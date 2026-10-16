@@ -42,6 +42,7 @@ The budget decides:
 | Standard Scaler, Log Transform | one row group at a time (the scaler fits on all rows first, then scales) | one row group |
 | Checks (row count, allowed values, not empty, range) | one row group at a time; the rows pass through uncopied | one row group |
 | The `unique` check | one DuckDB query (group by the columns) over the file; the rows pass through uncopied | within the budget |
+| Export CSV / JSON / Parquet, Data Output, and Export in the SQL Workbench | write the table one row group at a time (a table in memory in one go), hashing the file as it is written for the lineage | one row group |
 | Models, clustering, PCA, Robust Scaler, and other steps | read their input whole when it fits | stop before loading otherwise |
 
 When a step must read its input whole and it does not fit, the run stops

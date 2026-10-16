@@ -373,8 +373,15 @@ Publish, Run step or Execute Pipeline. Publish shows the selected output's:
 - **Made by**: the recipe and its revision (the first 12 hex digits of the
   SHA-256 of its steps' types and settings, so any change to a step changes
   it) and the number of steps;
-- **Inputs**: each Data Input's file with its size and SHA-256;
-- **Result**: rows, columns, the file's size and SHA-256;
+- **Inputs**: each Data Input's file with its size and SHA-256. A file is
+  hashed once (the digest is kept by path, size and write time in the
+  project's `cache/ingestion/digests`). A CSV over the data budget's result
+  threshold is hashed while it is converted, so it is not read again. A
+  larger file never read in full (a Parquet file opened in place) shows *not
+  hashed (large file; size and time identify it)*, and the lineage file holds
+  its write time;
+- **Result**: rows, columns, the file's size and SHA-256 (hashed while the
+  file is written, so the export is not read back);
 - **Checks**: *4 of 4 pass*, or the first one that did not;
 - **Written**: when, from which graph file.
 

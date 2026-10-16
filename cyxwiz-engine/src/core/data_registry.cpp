@@ -4,6 +4,12 @@
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "data_budget.h"
+#include "sha256_digest.h"
+#include "hashing_output_stream.h"
+#include <arrow/csv/writer.h>
+#include <arrow/io/buffered.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
 #include <arrow/compute/api.h>  // for arrow::compute::Cast (integer column compaction)
 #include <limits>              // for std::numeric_limits (Arrow block_size cap)
 
@@ -1638,6 +1644,24 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         }
     } else {
         spdlog::info("LoadTabularCSV: converting CSV to Parquet cache at '{}'", cache_path);
+        // The conversion reads every byte of the source: its SHA-256 comes
+        // with it, for a lineage that would otherwise read the file again.
+        uint64_t source_bytes = 0;
+        const std::string stamp = FileStamp(path, &source_bytes);
+        std::unique_ptr<Sha256Hasher> hasher;
+        uint64_t hashed_bytes = 0;
+        bool hash_ok = false;
+        CsvSourceObserver observer;
+        observer.restart = [&] {
+            hasher = std::make_unique<Sha256Hasher>();
+            hashed_bytes = 0;
+            hash_ok = true;
+        };
+        observer.bytes = [&](const uint8_t* data, int64_t n) {
+            std::string error;
+            if (hash_ok) hash_ok = hasher->Update(std::string_view(reinterpret_cast<const char*>(data), static_cast<size_t>(n)), error);
+            hashed_bytes += static_cast<uint64_t>(n);
+        };
         if (!ParquetBackedDataset::ConvertCsvToParquet(path, cache_path,
                                                        has_header, delimiter, skip_rows,
                                                        max_rows,
@@ -1646,9 +1670,16 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                                                        decimal_point,
                                                        use_threads,
                                                        progress_callback,
-                                                       quote_char)) {
+                                                       quote_char,
+                                                       &observer)) {
             spdlog::error("LoadTabularCSV: CSV-to-Parquet conversion failed for '{}'", path);
             return TabularLoadBackend::Failed;
+        }
+        // Only a source read to its end, unchanged meanwhile (a row limit stops early).
+        std::string digest, error;
+        if (hash_ok && hasher && hashed_bytes == source_bytes && FileStamp(path) == stamp && hasher->Finish(digest, error)) {
+            RememberFileDigest(stamp, fs::path(cache_path).parent_path(), digest);
+            spdlog::info("LoadTabularCSV: source SHA-256 recorded while converting ({})", digest.substr(0, 12));
         }
         if (load_status) *load_status = "Created persistent ingestion cache";
     }
@@ -1973,54 +2004,144 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadMLDatasetToArrow(
 // Arrow Export Methods (for DataOutput node pipeline execution)
 // =============================================================================
 
-bool DataRegistry::ExportArrowToCSV(const std::string& dataset_name, const std::string& output_path) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = arrow_datasets_.find(dataset_name);
-    if (it == arrow_datasets_.end()) {
-        spdlog::error("ExportArrowToCSV: Dataset '{}' not found", dataset_name);
+bool DataRegistry::VisitTablePieces(const std::string& name,
+                                    const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
+                                    std::shared_ptr<arrow::Schema>* schema, std::string& error) {
+    if (const auto memory = GetArrowDataset(name)) {
+        const auto table = memory->GetArrowTable();
+        if (!table) {
+            error = "'" + name + "' has no table";
+            return false;
+        }
+        if (schema) *schema = table->schema();
+        return visit(table, error);
+    }
+    const auto disk = GetParquetBackedDataset(name);
+    if (!disk) {
+        error = "'" + name + "' is not a table";
         return false;
     }
-
-    bool success = it->second->ExportCSV(output_path);
-    if (success) {
-        spdlog::info("ExportArrowToCSV: Exported '{}' to '{}'", dataset_name, output_path);
+    if (schema) *schema = disk->GetSchema();
+    for (int group = 0; group < disk->GetNumRowGroups(); ++group) {
+        const auto piece = disk->ReadRowGroup(group);
+        if (!piece) {
+            error = "could not read row group " + std::to_string(group) + " of '" + disk->GetFilePath() + "'";
+            return false;
+        }
+        if (!visit(piece, error)) return false;
     }
-    return success;
+    return true;
 }
 
-bool DataRegistry::ExportArrowToParquet(const std::string& dataset_name, const std::string& output_path) {
-    std::lock_guard<std::mutex> lock(mutex_);
+namespace {
 
-    auto it = arrow_datasets_.find(dataset_name);
-    if (it == arrow_datasets_.end()) {
-        spdlog::error("ExportArrowToParquet: Dataset '{}' not found", dataset_name);
-        return false;
-    }
+// An export's file, buffered and hashed as it is written.
+struct ExportFile {
+    std::shared_ptr<HashingOutputStream> hashed;
+    std::shared_ptr<arrow::io::OutputStream> buffered;
+};
 
-    bool success = it->second->ExportParquet(output_path);
-    if (success) {
-        spdlog::info("ExportArrowToParquet: Exported '{}' to '{}'", dataset_name, output_path);
-    }
-    return success;
+arrow::Result<ExportFile> OpenExportFile(const std::string& path) {
+    ARROW_ASSIGN_OR_RAISE(auto file, arrow::io::FileOutputStream::Open(path));
+    ExportFile out;
+    out.hashed = std::make_shared<HashingOutputStream>(file);
+    ARROW_ASSIGN_OR_RAISE(out.buffered, arrow::io::BufferedOutputStream::Create(1 << 20, arrow::default_memory_pool(), out.hashed));
+    return out;
 }
 
-bool DataRegistry::ExportArrowToJSON(const std::string& dataset_name, const std::string& output_path) {
-    std::lock_guard<std::mutex> lock(mutex_);
+}  // namespace
 
-    auto it = arrow_datasets_.find(dataset_name);
-    if (it == arrow_datasets_.end()) {
-        spdlog::error("ExportArrowToJSON: Dataset '{}' not found", dataset_name);
+bool DataRegistry::ExportTableCSV(const std::string& name, const std::string& output_path, TabularExport* written) {
+    std::string error;
+    auto opened = OpenExportFile(output_path);
+    if (!opened.ok()) {
+        spdlog::error("ExportTableCSV: cannot open '{}': {}", output_path, opened.status().ToString());
         return false;
     }
+    ExportFile file = *opened;
+    std::shared_ptr<arrow::ipc::RecordBatchWriter> writer;
+    TabularExport facts;
+    const bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+        if (!writer) {
+            auto options = arrow::csv::WriteOptions::Defaults();
+            options.delimiter = ',';
+            options.include_header = true;
+            auto made = arrow::csv::MakeCSVWriter(file.buffered, piece->schema(), options);
+            if (!made.ok()) {
+                why = made.status().ToString();
+                return false;
+            }
+            writer = *made;
+        }
+        if (auto status = writer->WriteTable(*piece); !status.ok()) {
+            why = status.ToString();
+            return false;
+        }
+        facts.rows += piece->num_rows();
+        return true;
+    }, &facts.schema, error);
+    // A table with no row groups still gets its header.
+    if (ok && !writer && facts.schema) {
+        auto options = arrow::csv::WriteOptions::Defaults();
+        auto made = arrow::csv::MakeCSVWriter(file.buffered, facts.schema, options);
+        if (made.ok()) writer = *made;
+    }
+    arrow::Status closed = writer ? writer->Close() : arrow::Status::OK();
+    if (closed.ok()) closed = file.buffered->Close();
+    if (!ok || !closed.ok()) {
+        spdlog::error("ExportTableCSV: '{}' to '{}' failed: {}", name, output_path, ok ? closed.ToString() : error);
+        return false;
+    }
+    facts.bytes = file.hashed->bytes();
+    facts.sha256 = file.hashed->Finish();
+    spdlog::info("ExportTableCSV: '{}' to '{}' ({} rows)", name, output_path, facts.rows);
+    if (written) *written = std::move(facts);
+    return true;
+}
 
-    // JSON export - Arrow doesn't have native JSON writer, use custom implementation
-    // For now, write as CSV with .json extension (will need proper JSON serialization)
-    spdlog::warn(
-        "ExportArrowToJSON: Native JSON export for '{}' to '{}' is not implemented; consider CSV",
-        dataset_name, output_path);
-    // TODO: Implement proper JSON export using nlohmann/json
-    return false;
+bool DataRegistry::ExportTableParquet(const std::string& name, const std::string& output_path, TabularExport* written) {
+    std::string error;
+    auto opened = OpenExportFile(output_path);
+    if (!opened.ok()) {
+        spdlog::error("ExportTableParquet: cannot open '{}': {}", output_path, opened.status().ToString());
+        return false;
+    }
+    ExportFile file = *opened;
+    std::unique_ptr<parquet::arrow::FileWriter> writer;
+    TabularExport facts;
+    const auto open_writer = [&](const std::shared_ptr<arrow::Schema>& schema, std::string& why) {
+        parquet::WriterProperties::Builder properties;
+        properties.compression(parquet::Compression::SNAPPY);
+        auto made = parquet::arrow::FileWriter::Open(*schema, arrow::default_memory_pool(), file.buffered, properties.build(),
+                                                     parquet::ArrowWriterProperties::Builder().store_schema()->build());
+        if (!made.ok()) {
+            why = made.status().ToString();
+            return false;
+        }
+        writer = std::move(*made);
+        return true;
+    };
+    bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+        if (!writer && !open_writer(piece->schema(), why)) return false;
+        if (auto status = writer->WriteTable(*piece, 1024 * 1024); !status.ok()) {
+            why = status.ToString();
+            return false;
+        }
+        facts.rows += piece->num_rows();
+        return true;
+    }, &facts.schema, error);
+    if (ok && !writer && facts.schema) ok = open_writer(facts.schema, error);  // no row groups: an empty file with the schema
+    arrow::Status closed = writer ? writer->Close() : arrow::Status::OK();
+    if (closed.ok()) closed = file.buffered->Close();
+    if (!ok || !closed.ok()) {
+        spdlog::error("ExportTableParquet: '{}' to '{}' failed: {}", name, output_path, ok ? closed.ToString() : error);
+        return false;
+    }
+    facts.bytes = file.hashed->bytes();
+    facts.sha256 = file.hashed->Finish();
+    spdlog::info("ExportTableParquet: '{}' to '{}' ({} rows)", name, output_path, facts.rows);
+    if (written) *written = std::move(facts);
+    return true;
 }
 
 } // namespace cyxwiz

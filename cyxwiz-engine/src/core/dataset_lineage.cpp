@@ -27,13 +27,20 @@ std::string Bytes(uint64_t b) {
     return buf;
 }
 
-nlohmann::json FileJson(const LineageFile& f) { return {{"path", f.path}, {"bytes", f.bytes}, {"sha256", f.sha256}}; }
+nlohmann::json FileJson(const LineageFile& f) {
+    nlohmann::json j = {{"path", f.path}, {"bytes", f.bytes}, {"sha256", f.sha256}};
+    if (!f.modified.empty()) j["modified"] = f.modified;
+    if (!f.note.empty()) j["note"] = f.note;
+    return j;
+}
 
 LineageFile FileFrom(const nlohmann::json& j) {
     LineageFile f;
     f.path = j.value("path", std::string());
     f.bytes = j.value("bytes", uint64_t{0});
     f.sha256 = j.value("sha256", std::string());
+    f.modified = j.value("modified", std::string());
+    f.note = j.value("note", std::string());
     return f;
 }
 
@@ -189,8 +196,9 @@ LineageSummary SummarizeLineage(const DatasetLineage& l) {
     else s.made_by = count + " of the graph";
     for (size_t i = 0; i < l.inputs.size(); ++i) {
         const auto& f = l.inputs[i];
-        s.inputs += (i ? "; " : "") + fs::path(f.path).filename().string() + " \xC2\xB7 " + Bytes(f.bytes) + " \xC2\xB7 sha256 " +
-                    ShortDigest(f.sha256);
+        s.inputs += (i ? "; " : "") + fs::path(f.path).filename().string() + " \xC2\xB7 " + Bytes(f.bytes) + " \xC2\xB7 " +
+                    (f.sha256.empty() && !f.note.empty() ? "not hashed (large file; size and time identify it)"
+                                                         : "sha256 " + ShortDigest(f.sha256));
     }
     if (s.inputs.empty()) s.inputs = "no file input";
     s.result = (l.rows >= 0 ? Thousands(l.rows) + " rows" : std::string("rows unknown")) +

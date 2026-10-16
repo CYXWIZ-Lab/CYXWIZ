@@ -106,7 +106,8 @@ public:
                                      char decimal_point = '.',
                                      bool use_threads = true,
                                      const CsvProgressCallback& progress_callback = {},
-                                     char quote_char = '"');
+                                     char quote_char = '"',
+                                     const CsvSourceObserver* source_observer = nullptr);
 
     /**
      * Read a single row group as an in-memory Arrow Table.

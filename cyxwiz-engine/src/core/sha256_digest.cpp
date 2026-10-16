@@ -5,6 +5,8 @@
 #include <array>
 #include <fstream>
 #include <iomanip>
+#include <map>
+#include <mutex>
 #include <sstream>
 
 namespace cyxwiz {
@@ -56,6 +58,76 @@ bool Sha256Hasher::Finish(std::string& digest, std::string& error) {
     }
     digest = output.str();
     return true;
+}
+
+namespace {
+
+std::mutex& DigestMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::map<std::string, std::string>& KnownDigests() {
+    static std::map<std::string, std::string> digests;
+    return digests;
+}
+
+// One small file per stamp: <store>/digests/<sha256 of the stamp>.txt holding
+// the stamp and the digest (the stamp is checked, not trusted from the name).
+std::filesystem::path DigestFile(const std::string& stamp, const std::filesystem::path& store_dir) {
+    Sha256Hasher hasher;
+    std::string name, error;
+    if (!hasher.Update(stamp, error) || !hasher.Finish(name, error)) return {};
+    return store_dir / "digests" / (name.substr(0, 32) + ".txt");
+}
+
+}  // namespace
+
+std::string FileStamp(const std::filesystem::path& path, uint64_t* bytes) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return {};
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (ec) return {};
+    if (bytes) *bytes = size;
+    const auto absolute = std::filesystem::absolute(path, ec);
+    return (ec ? path : absolute).lexically_normal().string() + "|" + std::to_string(size) + "|" +
+           std::to_string(time.time_since_epoch().count());
+}
+
+std::string KnownFileDigest(const std::string& stamp, const std::filesystem::path& store_dir) {
+    if (stamp.empty()) return {};
+    {
+        std::lock_guard<std::mutex> lock(DigestMutex());
+        if (const auto it = KnownDigests().find(stamp); it != KnownDigests().end()) return it->second;
+    }
+    if (store_dir.empty()) return {};
+    std::ifstream input(DigestFile(stamp, store_dir));
+    std::string saved_stamp, digest;
+    if (!std::getline(input, saved_stamp) || !std::getline(input, digest) || saved_stamp != stamp || digest.size() != 64)
+        return {};
+    std::lock_guard<std::mutex> lock(DigestMutex());
+    KnownDigests()[stamp] = digest;
+    return digest;
+}
+
+void RememberFileDigest(const std::string& stamp, const std::filesystem::path& store_dir, const std::string& digest) {
+    if (stamp.empty() || digest.empty()) return;
+    {
+        std::lock_guard<std::mutex> lock(DigestMutex());
+        KnownDigests()[stamp] = digest;
+    }
+    if (store_dir.empty()) return;
+    const auto file = DigestFile(stamp, store_dir);
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    const auto temp = std::filesystem::path(file.string() + ".tmp");
+    {
+        std::ofstream output(temp, std::ios::trunc);
+        output << stamp << '\n' << digest << '\n';
+        if (!output) return;
+    }
+    std::filesystem::rename(temp, file, ec);
 }
 
 bool Sha256File(const std::filesystem::path& path, std::string& digest, std::string& error) {

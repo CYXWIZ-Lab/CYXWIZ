@@ -33,6 +33,7 @@ class SqlTransform;
 struct SqlTransformInput;
 class IPipelineOperator;
 struct PipelineRuntimeSupport;
+struct TabularExport;
 
 enum class PipelineNodeExecutionEvent : uint8_t {
     Pending,
@@ -256,7 +257,7 @@ private:
     const std::vector<Node>* run_nodes_ = nullptr;  // the run's nodes while ExecuteParallel runs (lineage)
     // Writes <output>.lineage.json for an export node that wrote `output_path`
     // (TOFIX148 Publish); a failure is logged, the export stands.
-    void WriteExportLineage(const Node& node, const ExecutionContext& ctx, const std::string& input_dataset,
+    void WriteExportLineage(const Node& node, const ExecutionContext& ctx, const TabularExport& written,
                             const std::string& output_path, const std::string& format);
     std::string export_root_;             // Project exports directory
     std::string ingestion_cache_root_;    // Project cache/ingestion directory

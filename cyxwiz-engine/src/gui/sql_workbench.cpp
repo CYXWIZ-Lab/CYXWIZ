@@ -511,8 +511,8 @@ void SqlWorkbenchDialog::ExportResult(bool parquet) {
     const auto path = cyxwiz::FileDialogs::SaveFile("Export result", filters, nullptr, name.c_str());
     if (!path) return;
     auto& registry = cyxwiz::DataRegistry::Instance();
-    const bool ok = parquet ? registry.ExportArrowToParquet(result_dataset_, *path)
-                            : registry.ExportArrowToCSV(result_dataset_, *path);
+    const bool ok = parquet ? registry.ExportTableParquet(result_dataset_, *path)
+                            : registry.ExportTableCSV(result_dataset_, *path);
     AddMessage(ok ? "Exported " + sqlstep::FormatCount(result_->num_rows()) + " rows to " + *path
                   : "Export to " + *path + " failed (see the Console).",
                !ok);

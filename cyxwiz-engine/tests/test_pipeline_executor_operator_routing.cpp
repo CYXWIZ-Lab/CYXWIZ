@@ -1045,6 +1045,100 @@ void CheckFocusedExportOutputPaths() {
         const auto& facts = lineage_executor.GetNodeRunFacts();
         Check(facts.count(90011) && facts.at(90011).written_path == lineage_out.string(), "run facts record the written path");
         registry.UnloadDataset("ds_datainput_90009");
+
+        // Over the data budget's result threshold (TOFIX157): a CSV converted
+        // to Parquet is hashed while it is converted (no second read); a
+        // Parquet file opened in place is not read just to hash it: size and
+        // write time identify it.
+        const fs::path big_csv = parquet_dir / "lineage_big.csv";
+        {
+            std::ofstream out(big_csv, std::ios::binary | std::ios::trunc);
+            out << "id,value\n";
+            for (int i = 0; i < 200; ++i) out << i << "," << i * 3 << "\n";
+        }
+        const fs::path big_parquet = parquet_dir / "lineage_big.parquet";
+        auto lineage_graph = [&](const fs::path& source, const std::string& type, const fs::path& out) {
+            return std::string(R"({"nodes":[{"id":90021,"type":"DataInput","name":"Input","parameters":{"source_type":"file","file_path":")") +
+                   JsonEscapePath(source.string()) + R"(","type":")" + type +
+                   R"(","has_header":"true","force_disk_backed":"true"}},{"id":90022,"type":"ExportParquet","name":"Export","parameters":{"path":")" +
+                   JsonEscapePath(out.string()) + R"("}}],"links":[{"start_node":90021,"end_node":90022}]})";
+        };
+        const fs::path big_out = parquet_dir / "lineage_big_out.parquet";
+        const fs::path cache_root = fs::temp_directory_path() / "cyxwiz_lineage_digest_cache";
+        std::error_code cleanup_error;
+        fs::remove_all(cache_root, cleanup_error);
+        cyxwiz::SetDataBudgetBytes(2048);
+        {
+            cyxwiz::PipelineExecutor converting;
+            converting.SetIngestionCacheRoot(cache_root.string());
+            Check(converting.ExecutePipeline(lineage_graph(big_csv, "csv", big_out)),
+                  "a large CSV exports: " + converting.GetLastError());
+            cyxwiz::DatasetLineage converted;
+            Check(cyxwiz::ReadLineage(big_out.string(), converted, lineage_error), "lineage of the large CSV: " + lineage_error);
+            std::string big_digest;
+            Check(cyxwiz::Sha256File(big_csv, big_digest, lineage_error) && converted.inputs.size() == 1 &&
+                      converted.inputs[0].sha256 == big_digest && converted.inputs[0].note.empty() &&
+                      !converted.inputs[0].modified.empty(),
+                  "the large CSV's SHA-256 comes from its conversion");
+            Check(cyxwiz::KnownFileDigest(cyxwiz::FileStamp(big_csv), cache_root) == big_digest,
+                  "the digest is kept beside the ingestion cache");
+            registry.UnregisterTabularDataset("ds_datainput_90021");
+        }
+        {
+            // A Parquet file of the same rows, opened in place.
+            cyxwiz::PipelineExecutor writer;
+            Check(writer.ExecutePipeline(lineage_graph(big_csv, "csv", big_parquet)), "write the large Parquet: " + writer.GetLastError());
+            registry.UnregisterTabularDataset("ds_datainput_90021");
+            cyxwiz::PipelineExecutor in_place;
+            in_place.SetIngestionCacheRoot(cache_root.string());
+            Check(in_place.ExecutePipeline(lineage_graph(big_parquet, "parquet", big_out)),
+                  "a large Parquet exports: " + in_place.GetLastError());
+            cyxwiz::DatasetLineage opened;
+            Check(cyxwiz::ReadLineage(big_out.string(), opened, lineage_error), "lineage of the large Parquet: " + lineage_error);
+            Check(opened.inputs.size() == 1 && opened.inputs[0].sha256.empty() &&
+                      opened.inputs[0].note.find("not hashed") != std::string::npos && opened.inputs[0].bytes > 0 &&
+                      !opened.inputs[0].modified.empty(),
+                  "a large Parquet opened in place is identified by size and time, not read again");
+            Check(cyxwiz::SummarizeLineage(opened).inputs.find("not hashed") != std::string::npos,
+                  "the lineage summary says the input was not hashed");
+            registry.UnregisterTabularDataset("ds_datainput_90021");
+        }
+        cyxwiz::SetDataBudgetBytes(0);
+
+        // Exports write a table on disk a row group at a time (TOFIX157):
+        // with a 1-byte budget nothing can be read whole, yet CSV, JSON and
+        // Parquet exports of the 200 rows run, and the output's SHA-256 in
+        // the lineage (hashed while writing) is the file's.
+        cyxwiz::SetDataBudgetBytes(1);
+        for (const std::string format : {"csv", "json", "parquet"}) {
+            const fs::path out = parquet_dir / ("streamed." + format);
+            const std::string type = format == "csv" ? "ExportCSV" : format == "json" ? "ExportJSON" : "ExportParquet";
+            const std::string graph =
+                std::string(R"({"nodes":[{"id":90031,"type":"DataInput","name":"Input","parameters":{"source_type":"file","file_path":")") +
+                JsonEscapePath(big_parquet.string()) +
+                R"(","type":"parquet","force_disk_backed":"true"}},{"id":90032,"type":")" + type +
+                R"(","name":"Export","parameters":{"path":")" + JsonEscapePath(out.string()) +
+                R"("}}],"links":[{"start_node":90031,"end_node":90032}]})";
+            cyxwiz::PipelineExecutor streaming;
+            Check(streaming.ExecutePipeline(graph), format + " export of a table on disk under a 1-byte budget: " + streaming.GetLastError());
+            Check(registry.IsParquetBackedDataset("ds_datainput_90031") && !registry.GetArrowDataset("ds_datainput_90031_in_memory"),
+                  format + ": the input stayed on disk (not read whole)");
+            cyxwiz::DatasetLineage streamed;
+            Check(cyxwiz::ReadLineage(out.string(), streamed, lineage_error), format + " lineage: " + lineage_error);
+            std::string digest;
+            Check(cyxwiz::Sha256File(out, digest, lineage_error) && streamed.output.sha256 == digest &&
+                      streamed.output.bytes == fs::file_size(out) && streamed.rows == 200 && streamed.columns == 2,
+                  format + ": rows, size and the SHA-256 hashed while writing match the file");
+            registry.UnregisterTabularDataset("ds_datainput_90031");
+        }
+        {
+            std::ifstream json(parquet_dir / "streamed.json");
+            const std::string text((std::istreambuf_iterator<char>(json)), std::istreambuf_iterator<char>());
+            Check(text.rfind("[\n  {\"id\": 0, \"value\": 0},\n  {\"id\": 1, \"value\": 3},", 0) == 0 &&
+                      text.size() > 4 && text.compare(text.size() - 4, 4, "}\n]\n") == 0,
+                  "the JSON export is an array of objects, as before: " + text.substr(0, 60));
+        }
+        cyxwiz::SetDataBudgetBytes(0);
     }
 
     registry.UnloadDataset("ds_datainput_90001");

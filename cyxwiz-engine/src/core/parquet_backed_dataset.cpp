@@ -489,7 +489,8 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                                                  char decimal_point,
                                                  bool use_threads,
                                                  const CsvProgressCallback& progress_callback,
-                                                 char quote_char) {
+                                                 char quote_char,
+                                                 const CsvSourceObserver* source_observer) {
     spdlog::info(
         "ParquetBackedDataset::ConvertCsvToParquet: {} -> {} (max_rows={})",
         csv_path,
@@ -582,7 +583,7 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
             auto maybe_reader = MakeStableCsvStreamingReader(
                 csv_path, read_options, parse_options, convert_options,
                 &promoted_integer_columns, promote_inferred_integers,
-                &input_source);
+                &input_source, source_observer);
           if (!maybe_reader.ok()) {
             spdlog::error(
                 "ConvertCsvToParquet: stable StreamingReader failed for {}: {}",

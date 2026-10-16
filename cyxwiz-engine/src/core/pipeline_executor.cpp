@@ -1,6 +1,7 @@
 #include "pipeline_executor.h"
 #include "dataset_lineage.h"
 #include "sha256_digest.h"
+#include "hashing_output_stream.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/model_evaluation.h>
 #include "project_data_path.h"
@@ -13,6 +14,7 @@
 #include "sql_step_presentation.h"
 #include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
+#include <arrow/io/buffered.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include "data_convert_service.h"
@@ -4510,18 +4512,14 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 
     try {
+        // In memory or on disk: written a piece at a time (TOFIX157).
         auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("DataOutput: Input dataset not found in registry");
-            return false;
-        }
-
+        TabularExport written;
         bool success = false;
         if (format == "csv") {
-            success = registry.ExportArrowToCSV(input_dataset_name, output_path);
+            success = registry.ExportTableCSV(input_dataset_name, output_path, &written);
         } else if (format == "parquet") {
-            success = registry.ExportArrowToParquet(input_dataset_name, output_path);
+            success = registry.ExportTableParquet(input_dataset_name, output_path, &written);
         }
 
         if (!success) {
@@ -4533,7 +4531,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         ctx.node_results[node.id] = input_dataset_name;
         ctx.output_dataset = output_path;
         ctx.node_written[node.id] = output_path;
-        WriteExportLineage(node, ctx, input_dataset_name, output_path, format);
+        WriteExportLineage(node, ctx, written, output_path, format);
 
         spdlog::info("[Pipeline] DataOutput successfully exported to {}", output_path);
         return true;
@@ -4916,9 +4914,9 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
         if (!output_path.empty()) {
             bool success = false;
             if (format == "csv") {
-                success = registry.ExportArrowToCSV(input_dataset_name, output_path);
+                success = registry.ExportTableCSV(input_dataset_name, output_path);
             } else if (format == "parquet") {
-                success = registry.ExportArrowToParquet(input_dataset_name, output_path);
+                success = registry.ExportTableParquet(input_dataset_name, output_path);
             }
 
             if (!success) {
@@ -5672,6 +5670,9 @@ bool PipelineExecutor::StepReadsInputFiles(const Node& node) {
         NodeType::CellUpdater, NodeType::RowAppender, NodeType::Unpivot, NodeType::StringManipulation,
         NodeType::MathFormula};
     if (node.type == "SQLQuery" || (node.runtime_type && sql_steps.count(*node.runtime_type) > 0)) return true;
+    // Exports write a table on disk a row group at a time (TOFIX157).
+    if (node.type == "DataOutput" || node.type == "ExportCSV" || node.type == "ExportJSON" || node.type == "ExportParquet")
+        return true;
     // Operators that stream read their input a row group at a time.
     auto& factory = PipelineOperatorFactory::Instance();
     if (!node.runtime_type || !factory.HasOperator(*node.runtime_type)) return false;
@@ -7591,30 +7592,45 @@ const PipelineExecutor::Node* PipelineExecutor::FindNodeById(
 
 namespace {
 
-// An input file's SHA-256, kept per path, size and time so a run does not
-// hash an unchanged file again.
-std::string CachedFileDigest(const std::filesystem::path& path, uint64_t& bytes) {
-    static std::mutex mutex;
-    static std::map<std::string, std::string> cache;
+// An input file for the lineage. Its SHA-256 is known when the file was
+// hashed before, by path, size and time (also while a large CSV was
+// converted); otherwise a file up to the data budget's result threshold is
+// hashed now, and a larger one (a Parquet file opened in place) is not read
+// again just for this: its size and write time identify it (TOFIX157).
+LineageFile LineageInput(const std::filesystem::path& path, const std::filesystem::path& digest_store) {
+    LineageFile input;
+    input.path = path.string();
+    const std::string stamp = FileStamp(path, &input.bytes);
+    if (stamp.empty()) return input;
     std::error_code ec;
-    bytes = std::filesystem::file_size(path, ec);
-    if (ec) return {};
-    const auto time = std::filesystem::last_write_time(path, ec).time_since_epoch().count();
-    const std::string key = path.string() + "|" + std::to_string(bytes) + "|" + std::to_string(time);
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (!ec) {
+        const auto wall = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
+        std::tm local{};
+#if defined(_WIN32)
+        localtime_s(&local, &wall);
+#else
+        localtime_r(&wall, &local);
+#endif
+        std::ostringstream text;
+        text << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+        input.modified = text.str();
     }
-    std::string digest, error;
-    if (!Sha256File(path, digest, error)) return {};
-    std::lock_guard<std::mutex> lock(mutex);
-    cache[key] = digest;
-    return digest;
+    input.sha256 = KnownFileDigest(stamp, digest_store);
+    if (!input.sha256.empty()) return input;
+    if (input.bytes > DataResultThresholdBytes()) {
+        input.note = "not hashed: larger than the data budget's result threshold (" + FormatDataBytes(DataResultThresholdBytes()) +
+                     "); size and write time identify it";
+        return input;
+    }
+    std::string error;
+    if (Sha256File(path, input.sha256, error)) RememberFileDigest(stamp, digest_store, input.sha256);
+    return input;
 }
 
 }  // namespace
 
-void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionContext& ctx, const std::string& input_dataset,
+void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionContext& ctx, const TabularExport& written,
                                           const std::string& output_path, const std::string& format) {
     if (!run_nodes_) return;
     // The steps above the export, in run order (inputs before the steps that read them).
@@ -7658,10 +7674,9 @@ void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionConte
         if (n->type == "DataInput") {
             const auto file = n->parameters.find("file_path");
             if (file != n->parameters.end() && !file->second.empty()) {
-                LineageFile input;
-                input.path = ResolveProjectDataPath(file->second, project_root_);
-                input.sha256 = CachedFileDigest(input.path, input.bytes);
-                lineage.inputs.push_back(std::move(input));
+                const std::filesystem::path store =
+                    ingestion_cache_root_.empty() ? ParquetBackedDataset::GetCacheDir() : ingestion_cache_root_;
+                lineage.inputs.push_back(LineageInput(ResolveProjectDataPath(file->second, project_root_), store));
             }
         }
         if (!n->recipe.empty()) lineage.recipe = n->recipe;  // the nearest recipe above the export wins
@@ -7669,18 +7684,16 @@ void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionConte
     }
     lineage.recipe_revision = RecipeRevision(lineage.steps, lineage.recipe);
     lineage.checks = LineageChecks(lineage.steps);
-    if (const auto dataset = DataRegistry::Instance().GetArrowDataset(input_dataset)) {
-        lineage.rows = dataset->GetNumRows();
-        lineage.columns = dataset->GetNumColumns();
-        if (const auto table = dataset->GetArrowTable())
-            for (const auto& field : table->schema()->fields()) lineage.schema.emplace_back(field->name(), field->type()->ToString());
+    // What the export wrote, hashed while it was written (TOFIX157).
+    lineage.rows = written.rows;
+    if (written.schema) {
+        lineage.columns = written.schema->num_fields();
+        for (const auto& field : written.schema->fields()) lineage.schema.emplace_back(field->name(), field->type()->ToString());
     }
     lineage.output.path = output_path;
+    lineage.output.bytes = written.bytes;
+    lineage.output.sha256 = written.sha256;
     std::string error;
-    std::error_code ec;
-    lineage.output.bytes = std::filesystem::file_size(output_path, ec);
-    if (!Sha256File(output_path, lineage.output.sha256, error))
-        spdlog::warn("Lineage of '{}': the output could not be hashed ({})", output_path, error);
     if (!WriteLineage(lineage, error)) {
         spdlog::warn("Lineage of '{}' not written: {}", output_path, error);
         return;
@@ -7700,20 +7713,16 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
         node.parameters, input_dataset_name, ".csv", export_root_, project_root_);
 
     spdlog::info("[Data Studio] Exporting to CSV: {}", output_path);
-    auto& registry = DataRegistry::Instance();
-    if (!registry.GetArrowDataset(input_dataset_name)) {
-        ReportError("ExportCSV: Input dataset not found in registry");
-        return false;
-    }
-    if (!registry.ExportArrowToCSV(input_dataset_name, output_path)) {
-        ReportError("ExportCSV: Export failed");
+    TabularExport written;
+    if (!DataRegistry::Instance().ExportTableCSV(input_dataset_name, output_path, &written)) {
+        ReportError("ExportCSV: Export failed (see the log)");
         return false;
     }
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     ctx.node_written[node.id] = output_path;
-    WriteExportLineage(node, ctx, input_dataset_name, output_path, "csv");
+    WriteExportLineage(node, ctx, written, output_path, "csv");
     return true;
 }
 
@@ -7728,57 +7737,62 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
         node.parameters, input_dataset_name, ".json", export_root_, project_root_);
 
     spdlog::info("[Data Studio] Exporting to JSON: {}", output_path);
-    auto& registry = DataRegistry::Instance();
-    auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-    if (!input_dataset) {
-        ReportError("ExportJSON: Input dataset not found in registry");
+    // An array of objects, written a piece at a time (a table on disk one
+    // row group at a time) and hashed as it is written (TOFIX157).
+    auto file = arrow::io::FileOutputStream::Open(output_path);
+    if (!file.ok()) {
+        ReportError("ExportJSON: Failed to open output file: " + file.status().ToString());
         return false;
     }
-
-    auto table = input_dataset->GetArrowTable();
-    if (!table || !table->schema()) {
-        ReportError("ExportJSON: Input table is null");
+    auto hashed = std::make_shared<HashingOutputStream>(*file);
+    auto buffered = arrow::io::BufferedOutputStream::Create(1 << 20, arrow::default_memory_pool(), hashed);
+    if (!buffered.ok()) {
+        ReportError("ExportJSON: " + buffered.status().ToString());
         return false;
     }
-
-    std::ofstream output(output_path, std::ios::binary);
-    if (!output) {
-        ReportError("ExportJSON: Failed to open output file");
+    const auto output = *buffered;
+    TabularExport written;
+    std::string error;
+    const auto write = [&](const std::string& text, std::string& why) {
+        const auto status = output->Write(text.data(), static_cast<int64_t>(text.size()));
+        if (!status.ok()) why = "Failed to write output file: " + status.ToString();
+        return status.ok();
+    };
+    bool ok = write("[\n", error) &&
+              DataRegistry::Instance().VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+                  std::vector<std::string> names;
+                  for (const auto& field : piece->schema()->fields()) names.push_back(QuoteJsonString(field->name()) + ": ");
+                  std::string text;
+                  for (int64_t row = 0; row < piece->num_rows(); ++row) {
+                      text += written.rows + row > 0 ? ",\n  {" : "  {";
+                      for (int column = 0; column < piece->num_columns(); ++column) {
+                          auto scalar = piece->column(column)->GetScalar(row);
+                          if (!scalar.ok()) {
+                              why = "Failed to read scalar value";
+                              return false;
+                          }
+                          text += (column > 0 ? ", " : "") + names[static_cast<size_t>(column)] + ScalarToJsonValue(*scalar);
+                      }
+                      text += "}";
+                      if (text.size() > (1u << 20) && !write(text, why)) return false;
+                      if (text.size() > (1u << 20)) text.clear();
+                  }
+                  written.rows += piece->num_rows();
+                  return write(text, why);
+              }, &written.schema, error) &&
+              write(written.rows > 0 ? "\n]\n" : "]\n", error);
+    const auto closed = output->Close();
+    if (!ok || !closed.ok()) {
+        ReportError("ExportJSON: " + (ok ? closed.ToString() : error));
         return false;
     }
-
-    output << "[\n";
-    for (int64_t row = 0; row < table->num_rows(); ++row) {
-        output << "  {";
-        for (int column = 0; column < table->num_columns(); ++column) {
-            if (column > 0) {
-                output << ", ";
-            }
-            output << QuoteJsonString(table->schema()->field(column)->name())
-                   << ": ";
-            auto scalar_result = table->column(column)->GetScalar(row);
-            if (!scalar_result.ok()) {
-                ReportError("ExportJSON: Failed to read scalar value");
-                return false;
-            }
-            output << ScalarToJsonValue(*scalar_result);
-        }
-        output << "}";
-        if (row + 1 < table->num_rows()) {
-            output << ",";
-        }
-        output << "\n";
-    }
-    output << "]\n";
-    if (!output) {
-        ReportError("ExportJSON: Failed to write output file");
-        return false;
-    }
+    written.bytes = hashed->bytes();
+    written.sha256 = hashed->Finish();
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     ctx.node_written[node.id] = output_path;
-    WriteExportLineage(node, ctx, input_dataset_name, output_path, "json");
+    WriteExportLineage(node, ctx, written, output_path, "json");
     return true;
 }
 
@@ -7793,20 +7807,16 @@ bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& 
         node.parameters, input_dataset_name, ".parquet", export_root_, project_root_);
 
     spdlog::info("[Data Studio] Exporting to Parquet: {}", output_path);
-    auto& registry = DataRegistry::Instance();
-    if (!registry.GetArrowDataset(input_dataset_name)) {
-        ReportError("ExportParquet: Input dataset not found in registry");
-        return false;
-    }
-    if (!registry.ExportArrowToParquet(input_dataset_name, output_path)) {
-        ReportError("ExportParquet: Export failed");
+    TabularExport written;
+    if (!DataRegistry::Instance().ExportTableParquet(input_dataset_name, output_path, &written)) {
+        ReportError("ExportParquet: Export failed (see the log)");
         return false;
     }
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     ctx.node_written[node.id] = output_path;
-    WriteExportLineage(node, ctx, input_dataset_name, output_path, "parquet");
+    WriteExportLineage(node, ctx, written, output_path, "parquet");
     return true;
 }
 

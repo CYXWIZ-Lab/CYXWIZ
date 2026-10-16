@@ -289,43 +289,6 @@ std::shared_ptr<ArrowDataset> ArrowDataset::Slice(int64_t offset, int64_t length
     return std::make_shared<ArrowDataset>(sliced_table, name_ + "_slice");
 }
 
-bool ArrowDataset::ExportCSV(const std::string& path) const {
-    if (!table_) {
-        spdlog::error("Cannot export null table to CSV");
-        return false;
-    }
-
-    spdlog::info("Exporting Arrow table '{}' to CSV: {}", name_, path);
-
-    // Open output file
-    auto maybe_output = arrow::io::FileOutputStream::Open(path);
-    if (!maybe_output.ok()) {
-        spdlog::error("Failed to open CSV output file: {} - {}", path, maybe_output.status().ToString());
-        return false;
-    }
-    std::shared_ptr<arrow::io::FileOutputStream> output = maybe_output.ValueOrDie();
-
-    auto write_options = arrow::csv::WriteOptions::Defaults();
-    write_options.delimiter = ',';
-    write_options.include_header = true;
-    auto status = arrow::csv::WriteCSV(*table_, write_options, output.get());
-    if (!status.ok()) {
-        spdlog::error("Failed to write CSV data: {}", status.ToString());
-        (void)output->Close();
-        return false;
-    }
-
-    status = output->Close();
-    if (!status.ok()) {
-        spdlog::error("Failed to close CSV file: {}", status.ToString());
-        return false;
-    }
-
-    spdlog::info("CSV exported successfully: {} rows, {} columns",
-                 table_->num_rows(), table_->num_columns());
-    return true;
-}
-
 bool ArrowDataset::ExportParquet(const std::string& path, bool compress) const {
     if (!table_) {
         spdlog::error("Cannot export null table to Parquet");
