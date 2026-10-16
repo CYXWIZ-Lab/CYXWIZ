@@ -287,6 +287,9 @@ the node's current settings:
 | Compared | Your `Backward(r)` for the input, and `GetGradients()` for every parameter |
 | Passes when | The largest relative error is at most 0.02. Relative error is \|analytic − numeric\| / max(0.05, \|analytic\| + \|numeric\|) |
 
+The check runs only on settings your `InferOutputShape` accepts; while it
+refuses them, Properties shows *Could not check* with your message.
+
 The 0.05 floor keeps 32-bit rounding on a gradient close to zero from
 reading as a large error; a wrong gradient is typically off by 0.1 or more.
 The result goes stale when you change a setting; check again before
@@ -311,7 +314,7 @@ warning.
 
 ## 9. Loading, unloading and startup
 
-- **Refresh** in the Plugin Manager loads every plugin in the search folders.
+- **Install...** in the Plugin Manager loads one plugin from its folder; **Refresh** loads every plugin in the two plugin folders (see the [quickstart](plugin-quickstart.md#3-load-it-in-the-engine)).
   Loaded plugins are remembered and load again when the Engine starts, unless
   the user unticks **Load when the Engine starts**. **Unload** takes the
   plugin off that list.

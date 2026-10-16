@@ -4,11 +4,14 @@
 
 ## The plugin does not appear in the Plugin Manager
 
-- Press **Refresh**: plugins load from the Plugin Manager, or at startup when
-  they were loaded before.
-- The folder must be under `plugins/` in the folder the Engine starts in, or
-  under your user plugin folder (`%APPDATA%\cyxwiz\plugins\`,
-  `~/.cyxwiz/plugins/`), and hold a `plugin.json`.
+- Plugins load from the Plugin Manager (**Install...** with the plugin's
+  folder, or **Refresh**), or at startup when they were loaded before.
+- **Refresh** only searches `plugins` beside the Engine program (in a source
+  build `<build folder>/bin/Release/plugins/`) and your user plugin folder
+  (`%APPDATA%\cyxwiz\plugins\`, `~/.cyxwiz/plugins/`). Starting the Engine
+  from another folder does not change this. A plugin elsewhere loads with
+  **Install...**.
+- The plugin folder must hold a `plugin.json`.
 - The library named in `platforms` must exist at that path (for example
   `bin/my_nodes.dll`).
 - `api_version` must have the Engine's major number and a minor number no
@@ -50,8 +53,10 @@ run, but the node may learn wrongly.
   `(1 + |x|)²`).
 - If you are not the author, tell the plugin's author.
 
-*Could not check* means the module could not run on the check's inputs
-(batch shapes [2, 3] and [3, 4, 5]); the reason follows. Fix the settings, or
+*Could not check* means the node could not be built or run for the check;
+the reason follows. While the plugin refuses a setting (the orange message
+under the field), the check is off: fix the setting first. Otherwise the
+module failed on the check's inputs (batch shapes [2, 3] and [3, 4, 5]), and
 the node may need a specific input shape.
 
 ## Training stops with "Extension node '...' (...): ..."

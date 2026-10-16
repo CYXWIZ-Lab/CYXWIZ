@@ -47,19 +47,22 @@ The library lands in `plugins/examples/activation_nodes/bin/`.
 
 ## 3. Load it in the Engine
 
-The Engine looks for plugins, at any depth, in two folders:
+1. Open the **Plugin Manager** (sidebar, or **Apps > Plugin Manager**).
+2. Press **Install...**, enter the plugin folder
+   (`<repository>/plugins/examples/activation_nodes`, the folder that holds
+   `plugin.json`) or pick it with **Browse**, and press **Install**.
+3. The card **Example Activation Nodes** appears. It says *Adds: 2 trainable
+   nodes (Activations)* and has **Load when the Engine starts** ticked.
 
-| Folder | Example |
+**Refresh** loads every plugin found, at any depth, in the two plugin
+folders:
+
+| Folder | Where |
 |---|---|
-| `plugins/` under the folder the Engine starts in | Start the Engine from the repository root |
+| `plugins` beside the Engine program | In a source build `<build folder>/bin/Release/plugins/`; in an installed Engine, its install folder. The Engine always works from its own program folder, whatever folder you start it from |
 | Your user plugin folder | `%APPDATA%\cyxwiz\plugins\` on Windows, `~/.cyxwiz/plugins/` elsewhere |
 
-A plugin folder is any folder with a `plugin.json`.
-
-1. Open the **Plugin Manager** (sidebar, or **Apps > Plugin Manager**).
-2. Press **Refresh**. Every plugin in the two folders loads.
-3. The card **Example Activation Nodes** says *Adds: 2 trainable nodes
-   (Activations)* and has **Load when the Engine starts** ticked.
+Copying the plugin folder into one of them also works: press **Refresh**.
 
 From now on the plugin loads by itself when the Engine starts. Untick the box
 to stop that; **Unload** also takes it off the list.
