@@ -535,16 +535,18 @@ public:
     DataOutputDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(700, 500); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(720, 340); }
+    bool TracksChanges() const override { return true; }
 
 protected:
     void RenderContent() override;
 
 private:
-    void RenderSettingsTab();
+    void LoadFromNode();
 
     char file_path_[512] = {};
-    int output_type_ = 0;
+    int output_type_ = 0;  // 0 CSV, 1 Parquet
+    int path_base_ = 0;    // a relative path against: 0 the project folder, 1 the exports folder
 };
 
 /**

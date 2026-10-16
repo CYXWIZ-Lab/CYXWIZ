@@ -10,6 +10,8 @@
 #include "../core/file_dialogs.h"
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
+#include "../core/data_studio_publish.h"
+#include "../core/project_manager.h"
 #include "../core/graph_compiler.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/training_parameter_contract.h"
@@ -150,6 +152,14 @@ bool BrowseDataOutput(char* destination,
     return false;
 }
 
+constexpr float kFieldLabel = 170.0f;
+
+void Field(const char* label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", label);
+    ImGui::SameLine(kFieldLabel);
+}
+
 } // namespace
 
 // ==================== DataOutputDialog ====================
@@ -157,27 +167,22 @@ bool BrowseDataOutput(char* destination,
 DataOutputDialog::DataOutputDialog(MLNode* node)
     : NodeConfigDialog("Data Output", node)
 {
-    if (node_) {
-        auto file_path_it = node_->parameters.find("file_path");
-        if (file_path_it == node_->parameters.end() ||
-            file_path_it->second.empty()) {
-            file_path_it = node_->parameters.find("path");
-        }
-        if (file_path_it != node_->parameters.end()) {
-            CopyToBuffer(file_path_, sizeof(file_path_), file_path_it->second);
-        }
+    LoadFromNode();
+}
 
-        auto file_type_it = node_->parameters.find("file_type");
-        if (file_type_it == node_->parameters.end() ||
-            file_type_it->second.empty()) {
-            file_type_it = node_->parameters.find("format");
-        }
-        if (file_type_it != node_->parameters.end()) {
-            std::string type = LowerAscii(file_type_it->second);
-            if (type == "csv") output_type_ = 0;
-            else if (type == "parquet") output_type_ = 1;
-        }
-    }
+void DataOutputDialog::LoadFromNode() {
+    file_path_[0] = '\0';
+    output_type_ = 0;
+    path_base_ = 0;
+    if (!node_) return;
+    const auto& params = node_->parameters;
+    std::string path = ReadStringParamValue(params, "file_path");
+    if (path.empty()) path = ReadStringParamValue(params, "path");
+    CopyToBuffer(file_path_, sizeof(file_path_), path);
+    std::string type = LowerAscii(ReadStringParamValue(params, "file_type"));
+    if (type.empty()) type = LowerAscii(ReadStringParamValue(params, "format"));
+    output_type_ = type == "parquet" ? 1 : 0;
+    path_base_ = ReadStringParamValue(params, "path_base", "project") == "exports" ? 1 : 0;
 }
 
 void DataOutputDialog::Apply() {
@@ -186,6 +191,7 @@ void DataOutputDialog::Apply() {
     node_->parameters["file_path"] = file_path_;
     const char* types[] = {"csv", "parquet"};
     node_->parameters["file_type"] = types[output_type_];
+    node_->parameters["path_base"] = path_base_ == 1 ? "exports" : "project";
     node_->parameters["configured"] = "true";
 
     if (strlen(file_path_) > 0) {
@@ -199,55 +205,82 @@ void DataOutputDialog::Apply() {
 void DataOutputDialog::Reset() {
     if (!node_) return;
     node_->parameters = original_params_;
+    LoadFromNode();
     has_changes_ = false;
 }
 
 void DataOutputDialog::RenderContent() {
-    if (ImGui::BeginTabBar("DataOutputTabs")) {
-        if (ImGui::BeginTabItem("Settings")) {
-            RenderSettingsTab();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-}
-
-void DataOutputDialog::RenderSettingsTab() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Output Location");
-    ImGui::Separator();
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    namespace ui = cyxwiz::ui;
     ImGui::Spacing();
 
-    ImGui::Text("File:");
-    ImGui::SameLine(60);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-    if (ImGui::InputText("##outpath", file_path_, sizeof(file_path_))) {
+    // File, full width with Browse.
+    ImGui::TextUnformatted("File");
+    const float browse = ui::ButtonWidth("Browse...", ui::ButtonSize::Regular);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse - ImGui::GetStyle().ItemSpacing.x);
+    if (ImGui::InputTextWithHint("##outpath", "empty: the exports folder, named after the table it reads",
+                                 file_path_, sizeof(file_path_)))
         has_changes_ = true;
-    }
     ImGui::SameLine();
-    if (ImGui::Button("Browse", ImVec2(70, 0))) {
-        const std::string dialog_format = output_type_ == 1 ? "parquet" : "csv";
-        if (BrowseDataOutput(file_path_, sizeof(file_path_), dialog_format)) {
+    if (ui::SecondaryButton("Browse...", true, nullptr, ui::ButtonSize::Regular)) {
+        if (BrowseDataOutput(file_path_, sizeof(file_path_), output_type_ == 1 ? "parquet" : "csv"))
             has_changes_ = true;
-        }
     }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Format");
-    ImGui::Separator();
     ImGui::Spacing();
 
-    const char* formats[] = {"CSV", "Parquet"};
-    ImGui::Text("Format:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::Combo("##format", &output_type_, formats, 2)) {
+    // Format: switching it switches the file's extension too.
+    Field("Format");
+    static const char* const kFormats[] = {"CSV", "Parquet"};
+    const int previous = output_type_;
+    if (ui::SegmentedControl("##format", kFormats, 2, &output_type_)) {
+        std::filesystem::path path(file_path_);
+        const char* old_ext = previous == 1 ? ".parquet" : ".csv";
+        if (LowerAscii(path.extension().string()) == old_ext) {
+            path.replace_extension(output_type_ == 1 ? ".parquet" : ".csv");
+            CopyToBuffer(file_path_, sizeof(file_path_), path.string());
+        }
         has_changes_ = true;
     }
 
+    // Where a relative path goes.
+    const std::filesystem::path path(file_path_);
+    if (file_path_[0] != '\0' && path.is_relative()) {
+        Field("Relative to");
+        static const char* const kBases[] = {"Project folder", "Exports folder"};
+        if (ui::SegmentedControl("##path_base", kBases, 2, &path_base_)) has_changes_ = true;
+    }
+
+    // The file it writes, as the run resolves it.
+    ImGui::Spacing();
+    Field("Writes to");
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    const std::map<std::string, std::string> params{
+        {"file_path", file_path_},
+        {"file_type", output_type_ == 1 ? "parquet" : "csv"},
+        {"path_base", path_base_ == 1 ? "exports" : "project"}};
+    const std::string writes = cyxwiz::studio::OutputPath(NodeType::DataOutput, params, pm.GetProjectRoot(),
+                                                          pm.GetExportsPath());
+    ImGui::PushTextWrapPos(0.0f);
+    if (!writes.empty()) {
+        ImGui::TextUnformatted(writes.c_str());
+    } else {
+        ImGui::TextColored(t.text_dim, "the exports folder, as <table name>%s (named when it runs)",
+                           output_type_ == 1 ? ".parquet" : ".csv");
+    }
+    // What the last run wrote.
+    if (node_editor_ && node_) {
+        const auto& facts = node_editor_->GetNodeRunFacts();
+        const auto fact = facts.find(node_->id);
+        if (fact != facts.end()) {
+            Field("Last run");
+            if (!fact->second.error.empty())
+                ImGui::TextColored(t.error, "failed: %s", fact->second.error.c_str());
+            else if (!fact->second.written_path.empty())
+                ImGui::TextColored(t.text_dim, "wrote %s at %s", fact->second.written_path.c_str(),
+                                   fact->second.finished_at.c_str());
+        }
+    }
+    ImGui::PopTextWrapPos();
 }
 
 // ==================== DataConvertDialog ====================
@@ -965,14 +998,6 @@ bool IsPositiveIntegerText(const char* text) {
 }
 
 namespace {
-
-constexpr float kFieldLabel = 170.0f;
-
-void Field(const char* label) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", label);
-    ImGui::SameLine(kFieldLabel);
-}
 
 std::string GroupDigits(int64_t value) {
     std::string digits = std::to_string(value < 0 ? -value : value);

@@ -189,3 +189,13 @@ numbers, a column the input has). Reopening the dialog shows the saved
 condition as rows again. A condition written by hand with brackets in
 Properties does not fit rows: the dialog shows it as text to edit, with
 **Start over with rows**.
+
+## Data Output
+
+**File** is the file the step writes, with **Browse...**; left empty, the
+step writes to the project's exports folder, named after the table it reads.
+**Format** is CSV or Parquet; switching it also switches the file's
+extension. A relative file path shows **Relative to**: the project folder
+(like Data Input paths) or the exports folder. **Writes to** shows the full
+path the run will write, and after a run **Last run** shows the file it wrote
+and when, or why it failed.
