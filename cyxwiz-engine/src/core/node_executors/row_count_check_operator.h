@@ -53,8 +53,11 @@ public:
 
     // Streams (TOFIX154): every batch is counted or checked, the rule is
     // judged at EndFit, and the input passes through uncopied. `unique` keeps
-    // every key and so reads its input whole (not streamed).
+    // every key, so it does not stream: a table in memory is checked whole,
+    // a table on disk by one GROUP BY in DuckDB (CheckSql), which spills.
     bool SupportsStreaming() const override { return check_ != "unique"; }
+    std::string CheckSql() const override;
+    arrow::Status JudgeSql(const std::shared_ptr<arrow::Table>& result) override;
     bool PassesInputThrough() const override { return true; }
     arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
     arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;

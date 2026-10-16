@@ -406,6 +406,8 @@ private:
     // written once (StepInputFile). The result comes back as a table, or,
     // when an input is on disk or large, DuckDB writes it to the pipeline
     // cache; a result above the data budget's threshold stays there on disk.
+    // A check's output is its input (the same table or file) under output_name.
+    bool PassInputThrough(const Node& node, const std::string& input_dataset, const std::string& output_name);
     struct StepSqlInput {
         std::string alias;
         std::string dataset;

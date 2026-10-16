@@ -189,6 +189,14 @@ public:
     // A check: it reads every batch (FitBatch) and its output is its input,
     // so the stream writes nothing.
     virtual bool PassesInputThrough() const { return false; }
+    // A check that needs every row at once can judge a table on disk from
+    // one SQL query over it instead (TOFIX154): the query, its input named
+    // `input`; empty when it has none. JudgeSql decides from the result as
+    // Apply would (its outcome, or the failure).
+    virtual std::string CheckSql() const { return {}; }
+    virtual arrow::Status JudgeSql(const std::shared_ptr<arrow::Table>& /*result*/) {
+        return arrow::Status::NotImplemented(GetName(), " has no SQL check");
+    }
 
     // Tables for output pins 1, 2, ... from the last successful Apply (pin 0 is
     // Apply's result). Empty for single-output operators; an empty table

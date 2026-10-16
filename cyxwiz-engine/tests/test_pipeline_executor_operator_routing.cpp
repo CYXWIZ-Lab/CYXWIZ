@@ -1356,6 +1356,73 @@ void CheckLazyEvaluation() {
     std::cout << "Lazy evaluation passed\n";
 }
 
+// TOFIX154: a unique check on a table on disk runs as one DuckDB GROUP BY
+// (it needs every key, so it does not stream): the same verdict as in
+// memory, and the file passes through uncopied.
+void CheckUniqueOnDisk() {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_unique_on_disk";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto file = dir / "keys.parquet";
+    {
+        arrow::Int64Builder ids, keys;
+        arrow::StringBuilder names;
+        for (int64_t i = 0; i < 1000; ++i) {
+            Check(ids.Append(i).ok() && keys.Append(i % 400).ok() && names.Append("n" + std::to_string(i % 400)).ok(),
+                  "unique fixture values");
+        }
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("id", arrow::int64()),
+                                                       arrow::field("key", arrow::int64()),
+                                                       arrow::field("name", arrow::utf8())}),
+                                        {ids.Finish().ValueOrDie(), keys.Finish().ValueOrDie(),
+                                         names.Finish().ValueOrDie()});
+        auto out = arrow::io::FileOutputStream::Open(file.string()).ValueOrDie();
+        Check(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out, 100).ok() && out->Close().ok(),
+              "unique fixture written in row groups of 100");
+    }
+    auto graph = [&](bool disk, const std::string& columns) {
+        return std::string(R"({"nodes":[{"id":95301,"type":"DataInput","name":"Keys","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95302,"type":"RowCountCheck","name":"Unique","parameters":{"check":"unique","check_name":"keys","columns":")" +
+            columns + R"("}}],"links":[{"start_node":95301,"end_node":95302}]})";
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    for (const bool disk : {false, true}) {
+        const std::string where = disk ? "on disk" : "in memory";
+        if (disk) cyxwiz::SetDataBudgetBytes(1);
+        {
+            cyxwiz::PipelineExecutor executor;
+            Check(executor.ExecutePipeline(graph(disk, "id")), "unique id passes " + where + ": " + executor.GetLastError());
+            const auto facts = executor.GetNodeRunFacts();
+            Check(facts.at(95302).outcome == "passed: id unique in 1000 rows",
+                  "unique id outcome " + where + ": " + facts.at(95302).outcome);
+            const auto output = facts.at(95302).output_dataset;
+            if (disk) {
+                const auto passed = registry.GetParquetBackedDataset(output);
+                Check(passed && passed->GetNumRows() == 1000 && passed->GetFilePath() == file.string(),
+                      "on disk the check passes the same file through");
+            } else {
+                const auto passed = registry.GetArrowDataset(output);
+                Check(passed && passed->GetNumRows() == 1000, "in memory the check passes the table through");
+            }
+            registry.UnregisterTabularDataset(output);
+        }
+        for (const std::string columns : {"key", "key,name"}) {
+            cyxwiz::PipelineExecutor executor;
+            Check(!executor.ExecutePipeline(graph(disk, columns)), "repeated " + columns + " fails " + where);
+            const auto error = executor.GetLastError();
+            const std::string what = columns == "key" ? "key" : "key, name";
+            Check(error.find("'keys' failed: " + what + " repeats in 600 row(s)") != std::string::npos,
+                  "repeated " + columns + " " + where + " gives the count: " + error);
+        }
+        registry.UnregisterTabularDataset("ds_datainput_95301");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+    fs::remove_all(dir);
+    std::cout << "Unique on disk passed\n";
+}
+
 void CheckStreamingScaler() {
     // TOFIX154 step 4: StandardScaler over a Parquet file of 10 row groups,
     // streamed (input on disk, tiny budget) and in memory: the same output.
@@ -2568,8 +2635,8 @@ int main(int argc, char** argv) {
     if(argc==1) CheckJsonLinesInput();
     if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
     if(argc==2 && std::string(argv[1])=="--lazy") { CheckLazyEvaluation(); return 0; }
-    if(argc==2 && std::string(argv[1])=="--streaming") { CheckStreamingScaler(); return 0; }
-    if(argc==1) CheckStreamingScaler();
+    if(argc==2 && std::string(argv[1])=="--streaming") { CheckStreamingScaler(); CheckUniqueOnDisk(); return 0; }
+    if(argc==1) { CheckStreamingScaler(); CheckUniqueOnDisk(); }
     if(argc==1) CheckLazyEvaluation();
     if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
     if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }

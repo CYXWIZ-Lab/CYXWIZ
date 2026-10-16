@@ -5885,6 +5885,30 @@ bool PipelineExecutor::RegisterStepResultFile(const Node& node, const std::strin
     return true;
 }
 
+bool PipelineExecutor::PassInputThrough(const Node& node, const std::string& input_dataset,
+                                        const std::string& output_name) {
+    // A check's output is its input: the same table, or the same file.
+    auto& registry = DataRegistry::Instance();
+    const auto disk = registry.GetParquetBackedDataset(input_dataset);
+    if (!disk) {
+        const auto memory = registry.GetArrowDataset(input_dataset);
+        if (!memory) {
+            ReportError(node.type + ": input dataset '" + input_dataset + "' is not a table");
+            return false;
+        }
+        registry.RegisterArrowTable(memory->GetArrowTable(), output_name);
+        return true;
+    }
+    auto same = ParquetBackedDataset::Open(disk->GetFilePath(), output_name);
+    if (!same) {
+        ReportError(node.type + ": could not open '" + disk->GetFilePath() + "'");
+        return false;
+    }
+    registry.UnregisterTabularDataset(output_name);
+    registry.RegisterParquetBacked(output_name, same);
+    return true;
+}
+
 bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator& op,
                                             const std::string& input_dataset, const std::string& output_name) {
     auto& registry = DataRegistry::Instance();
@@ -5919,15 +5943,7 @@ bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator&
         }
         if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
         if (auto status = op.EndStream(); !status.ok()) return fail(status.ToString());
-        if (memory_table) {
-            registry.RegisterArrowTable(memory_table, output_name);
-        } else {
-            auto same = ParquetBackedDataset::Open(disk->GetFilePath(), output_name);
-            if (!same) return fail("could not open '" + disk->GetFilePath() + "'");
-            registry.UnregisterTabularDataset(output_name);
-            registry.RegisterParquetBacked(output_name, same);
-        }
-        return true;
+        return PassInputThrough(node, input_dataset, output_name);
     }
     if (op.NeedsFitPass()) {
         for (int index = 0; index < batches; ++index) {
@@ -6227,6 +6243,25 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
             ctx.node_outcomes[node.id] = std::move(outcome);
         }
         return true;
+    }
+
+    // A check that needs every row judges an input on disk with one query.
+    if (input_ref && input_ref->kind == TableRef::Kind::Parquet && op->PassesInputThrough()) {
+        if (const auto sql = op->CheckSql(); !sql.empty()) {
+            const auto verdict = FetchStepSql({{"input", input_dataset_name}}, sql, node.type + ": ");
+            if (!verdict) return false;
+            if (auto status = op->JudgeSql(verdict); !status.ok()) {
+                ReportError(node.type + ": " + status.ToString());
+                return false;
+            }
+            if (!PassInputThrough(node, input_dataset_name, output_dataset_name)) return false;
+            ctx.node_results[node.id] = output_dataset_name;
+            ctx.output_dataset = output_dataset_name;
+            if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+                ctx.node_outcomes[node.id] = std::move(outcome);
+            }
+            return true;
+        }
     }
 
     // Not streaming (this configuration needs every row at once): an input

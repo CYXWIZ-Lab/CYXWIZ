@@ -102,6 +102,43 @@ std::string Shown(const std::string& value) {
 
 }  // namespace
 
+std::string RowCountCheckOperator::CheckSql() const {
+    if (check_ != "unique") return {};
+    // The keys that repeat, the rows over one per key, and one repeated key
+    // (its columns as text joined by \x1f, as FitBatch keeps them).
+    std::string columns, as_text;
+    for (const auto& name : columns_) {
+        std::string quoted = "\"";
+        for (char c : name) quoted += c == '"' ? std::string("\"\"") : std::string(1, c);
+        quoted += "\"";
+        columns += (columns.empty() ? "" : ", ") + quoted;
+        as_text += (as_text.empty() ? "" : ", ") + ("coalesce(CAST(" + quoted + " AS VARCHAR), '')");
+    }
+    return "WITH repeated AS (SELECT " + columns + ", count(*) AS n FROM input GROUP BY " + columns +
+           " HAVING count(*) > 1) SELECT (SELECT count(*) FROM input) AS total_rows, "
+           "(SELECT coalesce(sum(n - 1), 0) FROM repeated) AS repeats, "
+           "(SELECT concat_ws(chr(31), " + as_text + ") || chr(31) FROM repeated LIMIT 1) AS example";
+}
+
+arrow::Status RowCountCheckOperator::JudgeSql(const std::shared_ptr<arrow::Table>& result) {
+    if (!result || result->num_rows() != 1 || result->num_columns() != 3)
+        return arrow::Status::Invalid(Label(), ": the check query returned no verdict");
+    const auto number = [&](int column) -> arrow::Result<int64_t> {
+        ARROW_ASSIGN_OR_RAISE(auto scalar, result->column(column)->GetScalar(0));
+        ARROW_ASSIGN_OR_RAISE(auto cast, scalar->CastTo(arrow::int64()));
+        return cast->is_valid ? std::static_pointer_cast<arrow::Int64Scalar>(cast)->value : 0;
+    };
+    ARROW_ASSIGN_OR_RAISE(rows_, number(0));
+    ARROW_ASSIGN_OR_RAISE(failing_, number(1));
+    ARROW_ASSIGN_OR_RAISE(auto example, result->column(2)->GetScalar(0));
+    first_.clear();
+    if (example->is_valid) {
+        first_ = example->ToString();
+        if (!first_.empty()) first_.pop_back();  // the trailing \x1f
+    }
+    return EndFit();
+}
+
 bool RowCountCheckOperator::Configure(const std::map<std::string, std::string>& params,
                                       std::string& error) {
     check_ = Trim(Param(params, "check"));

@@ -35,7 +35,8 @@ The budget decides:
 | SQL step, Filter Rows, Select Columns, Sort, Join, Group By, Remove Duplicates, Fill Missing, Value Counts, Binning, Text Clean, Polynomial Features, Rule Engine, Unit Converter, Unpivot, Row Appender, Cell Extractor / Updater, String Manipulation, Math Formula, Calculator | DuckDB reads the input file in place and writes a large result to a file | within the budget |
 | Standard Scaler, Log Transform | one row group at a time (the scaler fits on all rows first, then scales) | one row group |
 | Checks (row count, allowed values, not empty, range) | one row group at a time; the rows pass through uncopied | one row group |
-| Models, clustering, PCA, Robust Scaler, the `unique` check, and other steps | read their input whole when it fits | stop before loading otherwise |
+| The `unique` check | one DuckDB query (group by the columns) over the file; the rows pass through uncopied | within the budget |
+| Models, clustering, PCA, Robust Scaler, and other steps | read their input whole when it fits | stop before loading otherwise |
 
 When a step must read its input whole and it does not fit, the run stops
 before loading, for example:
