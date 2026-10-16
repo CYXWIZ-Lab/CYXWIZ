@@ -2,6 +2,7 @@
 #include "engine_runtime_ownership.h"
 #include "backend_pack_platform.h"
 #include "plugin/plugin_manager.h"
+#include "plugin/plugin_session.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -433,8 +434,10 @@ int main(int argc, char** argv) {
             search_paths.push_back(plugin_base_dir / "plugins");
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
-            // Plugins are loaded on-demand from the Plugin Manager panel (sidebar)
             spdlog::info("Plugin system: {} search paths configured", search_paths.size());
+            // Plugins loaded in an earlier session and set to load at startup
+            // (TOFIX125 step 2.9); others load from the Plugin Manager.
+            cyxwiz::plugin::LoadStartupPlugins(pm);
         }
 
         int result = app.Run();

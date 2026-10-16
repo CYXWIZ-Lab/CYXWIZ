@@ -4,6 +4,7 @@
 #include "properties_node_editors.h"
 #include "node_editor.h"
 #include "properties_rows.h"
+#include "properties_extension_node.h"
 #include "../core/file_dialogs.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
@@ -233,31 +234,8 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
         return;
     }
 
-    // Generic plugin node: one text row per parameter (internal keys hidden).
-    {
-        properties_rows::Rows rows("##plugin");
-        if (!rows.ok) return;
-        std::vector<std::string> keys;
-        for (const auto& [key, value] : node.parameters) {
-            if (!key.starts_with("_meta_")) keys.push_back(key);
-        }
-        for (const auto& key : keys) {
-            char buf[512];
-            std::strncpy(buf, node.parameters[key].c_str(), sizeof(buf) - 1);
-            buf[sizeof(buf) - 1] = '\0';
-            properties_rows::Label(key.c_str());
-            ImGui::PushID(key.c_str());
-            if (ImGui::InputText("##v", buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                node.parameters[key] = buf;
-                if (node.has_dynamic_pins && key == node.dynamic_pin_trigger && context.node_editor) {
-                    context.node_editor->ResolveDynamicPins(node.id);
-                }
-                context.invalidate_shapes();
-            }
-            ImGui::PopID();
-            properties_rows::Status(key.c_str());
-        }
-    }
+    if (!descriptor.has_value()) return;
+    RenderInstalledExtensionProperties(node, *descriptor, context);
     ModelInfo(node);
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "Inputs: %d \xC2\xB7 Outputs: %d",

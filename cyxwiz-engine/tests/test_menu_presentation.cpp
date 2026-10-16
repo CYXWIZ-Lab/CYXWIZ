@@ -39,6 +39,9 @@ MenuInputs SampleInputs() {
     in.icon_packs = {{"0", "FontAwesome (Default)", true, ""}, {"1", "Tabler Icons", false, ""}};
     in.tutorials = {{"getting_started", "Getting Started", true, ""}, {"first_model", "Your First Model", false, ""}};
     in.plugin_panels = {{"mujoco_viewport", "MuJoCo Viewport", false, "Simulation"}};
+    in.loaded_plugins = {{"com.cyxwiz.examples.activation-nodes", "Example Activation Nodes", "2 nodes", true},
+                         {"com.cyxwiz.simulation.mujoco", "MuJoCo Simulation", "2 windows, 5 nodes", true},
+                         {"com.example.viewer", "Viewer", "1 window", false}};
     return in;
 }
 
@@ -157,7 +160,7 @@ int main() {
         "data.import", "data.create_custom", "data.statistics", "data.augment",
         "script.python_console", "script.run",
         "deploy.connect", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16", "deploy.deploy",
-        "deploy.marketplace", "apps.panel", "apps.plugin_manager",
+        "deploy.marketplace", "apps.panel", "apps.plugin", "apps.plugin_manager",
         "help.tutorial", "help.browse_tutorials", "help.documentation", "help.shortcuts", "help.api_reference",
         "help.report_issue", "help.check_updates", "help.about", "account.sign_out",
         // not in any menu today
@@ -283,6 +286,23 @@ int main() {
               "theme check state");
         Check(Find(model, "file.open_recent", in.recent_projects[1].id)->label == "mnist", "recent project entry");
         Check(Find(model, "apps.panel", "mujoco_viewport") != nullptr, "plugin panel entry");
+        // Every loaded plugin is listed, with what it adds (TOFIX125 step 2.10).
+        const MenuItem* activation = Find(model, "apps.plugin", "com.cyxwiz.examples.activation-nodes");
+        Check(activation && activation->label == "Example Activation Nodes" && activation->detail == "2 nodes",
+              "node-only plugin entry");
+        Check(Find(model, "apps.plugin", "com.cyxwiz.simulation.mujoco")->detail == "2 windows, 5 nodes",
+              "plugin with windows entry");
+        Check(Find(model, "apps.plugin", "com.example.viewer") == nullptr &&
+                  Find(model, "apps.plugin_manager", "com.example.viewer") != nullptr,
+              "a plugin without nodes opens the Plugin Manager");
+        MenuInputs node_only = in;
+        node_only.plugin_panels.clear();
+        Check(Find(BuildMenuModel(node_only), "apps.plugin", "com.cyxwiz.examples.activation-nodes") != nullptr,
+              "node-only plugin listed without any window");
+        MenuInputs none = in;
+        none.plugin_panels.clear();
+        none.loaded_plugins.clear();
+        Check(Find(BuildMenuModel(none), "apps.plugin") == nullptr, "no plugins, no entries");
         Check(Find(model, "help.tutorial", "getting_started")->checked, "completed tutorial is checked");
         Check(Find(model, "account.sign_out") != nullptr && Find(model, "account.sign_in") == nullptr,
               "signed in account menu");

@@ -1917,6 +1917,9 @@ MainWindow::MainWindow()
         }
     });
 
+    toolbar_->SetShowPluginNodesCallback([this](const std::string& plugin_id) {
+        if (node_browser_panel_) node_browser_panel_->ShowPluginNodes(plugin_id);
+    });
     toolbar_->SetOpenServingCallback([this]() {
         if (serving_panel_) {
             serving_panel_->Toggle();

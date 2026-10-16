@@ -84,6 +84,7 @@ endif()
 add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/plugin_context.cpp
     src/plugin/registries/plugin_panel_registry.cpp
+    src/plugin/plugin_session.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
@@ -373,6 +374,7 @@ set(ENGINE_SOURCES
     src/gui/properties_executor.cpp
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
+    src/gui/properties_extension_node.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_rows.cpp
     src/gui/properties_truth.cpp
@@ -386,6 +388,8 @@ set(ENGINE_SOURCES
     src/core/properties_presentation.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
+    src/core/extension_properties_presentation.cpp
+    src/core/plugin_presentation.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
     src/core/python_scan_cache.cpp
@@ -2850,6 +2854,31 @@ if(WIN32)
     target_compile_definitions(test_extension_node_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 set_target_properties(test_extension_node_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: Properties of an installed extension node (TOFIX125 step 2.8) =====
+add_executable(test_extension_properties_presentation
+    tests/test_extension_properties_presentation.cpp
+    src/core/extension_properties_presentation.cpp
+)
+target_link_libraries(test_extension_properties_presentation PRIVATE cyxwiz-training-core)
+target_include_directories(test_extension_properties_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_extension_properties_presentation PRIVATE
+    imgui::imgui nlohmann_json::nlohmann_json spdlog::spdlog cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_extension_properties_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_extension_properties_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: plugins across sessions and what each adds (TOFIX125 steps 2.9-2.10) =====
+add_executable(test_plugin_presentation
+    tests/test_plugin_presentation.cpp
+    src/core/plugin_presentation.cpp
+)
+target_include_directories(test_plugin_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_presentation PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(test_plugin_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: unloading a plugin removes its registrations (TOFIX125) =====

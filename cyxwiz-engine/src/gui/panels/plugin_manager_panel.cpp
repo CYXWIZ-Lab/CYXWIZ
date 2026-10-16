@@ -2,6 +2,7 @@
 #include "../icons.h"
 #include "../../core/file_dialogs.h"
 #include "../../plugin/plugin_manager.h"
+#include "../../plugin/plugin_session.h"
 #include "../../plugin/security/permission_store.h"
 #include "../../core/async_task_manager.h"
 #include "../ui_tokens.h"
@@ -99,8 +100,10 @@ void PluginManagerPanel::Render() {
     // Apply deferred unloads after iteration is complete (CRITICAL-1/HIGH-4)
     for (const auto& id : deferred_unloads_) {
         mgr.UnloadPlugin(id);
+        plugin::RecordPluginUnloaded(id);
         spdlog::info("PluginManagerPanel: Unloaded plugin {}", id);
     }
+    if (!deferred_unloads_.empty()) ReloadStartupList();
     deferred_unloads_.clear();
 
     ImGui::End();
@@ -126,6 +129,8 @@ void PluginManagerPanel::RenderToolbar() {
         auto& mgr = plugin::PluginManager::Instance();
         mgr.LoadAllFromSearchPaths();
         mgr.InitializeAll();
+        plugin::RecordLoadedPlugins(mgr);
+        ReloadStartupList();
         spdlog::info("PluginManagerPanel: Refreshed plugin list");
     }
 
@@ -222,6 +227,27 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
         ImGui::TextColored(t.error, "  ERROR: %s", p->error_message.c_str());
     }
 
+    // What it adds and whether it loads at startup (TOFIX125 steps 2.9-2.10).
+    {
+        const std::string adds = cyxwiz::PluginAddsLine(plugin::DescribeContribution(p->manifest.id));
+        if (!adds.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.accent_text, "  %s", adds.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        if (!startup_list_read_) ReloadStartupList();
+        bool at_startup = cyxwiz::PluginLoadsAtStartup(startup_list_, p->manifest.id);
+        ImGui::Indent(t.space_md);
+        if (ImGui::Checkbox("Load when the Engine starts", &at_startup)) {
+            plugin::SetLoadAtStartup(p->manifest.id, p->plugin_dir.generic_string(), at_startup);
+            ReloadStartupList();
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "%s", cyxwiz::PluginStartupNote(at_startup).c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Unindent(t.space_md);
+    }
+
     // Permission badges + action buttons on same line
     ImGui::Text("  ");
     ImGui::SameLine();
@@ -290,6 +316,11 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
 
     // Separator between cards
     ImGui::Separator();
+}
+
+void PluginManagerPanel::ReloadStartupList() {
+    startup_list_ = plugin::ReadPluginStartupList();
+    startup_list_read_ = true;
 }
 
 // ============================================================================
@@ -490,6 +521,8 @@ void PluginManagerPanel::RenderInstallPopup() {
                     }
 
                     auto& mgr = plugin::PluginManager::Instance();
+                    plugin::RecordLoadedPlugins(mgr);
+                    ReloadStartupList();
                     const auto state = mgr.GetPluginState(plugin_id);
                     if (state == plugin::PluginState::Disabled) {
                         install_error_ = "Plugin is already installed but disabled. "

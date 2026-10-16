@@ -38,6 +38,14 @@ struct NamedEntry {
     std::string group;  // plugin panels: category
 };
 
+// A loaded plugin, for the Apps menu (TOFIX125 step 2.10).
+struct LoadedPluginEntry {
+    std::string id;
+    std::string name;
+    std::string detail;  // what it adds: "2 nodes", "2 windows, 5 nodes"
+    bool has_nodes = false;  // opens its nodes; otherwise the Plugin Manager
+};
+
 struct MenuInputs {
     Context focus = Context::Any;
     bool has_project = false;
@@ -69,6 +77,7 @@ struct MenuInputs {
     std::vector<NamedEntry> icon_packs;
     std::vector<NamedEntry> tutorials;      // checked = completed
     std::vector<NamedEntry> plugin_panels;  // checked = visible, group = category
+    std::vector<LoadedPluginEntry> loaded_plugins;
 };
 
 struct MenuItem {
@@ -79,6 +88,7 @@ struct MenuItem {
     std::string shortcut;   // printed chord, empty when none
     std::string hint;       // one sentence for the status bar
     std::string argument;   // parametrised actions: preset, path, panel name
+    std::string detail;     // a dim note after the label ("2 nodes"), not a chord
     bool enabled = true;
     std::string disabled_reason;
     bool checkable = false;

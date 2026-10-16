@@ -751,8 +751,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
     {
         Menu m{"apps", "Apps", {}};
         auto& i = m.items;
-        if (in.plugin_panels.empty()) {
-            i.push_back(Head("No plugin apps loaded"));
+        if (in.plugin_panels.empty() && in.loaded_plugins.empty()) {
+            i.push_back(Head("No plugins loaded"));
         } else {
             std::string group;
             for (const auto& p : in.plugin_panels) {
@@ -765,6 +765,21 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                 opts.checked = p.checked;
                 opts.argument = p.id;
                 i.push_back(Action(f, "apps.panel", p.label, "Panel provided by a plugin.", opts));
+            }
+        }
+        // Every loaded plugin, windows or not: a node-only plugin is found
+        // here too and opens its nodes in the Node Browser.
+        if (!in.loaded_plugins.empty()) {
+            if (!in.plugin_panels.empty()) i.push_back(Sep());
+            i.push_back(Head("Loaded plugins"));
+            for (const auto& p : in.loaded_plugins) {
+                Opts opts;
+                opts.argument = p.id;
+                MenuItem item = p.has_nodes
+                    ? Action(f, "apps.plugin", p.name, "Shows the nodes this plugin adds in the Node Browser.", opts)
+                    : Action(f, "apps.plugin_manager", p.name, "Shows this plugin in the Plugin Manager.", opts);
+                item.detail = p.detail;
+                i.push_back(std::move(item));
             }
         }
         i.push_back(Sep());

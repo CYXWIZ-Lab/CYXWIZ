@@ -137,4 +137,13 @@ size_t PluginPanelRegistry::GetCount() const {
     return panels_.size();
 }
 
+size_t PluginPanelRegistry::CountForPlugin(const std::string& plugin_id) const {
+    std::lock_guard lock(mutex_);
+    size_t count = 0;
+    for (const auto& [id, entry] : panels_) {
+        if (entry.plugin_id == plugin_id) ++count;
+    }
+    return count;
+}
+
 } // namespace cyxwiz::plugin
