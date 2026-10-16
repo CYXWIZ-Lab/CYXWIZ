@@ -123,7 +123,7 @@ void StartPage::LoadStarterGraphs() {
     static constexpr std::array<Def, 5> defs = {{
         {"Binary image classification", "Cats-vs-dogs training graph for a two-class image dataset.", "Binary classification", ICON_FA_IMAGES, "cats_dogs_classifier.cyxgraph"},
         {"Multiclass image classification", "MNIST MLP graph for a tabular digit dataset with ten classes.", "Multiclass classification", ICON_FA_IMAGE, "mnist_mlp.cyxgraph"},
-        {"Text classification", "Call-center sentiment graph for customer conversation labels.", "Text classification", ICON_FA_COMMENTS, "call_center_sentiment.cyxgraph"},
+        {"Text classification", "Mental-health sentiment graph: a Text Tokenizer, an Embedding and a seven-class classifier.", "Text classification", ICON_FA_COMMENTS, "mental_health_sentiment_classifier_v2.cyxgraph"},
         {"Audio classification", "Speech-command graph for labeled command utterances.", "Audio classification", ICON_FA_WAVE_SQUARE, "speech_command_classifier.cyxgraph"},
         {"Time-series forecasting", "Airline-passengers dense forecaster using a real time-series training graph.", "Forecasting / regression", ICON_FA_CHART_LINE, "timeseries/airline_passengers_dense.cyxgraph"}}};
     starter_graphs_.clear();
