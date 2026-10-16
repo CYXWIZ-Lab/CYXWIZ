@@ -3855,14 +3855,13 @@ void MainWindow::PollDataInputLoads() {
         // The load's reason replaces the compiler's "open the node and click
         // Apply" for those nodes: Apply would fail the same way.
         std::erase_if(compile_result_issues_, [&](const cyxwiz::ValidationIssue& issue) {
-            return issue.message.rfind("Data is not loaded", 0) == 0 &&
+            return issue.error_code == cyxwiz::errors::Compiler::DataNotLoaded &&
                    std::any_of(failures.begin(), failures.end(),
                                [&](const cyxwiz::ValidationIssue& failure) { return failure.node_id == issue.node_id; });
         });
         compile_result_issues_.insert(compile_result_issues_.begin(), failures.begin(), failures.end());
         compile_result_success_ = false;
-        compile_result_mode_ = CompileResultMode::BlockedTrain;
-        show_compile_result_popup_ = true;
+        ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data could not be loaded");
         if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("Could not load " + failed_names);
         return;
     }
@@ -3900,8 +3899,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // instead of silently logging.
         BuildCompileResult(nodes, links);
         if (!compile_result_success_) {
-            compile_result_mode_ = CompileResultMode::BlockedTrain;
-            show_compile_result_popup_ = true;
+            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked);
             spdlog::error("StartTrainingFromGraph: blocked - graph has errors");
             return;
         }
@@ -3933,8 +3931,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 {lvl, -1, "", msg, cyxwiz::errors::Ui::InvalidWorkflowState});
             if (strict) {
                 compile_result_success_ = false;
-                compile_result_mode_ = CompileResultMode::BlockedTrain;
-                show_compile_result_popup_ = true;
+                ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked,
+                                  "this project requires a Local Debug (F6) run first");
                 spdlog::error("StartTrainingFromGraph: blocked by "
                               "require_debug_before_train (hash mismatch)");
                 return;
@@ -4018,10 +4016,6 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
         if (memory_preflight.blocked) {
             compile_result_success_ = false;
-            compile_result_mode_ = CompileResultMode::BlockedTrain;
-            compile_result_message_ = memory_preflight.status_title;
-            compile_result_summary_ = memory_preflight.status_detail;
-            compile_result_backend_placements_.clear();
             compile_result_issues_.clear();
             compile_result_issues_.push_back({
                 cyxwiz::IssueLevel::Error,
@@ -4029,7 +4023,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 memory_preflight.evidence.node_name,
                 memory_preflight.status_detail,
                 cyxwiz::errors::Training::InvalidTrainingSetup});
-            show_compile_result_popup_ = true;
+            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the prepared data would not fit in memory");
             spdlog::error(
                 "StartTrainingFromGraph: pre-start materialization memory "
                 "check blocked training: {}",
@@ -4056,6 +4050,10 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 memory_preflight.evidence.node_id;
             materialization_memory_confirmation_estimated_bytes_ =
                 memory_preflight.evidence.estimated_memory_bytes;
+            materialization_memory_confirmation_available_bytes_ =
+                memory_preflight.evidence.available_memory_bytes;
+            materialization_memory_confirmation_budget_bytes_ =
+                memory_preflight.evidence.safe_memory_budget_bytes;
             materialization_memory_confirmation_detail_ =
                 memory_preflight.status_detail;
             materialization_memory_confirmation_risk_ =
@@ -4107,123 +4105,24 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             }
         } else {
             compile_result_success_ = false;
-            compile_result_mode_ = CompileResultMode::BlockedTrain;
-            compile_result_message_ = launch_result.status_title.empty()
-                ? "Training launch blocked"
-                : launch_result.status_title;
-            compile_result_summary_ = launch_result.status_detail;
-            compile_result_backend_placements_.clear();
             compile_result_issues_.clear();
 
             cyxwiz::ValidationIssue issue;
             issue.level = cyxwiz::IssueLevel::Error;
-            issue.message = launch_result.status_detail.empty()
+            const std::string detail = launch_result.status_detail.empty()
                 ? launch_result.error_message
                 : launch_result.status_detail;
+            issue.message = launch_result.status_title.empty() ? detail
+                                                               : launch_result.status_title + ": " + detail;
             issue.error_code = cyxwiz::errors::Training::InvalidTrainingSetup;
             compile_result_issues_.push_back(std::move(issue));
-            show_compile_result_popup_ = true;
+            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the training launch was refused");
         }
 
     } catch (const std::exception& e) {
         spdlog::error("StartTrainingFromGraph exception: {}", e.what());
     } catch (...) {
         spdlog::error("StartTrainingFromGraph unknown exception");
-    }
-}
-
-void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
-    constexpr const char* kPopupTitle = "Confirm Materialization Memory Risk";
-    if (show_materialization_memory_confirmation_popup_) {
-        ImGui::OpenPopup(kPopupTitle);
-        show_materialization_memory_confirmation_popup_ = false;
-    }
-
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(720, 430), ImGuiCond_Appearing);
-
-    bool continue_training = false;
-    bool cancel_training = false;
-    if (ImGui::BeginPopupModal(
-            kPopupTitle, nullptr, ImGuiWindowFlags_NoResize)) {
-        const bool risky = materialization_memory_confirmation_risk_ == "risky";
-        const ImVec4 risk_color = risky
-            ? cyxwiz::ui::CurrentTokens().caution
-            : cyxwiz::ui::CurrentTokens().warning;
-        ImGui::TextColored(
-            risk_color, "%s memory estimate",
-            risky ? "Risky" : "Warning");
-        if (!materialization_memory_confirmation_node_.empty()) {
-            ImGui::SameLine();
-            ImGui::TextDisabled(
-                "- %s", materialization_memory_confirmation_node_.c_str());
-        }
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::BeginChild(
-            "MaterializationMemoryConfirmationBody",
-            ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 18.0f), true);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(
-            materialization_memory_confirmation_detail_.c_str());
-        ImGui::Spacing();
-        ImGui::TextColored(
-            risk_color,
-            "Continuing may cause paging, a slow or unresponsive UI, or a "
-            "capacity stop. No background materialization has started yet.");
-        ImGui::PopTextWrapPos();
-        ImGui::EndChild();
-
-        const float button_width = 160.0f;
-        const float gap = ImGui::GetStyle().ItemSpacing.x;
-        const float total_width = button_width * 2.0f + gap;
-        ImGui::SetCursorPosX(
-            (ImGui::GetWindowSize().x - total_width) * 0.5f);
-        if (ImGui::Button("Cancel", ImVec2(button_width, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            cancel_training = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Continue anyway", ImVec2(button_width, 0))) {
-            continue_training = true;
-        }
-
-        if (continue_training || cancel_training) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-
-    if (cancel_training) {
-        pending_memory_confirmation_nodes_.clear();
-        pending_memory_confirmation_links_.clear();
-        materialization_memory_confirmation_detail_.clear();
-        materialization_memory_confirmation_risk_.clear();
-        materialization_memory_confirmation_node_.clear();
-        materialization_memory_confirmation_node_id_ = -1;
-        materialization_memory_confirmation_estimated_bytes_ = 0;
-        spdlog::info(
-            "StartTrainingFromGraph: materialization memory confirmation "
-            "cancelled by user");
-    } else if (continue_training) {
-        auto nodes = std::move(pending_memory_confirmation_nodes_);
-        auto links = std::move(pending_memory_confirmation_links_);
-        accepted_materialization_memory_node_id_ =
-            materialization_memory_confirmation_node_id_;
-        accepted_materialization_memory_estimated_bytes_ =
-            materialization_memory_confirmation_estimated_bytes_;
-        accepted_materialization_memory_risk_ =
-            materialization_memory_confirmation_risk_;
-        materialization_memory_confirmation_detail_.clear();
-        materialization_memory_confirmation_risk_.clear();
-        materialization_memory_confirmation_node_.clear();
-        materialization_memory_confirmation_node_id_ = -1;
-        materialization_memory_confirmation_estimated_bytes_ = 0;
-        materialization_memory_confirmation_accepted_once_ = true;
-        StartTrainingFromGraph(nodes, links);
     }
 }
 
@@ -4236,45 +4135,27 @@ void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
 void MainWindow::CompileGraphAndReport() {
     if (!node_editor_) {
         compile_result_success_ = false;
-        compile_result_mode_ = CompileResultMode::Compile;
-        compile_result_message_ = "Node editor is not available.";
-        compile_result_summary_.clear();
-        compile_result_issues_.clear();
-        compile_result_issues_.push_back({
-            cyxwiz::IssueLevel::Error,
-            -1,
-            "",
-            compile_result_message_,
-            cyxwiz::errors::Ui::InvalidWorkflowState
-        });
+        compile_result_has_config_ = false;
         compile_result_backend_placements_.clear();
-        show_compile_result_popup_ = true;
+        compile_result_issues_ = {{cyxwiz::IssueLevel::Error, -1, "", "The node editor is not available.",
+                                   cyxwiz::errors::Ui::InvalidWorkflowState}};
+        ShowCompileReport(cyxwiz::compile_report::Mode::Compile);
         return;
     }
 
-    auto nodes = node_editor_->GetNodes();
-    auto links = node_editor_->GetLinks();
-    compile_result_mode_ = CompileResultMode::Compile;
-    BuildCompileResult(nodes, links);
-    show_compile_result_popup_ = true;
+    BuildCompileResult(node_editor_->GetNodes(), node_editor_->GetLinks());
+    ShowCompileReport(cyxwiz::compile_report::Mode::Compile);
 }
 
 void MainWindow::LocalDebugGraphAndReport() {
     if (!node_editor_ || !studio_debugger_panel_) {
         compile_result_success_ = false;
-        compile_result_mode_ = CompileResultMode::BlockedDebug;
-        compile_result_message_ = "Node editor is not available.";
-        compile_result_summary_.clear();
-        compile_result_issues_.clear();
-        compile_result_issues_.push_back({
-            cyxwiz::IssueLevel::Error,
-            -1,
-            "",
-            compile_result_message_,
-            cyxwiz::errors::Ui::InvalidWorkflowState
-        });
+        compile_result_has_config_ = false;
         compile_result_backend_placements_.clear();
-        show_compile_result_popup_ = true;
+        compile_result_issues_ = {{cyxwiz::IssueLevel::Error, -1, "",
+                                   "The node editor or the Studio Debugger is not available.",
+                                   cyxwiz::errors::Ui::InvalidWorkflowState}};
+        ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
         return;
     }
 
@@ -5557,8 +5438,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     spdlog::info("BuildCompileResult: compiling {} nodes, {} links", nodes.size(), links.size());
 
     compile_result_issues_.clear();
-    compile_result_summary_.clear();
-    compile_result_message_.clear();
+    compile_result_has_config_ = false;
     compile_result_backend_placements_.clear();
     compile_result_success_ = false;
     if (properties_) {
@@ -5600,112 +5480,89 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             properties_->SetBackendPlacementFacts(std::move(facts));
         }
 
-        // Build the architecture summary text. Even when the graph has
-        // errors, the partial summary is informative - it shows what the
-        // compiler managed to extract before hitting issues.
-        std::ostringstream out;
-        out << "Layers:          " << config.layers.size() << "\n";
-        out << "Input size:      " << config.input_size;
-        if (!config.input_shape.empty()) {
-            out << "  (shape [";
-            for (size_t i = 0; i < config.input_shape.size(); ++i) {
-                if (i) out << ", ";
-                out << config.input_shape[i];
+        // The configuration facts (the report's Configuration tab). Even when
+        // the graph has errors, the partial facts show what the compiler
+        // extracted before the issues.
+        auto& facts = compile_result_config_;
+        facts = {};
+        compile_result_has_config_ = true;
+        facts.layers = config.layers.size();
+        facts.input_size = config.input_size;
+        facts.input_shape = config.input_shape;
+        facts.output_size = config.output_size;
+        std::string dataset = config.dataset_name;
+        std::string input_name;
+        for (const auto& node : nodes) {
+            if (node.type != NodeType::DataInput) continue;
+            input_name = node.name;
+            if (dataset.empty()) {
+                auto it = node.parameters.find("dataset_name");
+                if (it != node.parameters.end()) dataset = it->second;
             }
-            out << "])";
+            break;
         }
-        out << "\n";
-        out << "Output size:     " << config.output_size << "\n";
-        out << "\n";
-
-        // Dataset name comes from the DataInput node directly so older
-        // project files (which used the now-fixed "dataset" key) still
-        // resolve. graph_compiler now reads "dataset_name" first, so
-        // config.dataset_name should be populated for new projects.
-        std::string dataset_name_from_graph = config.dataset_name;
-        if (dataset_name_from_graph.empty()) {
-            for (const auto& node : nodes) {
-                if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
-                    auto it = node.parameters.find("dataset_name");
-                    if (it != node.parameters.end() && !it->second.empty()) {
-                        dataset_name_from_graph = it->second;
-                        break;
-                    }
-                }
+        auto& reg = cyxwiz::DataRegistry::Instance();
+        facts.dataset = dataset.empty() ? input_name : dataset;
+        const bool registered = !dataset.empty() &&
+            (reg.IsArrowDataset(dataset) || reg.IsParquetBackedDataset(dataset) || reg.IsTextDataset(dataset) ||
+             reg.IsImageDataset(dataset) || reg.IsAudioDataset(dataset) || reg.IsSparseFeatureDataset(dataset) ||
+             reg.HasDataset(dataset));
+        if (!registered) {
+            facts.backing = cyxwiz::compile_report::Backing::NotLoaded;
+        } else if (reg.IsArrowDataset(dataset)) {
+            if (auto arrow_ds = reg.GetArrowDataset(dataset)) {
+                facts.backing = cyxwiz::compile_report::Backing::InMemoryArrow;
+                facts.backing_megabytes = arrow_ds->GetMemoryUsage() / (1024.0 * 1024.0);
+                facts.rows = static_cast<long long>(arrow_ds->GetNumRows());
             }
-        }
-
-        out << "Dataset:         "
-            << (dataset_name_from_graph.empty() ? "<not set in DataInput>" : dataset_name_from_graph)
-            << "\n";
-
-        if (!dataset_name_from_graph.empty()) {
-            auto& reg = cyxwiz::DataRegistry::Instance();
-            if (reg.IsArrowDataset(dataset_name_from_graph)) {
-                auto arrow_ds = reg.GetArrowDataset(dataset_name_from_graph);
-                if (arrow_ds) {
-                    out << "Backing:         In-memory Arrow ("
-                        << (arrow_ds->GetMemoryUsage() / (1024.0 * 1024.0))
-                        << " MB resident, " << arrow_ds->GetNumRows() << " rows)\n";
-                }
-            } else if (reg.IsParquetBackedDataset(dataset_name_from_graph)) {
-                auto pq_ds = reg.GetParquetBackedDataset(dataset_name_from_graph);
-                if (pq_ds) {
-                    out << "Backing:         Disk-backed Parquet ("
-                        << (pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0))
-                        << " MB on disk, " << pq_ds->GetNumRows() << " rows, "
-                        << pq_ds->GetNumRowGroups() << " row groups)\n";
-                }
+        } else if (reg.IsParquetBackedDataset(dataset)) {
+            if (auto pq_ds = reg.GetParquetBackedDataset(dataset)) {
+                facts.backing = cyxwiz::compile_report::Backing::DiskParquet;
+                facts.backing_megabytes = pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0);
+                facts.rows = static_cast<long long>(pq_ds->GetNumRows());
+                facts.row_groups = static_cast<long long>(pq_ds->GetNumRowGroups());
+            }
+        } else {
+            facts.backing = cyxwiz::compile_report::Backing::OtherLoaded;
+            if (const auto* text = reg.GetTextDatasetEntry(dataset)) {
+                facts.backing_label = "text, loaded lazily";
+                facts.rows = static_cast<long long>(text->num_samples);
+            } else if (const auto* image = reg.GetImageDatasetEntry(dataset)) {
+                facts.backing_label = "image folder, loaded lazily";
+                facts.rows = static_cast<long long>(image->num_images);
+            } else if (reg.IsAudioDataset(dataset)) {
+                facts.backing_label = "audio folder, loaded lazily";
             } else {
-                out << "Backing:         <not registered - Apply the DataInput node first>\n";
+                facts.backing_label = "loaded";
             }
         }
-
-        out << "Split ratios:    train=" << config.train_ratio
-            << ", val=" << config.val_ratio
-            << ", test=" << config.test_ratio
-            << (config.has_data_split ? " (from DataSplit node)" : " (default, no DataSplit node)")
-            << "\n";
-
-        out << "Training loop:   batch_size=" << config.batch_size
-            << ", epochs=" << config.epochs
-            << ", shuffle=" << (config.shuffle ? "true" : "false")
-            << ", drop_last=" << (config.drop_last ? "true" : "false")
-            << (config.has_data_loader ? " (from DataLoader node)" : " (default, no DataLoader node)")
-            << "\n";
-
-        if (config.num_workers > 0) {
-            out << "                 num_workers=" << config.num_workers
-                << " (synchronous per-batch conversion where supported)\n";
+        for (const auto& node : nodes) {
+            if (node.type == NodeType::DataSplit && facts.split_node.empty()) facts.split_node = node.name;
+            if (node.type == NodeType::DataLoader && facts.loader_node.empty()) facts.loader_node = node.name;
         }
-        if (config.prefetch_factor > 0) {
-            out << "                 prefetch_factor=" << config.prefetch_factor
-                << " (bounded async queue for supported Arrow/Parquet batchers)\n";
-        }
-        out << "                 metric_report_interval=" << config.log_interval
-            << " batches, validation_freq=" << config.validation_freq
-            << " epochs (final epoch always validates)\n";
-        out << "                 seed=" << config.dataloader_seed
-            << " (DataLoader split/shuffle order)\n";
-        out << "                 grad_accum_steps=" << config.grad_accum_steps
-            << " (optimizer step every N backward passes)\n";
-
-        out << "\n";
-        out << "Loss:            " << config.GetLossName() << "\n";
-        out << "Optimizer:       " << config.GetOptimizerName()
-            << " (lr=" << config.learning_rate << ")\n";
-
-        if (config.preprocessing.has_normalization) {
-            out << "Preprocessing:   Normalize(mean=" << config.preprocessing.norm_mean
-                << ", std=" << config.preprocessing.norm_std << ")\n";
-        }
-        if (config.preprocessing.has_onehot) {
-            out << "                 One-hot encoding ("
-                << config.preprocessing.num_classes << " classes)\n";
-        }
-
-        compile_result_summary_ = out.str();
-        compile_result_message_ = config.error_message;  // legacy
+        facts.has_split = config.has_data_split;
+        facts.train_ratio = config.train_ratio;
+        facts.val_ratio = config.val_ratio;
+        facts.test_ratio = config.test_ratio;
+        facts.has_loader = config.has_data_loader;
+        facts.batch_size = static_cast<int>(config.batch_size);
+        facts.epochs = static_cast<int>(config.epochs);
+        facts.shuffle = config.shuffle;
+        facts.drop_last = config.drop_last;
+        facts.num_workers = static_cast<int>(config.num_workers);
+        facts.prefetch_factor = static_cast<int>(config.prefetch_factor);
+        facts.log_interval = static_cast<int>(config.log_interval);
+        facts.validation_freq = static_cast<int>(config.validation_freq);
+        facts.seed = static_cast<unsigned long long>(config.dataloader_seed);
+        facts.grad_accum_steps = static_cast<int>(config.grad_accum_steps);
+        facts.loss = config.GetLossName();
+        facts.optimizer = config.GetOptimizerName();
+        facts.learning_rate = config.learning_rate;
+        facts.normalize = config.preprocessing.has_normalization;
+        facts.norm_mean = config.preprocessing.norm_mean;
+        facts.norm_std = config.preprocessing.norm_std;
+        facts.one_hot = config.preprocessing.has_onehot;
+        facts.num_classes = static_cast<int>(config.preprocessing.num_classes);
 
         spdlog::info("BuildCompileResult: {} - {} layers, {} errors / {} warnings",
                      config.is_valid ? "valid" : "INVALID",
@@ -5740,317 +5597,6 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         exc_issue.error_code = cyxwiz::errors::Compiler::InvariantViolation;
         compile_result_issues_.push_back(std::move(exc_issue));
         spdlog::error("BuildCompileResult unknown exception");
-    }
-}
-
-void MainWindow::ShowOperationError(std::string title, std::string message) {
-    spdlog::error("{}: {}", title, message);
-    operation_error_title_ = std::move(title);
-    operation_error_message_ = std::move(message);
-    show_operation_error_popup_ = true;
-}
-
-void MainWindow::RenderOperationErrorPopup() {
-    static constexpr const char* kPopupId = "Operation failed##operation_error";
-    if (show_operation_error_popup_) {
-        ImGui::OpenPopup(kPopupId);
-        show_operation_error_popup_ = false;
-    }
-    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", operation_error_title_.c_str());
-        ImGui::Separator();
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 540.0f);
-        ImGui::TextUnformatted(operation_error_message_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        if (ImGui::Button("OK", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
-
-void MainWindow::RenderCompileResultPopup() {
-    // Window title differs based on which flow opened the popup.
-    const char* popup_title = "Compile Graph Result";
-    switch (compile_result_mode_) {
-        case CompileResultMode::Compile:      popup_title = "Compile Graph Result"; break;
-        case CompileResultMode::Debug:        popup_title = "Local Debug Result";   break;
-        case CompileResultMode::BlockedTrain: popup_title = "Cannot Start Training"; break;
-        case CompileResultMode::BlockedDebug: popup_title = "Cannot Run Local Debug"; break;
-    }
-
-    if (show_compile_result_popup_) {
-        ImGui::OpenPopup(popup_title);
-        show_compile_result_popup_ = false;
-    }
-
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(980, 720), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(760, 540), ImVec2(FLT_MAX, FLT_MAX));
-
-    if (ImGui::BeginPopupModal(popup_title, nullptr)) {
-        const cyxwiz::ui::Tokens& tok = cyxwiz::ui::CurrentTokens();
-        // === Header line: overall status ===
-        size_t error_count = 0, warn_count = 0, info_count = 0;
-        for (const auto& issue : compile_result_issues_) {
-            switch (issue.level) {
-                case cyxwiz::IssueLevel::Error:   error_count++; break;
-                case cyxwiz::IssueLevel::Warning: warn_count++;  break;
-                case cyxwiz::IssueLevel::Info:    info_count++;  break;
-            }
-        }
-
-        if (compile_result_mode_ == CompileResultMode::BlockedTrain) {
-            ImGui::TextColored(tok.error,
-                               "[BLOCKED]  Training cannot start - fix the errors below");
-        } else if (compile_result_mode_ == CompileResultMode::BlockedDebug) {
-            ImGui::TextColored(tok.error,
-                               "[BLOCKED]  Local Debug cannot run - fix the errors below");
-        } else if (compile_result_mode_ == CompileResultMode::Debug) {
-            // The Local Debug subtitle mirrors the compile-mode header
-            // shape but makes it clear the tensors that produced these
-            // findings were synthetic, not the user's dataset.
-            ImGui::TextColored(tok.text_dim,
-                               "1 forward + 1 backward pass, synthetic data");
-            ImGui::Spacing();
-            if (compile_result_success_ && warn_count == 0) {
-                ImGui::TextColored(tok.success,
-                                   "[OK]  Debug pass succeeded");
-            } else if (compile_result_success_) {
-                ImGui::TextColored(tok.warning,
-                                   "[OK with warnings]  Debug pass succeeded - %zu warning(s)", warn_count);
-            } else {
-                ImGui::TextColored(tok.error,
-                                   "[FAIL]  Debug pass hit %zu error(s)", error_count);
-            }
-        } else if (compile_result_success_ && warn_count == 0) {
-            ImGui::TextColored(tok.success,
-                               "[OK]  Graph is valid and ready to train");
-        } else if (compile_result_success_) {
-            ImGui::TextColored(tok.warning,
-                               "[OK with warnings]  Graph is valid - %zu warning(s)", warn_count);
-        } else {
-            ImGui::TextColored(tok.error,
-                               "[FAIL]  Graph has %zu error(s)", error_count);
-        }
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        size_t gpu_count = 0;
-        size_t cpu_count = 0;
-        size_t mixed_count = 0;
-        size_t risk_count = 0;
-        size_t unsupported_count = 0;
-        size_t unknown_count = 0;
-        for (const auto& placement : compile_result_backend_placements_) {
-            if (placement.status == cyxwiz::BackendPlacementStatus::Gpu) {
-                ++gpu_count;
-            } else if (placement.status == cyxwiz::BackendPlacementStatus::Cpu) {
-                ++cpu_count;
-            } else if (placement.status == cyxwiz::BackendPlacementStatus::Mixed) {
-                ++mixed_count;
-            } else if (placement.status == cyxwiz::BackendPlacementStatus::Risk) {
-                ++risk_count;
-            } else if (placement.status == cyxwiz::BackendPlacementStatus::Unsupported) {
-                ++unsupported_count;
-            } else {
-                ++unknown_count;
-            }
-        }
-
-        auto render_metric = [](const char* label, size_t value, ImVec4 color) {
-            ImGui::PushStyleColor(ImGuiCol_Text, color);
-            ImGui::Text("%s %zu", label, value);
-            ImGui::PopStyleColor();
-        };
-
-        render_metric("Errors", error_count, tok.error);
-        ImGui::SameLine();
-        render_metric("Warnings", warn_count, tok.warning);
-        ImGui::SameLine();
-        render_metric("Info", info_count, tok.info);
-        if (!compile_result_backend_placements_.empty()) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("|");
-            ImGui::SameLine();
-            render_metric("GPU", gpu_count, tok.success);
-            ImGui::SameLine();
-            render_metric("CPU", cpu_count, tok.warning);
-            ImGui::SameLine();
-            render_metric("Unknown", unknown_count, tok.pending);
-        }
-        ImGui::Spacing();
-
-        const float body_h = -ImGui::GetFrameHeightWithSpacing() - 12.0f;
-        if (ImGui::BeginTabBar("CompileReportTabs", ImGuiTabBarFlags_None)) {
-            if (ImGui::BeginTabItem("Findings")) {
-                ImGui::BeginChild("CompileFindingsBody", ImVec2(0, body_h), true);
-                if (compile_result_issues_.empty()) {
-                    ImGui::TextDisabled("No compiler findings.");
-                } else {
-                    ImGui::PushTextWrapPos(0.0f);
-                    for (const auto& issue : compile_result_issues_) {
-                        ImVec4 color = tok.text;
-                        const char* tag = "INFO";
-                        switch (issue.level) {
-                            case cyxwiz::IssueLevel::Error:
-                                color = tok.error;
-                                tag = "ERROR";
-                                break;
-                            case cyxwiz::IssueLevel::Warning:
-                                color = tok.warning;
-                                tag = "WARNING";
-                                break;
-                            case cyxwiz::IssueLevel::Info:
-                                color = tok.info;
-                                tag = "INFO";
-                                break;
-                        }
-                        ImGui::PushStyleColor(ImGuiCol_Text, color);
-                        ImGui::TextUnformatted(tag);
-                        ImGui::PopStyleColor();
-                        if (!issue.node_name.empty()) {
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("%s", issue.node_name.c_str());
-                        }
-                        if (!issue.error_code.empty()) {
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("%s", issue.error_code.c_str());
-                        }
-                        // Jump to the node the finding is about (TOFIX123).
-                        if (issue.node_id >= 0 && node_editor_) {
-                            ImGui::SameLine();
-                            ImGui::PushID(&issue);
-                            if (cyxwiz::ui::LinkButton("Select node")) {
-                                node_editor_->FocusNode(issue.node_id);
-                            }
-                            ImGui::PopID();
-                        }
-                        ImGui::TextWrapped("%s", issue.message.c_str());
-                        ImGui::Spacing();
-                        ImGui::Separator();
-                        ImGui::Spacing();
-                    }
-                    ImGui::PopTextWrapPos();
-                }
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Backend Placement")) {
-                ImGui::BeginChild("CompileBackendPlacementBody", ImVec2(0, body_h), true);
-                if (compile_result_backend_placements_.empty()) {
-                    ImGui::TextDisabled("No backend placement report was produced.");
-                } else {
-                    ImGui::Text("GPU %zu   CPU %zu   Mixed %zu   Risk %zu   Unsupported %zu   Unknown %zu",
-                                gpu_count, cpu_count, mixed_count, risk_count,
-                                unsupported_count, unknown_count);
-                    ImGui::Spacing();
-
-                    if (ImGui::BeginTable(
-                            "CompileBackendPlacementTable", 4,
-                            ImGuiTableFlags_BordersInnerV |
-                                ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_Resizable |
-                                ImGuiTableFlags_ScrollY)) {
-                        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 92.0f);
-                        ImGui::TableSetupColumn("Node", ImGuiTableColumnFlags_WidthStretch, 0.25f);
-                        ImGui::TableSetupColumn("Backend", ImGuiTableColumnFlags_WidthStretch, 0.25f);
-                        ImGui::TableSetupColumn("Reason and action", ImGuiTableColumnFlags_WidthStretch, 0.50f);
-                        ImGui::TableHeadersRow();
-
-                        for (const auto& placement : compile_result_backend_placements_) {
-                            ImVec4 status_color = tok.pending;
-                            if (placement.status == cyxwiz::BackendPlacementStatus::Gpu) {
-                                status_color = tok.success;
-                            } else if (placement.status == cyxwiz::BackendPlacementStatus::Cpu ||
-                                       placement.status == cyxwiz::BackendPlacementStatus::Mixed ||
-                                       placement.status == cyxwiz::BackendPlacementStatus::Risk) {
-                                status_color = tok.warning;
-                            } else if (placement.status == cyxwiz::BackendPlacementStatus::Unsupported) {
-                                status_color = tok.error;
-                            }
-
-                            std::string node_label = placement.node_type;
-                            if (!placement.node_name.empty()) {
-                                node_label += " '" + placement.node_name + "'";
-                            }
-
-                            std::string backend_label = placement.expected_backend;
-                            if (!placement.fallback_backend.empty() &&
-                                placement.fallback_backend != placement.expected_backend) {
-                                backend_label += " -> " + placement.fallback_backend;
-                            }
-
-                            std::string reason_label = placement.reason_code;
-                            if (placement.NeedsUserAttention() &&
-                                !placement.suggested_action.empty()) {
-                                reason_label += ": " + placement.suggested_action;
-                            }
-                            if (placement.HasObservationMetadata()) {
-                                reason_label += "\nObservation";
-                                if (!placement.observation_dtype.empty()) {
-                                    reason_label += " dtype=" +
-                                        placement.observation_dtype;
-                                }
-                                if (!placement.observation_probe_outcome.empty()) {
-                                    reason_label += " outcome=" +
-                                        placement.observation_probe_outcome;
-                                }
-                                if (!placement.observation_probe_scope.empty()) {
-                                    reason_label += " scope=" +
-                                        placement.observation_probe_scope;
-                                }
-                                if (!placement.observation_device.empty()) {
-                                    reason_label += "\nDevice: " +
-                                        placement.observation_device;
-                                }
-                            }
-
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::TextColored(status_color, "%s", placement.status.c_str());
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::TextWrapped("%s", node_label.c_str());
-                            ImGui::TableSetColumnIndex(2);
-                            ImGui::TextWrapped("%s", backend_label.c_str());
-                            ImGui::TableSetColumnIndex(3);
-                            ImGui::TextWrapped("%s", reason_label.c_str());
-                        }
-                        ImGui::EndTable();
-                    }
-                }
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Configuration")) {
-                ImGui::BeginChild("CompileSummary", ImVec2(0, body_h), true);
-                if (compile_result_summary_.empty()) {
-                    ImGui::TextDisabled("No configuration summary available.");
-                } else {
-                    ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextUnformatted(compile_result_summary_.c_str());
-                    ImGui::PopTextWrapPos();
-                }
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-
-        ImGui::Spacing();
-        float button_width = 120.0f;
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - button_width) * 0.5f);
-        if (ImGui::Button("OK", ImVec2(button_width, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            compile_result_mode_ = CompileResultMode::Compile;  // reset for next popup
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
     }
 }
 
@@ -6636,11 +6182,7 @@ void MainWindow::LoadCheckpointForTesting() {
     const auto links = node_editor_->GetLinks();
     BuildCompileResult(nodes, links);
     if (!compile_result_success_) {
-        compile_result_mode_ = CompileResultMode::Compile;
-        compile_result_message_ =
-            "Cannot load checkpoint: the open graph must compile first. It should be the "
-            "graph the checkpoint was trained with, with its Data Inputs applied.";
-        show_compile_result_popup_ = true;
+        ShowCompileReport(cyxwiz::compile_report::Mode::CheckpointBlocked);
         spdlog::error(
             "LoadCheckpoint: active graph did not pass the compile gate.");
         return;

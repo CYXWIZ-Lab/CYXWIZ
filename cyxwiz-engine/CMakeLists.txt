@@ -327,6 +327,7 @@ set(ENGINE_SOURCES
     src/gui/engine_graph_training_dispatch.cpp
     src/gui/main_window.cpp
     src/gui/main_window_shortcuts.cpp
+    src/gui/main_window_compile_report.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
     src/gui/node_editor_toolbar.cpp

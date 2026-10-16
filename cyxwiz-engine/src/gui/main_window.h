@@ -8,6 +8,7 @@
 #include <map>
 #include <utility>
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
+#include "../core/compile_report_presentation.h"
 
 namespace cyxwiz {
 class ProjectManager;
@@ -250,6 +251,10 @@ private:
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
+    // Opens the compile report (main_window_compile_report.cpp) for what the
+    // compile found, or for why Train / Local Debug / a checkpoint load
+    // stopped (`stop_reason`, empty when the findings say it).
+    void ShowCompileReport(cyxwiz::compile_report::Mode mode, std::string stop_reason = {});
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
@@ -280,38 +285,19 @@ private:
     void BuildCompileResult(const std::vector<MLNode>& nodes,
                             const std::vector<NodeLink>& links);
 
-    // Which flow opened the compile popup. Drives title + header text
-    // in RenderCompileResultPopup:
-    //   Compile       - explicit Compile button / F7 (informational)
-    //   Debug         - Local Debug run finished (success or warnings)
-    //   BlockedTrain  - Train button refused to start because of Error
-    //                   issues in the compiled graph
-    //   BlockedDebug  - Local Debug button refused to run because the
-    //                   compile gate found Error issues
-    enum class CompileResultMode {
-        Compile,
-        Debug,
-        BlockedTrain,
-        BlockedDebug,
-    };
-
-    // Compile popup state. compile_result_issues_ holds the structured
-    // findings (errors / warnings / info) from GraphCompiler::Compile or
-    // DebugExecutor::Run so the popup can render them with severity icons.
-    // compile_result_summary_ is the human-readable architecture summary
-    // (layers, dataset, batch, etc.) shown below the issue list —
-    // Local Debug runs replace it with a per-layer trace instead.
-    // compile_result_mode_ selects the header + title text.
+    // The compile report (TOFIX129 B3): the findings, placements and
+    // configuration of the last compile, and the report built from them when
+    // the popup opens (core/compile_report_presentation).
     bool show_compile_result_popup_ = false;
     bool show_operation_error_popup_ = false;
     std::string operation_error_title_;
     std::string operation_error_message_;
     bool compile_result_success_ = false;
-    CompileResultMode compile_result_mode_ = CompileResultMode::Compile;
-    std::string compile_result_message_;     // legacy single-string fallback
-    std::string compile_result_summary_;
+    bool compile_result_has_config_ = false;
+    cyxwiz::compile_report::ConfigFacts compile_result_config_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
+    cyxwiz::compile_report::Report compile_report_;
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.
@@ -319,6 +305,8 @@ private:
     bool materialization_memory_confirmation_accepted_once_ = false;
     int materialization_memory_confirmation_node_id_ = -1;
     uint64_t materialization_memory_confirmation_estimated_bytes_ = 0;
+    uint64_t materialization_memory_confirmation_available_bytes_ = 0;
+    uint64_t materialization_memory_confirmation_budget_bytes_ = 0;
     std::string materialization_memory_confirmation_detail_;
     std::string materialization_memory_confirmation_risk_;
     std::string materialization_memory_confirmation_node_;
