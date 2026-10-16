@@ -177,7 +177,8 @@ void RenderGradientCard(const MLNode& node, const cyxwiz::ExtensionGradientView&
     Wrapped(t.text_dim, gradient.next_step);
     ImGui::Spacing();
     if (cyxwiz::ui::SecondaryButton(gradient.button_label.c_str(), gradient.button_enabled,
-                                    "The check is running")) {
+                                    gradient.button_disabled_reason.empty() ? "The check is running"
+                                                                            : gradient.button_disabled_reason.c_str())) {
         state.pending.insert(node.id);
     }
     if (!gradient.details.empty()) {
@@ -232,7 +233,6 @@ void RenderInstalledExtensionProperties(MLNode& node, const cyxwiz::ExtensionNod
     Wrapped(t.text_dim, view.subtitle);
     ImGui::Spacing();
 
-    ImGui::TextColored(t.text_bright, "Settings");
     if (!view.no_settings_text.empty()) Wrapped(t.text_dim, view.no_settings_text);
     Wrapped(t.caution, view.general_error);
     if (!view.settings.empty()) {

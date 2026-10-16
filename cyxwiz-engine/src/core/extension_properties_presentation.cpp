@@ -70,6 +70,17 @@ ExtensionGradientView BuildGradient(const ExtensionPropertiesInputs& in,
     if (!view.shown) return view;
 
     const ExtensionGradientRecord* record = in.last_check;
+    // The plugin refuses these settings: the node cannot be built, so there
+    // is nothing to check (an old result would describe other settings).
+    if (!in.shape_error.empty()) {
+        view.state = ExtensionGradientState::CouldNotCheck;
+        view.status_line = "Could not check: " + in.shape_error;
+        view.next_step = "Fix the setting the plugin refused, then check the gradient.";
+        view.button_label = record ? "Check again" : "Check gradient";
+        view.button_enabled = false;
+        view.button_disabled_reason = "The plugin refuses the current settings";
+        return view;
+    }
     if (in.checking) {
         view.state = ExtensionGradientState::Checking;
         view.status_line = "Running the node on small inputs and comparing gradients.";

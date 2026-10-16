@@ -180,6 +180,16 @@ int main() {
         const auto view = cyxwiz::BuildExtensionPropertiesView(in);
         Equal(view.settings[0].error, "initial_a must be greater than 0", "refusal under the field");
         Check(view.general_error.empty(), "not repeated above");
+        // The check cannot run on refused settings, even after a pass.
+        Check(view.gradient.state == cyxwiz::ExtensionGradientState::CouldNotCheck, "refused: could not check");
+        Equal(view.gradient.status_line, "Could not check: initial_a must be greater than 0", "refused line");
+        Check(!view.gradient.button_enabled && !view.gradient.button_disabled_reason.empty(),
+              "refused: button off with a reason");
+        const auto passed = Record(true, 9.0e-4, "Passed: x", bad);
+        in.last_check = &passed;
+        Check(cyxwiz::BuildExtensionPropertiesView(in).gradient.state ==
+                  cyxwiz::ExtensionGradientState::CouldNotCheck,
+              "a pass on refused settings is not shown as verified");
     }
     // A refusal that names no setting is shown once, above.
     {

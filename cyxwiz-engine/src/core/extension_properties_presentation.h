@@ -51,6 +51,7 @@ struct ExtensionGradientView {
     std::string next_step;     // failures: what it means and what to do
     std::string button_label;  // "Check gradient", "Check again"
     bool button_enabled = true;
+    std::string button_disabled_reason;
     std::vector<std::pair<std::string, std::string>> details;
 };
 
