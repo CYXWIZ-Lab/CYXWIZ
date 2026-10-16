@@ -65,6 +65,10 @@ bool ExtensionNodeRegistry::Register(Registration registration, std::string& err
     descriptor.type_id = MakeExtensionTypeId(descriptor.provider_id, descriptor.type_name);
     descriptor.metadata.type = gui::NodeType::PluginCustom;
     descriptor.metadata.category = gui::NodeCategory::Plugin;
+    // Properties draws extension nodes with their own editor (plugin, typed
+    // settings, gradient check; the MuJoCo Plant's file field), not the
+    // generic settings rows.
+    descriptor.metadata.properties_editor = NodePropertiesEditor::Custom;
 
     if (descriptor.kind == ExtensionNodeKind::TensorLayer && !registration.tensor_factory) {
         error = "trainable node '" + descriptor.type_id + "' has no tensor factory";

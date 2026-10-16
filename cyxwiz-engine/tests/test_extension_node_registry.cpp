@@ -154,6 +154,8 @@ void TestRegisterFindRemove() {
           "an extension node's metadata category is Plugin");
     Check(snake->metadata.parameters.size() == 1 && snake->metadata.parameters[0].type == "float",
           "typed parameters are kept");
+    Check(snake->metadata.properties_editor == cyxwiz::NodePropertiesEditor::Custom,
+          "Properties draws an extension node with its own editor, not the generic rows");
     Check(snake->metadata.inputs.size() == 1 && snake->metadata.outputs.size() == 1,
           "ports are kept");
 
