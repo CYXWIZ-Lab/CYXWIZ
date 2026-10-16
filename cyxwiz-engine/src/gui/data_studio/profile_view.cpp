@@ -334,6 +334,12 @@ void ProfileView::RenderColumns(float /*width*/) {
             ImGui::TableSetColumnIndex(5);
             if (c.missing) ImGui::TextColored(t.warning, "%s (%s)", Thousands(c.missing).c_str(), Percent(c.missing, profile_->rows).c_str());
             else ImGui::TextColored(t.text_faint, "0");
+            // Empty texts are not missing, but say so (362 empty statements
+            // read as "0 missing", board 7).
+            if (c.empty_text) {
+                ImGui::SameLine();
+                ImGui::TextColored(t.text_dim, "%s empty", Thousands(c.empty_text).c_str());
+            }
             ImGui::TableSetColumnIndex(6);
             if (c.numeric) ImGui::TextUnformatted(Short(c.mean).c_str());
             ImGui::TableSetColumnIndex(7);
@@ -411,6 +417,7 @@ void ProfileView::RenderDetail() {
             };
             row("Non-missing", Thousands(c.facts.non_null));
             row("Missing", Thousands(c.missing) + (c.missing_text ? " (" + Thousands(c.missing_text) + " as text)" : std::string()));
+            if (c.empty_text) row("Empty text", Thousands(c.empty_text) + " (not counted as missing)");
             row("Distinct", Thousands(c.facts.distinct) + (profile_->exact ? "" : " (about)"));
             if (c.numeric) {
                 row("Min", Short(c.min));
