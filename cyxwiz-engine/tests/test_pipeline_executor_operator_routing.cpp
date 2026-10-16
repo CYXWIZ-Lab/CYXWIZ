@@ -1419,6 +1419,17 @@ void CheckUniqueOnDisk() {
         registry.UnregisterTabularDataset("ds_datainput_95301");
         cyxwiz::SetDataBudgetBytes(0);
     }
+    // The pivot step's "Find values" on a table on disk: the first distinct
+    // values, a row group at a time, stopping once it has them.
+    {
+        const auto keys = cyxwiz::ParquetBackedDataset::Open(file.string(), "find_values");
+        Check(keys != nullptr, "the key file opens");
+        const auto names = keys->FirstDistinctValues("name", 50);
+        Check(names.size() == 50 && names.front() == "n0" && names.back() == "n49",
+              "the first 50 names in file order");
+        Check(keys->FirstDistinctValues("key", 500).size() == 400, "every distinct key when fewer than asked");
+        Check(keys->FirstDistinctValues("missing", 5).empty(), "a missing column gives none");
+    }
     fs::remove_all(dir);
     std::cout << "Unique on disk passed\n";
 }

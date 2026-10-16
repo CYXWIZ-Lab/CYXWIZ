@@ -2,6 +2,7 @@
 // SQL Workbench's Guided mode and Data Studio > Prepare (TOFIX148 D3).
 #include "guided_editor.h"
 
+#include "../core/parquet_backed_dataset.h"
 #include "../core/sql_step_presentation.h"
 #include "icons.h"
 #include "sql_workbench_ui.h"
@@ -864,14 +865,16 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
             Next(ImGui::CalcTextSize("Find values").x);
             const bool can_find = !busy && !inputs_.empty() && inputs_.front().table && !StrRef(p, "names_from").empty();
             if (ui::LinkButton("Find values", can_find)) {
-                // Distinct values from the main input (up to 50).
-                const auto column = inputs_.front().table->GetColumnByName(StrRef(p, "names_from"));
+                // Distinct values from the main input (up to 50); a table on
+                // disk is read a row group at a time until it has them.
+                const auto& input = inputs_.front();
+                const std::string names_from = StrRef(p, "names_from");
                 std::vector<std::string> seen;
-                for (int64_t r = 0; column && r < column->length() && seen.size() < 50; ++r) {
-                    auto s = column->GetScalar(r);
-                    if (!s.ok() || !(*s)->is_valid) continue;
-                    const std::string v = (*s)->ToString();
-                    if (std::find(seen.begin(), seen.end(), v) == seen.end()) seen.push_back(v);
+                if (!input.parquet_path.empty()) {
+                    if (const auto file = cyxwiz::ParquetBackedDataset::Open(input.parquet_path, "find_values"))
+                        seen = file->FirstDistinctValues(names_from, 50);
+                } else if (const auto column = input.table->GetColumnByName(names_from)) {
+                    cyxwiz::AppendDistinctValues(*column, seen, 50);
                 }
                 std::string joined;
                 for (const auto& v : seen) joined += (joined.empty() ? "" : ", ") + v;

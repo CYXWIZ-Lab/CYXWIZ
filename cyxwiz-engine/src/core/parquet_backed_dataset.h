@@ -127,6 +127,10 @@ public:
     // time); nullptr when missing or unreadable.
     std::shared_ptr<arrow::ChunkedArray> ReadRowGroupColumn(int row_group_idx, const std::string& name) const;
 
+    // Up to max_values distinct values of a column as text, in the order
+    // met; reads a row group at a time and stops once it has them.
+    std::vector<std::string> FirstDistinctValues(const std::string& name, size_t max_values) const;
+
     // The whole table (an admitted step's input, TOFIX154).
     std::shared_ptr<arrow::Table> ReadAll() const;
 
@@ -187,5 +191,9 @@ private:
     // partition work without re-reading metadata every epoch.
     std::vector<int64_t> row_group_sizes_;
 };
+
+// Adds the distinct values of `column` (as text, nulls skipped) to `seen`,
+// in the order met, until it holds max_values.
+void AppendDistinctValues(const arrow::ChunkedArray& column, std::vector<std::string>& seen, size_t max_values);
 
 } // namespace cyxwiz

@@ -266,6 +266,25 @@ std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadRowGroupColumn(in
     return column;
 }
 
+void AppendDistinctValues(const arrow::ChunkedArray& column, std::vector<std::string>& seen, size_t max_values) {
+    for (int64_t row = 0; row < column.length() && seen.size() < max_values; ++row) {
+        auto scalar = column.GetScalar(row);
+        if (!scalar.ok() || !(*scalar)->is_valid) continue;
+        std::string value = (*scalar)->ToString();
+        if (std::find(seen.begin(), seen.end(), value) == seen.end()) seen.push_back(std::move(value));
+    }
+}
+
+std::vector<std::string> ParquetBackedDataset::FirstDistinctValues(const std::string& name, size_t max_values) const {
+    std::vector<std::string> seen;
+    for (int group = 0; group < GetNumRowGroups() && seen.size() < max_values; ++group) {
+        const auto column = ReadRowGroupColumn(group, name);
+        if (!column) break;
+        AppendDistinctValues(*column, seen, max_values);
+    }
+    return seen;
+}
+
 std::vector<std::string> ParquetBackedDataset::GetColumnNames() const {
     std::vector<std::string> names;
     if (!schema_) return names;
