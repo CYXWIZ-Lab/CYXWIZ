@@ -27,3 +27,14 @@ Feather, Arrow / IPC, a ZIP of text documents; HDF5 files can be inspected),
 text, a token-tagging table, a time series, a folder of images or a folder of
 audio. Databases come in through Data Studio's SQL Workbench, not through Data
 Input.
+
+### Table format options
+
+- **Quote character** (default `"`): a value inside it may hold the
+  delimiter and line breaks; a doubled quote inside is one quote. Leave it
+  empty to read quotes as ordinary text. Preview, Apply and pipeline runs use
+  the same character.
+- Files are read as UTF-8; a byte order mark at the start is skipped.
+- **Limit Rows** skips the first rows and caps how many are loaded. To keep
+  only some rows, filter them in Data Studio's Prepare step or with a Filter
+  or SQL node.

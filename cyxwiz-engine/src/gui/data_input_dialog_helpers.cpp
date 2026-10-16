@@ -97,7 +97,8 @@ void DataInputDialog::LoadColumnList() {
         detected_type_,
         skip_rows_,
         file_category_ == FileCategory::Text
-            ? preview_sample_rows_ + (has_header_ ? 1 : 0) : 25);
+            ? preview_sample_rows_ + (has_header_ ? 1 : 0) : 25,
+        quote_char_[0]);
     if (!table.error.empty()) {
         preview_error_ = table.error;
         return;
@@ -183,7 +184,7 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
 
     if (!data_input::MatchesAppliedTabularPreview(node_->parameters, {
             file_path_, detected_type_, has_header_, custom_delimiter_,
-            decimal_point_, missing_value_tokens_, skip_rows_, max_rows_},
+            decimal_point_, missing_value_tokens_, skip_rows_, max_rows_, quote_char_[0]},
             cyxwiz::ProjectManager::Instance().GetProjectRoot())) {
         return false;
     }

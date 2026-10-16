@@ -105,7 +105,8 @@ public:
                                      const std::vector<std::string>& selected_columns = {},
                                      char decimal_point = '.',
                                      bool use_threads = true,
-                                     const CsvProgressCallback& progress_callback = {});
+                                     const CsvProgressCallback& progress_callback = {},
+                                     char quote_char = '"');
 
     /**
      * Read a single row group as an in-memory Arrow Table.

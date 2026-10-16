@@ -296,7 +296,6 @@ private:
     // KNIME-style tabs
     void RenderTransformationTab();
     void RenderLimitRowsTab();
-    void RenderEncodingTab();
     void RenderMemoryTab();
     void RenderAuditTab();
 
@@ -336,7 +335,6 @@ private:
     char folder_path_[512] = {};
     // 0=Auto, 1=CSV, 2=TSV, 3=JSON, 4=Parquet, 5=Excel, 6=HDF5, 7=Feather, 8=Arrow, 9=TXT, 10=ARFF
     int detected_type_ = 0;
-    int encoding_idx_ = 0;
     size_t file_size_ = 0;
 
     // STATE: Tabular format options
@@ -410,7 +408,6 @@ private:
     // STATE: Row filter
     int skip_rows_ = 0;
     int max_rows_ = 0;
-    char where_clause_[256] = {};
 
     // (Removed: memory_policy_, auto_chunk_size_, chunk_size_kb_, lru_chunks_,
     //  prefetch_enabled_. These were remnants of the pre-Arrow streaming/LRU

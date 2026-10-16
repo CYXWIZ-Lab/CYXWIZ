@@ -101,6 +101,10 @@ DataInputDialog::DataInputDialog(MLNode* node)
             const char decimal_point = node_->parameters["decimal_point"][0];
             decimal_point_ = (decimal_point == ',') ? ',' : '.';
         }
+        if (node_->parameters.count("quote_char")) {
+            strncpy(quote_char_, node_->parameters["quote_char"].c_str(), sizeof(quote_char_) - 1);
+            quote_char_[sizeof(quote_char_) - 1] = '\0';
+        }
         if (node_->parameters.count("missing_value_tokens")) {
             strncpy(missing_value_tokens_,
                     node_->parameters["missing_value_tokens"].c_str(),
@@ -119,14 +123,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 max_rows_ = std::max(0, std::stoi(node_->parameters["max_rows"]));
             } catch (...) {
                 max_rows_ = 0;
-            }
-        }
-        if (node_->parameters.count("encoding")) {
-            try {
-                encoding_idx_ = std::clamp(
-                    std::stoi(node_->parameters["encoding"]), 0, 6);
-            } catch (...) {
-                encoding_idx_ = 0;
             }
         }
         if (node_->parameters.count("folder_path")) {
@@ -409,10 +405,6 @@ void DataInputDialog::RenderContent() {
             }
             if (ImGui::BeginTabItem("Limit Rows")) {
                 RenderLimitRowsTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Encoding")) {
-                RenderEncodingTab();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Memory")) {

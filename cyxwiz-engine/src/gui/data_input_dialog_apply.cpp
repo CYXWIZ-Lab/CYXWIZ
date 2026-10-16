@@ -136,10 +136,12 @@ void DataInputDialog::Apply() {
         node_->parameters["has_header"] = has_header_ ? "true" : "false";
         node_->parameters["delimiter"] = custom_delimiter_;
         node_->parameters["decimal_point"] = std::string(1, decimal_point_);
+        node_->parameters["quote_char"] = std::string(quote_char_, quote_char_[0] ? 1 : 0);
         node_->parameters["missing_value_tokens"] = missing_value_tokens_;
         node_->parameters["skip_rows"] = std::to_string(skip_rows_);
         node_->parameters["max_rows"] = std::to_string(max_rows_);
-        node_->parameters["encoding"] = std::to_string(encoding_idx_);
+        // Files are read as UTF-8; the encoding choice it saved was never read.
+        node_->parameters.erase("encoding");
 
         if (file_category_ == FileCategory::Image) {
             node_->parameters["target_width"] = std::to_string(target_width_);
@@ -451,6 +453,7 @@ void DataInputDialog::Apply() {
         ctx.has_header         = has_header_;
         ctx.delimiter          = custom_delimiter_[0];
         ctx.decimal_point      = decimal_point_;
+        ctx.quote_char         = quote_char_[0];
         ctx.missing_value_tokens = missing_value_tokens_;
         ctx.skip_rows          = skip_rows_;
         ctx.max_rows           = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;

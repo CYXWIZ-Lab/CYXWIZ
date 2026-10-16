@@ -106,6 +106,7 @@ struct ApplyContext {
     bool has_header = true;
     char delimiter = ',';
     char decimal_point = '.';
+    char quote_char = '"';               // '\0' = no quoting
     // Data Input already runs on an AsyncTaskManager worker. Keep nested
     // Arrow CSV parsing off for interactive loads so rendering retains CPU.
     bool use_threads = false;

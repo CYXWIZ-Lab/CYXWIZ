@@ -53,6 +53,19 @@ inline std::vector<std::string> ParseMissingValueTokens(
     return tokens;
 }
 
+// Data Input's quote character: '\0' reads quotes as ordinary characters.
+inline void ApplyCsvQuoteChar(arrow::csv::ParseOptions& options, char quote_char) {
+    options.quoting = quote_char != '\0';
+    if (options.quoting) options.quote_char = quote_char;
+}
+
+// The node's quote_char parameter: one character; empty means no quoting;
+// absent means '"'.
+inline char QuoteCharFromParameter(const std::string* value) {
+    if (!value) return '"';
+    return value->empty() ? '\0' : value->front();
+}
+
 inline arrow::csv::ConvertOptions MakeTabularCsvConvertOptions(
     const std::vector<std::string>& additional_null_values =
         DefaultTabularMissingValueTokens(),

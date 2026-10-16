@@ -207,7 +207,15 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::Text("Quote char:");
             ImGui::SameLine(100);
             ImGui::SetNextItemWidth(30);
-            ImGui::InputText("##quote", quote_char_, sizeof(quote_char_));
+            // One character; empty reads quotes as ordinary text.
+            if (ImGui::InputText("##quote", quote_char_, 2)) {
+                has_changes_ = true;
+                preview_loaded_ = false;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Values in this character may hold the delimiter and line breaks. "
+                                  "Leave it empty to read quotes as ordinary text.");
+            }
 
             ImGui::Text("Missing tokens:");
             ImGui::SameLine(100);
@@ -221,6 +229,7 @@ void DataInputDialog::RenderTabularOptions() {
                     "Comma-separated values treated as null before type inference.\n"
                     "Example: na,?,missing. Arrow standard null spellings remain enabled.");
             }
+            ImGui::TextDisabled("Reads UTF-8 (a byte order mark is skipped).");
         }
     }
 
