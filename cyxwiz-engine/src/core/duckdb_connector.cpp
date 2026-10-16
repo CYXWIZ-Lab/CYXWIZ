@@ -386,6 +386,11 @@ bool DuckDBConnector::RegisterTable(
     const std::string& table_name,
     std::shared_ptr<arrow::Table> arrow_table) {
 
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        spdlog::error(last_error_);
+        return false;
+    }
     if (!arrow_table) {
         last_error_ = "Cannot register null Arrow table";
         spdlog::error(last_error_);
@@ -456,6 +461,7 @@ bool DuckDBConnector::RegisterTable(
 }
 
 bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
+    if (!conn_) return false;
     try {
         const std::string existing = ExistingObjectKind(*conn_, table_name);
         if (!existing.empty()) {
