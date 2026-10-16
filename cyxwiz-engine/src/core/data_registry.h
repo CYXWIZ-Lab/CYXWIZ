@@ -452,11 +452,11 @@ public:
     void UnregisterImageDataset(const std::string& name);
 
     // --- Audio dataset registry (Phase 2) ---
-    // Same lightweight-metadata pattern as images. The actual AudioDataset
-    // is constructed at training start by AudioDatasetBatcher using the
-    // feature config from this entry. Audio files (wav/flac/ogg/aiff) are
-    // loaded lazily per GetItem() so we don't need to scan the whole
-    // dataset at registration time — we just record what's there.
+    // Same lightweight-metadata pattern as images: only the loading
+    // settings. AudioDatasetBatcher builds the AudioDataset at training
+    // start with these and the features from the graph's Spectrogram /
+    // MelSpectrogram / MFCC node. Audio files (wav/flac/ogg/aiff) are
+    // decoded per GetItem(), so registration just records what's there.
     struct AudioDatasetEntry {
         std::string folder_path;
         bool labeled_subdirs = true;     // false = flat directory, no labels
@@ -469,27 +469,13 @@ public:
         std::string filename_col;
         std::string label_col;
 
-        // Feature extraction config — drives what AudioDataset produces
-        // for each sample. 0=Spectrogram, 1=MelSpectrogram, 2=MFCC.
-        int feature_type = 1;            // default MelSpectrogram
-        int target_sr = 16000;
-        int n_fft = 512;
-        int hop_length = 256;
-        int n_mels = 128;
-        float fmin = 0.0f;
-        float fmax = 0.0f;
-        int n_mfcc = 13;
+        int target_sr = 16000;           // resample to this rate (mono)
         float max_duration = 5.0f;       // seconds; pad/truncate to this length
 
-        // Populated by the dialog after a quick directory scan + probe
+        // Populated by the dialog after a directory scan
         size_t num_samples = 0;
         size_t num_classes = 0;
         std::vector<std::string> class_names;
-        // Actual feature shape from a first-sample probe, so the Memory
-        // tab can compute "if fully cached" estimates without re-probing
-        // on every dialog reopen. Zero if probe hasn't happened yet.
-        int feature_rows = 0;
-        int feature_cols = 0;
     };
     void RegisterAudioDataset(const std::string& name, const AudioDatasetEntry& entry);
     bool IsAudioDataset(const std::string& name) const;

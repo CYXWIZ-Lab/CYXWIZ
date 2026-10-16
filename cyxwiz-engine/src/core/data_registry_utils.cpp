@@ -556,9 +556,8 @@ void DataRegistry::RegisterAudioDataset(const std::string& name,
     std::lock_guard<std::mutex> lock(mutex_);
     InvalidateTabularPublicationUnlocked(name);
     audio_dataset_entries_[name] = entry;
-    spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, feature_type={}, sr={}",
-                 name, entry.num_samples, entry.num_classes,
-                 entry.feature_type, entry.target_sr);
+    spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, sr={}",
+                 name, entry.num_samples, entry.num_classes, entry.target_sr);
 }
 
 bool DataRegistry::IsAudioDataset(const std::string& name) const {

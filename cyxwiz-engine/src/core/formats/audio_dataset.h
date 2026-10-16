@@ -57,6 +57,10 @@ struct AudioDatasetConfig {
     float noise_level = 0.0f;
     bool time_stretch = false;
     bool pitch_shift = false;
+
+    // false = scan files and labels only, no feature-shape probe; GetInfo()
+    // then reports shape {0, 0}. The Data Input load check uses this.
+    bool probe_feature_shape = true;
 };
 
 /**

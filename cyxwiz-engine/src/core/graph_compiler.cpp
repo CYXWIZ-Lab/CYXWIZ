@@ -6966,11 +6966,9 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
 //
 // Each extractor sets has_feature_node=true (except AudioAugmentation,
 // which sets has_augmentation=true) and copies the GUI node's parameters
-// into config.audio_preprocessing. AudioDatasetBatcher later merges this
-// into its AudioDatasetConfig, overriding the dialog-baked defaults on
-// AudioDatasetEntry. If no audio feature node is found in the graph,
-// has_feature_node stays false and the batcher uses the dialog defaults
-// — "fallback mode", the standard UX.
+// into config.audio_preprocessing. AudioDatasetBatcher builds its
+// AudioDatasetConfig features from this alone; without a feature node the
+// compiler reports CW-C-0205 and the batcher refuses.
 
 static void ExtractSpectrogram(const gui::MLNode& node, TrainingConfiguration& config) {
     config.audio_preprocessing.has_feature_node = true;

@@ -44,6 +44,8 @@ void DataInputDialog::RenderDatasetSummaryPanel() {
             ImGui::Text("%s on disk", FormatBytes(loaded_memory_bytes_).c_str());
         } else if (loaded_backend_ == 3) {
             ImGui::TextUnformatted("decoded per batch at the Resize size");
+        } else if (loaded_backend_ == 4) {
+            ImGui::TextUnformatted("decoded per batch by the feature node");
         } else if (loaded_memory_is_estimate_) {
             ImGui::Text("~%s if fully cached", FormatBytes(loaded_memory_bytes_).c_str());
         } else {

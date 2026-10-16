@@ -323,15 +323,22 @@ void TestAudioBatcher(const fs::path& root) {
     cyxwiz::DataRegistry::AudioDatasetEntry entry;
     entry.folder_path = audio_root.string();
     entry.labeled_subdirs = true;
-    entry.feature_type = 0;
     entry.target_sr = 8000;
-    entry.n_fft = 16;
-    entry.hop_length = 8;
     entry.max_duration = 0.016f;
     entry.num_samples = 4;
     entry.num_classes = 2;
 
+    // Without a feature node the batcher refuses rather than invent features.
+    cyxwiz::AudioPreprocessingConfig no_features;
+    cyxwiz::AudioDatasetBatcher refused(entry, no_features, 2, 0.75f, false, 0, 19);
+    Check(refused.GetNumSamples() == 0 && refused.GetFeatureRows() == 0,
+          "AudioDatasetBatcher refuses audio without a feature node");
+
     cyxwiz::AudioPreprocessingConfig preprocessing;
+    preprocessing.has_feature_node = true;
+    preprocessing.feature_type = cyxwiz::AudioFeatureType::Spectrogram;
+    preprocessing.n_fft = 16;
+    preprocessing.hop_length = 8;
     cyxwiz::AudioDatasetBatcher batcher(
         entry, preprocessing, 2, 0.75f, false, 0, 19);
     CheckTrainOnlyDropLast(batcher, "AudioDatasetBatcher");

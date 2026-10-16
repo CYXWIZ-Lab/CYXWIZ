@@ -1370,9 +1370,6 @@ DatasetAuditResult DatasetAudit::AuditAudio(
     result.domain = "audio";
     result.sample_count = static_cast<int64_t>(entry.num_samples);
     result.class_count = static_cast<int64_t>(entry.num_classes);
-    result.feature_count = entry.feature_rows > 0 && entry.feature_cols > 0
-        ? static_cast<int64_t>(entry.feature_rows) * entry.feature_cols
-        : 0;
     AuditBasicCounts(result, true, true);
     AuditClassNameList(result, entry.num_classes, entry.class_names);
     if (entry.folder_path.empty()) {

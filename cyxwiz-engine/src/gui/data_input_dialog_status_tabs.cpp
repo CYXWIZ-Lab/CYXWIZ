@@ -36,6 +36,10 @@ void DataInputDialog::RenderMemoryTab() {
                 ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- decoded per batch at the Resize size; nothing is held");
+            } else if (loaded_backend_ == 4) {
+                ImGui::TextColored(t.success, "Lazy-loaded");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- decoded per batch by the feature node; nothing is held");
             } else if (loaded_memory_is_estimate_) {
                 ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();

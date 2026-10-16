@@ -540,14 +540,6 @@ void DataInputDialog::Apply() {
         ctx.audio_labeled_subdirs  = (audio_layout_ == AudioLayout::ClassSubdirs);
         ctx.audio_target_sr        = sample_rate_;
         ctx.audio_max_duration     = duration_sec_;
-        // Feature-extraction knobs are not yet exposed in the dialog
-        // UI; pass the same defaults the pre-refactor code baked in
-        // so existing training graphs see identical tensor shapes.
-        ctx.audio_n_fft            = 512;
-        ctx.audio_hop_length       = 256;
-        ctx.audio_n_mels           = 128;
-        ctx.audio_n_mfcc           = 13;
-        ctx.audio_feature_type     = 1;  // MelSpectrogram
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
