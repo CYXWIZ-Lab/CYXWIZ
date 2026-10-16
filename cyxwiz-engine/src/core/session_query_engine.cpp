@@ -4,6 +4,7 @@
 
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cctype>
@@ -284,6 +285,20 @@ QueryResult SessionQueryEngine::Run(const QueryRequest& request, QueryToken* tok
     QueryToken local;
     QueryToken& tk = token ? *token : local;
     const auto start = std::chrono::steady_clock::now();
+    bool reopen = false;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        reopen = db_ && !db_->MatchesDataBudget();
+    }
+    if (reopen) {
+        // A changed data budget or spill folder reopens DuckDB with them
+        // (TOFIX154); the views on attached tables are made again.
+        std::unique_lock<std::shared_mutex> exclusive(mutex_);
+        if (db_ && !db_->MatchesDataBudget()) {
+            std::string error;
+            if (!Open(&error)) spdlog::warn("Query engine reopen: {}", error);
+        }
+    }
     if (!request.export_path.empty()) {
         // The file's folder must exist and be one DuckDB may write (a reopen when new).
         std::error_code ec;

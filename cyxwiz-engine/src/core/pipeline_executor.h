@@ -202,6 +202,21 @@ private:
         std::string cached_output_dataset;  // Result from last successful execution
     };
 
+    // What a node left in its latest successful run on this executor, so an
+    // unchanged node is not run again (lazy evaluation, TOFIX154 item 10).
+    // Nodes that write files or prepare a deployment always run.
+    struct NodeRunCache {
+        uint64_t hash = 0;
+        std::string output;                     // node_results entry
+        std::map<int, std::string> pin_outputs; // output pin >= 1 -> dataset
+        std::string model_artifact;
+        std::string outcome;
+    };
+    std::map<int, NodeRunCache> run_cache_;
+    // Restores each unchanged node's hash and output from run_cache_ (when
+    // its output still exists), so MarkDirtyNodes can skip it.
+    void RestoreRunCache(std::vector<Node>& nodes);
+
     std::map<int, std::string> last_node_results_;
     std::map<std::pair<int, int>, std::string> last_node_pin_results_;
     std::map<int, std::string> last_model_artifacts_;

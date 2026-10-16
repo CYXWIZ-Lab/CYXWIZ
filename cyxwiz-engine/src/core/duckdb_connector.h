@@ -2,6 +2,7 @@
 
 #include <arrow/api.h>
 #include <duckdb.hpp>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,6 +75,10 @@ public:
     // Null when this connector is not ready.
     std::unique_ptr<DuckDBConnector> NewConnection();
 
+    // True while the data budget and spill folder are the ones the database
+    // was opened with (TOFIX154); owners reopen it when they change.
+    bool MatchesDataBudget() const;
+
     /**
      * Destructor - closes connection
      */
@@ -142,6 +147,8 @@ private:
     std::shared_ptr<duckdb::DuckDB> db_;  // shared with the connections NewConnection makes
     std::unique_ptr<duckdb::Connection> conn_;
     std::string last_error_;
+    uint64_t opened_budget_ = 0;   // DataBudgetBytes() when opened (memory_limit)
+    std::string opened_spill_;     // DataSpillDirectory() when opened (temp_directory)
 
     struct SharedTag {};
     DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db);

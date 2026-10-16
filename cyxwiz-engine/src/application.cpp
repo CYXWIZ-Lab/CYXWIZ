@@ -18,6 +18,7 @@
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
+#include "core/data_budget.h"
 #include "core/data_registry.h"
 #include "core/dataset_catalog.h"
 #include "core/project_manager.h"
@@ -393,6 +394,7 @@ bool CyxWizApp::Initialize() {
     gui::ApplyStartupAppearance();
     spdlog::set_level(cyxwiz::core::EngineConfig::Instance().RecordDebugLogs() ? spdlog::level::debug
                                                                               : spdlog::level::info);
+    cyxwiz::SetDataBudgetBytes(cyxwiz::core::EngineConfig::Instance().DataBudgetBytes());
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);

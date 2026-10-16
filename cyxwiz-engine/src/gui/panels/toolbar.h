@@ -306,15 +306,6 @@ public:
     // Initialize editor settings from script editor's current values
     void SetEditorTabSize(int size) { editor_tab_size_ = size; }
     void SetEditorFontScale(float scale);  // Converts scale to font size
-    void SetMaterializationMemoryLimitBytes(uint64_t bytes) {
-        materialization_memory_limit_mb_ = static_cast<int>(
-            std::min<uint64_t>(bytes / (1024ULL * 1024ULL), 2000000ULL));
-    }
-    uint64_t GetMaterializationMemoryLimitBytes() const {
-        return static_cast<uint64_t>(
-            std::max(materialization_memory_limit_mb_, 0)) *
-            1024ULL * 1024ULL;
-    }
     void SetEditorShowWhitespace(bool show) { editor_show_whitespace_ = show; }
     void SetEditorWordWrap(bool wrap) { editor_word_wrap_ = wrap; }
     void SetEditorAutoIndent(bool indent) { editor_auto_indent_ = indent; }
@@ -763,7 +754,6 @@ private:
     bool general_check_updates_ = true;
     int general_recent_files_limit_ = 10;
     bool general_confirm_on_exit_ = true;
-    int materialization_memory_limit_mb_ = 0;
 
     // Appearance preferences
 

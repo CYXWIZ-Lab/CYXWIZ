@@ -158,6 +158,13 @@ public:
     bool RecordDebugLogs() const;
     void SetRecordDebugLogs(bool record);
 
+    // ===== Data =====
+
+    // The data budget (TOFIX154, core/data_budget.h) in bytes; 0 = the
+    // default, half of physical memory. Engine-wide: it is about the machine.
+    uint64_t DataBudgetBytes() const;
+    void SetDataBudgetBytes(uint64_t bytes);
+
     // ===== Appearance (Engine-wide) =====
 
     AppearanceConfig GetAppearance() const;
@@ -216,6 +223,7 @@ private:
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
+    uint64_t data_budget_bytes_ = 0;
     AppearanceConfig appearance_;
 
     // Recent projects

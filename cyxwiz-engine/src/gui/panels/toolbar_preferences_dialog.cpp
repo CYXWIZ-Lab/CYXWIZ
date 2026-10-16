@@ -6,6 +6,7 @@
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
+#include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
 #include "../../core/route_qualification_service.h"
@@ -139,19 +140,31 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     ImGui::Spacing();
                     ImGui::Spacing();
-                    ImGui::Text("Materialization Memory");
+                    ImGui::Text("Data");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::Text("Hard limit (MB):");
-                    ImGui::SetNextItemWidth(160.0f);
-                    ImGui::InputInt("##materialization_memory_limit_mb",
-                                    &materialization_memory_limit_mb_,
-                                    256,
-                                    1024);
-                    materialization_memory_limit_mb_ = std::clamp(
-                        materialization_memory_limit_mb_, 0, 2000000);
-                    ImGui::TextDisabled(
-                        "0 uses the automatic available-RAM safety budget.");
+                    {
+                        // Engine-wide (it is about this PC), applied and saved
+                        // at once (TOFIX154).
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        int budget_mb = static_cast<int>(engine_config.DataBudgetBytes() >> 20);
+                        ImGui::Text("Data budget (MB):");
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::InputInt("##data_budget_mb", &budget_mb, 256, 1024)) {
+                            budget_mb = std::clamp(budget_mb, 0, 2000000);
+                            engine_config.SetDataBudgetBytes(static_cast<uint64_t>(budget_mb) << 20);
+                            engine_config.Save();
+                            cyxwiz::SetDataBudgetBytes(engine_config.DataBudgetBytes());
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled(
+                            "0 uses half of this PC's memory (%s). Now %s: tables over %s stay on disk, "
+                            "and a step that needs more than the budget stops before loading.",
+                            cyxwiz::FormatDataBytes(cyxwiz::DefaultDataBudgetBytes()).c_str(),
+                            cyxwiz::FormatDataBytes(cyxwiz::DataBudgetBytes()).c_str(),
+                            cyxwiz::FormatDataBytes(cyxwiz::DataResultThresholdBytes()).c_str());
+                        ImGui::PopTextWrapPos();
+                    }
 
                     ImGui::EndTabItem();
                 }

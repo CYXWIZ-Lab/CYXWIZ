@@ -1,5 +1,6 @@
 #include "core/arrow_dataset.h"
 #include "core/data_budget.h"
+#include "core/duckdb_connector.h"
 #include "core/data_registry.h"
 #include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
@@ -1288,6 +1289,58 @@ void CheckNodeRunFacts() {
     std::cout << "Node run facts passed\n";
 }
 
+void CheckLazyEvaluation() {
+    // TOFIX154 item 10: an executor kept between runs reuses an unchanged
+    // node's result; a changed parameter or source file reruns that node and
+    // everything below it; a node that writes a file always runs.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_lazy_evaluation";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    { std::ofstream file(csv); file << "id,word\n1,alpha\n2,beta\n3,gamma\n"; }
+    auto graph = [&](const std::string& min_letters) {
+        return R"({"nodes":[{"id":94101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":94102,"type":"SQLQuery","name":"Long","parameters":{"sql_contract_version":"1","input_alias":"input","query":"SELECT id, word FROM input WHERE length(word) >= )" +
+            min_letters + R"("}},{"id":94103,"type":"ExportCSV","name":"Export","parameters":{"file_path":")" +
+            JsonEscapePath((dir / "out.csv").string()) +
+            R"("}}],"links":[{"start_node":94101,"end_node":94102},{"start_node":94102,"end_node":94103}]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    std::set<int> executed;
+    executor.SetNodeExecutionCallback([&executed](int id, cyxwiz::PipelineNodeExecutionEvent event, const std::string&) {
+        if (event == cyxwiz::PipelineNodeExecutionEvent::Executing) executed.insert(id);
+    });
+    auto run = [&](const std::string& min_letters) {
+        executed.clear();
+        Check(executor.ExecutePipeline(graph(min_letters)), "lazy run: " + executor.GetLastError());
+        return executed;
+    };
+    Check(run("5") == std::set<int>{94101, 94102, 94103}, "the first run executes every node");
+    Check(run("5") == std::set<int>{94103}, "an unchanged rerun executes only the export (it writes a file)");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 2, "the reused SQL step keeps its facts");
+    Check(run("4") == std::set<int>{94102, 94103}, "a changed parameter reruns that step and below");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 3, "the rerun step has its new rows");
+    { std::ofstream file(csv, std::ios::app); file << "4,delta\n"; }
+    Check(run("4") == std::set<int>{94101, 94102, 94103}, "an edited source file reruns everything");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 4, "the rerun reads the edited file");
+    for (int id : {94101, 94102}) cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(
+        id == 94101 ? "ds_datainput_94101" : "ds_sql_94102");
+    Check(run("4") == std::set<int>{94101, 94102, 94103}, "a result that is gone is computed again");
+    // The kept executor reopens DuckDB when the data budget changes.
+    {
+        cyxwiz::DuckDBConnector connector;
+        Check(connector.MatchesDataBudget(), "a new DuckDB connection matches the data budget");
+        cyxwiz::SetDataBudgetBytes(512ULL << 20);
+        Check(!connector.MatchesDataBudget(), "a changed data budget no longer matches");
+        Check(run("5") == std::set<int>{94102, 94103}, "a run after a budget change works");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+    fs::remove_all(dir);
+    std::cout << "Lazy evaluation passed\n";
+}
+
 void CheckJsonLinesInput() {
     // TOFIX143 P1b: DataInput reads JSON Lines into Arrow (nested objects become
     // structs, arrays lists, keys missing in some rows become nulls).
@@ -2371,6 +2424,8 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--json-lines") { CheckJsonLinesInput(); return 0; }
     if(argc==1) CheckJsonLinesInput();
     if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--lazy") { CheckLazyEvaluation(); return 0; }
+    if(argc==1) CheckLazyEvaluation();
     if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
     if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }
     if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); CheckGuidedOperations(); }

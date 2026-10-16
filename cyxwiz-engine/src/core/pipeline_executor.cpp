@@ -11,6 +11,7 @@
 #include "duckdb_connector.h"
 #include "data_registry.h"
 #include "data_budget.h"
+#include "sql_step_presentation.h"
 #include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
 #include "data_convert_service.h"
@@ -3242,6 +3243,9 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     deployment_dataset_.clear();
     for (const auto& name : admitted_inputs_) DataRegistry::Instance().UnregisterTabularDataset(name);
     admitted_inputs_.clear();
+    // The executor outlives runs (lazy evaluation): a changed data budget or
+    // spill folder reopens its DuckDB with them.
+    if (!duckdb_ || !duckdb_->MatchesDataBudget()) duckdb_ = std::make_unique<DuckDBConnector>();
 
     spdlog::info("[Data Studio] Starting pipeline execution");
 
@@ -3282,6 +3286,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     UpdateProgress(0.2f, "Pipeline validated");
 
     // Phase 8: Mark nodes that need execution (lazy evaluation)
+    RestoreRunCache(nodes);
     MarkDirtyNodes(nodes);
 
     int nodes_to_execute = 0;
@@ -5799,7 +5804,7 @@ std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::strin
     const uint64_t table_bytes = disk->GetInMemoryBytesEstimate();
     const uint64_t budget = DataBudgetBytes();
     if (table_bytes * 2 > budget) {
-        ReportError(node.name + ": its input (" + std::to_string(disk->GetNumRows()) + " rows) is on disk and needs about " +
+        ReportError(node.name + ": its input (" + sqlstep::FormatCount(disk->GetNumRows()) + " rows) is on disk and needs about " +
                     FormatDataBytes(table_bytes * 2) + " of memory to read, over the data budget of " +
                     FormatDataBytes(budget) + ". Select fewer columns in Data Input, or raise the data budget "
                     "in Preferences > Data.");
@@ -7083,7 +7088,52 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         }
     }
 
+    // The wiring: which node and output pin feeds each input.
+    auto mix = [&hash, prime](const std::string& text) {
+        for (char c : text) {
+            hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+            hash *= prime;
+        }
+        hash ^= 0xffULL;
+        hash *= prime;
+    };
+    mix(node.recipe);
+    for (size_t i = 0; i < node.inputs.size(); ++i) {
+        const auto pin = i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
+        mix(std::to_string(node.inputs[i]) + ":" + (pin ? std::to_string(*pin) : std::string("-")));
+    }
+    // A parameter naming a file (a source, a vocabulary, a fitted state) makes
+    // the node depend on that file's size and time, so an edited file reruns.
+    for (const auto& [key, value] : sorted_params) {
+        if (value.empty() || value.size() > 1024) continue;
+        std::error_code error;
+        const std::filesystem::path path = ResolveProjectDataPath(value, project_root_);
+        if (!std::filesystem::is_regular_file(path, error)) continue;
+        const auto size = std::filesystem::file_size(path, error);
+        const auto time = std::filesystem::last_write_time(path, error).time_since_epoch().count();
+        if (!error) mix(key + "@" + std::to_string(size) + "@" + std::to_string(time));
+    }
+
     return hash;
+}
+
+void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
+    auto& registry = DataRegistry::Instance();
+    for (auto& node : nodes) {
+        const auto it = run_cache_.find(node.id);
+        if (it == run_cache_.end()) continue;
+        const NodeRunCache& cache = it->second;
+        std::error_code error;
+        const bool output_kept = !cache.output.empty() && registry.GetTableRef(cache.output).has_value();
+        const bool artifact_kept = cache.model_artifact.empty() ||
+                                   std::filesystem::exists(cache.model_artifact, error);
+        if (!output_kept || !artifact_kept) {
+            run_cache_.erase(it);
+            continue;
+        }
+        node.last_execution_hash = cache.hash;
+        node.cached_output_dataset = cache.output;
+    }
 }
 
 void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
@@ -7180,11 +7230,30 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
             // this run fails at it, or before it, nothing stale is left that
             // looks current (a check that no longer holds).
             DataRegistry::Instance().UnregisterTabularDataset(OperatorOutputName(node.type, node.id));
+            // Its earlier output goes too (a pass-through output is another
+            // node's table and stays).
+            if (const auto cached = run_cache_.find(node.id); cached != run_cache_.end()) {
+                bool own_output = true;
+                for (const auto& [other_id, other] : run_cache_)
+                    if (other_id != node.id && other.output == cached->second.output) own_output = false;
+                if (own_output) DataRegistry::Instance().UnregisterTabularDataset(cached->second.output);
+                run_cache_.erase(cached);
+            }
+            {
+                // It reads "not run" until the run reaches it.
+                std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+                node_run_facts_.erase(node.id);
+            }
             NotifyNodeExecution(node, PipelineNodeExecutionEvent::Pending);
         } else {
             // Node doesn't need execution, use cached result
             if (!node.cached_output_dataset.empty()) {
                 ctx.node_results[node.id] = node.cached_output_dataset;
+                const NodeRunCache& cache = run_cache_.at(node.id);
+                for (const auto& [pin, dataset] : cache.pin_outputs) ctx.node_pin_results[{node.id, pin}] = dataset;
+                if (!cache.model_artifact.empty()) ctx.model_artifacts[node.id] = cache.model_artifact;
+                if (!cache.outcome.empty()) ctx.node_outcomes[node.id] = cache.outcome;
+                if (node.type == "DataInput" && ctx.input_dataset.empty()) ctx.input_dataset = cache.output;
                 spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
                 completed.insert(node.id);
                 NotifyNodeExecution(node, PipelineNodeExecutionEvent::Completed,
@@ -7202,6 +7271,9 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     if (total_nodes_to_execute == 0) {
         spdlog::info("[Data Studio] All nodes up-to-date, using cached results");
         UpdateProgress(1.0f, "All nodes up-to-date");
+        last_node_results_ = ctx.node_results;
+        last_node_pin_results_ = ctx.node_pin_results;
+        last_model_artifacts_ = ctx.model_artifacts;
         return true;
     }
 
@@ -7312,10 +7384,25 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                                        written == result.ctx.node_written.end() ? "" : written->second);
                 }
 
-                // Cache the output dataset name
+                // Cache the output for the next run on this executor; a node
+                // that wrote a file or prepared a deployment always runs.
                 auto result_it = ctx.node_results.find(node_id);
                 if (result_it != ctx.node_results.end()) {
                     node->cached_output_dataset = result_it->second;
+                    if (!result.ctx.node_written.count(node_id) && !result.ctx.deployment_ready) {
+                        NodeRunCache cache;
+                        cache.hash = node->last_execution_hash;
+                        cache.output = result_it->second;
+                        for (const auto& [key, dataset] : result.ctx.node_pin_results)
+                            if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
+                        if (const auto model = result.ctx.model_artifacts.find(node_id);
+                            model != result.ctx.model_artifacts.end())
+                            cache.model_artifact = model->second;
+                        if (const auto outcome = result.ctx.node_outcomes.find(node_id);
+                            outcome != result.ctx.node_outcomes.end())
+                            cache.outcome = outcome->second;
+                        run_cache_[node_id] = std::move(cache);
+                    }
                 }
 
                 float progress = base_progress +
