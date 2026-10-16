@@ -5,6 +5,11 @@
 #include "materialization_memory_guard.h"
 #include "pipeline_runtime_capabilities.h"
 #include "process_memory_snapshot.h"
+#include "parquet_backed_dataset.h"
+
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
+#include <filesystem>
 
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
@@ -532,6 +537,195 @@ MaterializeTableResult PipelineMaterializer::PreflightTable(
     return MaterializeTable(
         nodes, links, source_table, source_dataset_name, {},
         std::move(execution_context));
+}
+
+MaterializeTableResult PipelineMaterializer::MaterializeParquetStreamed(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const ParquetBackedDataset& source,
+    const std::string& source_dataset_name,
+    const std::string& output_path,
+    PipelineOperatorProgressCallback progress_callback,
+    PipelineOperatorExecutionContext execution_context) {
+    MaterializeTableResult result;
+    const gui::MLNode* data_input = FindDataInputNode(nodes, source_dataset_name);
+    if (!data_input) return result;
+    bool any_materializable = false;
+    for (const auto& n : nodes)
+        if (n.id != data_input->id && IsArrowTableMaterializerOperator(n.type)) any_materializable = true;
+    if (!any_materializable) return result;
+    std::string graph_shape_error;
+    if (!ValidateLinearMaterializerOperatorPath(*data_input, nodes, links, graph_shape_error)) {
+        SetMaterializationFailure(result, MaterializationFailureKind::Error, graph_shape_error);
+        return result;
+    }
+
+    // The operators in path order (the walk MaterializeTable makes).
+    auto& factory = PipelineOperatorFactory::Instance();
+    std::vector<std::unique_ptr<IPipelineOperator>> ops;
+    std::vector<const gui::MLNode*> op_nodes;
+    std::queue<int> queue;
+    std::unordered_set<int> visited{data_input->id};
+    queue.push(data_input->id);
+    while (!queue.empty()) {
+        const gui::MLNode* node = FindNodeById(queue.front(), nodes);
+        queue.pop();
+        if (!node) continue;
+        const auto operator_type = ResolveArrowTableMaterializerOperatorType(node->type);
+        if (node->id != data_input->id && operator_type.has_value()) {
+            auto op = factory.Create(*operator_type);
+            std::string error;
+            const auto params = BuildOperatorParams(*node, nodes, links);
+            if (!op || !op->Configure(params, error)) {
+                SetMaterializationFailure(result, MaterializationFailureKind::Error,
+                    "PipelineMaterializer: Configure failed for node '" + node->name + "': " + error, node);
+                return result;
+            }
+            if (RequestsSparseFeatureOutput(params) || !op->SupportsStreaming()) {
+                SetMaterializationFailure(result, MaterializationFailureKind::Capacity,
+                    "PipelineMaterializer: '" + node->name + "' needs every row at once, and '" +
+                        source_dataset_name + "' is kept on disk. Before the Data Loader a table on disk "
+                        "runs only steps that stream (Standard Scaler, Min-Max Scaler, Log Transform, "
+                        "checks); raise the data budget (Preferences > Data) to load it in memory.", node);
+                return result;
+            }
+            op->SetExecutionContext(execution_context);
+            ops.push_back(std::move(op));
+            op_nodes.push_back(node);
+        }
+        for (const auto& link : links) {
+            if (link.from_node == node->id && !IsSideBranch(link.to_node, *data_input, nodes, links) &&
+                visited.insert(link.to_node).second)
+                queue.push(link.to_node);
+        }
+    }
+    if (ops.empty()) return result;
+
+    const int groups = source.GetNumRowGroups();
+    const auto fail_at = [&](size_t op_index, const std::string& message) {
+        SetMaterializationFailure(result, MaterializationFailureKind::Error,
+            "PipelineMaterializer: node '" + op_nodes[op_index]->name + "': " + message, op_nodes[op_index]);
+        return result;
+    };
+    // A batch through operators [0, count).
+    auto through = [&](std::shared_ptr<arrow::Table> batch, size_t count, size_t& failed,
+                       std::string& error) -> std::shared_ptr<arrow::Table> {
+        for (size_t j = 0; j < count && batch; ++j) {
+            if (ops[j]->PassesInputThrough()) continue;
+            auto applied = ops[j]->ApplyBatch(batch);
+            if (!applied.ok()) {
+                failed = j;
+                error = applied.status().ToString();
+                return nullptr;
+            }
+            batch = *applied;
+        }
+        return batch;
+    };
+    const size_t total_passes = 1 + static_cast<size_t>(std::count_if(ops.begin(), ops.end(), [](const auto& op) {
+        return op->NeedsFitPass() || op->PassesInputThrough();
+    }));
+    size_t pass = 0;
+    auto report = [&](int group, const std::string& what) {
+        if (!progress_callback) return;
+        PipelineOperatorProgress event;
+        event.stage = "Streaming";
+        event.message = what;
+        event.progress = static_cast<float>((static_cast<double>(pass) + static_cast<double>(group) / std::max(1, groups)) /
+                                            static_cast<double>(total_passes));
+        progress_callback(event);
+    };
+    std::vector<bool> begun(ops.size(), false);
+    auto begin = [&](size_t k, const std::shared_ptr<arrow::Table>& batch) {
+        if (begun[k]) return arrow::Status::OK();
+        begun[k] = true;
+        return ops[k]->BeginStream(batch->schema());
+    };
+
+    // Fit passes: an operator that fits (or checks) sees every batch after
+    // the operators before it.
+    for (size_t k = 0; k < ops.size(); ++k) {
+        if (!ops[k]->NeedsFitPass() && !ops[k]->PassesInputThrough()) continue;
+        for (int group = 0; group < groups; ++group) {
+            if (execution_context.IsCancellationRequested()) {
+                SetMaterializationFailure(result, MaterializationFailureKind::Cancelled,
+                                          "PipelineMaterializer: cancelled", op_nodes[k]);
+                return result;
+            }
+            report(group, "Fitting " + op_nodes[k]->name);
+            size_t failed = 0;
+            std::string error;
+            auto batch = source.ReadRowGroup(group);
+            if (!batch) return fail_at(k, "could not read row group " + std::to_string(group));
+            for (size_t j = 0; j < k; ++j)
+                if (auto status = begin(j, batch); !status.ok()) return fail_at(j, status.ToString());
+            batch = through(batch, k, failed, error);
+            if (!batch) return fail_at(failed, error);
+            if (auto status = begin(k, batch); !status.ok()) return fail_at(k, status.ToString());
+            if (auto status = ops[k]->FitBatch(batch); !status.ok()) return fail_at(k, status.ToString());
+        }
+        if (auto status = ops[k]->EndFit(); !status.ok()) return fail_at(k, status.ToString());
+        ++pass;
+    }
+
+    // The output, a row group at a time.
+    std::error_code fs_error;
+    std::filesystem::create_directories(std::filesystem::path(output_path).parent_path(), fs_error);
+    const std::string tmp_path = output_path + ".tmp";
+    std::shared_ptr<arrow::io::FileOutputStream> out;
+    std::unique_ptr<parquet::arrow::FileWriter> writer;
+    auto abandon = [&](size_t k, const std::string& message) {
+        if (writer) (void)writer->Close();
+        if (out) (void)out->Close();
+        std::filesystem::remove(tmp_path, fs_error);
+        return fail_at(k, message);
+    };
+    for (int group = 0; group < groups; ++group) {
+        if (execution_context.IsCancellationRequested()) {
+            abandon(0, "cancelled");
+            result.failure_kind = MaterializationFailureKind::Cancelled;
+            return result;
+        }
+        report(group, "Writing the prepared data");
+        auto batch = source.ReadRowGroup(group);
+        if (!batch) return abandon(0, "could not read row group " + std::to_string(group));
+        for (size_t j = 0; j < ops.size(); ++j)
+            if (auto status = begin(j, batch); !status.ok()) return abandon(j, status.ToString());
+        size_t failed = 0;
+        std::string error;
+        batch = through(batch, ops.size(), failed, error);
+        if (!batch) return abandon(failed, error);
+        if (!writer) {
+            auto opened = arrow::io::FileOutputStream::Open(tmp_path);
+            if (!opened.ok()) return abandon(0, opened.status().ToString());
+            out = *opened;
+            auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
+            auto made = parquet::arrow::FileWriter::Open(*batch->schema(), arrow::default_memory_pool(), out, props);
+            if (!made.ok()) return abandon(0, made.status().ToString());
+            writer = std::move(*made);
+        }
+        if (auto status = writer->WriteTable(*batch, std::max<int64_t>(1, batch->num_rows())); !status.ok())
+            return abandon(0, status.ToString());
+    }
+    if (!writer) {
+        SetMaterializationFailure(result, MaterializationFailureKind::Error,
+                                  "PipelineMaterializer: '" + source_dataset_name + "' has no rows");
+        return result;
+    }
+    auto closed = writer->Close();
+    if (closed.ok()) closed = out->Close();
+    writer.reset();
+    out.reset();
+    if (!closed.ok()) return abandon(0, closed.ToString());
+    for (size_t k = 0; k < ops.size(); ++k)
+        if (auto status = ops[k]->EndStream(); !status.ok()) return abandon(k, status.ToString());
+    std::filesystem::rename(tmp_path, output_path, fs_error);
+    if (fs_error) return abandon(0, "could not move the prepared data into place: " + fs_error.message());
+    result.operators_applied = static_cast<int>(ops.size());
+    for (size_t k = 0; k < ops.size(); ++k)
+        spdlog::info("PipelineMaterializer: streamed operator '{}' on node '{}' over {} row groups",
+                     ops[k]->GetName(), op_nodes[k]->name, groups);
+    return result;
 }
 
 MaterializeTableResult PipelineMaterializer::MaterializeTable(

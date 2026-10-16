@@ -44,6 +44,31 @@ before loading, for example:
 > memory to read, over the data budget of 256 MB. Select fewer columns in
 > Data Input, or raise the data budget in Preferences > Data.
 
+## Training on a large table
+
+A Data Input kept on disk can feed training:
+
+- **Steps before the Data Loader** (Standard and Min-Max Scaler, Log Transform, checks) run one
+  row group at a time: each fitting step reads the file once to fit, then one
+  last pass writes the prepared table to a Parquet file
+  (`cache/materialized/streamed` in the project) that training reads. It is
+  prepared again on each run (not cached), and the previous file is removed.
+  A step there that needs every row at once (a tokenizer, a vectorizer, PCA,
+  the Robust Scaler) stops the run before training with the reason, for
+  example:
+
+  > 'Text Tokenizer' needs every row at once, and 'corpus' is kept on disk.
+  > Before the Data Loader a table on disk runs only steps that stream
+  > (Standard Scaler, Min-Max Scaler, Log Transform, checks); raise the data
+  > budget (Preferences > Data) to load it in memory.
+
+- **Causal-LM token windows** (a `tokens` list column) on disk are read one
+  row group at a time while training: memory holds one row group's windows.
+  The row-group order is shuffled every epoch, and the windows within each
+  group. Validation and Test windows come from datasets of their own (a Data
+  Split with named inputs); a ratio split of a windows file on disk is
+  refused.
+
 ## Running again
 
 A graph run again reuses every step whose settings, inputs and source files

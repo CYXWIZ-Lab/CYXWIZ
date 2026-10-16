@@ -173,6 +173,7 @@ enum class PipelineRuntimeImplementationOwner {
 enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
+    StreamingOperatorsOnly,  // a table on disk: operators that stream (TOFIX154)
 };
 
 struct PipelineMaterializerStorageBackendCapability {

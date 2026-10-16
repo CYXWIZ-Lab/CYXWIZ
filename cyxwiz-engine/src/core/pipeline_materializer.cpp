@@ -2,6 +2,7 @@
 
 #include "arrow_dataset.h"
 #include "data_registry.h"
+#include "parquet_backed_dataset.h"
 #include "materialization_memory_guard.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sparse_feature_dataset.h"
@@ -522,6 +523,54 @@ MaterializeResult PipelineMaterializer::Materialize(
     result.source_kind = ResolvePipelineMaterializerSourceKind(
         registry, source_dataset_name);
     result.effective_kind = result.source_kind;
+
+    // A training set kept on disk streams through the operators (TOFIX154).
+    if (result.source_kind == PipelineMaterializerSourceKind::ParquetBacked) {
+        const auto disk = registry.GetParquetBackedDataset(source_dataset_name);
+        const std::string materialized_name = source_dataset_name + kMaterializedSuffix;
+        const auto folder = cache_config.cache_root.empty()
+            ? std::filesystem::temp_directory_path() / "cyxwiz" / "materialized"
+            : MaterializationCacheDirectory(cache_config) / "streamed";
+        const std::string output_path = (folder / (materialized_name + "_" +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".parquet")).string();
+        if (cache_config.mode != MaterializationCacheMode::Disabled) {
+            result.cache_status = MaterializationCacheStatus::Unsupported;
+            result.cache_message = "data kept on disk is prepared again each run (not cached)";
+        }
+        auto streamed = disk ? MaterializeParquetStreamed(nodes, links, *disk, source_dataset_name, output_path,
+                                                           progress_callback, execution_context)
+                             : MaterializeTableResult{};
+        if (!streamed.success) {
+            SetMaterializationFailure(result, streamed.failure_kind == MaterializationFailureKind::None
+                                                  ? MaterializationFailureKind::Error : streamed.failure_kind,
+                                      streamed.error_message, streamed.failed_node_id, streamed.failed_node_name);
+            return result;
+        }
+        if (streamed.operators_applied == 0) return result;
+        // The previous run's prepared file goes when nothing maps it any more.
+        std::string previous;
+        if (const auto old = registry.GetParquetBackedDataset(materialized_name)) previous = old->GetFilePath();
+        auto prepared = ParquetBackedDataset::Open(output_path, materialized_name);
+        if (!prepared) {
+            SetMaterializationFailure(result, MaterializationFailureKind::Error,
+                                      "PipelineMaterializer: could not open the prepared data '" + output_path + "'");
+            return result;
+        }
+        registry.UnregisterTabularDataset(materialized_name);
+        registry.RegisterParquetBacked(materialized_name, prepared);
+        if (!previous.empty()) {
+            std::error_code removed;
+            if (!std::filesystem::remove(previous, removed) && removed)
+                spdlog::debug("PipelineMaterializer: previous prepared file '{}' still in use: {}",
+                              previous, removed.message());
+        }
+        result.operators_applied = streamed.operators_applied;
+        result.effective_dataset_name = materialized_name;
+        result.effective_kind = PipelineMaterializerSourceKind::ParquetBacked;
+        spdlog::info("PipelineMaterializer: '{}' -> '{}' streamed on disk ({} operators)",
+                     source_dataset_name, materialized_name, streamed.operators_applied);
+        return result;
+    }
 
     const auto backend_support =
         ResolvePipelineMaterializerStorageBackendSupport(

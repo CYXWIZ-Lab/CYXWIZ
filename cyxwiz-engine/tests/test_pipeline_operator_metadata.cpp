@@ -4006,19 +4006,24 @@ int main() {
                       backend_name);
             if (capability.materializer_supported) {
                 ++materializer_supported_backends;
-                Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable,
-                      "only ArrowTable should be materializer-supported today");
+                // In memory every operator; a table on disk (TOFIX154) the
+                // operators that stream.
+                Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable ||
+                          capability.backend == cyxwiz::PipelineStorageBackend::ParquetBacked,
+                      "only ArrowTable and ParquetBacked should be materializer-supported today");
                 Check(capability.storage_support ==
-                          cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly,
-                      "ArrowTable materializer support should be ArrowTableOnly");
+                          (capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable
+                               ? cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly
+                               : cyxwiz::PipelineMaterializerStorageSupport::StreamingOperatorsOnly),
+                      "materializer support scope per backend");
             } else {
                 Check(capability.storage_support ==
                           cyxwiz::PipelineMaterializerStorageSupport::None,
                       "unsupported materializer backend should advertise no storage scope");
             }
         }
-        Check(materializer_supported_backends == 1,
-              "exactly one materializer storage backend should be supported today");
+        Check(materializer_supported_backends == 2,
+              "exactly two materializer storage backends should be supported today");
         Check(materializer_storage_backends.size() ==
                   expected_materializer_storage_backends.size(),
               "materializer storage scope should pin Arrow plus five pass-through domains");

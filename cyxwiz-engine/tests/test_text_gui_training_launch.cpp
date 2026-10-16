@@ -1142,14 +1142,20 @@ int main(int argc, char** argv) {
     Check(parquet_dataset != nullptr,
           "materializer scope Parquet fixture should open");
     registry.RegisterParquetBacked(kScopeParquetDatasetName, parquet_dataset);
+    // A table on disk runs only operators that stream (TOFIX154); the text
+    // tokenizer needs every row, so the run stops and says why.
+    const std::vector<gui::MLNode> parquet_scope_nodes = {
+        MakeDataInputNode(kScopeParquetDatasetName),
+        MakeTokenizerNode(),
+    };
     auto parquet_scope = cyxwiz::PipelineMaterializer::Materialize(
-        scope_nodes, links, registry, kScopeParquetDatasetName);
-    CheckUnsupportedMaterializerSource(
-        parquet_scope,
-        kScopeParquetDatasetName,
-        cyxwiz::PipelineMaterializerSourceKind::ParquetBacked,
-        cyxwiz::PipelineStorageBackend::ParquetBacked,
-        "Parquet-backed");
+        parquet_scope_nodes, links, registry, kScopeParquetDatasetName);
+    Check(!parquet_scope.success &&
+              parquet_scope.error_message.find("needs every row at once") != std::string::npos,
+          "Parquet-backed source with a tokenizer should stop with the reason: " +
+              parquet_scope.error_message);
+    Check(!parquet_scope.skipped_unsupported_source,
+          "Parquet-backed source is no longer skipped silently");
     registry.UnregisterTabularDataset(kScopeParquetDatasetName);
     parquet_dataset.reset();
     std::remove(parquet_path.string().c_str());
