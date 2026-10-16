@@ -242,6 +242,8 @@ Report BuildReport(const Input& in) {
         f.open_dialog = issue.node_id >= 0 && (issue.error_code == errors::Compiler::DataNotLoaded ||
                                                StartsWith(issue.message, "Could not load the data before training"));
         f.open_data_studio = issue.error_code == errors::Compiler::DataCheckSuggested;
+        if (issue.node_id >= 0 && issue.error_code == errors::Compiler::TextNotTokenized)
+            f.add_node = AddNodeFix::TextTokenizer;
         r.findings.push_back(std::move(f));
     }
     std::stable_sort(r.findings.begin(), r.findings.end(),

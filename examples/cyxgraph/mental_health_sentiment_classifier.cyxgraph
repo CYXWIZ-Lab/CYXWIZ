@@ -1,7 +1,7 @@
 {
   "id": "mental_health_sentiment_classifier",
   "name": "Mental Health Sentiment Classifier",
-  "description": "Multi-class mental health text classification from first-person statements. Classifies short self-reported text into 7 mental health categories: Normal, Depression, Suicidal, Anxiety, Bipolar, Stress, Personality disorder. Uses the legacy fallback text path from DataInput defaults with the Dataset -> DataSplit -> DataLoader boundary and DataLoader.Labels loss targets. Target file: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv, columns statement and status.",
+  "description": "Multi-class mental health text classification from first-person statements. Classifies short self-reported text into 7 mental health categories: Normal, Depression, Suicidal, Anxiety, Bipolar, Stress, Personality disorder. The Data Input loads the text and its label; the Text Tokenizer turns each statement into word ids (20,000-word vocabulary, words seen at least twice), then Data Split and DataLoader feed an Embedding and a dense classifier, with DataLoader.Labels as the loss targets. Target file: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv, columns statement and status.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -85,12 +85,26 @@
           "file_category": "text",
           "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
           "text_column": "statement",
-          "text_label_column": "status",
-          "text_tokenizer_type": "1",
-          "text_max_length": "$max_length",
-          "text_lowercase": "true",
-          "text_min_freq": "2",
-          "text_max_vocab_size": "20000"
+          "text_label_column": "status"
+        }
+      },
+      {
+        "id": "text_tokenizer",
+        "type": "TextTokenizer",
+        "name": "Tokenizer (word)",
+        "pos": [
+          250,
+          300
+        ],
+        "params": {
+          "text_col": "statement",
+          "label_col": "status",
+          "pad_value": "0",
+          "tokenizer_type": "1",
+          "max_length": "$max_length",
+          "lowercase": "true",
+          "min_word_freq": "2",
+          "max_vocab_size": "20000"
         }
       },
       {
@@ -98,7 +112,7 @@
         "type": "DataSplit",
         "name": "Stratified Split",
         "pos": [
-          250,
+          500,
           300
         ],
         "params": {
@@ -114,7 +128,7 @@
         "type": "DataLoader",
         "name": "DataLoader",
         "pos": [
-          500,
+          750,
           300
         ],
         "params": {
@@ -130,7 +144,7 @@
         "type": "Embedding",
         "name": "Embedding 20k x N",
         "pos": [
-          750,
+          1000,
           300
         ],
         "params": {
@@ -144,7 +158,7 @@
         "type": "Flatten",
         "name": "Flatten",
         "pos": [
-          1000,
+          1250,
           300
         ]
       },
@@ -153,7 +167,7 @@
         "type": "Dense",
         "name": "Dense 256",
         "pos": [
-          1250,
+          1500,
           300
         ],
         "params": {
@@ -165,7 +179,7 @@
         "type": "ReLU",
         "name": "ReLU",
         "pos": [
-          1500,
+          1750,
           300
         ]
       },
@@ -174,7 +188,7 @@
         "type": "Dropout",
         "name": "Dropout",
         "pos": [
-          1750,
+          2000,
           300
         ],
         "params": {
@@ -186,7 +200,7 @@
         "type": "Dense",
         "name": "Dense 64",
         "pos": [
-          2000,
+          2250,
           300
         ],
         "params": {
@@ -198,7 +212,7 @@
         "type": "ReLU",
         "name": "ReLU",
         "pos": [
-          2250,
+          2500,
           300
         ]
       },
@@ -207,7 +221,7 @@
         "type": "Dropout",
         "name": "Dropout",
         "pos": [
-          2500,
+          2750,
           300
         ],
         "params": {
@@ -219,7 +233,7 @@
         "type": "Dense",
         "name": "Dense N",
         "pos": [
-          3500,
+          3750,
           300
         ],
         "params": {
@@ -231,7 +245,7 @@
         "type": "CrossEntropyLoss",
         "name": "CrossEntropy",
         "pos": [
-          3750,
+          4000,
           300
         ]
       },
@@ -240,7 +254,7 @@
         "type": "Adam",
         "name": "Adam",
         "pos": [
-          4000,
+          4250,
           300
         ],
         "params": {
@@ -252,7 +266,7 @@
         "type": "Output",
         "name": "Output",
         "pos": [
-          4250,
+          4500,
           300
         ],
         "params": {
@@ -263,6 +277,12 @@
     "links": [
       {
         "from": "data_input",
+        "to": "text_tokenizer",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_tokenizer",
         "to": "data_split",
         "from_pin": 0,
         "to_pin": 0

@@ -38,3 +38,13 @@ Input.
 - **Limit Rows** skips the first rows and caps how many are loaded. To keep
   only some rows, filter them in Data Studio's Prepare step or with a Filter
   or SQL node.
+
+### Text needs a node that turns it into numbers
+
+Data Input loads text and its label; a node after it turns the text into
+numbers: a **Text Tokenizer** (word ids), a **TF-IDF** or **Count**
+vectorizer, or **Word Embeddings**. Compile refuses a text input that reaches
+the model without one (*CW-C-0203*, "gives text, and nothing turns it into
+numbers") and offers **Add a Text Tokenizer**: it adds the node after the
+Data Input, takes over its links, fills in the text and label columns and
+opens its dialog.

@@ -117,7 +117,7 @@ void MainWindow::RenderCompileResultPopup() {
     const auto& r = compile_report_;
     const std::string window = r.title + kId;
     NextWindowFits(860.0f, 640.0f);
-    int focus_node = -1, open_node = -1;
+    int focus_node = -1, open_node = -1, add_tokenizer_after = -1;
     bool open_data_studio = false, train = false;
     if (ImGui::BeginPopupModal(window.c_str(), nullptr)) {
         const auto& t = cyxwiz::ui::CurrentTokens();
@@ -167,6 +167,10 @@ void MainWindow::RenderCompileResultPopup() {
                     if (f.open_dialog && node_editor_) {
                         meta.Next(ImGui::CalcTextSize("Open its dialog").x);
                         if (cyxwiz::ui::LinkButton("Open its dialog")) open_node = f.node_id;
+                    }
+                    if (f.add_node == cyxwiz::compile_report::AddNodeFix::TextTokenizer && node_editor_) {
+                        meta.Next(ImGui::CalcTextSize("Add a Text Tokenizer").x);
+                        if (cyxwiz::ui::LinkButton("Add a Text Tokenizer")) add_tokenizer_after = f.node_id;
                     }
                     if (f.open_data_studio && data_studio_panel_) {
                         meta.Next(ImGui::CalcTextSize("Open Data Studio").x);
@@ -289,7 +293,8 @@ void MainWindow::RenderCompileResultPopup() {
             close = cyxwiz::ui::PrimaryButton("Close");
             ImGui::SetItemDefaultFocus();
         }
-        if (close || train || EscapePressedHere() || focus_node >= 0 || open_node >= 0 || open_data_studio)
+        if (close || train || EscapePressedHere() || focus_node >= 0 || open_node >= 0 || open_data_studio ||
+            add_tokenizer_after >= 0)
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -297,6 +302,7 @@ void MainWindow::RenderCompileResultPopup() {
     // Actions run after the modal closes.
     if (focus_node >= 0 && node_editor_) node_editor_->FocusNode(focus_node);
     if (open_node >= 0 && node_editor_) node_editor_->OpenNodeConfiguration(open_node);
+    if (add_tokenizer_after >= 0 && node_editor_) node_editor_->AddTextTokenizerAfter(add_tokenizer_after);
     if (open_data_studio && data_studio_panel_) {
         data_studio_panel_->SetVisible(true);
         if (compile_result_config_.backing != report::Backing::NotLoaded && !compile_result_config_.dataset.empty())

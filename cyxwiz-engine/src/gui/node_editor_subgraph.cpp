@@ -751,6 +751,25 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     ClearValidationState();
     deferred_focus_ = {step_id, 2};
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
+    if (request.open_dialog) OpenNodeConfiguration(step_id);
+}
+
+void NodeEditor::AddTextTokenizerAfter(int input_id) {
+    const MLNode* input = FindNodeById(input_id);
+    if (!input) return;
+    std::map<std::string, std::string> parameters;
+    const auto column = [&](const char* key) {
+        const auto it = input->parameters.find(key);
+        return it == input->parameters.end() ? std::string() : it->second;
+    };
+    if (const auto text = column("text_column"); !text.empty()) {
+        parameters["text_col"] = text;
+        parameters["text_column"] = text;
+    }
+    if (const auto label = column("text_label_column"); !label.empty()) parameters["label_col"] = label;
+    PendingStepAfter request{input_id, NodeType::TextTokenizer, false, {}, {}, std::move(parameters)};
+    request.open_dialog = true;
+    pending_steps_after_.push_back(std::move(request));
 }
 
 bool NodeEditor::IsSubgraphNode(int node_id) const {

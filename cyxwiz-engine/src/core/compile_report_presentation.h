@@ -81,6 +81,9 @@ struct Chip {
     Tone tone = Tone::Neutral;
 };
 
+// A node the finding's fix adds after its node (the renderer creates it).
+enum class AddNodeFix { None, TextTokenizer };
+
 struct Finding {
     IssueLevel level = IssueLevel::Info;
     Tone tone = Tone::Info;
@@ -90,6 +93,7 @@ struct Finding {
     std::string code;           // empty for the generic code (C-1)
     bool open_dialog = false;   // the fix is in the node's dialog (data not loaded or failed to load)
     bool open_data_studio = false;
+    AddNodeFix add_node = AddNodeFix::None;
 };
 
 struct PlacementRow {

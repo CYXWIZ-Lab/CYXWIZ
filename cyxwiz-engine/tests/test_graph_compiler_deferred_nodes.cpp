@@ -1,5 +1,6 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/error_codes.h"
+#include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
@@ -512,6 +513,36 @@ int main() {
     Check(disconnected_sparse_config.is_valid &&
               !HasIssueText(disconnected_sparse_config, "Sparse feature"),
           "disconnected sparse vectorizer must not affect the selected training path");
+
+    // Data Input only loads text (TOFIX129 B-8): text that reaches the model
+    // with nothing turning it into numbers is refused, with its own code.
+    // The Engine's loaders map a category to its domain; here only "text".
+    const auto saved_hooks = cyxwiz::GetGraphCompilerDatasetHooks();
+    auto text_hooks = saved_hooks;
+    text_hooks.preprocessing_domain = [](const std::string& category) -> std::optional<cyxwiz::PreprocessingDomain> {
+        if (category == "text") return cyxwiz::PreprocessingDomain::Text;
+        return std::nullopt;
+    };
+    cyxwiz::SetGraphCompilerDatasetHooks(text_hooks);
+    auto text_data = data;
+    text_data.parameters["file_category"] = "text";
+    text_data.parameters["text_column"] = "text";
+    const auto raw_text_config = compiler.Compile(
+        {text_data, dense, loss, optimizer},
+        {Link(1, 1, 101, 2, 201), Link(2, 2, 202, 4, 401), Link(3, 1, 102, 4, 402), Link(4, 4, 403, 5, 501)},
+        true);
+    Check(!raw_text_config.is_valid && HasIssueCode(raw_text_config, cyxwiz::errors::Compiler::TextNotTokenized),
+          "text straight into Dense must be refused with CW-C-0203");
+    auto text_tokenizer = tokenizer;
+    text_tokenizer.parameters = {{"text_col", "text"}, {"max_length", "16"}};
+    const auto tokenized_config = compiler.Compile(
+        {text_data, text_tokenizer, dense, loss, optimizer},
+        {Link(1, 1, 101, 10, 1001), Link(2, 10, 1002, 2, 201), Link(3, 2, 202, 4, 401), Link(4, 1, 102, 4, 402),
+         Link(5, 4, 403, 5, 501)},
+        true);
+    Check(!HasIssueCode(tokenized_config, cyxwiz::errors::Compiler::TextNotTokenized),
+          "a Text Tokenizer on the path turns the text into numbers");
+    cyxwiz::SetGraphCompilerDatasetHooks(saved_hooks);
 
     auto configured_optimizer = optimizer;
     configured_optimizer.type = gui::NodeType::AdamW;

@@ -6197,15 +6197,22 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    // Text preprocessing is no longer extracted into TrainingConfiguration.
-    // TextTokenizer is a real Arrow operator; TextVocabulary/TextPadding
-    // fold into it during PipelineMaterializer. If no materialized Arrow
-    // table is selected, TextDatasetBatcher uses the dialog-baked defaults
-    // from DataRegistry::TextDatasetEntry.
-    if (config.preprocessing_domain == PreprocessingDomain::Text) {
-        CYXWIZ_BUILDER_INFO("GraphCompiler: text preprocessing nodes are materialized "
-                     "through Arrow operators; legacy text fallback uses dialog "
-                     "defaults from the registered dataset");
+    // Data Input only loads text (TOFIX129 B-8); a node turns it into
+    // numbers: a Text Tokenizer (ids), a TF-IDF or Count vectorizer, or Word
+    // Embeddings. Without one on the training path the model would get raw
+    // strings.
+    if (config.preprocessing_domain == PreprocessingDomain::Text && dataset_node) {
+        const bool text_to_numbers = std::any_of(nodes.begin(), nodes.end(), [&](const gui::MLNode& node) {
+            return ContainsWhenFiltered(training_path_ids, node.id) &&
+                   (node.type == gui::NodeType::TextTokenizer || node.type == gui::NodeType::TFIDFVectorizer ||
+                    node.type == gui::NodeType::CountVectorizer || node.type == gui::NodeType::WordEmbeddings);
+        });
+        if (!text_to_numbers) {
+            AddIssue(config, IssueLevel::Error,
+                     "'" + dataset_node->name + "' gives text, and nothing turns it into numbers before the "
+                     "model: add a Text Tokenizer after it (or a TF-IDF / Count vectorizer)",
+                     dataset_node->id, dataset_node->name, errors::Compiler::TextNotTokenized);
+        }
     }
 
     // Import rebuilds weights/architecture; training previews require live data
