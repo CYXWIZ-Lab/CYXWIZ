@@ -43,11 +43,17 @@ void Wrapped(const ImVec4& colour, const std::string& text) {
 
 void KeyValueRows(const char* id, const std::vector<std::pair<std::string, std::string>>& rows) {
     if (rows.empty() || !ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return;
+    // Fixed shares, the label wrapping: sized by content, a long label
+    // ("Output memory per batch") left the value a sliver ("16.\n0\nKB").
+    ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+    ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     const auto& t = cyxwiz::ui::CurrentTokens();
     for (const auto& [key, value] : rows) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_dim, "%s", key.c_str());
+        ImGui::PopTextWrapPos();
         ImGui::TableNextColumn();
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextUnformatted(value.c_str());
