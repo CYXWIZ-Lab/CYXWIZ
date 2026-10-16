@@ -325,7 +325,12 @@ View Build(const Input& in) {
         if (const Dataset* d = DatasetOfInput(in, n)) {
             item.dataset = d->name;
             item.meta = Thousands(static_cast<int64_t>(d->rows));
-            shown.insert(d->name);
+            // Also the input's other copies (a pipeline run reads the file
+            // again as ds_datainput_<id>): one row per Data Input, not a
+            // second "Sentiment CSV" under Other datasets.
+            for (const std::string& name :
+                 {d->name, n.output_dataset, n.dataset_name, "ds_datainput_" + std::to_string(n.id)})
+                if (!name.empty()) shown.insert(name);
         } else {
             item.meta = "not loaded";
             item.tone = Tone::Warn;

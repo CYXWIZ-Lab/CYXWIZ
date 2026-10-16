@@ -201,6 +201,18 @@ int main() {
         k.datasets[0].label = "Data Input";
         k.datasets[1].label = "Data Input";
         Check(Build(k).rail[0].items[0].meta == "not loaded", "a shared label matches no node");
+
+        // A pipeline run reads a loaded Data Input again as ds_datainput_<id>, labelled with the node's
+        // name: one row under Data Inputs, not a second "Sentiment CSV" under Other datasets.
+        Input copies;
+        copies.datasets = {{"sentiment_mental_health", "Sentiment CSV", 53043, 3, true},
+                           {"ds_datainput_1", "Sentiment CSV", 53043, 3, true}};
+        copies.nodes.push_back(Node(1, NodeType::DataInput, "Sentiment CSV"));
+        copies.nodes[0].dataset_name = "sentiment_mental_health";
+        const View copied = Build(copies);
+        Check(copied.rail[0].items.size() == 1 && copied.rail[0].items[0].dataset == "sentiment_mental_health" &&
+                  copied.rail.size() == 3,
+              "a run's copy of a Data Input is not listed again under Other datasets");
         std::string stem;
         Check(SplitOfName("documents_train", &stem) == "train" && stem == "documents" && SplitOfName("x-dev") == "validation" &&
                   SplitOfName("interval").empty() && SplitOfName("train").empty(),

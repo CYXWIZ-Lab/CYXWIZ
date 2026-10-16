@@ -66,9 +66,11 @@ SessionQueryService::SessionQueryService() {
 }
 
 std::vector<std::string> SessionQueryService::QueryableNames() const {
+    // Each name once: a Data Input's dataset and a run's copy of it share
+    // the node's name, and a query names it once.
     std::vector<std::string> out;
     for (const auto& e : DatasetCatalog::Instance().List())
-        if (Queryable(e)) out.push_back(e.Shown());
+        if (Queryable(e) && std::find(out.begin(), out.end(), e.Shown()) == out.end()) out.push_back(e.Shown());
     return out;
 }
 
