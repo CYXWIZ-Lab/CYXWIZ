@@ -136,3 +136,25 @@ The tabs are named by what you decide:
   and round trip under a disclosure.
 
 Help for each field is the hover text on its label.
+
+## Data Split
+
+A bar shows the three parts with their rows from the graph's data (*train 80%
+about 42,145, val 5,268, test 5,268*), above the Train / Validation / Test
+sliders and their sum (Apply scales them to 1.00). **Seed** sets the
+shuffled order the parts are cut from; **Stratified** keeps each class's
+share in every part. *From the graph* names the dataset and its samples, with
+**Refresh from graph**; **Details** holds the resolved manifest (origins,
+schemas, policy, source ids, leakage checks). An old graph using Data
+Boundary v1 shows a caution and **Migrate graph to Dataset v2**.
+
+## Data Loader
+
+Five tabs: **Training** (epochs, validate every, batch size with about how
+many batches an epoch has, seed, model seed, shuffle, drop the last short
+batch), **Batches** (gradient accumulation, prefetch), **Balance** (class
+balancing for training batches: mode, target per class, seed),
+**Checkpoints** (best validation checkpoint, early stop patience, checkpoint
+folder, start from an earlier checkpoint) and **Advanced** (worker threads,
+pin memory, report interval, generation previews). The Data Loader is the one
+place batching is set.

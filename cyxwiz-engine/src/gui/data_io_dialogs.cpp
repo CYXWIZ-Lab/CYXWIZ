@@ -2,11 +2,16 @@
 
 #include "node_config_dialog.h"
 #include "data_convert_format_controls.h"
+#include "node_editor.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "../core/async_task_manager.h"
 #include "../core/data_convert_formats.h"
 #include "../core/file_dialogs.h"
+#include "../core/arrow_dataset.h"
+#include "../core/data_registry.h"
 #include "../core/graph_compiler.h"
+#include "../core/parquet_backed_dataset.h"
 #include "../core/training_parameter_contract.h"
 #include "../core/worker_defaults.h"
 
@@ -16,6 +21,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <spdlog/spdlog.h>
 #include <sstream>
 #include <string>
@@ -958,6 +964,72 @@ bool IsPositiveIntegerText(const char* text) {
 }
 }
 
+namespace {
+
+constexpr float kFieldLabel = 170.0f;
+
+void Field(const char* label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", label);
+    ImGui::SameLine(kFieldLabel);
+}
+
+std::string GroupDigits(int64_t value) {
+    std::string digits = std::to_string(value < 0 ? -value : value);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<size_t>(i), ",");
+    return value < 0 ? "-" + digits : digits;
+}
+
+// Upstream of `node_id`: the loaded row count of the Data Input and the
+// Data Split's train ratio (each -1 when not found).
+struct UpstreamData {
+    int64_t rows = -1;
+    float train_ratio = -1.0f;
+    std::string input_name;
+};
+
+UpstreamData FindUpstreamData(NodeEditor* editor, int node_id) {
+    UpstreamData found;
+    if (!editor) return found;
+    const auto& nodes = editor->GetNodes();
+    const auto& links = editor->GetLinks();
+    std::set<int> seen{node_id};
+    std::vector<int> frontier{node_id};
+    for (size_t i = 0; i < frontier.size(); ++i) {
+        for (const auto& link : links) {
+            if (link.to_node != frontier[i] || !seen.insert(link.from_node).second) continue;
+            const auto it = std::find_if(nodes.begin(), nodes.end(),
+                                         [&](const MLNode& n) { return n.id == link.from_node; });
+            if (it == nodes.end()) continue;
+            const auto param = [&](const char* key) {
+                const auto p = it->parameters.find(key);
+                return p == it->parameters.end() ? std::string() : p->second;
+            };
+            if (it->type == NodeType::DataSplit && found.train_ratio < 0.0f) {
+                try { found.train_ratio = std::stof(param("train_ratio")); } catch (...) {}
+            }
+            if (it->type == NodeType::DataInput && found.rows < 0) {
+                // The rows of the dataset it loaded, from the registry.
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                const std::string name = param("dataset_name");
+                if (const auto* text = registry.GetTextDatasetEntry(name))
+                    found.rows = static_cast<int64_t>(text->num_samples);
+                else if (auto arrow = registry.GetArrowDataset(name)) found.rows = arrow->GetNumRows();
+                else if (auto parquet = registry.GetParquetBackedDataset(name)) found.rows = parquet->GetNumRows();
+                else if (const auto* image = registry.GetImageDatasetEntry(name))
+                    found.rows = static_cast<int64_t>(image->num_images);
+                else if (const auto* audio = registry.GetAudioDatasetEntry(name))
+                    found.rows = static_cast<int64_t>(audio->num_samples);
+                found.input_name = it->name;
+            }
+            frontier.push_back(it->id);
+        }
+    }
+    return found;
+}
+
+}  // namespace
+
 DataLoaderDialog::DataLoaderDialog(MLNode* node)
     : NodeConfigDialog("Data Loader", node)
 {
@@ -1135,299 +1207,220 @@ void DataLoaderDialog::Reset() {
 }
 
 void DataLoaderDialog::RenderContent() {
-    if (ImGui::CollapsingHeader("Generation previews")) {
-        if (ImGui::Checkbox("Generate samples during training", &generation_preview_enabled_)) has_changes_ = true;
-        ImGui::BeginDisabled(!generation_preview_enabled_);
-        if (ImGui::InputInt("Every N completed epochs", &generation_preview_every_epochs_)) has_changes_ = true;
-        if (ImGui::InputInt("Maximum new tokens (1-128)", &generation_preview_max_new_tokens_)) has_changes_ = true;
-        if (ImGui::InputTextMultiline("Prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_), ImVec2(-1,100))) has_changes_ = true;
-        ImGui::TextWrapped("One prompt per line (1-8); for multi-line chat prompts put a line of --- between prompts (an empty line before --- keeps a trailing newline). Greedy previews use the causal token-window vocabulary. Training pauses between epochs; results appear in the Console and run artifacts.");
-        ImGui::EndDisabled();
-    }
-
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Training Loop");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Epochs:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##epochs", &epochs_)) {
-        if (epochs_ < 1) epochs_ = 1;
-        if (epochs_ > 100000) epochs_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(full passes over training split)");
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Batching");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Batch size:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##batch_size", &batch_size_)) {
-        if (batch_size_ < 1) batch_size_ = 1;
-        if (batch_size_ > 100000) batch_size_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(samples per gradient step)");
-
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Shuffle each epoch", &shuffle_)) has_changes_ = true;
-    ImGui::TextDisabled("  Reshuffles training samples at the start of every epoch.");
-
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Drop last incomplete batch", &drop_last_)) has_changes_ = true;
-    ImGui::TextDisabled("  Discard the final batch if it has fewer than batch_size samples.");
-
-    ImGui::Spacing();
-    ImGui::Text("Grad accum:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##grad_accum_steps", &grad_accum_steps_)) {
-        grad_accum_steps_ =
-            cyxwiz::training_contract::ClampGradientAccumulationSteps(
-                grad_accum_steps_);
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(optimizer step every N batches)");
-
-    ImGui::Spacing();
-    ImGui::Text("Validate every:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##validation_freq", &validation_freq_)) {
-        if (validation_freq_ < 1) validation_freq_ = 1;
-        if (validation_freq_ > 100000) validation_freq_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(epochs; final epoch always validates)");
-
-    ImGui::Spacing();
-    ImGui::Text("Seed:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##dataloader_seed", &seed_)) {
-        if (seed_ < 0) seed_ = 0;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(split/shuffle order)");
-    ImGui::Spacing();
-    ImGui::Text("Model RNG seed:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##model_rng_seed", &model_seed_)) has_changes_ = true;
-    ImGui::SameLine();
-    ImGui::TextDisabled("(-1 unset; fresh-run weights/dropout)");
-    if (model_seed_ < -1)
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "Model RNG seed must be -1 or nonnegative.");
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Class Imbalance");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Balance training classes", &balance_classes_)) {
-        if (balance_classes_ && balance_mode_index_ == 0) {
-            balance_mode_index_ = 1;
-        }
-        if (!balance_classes_) {
-            balance_mode_index_ = 0;
-        }
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Applies only to training batches. Validation and test distributions stay unchanged.");
-
-    const char* balance_modes[] = {
-        "None", "Oversample minority", "Undersample majority", "Weighted sampler"
-    };
-    ImGui::BeginDisabled(!balance_classes_);
-    ImGui::Text("Mode:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(190);
-    if (ImGui::Combo("##balance_mode", &balance_mode_index_,
-                     balance_modes, IM_ARRAYSIZE(balance_modes))) {
-        if (balance_mode_index_ == 0) {
-            balance_classes_ = false;
-        }
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(train split only)");
-
-    const char* balance_targets[] = {"max", "median", "min", "custom number"};
-    int target_index = 0;
-    if (std::strcmp(balance_target_, "median") == 0) {
-        target_index = 1;
-    } else if (std::strcmp(balance_target_, "min") == 0) {
-        target_index = 2;
-    } else if (IsPositiveIntegerText(balance_target_)) {
-        target_index = 3;
-    }
-    ImGui::Text("Target:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(190);
-    if (ImGui::Combo("##balance_target_mode", &target_index,
-                     balance_targets, IM_ARRAYSIZE(balance_targets))) {
-        if (target_index == 0) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
-        } else if (target_index == 1) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "median");
-        } else if (target_index == 2) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "min");
-        } else if (!IsPositiveIntegerText(balance_target_)) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "1");
-        }
-        has_changes_ = true;
-    }
-    if (target_index == 3) {
-        int target_count = 1;
-        try {
-            target_count = std::max(1, std::stoi(balance_target_));
-        } catch (...) {
-            target_count = 1;
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(110);
-        if (ImGui::InputInt("##balance_target_count", &target_count)) {
-            if (target_count < 1) target_count = 1;
-            CopyToBuffer(balance_target_, sizeof(balance_target_),
-                         std::to_string(target_count));
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    // Six headed sections in one scroll became five tabs (board 5); every
+    // field stays.
+    if (!ImGui::BeginTabBar("##data_loader_tabs")) return;
+    if (ImGui::BeginTabItem("Training")) {
+        ImGui::Spacing();
+        Field("Epochs");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##epochs", &epochs_)) {
+            epochs_ = std::clamp(epochs_, 1, 100000);
             has_changes_ = true;
         }
+        Field("Validate every");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##validation_freq", &validation_freq_)) {
+            validation_freq_ = std::clamp(validation_freq_, 1, 100000);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("epoch (the last one always validates)");
+        Field("Batch size");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##batch_size", &batch_size_)) {
+            batch_size_ = std::clamp(batch_size_, 1, 100000);
+            has_changes_ = true;
+        }
+        // Batches per epoch from the graph's data: the Data Input's rows times
+        // the Data Split's train share.
+        const auto upstream = node_ ? FindUpstreamData(node_editor_, node_->id) : UpstreamData{};
+        if (upstream.rows > 0) {
+            const double train = static_cast<double>(upstream.rows) *
+                                 (upstream.train_ratio > 0.0f ? upstream.train_ratio : 0.8);
+            const double batches = drop_last_ ? std::floor(train / batch_size_) : std::ceil(train / batch_size_);
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "about %s batches per epoch",
+                               GroupDigits(static_cast<int64_t>(batches)).c_str());
+        }
+        Field("Seed");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##dataloader_seed", &seed_)) {
+            if (seed_ < 0) seed_ = 0;
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("split and shuffle order");
+        Field("Model seed");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##model_rng_seed", &model_seed_)) has_changes_ = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("weights and dropout of a fresh run; -1 unset");
+        if (model_seed_ < -1) ImGui::TextColored(t.error, "The model seed must be -1 or nonnegative.");
+        if (ImGui::Checkbox("Shuffle every epoch", &shuffle_)) has_changes_ = true;
+        if (ImGui::Checkbox("Drop the last short batch", &drop_last_)) has_changes_ = true;
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_faint, "Generation previews, logging, workers and pin memory are under Advanced.");
+        ImGui::EndTabItem();
     }
-
-    ImGui::Text("Balance seed:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##balance_seed", &balance_seed_)) {
-        if (balance_seed_ < 0) balance_seed_ = 0;
-        has_changes_ = true;
+    if (ImGui::BeginTabItem("Batches")) {
+        ImGui::Spacing();
+        Field("Accumulate gradients");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##grad_accum_steps", &grad_accum_steps_)) {
+            grad_accum_steps_ = cyxwiz::training_contract::ClampGradientAccumulationSteps(grad_accum_steps_);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("batches per optimizer step");
+        Field("Prefetch");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##prefetch_factor", &prefetch_factor_)) {
+            prefetch_factor_ = std::clamp(prefetch_factor_, 0, 64);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(prefetch_factor_ > 0 ? "batches queued ahead (Arrow / Parquet batchers)"
+                                                 : "0 = no queue ahead");
+        ImGui::EndTabItem();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(deterministic sampler)");
-    ImGui::EndDisabled();
-
+    if (ImGui::BeginTabItem("Balance")) {
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Balance training classes", &balance_classes_)) {
+            if (balance_classes_ && balance_mode_index_ == 0) balance_mode_index_ = 1;
+            if (!balance_classes_) balance_mode_index_ = 0;
+            has_changes_ = true;
+        }
+        ImGui::TextDisabled("Training batches only; validation and test keep their distribution.");
+        const char* balance_modes[] = {"None", "Oversample minority", "Undersample majority", "Weighted sampler"};
+        ImGui::BeginDisabled(!balance_classes_);
+        Field("Mode");
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::Combo("##balance_mode", &balance_mode_index_, balance_modes, IM_ARRAYSIZE(balance_modes))) {
+            if (balance_mode_index_ == 0) balance_classes_ = false;
+            has_changes_ = true;
+        }
+        const char* balance_targets[] = {"max", "median", "min", "custom number"};
+        int target_index = 0;
+        if (std::strcmp(balance_target_, "median") == 0) target_index = 1;
+        else if (std::strcmp(balance_target_, "min") == 0) target_index = 2;
+        else if (IsPositiveIntegerText(balance_target_)) target_index = 3;
+        Field("Target per class");
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::Combo("##balance_target_mode", &target_index, balance_targets, IM_ARRAYSIZE(balance_targets))) {
+            if (target_index == 0) CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
+            else if (target_index == 1) CopyToBuffer(balance_target_, sizeof(balance_target_), "median");
+            else if (target_index == 2) CopyToBuffer(balance_target_, sizeof(balance_target_), "min");
+            else if (!IsPositiveIntegerText(balance_target_))
+                CopyToBuffer(balance_target_, sizeof(balance_target_), "1");
+            has_changes_ = true;
+        }
+        if (target_index == 3) {
+            int target_count = 1;
+            try { target_count = std::max(1, std::stoi(balance_target_)); } catch (...) { target_count = 1; }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::InputInt("##balance_target_count", &target_count)) {
+                if (target_count < 1) target_count = 1;
+                CopyToBuffer(balance_target_, sizeof(balance_target_), std::to_string(target_count));
+                has_changes_ = true;
+            }
+        }
+        Field("Balance seed");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##balance_seed", &balance_seed_)) {
+            if (balance_seed_ < 0) balance_seed_ = 0;
+            has_changes_ = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Checkpoints")) {
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Save the best validation checkpoint", &save_best_checkpoint_)) has_changes_ = true;
+        ImGui::TextDisabled("Saved whenever the validation loss improves.");
+        Field("Early stop patience");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##early_stopping_patience", &early_stopping_patience_)) {
+            early_stopping_patience_ = std::clamp(early_stopping_patience_, 0, 100000);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("epochs without improvement; 0 = off");
+        Field("Checkpoint folder");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) has_changes_ = true;
+        ImGui::TextDisabled("Empty uses the project's checkpoints folder (.cyxwiz/checkpoints without a project).");
+        Field("Start from");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_,
+                             sizeof(initialize_from_checkpoint_)))
+            has_changes_ = true;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Optional: a checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights "
+                            "are this model's starting point and every layer keeps training on this data (full "
+                            "fine-tuning; nothing is frozen). Optimizer, schedule, epochs and seed start fresh. Layer "
+                            "names, shapes and the tokenizer must match. Empty = random weights.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Advanced")) {
+        ImGui::Spacing();
+        Field("Worker threads");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##num_workers", &num_workers_)) {
+            num_workers_ = std::clamp(num_workers_, 0, 64);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(num_workers_ > 0 ? "per-batch workers where supported"
+                                             : "0 = batches load on the training thread");
+        Field("Pin memory");
+        ImGui::TextColored(pin_memory_requested_ ? t.warning : t.text_dim, "%s",
+                           pin_memory_requested_ ? "not supported on this device (this graph asks for it; ignored)"
+                                                 : "not supported on this device");
+        Field("Report every");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##log_interval", &log_interval_)) {
+            log_interval_ = std::clamp(log_interval_, 0, 100000);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("batches; 0 = only the first and the last");
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Generate samples during training", &generation_preview_enabled_)) has_changes_ = true;
+        ImGui::BeginDisabled(!generation_preview_enabled_);
+        Field("Every");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##gen_every", &generation_preview_every_epochs_)) has_changes_ = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("completed epochs");
+        Field("New tokens");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##gen_tokens", &generation_preview_max_new_tokens_)) has_changes_ = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("1 to 128");
+        Field("Prompts");
+        if (ImGui::InputTextMultiline("##gen_prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_),
+                                      ImVec2(-1, 100)))
+            has_changes_ = true;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("One prompt per line (1 to 8); for multi-line chat prompts put a line of --- between "
+                            "prompts (an empty line before --- keeps a trailing newline). Greedy previews use the "
+                            "causal token-window vocabulary; training pauses between epochs; results go to the "
+                            "Console and the run's artifacts.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndDisabled();
+        ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Checkpointing");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Save best validation checkpoint", &save_best_checkpoint_)) {
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Runtime-supported: saves the best validation epoch when validation loss improves.");
-
-    ImGui::Text("Early stop patience:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##early_stopping_patience", &early_stopping_patience_)) {
-        if (early_stopping_patience_ < 0) early_stopping_patience_ = 0;
-        if (early_stopping_patience_ > 100000) early_stopping_patience_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Runtime-supported: 0 disables early stopping.");
-
-    ImGui::Text("Checkpoint dir:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) {
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Empty uses the active project's checkpoints folder; without a project, runtime uses .cyxwiz/checkpoints.");
-
-    ImGui::Text("Start from:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_))) {
-        has_changes_ = true;
-    }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("  Optional: a checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights are this "
-                        "model's starting point and every layer keeps training on this data (full fine-tuning; nothing is "
-                        "frozen). Optimizer, schedule, epochs and seed start fresh. Layer names, shapes and the tokenizer "
-                        "must match. Empty = random weights.");
+    ImGui::TextColored(t.text_faint, "This node reads the Data Split's partitions and is the one place batching is "
+                                     "set: a batch size on the optimizer is ignored (a warning says so at training "
+                                     "start).");
     ImGui::PopTextWrapPos();
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Performance");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Worker threads:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##num_workers", &num_workers_)) {
-        if (num_workers_ < 0) num_workers_ = 0;
-        if (num_workers_ > 64) num_workers_ = 64;
-        has_changes_ = true;
-    }
-    if (num_workers_ > 0) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "  Used as synchronous per-batch workers where supported; Prefetch controls async queuing.");
-    } else {
-        ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
-    }
-
-    ImGui::Spacing();
-    ImGui::Text("Prefetch:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##prefetch_factor", &prefetch_factor_)) {
-        if (prefetch_factor_ < 0) prefetch_factor_ = 0;
-        if (prefetch_factor_ > 64) prefetch_factor_ = 64;
-        has_changes_ = true;
-    }
-    if (prefetch_factor_ > 0) {
-        ImGui::TextDisabled("  Bounded async queue depth for Arrow/Parquet batchers.");
-    } else {
-        ImGui::TextDisabled("  0 = disable async prefetch.");
-    }
-
-    ImGui::Spacing();
-    ImGui::Text("Pin memory:");
-    ImGui::SameLine(130);
-    ImGui::TextDisabled(pin_memory_requested_ ? "unsupported (saved true)" : "unsupported");
-    if (pin_memory_requested_) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "  This loaded graph requests pin_memory=true, but current batchers ignore it.");
-    } else {
-        ImGui::TextDisabled("  Serialized for compatibility only; no pinned host-memory transfer backend exists yet.");
-    }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Logging");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Report every:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##log_interval", &log_interval_)) {
-        if (log_interval_ < 0) log_interval_ = 0;
-        if (log_interval_ > 100000) log_interval_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(batches; 0 samples first/final only)");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextDisabled(
-        "This node consumes the Partitions Dataset contract and is the single\n"
-        "source of truth for batching. If batch_size is also set on the optimizer\n"
-        "node, the DataLoader value wins and a warning is logged at training start.");
 }
 
 // ==================== DataSplitDialog ====================
@@ -1513,147 +1506,146 @@ void DataSplitDialog::RefreshResolvedManifest() {
 }
 
 void DataSplitDialog::RenderContent() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    const bool legacy_contract = node_ &&
-        node_->parameters.count("data_boundary_pin_contract") > 0 &&
-        node_->parameters.at("data_boundary_pin_contract") == "legacy.v1";
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    const bool legacy_contract = node_ && node_->parameters.count("data_boundary_pin_contract") > 0 &&
+                                 node_->parameters.at("data_boundary_pin_contract") == "legacy.v1";
     if (legacy_contract) {
-        ImGui::PushStyleColor(ImGuiCol_Text, cyxwiz::ui::CurrentTokens().warning);
-        ImGui::TextWrapped(
-            "Legacy Data Boundary v1 is preserved. Its two tensor inputs and six Train/Val/Test outputs remain connected exactly as saved.");
-        ImGui::PopStyleColor();
-        ImGui::TextWrapped(
-            "Explicit migration converts Data Input -> Data Split -> Data Loader to Dataset v2. Duplicate legacy label links are removed and direct label targets are rerouted from Data Loader.Labels. Migration is refused if Val/Test canvas branches or an ambiguous boundary would lose meaning.");
-        ImGui::BeginDisabled(node_editor_ == nullptr);
-        if (ImGui::Button("Migrate graph to Dataset v2")) {
+        // Only an old graph shows this.
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.caution, "This graph uses the old Data Boundary v1: its two tensor inputs and six "
+                                      "Train / Val / Test outputs stay connected as saved.");
+        ImGui::TextDisabled("Migrating turns Data Input -> Data Split -> Data Loader into Dataset v2: duplicate "
+                            "label links go and label targets read Data Loader.Labels. It is refused when Val / Test "
+                            "canvas branches or an ambiguous boundary would lose meaning.");
+        ImGui::PopTextWrapPos();
+        if (cyxwiz::ui::SecondaryButton("Migrate graph to Dataset v2", node_editor_ != nullptr,
+                                        "Open the dialog from the canvas", cyxwiz::ui::ButtonSize::Small)) {
             const auto result = node_editor_->MigrateLegacyDataBoundary();
             migration_status_ = result.message;
             if (result.success) resolution_attempted_ = false;
         }
-        ImGui::EndDisabled();
-        if (!migration_status_.empty()) {
-            ImGui::TextWrapped("%s", migration_status_.c_str());
-        }
-        ImGui::Separator();
+        if (!migration_status_.empty()) ImGui::TextWrapped("%s", migration_status_.c_str());
+        ImGui::Spacing();
     }
 
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Split Ratios");
-    ImGui::Separator();
+    // The three parts as one bar, with their rows from the graph's data.
+    const auto upstream = node_ ? FindUpstreamData(node_editor_, node_->id) : UpstreamData{};
+    const float sum = train_ratio_ + val_ratio_ + test_ratio_;
+    const float norm = sum > 0.001f ? sum : 1.0f;
+    const float parts[3] = {train_ratio_ / norm, val_ratio_ / norm, test_ratio_ / norm};
+    const char* names[3] = {"train", "val", "test"};
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float height = ImGui::GetFrameHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    float x = at.x;
+    auto* draw = ImGui::GetWindowDrawList();
+    std::string unfitted;  // parts too narrow for their label: listed under the bar
+    for (int k = 0; k < 3; ++k) {
+        const float w = width * parts[k];
+        if (w <= 0.5f) continue;
+        draw->AddRectFilled(ImVec2(x, at.y), ImVec2(x + w - 2.0f, at.y + height),
+                            ImGui::GetColorU32(cyxwiz::ui::WithAlpha(t.series[k], 0.55f)), 4.0f);
+        std::string label = names[k];
+        if (k == 0) label += " " + std::to_string(static_cast<int>(std::lround(parts[k] * 100.0f))) + "%";
+        if (upstream.rows > 0)
+            label += (k == 0 ? " \xC2\xB7 about " : " ") +
+                     GroupDigits(static_cast<int64_t>(std::llround(upstream.rows * parts[k])));
+        const ImVec2 size = ImGui::CalcTextSize(label.c_str());
+        if (size.x + 12.0f < w)
+            draw->AddText(ImVec2(x + 6.0f, at.y + (height - size.y) * 0.5f), ImGui::GetColorU32(t.text_bright),
+                          label.c_str());
+        else
+            unfitted += (unfitted.empty() ? "" : "   ") + label;
+        x += w;
+    }
+    ImGui::Dummy(ImVec2(width, height));
+    if (!unfitted.empty()) ImGui::TextColored(t.text_dim, "%s", unfitted.c_str());
     ImGui::Spacing();
 
     bool changed = false;
-    ImGui::Text("Train:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Train");
+    ImGui::SetNextItemWidth(220);
     if (ImGui::SliderFloat("##train", &train_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
-
-    ImGui::Text("Validation:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Validation");
+    ImGui::SetNextItemWidth(220);
     if (ImGui::SliderFloat("##val", &val_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
-
-    ImGui::Text("Test:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Test");
+    ImGui::SetNextItemWidth(220);
     if (ImGui::SliderFloat("##test", &test_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
-
     if (changed) has_changes_ = true;
+    if (std::abs(sum - 1.0f) > 0.01f)
+        ImGui::TextColored(t.warning, "Sum %.2f (Apply scales the three to 1.00)", sum);
+    else
+        ImGui::TextColored(t.text_dim, "Sum %.2f", sum);
 
-    float sum = train_ratio_ + val_ratio_ + test_ratio_;
-    ImGui::Spacing();
-    if (std::abs(sum - 1.0f) > 0.01f) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "Sum = %.2f (will be normalized to 1.00 on Apply)", sum);
-    } else {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "Sum = %.2f", sum);
-    }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Options");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Seed:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Seed");
+    ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt("##seed", &seed_)) has_changes_ = true;
-    ImGui::TextDisabled("  Controls the shuffled order used when partitioning.");
+    ImGui::SameLine();
+    ImGui::TextDisabled("the shuffled order the parts are cut from");
+    if (ImGui::Checkbox("Stratified: keep each class's share in every part", &stratified_)) has_changes_ = true;
 
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Stratified split", &stratified_)) has_changes_ = true;
-    ImGui::TextDisabled("  Preserve class distribution across splits (classification only).");
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Resolved Partition Manifest");
-    ImGui::Separator();
     ImGui::Spacing();
     if (!resolution_attempted_) RefreshResolvedManifest();
-    if (ImGui::Button("Refresh from graph")) RefreshResolvedManifest();
+    const auto& partitions = resolved_partitions_;
+    if (partitions.train.IsSupplied()) {
+        ImGui::TextColored(t.text_dim, "From the graph:");
+        ImGui::SameLine();
+        std::string from = partitions.train.dataset_name;
+        if (upstream.rows > 0) from += ", " + GroupDigits(upstream.rows) + " samples";
+        ImGui::TextUnformatted(from.c_str());
+    } else {
+        ImGui::TextColored(t.warning, "%s", resolution_status_.c_str());
+    }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", resolution_status_.c_str());
+    if (cyxwiz::ui::LinkButton("Refresh from graph")) RefreshResolvedManifest();
 
-    if (resolved_partitions_.train.IsSupplied()) {
-        const auto& partitions = resolved_partitions_;
+    if (partitions.train.IsSupplied() && ImGui::TreeNodeEx("Details (the resolved manifest)")) {
         const auto& manifest = partitions.manifest;
         const auto rows_text = [](int64_t rows) {
-            return rows >= 0 ? std::to_string(rows) : std::string("resolved at batching");
+            return rows >= 0 ? GroupDigits(rows) : std::string("resolved at batching");
         };
         const auto short_id = [](const std::string& value) {
-            return value.empty() ? std::string("unavailable")
-                                 : value.substr(0, std::min<size_t>(12, value.size()));
+            return value.empty() ? std::string("unavailable") : value.substr(0, std::min<size_t>(12, value.size()));
         };
-        ImGui::TextWrapped("Train: %s | external | %s rows",
-                           partitions.train.dataset_name.c_str(),
-                           rows_text(manifest.train_rows).c_str());
-        ImGui::TextWrapped("Dev: %s | %s | %s rows | schema %s",
-                           (partitions.dev.IsSupplied()
-                                ? partitions.dev.dataset_name
-                                : partitions.train.dataset_name).c_str(),
-                           cyxwiz::PartitionOriginName(manifest.dev_origin),
-                           rows_text(manifest.dev_rows).c_str(),
-                           cyxwiz::PartitionCompatibilityName(
-                               manifest.dev_compatibility));
-        ImGui::TextWrapped("Test: %s | %s | %s rows | schema %s",
-                           (partitions.test.IsSupplied()
-                                ? partitions.test.dataset_name
-                                : partitions.train.dataset_name).c_str(),
-                           cyxwiz::PartitionOriginName(manifest.test_origin),
-                           rows_text(manifest.test_rows).c_str(),
-                           cyxwiz::PartitionCompatibilityName(
-                               manifest.test_compatibility));
-        ImGui::TextDisabled("Dev resolution: %s",
-                            manifest.dev_resolution_reason.c_str());
-        ImGui::TextDisabled("Test resolution: %s",
-                            manifest.test_resolution_reason.c_str());
-        ImGui::TextWrapped(
-            "Policy: %s, seed %d, stratified %s | manifest %s",
-            cyxwiz::PartitionSplitMethodName(manifest.split_method),
-            manifest.seed,
-            manifest.stratified ? "yes" : "no",
-            short_id(manifest.manifest_fingerprint).c_str());
-        ImGui::TextWrapped(
-            "Source IDs: train %s | dev %s | test %s | feature schema %s",
-            short_id(manifest.training_source_fingerprint).c_str(),
-            short_id(manifest.validation_source_fingerprint).c_str(),
-            short_id(manifest.test_source_fingerprint).c_str(),
-            short_id(manifest.feature_schema_fingerprint).c_str());
-        ImGui::TextDisabled(
-            "Leakage: Dev %s, Test %s. External-role overlap checks run again at training preflight.",
-            cyxwiz::PartitionLeakageStatusName(manifest.dev_leakage),
-            cyxwiz::PartitionLeakageStatusName(manifest.test_leakage));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", resolution_status_.c_str());
+        ImGui::Text("Train: %s, external, %s rows", partitions.train.dataset_name.c_str(),
+                    rows_text(manifest.train_rows).c_str());
+        ImGui::Text("Validation: %s, %s, %s rows, schema %s",
+                    (partitions.dev.IsSupplied() ? partitions.dev.dataset_name
+                                                   : partitions.train.dataset_name).c_str(),
+                    cyxwiz::PartitionOriginName(manifest.dev_origin), rows_text(manifest.dev_rows).c_str(),
+                    cyxwiz::PartitionCompatibilityName(manifest.dev_compatibility));
+        ImGui::Text("Test: %s, %s, %s rows, schema %s",
+                    (partitions.test.IsSupplied() ? partitions.test.dataset_name
+                                                   : partitions.train.dataset_name).c_str(),
+                    cyxwiz::PartitionOriginName(manifest.test_origin), rows_text(manifest.test_rows).c_str(),
+                    cyxwiz::PartitionCompatibilityName(manifest.test_compatibility));
+        ImGui::TextDisabled("Validation: %s", manifest.dev_resolution_reason.c_str());
+        ImGui::TextDisabled("Test: %s", manifest.test_resolution_reason.c_str());
+        ImGui::Text("Policy: %s, seed %d, stratified %s, manifest %s",
+                    cyxwiz::PartitionSplitMethodName(manifest.split_method), manifest.seed,
+                    manifest.stratified ? "yes" : "no", short_id(manifest.manifest_fingerprint).c_str());
+        ImGui::Text("Source ids: train %s, validation %s, test %s, feature schema %s",
+                    short_id(manifest.training_source_fingerprint).c_str(),
+                    short_id(manifest.validation_source_fingerprint).c_str(),
+                    short_id(manifest.test_source_fingerprint).c_str(),
+                    short_id(manifest.feature_schema_fingerprint).c_str());
+        ImGui::TextDisabled("Leakage: validation %s, test %s. Overlap with external roles is checked again before "
+                            "training.",
+                            cyxwiz::PartitionLeakageStatusName(manifest.dev_leakage),
+                            cyxwiz::PartitionLeakageStatusName(manifest.test_leakage));
+        ImGui::PopTextWrapPos();
+        ImGui::TreePop();
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextDisabled(
-        "If no DataSplit node is in the graph, training uses defaults (80/10/10).\n"
-        "This node resolves partition policy for training. Older saved graphs\n"
-        "may show Train/Val/Test tensor output pins as legacy compatibility\n"
-        "pins; runtime validation/test paths are created from resolved dataset\n"
-        "partitions, not from separate canvas branches.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Without a Data Split node training uses 80/10/10. This node sets how the data "
+                                     "is partitioned; validation and test come from these partitions, not from canvas "
+                                     "branches (old graphs may still show Train / Val / Test output pins).");
+    ImGui::PopTextWrapPos();
 }
 
 } // namespace gui
