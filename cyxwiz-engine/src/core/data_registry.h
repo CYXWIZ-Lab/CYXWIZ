@@ -571,7 +571,8 @@ public:
                                        bool use_threads = true,
                                        const CsvProgressCallback& progress_callback = {},
                                        std::string* load_status = nullptr,
-                                       const std::string& cache_directory = {});
+                                       const std::string& cache_directory = {},
+                                       char quote_char = '"');
 
     /**
      * Parquet loader with the same dispatch as LoadTabularCSV (TOFIX154): a
@@ -614,7 +615,8 @@ public:
                                                         const std::vector<std::string>& selected_columns = {},
                                                         char decimal_point = '.',
                                                         bool use_threads = true,
-                                                        const CsvProgressCallback& progress_callback = {});
+                                                        const CsvProgressCallback& progress_callback = {},
+                                                        char quote_char = '"');
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);

@@ -125,39 +125,9 @@ void DataInputDialog::RenderLimitRowsTab() {
     ImGui::TextDisabled("To change how many preview rows are displayed per page, use Preview > Rows/page.");
     ImGui::TextDisabled(
         "To include or exclude columns by name, use the Transformation tab.");
+    ImGui::TextDisabled(
+        "To keep only some rows, filter them in Data Studio's Prepare step or with a Filter or SQL node.");
     ImGui::PopTextWrapPos();
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Filter rows (SQL WHERE clause):");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextMultiline("##where", where_clause_, sizeof(where_clause_), ImVec2(0, 60))) {
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("Example: age > 18 AND status = 'active'");
-}
-
-void DataInputDialog::RenderEncodingTab() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Character Encoding");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const char* encodings[] = {"Auto-detect", "UTF-8", "UTF-16", "ASCII", "ISO-8859-1", "Windows-1252", "UTF-8 with BOM"};
-    ImGui::Text("File encoding:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::Combo("##encoding", &encoding_idx_, encodings, 7)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Auto-detect will scan the first bytes of the file to determine encoding.");
 }
 
 } // namespace gui

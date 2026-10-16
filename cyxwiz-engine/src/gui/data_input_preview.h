@@ -19,6 +19,7 @@ struct TabularPreviewSource {
     std::string missing_value_tokens;
     int skip_rows = 0;
     int max_rows = 0;
+    char quote_char = '"';
 };
 
 // The applied file_path may be stored project-relative; it is resolved
@@ -48,7 +49,8 @@ PreviewTable LoadDelimitedPreview(
     char delimiter,
     int detected_type,
     int skip_rows = 0,
-    int max_lines = 25);
+    int max_lines = 25,
+    char quote_char = '"');
 
 LabelDistribution ComputeLabelDistribution(
     const std::vector<std::string>& columns,

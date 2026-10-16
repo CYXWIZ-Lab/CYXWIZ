@@ -63,6 +63,12 @@ public:
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
     virtual bool CanApply() const { return true; }
+    // Why OK and Apply are off (busy, or CanApply false), or nullptr while
+    // they are on; shown on hover.
+    virtual const char* ApplyBlockedReason() const;
+    // True for a dialog that sets has_changes_ on every edit: Apply then
+    // stays off while nothing changed.
+    virtual bool TracksChanges() const { return false; }
     // False for dialogs that draw their own actions (the SQL Workbench):
     // the base then gives RenderContent the whole window, with no OK /
     // Cancel / Apply row.
@@ -79,8 +85,9 @@ public:
 
 protected:
     virtual void RenderContent() = 0;
-    // The row under the content: OK / Cancel / Apply by default. A dialog
-    // with its own footer overrides both; should_close asks Render to close.
+    // The row under the content: Cancel, Apply, then OK in the Engine's
+    // buttons. A dialog with its own footer overrides both; should_close asks
+    // Render to close.
     virtual float FooterHeight() const;
     virtual void RenderFooter(bool& should_close);
     virtual void OnClose() {}
@@ -213,15 +220,10 @@ private:
 };
 
 /**
- * DataInputDialog - Universal smart data input configuration (KNIME-style)
- *
- * Comprehensive data source support:
- * - File: Tabular (CSV, Excel, Parquet), Image, Audio, Video
- * - ML Dataset: MNIST, CIFAR, ImageNet, HuggingFace, Kaggle
- * - Database: SQLite, PostgreSQL, MySQL
- * - Cloud: S3, GCS, Azure Blob
- *
- * KNIME-style tabbed interface with live preview
+ * DataInputDialog - loads a file or folder for the graph: a table (CSV,
+ * Parquet, Feather, Arrow, ZIP text documents, HDF5 inspection), text, a
+ * token-tagging table, a time series, an image folder or an audio folder.
+ * Databases come in through Data Studio's SQL Workbench.
  */
 class DataInputDialog : public NodeConfigDialog {
 public:
@@ -232,6 +234,11 @@ public:
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
     bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
     bool CanApply() const override { return !IsHdf5Source(); }
+    const char* ApplyBlockedReason() const override {
+        if (IsBusy()) return "Wait for the load to finish";
+        if (IsHdf5Source()) return "An HDF5 file can be inspected here; loading it is not built yet";
+        return nullptr;
+    }
     // Train loads a Data Input a reopened project has not loaded through a
     // dialog it never shows (the same Apply as OK): the load's result is
     // taken here each frame, as RenderContent does for a shown dialog.
@@ -243,10 +250,6 @@ protected:
     void OnClose() override;
 
 private:
-    // Data source types
-    using SourceType = gui::data_input::SourceType;
-    using MLDatasetType = gui::data_input::MLDatasetType;
-    using DatabaseType = gui::data_input::DatabaseType;
     using ImageLayout = gui::data_input::ImageLayout;
     using AudioLayout = gui::data_input::AudioLayout;
     using TextLayout = gui::data_input::TextLayout;
@@ -258,11 +261,7 @@ private:
     using FileCategory = cyxwiz::loaders::FileCategory;
 
     // Main tab renderers
-    void RenderSourceSelector();
     void RenderFileSource();
-    void RenderMLDatasetSource();
-    void RenderDatabaseSource();
-    void RenderCloudSource();
     void RenderOptionsPanel();
     void RenderPreviewPanel();
     void RenderDatasetSummaryPanel();
@@ -292,26 +291,13 @@ private:
     void ApplySequenceSettings();
     void RenderImageOptions();
     void RenderAudioOptions();
-    void RenderVideoOptions();
     void RenderTextOptions();
 
     // KNIME-style tabs
     void RenderTransformationTab();
     void RenderLimitRowsTab();
-    void RenderEncodingTab();
     void RenderMemoryTab();
     void RenderAuditTab();
-    void RenderMLDatasetOptions();
-
-    // ML Dataset sub-renderers
-    void RenderBuiltinDatasets();
-    void RenderImageFolderPicker();
-    void RenderHuggingFaceConfig();
-    void RenderKaggleConfig();
-
-    // Database sub-renderers
-    void RenderDatabaseConnection();
-    void RenderSQLQuery();
 
     // Preview renderers
     void RenderTabularPreview();
@@ -332,11 +318,8 @@ private:
     void UpdateRAMEstimate();
     void BrowseFile();
     void BrowseFolder();
-    bool IsApplySupported() const;
     bool IsPreviewSupported() const;
-    const char* UnsupportedApplyMessage() const;
     const char* PreviewUnavailableMessage() const;
-    void MarkApplyUnsupported(const char* message);
     std::string CurrentSourcePath() const;
     std::string CurrentSourceLabel() const;
     std::string CurrentApplySummary() const;
@@ -344,10 +327,7 @@ private:
     const char* GetFileTypeName() const;
 
     // STATE: Source selection
-    SourceType source_type_ = SourceType::File;
     FileCategory file_category_ = FileCategory::Tabular;
-    MLDatasetType ml_dataset_type_ = MLDatasetType::MNIST;
-    DatabaseType database_type_ = DatabaseType::SQLite;
 
     // STATE: File source
     char archive_member_[65537] = {};
@@ -355,7 +335,6 @@ private:
     char folder_path_[512] = {};
     // 0=Auto, 1=CSV, 2=TSV, 3=JSON, 4=Parquet, 5=Excel, 6=HDF5, 7=Feather, 8=Arrow, 9=TXT, 10=ARFF
     int detected_type_ = 0;
-    int encoding_idx_ = 0;
     size_t file_size_ = 0;
 
     // STATE: Tabular format options
@@ -412,27 +391,6 @@ private:
     char audio_filename_col_[64] = {};   // empty = auto-detect
     char audio_label_col_[64] = {};      // empty = auto-detect
 
-    // STATE: ML Dataset options
-    char dataset_name_[128] = "mnist";
-    char dataset_subset_[64] = "";
-    char cache_dir_[512] = "";
-    char hf_token_[256] = "";
-    char kaggle_slug_[256] = "";
-
-    // STATE: Database options
-    char db_host_[128] = "localhost";
-    int db_port_ = 5432;
-    char db_name_[128] = "";
-    char db_user_[64] = "";
-    char db_password_[128] = "";
-    char db_file_[512] = "";
-    char sql_query_[2048] = "SELECT * FROM table_name LIMIT 1000";
-
-    // STATE: Cloud options
-    char cloud_bucket_[256] = "";
-    char cloud_path_[512] = "";
-    char cloud_credentials_[512] = "";
-
     // STATE: Column selection
     bool select_all_columns_ = true;
     std::vector<std::string> available_columns_;
@@ -450,7 +408,6 @@ private:
     // STATE: Row filter
     int skip_rows_ = 0;
     int max_rows_ = 0;
-    char where_clause_[256] = {};
 
     // (Removed: memory_policy_, auto_chunk_size_, chunk_size_kb_, lru_chunks_,
     //  prefetch_enabled_. These were remnants of the pre-Arrow streaming/LRU

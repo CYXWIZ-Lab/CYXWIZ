@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -247,6 +248,50 @@ int main() {
               auto_tsv.rows == std::vector<std::vector<std::string>>{{"1", "2"}},
           "Auto TSV preview must use tabs, not the default comma");
     fs::remove(tsv_path);
+
+    // The quote character (TOFIX129 B-3): a single quote groups the comma,
+    // an empty quote reads quotes as text; the preview, the applied-settings
+    // match and the registry load all follow it.
+    const fs::path single_quote_path = fs::temp_directory_path() / "cyxwiz_single_quote.csv";
+    {
+        std::ofstream csv(single_quote_path, std::ios::binary | std::ios::trunc);
+        csv << "text,label\n'a, b',x\n\"c\",y\n";
+    }
+    const auto single = gui::data_input::LoadDelimitedPreview(
+        single_quote_path.string(), true, ',', 1, 0, 25, '\'');
+    Check(single.error.empty() &&
+              single.rows == std::vector<std::vector<std::string>>{{"a, b", "x"}, {"\"c\"", "y"}},
+          "a single-quote preview groups 'a, b' and keeps double quotes as text");
+    {
+        std::ofstream csv(single_quote_path, std::ios::binary | std::ios::trunc);
+        csv << "text,label\n\"5\" screen,x\n";
+    }
+    const auto unquoted = gui::data_input::LoadDelimitedPreview(
+        single_quote_path.string(), true, ',', 1, 0, 25, '\0');
+    Check(unquoted.error.empty() &&
+              unquoted.rows == std::vector<std::vector<std::string>>{{"\"5\" screen", "x"}},
+          "an empty quote character reads quotes as ordinary text");
+    {
+        const gui::data_input::TabularPreviewSource source{
+            single_quote_path.string(), 1, true, ",", '.', "", 0, 0, '\''};
+        std::map<std::string, std::string> applied{
+            {"file_path", source.path}, {"file_type", "csv"}, {"has_header", "true"},
+            {"delimiter", ","}, {"decimal_point", "."}, {"missing_value_tokens", ""},
+            {"skip_rows", "0"}, {"max_rows", "0"}, {"quote_char", "'"}};
+        Check(gui::data_input::MatchesAppliedTabularPreview(applied, source),
+              "the applied quote character matches the dialog's");
+        applied.erase("quote_char");
+        Check(!gui::data_input::MatchesAppliedTabularPreview(applied, source),
+              "a node without quote_char was applied with '\"', so a single-quote source does not match");
+    }
+    {
+        std::ofstream csv(single_quote_path, std::ios::binary | std::ios::trunc);
+        csv << "\xEF\xBB\xBFtext,label\nhello,x\n";
+    }
+    const auto bom = gui::data_input::LoadDelimitedPreview(single_quote_path.string(), true, ',', 1);
+    Check(bom.error.empty() && bom.columns == std::vector<std::string>({"text", "label"}),
+          "a UTF-8 byte order mark is not part of the first column's name");
+    fs::remove(single_quote_path);
 
     const fs::path quoted_csv_path =
         fs::temp_directory_path() / "cyxwiz_quoted_preview.csv";

@@ -1163,11 +1163,6 @@ void WordEmbeddingsDialog::RenderOutputs() {
     EndCard();
 }
 
-float WordEmbeddingsDialog::FooterHeight() const {
-    const auto& t = ui::CurrentTokens();
-    return ImGui::GetFontSize() + t.button_padding.y * 2.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f;
-}
-
 void WordEmbeddingsDialog::RenderFooter(bool& should_close) {
     ImGui::Dummy(ImVec2(0, 2.0f));
     const float spacing = ImGui::GetStyle().ItemSpacing.x;

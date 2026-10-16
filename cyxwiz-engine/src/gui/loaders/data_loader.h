@@ -53,7 +53,6 @@ enum class FileCategory {
     Tabular,
     Image,
     Audio,
-    Video,
     Text,
     TimeSeries,
 };
@@ -107,6 +106,7 @@ struct ApplyContext {
     bool has_header = true;
     char delimiter = ',';
     char decimal_point = '.';
+    char quote_char = '"';               // '\0' = no quoting
     // Data Input already runs on an AsyncTaskManager worker. Keep nested
     // Arrow CSV parsing off for interactive loads so rendering retains CPU.
     bool use_threads = false;
@@ -351,9 +351,7 @@ public:
 //
 // TabularLoader (also serving the TimeSeries category — same load path,
 // different params) is registered first; TextLoader, ImageLoader, and
-// AudioLoader follow. Video is deliberately unregistered — the guard at
-// the top of DataInputDialog::Apply fails video loads loudly before
-// reaching the dispatch.
+// AudioLoader follow.
 DataLoader* GetByCategory(FileCategory cat);
 
 // Resolves a registered dataset name back to its loader. Uses

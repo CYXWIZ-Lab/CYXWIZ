@@ -699,6 +699,76 @@ void CheckPlotLaneRunsOnlyTheClosure() {
     std::cout << "plot lane: closure only, feeder result found (" << it->second << ")\n";
 }
 
+void CheckDataInputQuoteCharacter() {
+    // TOFIX129 B-3: Data Input's quote character reaches every CSV reader,
+    // and a UTF-8 byte order mark is not part of the first column's name.
+    namespace fs = std::filesystem;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const fs::path csv_path = fs::temp_directory_path() / "cyxwiz_quote_char.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "text,label\n'a, b',x\n'c',y\n";
+    }
+    const auto first_text = [](const std::shared_ptr<arrow::Table>& table) {
+        const auto column = table ? table->GetColumnByName("text") : nullptr;
+        const auto value = column ? column->GetScalar(0) : arrow::Result<std::shared_ptr<arrow::Scalar>>();
+        return value.ok() ? (*value)->ToString() : std::string("<none>");
+    };
+
+    auto in_memory = registry.LoadCSVToArrow(
+        csv_path.string(), "quote_char_memory", true, ',', 0, 0,
+        cyxwiz::DefaultTabularMissingValueTokens(), {}, '.', false, {}, '\'');
+    Check(in_memory && in_memory->GetNumRows() == 2 && in_memory->GetNumColumns() == 2 &&
+              first_text(in_memory->GetArrowTable()) == "a, b",
+          "quote character ' reads 'a, b' as one value in memory: " +
+              (in_memory ? first_text(in_memory->GetArrowTable()) : std::string("not loaded")));
+    registry.UnregisterTabularDataset(in_memory->GetName());
+
+    registry.UnregisterTabularDataset("quote_char_disk");
+    const auto disk = registry.LoadTabularCSV(
+        csv_path.string(), "quote_char_disk", true, ',', 0, 0, true,
+        cyxwiz::DefaultTabularMissingValueTokens(), {}, '.', false, {}, nullptr, {}, '\'');
+    auto parquet = registry.GetParquetBackedDataset("quote_char_disk");
+    Check(disk == cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked && parquet &&
+              first_text(parquet->ReadRowGroup(0)) == "a, b",
+          "quote character ' reaches the Parquet conversion");
+    const std::string disk_cache = parquet ? parquet->GetFilePath() : std::string{};
+    registry.UnregisterTabularDataset("quote_char_disk");
+    parquet.reset();
+
+    nlohmann::json pipeline;
+    pipeline["nodes"] = nlohmann::json::array({{
+        {"id", 7101}, {"type", "DataInput"}, {"name", "Quoted"},
+        {"parameters", {{"source_type", "file"}, {"file_path", csv_path.string()}, {"type", "csv"},
+                        {"has_header", "true"}, {"delimiter", ","}, {"decimal_point", "."},
+                        {"quote_char", "'"}, {"skip_rows", "0"}, {"max_rows", "0"},
+                        {"missing_value_tokens", ""}, {"selected_columns", "[]"},
+                        {"force_disk_backed", "false"}}}}});
+    pipeline["links"] = nlohmann::json::array();
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(pipeline.dump()),
+          "a DataInput with quote_char runs: " + executor.GetLastError());
+    const auto result = executor.NodeResults().find(7101);
+    const auto loaded = result == executor.NodeResults().end()
+        ? nullptr : registry.GetArrowDataset(result->second);
+    Check(loaded && loaded->GetNumColumns() == 2 && first_text(loaded->GetArrowTable()) == "a, b",
+          "the pipeline executor applies the node's quote_char");
+
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "\xEF\xBB\xBFtext,label\nhello,x\n";
+    }
+    auto bom = registry.LoadCSVToArrow(csv_path.string(), "quote_char_bom");
+    Check(bom && bom->GetSchema()->field(0)->name() == "text",
+          "a UTF-8 byte order mark is skipped by the CSV load");
+    registry.UnregisterTabularDataset(bom->GetName());
+
+    std::error_code error;
+    fs::remove(csv_path, error);
+    if (!disk_cache.empty()) fs::remove(disk_cache, error);
+    std::cout << "data input: quote character in memory, on disk and in the executor; BOM skipped\n";
+}
+
 void CheckPipelineDataInputUsesProjectIngestionCache() {
     namespace fs = std::filesystem;
 
@@ -2695,6 +2765,7 @@ int main(int argc, char** argv) {
     CheckValidationBadSchemaRoutingCoverage();
     CheckTrack70RowAndColumnLimits();
     CheckPipelineDataInputUsesProjectIngestionCache();
+    CheckDataInputQuoteCharacter();
     CheckPlotLaneRunsOnlyTheClosure();
     CheckCustomerSegmentsDemoGraph();
 

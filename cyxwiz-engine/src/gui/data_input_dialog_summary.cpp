@@ -119,12 +119,7 @@ void DataInputDialog::RenderDatasetSummaryPanel() {
 
     RenderSequenceSummary();
 
-    if (IsApplySupported()) {
-        ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
-    } else {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error,
-                           "Apply path: %s", CurrentApplySummary().c_str());
-    }
+    ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
 }
 
 } // namespace gui

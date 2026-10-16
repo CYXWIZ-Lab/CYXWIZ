@@ -501,29 +501,4 @@ void EmbeddingDialog::RenderAdvancedTab() {
     ImGui::Unindent(kLabelWidth);
 }
 
-float EmbeddingDialog::FooterHeight() const {
-    const auto& t = ui::CurrentTokens();
-    return ImGui::GetFontSize() + t.button_padding.y * 2.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f;
-}
-
-void EmbeddingDialog::RenderFooter(bool& should_close) {
-    ImGui::Dummy(ImVec2(0, 2.0f));
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float width = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) +
-                        ui::ButtonWidth("Apply", ui::ButtonSize::Regular) +
-                        ui::ButtonWidth("OK", ui::ButtonSize::Regular) + spacing * 2.0f;
-    ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width));
-    if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) {
-        Reset();
-        should_close = true;
-    }
-    ImGui::SameLine();
-    if (ui::SecondaryButton("Apply", has_changes_, "Nothing changed", ui::ButtonSize::Regular)) Apply();
-    ImGui::SameLine();
-    if (ui::PrimaryButton("OK")) {
-        Apply();
-        should_close = true;
-    }
-}
-
 }  // namespace gui

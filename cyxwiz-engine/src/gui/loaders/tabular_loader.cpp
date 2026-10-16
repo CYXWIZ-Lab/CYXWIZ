@@ -193,6 +193,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const bool has_header        = ctx.has_header;
     const char delim             = (file_type == "tsv") ? '\t' : ctx.delimiter;
     const char decimal_point     = ctx.decimal_point;
+    const char quote_char        = ctx.quote_char;
     const bool use_threads       = ctx.use_threads;
     const auto missing_tokens    =
         cyxwiz::ParseMissingValueTokens(ctx.missing_value_tokens);
@@ -222,7 +223,8 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading " + name,
-        [path, name, file_type, archive_member, json_lines, has_header, delim, decimal_point, use_threads,
+        [path, name, file_type, archive_member, json_lines, has_header, delim, decimal_point, quote_char,
+         use_threads,
          missing_tokens, skip_rows, max_rows, force_disk, label_col,
          selected_columns, ingestion_cache_directory, state]
         (cyxwiz::LambdaTask& task) {
@@ -260,7 +262,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                               path, name, has_header, delim, skip_rows, max_rows,
                               force_disk, missing_tokens, selected_columns,
                               decimal_point, use_threads, csv_progress, &load_status,
-                              ingestion_cache_directory);
+                              ingestion_cache_directory, quote_char);
                     task.ReportProgress(0.9f, "Finalizing");
 
                     if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {
@@ -633,10 +635,10 @@ std::vector<ParamSchema> TabularLoader::NodeParams() const {
         {"type",              "auto",   "Detected file type (csv/tsv/...)"},
         {"has_header",        "true",   "First row contains column names"},
         {"delimiter",         ",",      "Column separator"},
+        {"quote_char",        "\"",     "Quote character (empty = no quoting)"},
         {"skip_rows",         "0",      "Rows to skip at file start"},
         {"max_rows",          "0",      "Max rows to load (0 = all)"},
         {"selected_columns",  "[]",     "JSON array of included column names"},
-        {"encoding",          "0",      "Text encoding index"},
         {"label_column",      "",       "Column name used as training label"},
         {"force_disk_backed", "false",  "Force Parquet disk-backed cache"},
         {"sheet_idx",         "0",      "Excel sheet index"},

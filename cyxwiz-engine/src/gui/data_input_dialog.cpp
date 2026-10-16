@@ -56,12 +56,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
         if (node_->parameters.count("archive_member")) {
             strncpy(archive_member_, node_->parameters["archive_member"].c_str(), sizeof(archive_member_) - 1);
         }
-        // Restore from parameters
-        if (node_->parameters.count("source_type")) {
-            source_type_ = data_input::SourceTypeFromParam(
-                node_->parameters["source_type"],
-                source_type_);
-        }
         // Apply stores sources inside the project project-relative; the
         // dialog works on the resolved path, as the loaders do, so Preview
         // and the registry lookup open the same file after a reopen.
@@ -107,6 +101,10 @@ DataInputDialog::DataInputDialog(MLNode* node)
             const char decimal_point = node_->parameters["decimal_point"][0];
             decimal_point_ = (decimal_point == ',') ? ',' : '.';
         }
+        if (node_->parameters.count("quote_char")) {
+            strncpy(quote_char_, node_->parameters["quote_char"].c_str(), sizeof(quote_char_) - 1);
+            quote_char_[sizeof(quote_char_) - 1] = '\0';
+        }
         if (node_->parameters.count("missing_value_tokens")) {
             strncpy(missing_value_tokens_,
                     node_->parameters["missing_value_tokens"].c_str(),
@@ -127,21 +125,10 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 max_rows_ = 0;
             }
         }
-        if (node_->parameters.count("encoding")) {
-            try {
-                encoding_idx_ = std::clamp(
-                    std::stoi(node_->parameters["encoding"]), 0, 6);
-            } catch (...) {
-                encoding_idx_ = 0;
-            }
-        }
         if (node_->parameters.count("folder_path")) {
             const std::string resolved =
                 cyxwiz::ResolveProjectDataPath(node_->parameters["folder_path"], project_root);
             strncpy(folder_path_, resolved.c_str(), sizeof(folder_path_) - 1);
-        }
-        if (node_->parameters.count("dataset_name")) {
-            strncpy(dataset_name_, node_->parameters["dataset_name"].c_str(), sizeof(dataset_name_) - 1);
         }
         // Restore the Force disk-backed cache checkbox from node params.
         // Without this, the toggle state is lost every time the dialog is
@@ -395,14 +382,10 @@ void DataInputDialog::RenderContent() {
 
     ImGui::TextColored(accent, "Connect data");
     ImGui::TextColored(muted,
-        "Choose a source, inspect the contract, then apply it to this DataInput node.");
-    ImGui::Spacing();
-    RenderSourceSelector();
-    SyncHdf5InspectorSource();
+        "Choose a file or folder, inspect it, then apply it to this DataInput node.");
     ImGui::Spacing();
 
-    // KNIME-style tab bar at TOP based on source type
-    if (source_type_ == SourceType::File) {
+    {
         if (ImGui::BeginTabBar("DataInputTabs", ImGuiTabBarFlags_None)) {
             if (ImGui::BeginTabItem("Settings")) {
                 RenderFileSource();
@@ -424,10 +407,6 @@ void DataInputDialog::RenderContent() {
                 RenderLimitRowsTab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Encoding")) {
-                RenderEncodingTab();
-                ImGui::EndTabItem();
-            }
             if (ImGui::BeginTabItem("Memory")) {
                 RenderMemoryTab();
                 ImGui::EndTabItem();
@@ -438,35 +417,6 @@ void DataInputDialog::RenderContent() {
             }
             ImGui::EndTabBar();
         }
-    }
-    else if (source_type_ == SourceType::MLDataset) {
-        if (ImGui::BeginTabBar("MLDatasetTabs", ImGuiTabBarFlags_None)) {
-            if (ImGui::BeginTabItem("Dataset")) {
-                RenderMLDatasetSource();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Options")) {
-                RenderMLDatasetOptions();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-    }
-    else if (source_type_ == SourceType::Database) {
-        if (ImGui::BeginTabBar("DatabaseTabs", ImGuiTabBarFlags_None)) {
-            if (ImGui::BeginTabItem("Connection")) {
-                RenderDatabaseSource();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Query")) {
-                RenderSQLQuery();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-    }
-    else if (source_type_ == SourceType::Cloud) {
-        RenderCloudSource();
     }
 
     // === Status bar (Apply feedback) ===

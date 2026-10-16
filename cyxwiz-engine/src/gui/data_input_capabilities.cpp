@@ -39,32 +39,13 @@ bool IsTabularCategory(FileCategory file_category) {
 
 } // namespace
 
-SourceType SourceTypeFromParam(const std::string& value, SourceType fallback) {
-    if (value == "file") return SourceType::File;
-    if (value == "ml_dataset") return SourceType::MLDataset;
-    if (value == "database") return SourceType::Database;
-    if (value == "cloud") return SourceType::Cloud;
-    return fallback;
-}
-
 FileCategory FileCategoryFromParam(const std::string& value, FileCategory fallback) {
     if (value == "tabular") return FileCategory::Tabular;
     if (value == "image") return FileCategory::Image;
     if (value == "audio") return FileCategory::Audio;
-    if (value == "video") return FileCategory::Video;
     if (value == "text") return FileCategory::Text;
     if (value == "timeseries") return FileCategory::TimeSeries;
     return fallback;
-}
-
-const char* SourceTypeParam(SourceType source_type) {
-    switch (source_type) {
-        case SourceType::File: return "file";
-        case SourceType::MLDataset: return "ml_dataset";
-        case SourceType::Database: return "database";
-        case SourceType::Cloud: return "cloud";
-    }
-    return "file";
 }
 
 const char* FileCategoryParam(FileCategory file_category) {
@@ -72,81 +53,23 @@ const char* FileCategoryParam(FileCategory file_category) {
         case FileCategory::Tabular: return "tabular";
         case FileCategory::Image: return "image";
         case FileCategory::Audio: return "audio";
-        case FileCategory::Video: return "video";
         case FileCategory::Text: return "text";
         case FileCategory::TimeSeries: return "timeseries";
     }
     return "tabular";
 }
 
-const char* MLDatasetTypeParam(MLDatasetType dataset_type) {
-    switch (dataset_type) {
-        case MLDatasetType::MNIST: return "mnist";
-        case MLDatasetType::CIFAR10: return "cifar10";
-        case MLDatasetType::CIFAR100: return "cifar100";
-        case MLDatasetType::FashionMNIST: return "fashion_mnist";
-        case MLDatasetType::ImageNet: return "imagenet";
-        case MLDatasetType::ImageFolder: return "image_folder";
-        case MLDatasetType::HuggingFace: return "huggingface";
-        case MLDatasetType::Kaggle: return "kaggle";
-        case MLDatasetType::Custom: return "custom";
-    }
-    return "mnist";
+bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category) {
+    return file_category == FileCategory::Tabular ||
+           file_category == FileCategory::Text ||
+           file_category == FileCategory::TimeSeries;
 }
 
-const char* DatabaseTypeParam(DatabaseType database_type) {
-    switch (database_type) {
-        case DatabaseType::SQLite: return "sqlite";
-        case DatabaseType::PostgreSQL: return "postgresql";
-        case DatabaseType::MySQL: return "mysql";
-        case DatabaseType::DuckDB: return "duckdb";
+const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_category) {
+    if (file_category == FileCategory::Image) {
+        return "Image preview is not wired yet. Apply can still scan supported image folders.";
     }
-    return "sqlite";
-}
-
-bool IsApplySupported(SourceType source_type, cyxwiz::loaders::FileCategory file_category) {
-    if (source_type != SourceType::File) {
-        return false;
-    }
-    return file_category != FileCategory::Video;
-}
-
-bool IsPreviewSupported(SourceType source_type, cyxwiz::loaders::FileCategory file_category) {
-    return source_type == SourceType::File &&
-           (file_category == FileCategory::Tabular ||
-            file_category == FileCategory::Text ||
-            file_category == FileCategory::TimeSeries);
-}
-
-const char* UnsupportedApplyMessage(SourceType source_type, cyxwiz::loaders::FileCategory file_category) {
-    if (source_type == SourceType::File && file_category == FileCategory::Video) {
-        return "Video loading is planned but not wired yet.";
-    }
-    if (source_type == SourceType::MLDataset) {
-        return "ML dataset downloads are planned but not wired yet. Use File source for loadable datasets.";
-    }
-    if (source_type == SourceType::Database) {
-        return "Database loading is planned but not wired yet.";
-    }
-    if (source_type == SourceType::Cloud) {
-        return "Cloud storage loading is planned but not wired yet.";
-    }
-    return "This data source is not available yet.";
-}
-
-const char* PreviewUnavailableMessage(SourceType source_type, cyxwiz::loaders::FileCategory file_category) {
-    if (source_type == SourceType::File) {
-        if (file_category == FileCategory::Image) {
-            return "Image preview is not wired yet. Apply can still scan supported image folders.";
-        }
-        if (file_category == FileCategory::Audio) {
-            return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
-        }
-        if (file_category == FileCategory::Video) {
-            return "Video preview is not available because video loading is not wired yet.";
-        }
-    }
-    return UnsupportedApplyMessage(source_type, file_category);
+    return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
 }
 
 const char* FileTypeParam(int detected_type) {
@@ -199,10 +122,6 @@ FileCategory DetectFileCategoryForPath(const std::string& path, FileCategory cur
         ext == "m4a" || ext == "aac") {
         return FileCategory::Audio;
     }
-    if (ext == "mp4" || ext == "avi" || ext == "mov" || ext == "mkv" ||
-        ext == "webm" || ext == "wmv") {
-        return FileCategory::Video;
-    }
     if (current_category == FileCategory::Text || current_category == FileCategory::TimeSeries) {
         return current_category;
     }
@@ -216,39 +135,27 @@ bool UsesFolderPath(FileCategory file_category, TextLayout text_layout) {
 }
 
 std::string CurrentSourceLabel(
-    SourceType source_type,
     FileCategory file_category,
     TextLayout text_layout) {
-    if (source_type == SourceType::File) {
-        switch (file_category) {
-            case FileCategory::Tabular: return "Tabular file";
-            case FileCategory::Image: return "Image folder";
-            case FileCategory::Audio: return "Audio folder";
-            case FileCategory::Video: return "Video file (planned)";
-            case FileCategory::Text:
-                return text_layout == TextLayout::CorpusSubdirs
-                    ? "Text corpus folder"
-                    : "Text file";
-            case FileCategory::TimeSeries: return "Time series file";
-        }
+    switch (file_category) {
+        case FileCategory::Tabular: return "Tabular file";
+        case FileCategory::Image: return "Image folder";
+        case FileCategory::Audio: return "Audio folder";
+        case FileCategory::Text:
+            return text_layout == TextLayout::CorpusSubdirs
+                ? "Text corpus folder"
+                : "Text file";
+        case FileCategory::TimeSeries: return "Time series file";
     }
-    if (source_type == SourceType::MLDataset) return "ML dataset (planned)";
-    if (source_type == SourceType::Database) return "Database (planned)";
-    if (source_type == SourceType::Cloud) return "Cloud storage (planned)";
     return "Unknown";
 }
 
 std::string CurrentApplySummary(
-    SourceType source_type,
     FileCategory file_category,
     TextLayout text_layout,
     bool force_disk_backed,
     int max_rows,
     int skip_rows) {
-    if (!IsApplySupported(source_type, file_category)) {
-        return UnsupportedApplyMessage(source_type, file_category);
-    }
-
     std::string summary;
     switch (file_category) {
         case FileCategory::Tabular:
@@ -267,9 +174,6 @@ std::string CurrentApplySummary(
             summary = text_layout == TextLayout::CorpusSubdirs
                 ? "scan the corpus folder, tokenize text, and build vocabulary"
                 : "load the selected text file, tokenize text, and build vocabulary";
-            break;
-        case FileCategory::Video:
-            summary = UnsupportedApplyMessage(source_type, file_category);
             break;
     }
 
@@ -297,27 +201,12 @@ const char* BackendSummary(int loaded_backend) {
     }
 }
 
-std::string GenerateDatasetName(
-    SourceType source_type,
-    const std::string& file_path,
-    const std::string& folder_path,
-    const std::string& dataset_name,
-    const std::string& db_name,
-    const std::string& cloud_bucket) {
+std::string GenerateDatasetName(const std::string& file_path, const std::string& folder_path) {
     std::string name;
-
-    if (source_type == SourceType::File) {
-        if (!file_path.empty()) {
-            name = fs::path(file_path).stem().string();
-        } else if (!folder_path.empty()) {
-            name = fs::path(folder_path).filename().string();
-        }
-    } else if (source_type == SourceType::MLDataset) {
-        name = dataset_name;
-    } else if (source_type == SourceType::Database) {
-        name = std::string("db_") + db_name;
-    } else if (source_type == SourceType::Cloud) {
-        name = std::string("cloud_") + cloud_bucket;
+    if (!file_path.empty()) {
+        name = fs::path(file_path).stem().string();
+    } else if (!folder_path.empty()) {
+        name = fs::path(folder_path).filename().string();
     }
 
     for (char& c : name) {
