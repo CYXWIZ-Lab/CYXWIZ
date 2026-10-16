@@ -85,7 +85,15 @@ static void CloseScopesLeftOpen(const ImGuiErrorRecoveryState& before) {
         if (p->CurrentPlot) ImPlot::EndPlot();
         if (p->CurrentSubplot) ImPlot::EndSubplots();
     }
+    // Recovering here is intended: no assert and no "Message from Dear ImGui"
+    // box every frame (the exception is in the log).
+    ImGuiIO& io = ImGui::GetIO();
+    const bool assert_on = io.ConfigErrorRecoveryEnableAssert, tooltip_on = io.ConfigErrorRecoveryEnableTooltip;
+    io.ConfigErrorRecoveryEnableAssert = false;
+    io.ConfigErrorRecoveryEnableTooltip = false;
     ImGui::ErrorRecoveryTryToRecoverState(&before);
+    io.ConfigErrorRecoveryEnableAssert = assert_on;
+    io.ConfigErrorRecoveryEnableTooltip = tooltip_on;
 }
 
 static void glfw_error_callback(int error, const char* description) {
