@@ -81,6 +81,13 @@ private:
     void DrawStrip();
     void DrawGrid(float width);
     void DrawCard(WidgetSpec& w, float width, float height);
+    // The values or range a widget selected: drawn in full colour, the rest dimmed.
+    void HighlightOf(const WidgetSpec& w, std::vector<std::string>& picked, double& lo, double& hi) const;
+    // A click on a bar, slice or bin of a widget's plot filters the other
+    // widgets (the same click again clears it).
+    void ApplyClick(const WidgetSpec& w, plot::PlotView& view);
+    // Plots opened large, each in its own window (the card keeps its plot).
+    void DrawLargeViews();
     void DrawSettings(float width);
     void OpenInPlotWindow(WidgetSpec& w);
     // The table as people call it (queries shown or opened elsewhere name it so).
@@ -120,6 +127,12 @@ private:
     std::string target_;
     std::map<std::string, std::unique_ptr<plot::PlotView>> views_;
     std::map<std::string, uint64_t> view_versions_;
+    struct LargeView {
+        bool open = true;
+        std::unique_ptr<plot::PlotView> view;
+        uint64_t version = ~0ull;
+    };
+    std::map<std::string, LargeView> large_;  // by widget id
     std::string selected_;
     std::unique_ptr<plot::PlotWindow> editor_;
     std::string editing_;

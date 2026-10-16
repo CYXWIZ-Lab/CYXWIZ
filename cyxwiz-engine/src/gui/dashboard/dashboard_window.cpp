@@ -102,6 +102,7 @@ void DashboardWindow::RemoveWidget(const std::string& id) {
     spec_.widgets.erase(std::remove_if(spec_.widgets.begin(), spec_.widgets.end(), [&](const WidgetSpec& x) { return x.id == id; }),
                         spec_.widgets.end());
     views_.erase(id);
+    large_.erase(id);
     if (selected_ == id) selected_.clear();
 }
 
@@ -333,6 +334,7 @@ void DashboardWindow::Render() {
     if (editor_) editor_->Render();
     FinishExport();
     if (!visible) return;
+    DrawLargeViews();
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(1360, 860), ImGuiCond_FirstUseEver);
     const std::string title = "Dashboard" + (title_.empty() ? std::string() : " \xC2\xB7 " + title_) + "###" + id_;
@@ -606,6 +608,17 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
         ImGui::SameLine();
         ImGui::TextColored(t.info, "sampled");
     }
+    // View large: the plot in its own window, at the header's right.
+    if (mode_ == Mode::Dashboard && w.type == WidgetType::Plot && r.prepared) {
+        const char* large = ICON_FA_EXPAND;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - ui::ButtonWidth(large, ui::ButtonSize::Small)));
+        const bool open = large_.count(w.id) > 0;
+        if (ui::GhostButton(large, true, nullptr, open)) {
+            if (open) ::gui::BringToFront("###" + id_ + "_large_" + w.id);
+            else large_.try_emplace(w.id);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(open ? "Shown large in its own window: bring it to the front" : "View large, in its own window");
+    }
     const ImVec2 body(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
     switch (r.state) {
         case WidgetResult::State::Unbound: {
@@ -697,67 +710,118 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                     view_versions_[w.id] = r.version;
                 }
                 view->SetBackground(r.all_rows);
-                // What this widget selected: its bars or bins in full colour.
                 std::vector<std::string> picked;
                 double lo = NAN, hi = NAN;
-                for (const auto& q : spec_.filters.predicates) {
-                    // A text widget filters the text (or class) column, not its query's.
-                    const bool own = q.source_widget == w.id && (w.IsText() || q.field == w.plot.x_column);
-                    if (!own) continue;
-                    if (q.op == FilterPredicate::Op::In || q.op == FilterPredicate::Op::Contains) picked = q.values;
-                    else if (q.op == FilterPredicate::Op::Range) {
-                        lo = q.lo;
-                        hi = q.hi;
-                    }
-                }
+                HighlightOf(w, picked, lo, hi);
                 view->SetHighlight(picked, lo, hi);
                 plot::PlotView::Options o;
                 o.toolbar = mode_ == Mode::Visualize;  // Visualize: Fit and Export on its one plot
                 o.own_window_button = false;
                 view->Draw(body, o);
-                // A click on a bar, slice or bin filters the other widgets (again: clears).
-                auto click = view->TakeClick();
-                if (mode_ == Mode::Visualize || w.IsQuery()) click.reset();  // no shared filter here / the query's own columns
-                FilterPredicate p;
-                if (click) {
-                    p.field = click->field;
-                    p.source_widget = w.id;
-                    p.bucket = w.bucket;  // a date widget's bins are years
-                    if (click->what == plot::PlotView::Click::What::Category) p.values = {click->value};
-                    else {
-                        p.op = FilterPredicate::Op::Range;
-                        p.lo = click->lo;
-                        p.hi = click->hi;
-                    }
-                    // A text widget: a word or phrase keeps the texts that have it, a
-                    // length bin their word count, a class its rows.
-                    if (w.IsText()) {
-                        if (w.text_view == TextView::WordsByClass) {
-                            p.field = w.label_field;
-                        } else if (w.text_view == TextView::Length) {
-                            p.field = w.text_field;
-                            p.bucket = "words";
-                        } else {
-                            p.field = w.text_field;
-                            p.op = FilterPredicate::Op::Contains;
-                        }
-                    }
-                    if (p.field.empty()) click.reset();  // a class view with no class column
-                }
-                if (click) {
-                    bool same = false;
-                    for (const auto& q : spec_.filters.predicates)
-                        same = same || (q.source_widget == w.id && q.field == p.field && q.Text() == p.Text());
-                    if (same) spec_.filters.ClearWidget(w.id);
-                    else spec_.filters.Set(p);
-                    SaveIfChanged();
-                }
+                ApplyClick(w, *view);
             }
             break;
         }
     }
     ImGui::EndChild();
     ImGui::PopID();
+}
+
+void DashboardWindow::HighlightOf(const WidgetSpec& w, std::vector<std::string>& picked, double& lo, double& hi) const {
+    for (const auto& q : spec_.filters.predicates) {
+        // A text widget filters the text (or class) column, not its query's.
+        const bool own = q.source_widget == w.id && (w.IsText() || q.field == w.plot.x_column);
+        if (!own) continue;
+        if (q.op == FilterPredicate::Op::In || q.op == FilterPredicate::Op::Contains) picked = q.values;
+        else if (q.op == FilterPredicate::Op::Range) {
+            lo = q.lo;
+            hi = q.hi;
+        }
+    }
+}
+
+void DashboardWindow::ApplyClick(const WidgetSpec& w, plot::PlotView& view) {
+    auto click = view.TakeClick();
+    if (mode_ == Mode::Visualize || w.IsQuery()) click.reset();  // no shared filter here / the query's own columns
+    FilterPredicate p;
+    if (click) {
+        p.field = click->field;
+        p.source_widget = w.id;
+        p.bucket = w.bucket;  // a date widget's bins are years
+        if (click->what == plot::PlotView::Click::What::Category) p.values = {click->value};
+        else {
+            p.op = FilterPredicate::Op::Range;
+            p.lo = click->lo;
+            p.hi = click->hi;
+        }
+        // A text widget: a word or phrase keeps the texts that have it, a
+        // length bin their word count, a class its rows.
+        if (w.IsText()) {
+            if (w.text_view == TextView::WordsByClass) {
+                p.field = w.label_field;
+            } else if (w.text_view == TextView::Length) {
+                p.field = w.text_field;
+                p.bucket = "words";
+            } else {
+                p.field = w.text_field;
+                p.op = FilterPredicate::Op::Contains;
+            }
+        }
+        if (p.field.empty()) click.reset();  // a class view with no class column
+    }
+    if (click) {
+        bool same = false;
+        for (const auto& q : spec_.filters.predicates)
+            same = same || (q.source_widget == w.id && q.field == p.field && q.Text() == p.Text());
+        if (same) spec_.filters.ClearWidget(w.id);
+        else spec_.filters.Set(p);
+        SaveIfChanged();
+    }
+}
+
+void DashboardWindow::DrawLargeViews() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    for (auto it = large_.begin(); it != large_.end();) {
+        const WidgetSpec* w = spec_.Find(it->first);
+        if (!w || !it->second.open) {
+            it = large_.erase(it);
+            continue;
+        }
+        LargeView& large = it->second;
+        const WidgetResult& r = session_.ResultOf(w->id);
+        ImGui::SetNextWindowSize(ImVec2(1000, 680), ImGuiCond_FirstUseEver);
+        const std::string title = WidgetTitle(*w) + " \xC2\xB7 Dashboard###" + id_ + "_large_" + w->id;
+        ::gui::NextWindowMayLeave(title.c_str());
+        const bool expanded = ImGui::Begin(title.c_str(), &large.open);
+        ::gui::TabMenu(title.c_str(), &large.open);
+        if (expanded) {
+            if (r.state == WidgetResult::State::Failed) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.error, "%s", r.message.c_str());
+                ImGui::PopTextWrapPos();
+            } else if (!r.prepared) {
+                ImGui::TextColored(t.text_faint, "Reading...");
+            } else {
+                if (!large.view) large.view = std::make_unique<plot::PlotView>(id_ + "_large_" + w->id);
+                if (large.version != r.version) {
+                    large.view->SetData(*r.prepared);
+                    large.version = r.version;
+                }
+                large.view->SetBackground(r.all_rows);
+                std::vector<std::string> picked;
+                double lo = NAN, hi = NAN;
+                HighlightOf(*w, picked, lo, hi);
+                large.view->SetHighlight(picked, lo, hi);
+                plot::PlotView::Options o;
+                o.export_name = WidgetTitle(*w);
+                o.own_window_button = false;  // it is the window
+                large.view->Draw(ImVec2(0, 0), o);
+                ApplyClick(*w, *large.view);
+            }
+        }
+        ImGui::End();
+        ++it;
+    }
 }
 
 void DashboardWindow::DrawSettings(float width) {
