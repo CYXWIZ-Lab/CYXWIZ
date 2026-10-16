@@ -13,8 +13,11 @@
 #include "../../core/training_trace_collector.h"
 #endif
 #include "../../core/training_run_comparison.h"
+#include "../../core/file_dialogs.h"
+#include "../../core/project_manager.h"
 #include "../../core/route_qualification_snapshot.h"
 #include "../icons.h"
+#include <filesystem>
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -2699,13 +2702,23 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     const DashColors c = CurrentDashColors();
     if (DashButton("Export Run CSV", DashButtonKind::Secondary, c)) {
-        std::string error;
-        if (!WriteTrainingRunComparisonCsv(
-                "training_run_comparison.csv",
-                run_comparison_records_,
-                &error)) {
-            RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed",
-                             error);
+        // A save dialog in the project's exports folder; it wrote
+        // training_run_comparison.csv into the working directory unasked.
+        const std::string root = ProjectManager::Instance().GetProjectRoot();
+        const std::string folder = root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
+        const auto path = FileDialogs::SaveFile("Export Run CSV", {{"CSV Files", "csv"}, {"All Files", "*"}},
+                                                folder.empty() ? nullptr : folder.c_str(),
+                                                "training_run_comparison.csv");
+        if (path) {
+            std::string error;
+            if (WriteTrainingRunComparisonCsv(*path, run_comparison_records_, &error)) {
+                run_export_note_ = "Saved " + *path;
+                run_export_failed_ = false;
+            } else {
+                run_export_note_ = "Could not save the runs: " + error;
+                run_export_failed_ = true;
+                RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
+            }
         }
     }
     ImGui::SameLine();
@@ -2718,6 +2731,12 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     ImGui::TextDisabled(
         "Partition Match is relative to the top-ranked run; different manifests "
         "are not directly comparable.");
+    if (!run_export_note_.empty()) {
+        const auto& tokens = cyxwiz::ui::CurrentTokens();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(run_export_failed_ ? tokens.error : tokens.success, "%s", run_export_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
     if (active_checkpoint_loaded_) {
         ImGui::TextDisabled(
             "A checkpoint loaded for testing is shown under Active model state; "

@@ -263,6 +263,8 @@ private:
     MetricSeries val_accuracy_;
     std::vector<MetricSeries> custom_metrics_;
     std::vector<TrainingRunComparisonRecord> run_comparison_records_;
+    std::string run_export_note_;  // where Export Run CSV wrote, or why it could not
+    bool run_export_failed_ = false;
     std::vector<MaterializationProgress> materialization_events_;
     std::string materialization_output_dataset_;
     std::string materialization_status_;
