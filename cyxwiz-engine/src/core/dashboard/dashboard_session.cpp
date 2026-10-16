@@ -240,6 +240,7 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
     // The row count decides whether the plot is drawn from a sample.
     const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
     const bool sampled = w.type == WidgetType::Plot && entry && entry->rows > kRowCap;
+    const size_t source_rows = entry ? static_cast<size_t>(entry->rows) : 0;
     auto result = std::make_shared<WidgetResult>();
     result->fingerprint = fingerprint;
     result->sampled = sampled;
@@ -250,7 +251,7 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
     std::weak_ptr<int> alive = alive_;
     const uint64_t task = AsyncTaskManager::Instance().RunAsync(
         "Dashboard: " + (w.title.empty() ? KindOf(w).label : w.title),
-        [request, all_request, with_all, widget, result](LambdaTask& t) {
+        [request, all_request, with_all, widget, result, sampled, source_rows](LambdaTask& t) {
             // Cancel (a new filter, the window closing) stops the query itself.
             auto token = std::make_shared<QueryToken>();
             t.SetCancellationCallback([token] { SessionQueryService::Instance().Interrupt(*token); });
@@ -269,7 +270,12 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
             } else {
                 // Prepared off the UI thread, exactly as the Plot window does.
                 const plot::Source src = plot::SourceFromArrow(*q.table, plot::ColumnsNeeded(widget.plot));
-                result->prepared = std::make_shared<const plot::Prepared>(plot::Prepare(widget.plot, src));
+                plot::Prepared prepared = plot::Prepare(widget.plot, src);
+                // Every value of a sample is not every value: the label says
+                // how many rows of the source it drew from (TOFIX154).
+                if (sampled && prepared.label.state == plot::DataLabel::State::Exact)
+                    prepared.label = {plot::DataLabel::State::Sampled, static_cast<size_t>(q.table->num_rows()), source_rows};
+                result->prepared = std::make_shared<const plot::Prepared>(std::move(prepared));
                 if (with_all) {
                     QueryResult a = SessionQueryService::Instance().RunNow(all_request, token.get());
                     if (a.ok)
