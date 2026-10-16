@@ -4,6 +4,8 @@
 #include "../../core/model_format.h"
 #include "../../core/model_exporter.h"
 #include <string>
+#include <utility>
+#include <vector>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -47,6 +49,10 @@ public:
         std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
 
+    // The graph the model was trained from (its name prefills the file and the
+    // model name).
+    void SetSourceGraph(const std::string& graph_path) { graph_path_ = graph_path; }
+
     // Callbacks
     using ExportCompleteCallback = std::function<void(
         const ExportResult&,
@@ -65,9 +71,7 @@ private:
     void RenderMetadata();
     void RenderProgress();
     void RenderButtons();
-
-    // File dialog helper
-    std::string SaveFileDialog(const char* filter, const char* default_ext);
+    void RowsTable(const char* id, const std::vector<std::pair<std::string, std::string>>& rows);
 
     // Start export in background thread
     void StartExport();
@@ -82,6 +86,7 @@ private:
     const TrainingMetrics* metrics_ = nullptr;
     std::string graph_json_;
     uint64_t graph_hash_ = 0;
+    std::string graph_path_;
 
     // Export settings
     ModelFormat selected_format_ = ModelFormat::CyxModel;
@@ -98,9 +103,7 @@ private:
     bool include_optimizer_state_ = true;
     bool include_training_history_ = true;
     bool include_graph_ = true;
-    int quantization_index_ = 0;
     int opset_version_ = 17;
-    bool compress_ = true;
 
     // Export state
     std::atomic<bool> is_exporting_{false};

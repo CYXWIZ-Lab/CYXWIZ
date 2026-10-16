@@ -1404,6 +1404,7 @@ MainWindow::MainWindow()
                 spdlog::warn("No trained model available for export");
             }
 
+            if (node_editor_) export_dialog_->SetSourceGraph(node_editor_->GetCurrentFilePath());
             export_dialog_->Open(requested_format);
             spdlog::info("Opened Export Model dialog (format index: {})", format_index);
         }

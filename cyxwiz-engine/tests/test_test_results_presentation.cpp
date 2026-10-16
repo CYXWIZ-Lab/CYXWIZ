@@ -6,6 +6,7 @@
 
 #include "../src/core/test_results_export.h"
 #include "../src/core/test_results_presentation.h"
+#include "../src/core/model_export_presentation.h"
 
 #include <nlohmann/json.hpp>
 
@@ -155,13 +156,45 @@ void CheckExports() {
     std::filesystem::remove_all(dir);
 }
 
+// Export Model: the formats of this build, the default file and its renaming.
+void CheckExportModel() {
+    using namespace cyxwiz::model_export;
+    const auto without_onnx = AvailableFormats(false);
+    Check(without_onnx.size() == 2 && without_onnx[0].format == cyxwiz::ModelFormat::CyxModel &&
+              without_onnx[1].format == cyxwiz::ModelFormat::Safetensors,
+          "without the ONNX exporter: package and safetensors");
+    Check(AvailableFormats(true).size() == 3 && !IsAvailable(cyxwiz::ModelFormat::GGUF, true),
+          "ONNX when built; GGUF never offered");
+    const std::string path = DefaultPath("D:/tmp/project", "D:/tmp/project/cyxgraph/sentiment_lstm.cyxgraph",
+                                         cyxwiz::ModelFormat::CyxModel);
+    Check(path == (std::filesystem::path("D:/tmp/project") / "exports" / "sentiment_lstm.cyxmodel").string(),
+          "default file in the project's exports folder: " + path);
+    Check(DefaultPath("", "x.cyxgraph", cyxwiz::ModelFormat::CyxModel).empty(), "no project: no default file");
+    Check(std::filesystem::path(WithExtension(path, cyxwiz::ModelFormat::Safetensors)).filename() ==
+              "sentiment_lstm.safetensors",
+          "switching format renames the extension");
+    Check(DefaultName("", "D:/p/cyxgraph/sentiment_lstm.cyxgraph") == "sentiment_lstm" &&
+              DefaultName("trained name", "x.cyxgraph") == "trained name",
+          "the name: the trained one, else the graph's");
+    cyxwiz::ExportResult result;
+    result.output_path = "D:/x.cyxmodel";
+    result.file_size_bytes = 2 * 1024 * 1024;
+    result.num_parameters = 519719;
+    result.num_layers = 6;
+    result.export_time_ms = 120;
+    const auto rows = ResultRows(result);
+    Check(rows.size() == 4 && rows[1].second == "2.00 MB" && rows[2].second == "519,719 in 6 layers",
+          "result rows");
+}
+
 }  // namespace
 
 int main() {
+    CheckExportModel();
     CheckOverview();
     CheckSorting();
     CheckComparison();
     CheckExports();
-    std::cout << "test results presentation: overview, classes, sorting, comparison, exports. OK\n";
+    std::cout << "test results presentation: overview, classes, sorting, comparison, exports, export model. OK\n";
     return 0;
 }
