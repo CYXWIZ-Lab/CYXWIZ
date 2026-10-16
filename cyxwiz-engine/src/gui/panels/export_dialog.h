@@ -4,7 +4,6 @@
 #include "../../core/model_format.h"
 #include "../../core/model_exporter.h"
 #include <string>
-#include <utility>
 #include <vector>
 #include <cstdint>
 #include <functional>
@@ -71,7 +70,6 @@ private:
     void RenderMetadata();
     void RenderProgress();
     void RenderButtons();
-    void RowsTable(const char* id, const std::vector<std::pair<std::string, std::string>>& rows);
 
     // Start export in background thread
     void StartExport();

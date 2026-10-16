@@ -1503,42 +1503,26 @@ MainWindow::MainWindow()
             RecordArtifactConsistencyTrace(input);
         });
 
-    // Set up Import Model callback
+    // File > Open Model File...: reads a model file and opens its graph.
     toolbar_->SetImportModelCallback([this]() {
-        if (import_dialog_) {
-            import_dialog_->Open();
-            spdlog::info("Opened Import Model dialog");
-        }
+        if (import_dialog_) import_dialog_->Open();
     });
 
-    // Set up Import Complete callback - load graph into node editor
-    import_dialog_->SetImportCompleteCallback(
-        [this](const cyxwiz::ImportResult& result,
-               const cyxwiz::ImportOptions& options,
-               const cyxwiz::ProbeResult& probe,
+    import_dialog_->SetOpenGraphCallback(
+        [this](const cyxwiz::ProbeResult& probe,
                const std::string& graph_json,
                const std::string& input_path) {
             bool graph_loaded = false;
-            if (result.success) {
-                spdlog::info("Model inspection completed: {} ({} layers, {} params)",
-                             result.model_name, result.num_layers, result.num_parameters);
-
-                // Load graph into node editor if available
-                if (!graph_json.empty() && node_editor_) {
-                    if (node_editor_->LoadGraphFromString(graph_json)) {
-                        graph_loaded = true;
-                        node_editor_->Show();
-                        spdlog::info("Loaded inspected model graph into Node Editor");
-                    } else {
-                        spdlog::warn("Failed to load inspected graph into Node Editor");
-                    }
-                }
+            if (node_editor_ && node_editor_->LoadGraphFromString(graph_json)) {
+                graph_loaded = true;
+                node_editor_->Show();
+                spdlog::info("Opened the graph of {} (weights not loaded)", input_path);
             } else {
-                spdlog::error("Model inspection failed: {}", result.error_message);
+                spdlog::error("Open Model File: Studio could not load the graph of {}", input_path);
             }
 
             uint64_t graph_hash = 0;
-            if (graph_loaded && node_editor_) {
+            if (graph_loaded) {
                 graph_hash = HashGraphStructure(
                     node_editor_->GetNodes(), node_editor_->GetLinks());
             }
@@ -1548,17 +1532,16 @@ MainWindow::MainWindow()
             input.artifact_path = input_path;
             input.producer_name = "ModelImporter";
             input.graph_hash = graph_hash;
-            input.operation_success = result.success;
-            input.operation_status = result.success
-                ? "Model package inspection completed; weights were not loaded."
-                : result.error_message;
+            input.operation_success = graph_loaded;
+            input.operation_status = graph_loaded
+                ? "Opened the model file's graph; weights were not loaded."
+                : "Studio could not load the model file's graph.";
             input.artifact_graph_content = graph_json;
             const bool inspection_supported =
                 probe.format == cyxwiz::ModelFormat::CyxModel ||
                 probe.format == cyxwiz::ModelFormat::Safetensors;
             input.observed = ObserveModelArtifact(
                 input_path, probe, inspection_supported);
-            input.observed.package_warnings = result.warnings;
             const bool is_cyxmodel =
                 probe.format == cyxwiz::ModelFormat::CyxModel;
             const bool is_cyxmodel_directory =
@@ -1572,13 +1555,11 @@ MainWindow::MainWindow()
                 probe.supports_generation || probe.supports_bert_encoder;
             input.expected.tokenizer_vocabulary_required =
                 probe.supports_generation || probe.supports_bert_encoder;
-            input.expected.optimizer_state_expected =
-                options.load_optimizer_state;
-            input.expected.training_history_expected =
-                options.load_training_history;
+            input.expected.optimizer_state_expected = false;
+            input.expected.training_history_expected = false;
             RecordArtifactConsistencyTrace(input);
-        }
-    );
+            return graph_loaded;
+        });
 
     // Set up Model Conversion callbacks
     toolbar_->SetConvertBinaryToDirCallback([]() {

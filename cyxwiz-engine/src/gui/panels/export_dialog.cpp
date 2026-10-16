@@ -106,7 +106,9 @@ void ExportDialog::Render() {
                                ok ? ICON_FA_CIRCLE_CHECK " Exported" : ICON_FA_CIRCLE_XMARK " The export failed");
             ImGui::Spacing();
             if (ok) {
-                RowsTable("##export_result", model_export::ResultRows(last_result_));
+                std::vector<ui::KeyValue> rows;
+                for (const auto& [key, value] : model_export::ResultRows(last_result_)) rows.push_back({key, value});
+                ui::FactsTable("##export_result", rows);
             } else {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextUnformatted(last_result_.error_message.c_str());
@@ -140,23 +142,6 @@ void ExportDialog::Render() {
         }
     }
     ImGui::End();
-}
-
-void ExportDialog::RowsTable(const char* id, const std::vector<std::pair<std::string, std::string>>& rows) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return;
-    ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 0.3f);
-    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-    for (const auto& [key, value] : rows) {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextColored(t.text_dim, "%s", key.c_str());
-        ImGui::TableNextColumn();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(value.c_str());
-        ImGui::PopTextWrapPos();
-    }
-    ImGui::EndTable();
 }
 
 void ExportDialog::RenderFormatSelection() {

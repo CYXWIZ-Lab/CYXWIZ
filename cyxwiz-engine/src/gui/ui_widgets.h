@@ -7,6 +7,7 @@
 //   SectionHeader   title with a muted subtitle on one line
 //   BeginCard/EndCard   one bordered card per real-world object
 //   KeyValueTable   the Details block: two pairs per line, wrapped values
+//   FactsTable      a dialog's facts: one pair per line, no lines
 //   StatusText/StatusChip/StatusLegend   the shared status vocabulary
 //   Tooltip/HelpMarker   delayed tooltip, also on disabled items
 //   SearchField     text field with a magnifier hint
@@ -44,6 +45,10 @@ struct KeyValue {
 // `copy_on_click`, clicking a value copies it and says so.
 void KeyValueTable(const char* id, const std::vector<KeyValue>& rows, int pairs_per_line = 2,
                    bool copy_on_click = false);
+
+// One muted key and its wrapped value per line, without lines (a dialog's
+// facts: what a file holds, what an export wrote). Skips empty values.
+void FactsTable(const char* id, const std::vector<KeyValue>& rows);
 
 // Icon and word in the status colour. `text` replaces the standard word.
 void StatusText(Status status, const char* text = nullptr);

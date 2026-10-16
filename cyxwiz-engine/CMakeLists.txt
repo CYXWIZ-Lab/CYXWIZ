@@ -382,6 +382,7 @@ set(ENGINE_SOURCES
     src/core/test_results_presentation.cpp
     src/core/test_results_export.cpp
     src/core/model_export_presentation.cpp
+    src/core/model_open_presentation.cpp
     src/core/properties_presentation.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
@@ -4322,6 +4323,7 @@ add_executable(test_test_results_presentation
     tests/test_test_results_presentation.cpp
     src/core/test_results_presentation.cpp
     src/core/model_export_presentation.cpp
+    src/core/model_open_presentation.cpp
     src/core/test_results_export.cpp
     src/core/compiled_node_presentation.cpp
     src/core/data_registry_core.cpp

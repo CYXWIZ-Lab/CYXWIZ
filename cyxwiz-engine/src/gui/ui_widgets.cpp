@@ -129,6 +129,24 @@ void KeyValueTable(const char* id, const std::vector<KeyValue>& rows, int pairs_
     ImGui::EndTable();
 }
 
+void FactsTable(const char* id, const std::vector<KeyValue>& rows) {
+    const Tokens& t = CurrentTokens();
+    if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) return;
+    ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    for (const auto& row : rows) {
+        if (row.value.empty()) continue;
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(t.text_dim, "%s", row.key.c_str());
+        ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(row.value.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::EndTable();
+}
+
 // ---------------------------------------------------------------------------
 // Status vocabulary
 

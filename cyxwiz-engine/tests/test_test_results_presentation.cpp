@@ -7,6 +7,7 @@
 #include "../src/core/test_results_export.h"
 #include "../src/core/test_results_presentation.h"
 #include "../src/core/model_export_presentation.h"
+#include "../src/core/model_open_presentation.h"
 
 #include <nlohmann/json.hpp>
 
@@ -187,14 +188,61 @@ void CheckExportModel() {
           "result rows");
 }
 
+
+// Open Model File: the exported sentiment package, a weights-only file and an
+// unreadable file.
+void CheckOpenModel() {
+    cyxwiz::ProbeResult probe;
+    probe.valid = true;
+    probe.format = cyxwiz::ModelFormat::CyxModel;
+    probe.format_version = "CYXW v3";
+    probe.model_name = "sentiment_analysis_lstm_word_vectors";
+    probe.num_parameters = 519719;
+    probe.num_layers = 6;
+    probe.file_size = 2174719;
+    probe.epochs_trained = 1;
+    probe.final_accuracy = 0.6104f;
+    probe.has_graph = true;
+    probe.has_training_history = true;
+    probe.has_optimizer_state = true;
+    probe.layer_names = {"embedding.weight", "dense.bias"};
+    probe.layer_shapes["embedding.weight"] = {5000, 100};
+    const model_open::View v = model_open::BuildView(probe);
+    Check(v.readable && v.format_line == "CyxWiz package (CYXW v3)", "format line: " + v.format_line);
+    Check(v.rows.size() == 5 && v.rows[1].second == "519,719 in 6 layers" &&
+              v.rows[2].second == "1 epoch, accuracy 61.04%" &&
+              v.rows[3].second == "graph, weights, training history and optimizer state" &&
+              v.rows[4].second == "2.07 MB",
+          "rows: name, parameters, trained, contains, size");
+    Check(v.layers == "embedding.weight [5000, 100], dense.bias", "layers: " + v.layers);
+    Check(v.can_open_graph && Contains(v.note, "without its weights"), "a package opens its graph");
+    Check(model_open::LayersLine(probe, 1) == "embedding.weight [5000, 100], and 1 more", "layers are capped");
+
+    cyxwiz::ProbeResult weights;
+    weights.valid = true;
+    weights.format = cyxwiz::ModelFormat::Safetensors;
+    weights.format_version = "safetensors";
+    const model_open::View w = model_open::BuildView(weights);
+    Check(w.format_line == "Weights only (safetensors)" && w.rows[0].second == "Not named" && !w.can_open_graph &&
+              w.open_disabled_reason == "This file has no graph",
+          "weights only: nothing to open");
+
+    cyxwiz::ProbeResult bad;
+    bad.error_message = "Not a model file";
+    const model_open::View b = model_open::BuildView(bad);
+    Check(!b.readable && b.error == "Not a model file" && !b.can_open_graph, "an unreadable file says why");
+}
+
 }  // namespace
 
 int main() {
     CheckExportModel();
+    CheckOpenModel();
     CheckOverview();
     CheckSorting();
     CheckComparison();
     CheckExports();
-    std::cout << "test results presentation: overview, classes, sorting, comparison, exports, export model. OK\n";
+    std::cout << "test results presentation: overview, classes, sorting, comparison, exports, export model, open "
+                 "model. OK\n";
     return 0;
 }

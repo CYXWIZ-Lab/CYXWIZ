@@ -159,7 +159,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(any, "file.save", "Save (the script or graph when the Script Editor or canvas is focused)", "Ctrl+S", "File");
         add(any, "file.save_as", "Save As... (the script or graph when the Script Editor or canvas is focused)", "Ctrl+Shift+S", "File");
         add(any, "file.save_all", "Save All", "Ctrl+Alt+S", "File");
-        add(any, "file.import_model", "Import Model...", "Ctrl+I", "File");
+        add(any, "file.import_model", "Open Model File...", "Ctrl+I", "File");
         add(any, "export.cyxmodel", "Export Model as CyxWiz package", "Ctrl+E", "File > Export Model");
         add(any, "file.preferences", "Preferences...", "Ctrl+,", "File");
         add(any, "view.command_palette", "Command Palette", "Ctrl+P", "View");
@@ -365,7 +365,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Action(f, "file.save_all", "Save All", "Saves every open script."));
         i.push_back(Toggle(f, "file.auto_save", "Auto Save", "Saves open scripts every 60 seconds.", in.auto_save));
         i.push_back(Sep());
-        i.push_back(Action(f, "file.import_model", "Import Model...", "Loads a model file into the project."));
+        i.push_back(Action(f, "file.import_model", "Open Model File...",
+                           "Reads a model file and opens its graph, without its weights."));
         i.push_back(Sub("file.export", "Export Model", "Exports the trained model. The same menu is in Deploy.",
                         ExportSubmenu(f, in.onnx_export_available)));
         i.push_back(Sep());
