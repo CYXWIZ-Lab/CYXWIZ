@@ -2579,8 +2579,8 @@ int main() {
                                Link(3, 1, 102, 4, 402),
                                Link(4, 4, 403, 5, 501)},
                               true);
-    Check(HasIssueText(config, "No pre-train data inspection node found"),
-          "training graph without reachable inspection should warn before training");
+    Check(HasIssueText(config, "Check the data before a long training"),
+          "training graph without reachable inspection gets the data-check note");
 
     auto profiler = Node(26,
                          gui::NodeType::DataProfiler,
@@ -2595,8 +2595,8 @@ int main() {
                                Link(4, 4, 403, 5, 501),
                                Link(5, 1, 101, 26, 2601)},
                               true);
-    Check(!HasIssueText(config, "No pre-train data inspection node found"),
-          "reachable DataProfiler should satisfy the pre-train inspection warning");
+    Check(!HasIssueText(config, "Check the data before a long training"),
+          "reachable DataProfiler should satisfy the data-check note");
 
     auto stratified_split = Node(27,
                                  gui::NodeType::DataSplit,

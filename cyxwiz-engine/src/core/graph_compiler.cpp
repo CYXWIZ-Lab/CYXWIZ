@@ -4468,13 +4468,13 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateSingleDatasetSourceForSelectedLoss(nodes, loss_node, links, config);
         ValidateExtensionNodes(nodes, training_path_ids, config);
 
+        // A note, not a warning: Data Studio (Explore, Validate) checks the
+        // data without a node; a reachable inspection node also counts.
         if (dataset_node && !HasReachablePreTrainInspectionNode(nodes, dataset_reachable)) {
-            AddIssue(config, IssueLevel::Warning,
-                     "No pre-train data inspection node found - consider adding "
-                     "DataProfiler, DescribeStats, ValueCounts, SampleRows, "
-                     "CorrelationMatrix, or DataValidator before training to check "
-                     "missing values, class balance, column types, and label suitability",
-                     dataset_node->id, dataset_node->name);
+            AddIssue(config, IssueLevel::Info,
+                     "Check the data before a long training: Data Studio's Explore and Validate show "
+                     "missing values, class balance and column types",
+                     dataset_node->id, dataset_node->name, errors::Compiler::DataCheckSuggested);
         }
     }
 
@@ -4620,7 +4620,7 @@ TrainingConfiguration GraphCompiler::Compile(
             } else {
                 AddIssue(config, IssueLevel::Error,
                          "Data is not loaded - open the node and click Apply",
-                         dataset_node->id, dataset_node->name);
+                         dataset_node->id, dataset_node->name, errors::Compiler::DataNotLoaded);
             }
         } else {
             // dataset_name is set but registry has nothing under it.
@@ -4633,7 +4633,7 @@ TrainingConfiguration GraphCompiler::Compile(
             } else {
                 AddIssue(config, IssueLevel::Error,
                          "Data is not loaded - open the node and click Apply",
-                         dataset_node->id, dataset_node->name);
+                         dataset_node->id, dataset_node->name, errors::Compiler::DataNotLoaded);
             }
         }
 
