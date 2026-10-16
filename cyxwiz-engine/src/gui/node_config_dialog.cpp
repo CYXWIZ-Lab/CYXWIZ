@@ -5,6 +5,7 @@
 #include "node_editor.h"
 #include "separate_windows.h"
 #include "sql_workbench.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
@@ -162,42 +163,41 @@ bool NodeConfigDialog::Render() {
     return is_open_;
 }
 
+const char* NodeConfigDialog::ApplyBlockedReason() const {
+    if (IsBusy()) return "Wait for it to finish";
+    if (!CanApply()) return "Nothing to apply here";
+    return nullptr;
+}
+
 float NodeConfigDialog::FooterHeight() const {
-    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    return ImGui::GetFontSize() + t.button_padding.y * 2.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f;
 }
 
 void NodeConfigDialog::RenderFooter(bool& should_close) {
-    ImGui::Separator();
-
-    // Bottom buttons (OK, Cancel, Apply)
-    const float avail = ImGui::GetContentRegionAvail().x;
-    float button_width = 80.0f;
-    float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float total_width = button_width * 3 + spacing * 2;
-    ImGui::SetCursorPosX(avail - total_width);
-
-    // Grey out OK/Apply while a subclass reports it's busy (e.g. async
-    // data load in DataInputDialog). Cancel stays enabled so the user
-    // can always bail out.
-    bool busy = IsBusy() || !CanApply();
-
-    ImGui::BeginDisabled(busy);
-    if (ImGui::Button("OK", ImVec2(button_width, 0))) {
-        Apply();
-        should_close = true;
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+    namespace ui = cyxwiz::ui;
+    ImGui::Dummy(ImVec2(0, 2.0f));
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float width = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) +
+                        ui::ButtonWidth("Apply", ui::ButtonSize::Regular) +
+                        ui::ButtonWidth("OK", ui::ButtonSize::Regular) + spacing * 2.0f;
+    ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width));
+    // Cancel stays on while busy, so the user can always leave.
+    if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) {
         Reset();
         should_close = true;
     }
+    const char* blocked = ApplyBlockedReason();
+    const bool unchanged = TracksChanges() && !has_changes_;
     ImGui::SameLine();
-    ImGui::BeginDisabled(busy);
-    if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
+    if (ui::SecondaryButton("Apply", !blocked && !unchanged, blocked ? blocked : "Nothing changed",
+                            ui::ButtonSize::Regular))
         Apply();
+    ImGui::SameLine();
+    if (ui::PrimaryButton("OK", !blocked, blocked)) {
+        Apply();
+        should_close = true;
     }
-    ImGui::EndDisabled();
 }
 
 bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const char* filter) {
@@ -207,14 +207,15 @@ bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const 
     strncpy(buf, path.c_str(), sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
-    ImGui::Text("%s", label);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
+    ImGui::TextUnformatted(label);
+    const float browse = cyxwiz::ui::ButtonWidth("Browse...", cyxwiz::ui::ButtonSize::Regular);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse - ImGui::GetStyle().ItemSpacing.x);
     if (ImGui::InputText("##filepath", buf, sizeof(buf))) {
         path = buf;
         changed = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Browse...", ImVec2(80.0f, 0))) {
+    if (cyxwiz::ui::SecondaryButton("Browse...", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
         const char* default_path = path.empty() ? nullptr : path.c_str();
         if (auto selected = cyxwiz::FileDialogs::OpenFile(
                 "Select File", ConvertWindowsFilter(filter), default_path)) {

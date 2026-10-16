@@ -63,6 +63,12 @@ public:
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
     virtual bool CanApply() const { return true; }
+    // Why OK and Apply are off (busy, or CanApply false), or nullptr while
+    // they are on; shown on hover.
+    virtual const char* ApplyBlockedReason() const;
+    // True for a dialog that sets has_changes_ on every edit: Apply then
+    // stays off while nothing changed.
+    virtual bool TracksChanges() const { return false; }
     // False for dialogs that draw their own actions (the SQL Workbench):
     // the base then gives RenderContent the whole window, with no OK /
     // Cancel / Apply row.
@@ -79,8 +85,9 @@ public:
 
 protected:
     virtual void RenderContent() = 0;
-    // The row under the content: OK / Cancel / Apply by default. A dialog
-    // with its own footer overrides both; should_close asks Render to close.
+    // The row under the content: Cancel, Apply, then OK in the Engine's
+    // buttons. A dialog with its own footer overrides both; should_close asks
+    // Render to close.
     virtual float FooterHeight() const;
     virtual void RenderFooter(bool& should_close);
     virtual void OnClose() {}
@@ -232,6 +239,11 @@ public:
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
     bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
     bool CanApply() const override { return !IsHdf5Source(); }
+    const char* ApplyBlockedReason() const override {
+        if (IsBusy()) return "Wait for the load to finish";
+        if (IsHdf5Source()) return "An HDF5 file can be inspected here; loading it is not built yet";
+        return nullptr;
+    }
     // Train loads a Data Input a reopened project has not loaded through a
     // dialog it never shows (the same Apply as OK): the load's result is
     // taken here each frame, as RenderContent does for a shown dialog.

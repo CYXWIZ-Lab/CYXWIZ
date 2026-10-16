@@ -35,7 +35,6 @@ public:
 
 protected:
     void RenderContent() override;
-    float FooterHeight() const override;
     void RenderFooter(bool& should_close) override;
 
 private:
