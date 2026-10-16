@@ -115,3 +115,24 @@ folder of images is used as images (**Labels from**: class folders, or a
 flat folder and a labels CSV), a folder of audio as audio (labels, sample
 rate, length), a folder of text files as text. Training, validation and
 test roles come from the graph's Data Split, not from this node.
+
+## Text Tokenizer
+
+The tabs are named by what you decide:
+
+- **Words**: the text and label columns, **Split into** (Spaces, Words,
+  Characters, WordPiece, Byte BPE; Byte BPE adds its starting units and
+  space handling) and **Lowercase first**. A vocabulary card shows the file
+  the node uses (*sentiment_analysis_vocab.txt, 5000 tokens, min frequency
+  5*), warns when entries are broken bytes from before 2026-10-16 (rebuild
+  it), and has **Build and save vocabulary** and **Inspect file**.
+- **Vocabulary**: source CSV, text column, minimum frequency, maximum size,
+  the file and "build and save it when the file is missing".
+- **Length**: the output (padded token columns, causal document windows,
+  decode token IDs, round-trip check), maximum length, pad value, pad and
+  cut.
+- **Try it**: type a sample; its tokens show as you type ([UNK] in orange,
+  hover for the id) with the count against the maximum length, and the ids
+  and round trip under a disclosure.
+
+Help for each field is the hover text on its label.

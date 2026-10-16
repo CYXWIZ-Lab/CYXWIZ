@@ -155,10 +155,16 @@ protected:
     void RenderContent() override;
 
 private:
-    void RenderTokenizerTab();
+    // Tabs (board 4): Words, Vocabulary, Length, Try it.
+    void RenderWordsTab();
+    void RenderBpeOptions();
+    void RenderVocabularyCard();
     void RenderVocabularyTab();
-    void RenderPaddingTab();
-    void RenderPreviewTab();
+    void RenderLengthTab();
+    void RenderTryItTab();
+    void RunTryIt();
+    void ClearTryIt();
+    bool TracksChanges() const override { return true; }
     void LoadFromNode();
     // A tokenizer with no columns set takes the text and label columns of
     // the Data Input before it (TOFIX129 B-8), once, when first drawn.
@@ -198,6 +204,13 @@ private:
     bool preview_has_roundtrip_ = false;
     std::string status_message_;
     bool status_is_error_ = false;
+    std::string try_message_;
+    bool try_is_error_ = false;
+    // The vocabulary card's facts, read once per file.
+    std::string vocab_card_path_;
+    bool vocab_card_found_ = false;
+    size_t vocab_card_entries_ = 0;
+    size_t vocab_card_broken_ = 0;
 };
 
 /**
