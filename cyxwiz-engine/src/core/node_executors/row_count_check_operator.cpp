@@ -215,17 +215,53 @@ arrow::Result<std::shared_ptr<arrow::Schema>> RowCountCheckOperator::InferOutput
 arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::Apply(
     const std::shared_ptr<arrow::Table>& input) {
     if (!input) return arrow::Status::Invalid("RowCountCheck: no input table");
-    ARROW_RETURN_NOT_OK(InferOutputSchema(input->schema()).status());
-    return check_ == "row_count" ? ApplyRowCount(input) : ApplyValueCheck(input);
+    // The whole table is one batch of the stream.
+    ARROW_RETURN_NOT_OK(BeginStream(input->schema()));
+    ARROW_RETURN_NOT_OK(FitBatch(input));
+    ARROW_RETURN_NOT_OK(EndFit());
+    return input;
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::ApplyValueCheck(
-    const std::shared_ptr<arrow::Table>& input) {
+arrow::Status RowCountCheckOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
+    if (!schema) return arrow::Status::Invalid("RowCountCheck: no input table");
+    ARROW_RETURN_NOT_OK(InferOutputSchema(schema).status());
+    rows_ = counted_ = failing_ = 0;
+    first_.clear();
+    seen_.clear();
+    return arrow::Status::OK();
+}
+
+namespace {
+std::string FormatNumber(double v) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%g", v);
+    return std::string(text);
+}
+}  // namespace
+
+arrow::Status RowCountCheckOperator::FitBatch(const std::shared_ptr<arrow::Table>& input) {
     const int64_t rows = input->num_rows();
-    int64_t failing = 0;
-    std::string first;  // the first failing value, shown in the message
-    std::string rule, what;
-    if (check_ == "unique") {
+    rows_ += rows;
+    if (check_ == "row_count") {
+        if (!count_true_column_.empty()) {
+            for (const auto& chunk : input->GetColumnByName(count_true_column_)->chunks()) {
+                const auto& values = static_cast<const arrow::BooleanArray&>(*chunk);
+                for (int64_t i = 0; i < values.length(); ++i) {
+                    if (values.IsValid(i) && values.Value(i)) ++counted_;
+                }
+            }
+        } else if (!count_column_.empty()) {
+            for (const auto& chunk : input->GetColumnByName(count_column_)->chunks()) {
+                for (int64_t i = 0; i < chunk->length(); ++i) {
+                    if (!chunk->IsValid(i)) continue;
+                    ARROW_ASSIGN_OR_RAISE(auto scalar, chunk->GetScalar(i));
+                    if (scalar->ToString() == count_value_) ++counted_;
+                }
+            }
+        } else {
+            counted_ += rows;
+        }
+    } else if (check_ == "unique") {
         // One key per row from the columns as text (an empty table has no chunks to join).
         std::vector<std::shared_ptr<arrow::StringArray>> keys;
         for (const auto& name : columns_) {
@@ -234,51 +270,27 @@ arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::ApplyValueCh
             ARROW_ASSIGN_OR_RAISE(auto flat, arrow::Concatenate(text->chunks()));
             keys.push_back(std::static_pointer_cast<arrow::StringArray>(flat));
         }
-        std::unordered_set<std::string> seen;
-        seen.reserve(static_cast<size_t>(rows));
+        seen_.reserve(seen_.size() + static_cast<size_t>(rows));
         for (int64_t r = 0; r < rows; ++r) {
             std::string key;
             for (const auto& values : keys) {
                 key += values->IsNull(r) ? std::string("\x01") : std::string(values->GetView(r));
                 key += '\x1f';
             }
-            if (!seen.insert(key).second) {
-                if (failing++ == 0) first = key.substr(0, key.size() - 1);
+            if (!seen_.insert(key).second) {
+                if (failing_++ == 0) first_ = key.substr(0, key.size() - 1);
             }
         }
-        for (char& c : first) {
-            if (c == '\x1f') c = '|';
-        }
-        what = JoinList(columns_);
-        rule = "unique";
-        if (failing > 0) {
-            return arrow::Status::Invalid(Label(), " failed: ", what, " repeats in ", failing, " row(s) (first: ", Shown(first),
-                                          "). Nothing downstream ran; fix the data or the check.");
-        }
-        last_outcome_ = "passed: " + what + " unique in " + std::to_string(rows) + " rows";
     } else if (check_ == "range") {
-        const auto number = [](double v) {
-            char text[32];
-            std::snprintf(text, sizeof(text), "%g", v);
-            return std::string(text);
-        };
         ARROW_ASSIGN_OR_RAISE(auto cast, arrow::compute::Cast(arrow::Datum(input->GetColumnByName(column_)), arrow::float64()));
         for (const auto& chunk : cast.chunked_array()->chunks()) {
             const auto& values = static_cast<const arrow::DoubleArray&>(*chunk);
             for (int64_t i = 0; i < values.length(); ++i) {
                 const bool bad = values.IsNull(i) || (min_value_ && values.Value(i) < *min_value_) ||
                                  (max_value_ && values.Value(i) > *max_value_);
-                if (bad && failing++ == 0) first = values.IsNull(i) ? std::string("(empty)") : number(values.Value(i));
+                if (bad && failing_++ == 0) first_ = values.IsNull(i) ? std::string("(empty)") : FormatNumber(values.Value(i));
             }
         }
-        rule = min_value_ && max_value_ ? "within " + number(*min_value_) + " to " + number(*max_value_)
-               : min_value_             ? "at least " + number(*min_value_)
-                                        : "at most " + number(*max_value_);
-        if (failing > 0) {
-            return arrow::Status::Invalid(Label(), " failed: ", column_, " is not ", rule, " in ", failing, " row(s) (first: ", first,
-                                          "). Nothing downstream ran; fix the data or the check.");
-        }
-        last_outcome_ = "passed: " + column_ + " " + rule + " in " + std::to_string(rows) + " rows";
     } else {
         ARROW_ASSIGN_OR_RAISE(auto text, AsText(input->GetColumnByName(column_)));
         const std::unordered_set<std::string> allowed(allowed_.begin(), allowed_.end());
@@ -287,77 +299,79 @@ arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::ApplyValueCh
             for (int64_t i = 0; i < values.length(); ++i) {
                 const bool empty = values.IsNull(i) || values.GetView(i).empty();
                 const bool bad = check_ == "not_empty" ? empty : values.IsNull(i) || !allowed.count(std::string(values.GetView(i)));
-                if (bad && failing++ == 0) first = values.IsNull(i) ? std::string("(empty)") : Shown(std::string(values.GetView(i)));
+                if (bad && failing_++ == 0) first_ = values.IsNull(i) ? std::string("(empty)") : Shown(std::string(values.GetView(i)));
             }
-        }
-        if (check_ == "not_empty") {
-            if (failing > 0) {
-                return arrow::Status::Invalid(Label(), " failed: ", column_, " is empty in ", failing,
-                                              " row(s). Nothing downstream ran; fix the data or the check.");
-            }
-            last_outcome_ = "passed: " + column_ + " never empty in " + std::to_string(rows) + " rows";
-        } else {
-            if (failing > 0) {
-                return arrow::Status::Invalid(Label(), " failed: ", column_, " has ", failing, " value(s) outside ", JoinList(allowed_),
-                                              " (first: ", first, "). Nothing downstream ran; fix the data or the check.");
-            }
-            last_outcome_ = "passed: every " + column_ + " is one of " + JoinList(allowed_) + " (" + std::to_string(rows) + " rows)";
         }
     }
-    spdlog::info("{} {}", Label(), last_outcome_);
-    return input;
+    return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::ApplyRowCount(
-    const std::shared_ptr<arrow::Table>& input) {
-    int64_t counted = input->num_rows();
-    std::string what = "rows";
-    if (!count_true_column_.empty()) {
-        counted = 0;
-        for (const auto& chunk : input->GetColumnByName(count_true_column_)->chunks()) {
-            const auto& values = static_cast<const arrow::BooleanArray&>(*chunk);
-            for (int64_t i = 0; i < values.length(); ++i) {
-                if (values.IsValid(i) && values.Value(i)) ++counted;
-            }
-        }
-        what = "rows where " + count_true_column_ + " is true";
-    } else if (!count_column_.empty()) {
-        counted = 0;
-        for (const auto& chunk : input->GetColumnByName(count_column_)->chunks()) {
-            for (int64_t i = 0; i < chunk->length(); ++i) {
-                if (!chunk->IsValid(i)) continue;
-                ARROW_ASSIGN_OR_RAISE(auto scalar, chunk->GetScalar(i));
-                if (scalar->ToString() == count_value_) ++counted;
-            }
-        }
-        what = "rows where " + count_column_ + " = '" + count_value_ + "'";
-    }
-
-    std::string expectation;
-    bool ok = true;
-    if (expected_rows_) {
-        ok = ok && counted == *expected_rows_;
-        expectation = "exactly " + std::to_string(*expected_rows_);
-    }
-    if (min_rows_) {
-        ok = ok && counted >= *min_rows_;
-        expectation += (expectation.empty() ? "" : ", ") + std::string("at least ") +
-                       std::to_string(*min_rows_);
-    }
-    if (max_rows_) {
-        ok = ok && counted <= *max_rows_;
-        expectation += (expectation.empty() ? "" : ", ") + std::string("at most ") +
-                       std::to_string(*max_rows_);
-    }
+arrow::Status RowCountCheckOperator::EndFit() {
     const std::string label = Label();
-    if (!ok) {
-        return arrow::Status::Invalid(label, " failed: expected ", expectation, " ", what,
-                                      ", found ", counted,
-                                      ". Nothing downstream ran; fix the data or the expectation.");
+    if (check_ == "row_count") {
+        std::string what = "rows";
+        if (!count_true_column_.empty()) what = "rows where " + count_true_column_ + " is true";
+        else if (!count_column_.empty()) what = "rows where " + count_column_ + " = '" + count_value_ + "'";
+        std::string expectation;
+        bool ok = true;
+        if (expected_rows_) {
+            ok = ok && counted_ == *expected_rows_;
+            expectation = "exactly " + std::to_string(*expected_rows_);
+        }
+        if (min_rows_) {
+            ok = ok && counted_ >= *min_rows_;
+            expectation += (expectation.empty() ? "" : ", ") + std::string("at least ") +
+                           std::to_string(*min_rows_);
+        }
+        if (max_rows_) {
+            ok = ok && counted_ <= *max_rows_;
+            expectation += (expectation.empty() ? "" : ", ") + std::string("at most ") +
+                           std::to_string(*max_rows_);
+        }
+        if (!ok) {
+            return arrow::Status::Invalid(label, " failed: expected ", expectation, " ", what,
+                                          ", found ", counted_,
+                                          ". Nothing downstream ran; fix the data or the expectation.");
+        }
+        spdlog::info("[Data Studio] {} passed: {} {} (expected {})", label, counted_, what, expectation);
+        last_outcome_ = "passed: " + std::to_string(counted_) + " " + what + " (expected " + expectation + ")";
+        return arrow::Status::OK();
     }
-    spdlog::info("[Data Studio] {} passed: {} {} (expected {})", label, counted, what, expectation);
-    last_outcome_ = "passed: " + std::to_string(counted) + " " + what + " (expected " + expectation + ")";
-    return input;
+    if (check_ == "unique") {
+        std::string first = first_;
+        for (char& c : first) {
+            if (c == '\x1f') c = '|';
+        }
+        const std::string what = JoinList(columns_);
+        if (failing_ > 0) {
+            return arrow::Status::Invalid(label, " failed: ", what, " repeats in ", failing_, " row(s) (first: ", Shown(first),
+                                          "). Nothing downstream ran; fix the data or the check.");
+        }
+        last_outcome_ = "passed: " + what + " unique in " + std::to_string(rows_) + " rows";
+    } else if (check_ == "range") {
+        const std::string rule = min_value_ && max_value_ ? "within " + FormatNumber(*min_value_) + " to " + FormatNumber(*max_value_)
+                                 : min_value_             ? "at least " + FormatNumber(*min_value_)
+                                                          : "at most " + FormatNumber(*max_value_);
+        if (failing_ > 0) {
+            return arrow::Status::Invalid(label, " failed: ", column_, " is not ", rule, " in ", failing_, " row(s) (first: ", first_,
+                                          "). Nothing downstream ran; fix the data or the check.");
+        }
+        last_outcome_ = "passed: " + column_ + " " + rule + " in " + std::to_string(rows_) + " rows";
+    } else if (check_ == "not_empty") {
+        if (failing_ > 0) {
+            return arrow::Status::Invalid(label, " failed: ", column_, " is empty in ", failing_,
+                                          " row(s). Nothing downstream ran; fix the data or the check.");
+        }
+        last_outcome_ = "passed: " + column_ + " never empty in " + std::to_string(rows_) + " rows";
+    } else {
+        if (failing_ > 0) {
+            return arrow::Status::Invalid(label, " failed: ", column_, " has ", failing_, " value(s) outside ", JoinList(allowed_),
+                                          " (first: ", first_, "). Nothing downstream ran; fix the data or the check.");
+        }
+        last_outcome_ = "passed: every " + column_ + " is one of " + JoinList(allowed_) + " (" + std::to_string(rows_) + " rows)";
+    }
+    spdlog::info("{} {}", label, last_outcome_);
+    return arrow::Status::OK();
 }
 
 } // namespace cyxwiz

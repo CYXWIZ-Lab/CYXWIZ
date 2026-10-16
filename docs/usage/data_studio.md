@@ -80,7 +80,7 @@ ORDER BY tracks DESC
   the background: the Engine stays responsive, Task View shows it, and
   **Cancel** stops it. One query runs at a time.
 - Several tables in one query: `JOIN "Spotify" s ... JOIN "World countries" w`.
-  Large datasets kept on disk (Parquet) can be queried too.
+  Large datasets kept on disk (Parquet) can be queried too. How large tables are kept and read: [big_data.md](big_data.md).
 - The line under the editor lists the tables you can name now.
 - Only reading is allowed: one `SELECT` (or `WITH ... SELECT`). Changing data
   belongs in the graph (the SQL node, Filter Rows, ...). Queries cannot read

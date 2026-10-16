@@ -126,6 +126,10 @@ public:
     // The whole table (an admitted step's input, TOFIX154).
     std::shared_ptr<arrow::Table> ReadAll() const;
 
+    // About max_rows rows from row groups spread evenly over the file (a
+    // plot of a table on disk): fast, and it spans the whole file.
+    std::shared_ptr<arrow::Table> ReadSpreadRowGroups(int64_t max_rows) const;
+
     // Write the selected columns of a Parquet file to another Parquet file,
     // one row group at a time (Data Input's column selection on a file that
     // stays on disk). Writes to <output>.tmp and renames on success.

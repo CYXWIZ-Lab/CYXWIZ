@@ -192,11 +192,23 @@ std::vector<::gui::GuidedEditor::Input> PrepareView::StepInputs(int step_id) con
     const auto names = sqlstep::InputNames(step->parameters);
     const auto& facts = editor_->GetNodeRunFacts();
     for (const auto& input : editor_->GetDataStepContext(step_id).inputs) {
-        std::shared_ptr<arrow::Table> table;
+        ::gui::GuidedEditor::Input entry;
+        entry.alias = input.pin < static_cast<int>(names.size()) ? names[static_cast<size_t>(input.pin)] : std::string("input");
         const auto it = facts.find(input.id);
-        if (it != facts.end() && !it->second.output_dataset.empty())
-            if (auto ds = DataRegistry::Instance().GetArrowDataset(it->second.output_dataset)) table = ds->GetArrowTable();
-        inputs.push_back({input.pin < static_cast<int>(names.size()) ? names[static_cast<size_t>(input.pin)] : std::string("input"), table});
+        if (it != facts.end() && !it->second.output_dataset.empty()) {
+            const auto source = SqlInputForDataset(entry.alias, it->second.output_dataset);
+            if (source.table) {
+                entry.table = source.table;
+                entry.rows = source.table->num_rows();
+            } else if (!source.parquet_path.empty()) {
+                // A table kept on disk: its columns here, its rows read by DuckDB.
+                entry.parquet_path = source.parquet_path;
+                entry.table = arrow::Table::MakeEmpty(source.schema).ValueOr(nullptr);
+                const auto ref = DataRegistry::Instance().GetTableRef(it->second.output_dataset);
+                entry.rows = ref ? ref->rows : 0;
+            }
+        }
+        inputs.push_back(std::move(entry));
     }
     return inputs;
 }
@@ -343,7 +355,15 @@ void PrepareView::StartPartCounts(const studio::GraphNode& node) {
             job->done = true;
             return;
         }
-        inputs.push_back({input.alias, input.table});
+        SqlTransformInput source;
+        source.alias = input.alias;
+        if (input.parquet_path.empty()) {
+            source.table = input.table;
+        } else {
+            source.parquet_path = input.parquet_path;
+            source.schema = input.table->schema();
+        }
+        inputs.push_back(std::move(source));
     }
     std::vector<std::string> order;
     for (const auto& part : outline.parts) order.push_back(part.name);
@@ -602,7 +622,7 @@ void PrepareView::RenderGuided(float height) {
     // operations still write that query.
     ::gui::GuidedEditor::CardFacts facts;
     if (parts_ && parts_->done && parts_->error.empty() && parts_->query == pane_.Text()) facts.rows = &parts_->by_part;
-    if (!guided_.Inputs().empty() && guided_.Inputs().front().table) facts.input_rows = guided_.Inputs().front().table->num_rows();
+    if (!guided_.Inputs().empty() && guided_.Inputs().front().table) facts.input_rows = guided_.Inputs().front().rows;
     facts.checks_after = checks_after_;
 
     const float width = ImGui::GetContentRegionAvail().x;
@@ -694,8 +714,8 @@ void PrepareView::RenderResult(const studio::GraphNode& node) {
     if (key != grid_key_) {
         grid_key_ = key;
         grid_.SetTable(nullptr);
-        if (auto ds = DataRegistry::Instance().GetArrowDataset(node.output_dataset))
-            if (auto table = ds->GetArrowTable()) grid_.SetTable(DataTableFromArrow(*table, node.name, kGridRows));
+        if (auto table = DataRegistry::Instance().ReadTablePreview(node.output_dataset, kGridRows))
+            grid_.SetTable(DataTableFromArrow(*table, node.name, kGridRows));
         if (node.type == ::gui::NodeType::SQLQuery) StartPartCounts(node);
         else parts_.reset();
     }

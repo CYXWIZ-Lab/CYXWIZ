@@ -169,6 +169,19 @@ std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadAll() const {
     return ReadRowGroups(all);
 }
 
+std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadSpreadRowGroups(int64_t max_rows) const {
+    const int groups = GetNumRowGroups();
+    if (groups == 0 || num_rows_ <= max_rows) return ReadAll();
+    const int64_t average = std::max<int64_t>(1, num_rows_ / groups);
+    const int wanted = static_cast<int>(std::clamp<int64_t>((max_rows + average - 1) / average, 1, groups));
+    std::vector<int> indices;
+    for (int i = 0; i < wanted; ++i) {
+        const int index = static_cast<int>(static_cast<int64_t>(i) * groups / wanted);
+        if (indices.empty() || indices.back() != index) indices.push_back(index);
+    }
+    return ReadRowGroups(indices);
+}
+
 bool ParquetBackedDataset::WriteColumnProjection(const std::string& source_path,
                                                  const std::string& output_path,
                                                  const std::vector<std::string>& columns,

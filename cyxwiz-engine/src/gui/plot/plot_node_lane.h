@@ -49,6 +49,7 @@ public:
         float progress = 0.0f;         // Running
         std::string progress_text;
         std::shared_ptr<arrow::Table> table;
+        int64_t source_rows = 0;       // the dataset's rows: more than `table`'s when it is a sample of a table on disk
         std::string dataset_name;      // the registry name of `table` (a loaded Data Input or the run's result)
         bool sparse = false;           // dataset_name is sparse features (no `table`; a Dashboard reads them)
         std::string read_at;           // "16:42" when the table was read

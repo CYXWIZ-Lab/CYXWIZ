@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/column_role_store.h"
 #include "../../core/data_registry.h"
+#include "../../core/parquet_backed_dataset.h"
 #include "../../core/dashboard/sparse_summary.h"
 #include "../../core/dashboard/text_words.h"
 #include "../../core/project_manager.h"
@@ -1147,8 +1148,11 @@ void DashboardWindow::DrawPlotList() {
 }
 
 void DashboardWindow::OpenInPlotWindow(WidgetSpec& w) {
-    auto ds = DataRegistry::Instance().GetArrowDataset(dataset_);
-    if (!ds || !ds->GetArrowTable()) return;
+    // A table kept on disk opens as row groups spread over it (TOFIX154).
+    std::shared_ptr<arrow::Table> table;
+    if (auto ds = DataRegistry::Instance().GetArrowDataset(dataset_)) table = ds->GetArrowTable();
+    else if (auto disk = DataRegistry::Instance().GetParquetBackedDataset(dataset_)) table = disk->ReadSpreadRowGroups(500000);
+    if (!table) return;
     if (!editor_) editor_ = std::make_unique<plot::PlotWindow>(id_ + "_editor");
     editing_ = w.id;
     editor_->SetSpec(w.plot);
@@ -1158,7 +1162,7 @@ void DashboardWindow::OpenInPlotWindow(WidgetSpec& w) {
             SaveIfChanged();
         }
     };
-    editor_->SetArrowTable(title_.empty() ? dataset_ : title_, ds->GetArrowTable());
+    editor_->SetArrowTable(title_.empty() ? dataset_ : title_, table);
     editor_->visible = true;
 }
 

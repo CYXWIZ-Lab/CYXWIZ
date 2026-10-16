@@ -31,6 +31,7 @@ namespace cyxwiz {
 // Forward declaration
 class SqlTransform;
 struct SqlTransformInput;
+class IPipelineOperator;
 struct PipelineRuntimeSupport;
 
 enum class PipelineNodeExecutionEvent : uint8_t {
@@ -414,6 +415,16 @@ private:
     // reported as error_prefix + DuckDB's message.
     bool RunStepSql(const Node& node, const std::vector<StepSqlInput>& inputs, const std::string& sql,
                     const std::string& output_name, bool exact_types, const std::string& error_prefix);
+    // A result file a step wrote: read back into memory up to the threshold,
+    // else registered on disk (D1); false after ReportError.
+    bool RegisterStepResultFile(const Node& node, const std::string& output_name, const std::string& path,
+                                int64_t rows);
+    // A result file's path for this run (cache/pipeline/results).
+    std::string NewStepResultPath(const std::string& output_name) const;
+    // An operator that streams (TOFIX154 step 4) run over its input one row
+    // group at a time: fit pass, apply pass, the output written as it comes.
+    bool RunStreamingOperator(const Node& node, IPipelineOperator& op, const std::string& input_dataset,
+                              const std::string& output_name);
     // A step's input for checking columns and types: the table in memory, or
     // an empty table with the file's schema (its rows stay on disk).
     std::shared_ptr<arrow::Table> InputSchemaTable(const std::string& dataset) const;
@@ -423,16 +434,16 @@ private:
     // same files; null after ReportError.
     std::shared_ptr<arrow::Table> FetchStepSql(const std::vector<StepSqlInput>& inputs, const std::string& sql,
                                                const std::string& error_prefix);
-    // The SqlTransform inputs for a step: one file per input, the folders
-    // DuckDB may read; false after ReportError.
+    // The SqlTransform inputs for a step: one file per input; false after
+    // ReportError.
     bool PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
-                              std::vector<SqlTransformInput>& files, std::vector<std::string>& folders,
-                              uint64_t& input_bytes, bool& any_on_disk);
+                              std::vector<SqlTransformInput>& files, uint64_t& input_bytes, bool& any_on_disk);
     // The Parquet file a dataset is read from ("" after ReportError).
     std::string StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
                               uint64_t& bytes, bool& on_disk);
-    // Steps that run SQL over their inputs' files (RunStepSql) and so are not
-    // admitted (read whole) first.
+    // Steps that read their inputs from the files, never whole: SQL steps
+    // (RunStepSql) and operators that stream (RunStreamingOperator). They are
+    // not admitted first.
     static bool StepReadsInputFiles(const Node& node);
     // <project>/cache/pipeline, or <temp>/cyxwiz/pipeline outside a project.
     std::filesystem::path PipelineCacheRoot() const;

@@ -60,7 +60,9 @@ private:
         std::string alias;
         std::string source;  // "Data Input \"Tier 1 books\""
         int node_id = -1;
-        std::shared_ptr<arrow::Table> table;  // null when not in memory
+        std::shared_ptr<arrow::Table> table;  // null when not loaded; columns only for a table on disk
+        std::string parquet_path;             // a table kept on disk (TOFIX154): DuckDB reads the file
+        int64_t rows = 0;
     };
     struct HistoryEntry {
         std::string time;

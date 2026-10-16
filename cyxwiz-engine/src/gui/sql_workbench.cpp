@@ -203,8 +203,16 @@ void SqlWorkbenchDialog::RefreshInputs() {
         table.node_id = input.id;
         const auto it = facts.find(input.id);
         if (it != facts.end() && !it->second.output_dataset.empty()) {
-            if (auto dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(it->second.output_dataset)) {
-                table.table = dataset->GetArrowTable();
+            const auto source = cyxwiz::SqlInputForDataset(table.alias, it->second.output_dataset);
+            if (source.table) {
+                table.table = source.table;
+                table.rows = source.table->num_rows();
+            } else if (!source.parquet_path.empty()) {
+                // A table kept on disk: its columns here, its rows read by DuckDB.
+                table.parquet_path = source.parquet_path;
+                table.table = arrow::Table::MakeEmpty(source.schema).ValueOr(nullptr);
+                const auto ref = cyxwiz::DataRegistry::Instance().GetTableRef(it->second.output_dataset);
+                table.rows = ref ? ref->rows : 0;
             }
         }
         inputs_.push_back(std::move(table));
@@ -225,16 +233,27 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
         return;
     }
     std::vector<cyxwiz::SqlTransformInput> inputs;
+    bool on_disk = false;
     for (const auto& input : inputs_) {
         if (!input.table) {
             AddMessage("Input '" + input.alias + "' is not in memory. Use \"Load inputs\" first.", true);
             bottom_tab_ = kMessages;
             return;
         }
-        inputs.push_back({input.alias, input.table});
+        cyxwiz::SqlTransformInput source;
+        source.alias = input.alias;
+        if (input.parquet_path.empty()) {
+            source.table = input.table;
+        } else {
+            source.parquet_path = input.parquet_path;
+            source.schema = input.table->schema();
+            on_disk = true;
+        }
+        inputs.push_back(std::move(source));
     }
     // The Guided preview's sample: the main input only (look-up tables stay whole).
-    if (on_sample && sample_mode_ != 0 && !inputs.empty() && inputs.front().table->num_rows() > 1000) {
+    if (on_sample && sample_mode_ != 0 && !inputs.empty() && inputs.front().table &&
+        inputs.front().table->num_rows() > 1000) {
         auto& main = inputs.front().table;
         if (sample_mode_ == 1) {
             main = main->Slice(0, 1000);
@@ -305,6 +324,14 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
         AddMessage("The query has no parts to use here (no WITH, or it could not be split).", true);
         bottom_tab_ = kMessages;
         return;
+    }
+    // Over a table kept on disk the preview shows the first rows; the step
+    // itself writes every row (TOFIX154).
+    constexpr int64_t kDiskPreviewRows = 100000;
+    if (on_disk && mode == cyxwiz::SqlRunMode::Run && kind != RunKind::Counts) {
+        query = "SELECT * FROM (" + query + ") LIMIT " + std::to_string(kDiskPreviewRows);
+        AddMessage("An input is on disk: the preview shows at most the first " +
+                   sqlstep::FormatCount(kDiskPreviewRows) + " rows; the step writes every row.", false);
     }
     auto run = std::make_unique<Run>();
     run->kind = kind;
@@ -732,7 +759,8 @@ void SqlWorkbenchDialog::RenderInputsTab() {
         ImGui::PushID(static_cast<int>(i));
         Coloured(input.alias, t.accent_text);
         ImGui::SameLine();
-        Dim(input.table ? sqlstep::FormatCount(input.table->num_rows()) + " rows" : "not in memory");
+        Dim(!input.table ? std::string("not in memory")
+                         : sqlstep::FormatCount(input.rows) + " rows" + (input.parquet_path.empty() ? "" : " on disk"));
         DimWrapped("from " + input.source);
         if (input.table) {
             const auto& facts = node_editor_->GetNodeRunFacts();

@@ -1747,6 +1747,24 @@ std::optional<TableRef> DataRegistry::GetTableRef(const std::string& name) const
     return std::nullopt;
 }
 
+std::shared_ptr<arrow::Table> DataRegistry::ReadTablePreview(const std::string& name, int64_t max_rows) {
+    if (const auto memory = GetArrowDataset(name)) {
+        const auto table = memory->GetArrowTable();
+        return table ? table->Slice(0, std::max<int64_t>(0, max_rows)) : nullptr;
+    }
+    const auto disk = GetParquetBackedDataset(name);
+    if (!disk) return nullptr;
+    std::vector<int> groups;
+    int64_t rows = 0;
+    for (int i = 0; i < disk->GetNumRowGroups() && rows < max_rows; ++i) {
+        groups.push_back(i);
+        rows += disk->GetRowGroupSize(i);
+    }
+    if (groups.empty()) return arrow::Table::MakeEmpty(disk->GetSchema()).ValueOr(nullptr);
+    const auto table = disk->ReadRowGroups(groups);
+    return table ? table->Slice(0, max_rows) : nullptr;
+}
+
 std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
     const std::string& path, const std::string& name) {
 

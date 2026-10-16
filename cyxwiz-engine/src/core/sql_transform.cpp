@@ -1,10 +1,15 @@
 #include "sql_transform.h"
 
 #include "duckdb_connector.h"
+#include "data_registry.h"
+#include "parquet_backed_dataset.h"
+#include "arrow_dataset.h"
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <set>
 
 namespace cyxwiz {
@@ -55,8 +60,19 @@ std::string SqlInputAliasRejection(const std::string& alias) {
     return {};
 }
 
-SqlTransform::SqlTransform(std::vector<std::string> readable_folders) {
-    connector_ = std::make_unique<DuckDBConnector>(std::move(readable_folders));
+SqlTransform::SqlTransform() = default;
+
+SqlTransformInput SqlInputForDataset(const std::string& alias, const std::string& dataset) {
+    SqlTransformInput input;
+    input.alias = alias;
+    auto& registry = DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(dataset)) {
+        input.table = memory->GetArrowTable();
+    } else if (const auto disk = registry.GetParquetBackedDataset(dataset)) {
+        input.parquet_path = disk->GetFilePath();
+        input.schema = disk->GetSchema();
+    }
+    return input;
 }
 
 SqlTransform::~SqlTransform() = default;
@@ -75,6 +91,23 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
         result.error = "SQL: " + std::move(message);
         return result;
     };
+    {
+        // The folders DuckDB may touch: its file inputs' and its result's.
+        std::vector<std::string> folders;
+        auto folder_of = [&folders](const std::string& path) {
+            std::string folder = std::filesystem::path(path).parent_path().generic_string();
+            if (folder.empty()) return;
+            if (folder.back() != '/') folder += '/';
+            if (std::find(folders.begin(), folders.end(), folder) == folders.end()) folders.push_back(folder);
+        };
+        for (const auto& input : inputs)
+            if (!input.parquet_path.empty()) folder_of(input.parquet_path);
+        if (!output_path_.empty()) folder_of(output_path_);
+        auto connector = std::make_unique<DuckDBConnector>(std::move(folders));
+        std::lock_guard<std::mutex> lock(interrupt_mutex_);
+        connector_ = std::move(connector);
+        if (interrupted_ && connector_) connector_->Interrupt();
+    }
     if (!connector_ || !connector_->IsReady()) {
         return fail("the restricted DuckDB connection could not be opened: " +
                     (connector_ ? connector_->GetLastError() : std::string()));

@@ -590,6 +590,11 @@ public:
     // The dataset under this name, in memory or on disk (nullopt if neither).
     std::optional<TableRef> GetTableRef(const std::string& name) const;
 
+    // Its first max_rows rows (a grid, a preview), in memory or on disk: a
+    // table on disk reads only the row groups it needs; 0 rows gives just the
+    // columns. Null when the name is not a table.
+    std::shared_ptr<arrow::Table> ReadTablePreview(const std::string& name, int64_t max_rows);
+
     // Arrow format-specific loaders (for DataInput node)
     //
     // LoadCSVToArrow auto-detects the Arrow CSV block size. Batch callers may

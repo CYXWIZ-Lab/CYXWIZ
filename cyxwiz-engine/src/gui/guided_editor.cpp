@@ -433,8 +433,9 @@ void GuidedEditor::RenderCards(const ImVec2& size, const CardFacts& facts) {
         for (size_t i = 0; i < inputs_.size(); ++i) {
             const auto& input = inputs_[i];
             start += (i ? " and " : "") + input.alias +
-                     (input.table ? " (" + FormatCount(input.table->num_rows()) + " rows, " +
-                                        std::to_string(input.table->num_columns()) + " columns)"
+                     (input.table ? " (" + FormatCount(input.rows) + " rows, " +
+                                        std::to_string(input.table->num_columns()) + " columns" +
+                                        (input.parquet_path.empty() ? ")" : ", on disk)")
                                   : " (not loaded)");
         }
         DimWrapped(start);

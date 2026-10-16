@@ -3,6 +3,7 @@
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/parquet_backed_dataset.h"
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/pipeline_executor.h"
 #include "../../core/pipeline_materializer.h"
@@ -24,6 +25,25 @@
 namespace cyxwiz::plot {
 
 namespace {
+
+// The table a plot reads (TOFIX154): a table in memory, or about this many
+// rows from row groups spread over a table kept on disk; `rows` is the
+// dataset's own count.
+constexpr int64_t kPlotRowsFromDisk = 500000;
+std::shared_ptr<arrow::Table> PlotTable(const std::string& name, int64_t& rows) {
+    auto& registry = DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(name)) {
+        auto table = memory->GetArrowTable();
+        rows = table ? table->num_rows() : 0;
+        return table;
+    }
+    if (const auto disk = registry.GetParquetBackedDataset(name)) {
+        rows = disk->GetNumRows();
+        return disk->ReadSpreadRowGroups(kPlotRowsFromDisk);
+    }
+    rows = 0;
+    return nullptr;
+}
 
 std::string ClockNow() {
     const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -127,13 +147,15 @@ void PlotNodeLane::Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& n
 }
 
 void PlotNodeLane::ReadLoaded(Entry& e) {
-    auto dataset = DataRegistry::Instance().GetArrowDataset(e.plan.dataset_name);
     Status& s = e.status;
-    if (!dataset || !dataset->GetArrowTable()) {
+    int64_t rows = 0;
+    auto table = PlotTable(e.plan.dataset_name, rows);
+    if (!table) {
         s.state = Status::State::Idle;
         return;
     }
-    s.table = dataset->GetArrowTable();
+    s.table = table;
+    s.source_rows = rows;
     s.dataset_name = e.plan.dataset_name;
     s.read_at = ClockNow();
     ++s.data_version;
@@ -267,6 +289,7 @@ void PlotNodeLane::Finish(Entry& e) {
             const std::string name = "ds_plot_model_" + std::to_string(e.plan.feeder_id);
             if (table && DataRegistry::Instance().RegisterArrowTable(table, name)) {
                 s.table = table;
+                s.source_rows = table->num_rows();
                 s.dataset_name = name;
                 s.read_at = ClockNow();
                 ++s.data_version;
@@ -289,9 +312,11 @@ void PlotNodeLane::Finish(Entry& e) {
                 const auto it = results.find(e.plan.feeder_id);
                 if (it != results.end()) result_name = it->second;
             }
-            auto dataset = result_name.empty() ? nullptr : DataRegistry::Instance().GetArrowDataset(result_name);
-            if (dataset && dataset->GetArrowTable()) {
-                s.table = dataset->GetArrowTable();
+            int64_t rows = 0;
+            auto table = result_name.empty() ? nullptr : PlotTable(result_name, rows);
+            if (table) {
+                s.table = table;
+                s.source_rows = rows;
                 s.dataset_name = result_name;
                 s.read_at = ClockNow();
                 ++s.data_version;

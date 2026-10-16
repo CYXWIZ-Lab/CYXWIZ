@@ -17,12 +17,14 @@
 //       after one Data Input, run twice on the same executor. Serial branches
 //       show as total = load + both steps; lazy reuse as a faster second run.
 //   cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P] [--parquet-only]
+//       [--device cpu]
 //       Runs every pipeline on both files (the CSV also with --disk), each in
 //       a child process under a
 //       Job Object memory limit (the budget), and records time, peak memory
 //       and the outcome.
 
 #include "core/data_budget.h"
+#include <cyxwiz/device.h>
 #include "core/pipeline_executor.h"
 #include "core/pipeline_node_run_facts.h"
 
@@ -68,7 +70,7 @@ int Usage() {
     std::cerr << "usage: cyxwiz-bench-out-of-core generate --dir D --gb N\n"
                  "       cyxwiz-bench-out-of-core run --pipeline P --file F [--disk] [--budget-mb B]\n"
                  "       cyxwiz-bench-out-of-core probe --file F\n"
-                 "       cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P] [--parquet-only]\n";
+                 "       cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P] [--parquet-only] [--device cpu]\n";
     return 2;
 }
 
@@ -291,7 +293,7 @@ int Probe(const fs::path& file) {
 
 #ifdef _WIN32
 json RunChild(const std::string& self, const std::string& pipeline, const fs::path& file, bool disk,
-              uint64_t budget) {
+              uint64_t budget, const std::string& device) {
     json result = {{"pipeline", pipeline}, {"file", file.filename().string()}, {"disk", disk},
                    {"budget_mb", budget >> 20}};
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
@@ -306,7 +308,8 @@ json RunChild(const std::string& self, const std::string& pipeline, const fs::pa
                              FILE_ATTRIBUTE_NORMAL, nullptr);
     std::wstring command = L"\"" + fs::path(self).wstring() + L"\" run --pipeline " + fs::path(pipeline).wstring() +
                            L" --file \"" + file.wstring() + L"\"" + (disk ? L" --disk" : L"") +
-                           L" --budget-mb " + std::to_wstring((budget >> 20) / 2);
+                           L" --budget-mb " + std::to_wstring((budget >> 20) / 2) +
+                           (device.empty() ? L"" : L" --device " + fs::path(device).wstring());
     STARTUPINFOW startup{sizeof(startup)};
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdOutput = out;
@@ -355,7 +358,7 @@ json RunChild(const std::string& self, const std::string& pipeline, const fs::pa
 #endif
 
 int Suite(const std::string& self, const fs::path& dir, uint64_t budget_mb, const fs::path& out,
-          const std::string& only, bool parquet_only) {
+          const std::string& only, bool parquet_only, const std::string& device) {
 #ifdef _WIN32
     std::ofstream results(out, std::ios::app);
     int failures = 0;
@@ -365,7 +368,8 @@ int Suite(const std::string& self, const fs::path& dir, uint64_t budget_mb, cons
         for (const char* pipeline : kPipelines) {
             if (!only.empty() && only != pipeline) continue;
             fs::remove_all(dir / "cache");
-            json result = RunChild(self, pipeline, dir / name, disk, budget_mb << 20);
+            json result = RunChild(self, pipeline, dir / name, disk, budget_mb << 20, device);
+            if (!device.empty()) result["device"] = device;
             result["data"] = dir.filename().string();
             std::cout << result.dump() << '\n';
             results << result.dump() << '\n';
@@ -375,7 +379,7 @@ int Suite(const std::string& self, const fs::path& dir, uint64_t budget_mb, cons
     }
     return failures == 0 ? 0 : 1;
 #else
-    (void)self; (void)dir; (void)budget_mb; (void)out; (void)only; (void)parquet_only;
+    (void)self; (void)dir; (void)budget_mb; (void)out; (void)only; (void)parquet_only; (void)device;
     std::cerr << "suite needs Windows Job Objects\n";
     return 2;
 #endif
@@ -400,6 +404,9 @@ int main(int argc, char** argv) {
         // the cap standing in for the machine.
         const std::string budget = Arg(argc, argv, "--budget-mb");
         if (!budget.empty()) cyxwiz::SetDataBudgetBytes(std::stoull(budget) << 20);
+        // --device cpu: ArrayFire's CPU backend, as chosen in Preferences; a
+        // GPU driver's start-up does not fit a few hundred MB cap.
+        if (Arg(argc, argv, "--device") == "cpu") cyxwiz::Device::RecordProcessDevice(cyxwiz::DeviceType::CPU, 0);
         return Run(pipeline, file, disk);
     }
     if (command == "probe") {
@@ -418,7 +425,8 @@ int main(int argc, char** argv) {
 #endif
         return Suite(self, dir, std::stoull(Arg(argc, argv, "--budget-mb", "2048")), out,
                      Arg(argc, argv, "--only"),
-                     std::find(argv + 2, argv + argc, std::string("--parquet-only")) != argv + argc);
+                     std::find(argv + 2, argv + argc, std::string("--parquet-only")) != argv + argc,
+                     Arg(argc, argv, "--device"));
     }
     return Usage();
 }

@@ -305,10 +305,11 @@ DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
         opened_spill_ = DataSpillDirectory();
         config.SetOptionByName("memory_limit",
                                duckdb::Value(std::to_string(std::max<uint64_t>(64, opened_budget_ >> 20)) + "MB"));
-        // Each DuckDB thread needs working memory of its own (about 128 MB
-        // for a spilling sort); more threads than the budget feeds fail with
-        // "failed to pin block" instead of spilling.
-        const uint64_t threads = std::clamp<uint64_t>(opened_budget_ / (128ULL << 20), 1,
+        // Each DuckDB thread needs working memory of its own: one per 256 MB
+        // of budget (a 5 GB sort under 244 MB failed with two threads, ran
+        // with one); more threads than the budget feeds fail instead of
+        // spilling.
+        const uint64_t threads = std::clamp<uint64_t>(opened_budget_ / (256ULL << 20), 1,
                                                       std::max(1u, std::thread::hardware_concurrency()));
         config.SetOptionByName("threads", duckdb::Value::BIGINT(static_cast<int64_t>(threads)));
         const std::string& spill = opened_spill_;

@@ -59,9 +59,9 @@ enum class SqlRunMode { Run, Check, Explain, Profile };
 
 class SqlTransform {
 public:
-    // `readable_folders`: folders of the Parquet inputs and of the result
-    // file (DuckDB may read and write nothing else).
-    explicit SqlTransform(std::vector<std::string> readable_folders = {});
+    // Run opens its own restricted DuckDB, which may read the folders of its
+    // Parquet inputs and write the result file's folder, nothing else.
+    SqlTransform();
     ~SqlTransform();
     SqlTransform(const SqlTransform&) = delete;
     SqlTransform& operator=(const SqlTransform&) = delete;
@@ -86,6 +86,11 @@ private:
     std::mutex interrupt_mutex_;
     bool interrupted_ = false;
 };
+
+// A registered dataset as an input named `alias`: its table when it is in
+// memory, else its Parquet file (a table kept on disk, TOFIX154). No table
+// and no file when the dataset is not registered.
+SqlTransformInput SqlInputForDataset(const std::string& alias, const std::string& dataset);
 
 // Why this alias cannot name an input table, or empty when it can.
 std::string SqlInputAliasRejection(const std::string& alias);

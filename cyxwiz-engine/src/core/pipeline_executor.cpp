@@ -5668,7 +5668,12 @@ bool PipelineExecutor::StepReadsInputFiles(const Node& node) {
         NodeType::RuleEngine, NodeType::UnitConverter, NodeType::ValueCounts, NodeType::CellExtractor,
         NodeType::CellUpdater, NodeType::RowAppender, NodeType::Unpivot, NodeType::StringManipulation,
         NodeType::MathFormula};
-    return node.type == "SQLQuery" || (node.runtime_type && sql_steps.count(*node.runtime_type) > 0);
+    if (node.type == "SQLQuery" || (node.runtime_type && sql_steps.count(*node.runtime_type) > 0)) return true;
+    // Operators that stream read their input a row group at a time.
+    auto& factory = PipelineOperatorFactory::Instance();
+    if (!node.runtime_type || !factory.HasOperator(*node.runtime_type)) return false;
+    const auto op = factory.Create(*node.runtime_type);
+    return op && op->SupportsStreaming();
 }
 
 std::filesystem::path PipelineExecutor::PipelineCacheRoot() const {
@@ -5757,8 +5762,8 @@ void PipelineExecutor::RemoveUnusedStepFiles() {
 }
 
 bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
-                                            std::vector<SqlTransformInput>& files, std::vector<std::string>& folders,
-                                            uint64_t& input_bytes, bool& any_on_disk) {
+                                            std::vector<SqlTransformInput>& files, uint64_t& input_bytes,
+                                            bool& any_on_disk) {
     // The time-series steps order rows by DuckDB's rowid, which a table has
     // and a view on a file does not: their input is loaded into DuckDB.
     static const std::regex rowid_pattern(R"(\browid\b)", std::regex::icase);
@@ -5775,7 +5780,6 @@ bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inp
         if (file.parquet_path.empty()) return false;
         input_bytes += bytes;
         any_on_disk = any_on_disk || on_disk;
-        folders.push_back(std::filesystem::path(file.parquet_path).parent_path().generic_string() + "/");
         files.push_back(std::move(file));
     }
     return true;
@@ -5785,11 +5789,10 @@ std::shared_ptr<arrow::Table> PipelineExecutor::FetchStepSql(const std::vector<S
                                                              const std::string& sql,
                                                              const std::string& error_prefix) {
     std::vector<SqlTransformInput> files;
-    std::vector<std::string> folders;
     uint64_t input_bytes = 0;
     bool any_on_disk = false;
-    if (!PrepareStepSqlInputs(inputs, sql, files, folders, input_bytes, any_on_disk)) return nullptr;
-    SqlTransform transform(folders);
+    if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return nullptr;
+    SqlTransform transform;
     transform.AllowAnyTypes();
     {
         std::lock_guard<std::mutex> lock(active_sql_mutex_);
@@ -5811,23 +5814,16 @@ std::shared_ptr<arrow::Table> PipelineExecutor::FetchStepSql(const std::vector<S
 bool PipelineExecutor::RunStepSql(const Node& node, const std::vector<StepSqlInput>& inputs, const std::string& sql,
                                   const std::string& output_name, bool exact_types, const std::string& error_prefix) {
     std::vector<SqlTransformInput> files;
-    std::vector<std::string> folders;
     uint64_t input_bytes = 0;
     bool any_on_disk = false;
-    if (!PrepareStepSqlInputs(inputs, sql, files, folders, input_bytes, any_on_disk)) return false;
+    if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return false;
     // A result from a large input may be large too: DuckDB writes it to a
     // file instead of handing back a table (D1).
     const bool to_file = any_on_disk || input_bytes > DataResultThresholdBytes();
-    const auto results = PipelineCacheRoot() / "results";
-    const std::string result_path = (results / (output_name + "_" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".parquet")).string();
+    const std::string result_path = NewStepResultPath(output_name);
     std::error_code error;
-    if (to_file) {
-        std::filesystem::create_directories(results, error);
-        folders.push_back(results.generic_string() + "/");
-    }
 
-    SqlTransform transform(folders);
+    SqlTransform transform;
     if (!exact_types) transform.AllowAnyTypes();
     if (to_file) transform.WriteResultTo(result_path);
     {
@@ -5845,34 +5841,149 @@ bool PipelineExecutor::RunStepSql(const Node& node, const std::vector<StepSqlInp
         ReportError(error_prefix + result.error);
         return false;
     }
-    auto& registry = DataRegistry::Instance();
     if (!to_file) {
-        registry.RegisterArrowTable(result.table, output_name);
+        DataRegistry::Instance().RegisterArrowTable(result.table, output_name);
         return true;
     }
+    return RegisterStepResultFile(node, output_name, result_path, result.rows_written);
+}
+
+std::string PipelineExecutor::NewStepResultPath(const std::string& output_name) const {
+    const auto results = PipelineCacheRoot() / "results";
+    std::error_code error;
+    std::filesystem::create_directories(results, error);
+    return (results / (output_name + "_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".parquet")).string();
+}
+
+bool PipelineExecutor::RegisterStepResultFile(const Node& node, const std::string& output_name,
+                                              const std::string& path, int64_t rows) {
     // A result up to the threshold is read back into memory (as before);
     // a larger one stays a Parquet file.
-    auto written = ParquetBackedDataset::Open(result_path, output_name);
+    auto& registry = DataRegistry::Instance();
+    std::error_code error;
+    auto written = ParquetBackedDataset::Open(path, output_name);
     if (!written) {
-        ReportError(node.name + ": could not open its result '" + result_path + "'");
+        ReportError(node.name + ": could not open its result '" + path + "'");
         return false;
     }
     if (written->GetInMemoryBytesEstimate() <= DataResultThresholdBytes()) {
         auto table = written->ReadAll();
         written.reset();
         if (!table) {
-            ReportError(node.name + ": could not read its result '" + result_path + "'");
+            ReportError(node.name + ": could not read its result '" + path + "'");
             return false;
         }
         registry.RegisterArrowTable(table, output_name);
-        std::filesystem::remove(result_path, error);
+        std::filesystem::remove(path, error);
         return true;
     }
     registry.UnregisterTabularDataset(output_name);
     registry.RegisterParquetBacked(output_name, written);
-    step_result_files_[output_name] = result_path;
-    spdlog::info("[Pipeline] {}: {} rows kept on disk ({})", node.name, result.rows_written, result_path);
+    step_result_files_[output_name] = path;
+    spdlog::info("[Pipeline] {}: {} rows kept on disk ({})", node.name, rows, path);
     return true;
+}
+
+bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator& op,
+                                            const std::string& input_dataset, const std::string& output_name) {
+    auto& registry = DataRegistry::Instance();
+    const auto disk = registry.GetParquetBackedDataset(input_dataset);
+    const auto memory = disk ? nullptr : registry.GetArrowDataset(input_dataset);
+    const auto memory_table = memory ? memory->GetArrowTable() : nullptr;
+    if (!disk && !memory_table) {
+        ReportError(node.type + ": input dataset '" + input_dataset + "' is not a table");
+        return false;
+    }
+    // One row group of a file, or 128K rows of a table, at a time.
+    constexpr int64_t kBatchRows = 128 * 1024;
+    const int batches = disk ? disk->GetNumRowGroups()
+                             : static_cast<int>((memory_table->num_rows() + kBatchRows - 1) / kBatchRows);
+    auto batch_at = [&](int index) -> std::shared_ptr<arrow::Table> {
+        if (disk) return disk->ReadRowGroup(index);
+        return memory_table->Slice(static_cast<int64_t>(index) * kBatchRows, kBatchRows);
+    };
+    const auto schema = disk ? disk->GetSchema() : memory_table->schema();
+    auto fail = [&](const std::string& message) {
+        ReportError(node.type + ": " + message);
+        return false;
+    };
+    if (auto status = op.BeginStream(schema); !status.ok()) return fail(status.ToString());
+    if (op.PassesInputThrough()) {
+        // A check reads every batch; its output is its input, not copied.
+        for (int index = 0; index < batches; ++index) {
+            if (cancel_requested_) return fail("cancelled");
+            const auto batch = batch_at(index);
+            if (!batch) return fail("could not read rows of '" + input_dataset + "'");
+            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+        }
+        if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
+        if (auto status = op.EndStream(); !status.ok()) return fail(status.ToString());
+        if (memory_table) {
+            registry.RegisterArrowTable(memory_table, output_name);
+        } else {
+            auto same = ParquetBackedDataset::Open(disk->GetFilePath(), output_name);
+            if (!same) return fail("could not open '" + disk->GetFilePath() + "'");
+            registry.UnregisterTabularDataset(output_name);
+            registry.RegisterParquetBacked(output_name, same);
+        }
+        return true;
+    }
+    if (op.NeedsFitPass()) {
+        for (int index = 0; index < batches; ++index) {
+            if (cancel_requested_) return fail("cancelled");
+            const auto batch = batch_at(index);
+            if (!batch) return fail("could not read rows of '" + input_dataset + "'");
+            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+        }
+        if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
+    }
+    const std::string path = NewStepResultPath(output_name);
+    std::shared_ptr<arrow::io::FileOutputStream> out;
+    std::unique_ptr<parquet::arrow::FileWriter> writer;
+    std::error_code error;
+    auto abandon = [&](const std::string& message) {
+        if (writer) (void)writer->Close();
+        if (out) (void)out->Close();
+        std::filesystem::remove(path, error);
+        return fail(message);
+    };
+    int64_t rows = 0;
+    for (int index = 0; index < batches; ++index) {
+        if (cancel_requested_) return abandon("cancelled");
+        const auto batch = batch_at(index);
+        if (!batch) return abandon("could not read rows of '" + input_dataset + "'");
+        auto applied = op.ApplyBatch(batch);
+        if (!applied.ok()) return abandon(applied.status().ToString());
+        const auto table = applied.ValueOrDie();
+        if (!writer) {
+            auto opened = arrow::io::FileOutputStream::Open(path);
+            if (!opened.ok()) return abandon(opened.status().ToString());
+            out = *opened;
+            auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
+            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props);
+            if (!made.ok()) return abandon(made.status().ToString());
+            writer = std::move(*made);
+        }
+        if (auto status = writer->WriteTable(*table, kBatchRows); !status.ok()) return abandon(status.ToString());
+        rows += table->num_rows();
+    }
+    if (!writer) {
+        // No rows: an empty table with the output's schema.
+        auto applied = op.ApplyBatch(arrow::Table::MakeEmpty(schema).ValueOr(nullptr));
+        if (!applied.ok()) return fail(applied.status().ToString());
+        registry.RegisterArrowTable(applied.ValueOrDie(), output_name);
+        auto status = op.EndStream();
+        return status.ok() || fail(status.ToString());
+    }
+    auto closed = writer->Close();
+    if (closed.ok()) closed = out->Close();
+    writer.reset();
+    out.reset();
+    if (!closed.ok()) return abandon(closed.ToString());
+    if (auto status = op.EndStream(); !status.ok()) return abandon(status.ToString());
+    spdlog::info("[Pipeline] {}: streamed {} rows in {} batches", node.name, rows, batches);
+    return RegisterStepResultFile(node, output_name, path, rows);
 }
 
 std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::string& name) {
@@ -5881,8 +5992,6 @@ std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::strin
     // about twice the table); otherwise the run stops here, before loading.
     auto& registry = DataRegistry::Instance();
     if (registry.GetArrowDataset(name)) return name;
-    // Steps that run SQL read their inputs from the files (RunStepSql).
-    if (StepReadsInputFiles(node)) return name;
     const auto disk = registry.GetParquetBackedDataset(name);
     if (!disk) return name;  // not a table (images, text): the step reports it
     // One copy per run, shared by the steps that read it; a copy from another
@@ -5936,7 +6045,8 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
                         std::to_string(input_node_id) + " not found");
             return {};
         }
-        const std::string admitted = AdmitInputTable(node, *name);
+        // Steps that read files (SQL, streaming operators) are not admitted.
+        const std::string admitted = StepReadsInputFiles(node) ? *name : AdmitInputTable(node, *name);
         if (admitted.empty()) return {};
         dataset_names.push_back(admitted);
     }
@@ -5959,7 +6069,7 @@ std::string PipelineExecutor::GetInputDatasetForPin(
                         std::to_string(link.node_id));
             return {};
         }
-        return AdmitInputTable(node, *result);
+        return StepReadsInputFiles(node) ? *result : AdmitInputTable(node, *result);
     }
     ReportError(node.type + ": required Data input pin " +
                 std::to_string(target_pin_index) + " is not connected");
@@ -6054,16 +6164,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     }
 
     auto& registry = DataRegistry::Instance();
-    auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-    if (!input_dataset) {
-        ReportError(node.type + ": input dataset '" + input_dataset_name +
-                    "' is not an in-memory Arrow dataset");
-        return false;
-    }
-
-    auto input_table = input_dataset->GetArrowTable();
+    auto input_table = InputSchemaTable(input_dataset_name);
     if (!input_table) {
-        ReportError(node.type + ": input Arrow table is null");
+        ReportError(node.type + ": input dataset '" + input_dataset_name + "' is not a table");
         return false;
     }
 
@@ -6110,6 +6213,28 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                                              schema_error)) {
         ReportError(schema_error);
         return false;
+    }
+
+    // An operator that streams runs a row group at a time when its input is
+    // on disk or large (TOFIX154 step 4); the others read it whole (admitted).
+    const auto input_ref = registry.GetTableRef(input_dataset_name);
+    if (op->SupportsStreaming() && input_ref &&
+        (input_ref->kind == TableRef::Kind::Parquet || input_ref->bytes > DataResultThresholdBytes())) {
+        if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+            ctx.node_outcomes[node.id] = std::move(outcome);
+        }
+        return true;
+    }
+
+    // Not streaming (this configuration needs every row at once): an input
+    // on disk is admitted now, read whole or stopped with the numbers.
+    if (input_ref && input_ref->kind == TableRef::Kind::Parquet) {
+        input_dataset_name = AdmitInputTable(node, input_dataset_name);
+        if (input_dataset_name.empty()) return false;
+        input_table = InputSchemaTable(input_dataset_name);
     }
 
     WarnIfDenseTextVectorizerMaterializationIsLarge(

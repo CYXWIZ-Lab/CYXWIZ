@@ -148,9 +148,8 @@ void ValidateView::LoadColumns() {
     columns_key_ = key;
     columns_.clear();
     if (dataset.empty()) return;
-    if (auto ds = DataRegistry::Instance().GetArrowDataset(dataset))
-        if (auto table = ds->GetArrowTable())
-            for (const auto& field : table->schema()->fields()) columns_.push_back(field->name());
+    if (auto table = DataRegistry::Instance().ReadTablePreview(dataset, 0))  // columns only, in memory or on disk
+        for (const auto& field : table->schema()->fields()) columns_.push_back(field->name());
 }
 
 void ValidateView::Render() {

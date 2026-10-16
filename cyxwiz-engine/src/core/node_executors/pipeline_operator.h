@@ -169,6 +169,27 @@ public:
         (void)callback;
     }
 
+    // === Streaming (TOFIX154 step 4) ===
+    // An operator that runs on one batch (a row group) at a time, so data
+    // bigger than memory flows through it. A fit-then-transform operator
+    // (NeedsFitPass) sees every batch twice: FitBatch for each, EndFit, then
+    // ApplyBatch for each. EndStream finishes (saves a fitted state). Batches
+    // are tables with the stream's schema.
+    virtual bool SupportsStreaming() const { return false; }
+    virtual bool NeedsFitPass() const { return false; }
+    virtual arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>&) {
+        return arrow::Status::NotImplemented(GetName(), " does not stream");
+    }
+    virtual arrow::Status FitBatch(const std::shared_ptr<arrow::Table>&) { return arrow::Status::OK(); }
+    virtual arrow::Status EndFit() { return arrow::Status::OK(); }
+    virtual arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>&) {
+        return arrow::Status::NotImplemented(GetName(), " does not stream");
+    }
+    virtual arrow::Status EndStream() { return arrow::Status::OK(); }
+    // A check: it reads every batch (FitBatch) and its output is its input,
+    // so the stream writes nothing.
+    virtual bool PassesInputThrough() const { return false; }
+
     // Tables for output pins 1, 2, ... from the last successful Apply (pin 0 is
     // Apply's result). Empty for single-output operators; an empty table
     // pointer leaves that pin without a result.
