@@ -11,6 +11,8 @@ static void Require(bool value,const char* expression) { ++checks; if(!value) th
 #include "core/arrow_dataset.h"
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
 #include <filesystem>
 #include <map>
 
@@ -196,6 +198,71 @@ void CheckExternalRolesAndMetadata() {
     external_test.batcher->SetPhase(BatcherPhase::Test);REQUIRE(external_test.batcher->GetNumSamples()==1);
 }
 
+// Token windows kept on disk (TOFIX154 step 6): read a row group at a time,
+// they give the samples the in-memory path gives.
+static std::vector<std::vector<int64_t>> AllRows(ISequenceBatcher& batcher) {
+    std::vector<std::vector<int64_t>> rows;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextSequenceBatch();
+        if (batch.size == 0) break;
+        const auto* ids = static_cast<const Tensor&>(batch.word_ids).Data<int64_t>();
+        for (size_t r = 0; r < batch.size; ++r)
+            rows.emplace_back(ids + r * batch.sequence_length, ids + (r + 1) * batch.sequence_length);
+    }
+    return rows;
+}
+
+void CheckWindowsOnDisk() {
+    auto all = Windows();
+    auto path = std::filesystem::temp_directory_path() / "cyxwiz_windows_on_disk.parquet";
+    {
+        auto out = arrow::io::FileOutputStream::Open(path.string()).ValueOrDie();
+        auto arrow_props = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+        REQUIRE(parquet::arrow::WriteTable(*all, arrow::default_memory_pool(), out, 1,
+                                           parquet::default_writer_properties(), arrow_props).ok());
+        REQUIRE(out->Close().ok());
+    }
+    auto file = ParquetBackedDataset::Open(path.string(), "windows_on_disk");
+    REQUIRE(file != nullptr); REQUIRE(file->GetNumRowGroups() == 4);
+    SequenceWindowSource train; train.file = file;
+    auto cfg = Config();
+    auto streamed = BuildSequenceBatcherFromWindowSources(train, cfg, 2);
+    INFO(streamed.error_message); REQUIRE(streamed.success());
+    auto memory = BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(all, "windows"), cfg, 2);
+    REQUIRE(memory.success());
+    REQUIRE(streamed.sample_count == memory.sample_count); REQUIRE(streamed.batcher->GetNumSamples() == 4);
+    REQUIRE(streamed.token_vocabulary_size == memory.token_vocabulary_size);
+    REQUIRE(streamed.id_to_label == memory.id_to_label);
+    REQUIRE(streamed.tokenizer_vocabulary_artifact == memory.tokenizer_vocabulary_artifact);
+    const auto memory_rows = AllRows(*memory.batcher);
+    REQUIRE(AllRows(*streamed.batcher) == memory_rows);  // in order without shuffle
+    cfg.shuffle = true;
+    auto shuffled = BuildSequenceBatcherFromWindowSources(train, cfg, 2);
+    REQUIRE(shuffled.success());
+    auto rows = AllRows(*shuffled.batcher), expected = memory_rows;
+    std::sort(rows.begin(), rows.end()); std::sort(expected.begin(), expected.end());
+    REQUIRE(rows == expected);  // the same windows, another order
+    // Validation from a table in memory beside a training set on disk.
+    cfg = Config(); cfg.has_data_split = true; cfg.test_ratio = 0.0f;
+    SequenceWindowSource dev; dev.table = all->Slice(3, 1);
+    auto with_dev = BuildSequenceBatcherFromWindowSources(train, cfg, 2, dev);
+    INFO(with_dev.error_message); REQUIRE(with_dev.success());
+    REQUIRE(with_dev.batcher->HasPhase(BatcherPhase::Val)); REQUIRE_FALSE(with_dev.batcher->HasPhase(BatcherPhase::Test));
+    with_dev.batcher->SetPhase(BatcherPhase::Val); REQUIRE(AllRows(*with_dev.batcher).size() == 1);
+    // A ratio split of a file is refused (also a test share left to cut from
+    // Train beside a supplied validation set); a role with other metadata too.
+    REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2).success());
+    auto test_share = cfg; test_share.test_ratio = 0.1f;
+    const auto refused_share = BuildSequenceBatcherFromWindowSources(train, test_share, 2, dev);
+    REQUIRE_FALSE(refused_share.success());
+    REQUIRE(refused_share.error_message.find("test windows") != std::string::npos);
+    SequenceWindowSource bare; bare.table = all->Slice(3, 1)->ReplaceSchemaMetadata(nullptr);
+    REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2, bare).success());
+    std::error_code ignored;  // the batchers above still map the file
+    std::filesystem::remove(path, ignored);
+}
+
 // Supervised windows (TOFIX143): prompt + response + EOS in one window; only the
 // response targets are supervised. Byte BPE ids here are byte + 4; EOS is 3.
 void CheckSupervisedWindows() {
@@ -291,6 +358,7 @@ void CheckSupervisedWindows() {
 int main() {
     try {
         CheckCoverage(); CheckReloadAndTargets(); CheckInvalidInput(); CheckExternalRolesAndMetadata(); CheckSupervisedWindows();
+        CheckWindowsOnDisk();
         std::cout << "Document token windows passed: " << checks << " checks\n";
         return 0;
     } catch(const std::exception& e) {

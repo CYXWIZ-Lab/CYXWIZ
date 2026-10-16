@@ -29,7 +29,7 @@ void DataInputDialog::RenderMemoryTab() {
         case DataLoadState::InMemory: {
             const bool disk_backed = (loaded_backend_ == 2);
             if (disk_backed) {
-                ImGui::TextColored(t.info, "Loaded via Parquet cache");
+                ImGui::TextColored(t.info, "On disk (Parquet)");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
             } else if (loaded_memory_is_estimate_) {

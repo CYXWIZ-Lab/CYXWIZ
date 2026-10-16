@@ -1,6 +1,8 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include "../preprocessing_state.h"
+#include <cyxwiz/data_transform.h>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,6 +50,16 @@ public:
         progress_callback_ = std::move(callback);
     }
 
+    // Streams (TOFIX154): the fit pass merges each batch's moments, so the
+    // statistics are those of all the rows; Apply is one batch of the same.
+    bool SupportsStreaming() const override { return true; }
+    bool NeedsFitPass() const override { return operation_mode_ == "fit_transform"; }
+    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
+    arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;
+    arrow::Status EndFit() override;
+    arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
+    arrow::Status EndStream() override;
+
 private:
     std::vector<std::string> columns_;
     std::vector<std::string> exclude_columns_;
@@ -59,6 +71,15 @@ private:
     bool save_state_ = false;
     bool state_overwrite_ = false;
     PipelineOperatorProgressCallback progress_callback_;
+
+    // The stream: columns, merged moments (fit), center and scale per column.
+    std::shared_ptr<arrow::Schema> schema_;
+    std::vector<std::string> resolved_;
+    std::vector<DataTransform::ColumnMoments> moments_;
+    std::vector<double> centers_;
+    std::vector<double> scales_;
+    FittedPreprocessingState state_;
+    int64_t fit_rows_ = 0;
 };
 
 /**
@@ -86,12 +107,23 @@ public:
         progress_callback_ = std::move(callback);
     }
 
+    // Streams (TOFIX154): the fit pass merges each batch's min and max;
+    // Apply is one batch of the same.
+    bool SupportsStreaming() const override { return true; }
+    bool NeedsFitPass() const override { return true; }
+    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
+    arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
+
 private:
     std::vector<std::string> columns_;
     std::string label_col_;
     double range_min_ = 0.0;
     double range_max_ = 1.0;
     PipelineOperatorProgressCallback progress_callback_;
+
+    std::vector<std::string> resolved_;
+    std::vector<DataTransform::ColumnMoments> moments_;
 };
 
 /**

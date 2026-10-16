@@ -123,6 +123,29 @@ public:
     // nullptr when missing or unreadable.
     std::shared_ptr<arrow::ChunkedArray> ReadColumn(const std::string& name) const;
 
+    // One column of one row group (a pass over a column a row group at a
+    // time); nullptr when missing or unreadable.
+    std::shared_ptr<arrow::ChunkedArray> ReadRowGroupColumn(int row_group_idx, const std::string& name) const;
+
+    // Up to max_values distinct values of a column as text, in the order
+    // met; reads a row group at a time and stops once it has them.
+    std::vector<std::string> FirstDistinctValues(const std::string& name, size_t max_values) const;
+
+    // The whole table (an admitted step's input, TOFIX154).
+    std::shared_ptr<arrow::Table> ReadAll() const;
+
+    // About max_rows rows from row groups spread evenly over the file (a
+    // plot of a table on disk): fast, and it spans the whole file.
+    std::shared_ptr<arrow::Table> ReadSpreadRowGroups(int64_t max_rows) const;
+
+    // Write the selected columns of a Parquet file to another Parquet file,
+    // one row group at a time (Data Input's column selection on a file that
+    // stays on disk). Writes to <output>.tmp and renames on success.
+    static bool WriteColumnProjection(const std::string& source_path,
+                                      const std::string& output_path,
+                                      const std::vector<std::string>& columns,
+                                      std::string& error);
+
     // Metadata accessors - mirror ArrowDataset's shape where it makes sense,
     // so call sites that only need row/col/schema info can treat the two
     // types interchangeably via templates or small wrappers.
@@ -143,6 +166,10 @@ public:
     size_t GetMemoryUsage() const { return file_size_; }
     size_t GetFileSizeBytes() const { return file_size_; }
 
+    // About the size of the table in memory (TOFIX154): the row groups'
+    // uncompressed sizes from the file metadata.
+    uint64_t GetInMemoryBytesEstimate() const { return uncompressed_bytes_; }
+
 private:
     ParquetBackedDataset(const std::string& name, const std::string& path);
 
@@ -158,10 +185,15 @@ private:
     int64_t num_rows_ = 0;
     int64_t num_columns_ = 0;
     size_t file_size_ = 0;
+    uint64_t uncompressed_bytes_ = 0;
 
     // Row count per row group, pre-computed in Open() so the batcher can
     // partition work without re-reading metadata every epoch.
     std::vector<int64_t> row_group_sizes_;
 };
+
+// Adds the distinct values of `column` (as text, nulls skipped) to `seen`,
+// in the order met, until it holds max_values.
+void AppendDistinctValues(const arrow::ChunkedArray& column, std::vector<std::string>& seen, size_t max_values);
 
 } // namespace cyxwiz

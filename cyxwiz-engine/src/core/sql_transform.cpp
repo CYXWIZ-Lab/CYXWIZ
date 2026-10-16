@@ -1,10 +1,15 @@
 #include "sql_transform.h"
 
 #include "duckdb_connector.h"
+#include "data_registry.h"
+#include "parquet_backed_dataset.h"
+#include "arrow_dataset.h"
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <set>
 
 namespace cyxwiz {
@@ -55,8 +60,19 @@ std::string SqlInputAliasRejection(const std::string& alias) {
     return {};
 }
 
-SqlTransform::SqlTransform() {
-    connector_ = std::make_unique<DuckDBConnector>();
+SqlTransform::SqlTransform() = default;
+
+SqlTransformInput SqlInputForDataset(const std::string& alias, const std::string& dataset) {
+    SqlTransformInput input;
+    input.alias = alias;
+    auto& registry = DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(dataset)) {
+        input.table = memory->GetArrowTable();
+    } else if (const auto disk = registry.GetParquetBackedDataset(dataset)) {
+        input.parquet_path = disk->GetFilePath();
+        input.schema = disk->GetSchema();
+    }
+    return input;
 }
 
 SqlTransform::~SqlTransform() = default;
@@ -75,6 +91,23 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
         result.error = "SQL: " + std::move(message);
         return result;
     };
+    {
+        // The folders DuckDB may touch: its file inputs' and its result's.
+        std::vector<std::string> folders;
+        auto folder_of = [&folders](const std::string& path) {
+            std::string folder = std::filesystem::path(path).parent_path().generic_string();
+            if (folder.empty()) return;
+            if (folder.back() != '/') folder += '/';
+            if (std::find(folders.begin(), folders.end(), folder) == folders.end()) folders.push_back(folder);
+        };
+        for (const auto& input : inputs)
+            if (!input.parquet_path.empty()) folder_of(input.parquet_path);
+        if (!output_path_.empty()) folder_of(output_path_);
+        auto connector = std::make_unique<DuckDBConnector>(std::move(folders));
+        std::lock_guard<std::mutex> lock(interrupt_mutex_);
+        connector_ = std::move(connector);
+        if (interrupted_ && connector_) connector_->Interrupt();
+    }
     if (!connector_ || !connector_->IsReady()) {
         return fail("the restricted DuckDB connection could not be opened: " +
                     (connector_ ? connector_->GetLastError() : std::string()));
@@ -87,9 +120,11 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
     for (const auto& input : inputs) {
         if (const auto why = SqlInputAliasRejection(input.alias); !why.empty()) return fail(why);
         if (!aliases.insert(input.alias).second) return fail("input alias '" + input.alias + "' is used twice");
-        if (!input.table) return fail("input '" + input.alias + "' has no table");
-        for (const auto& field : input.table->schema()->fields()) {
-            if (!IsExactRoundTripType(*field->type())) {
+        const auto schema = input.table ? input.table->schema() : input.schema;
+        if (!schema || (!input.table && input.parquet_path.empty()))
+            return fail("input '" + input.alias + "' has no table");
+        for (const auto& field : schema->fields()) {
+            if (exact_types_ && !IsExactRoundTripType(*field->type())) {
                 return fail("input '" + input.alias + "' column '" + field->name() + "' has type " +
                             field->type()->ToString() +
                             ", which contract 1 cannot pass through DuckDB exactly; convert it "
@@ -103,14 +138,19 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
     }
 
     for (const auto& input : inputs) {
-        if (!connector_->RegisterTable(input.alias, input.table)) {
+        const bool registered = input.parquet_path.empty() ? connector_->RegisterTable(input.alias, input.table)
+                                : input.load_file ? connector_->RegisterParquetTable(input.alias, input.parquet_path)
+                                                  : connector_->RegisterParquetView(input.alias, input.parquet_path);
+        if (!registered) {
             return fail("could not register input '" + input.alias + "': " + connector_->GetLastError());
         }
     }
 
     // Bind before running: unknown tables/columns and unsupported result
     // types are reported without executing the query.
-    if (const auto why = connector_->UnsupportedResultColumns(query); !why.empty()) {
+    if (const auto why = exact_types_ ? connector_->UnsupportedResultColumns(query)
+                                      : std::string();
+        !why.empty()) {
         return fail(why);
     }
     if (mode == SqlRunMode::Check) {
@@ -146,6 +186,35 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
         return result;
     }
 
+    if (!output_path_.empty()) {
+        const auto names = connector_->ResultColumnNames(query);
+        if (names.empty()) return fail(connector_->GetLastError());
+        std::set<std::string> seen;
+        bool repeated = false;
+        for (const auto& name : names) {
+            if (seen.insert(name).second) continue;
+            if (exact_types_) {
+                return fail("the result has two columns named '" + name +
+                            "'; give each output column a unique name (AS ...)");
+            }
+            repeated = true;
+        }
+        // A file needs unique column names: the pipeline's own SQL (a join's
+        // SELECT *) gets DuckDB's renaming of a subquery's repeated names.
+        const std::string written = repeated ? "SELECT * FROM (" + query + ")" : query;
+        result.rows_written = connector_->CopyQueryToParquet(written, output_path_);
+        {
+            std::lock_guard<std::mutex> lock(interrupt_mutex_);
+            if (interrupted_) {
+                result.cancelled = true;
+                return fail("the query was cancelled");
+            }
+        }
+        if (result.rows_written < 0) return fail(connector_->GetLastError());
+        result.ok = true;
+        return result;
+    }
+
     auto table = connector_->Query(query);
     {
         std::lock_guard<std::mutex> lock(interrupt_mutex_);
@@ -159,7 +228,7 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
     }
     std::set<std::string> names;
     for (const auto& field : table->schema()->fields()) {
-        if (!names.insert(field->name()).second) {
+        if (exact_types_ && !names.insert(field->name()).second) {
             return fail("the result has two columns named '" + field->name() +
                         "'; give each output column a unique name (AS ...)");
         }

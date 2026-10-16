@@ -176,6 +176,20 @@ public:
     // Number of graph nodes the materializer would run as table operators.
     static int CountTableOperatorNodes(const std::vector<gui::MLNode>& nodes);
 
+    // A training set kept on disk (TOFIX154 step 6b): the same operator path
+    // run over its row groups, when every operator streams. One pass per
+    // operator that fits (each batch first through the operators before it),
+    // then the output written to `output_path` a row group at a time; `table`
+    // stays null. An operator that needs every row at once fails with why.
+    static MaterializeTableResult MaterializeParquetStreamed(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        const class ParquetBackedDataset& source,
+        const std::string& source_dataset_name,
+        const std::string& output_path,
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
+
     static MaterializeTableResult MaterializeTable(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,

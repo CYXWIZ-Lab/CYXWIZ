@@ -3,6 +3,7 @@
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
 #include "core/pipeline_materializer.h"
+#include "core/parquet_backed_dataset.h"
 #include "core/node_executors/preprocessing_operators.h"
 #include "core/node_executors/regression_model_artifact.h"
 #include "core/node_executors/regression_model_predictor_operator.h"
@@ -13,6 +14,8 @@
 #include "core/node_executors/time_series_split_operator.h"
 
 #include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -922,7 +925,108 @@ void TestMaterializerStructuredFailures() {
 
 } // namespace
 
+// A training set kept on disk streams through the operators, a row group at
+// a time (TOFIX154 step 6b): the prepared file holds what the in-memory path
+// computes, and an operator that needs every row stops with the reason.
+void TestStreamedMaterializerMatchesMemory() {
+    constexpr int kRows = 10000;
+    std::vector<double> x, y;
+    for (int i = 0; i < kRows; ++i) {
+        x.push_back(std::sin(i * 0.37) * 50.0 + i * 0.01);
+        y.push_back(1.0 + (i % 97) * 3.5);
+    }
+    auto table = arrow::Table::Make(
+        arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64())}),
+        {FinishDoubleArray(x), FinishDoubleArray(y)});
+
+    const auto path = std::filesystem::temp_directory_path() / "cyxwiz_streamed_materializer.parquet";
+    {
+        auto file = arrow::io::FileOutputStream::Open(path.string());
+        Check(file.ok(), "streamed fixture file opens");
+        auto status = parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *file, 1500);
+        Check(status.ok(), status.ToString());
+        Check((*file)->Close().ok(), "streamed fixture closes");
+    }
+    auto disk = cyxwiz::ParquetBackedDataset::Open(path.string(), "streamed_source");
+    Check(disk && disk->GetNumRowGroups() > 1, "streamed fixture has several row groups");
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const std::string name = "streamed_source";
+    const std::string prepared_name = name + cyxwiz::PipelineMaterializer::kMaterializedSuffix;
+    registry.UnregisterTabularDataset(name);
+    registry.UnregisterTabularDataset(prepared_name);
+    registry.RegisterParquetBacked(name, disk);
+
+    std::vector<gui::MLNode> nodes = {
+        MakeDataInputNode(901, name),
+        MakeOperatorNode(902, gui::NodeType::StandardScaler, "Scale x",
+                         {{"columns", "x"}, {"with_mean", "true"}, {"with_std", "true"}}),
+        MakeOperatorNode(903, gui::NodeType::MinMaxScaler, "Range y",
+                         {{"columns", "y"}, {"min", "0"}, {"max", "1"}}),
+        MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", {{"value_col", "y"}}),
+    };
+    std::vector<gui::NodeLink> links = {
+        {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
+        {2, 902, 0, 903, 0, gui::LinkType::TensorFlow},
+        {3, 903, 0, 904, 0, gui::LinkType::TensorFlow},
+    };
+
+    auto memory = cyxwiz::PipelineMaterializer::MaterializeTable(nodes, links, table, name);
+    Check(memory.success, "in-memory path succeeds: " + memory.error_message);
+
+    auto streamed = cyxwiz::PipelineMaterializer::Materialize(nodes, links, registry, name);
+    Check(streamed.success, "disk path succeeds: " + streamed.error_message);
+    Check(streamed.operators_applied == 3, "disk path applies three operators");
+    Check(streamed.effective_dataset_name == prepared_name, "disk path registers the prepared name");
+    Check(streamed.effective_kind == cyxwiz::PipelineMaterializerSourceKind::ParquetBacked,
+          "the prepared data stays on disk");
+    auto prepared = registry.GetParquetBackedDataset(prepared_name);
+    Check(prepared != nullptr, "prepared data is registered on disk");
+    const std::string prepared_path = prepared->GetFilePath();
+    std::vector<int> groups;
+    for (int i = 0; i < prepared->GetNumRowGroups(); ++i) groups.push_back(i);
+    auto prepared_table = prepared->ReadRowGroups(groups);
+    AssertTableContractEqual(memory.table, prepared_table, "streamed");
+    for (const char* column : {"x", "y"}) {
+        for (int64_t row = 0; row < kRows; ++row) {
+            const double left = ReadNumericValue(memory.table, column, row);
+            const double right = ReadNumericValue(prepared_table, column, row);
+            Check(std::fabs(left - right) < 1e-9 * std::max(1.0, std::fabs(left)),
+                  std::string("streamed values match for ") + column + " row " + std::to_string(row));
+        }
+    }
+
+    // A second run replaces the previous prepared file (closed here first).
+    prepared.reset();
+    auto again = cyxwiz::PipelineMaterializer::Materialize(nodes, links, registry, name);
+    Check(again.success, "second disk run succeeds: " + again.error_message);
+    Check(!std::filesystem::exists(prepared_path), "the previous prepared file is removed");
+
+    // RobustScaler needs medians over every row: it stops and says why.
+    std::vector<gui::MLNode> robust = {
+        MakeDataInputNode(901, name),
+        MakeOperatorNode(902, gui::NodeType::RobustScaler, "Robust x",
+                         {{"columns", "x"}, {"with_centering", "true"}, {"with_scaling", "true"}}),
+    };
+    auto refused = cyxwiz::PipelineMaterializer::Materialize(robust, {links[0]}, registry, name);
+    Check(!refused.success && refused.error_message.find("needs every row at once") != std::string::npos,
+          "a whole-table operator on disk stops with the reason: " + refused.error_message);
+    Check(refused.failure_kind == cyxwiz::MaterializationFailureKind::Capacity,
+          "the refusal is a capacity failure");
+
+    if (auto last = registry.GetParquetBackedDataset(prepared_name)) {
+        const std::string last_path = last->GetFilePath();
+        registry.UnregisterTabularDataset(prepared_name);
+        last.reset();
+        std::filesystem::remove(last_path);
+    }
+    registry.UnregisterTabularDataset(name);
+    disk.reset();
+    std::filesystem::remove(path);
+}
+
 int main() {
+    TestStreamedMaterializerMatchesMemory();
     TestStandardScalerEmitsMemoryPreflight();
     TestMaterializerPreflightStopsBeforeApply();
     TestStandardScalerExcludesMultipleTargetColumns();

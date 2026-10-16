@@ -1,6 +1,7 @@
 #include "parquet_arrow_batcher.h"
 
 #include "label_column_resolver.h"
+#include "split_partitioning.h"
 
 #include <arrow/array.h>
 #include <arrow/chunked_array.h>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
+#include <unordered_map>
 #include <stdexcept>
 #include <thread>
 
@@ -239,6 +241,152 @@ void ParquetArrowBatcher::SetRegressionTargetWidth(
 }
 
 // -----------------------------------------------------------------------------
+// Row-level splits for a table on disk (TOFIX154)
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// The class of each row of one chunk as a small id (ids assigned in order of
+// first appearance); nulls are a class of their own.
+void AppendClassIds(const arrow::Array& chunk, std::unordered_map<std::string, uint32_t>& ids,
+                    std::vector<uint32_t>& out) {
+    const auto id_of = [&ids](std::string key) {
+        const auto it = ids.find(key);
+        if (it != ids.end()) return it->second;
+        const auto id = static_cast<uint32_t>(ids.size());
+        ids.emplace(std::move(key), id);
+        return id;
+    };
+    for (int64_t i = 0; i < chunk.length(); ++i) {
+        if (chunk.IsNull(i)) {
+            out.push_back(id_of(std::string("\0null", 5)));
+            continue;
+        }
+        switch (chunk.type_id()) {
+        case arrow::Type::STRING: {
+            const auto view = static_cast<const arrow::StringArray&>(chunk).GetView(i);
+            out.push_back(id_of(std::string(view)));
+            break;
+        }
+        case arrow::Type::LARGE_STRING: {
+            const auto view = static_cast<const arrow::LargeStringArray&>(chunk).GetView(i);
+            out.push_back(id_of(std::string(view)));
+            break;
+        }
+        case arrow::Type::INT64:
+            out.push_back(id_of(std::to_string(static_cast<const arrow::Int64Array&>(chunk).Value(i))));
+            break;
+        case arrow::Type::INT32:
+            out.push_back(id_of(std::to_string(static_cast<const arrow::Int32Array&>(chunk).Value(i))));
+            break;
+        default: {
+            auto scalar = chunk.GetScalar(i);
+            out.push_back(id_of(scalar.ok() ? (*scalar)->ToString() : std::string()));
+            break;
+        }
+        }
+    }
+}
+
+}  // namespace
+
+std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
+                                                            const std::string& stratify_column,
+                                                            const std::array<double, 3>& ratios,
+                                                            bool shuffle, uint32_t seed, std::string& error) {
+    auto split = std::make_shared<ParquetRowSplit>();
+    const int groups = dataset.GetNumRowGroups();
+    int64_t rows = 0;
+    for (int g = 0; g < groups; ++g) {
+        split->group_offset.push_back(rows);
+        rows += dataset.GetRowGroupSize(g);
+    }
+    split->bucket.resize(static_cast<size_t>(rows));
+
+    if (stratify_column.empty()) {
+        // ArrowDatasetBatcher's slices, row by row.
+        const auto train = static_cast<int64_t>(rows * std::clamp(ratios[0], 0.0, 1.0));
+        const auto val = ratios[1] > 0.0 ? static_cast<int64_t>(rows * std::clamp(ratios[1], 0.0, 1.0))
+                                         : rows - train;
+        const auto val_end = std::min(rows, train + std::max<int64_t>(0, val));
+        for (int64_t row = 0; row < rows; ++row) {
+            const uint8_t bucket = row < train ? 0 : row < val_end ? 1 : 2;
+            split->bucket[static_cast<size_t>(row)] = bucket;
+            ++split->counts[bucket];
+        }
+        return split;
+    }
+
+    // Pass 1 counts each class's rows; pass 2 reads the column again rather
+    // than keep a 4-byte class id per row.
+    std::unordered_map<std::string, uint32_t> ids;
+    std::vector<uint64_t> class_rows;
+    std::vector<uint32_t> class_of;
+    const auto classes_of_group = [&](int g) -> bool {
+        class_of.clear();
+        const auto column = dataset.ReadRowGroupColumn(g, stratify_column);
+        if (!column) {
+            error = "could not read the column '" + stratify_column + "' to split the rows";
+            return false;
+        }
+        for (const auto& chunk : column->chunks()) AppendClassIds(*chunk, ids, class_of);
+        return true;
+    };
+    for (int g = 0; g < groups; ++g) {
+        if (!classes_of_group(g)) return nullptr;
+        if (class_rows.size() < ids.size()) class_rows.resize(ids.size(), 0);
+        for (const auto id : class_of) ++class_rows[id];
+    }
+
+    // Each class's rows per split, by the in-memory split's rule
+    // (split_partitioning.h), so both paths give the same sizes.
+    const auto normalized = split_partition_detail::Normalize(
+        static_cast<float>(ratios[0]), static_cast<float>(ratios[1]), static_cast<float>(ratios[2]));
+    std::vector<std::array<uint64_t, 3>> remaining(class_rows.size());
+    for (size_t c = 0; c < class_rows.size(); ++c) {
+        const auto counts = split_partition_detail::CountsFor(static_cast<size_t>(class_rows[c]), normalized);
+        remaining[c] = {counts.train, counts.val, counts.test};
+    }
+
+    // Pass 2: in file order each class fills Train, then Validation, then
+    // Test (the in-memory split unshuffled); shuffled, a draw without
+    // replacement meets every quota exactly.
+    std::mt19937_64 rng(seed);
+    for (int g = 0; g < groups; ++g) {
+        if (!classes_of_group(g)) return nullptr;
+        const int64_t offset = split->group_offset[static_cast<size_t>(g)];
+        for (size_t i = 0; i < class_of.size(); ++i) {
+            auto& left = remaining[class_of[i]];
+            const uint64_t total = left[0] + left[1] + left[2];
+            uint64_t draw = shuffle && total > 0 ? std::uniform_int_distribution<uint64_t>(0, total - 1)(rng) : 0;
+            uint8_t bucket = 0;
+            while (bucket < 2 && draw >= left[bucket]) draw -= left[bucket++];
+            if (left[bucket] > 0) --left[bucket];
+            split->bucket[static_cast<size_t>(offset) + i] = bucket;
+            ++split->counts[bucket];
+        }
+    }
+    return split;
+}
+
+void ParquetArrowBatcher::SetRowSplit(std::shared_ptr<const ParquetRowSplit> split) {
+    row_split_ = std::move(split);
+    if (!row_split_ || !dataset_) return;
+    const size_t phase = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
+    assigned_row_groups_.clear();
+    const int groups = dataset_->GetNumRowGroups();
+    for (int g = 0; g < groups; ++g) {
+        const auto begin = static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(g)]);
+        const auto end = begin + static_cast<size_t>(dataset_->GetRowGroupSize(g));
+        if (std::find(row_split_->bucket.begin() + begin, row_split_->bucket.begin() + end,
+                      static_cast<uint8_t>(phase)) != row_split_->bucket.begin() + end)
+            assigned_row_groups_.push_back(g);
+    }
+    num_samples_ = row_split_->counts[phase];
+    Reset();
+}
+
+// -----------------------------------------------------------------------------
 // AssignRowGroups - split row groups between train and val by index
 // -----------------------------------------------------------------------------
 
@@ -342,6 +490,12 @@ bool ParquetArrowBatcher::LoadNextRowGroup() {
                 offset += chunk_len;
             }
         }
+    } else if (row_split_) {
+        const uint8_t phase = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
+        const auto offset = static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(group_idx)]);
+        for (int64_t i = 0; i < rows_in_group; ++i)
+            if (row_split_->bucket[offset + static_cast<size_t>(i)] == phase)
+                current_row_indices_.push_back(static_cast<size_t>(i));
     } else {
         current_row_indices_.resize(static_cast<size_t>(rows_in_group));
         std::iota(current_row_indices_.begin(), current_row_indices_.end(), size_t{0});

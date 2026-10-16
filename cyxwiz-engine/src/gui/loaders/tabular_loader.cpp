@@ -248,15 +248,19 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         message);
                 };
 
-                if (file_type == "csv" || file_type == "tsv") {
-                    // CSV family — LoadTabularCSV auto-picks Arrow
-                    // in-memory vs Parquet disk-backed.
+                const bool parquet = file_type == "parquet";
+                if (file_type == "csv" || file_type == "tsv" || parquet) {
+                    // CSV family and Parquet: the registry picks Arrow
+                    // in-memory or a Parquet file on disk by the data budget.
                     std::string load_status;
-                    auto backend = reg.LoadTabularCSV(
-                        path, name, has_header, delim, skip_rows, max_rows,
-                        force_disk, missing_tokens, selected_columns,
-                        decimal_point, use_threads, csv_progress, &load_status,
-                        ingestion_cache_directory);
+                    auto backend = parquet
+                        ? reg.LoadTabularParquet(path, name, force_disk, selected_columns,
+                                                 &load_status, ingestion_cache_directory)
+                        : reg.LoadTabularCSV(
+                              path, name, has_header, delim, skip_rows, max_rows,
+                              force_disk, missing_tokens, selected_columns,
+                              decimal_point, use_threads, csv_progress, &load_status,
+                              ingestion_cache_directory);
                     task.ReportProgress(0.9f, "Finalizing");
 
                     if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {
@@ -289,7 +293,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                             state->cols    = pq->GetNumColumns();
                             state->bytes   = pq->GetMemoryUsage();
                             state->message = load_status.empty()
-                                ? "Loaded via Parquet cache"
+                                ? "Kept on disk"
                                 : load_status;
                             auto audit = cyxwiz::DatasetAudit::AuditParquet(name, pq, label_col);
                             state->audit_errors = audit.ErrorCount();
@@ -302,10 +306,12 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         }
                     } else {
                         state->success = false;
-                        state->message =
-                            "Failed to load CSV. Check delimiter/header; if "
-                            "metadata precedes the header, set Skip first N "
-                            "source rows.";
+                        state->message = parquet
+                            ? "Failed to load Parquet. Check that the file is a Parquet file "
+                              "and the selected columns exist."
+                            : "Failed to load CSV. Check delimiter/header; if "
+                              "metadata precedes the header, set Skip first N "
+                              "source rows.";
                     }
                 } else {
                     // Non-CSV supported formats go straight to Arrow
@@ -315,8 +321,6 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         dataset = reg.RegisterArrowTable(
                             LoadZipTextSelection(path, archive_member, {},
                                 [&task] { return task.ShouldStop(); }), name);
-                    } else if (file_type == "parquet") {
-                        dataset = reg.LoadParquetToArrow(path, name);
                     } else if (file_type == "json") {
                         dataset = reg.LoadJSONToArrow(path, name,
                             json_lines || std::filesystem::path(path).extension() == ".jsonl");
@@ -414,10 +418,10 @@ bool TabularLoader::RestoreFromRegistry(const std::string& name,
         out.bytes   = pq->GetMemoryUsage();
         out.backend = 2;
         out.memory_is_estimate = false;
-        out.status_message = "Loaded " + name + " via Parquet cache (" +
+        out.status_message = "Loaded " + name + " on disk (" +
             std::to_string(out.rows) + " rows, " +
             std::to_string(out.cols) + " cols, " +
-            FormatBytes(out.bytes) + " on disk)";
+            FormatBytes(out.bytes) + " file)";
         return true;
     }
     return false;
@@ -436,10 +440,10 @@ CompletedLoadDescription TabularLoader::DescribeCompletedLoad(
 
     fs::path p(state.source_path);
     d.default_status_message = "Loaded " + p.filename().string() +
-        (disk_backed ? " via Parquet cache (" : " (") +
+        (disk_backed ? " on disk (" : " (") +
         std::to_string(state.rows) + " rows, " +
         std::to_string(state.cols) + " cols, " +
-        FormatBytes(state.bytes) + (disk_backed ? " on disk" : "") + ")";
+        FormatBytes(state.bytes) + (disk_backed ? " file" : "") + ")";
     return d;
 }
 

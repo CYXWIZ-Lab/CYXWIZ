@@ -173,6 +173,7 @@ enum class PipelineRuntimeImplementationOwner {
 enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
+    StreamingOperatorsOnly,  // a table on disk: operators that stream (TOFIX154)
 };
 
 struct PipelineMaterializerStorageBackendCapability {
@@ -182,14 +183,6 @@ struct PipelineMaterializerStorageBackendCapability {
     bool materializer_supported = false;
     const char* reason = nullptr;
 };
-
-// Qualified input storage for PipelineExecutor, distinct from materializer support.
-struct PipelineExecutorInputStorageSupport {
-    bool supported = false;
-    const char* reason = nullptr;
-};
-PipelineExecutorInputStorageSupport ResolvePipelineExecutorInputStorageSupport(
-    gui::NodeType node_type, PipelineStorageBackend backend);
 
 struct PipelineRuntimeSupport {
     PipelineRuntimeSupport() = default;

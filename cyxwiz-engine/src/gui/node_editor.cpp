@@ -4700,23 +4700,18 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // task system. The worker owns its PipelineExecutor, so it never reads
     // mutable editor state and remains safe if the editor closes mid-run.
     //
-    // Each node this run executes drops its result from an earlier run (of
-    // any kind: its name was recorded with the node's facts), so a node the
-    // run fails at, or never reaches, leaves nothing stale that looks
-    // current (Data Studio's "Other datasets"); it reads "not run" until the
-    // run gets to it.
-    for (const auto& node : pipeline_json.at("nodes")) {
-        const auto facts = node_run_facts_.find(node.at("id").get<int>());
-        if (facts == node_run_facts_.end()) continue;
-        if (!facts->second.output_dataset.empty())
-            cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(facts->second.output_dataset);
-        node_run_facts_.erase(facts);
-    }
+    // Each node in this run reads "not run" until the run gets to it. The
+    // executor is kept between runs (lazy evaluation, TOFIX154): it reuses an
+    // unchanged node's result, and drops the earlier result of each node it
+    // runs again, so a node the run fails at leaves nothing stale.
+    for (const auto& node : pipeline_json.at("nodes")) node_run_facts_.erase(node.at("id").get<int>());
     std::string pipeline_str = pipeline_json.dump(2);
     // One line: Debug is recorded in every build, and the indented form was
     // about 140 lines per run.
     spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
-    auto executor = std::make_shared<cyxwiz::PipelineExecutor>();
+    auto executor = pipeline_executor_ && !pipeline_executor_->IsExecuting()
+        ? pipeline_executor_
+        : std::make_shared<cyxwiz::PipelineExecutor>();
     executor->SetArtifactRoot(
         cyxwiz::ProjectManager::Instance().GetArtifactsPath());
     executor->SetExportRoot(

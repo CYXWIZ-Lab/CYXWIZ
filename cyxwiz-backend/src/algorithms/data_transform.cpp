@@ -438,13 +438,20 @@ NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double
 // Scalers
 // ============================================================================
 
+// Min-max scaling of x to [range_min, range_max] with its low and high (a
+// constant column maps to range_min).
+static af::array NormalizedColumn(const af::array& x, double low, double high, double range_min,
+                                  double range_max) {
+    return (x - low) / ZeroSafeScale(high - low) * (range_max - range_min) + range_min;
+}
+
 TransformResult DataTransform::Normalize(const Columns& data, double range_min, double range_max) {
     TransformResult result = TransformEachColumn(data, "normalize", "DataTransform::Normalize",
         [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
             const double low = af::min<double>(x), high = af::max<double>(x);
             params[prefix + "min"] = low;
             params[prefix + "max"] = high;
-            return (x - low) / ZeroSafeScale(high - low) * (range_max - range_min) + range_min;
+            return NormalizedColumn(x, low, high, range_min, range_max);
         });
     if (result.success) {
         result.params["range_min"] = range_min;
@@ -453,17 +460,61 @@ TransformResult DataTransform::Normalize(const Columns& data, double range_min, 
     return result;
 }
 
+bool DataTransform::StandardizeParameters(const ColumnMoments& moments, const StandardizeOptions& options,
+                                          double& center, double& scale) {
+    center = options.with_mean ? moments.mean : 0.0;
+    scale = 1.0;
+    if (options.with_std) {
+        const double variance = moments.count > 0.0 ? moments.m2 / moments.count : 0.0;
+        scale = IsConstantFeature(variance, moments.mean, static_cast<dim_t>(moments.count))
+                    ? 1.0
+                    : ZeroSafeScale(std::sqrt(variance));
+    }
+    return std::isfinite(moments.mean) && std::isfinite(center) && std::isfinite(scale);
+}
+
+void DataTransform::CombineMoments(ColumnMoments& total, const ColumnMoments& batch) {
+    if (batch.count <= 0.0) return;
+    if (total.count <= 0.0) {
+        total = batch;
+        return;
+    }
+    total.min = std::min(total.min, batch.min);
+    total.max = std::max(total.max, batch.max);
+    const double count = total.count + batch.count;
+    const double delta = batch.mean - total.mean;
+    total.mean += delta * batch.count / count;
+    total.m2 += batch.m2 + delta * delta * total.count * batch.count / count;
+    total.count = count;
+}
+
+bool DataTransform::Moments(const Columns& data, std::vector<ColumnMoments>& moments, std::string& error) {
+    moments.assign(data.size(), {});
+    try {
+        for (size_t col = 0; col < data.size(); ++col) {
+            if (data[col].empty()) continue;
+            const af::array x = HostValuesToDevice(data[col]);
+            const double mean = af::mean<double>(x);
+            const af::array centered = x - mean;
+            moments[col] = {static_cast<double>(x.elements()), mean, af::sum<double>(centered * centered),
+                            af::min<double>(x), af::max<double>(x)};
+        }
+        return true;
+    } catch (const af::exception& e) {
+        error = DeviceError("DataTransform::Moments", e);
+        return false;
+    }
+}
+
 TransformResult DataTransform::Standardize(const Columns& data, const StandardizeOptions& options) {
     return TransformEachColumn(data, "standardize", "DataTransform::Standardize",
         [&](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
             const double column_mean = af::mean<double>(x);
-            const double mean = options.with_mean ? column_mean : 0.0;
-            double scale = 1.0;
-            if (options.with_std) {
-                const double std_dev = PopulationStd(x);
-                scale = IsConstantFeature(std_dev * std_dev, column_mean, x.elements()) ? 1.0 : ZeroSafeScale(std_dev);
-            }
-            if (!std::isfinite(mean) || !std::isfinite(scale)) {
+            const af::array centered = x - column_mean;
+            const ColumnMoments moments{static_cast<double>(x.elements()), column_mean,
+                                        af::sum<double>(centered * centered), 0.0, 0.0};
+            double mean = 0.0, scale = 1.0;
+            if (!StandardizeParameters(moments, options, mean, scale)) {
                 refusal = "Data has missing or non-finite values";
                 return {};
             }
@@ -471,6 +522,29 @@ TransformResult DataTransform::Standardize(const Columns& data, const Standardiz
             params[prefix + "std"] = scale;
             return (x - mean) / scale;
         });
+}
+
+TransformResult DataTransform::NormalizeColumns(const Columns& data, const std::vector<double>& lows,
+                                                const std::vector<double>& highs, double range_min,
+                                                double range_max) {
+    if (lows.size() != data.size() || highs.size() != data.size()) {
+        TransformResult result;
+        result.method = "normalize";
+        return Fail(result, "Need one min and one max per column");
+    }
+    size_t column = 0;
+    TransformResult result = TransformEachColumn(data, "normalize", "DataTransform::NormalizeColumns",
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const size_t i = column++;
+            params[prefix + "min"] = lows[i];
+            params[prefix + "max"] = highs[i];
+            return NormalizedColumn(x, lows[i], highs[i], range_min, range_max);
+        });
+    if (result.success) {
+        result.params["range_min"] = range_min;
+        result.params["range_max"] = range_max;
+    }
+    return result;
 }
 
 TransformResult DataTransform::ScaleColumns(const Columns& data, const std::vector<double>& centers,

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace cyxwiz {
@@ -50,10 +51,28 @@ public:
 
     std::string OutcomeSummary() const override { return last_outcome_; }
 
+    // Streams (TOFIX154): every batch is counted or checked, the rule is
+    // judged at EndFit, and the input passes through uncopied. `unique` keeps
+    // every key, so it does not stream: a table in memory is checked whole,
+    // a table on disk by one GROUP BY in DuckDB (CheckSql), which spills.
+    bool SupportsStreaming() const override { return check_ != "unique"; }
+    std::string CheckSql() const override;
+    arrow::Status JudgeSql(const std::shared_ptr<arrow::Table>& result) override;
+    bool PassesInputThrough() const override { return true; }
+    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
+    arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;
+    arrow::Status EndFit() override;
+
 private:
-    arrow::Result<std::shared_ptr<arrow::Table>> ApplyRowCount(const std::shared_ptr<arrow::Table>& input);
-    arrow::Result<std::shared_ptr<arrow::Table>> ApplyValueCheck(const std::shared_ptr<arrow::Table>& input);
     std::string Label() const;
+
+    // The stream so far: rows seen, counted rows (row_count), failing rows
+    // and the first failing value (value checks), the keys seen (unique).
+    int64_t rows_ = 0;
+    int64_t counted_ = 0;
+    int64_t failing_ = 0;
+    std::string first_;
+    std::unordered_set<std::string> seen_;
 
     std::string last_outcome_;  // "passed: <counted> <what> (expected <rule>)"
     std::string check_ = "row_count";

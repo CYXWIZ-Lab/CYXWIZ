@@ -2,6 +2,7 @@
 // graph through RunGraphTrainingJob, linked against cyxwiz-training-core only
 // (what a Server Node links), and checks the fail-closed refusals.
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/data_budget.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
@@ -9,7 +10,10 @@
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
+#include <arrow/api.h>
+#include <arrow/io/file.h>
 #include <arrow/table.h>
+#include <parquet/arrow/writer.h>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -47,6 +51,85 @@ void Check(bool condition, const std::string& what) {
 
 bool Contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
+}
+
+// Three separable classes over four features, written in row groups of 100.
+bool WriteTabularBlobs(const fs::path& path, int rows, int seed) {
+    arrow::DoubleBuilder features[4];
+    arrow::Int64Builder labels;
+    uint32_t state = static_cast<uint32_t>(seed);
+    const auto noise = [&state] {
+        state = state * 1664525u + 1013904223u;
+        return (static_cast<double>(state >> 8) / 16777216.0 - 0.5) * 0.6;
+    };
+    for (int row = 0; row < rows; ++row) {
+        const int label = row % 3;
+        for (int column = 0; column < 4; ++column) {
+            if (!features[column].Append((column == label ? 2.0 : 0.0) + noise()).ok()) return false;
+        }
+        if (!labels.Append(label).ok()) return false;
+    }
+    std::vector<std::shared_ptr<arrow::Array>> arrays(5);
+    for (int column = 0; column < 4; ++column) {
+        if (!features[column].Finish(&arrays[column]).ok()) return false;
+    }
+    if (!labels.Finish(&arrays[4]).ok()) return false;
+    auto table = arrow::Table::Make(arrow::schema({arrow::field("x0", arrow::float64()),
+                                                   arrow::field("x1", arrow::float64()),
+                                                   arrow::field("x2", arrow::float64()),
+                                                   arrow::field("x3", arrow::float64()),
+                                                   arrow::field("class", arrow::int64())}),
+                                    arrays);
+    auto out = arrow::io::FileOutputStream::Open(path.string());
+    return out.ok() && parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 100).ok() &&
+           (*out)->Close().ok();
+}
+
+// Data Input -> Split -> Loader -> Dense 16 -> ReLU -> Dense 3 -> cross
+// entropy -> Adam -> Output; with a validation input on the Split's second pin.
+nlohmann::json TabularGraph(bool validation_input) {
+    using gui::NodeType;
+    nlohmann::json nodes = nlohmann::json::array();
+    const auto add = [&nodes](int id, NodeType type, const char* name, nlohmann::json parameters) {
+        nodes.push_back({{"id", id}, {"type", static_cast<int>(type)}, {"name", name}, {"parameters", parameters}});
+    };
+    add(1, NodeType::DataInput, "Blobs",
+        {{"dataset_name", "tabular_blobs"}, {"file_category", "tabular"}, {"file_type", "parquet"},
+         {"label_column", "class"}});
+    add(2, NodeType::DataSplit, "Split",
+        {{"seed", "42"}, {"stratified", "false"}, {"train_ratio", validation_input ? "0.9" : "0.8"},
+         {"val_ratio", validation_input ? "0.1" : "0.1"}, {"test_ratio", validation_input ? "0" : "0.1"}});
+    add(3, NodeType::DataLoader, "Loader",
+        {{"batch_size", "32"}, {"epochs", "2"}, {"shuffle", "true"}, {"seed", "11"}, {"model_seed", "7"}});
+    add(4, NodeType::Dense, "Dense 16", {{"units", "16"}});
+    add(5, NodeType::ReLU, "ReLU", nlohmann::json::object());
+    add(6, NodeType::Dense, "Classes", {{"units", "3"}});
+    add(7, NodeType::CrossEntropyLoss, "Cross entropy", nlohmann::json::object());
+    add(8, NodeType::Adam, "Adam", {{"learning_rate", "0.01"}});
+    add(9, NodeType::Output, "Output", {{"num_classes", "3"}});
+    nlohmann::json links = nlohmann::json::array();
+    int link_id = 1;
+    const auto link = [&](int from, int from_index, int to, int to_index) {
+        links.push_back({{"id", link_id}, {"from_node", from}, {"from_pin", 100 + link_id}, {"from_pin_index", from_index},
+                         {"to_node", to}, {"to_pin", 200 + link_id}, {"to_pin_index", to_index}, {"link_type", 0}});
+        ++link_id;
+    };
+    link(1, 0, 2, 0);
+    link(2, 0, 3, 0);
+    link(3, 0, 4, 0);
+    link(4, 0, 5, 0);
+    link(5, 0, 6, 0);
+    link(6, 0, 7, 0);
+    link(3, 1, 7, 1);
+    link(7, 0, 8, 0);
+    link(8, 0, 9, 0);
+    if (validation_input) {
+        add(10, NodeType::DataInput, "Validation blobs",
+            {{"dataset_name", "tabular_blobs_validation"}, {"file_category", "tabular"}, {"file_type", "parquet"},
+             {"label_column", "class"}});
+        link(10, 0, 2, 1);
+    }
+    return {{"version", "1.0"}, {"data_boundary_version", 2}, {"nodes", nodes}, {"links", links}};
 }
 
 nlohmann::json& NodeNamed(nlohmann::json& graph, int id) {
@@ -187,6 +270,114 @@ int main() {
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(result.ok, "job with a validation role succeeded" +
                              (result.error.empty() ? "" : " (" + result.error + ")"));
+    }
+
+    std::cout << "keeps inputs over the data budget on disk (TOFIX154)\n";
+    {
+        // The same graph with a validation input and no test share, unshuffled
+        // and seeded: in memory, then with a 1-byte budget so both files stay
+        // on disk and stream a row group at a time. The losses match.
+        nlohmann::json graph = LoadTokenWindowGraph(root);
+        nlohmann::json input = NodeNamed(graph, 1);
+        input["id"] = 20;
+        input["name"] = "Validation tokens";
+        input["parameters"]["dataset_name"] = "tiny_causal_lm_validation";
+        graph["nodes"].push_back(input);
+        graph["links"].push_back({{"id", 40}, {"from_node", 20}, {"from_pin", 60}, {"from_pin_index", 0},
+                                  {"to_node", 3}, {"to_pin", 6}, {"to_pin_index", 1}, {"link_type", 0}});
+        for (auto& node : graph["nodes"]) {
+            auto& params = node["parameters"];
+            if (params.contains("batch_size")) {
+                params["model_seed"] = "7";
+                params["seed"] = "11";
+                params["shuffle"] = "false";
+                params["batch_size"] = "2";
+            }
+        }
+        for (auto& node : graph["nodes"]) {
+            if (!node["parameters"].contains("test_ratio")) continue;
+            node["parameters"]["train_ratio"] = "0.9";
+            node["parameters"]["val_ratio"] = "0.1";
+            node["parameters"]["test_ratio"] = "0";
+        }
+        const auto run = [&](const std::string& name, std::vector<float>& losses, std::vector<float>& val_losses) {
+            cyxwiz::GraphTrainingJobRequest request;
+            request.graph_json = graph.dump();
+            request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+            request.dataset_files["tiny_causal_lm_validation"] = validation.string();
+            request.epochs_override = 2;
+            request.checkpoint_dir_override = (work / name).string();
+            cyxwiz::GraphTrainingJobCallbacks callbacks;
+            callbacks.on_batch = [&losses](int, int, int, float loss, float) { losses.push_back(loss); };
+            callbacks.on_epoch = [&val_losses](int, float, float, float val_loss, float, float) {
+                val_losses.push_back(val_loss);
+            };
+            return cyxwiz::RunGraphTrainingJob(request, callbacks);
+        };
+        std::vector<float> memory_losses, memory_val, disk_losses, disk_val;
+        const auto memory = run("checkpoints_memory", memory_losses, memory_val);
+        Check(memory.ok, "in memory: trained" + (memory.error.empty() ? "" : " (" + memory.error + ")"));
+        cyxwiz::SetDataBudgetBytes(1);
+        const auto on_disk = run("checkpoints_disk", disk_losses, disk_val);
+        Check(on_disk.ok, "on disk: trained" + (on_disk.error.empty() ? "" : " (" + on_disk.error + ")"));
+        bool same = !memory_losses.empty() && memory_losses.size() == disk_losses.size() &&
+                    memory_val.size() == disk_val.size();
+        for (size_t i = 0; same && i < memory_losses.size(); ++i)
+            same = std::abs(memory_losses[i] - disk_losses[i]) <= 1e-5f * std::max(1.0f, std::abs(memory_losses[i]));
+        for (size_t i = 0; same && i < memory_val.size(); ++i)
+            same = std::abs(memory_val[i] - disk_val[i]) <= 1e-5f * std::max(1.0f, std::abs(memory_val[i]));
+        Check(same, "on disk: the same losses as in memory (" + std::to_string(memory_losses.size()) + " vs " +
+                        std::to_string(disk_losses.size()) + " batches)");
+
+        // A test share left to cut from Train is refused on disk, with the reason.
+        nlohmann::json share = graph;
+        for (auto& node : share["nodes"])
+            if (node["parameters"].contains("test_ratio")) node["parameters"]["test_ratio"] = "0.1";
+        cyxwiz::GraphTrainingJobRequest share_request;
+        share_request.graph_json = share.dump();
+        share_request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        share_request.dataset_files["tiny_causal_lm_validation"] = validation.string();
+        share_request.epochs_override = 1;
+        share_request.checkpoint_dir_override = (work / "checkpoints_disk_share").string();
+        const auto refused_share = cyxwiz::RunGraphTrainingJob(share_request);
+        Check(!refused_share.ok && Contains(refused_share.error, "test windows"),
+              "on disk: a test share without an input is refused (" + refused_share.error + ")");
+
+        // A ratio split cannot cut a windows file on disk: refused with the reason.
+        cyxwiz::GraphTrainingJobRequest request;
+        request.graph_json = LoadTokenWindowGraph(root).dump();
+        request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        request.epochs_override = 1;
+        request.checkpoint_dir_override = (work / "checkpoints_disk_split").string();
+        const auto split = cyxwiz::RunGraphTrainingJob(request);
+        Check(!split.ok && Contains(split.error, "ratio splitting"),
+              "on disk: a ratio split is refused with the reason (" + split.error + ")");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+
+    std::cout << "trains a table kept on disk (TOFIX154)\n";
+    {
+        const fs::path blobs = work / "blobs.parquet";
+        const fs::path blobs_validation = work / "blobs_validation.parquet";
+        Check(WriteTabularBlobs(blobs, 600, 1) && WriteTabularBlobs(blobs_validation, 90, 2), "tabular fixtures written");
+        const auto run = [&](bool validation_input, const std::string& name) {
+            cyxwiz::GraphTrainingJobRequest request;
+            request.graph_json = TabularGraph(validation_input).dump();
+            request.dataset_files["tabular_blobs"] = blobs.string();
+            if (validation_input) request.dataset_files["tabular_blobs_validation"] = blobs_validation.string();
+            request.checkpoint_dir_override = (work / name).string();
+            return cyxwiz::RunGraphTrainingJob(request);
+        };
+        const auto memory = run(false, "checkpoints_tabular_memory");
+        Check(memory.ok, "tabular in memory: trained" + (memory.error.empty() ? "" : " (" + memory.error + ")"));
+        cyxwiz::SetDataBudgetBytes(1);
+        const auto on_disk = run(false, "checkpoints_tabular_disk");
+        Check(on_disk.ok && on_disk.model != nullptr,
+              "tabular on disk: trained" + (on_disk.error.empty() ? "" : " (" + on_disk.error + ")"));
+        const auto with_validation = run(true, "checkpoints_tabular_disk_validation");
+        Check(with_validation.ok, "tabular on disk with a validation input on disk: trained" +
+                                      (with_validation.error.empty() ? "" : " (" + with_validation.error + ")"));
+        cyxwiz::SetDataBudgetBytes(0);
     }
 
     std::cout << "resumes exactly from an epoch checkpoint\n";

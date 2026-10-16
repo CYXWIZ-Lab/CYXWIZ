@@ -165,6 +165,7 @@
 #include "../core/pipeline_execution_task.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
+#include "../core/data_budget.h"
 #include "../core/data_registry.h"
 #include "../core/arrow_dataset.h"
 #include "../data/arrow_data_table.h"
@@ -3969,10 +3970,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         auto& tm = cyxwiz::TrainingManager::Instance();
 
         cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
-        materialization_memory_policy.hard_limit_bytes =
-            project.GetConfig()
-                .editor_settings
-                .materialization_memory_limit_bytes;
+        materialization_memory_policy.hard_limit_bytes = cyxwiz::DataBudgetBytes();
 
         cyxwiz::MaterializationMemoryContext preflight_memory_context;
         preflight_memory_context.policy = materialization_memory_policy;
@@ -5863,10 +5861,6 @@ void MainWindow::SaveProjectSettings() {
     // Save application-wide settings
     settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
     settings.ui_scale = ImGui::GetIO().FontGlobalScale;
-    if (toolbar_) {
-        settings.materialization_memory_limit_bytes =
-            toolbar_->GetMaterializationMemoryLimitBytes();
-    }
 
     // Save layout file
     SaveLayout();
@@ -5900,8 +5894,6 @@ void MainWindow::LoadProjectSettings() {
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
         toolbar_->SetEditorWordWrap(settings.word_wrap);
         toolbar_->SetEditorAutoIndent(settings.auto_indent);
-        toolbar_->SetMaterializationMemoryLimitBytes(
-            settings.materialization_memory_limit_bytes);
     }
 
     // Theme and text sizes are Engine-wide (Preferences > Appearance); the
@@ -5934,6 +5926,8 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     // Saved query results (dashboards) live in the project.
     cyxwiz::SessionQueryService::Instance().SetProjectRoot(project_root);
     cyxwiz::SetImageQualityProjectRoot(project_root);
+    // DuckDB spills sorts, joins and group-bys into the project (TOFIX154).
+    cyxwiz::SetDataSpillDirectory((std::filesystem::path(project_root) / "cache" / "duckdb_tmp").string());
 
     // Load project settings and layout
     LoadProjectSettings();
@@ -5956,6 +5950,7 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
     cyxwiz::SessionQueryService::Instance().SetProjectRoot("");
     cyxwiz::SetImageQualityProjectRoot("");
+    cyxwiz::SetDataSpillDirectory("");
 
     // A pipeline run writes into the closed project's artifact/export paths;
     // it stops with the project (TOFIX101 section 7).

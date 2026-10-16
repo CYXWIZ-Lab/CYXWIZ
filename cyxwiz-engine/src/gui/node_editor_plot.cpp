@@ -63,7 +63,11 @@ std::pair<std::string, std::string> StatusLines(const Lane::Status& st, const cy
             const long long rows = st.table ? st.table->num_rows() : 0;
             if (st.state == State::OutOfDate)
                 return {"Out of date", st.feeder_name + " changed; refresh in the plot (data of " + st.read_at + ")."};
-            return {what, cyxwiz::plot::Thousands(rows) + " rows \xC2\xB7 read " + st.read_at};
+            // A table kept on disk is plotted from a sample of its row groups (TOFIX154).
+            const std::string shown = st.source_rows > rows
+                ? cyxwiz::plot::Thousands(rows) + " of " + cyxwiz::plot::Thousands(st.source_rows) + " rows (sample)"
+                : cyxwiz::plot::Thousands(rows) + " rows";
+            return {what, shown + " \xC2\xB7 read " + st.read_at};
         }
     }
     return {"", ""};
@@ -215,8 +219,12 @@ void NodeEditor::DrawPlotNodeHeader(int node_id) {
         ImGui::Text("Data at %s", st.feeder_name.c_str());
         if (st.table) {
             ImGui::SameLine();
-            ImGui::TextColored(t.text_dim, "%s rows \xC3\x97 %d columns \xC2\xB7 read %s",
-                               cyxwiz::plot::Thousands(st.table->num_rows()).c_str(), st.table->num_columns(), st.read_at.c_str());
+            const std::string rows = st.source_rows > st.table->num_rows()
+                ? cyxwiz::plot::Thousands(st.table->num_rows()) + " of " + cyxwiz::plot::Thousands(st.source_rows) +
+                      " rows (sample)"
+                : cyxwiz::plot::Thousands(st.table->num_rows()) + " rows";
+            ImGui::TextColored(t.text_dim, "%s \xC3\x97 %d columns \xC2\xB7 read %s",
+                               rows.c_str(), st.table->num_columns(), st.read_at.c_str());
         }
     }
     // Actions at the right: Refresh, or Cancel while running.

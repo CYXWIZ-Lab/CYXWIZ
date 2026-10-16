@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mutex>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <map>
@@ -20,11 +21,17 @@ namespace gui {
 enum class NodeType;
 }
 
+namespace arrow {
+class Schema;
+class Table;
+}
+
 namespace cyxwiz {
 
 // Forward declaration
-class DuckDBConnector;
 class SqlTransform;
+struct SqlTransformInput;
+class IPipelineOperator;
 struct PipelineRuntimeSupport;
 
 enum class PipelineNodeExecutionEvent : uint8_t {
@@ -202,6 +209,21 @@ private:
         std::string cached_output_dataset;  // Result from last successful execution
     };
 
+    // What a node left in its latest successful run on this executor, so an
+    // unchanged node is not run again (lazy evaluation, TOFIX154 item 10).
+    // Nodes that write files or prepare a deployment always run.
+    struct NodeRunCache {
+        uint64_t hash = 0;
+        std::string output;                     // node_results entry
+        std::map<int, std::string> pin_outputs; // output pin >= 1 -> dataset
+        std::string model_artifact;
+        std::string outcome;
+    };
+    std::map<int, NodeRunCache> run_cache_;
+    // Restores each unchanged node's hash and output from run_cache_ (when
+    // its output still exists), so MarkDirtyNodes can skip it.
+    void RestoreRunCache(std::vector<Node>& nodes);
+
     std::map<int, std::string> last_node_results_;
     std::map<std::pair<int, int>, std::string> last_node_pin_results_;
     std::map<int, std::string> last_model_artifacts_;
@@ -229,6 +251,8 @@ private:
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
     std::string graph_path_;              // the graph file the run came from (lineage)
+    // In-memory copies of disk inputs (AdmitInputTable), kept until the next run.
+    std::vector<std::string> admitted_inputs_;
     const std::vector<Node>* run_nodes_ = nullptr;  // the run's nodes while ExecuteParallel runs (lineage)
     // Writes <output>.lineage.json for an export node that wrote `output_path`
     // (TOFIX148 Publish); a failure is logged, the export stands.
@@ -257,8 +281,6 @@ private:
                             const std::string& error,
                             const std::string& written_path = {});
 
-    // DuckDB connector for SQL transformations
-    std::unique_ptr<DuckDBConnector> duckdb_;
     // SQL step running now, so RequestCancel can interrupt DuckDB.
     std::mutex active_sql_mutex_;
     SqlTransform* active_sql_ = nullptr;
@@ -373,6 +395,72 @@ private:
     void MarkDirtyNodes(std::vector<Node>& nodes);
     std::vector<int> FindReadyNodes(const std::vector<Node>& nodes, const std::set<int>& completed) const;
     bool ExecuteParallel(std::vector<Node>& nodes);
+    // The input table a step reads in memory: name itself, or an in-memory
+    // copy of a disk table that fits the data budget; "" after ReportError.
+    std::string AdmitInputTable(const Node& node, const std::string& name);
+    // A step without its input table: keeps the lookup's own reason.
+    void ReportMissingInput(const std::string& step);
+
+    // SQL over files (TOFIX154 step 3). A step's inputs are Parquet files
+    // DuckDB reads in place: a disk table's own file, or a memory table
+    // written once (StepInputFile). The result comes back as a table, or,
+    // when an input is on disk or large, DuckDB writes it to the pipeline
+    // cache; a result above the data budget's threshold stays there on disk.
+    // A check's output is its input (the same table or file) under output_name.
+    bool PassInputThrough(const Node& node, const std::string& input_dataset, const std::string& output_name);
+    struct StepSqlInput {
+        std::string alias;
+        std::string dataset;
+    };
+    // `exact_types`: the SQL step's contract 1; the pipeline's own SQL
+    // (FilterRows, GroupBy, ...) takes any type DuckDB reads. Errors are
+    // reported as error_prefix + DuckDB's message.
+    bool RunStepSql(const Node& node, const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                    const std::string& output_name, bool exact_types, const std::string& error_prefix);
+    // A result file a step wrote: read back into memory up to the threshold,
+    // else registered on disk (D1); false after ReportError.
+    bool RegisterStepResultFile(const Node& node, const std::string& output_name, const std::string& path,
+                                int64_t rows);
+    // A result file's path for this run (cache/pipeline/results).
+    std::string NewStepResultPath(const std::string& output_name) const;
+    // An operator that streams (TOFIX154 step 4) run over its input one row
+    // group at a time: fit pass, apply pass, the output written as it comes.
+    bool RunStreamingOperator(const Node& node, IPipelineOperator& op, const std::string& input_dataset,
+                              const std::string& output_name);
+    // A step's input for checking columns and types: the table in memory, or
+    // an empty table with the file's schema (its rows stay on disk).
+    std::shared_ptr<arrow::Table> InputSchemaTable(const std::string& dataset) const;
+    // A dataset's rows wherever it lives (0 when it is not a table).
+    int64_t DatasetRows(const std::string& dataset) const;
+    // A small query's result as a table (a fit step's statistics), over the
+    // same files; null after ReportError.
+    std::shared_ptr<arrow::Table> FetchStepSql(const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                                               const std::string& error_prefix);
+    // The SqlTransform inputs for a step: one file per input; false after
+    // ReportError.
+    bool PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                              std::vector<SqlTransformInput>& files, uint64_t& input_bytes, bool& any_on_disk);
+    // The Parquet file a dataset is read from ("" after ReportError).
+    std::string StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
+                              uint64_t& bytes, bool& on_disk);
+    // Steps that read their inputs from the files, never whole: SQL steps
+    // (RunStepSql) and operators that stream (RunStreamingOperator). They are
+    // not admitted first.
+    static bool StepReadsInputFiles(const Node& node);
+    // <project>/cache/pipeline, or <temp>/cyxwiz/pipeline outside a project.
+    std::filesystem::path PipelineCacheRoot() const;
+    // Parquet copies of memory tables, kept while their table lives.
+    struct StepInputCopy {
+        std::weak_ptr<arrow::Table> table;
+        std::string path;
+    };
+    std::map<std::string, StepInputCopy> step_input_copies_;
+    // Result files this executor wrote (output dataset -> file); one name per
+    // run, since Windows cannot replace a file that is still mapped.
+    std::map<std::string, std::string> step_result_files_;
+    // Removes the copies whose table is gone and the result files no dataset
+    // uses any more (at run start and when the executor goes).
+    void RemoveUnusedStepFiles();
     Node* FindNodeById(std::vector<Node>& nodes, int node_id);
     const Node* FindNodeById(const std::vector<Node>& nodes, int node_id) const;
 

@@ -25,7 +25,9 @@ class GuidedEditor {
 public:
     struct Input {
         std::string alias;
-        std::shared_ptr<arrow::Table> table;  // null when not in memory
+        std::shared_ptr<arrow::Table> table;  // null when not loaded; columns only for a table on disk
+        std::string parquet_path;             // a table kept on disk (TOFIX154)
+        int64_t rows = 0;
     };
     // What the cards show beside each operation.
     struct CardFacts {

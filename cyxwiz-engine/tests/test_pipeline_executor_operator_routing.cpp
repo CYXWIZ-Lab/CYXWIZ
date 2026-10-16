@@ -1,4 +1,6 @@
 #include "core/arrow_dataset.h"
+#include "core/data_budget.h"
+#include "core/duckdb_connector.h"
 #include "core/data_registry.h"
 #include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
@@ -770,18 +772,48 @@ void CheckPipelineDataInputUsesProjectIngestionCache() {
         R"("source_type":"file","file_path":")" +
         JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true","delimiter":",",)"
-        R"("force_disk_backed":"true"}})"
-        R"(],"links":[]})";
+        R"("force_disk_backed":"true"}},)"
+        R"({"id":91003,"type":"SortRows","name":"Rows","parameters":{"columns":"value","order":"DESC"}})"
+        R"(],"links":[{"start_node":91002,"end_node":91003}]})";
+    // TOFIX154: a disk-backed Data Input feeds the next step, which reads it
+    // whole when that fits the data budget, and stops before loading if not.
     cyxwiz::PipelineExecutor disk_backed;
     disk_backed.SetIngestionCacheRoot(cache_root.string());
-    Check(!disk_backed.ExecutePipeline(disk_backed_json) &&
-              disk_backed.GetLastError().find(
-                  "currently require an in-memory Arrow table") !=
-                  std::string::npos,
-          "Pipeline DataInput should fail explicitly when the selected "
-          "disk-backed backend cannot feed transformation operators");
+    Check(disk_backed.ExecutePipeline(disk_backed_json),
+          "a disk-backed Data Input should feed the next step: " + disk_backed.GetLastError());
+    Check(registry.IsParquetBackedDataset("ds_datainput_91002"),
+          "the disk-backed Data Input stays a Parquet file");
+    const auto disk_facts = disk_backed.GetNodeRunFacts();
+    Check(disk_facts.count(91002) && disk_facts.at(91002).rows == 2,
+          "the disk-backed Data Input reports its rows");
+    Check(disk_facts.count(91003) && disk_facts.at(91003).rows == 2,
+          "the step after it reads every row");
+    // Under a tiny budget: a SQL step (SortRows) still runs, DuckDB reading
+    // the file and writing its result to disk; a step that needs its input
+    // whole (RobustScaler: quantiles) stops before loading.
+    cyxwiz::SetDataBudgetBytes(1);
+    cyxwiz::PipelineExecutor over_budget;
+    over_budget.SetIngestionCacheRoot(cache_root.string());
+    Check(over_budget.ExecutePipeline(disk_backed_json),
+          "a SQL step runs over a file under any budget: " + over_budget.GetLastError());
+    Check(registry.IsParquetBackedDataset("ds_sort_91003") &&
+              over_budget.GetNodeRunFacts().at(91003).rows == 2,
+          "its result over the threshold stays on disk");
+    std::string scaler_json = disk_backed_json;
+    const std::string sort_step = R"({"id":91003,"type":"SortRows","name":"Rows","parameters":{"columns":"value","order":"DESC"}})";
+    scaler_json.replace(scaler_json.find(sort_step), sort_step.size(),
+        R"({"id":91003,"type":"RobustScaler","name":"Scale","parameters":{"columns":"value"}})");
+    cyxwiz::PipelineExecutor whole_table;
+    whole_table.SetIngestionCacheRoot(cache_root.string());
+    Check(!whole_table.ExecutePipeline(scaler_json) &&
+              whole_table.GetLastError().find("over the data budget") != std::string::npos,
+          "a step that reads its input whole stops before loading over the budget: " +
+              whole_table.GetLastError());
+    cyxwiz::SetDataBudgetBytes(0);
+    registry.UnregisterTabularDataset("ds_sort_91003");
 
     registry.UnregisterTabularDataset("ds_datainput_91002");
+    registry.UnregisterTabularDataset("ds_datainput_91002_in_memory");
     fs::remove(csv_path, error);
     fs::remove_all(cache_root, error);
 }
@@ -1270,6 +1302,264 @@ void CheckNodeRunFacts() {
     Check(failed.count(93102) && failed.at(93102).rows == 3, "nodes before the failure keep their facts");
     fs::remove_all(dir);
     std::cout << "Node run facts passed\n";
+}
+
+void CheckLazyEvaluation() {
+    // TOFIX154 item 10: an executor kept between runs reuses an unchanged
+    // node's result; a changed parameter or source file reruns that node and
+    // everything below it; a node that writes a file always runs.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_lazy_evaluation";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    { std::ofstream file(csv); file << "id,word\n1,alpha\n2,beta\n3,gamma\n"; }
+    auto graph = [&](const std::string& min_letters) {
+        return R"({"nodes":[{"id":94101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":94102,"type":"SQLQuery","name":"Long","parameters":{"sql_contract_version":"1","input_alias":"input","query":"SELECT id, word FROM input WHERE length(word) >= )" +
+            min_letters + R"("}},{"id":94103,"type":"ExportCSV","name":"Export","parameters":{"file_path":")" +
+            JsonEscapePath((dir / "out.csv").string()) +
+            R"("}}],"links":[{"start_node":94101,"end_node":94102},{"start_node":94102,"end_node":94103}]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    std::set<int> executed;
+    executor.SetNodeExecutionCallback([&executed](int id, cyxwiz::PipelineNodeExecutionEvent event, const std::string&) {
+        if (event == cyxwiz::PipelineNodeExecutionEvent::Executing) executed.insert(id);
+    });
+    auto run = [&](const std::string& min_letters) {
+        executed.clear();
+        Check(executor.ExecutePipeline(graph(min_letters)), "lazy run: " + executor.GetLastError());
+        return executed;
+    };
+    Check(run("5") == std::set<int>{94101, 94102, 94103}, "the first run executes every node");
+    Check(run("5") == std::set<int>{94103}, "an unchanged rerun executes only the export (it writes a file)");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 2, "the reused SQL step keeps its facts");
+    Check(run("4") == std::set<int>{94102, 94103}, "a changed parameter reruns that step and below");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 3, "the rerun step has its new rows");
+    { std::ofstream file(csv, std::ios::app); file << "4,delta\n"; }
+    Check(run("4") == std::set<int>{94101, 94102, 94103}, "an edited source file reruns everything");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 4, "the rerun reads the edited file");
+    for (int id : {94101, 94102}) cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(
+        id == 94101 ? "ds_datainput_94101" : "ds_sql_94102");
+    Check(run("4") == std::set<int>{94101, 94102, 94103}, "a result that is gone is computed again");
+    // The kept executor reopens DuckDB when the data budget changes.
+    {
+        cyxwiz::DuckDBConnector connector;
+        Check(connector.MatchesDataBudget(), "a new DuckDB connection matches the data budget");
+        cyxwiz::SetDataBudgetBytes(512ULL << 20);
+        Check(!connector.MatchesDataBudget(), "a changed data budget no longer matches");
+        Check(run("5") == std::set<int>{94102, 94103}, "a run after a budget change works");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+    fs::remove_all(dir);
+    std::cout << "Lazy evaluation passed\n";
+}
+
+// TOFIX154: a unique check on a table on disk runs as one DuckDB GROUP BY
+// (it needs every key, so it does not stream): the same verdict as in
+// memory, and the file passes through uncopied.
+void CheckUniqueOnDisk() {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_unique_on_disk";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto file = dir / "keys.parquet";
+    {
+        arrow::Int64Builder ids, keys;
+        arrow::StringBuilder names;
+        for (int64_t i = 0; i < 1000; ++i) {
+            Check(ids.Append(i).ok() && keys.Append(i % 400).ok() && names.Append("n" + std::to_string(i % 400)).ok(),
+                  "unique fixture values");
+        }
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("id", arrow::int64()),
+                                                       arrow::field("key", arrow::int64()),
+                                                       arrow::field("name", arrow::utf8())}),
+                                        {ids.Finish().ValueOrDie(), keys.Finish().ValueOrDie(),
+                                         names.Finish().ValueOrDie()});
+        auto out = arrow::io::FileOutputStream::Open(file.string()).ValueOrDie();
+        Check(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out, 100).ok() && out->Close().ok(),
+              "unique fixture written in row groups of 100");
+    }
+    auto graph = [&](bool disk, const std::string& columns) {
+        return std::string(R"({"nodes":[{"id":95301,"type":"DataInput","name":"Keys","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95302,"type":"RowCountCheck","name":"Unique","parameters":{"check":"unique","check_name":"keys","columns":")" +
+            columns + R"("}}],"links":[{"start_node":95301,"end_node":95302}]})";
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    for (const bool disk : {false, true}) {
+        const std::string where = disk ? "on disk" : "in memory";
+        if (disk) cyxwiz::SetDataBudgetBytes(1);
+        {
+            cyxwiz::PipelineExecutor executor;
+            Check(executor.ExecutePipeline(graph(disk, "id")), "unique id passes " + where + ": " + executor.GetLastError());
+            const auto facts = executor.GetNodeRunFacts();
+            Check(facts.at(95302).outcome == "passed: id unique in 1000 rows",
+                  "unique id outcome " + where + ": " + facts.at(95302).outcome);
+            const auto output = facts.at(95302).output_dataset;
+            if (disk) {
+                const auto passed = registry.GetParquetBackedDataset(output);
+                Check(passed && passed->GetNumRows() == 1000 && passed->GetFilePath() == file.string(),
+                      "on disk the check passes the same file through");
+            } else {
+                const auto passed = registry.GetArrowDataset(output);
+                Check(passed && passed->GetNumRows() == 1000, "in memory the check passes the table through");
+            }
+            registry.UnregisterTabularDataset(output);
+        }
+        for (const std::string columns : {"key", "key,name"}) {
+            cyxwiz::PipelineExecutor executor;
+            Check(!executor.ExecutePipeline(graph(disk, columns)), "repeated " + columns + " fails " + where);
+            const auto error = executor.GetLastError();
+            const std::string what = columns == "key" ? "key" : "key, name";
+            Check(error.find("'keys' failed: " + what + " repeats in 600 row(s)") != std::string::npos,
+                  "repeated " + columns + " " + where + " gives the count: " + error);
+        }
+        registry.UnregisterTabularDataset("ds_datainput_95301");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+    // The pivot step's "Find values" on a table on disk: the first distinct
+    // values, a row group at a time, stopping once it has them.
+    {
+        const auto keys = cyxwiz::ParquetBackedDataset::Open(file.string(), "find_values");
+        Check(keys != nullptr, "the key file opens");
+        const auto names = keys->FirstDistinctValues("name", 50);
+        Check(names.size() == 50 && names.front() == "n0" && names.back() == "n49",
+              "the first 50 names in file order");
+        Check(keys->FirstDistinctValues("key", 500).size() == 400, "every distinct key when fewer than asked");
+        Check(keys->FirstDistinctValues("missing", 5).empty(), "a missing column gives none");
+    }
+    fs::remove_all(dir);
+    std::cout << "Unique on disk passed\n";
+}
+
+void CheckStreamingScaler() {
+    // TOFIX154 step 4: StandardScaler over a Parquet file of 10 row groups,
+    // streamed (input on disk, tiny budget) and in memory: the same output.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_streaming_scaler";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto file = dir / "values.parquet";
+    {
+        arrow::Int64Builder ids;
+        arrow::DoubleBuilder values;
+        for (int64_t i = 0; i < 1000; ++i) {
+            Check(ids.Append(i).ok() && values.Append(i * 0.37 + std::sin(static_cast<double>(i)) * 5.0).ok(),
+                  "streaming fixture values");
+        }
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("id", arrow::int64()),
+                                                       arrow::field("value", arrow::float64())}),
+                                        {ids.Finish().ValueOrDie(), values.Finish().ValueOrDie()});
+        auto out = arrow::io::FileOutputStream::Open(file.string()).ValueOrDie();
+        Check(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out, 100).ok() && out->Close().ok(),
+              "streaming fixture written in row groups of 100");
+    }
+    auto graph = [&](const std::string& scaler, bool disk) {
+        return std::string(R"({"nodes":[{"id":95101,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95102,"type":")" + scaler + R"(","name":"Scale","parameters":{"columns":"value"}}],"links":[{"start_node":95101,"end_node":95102}]})";
+    };
+    auto scaled = [&](const std::string& scaler, bool disk) {
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(graph(scaler, disk)), scaler + " run (" + (disk ? "disk" : "memory") +
+                                                                 "): " + executor.GetLastError());
+        const auto output = executor.GetNodeRunFacts().at(95102).output_dataset;
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        std::shared_ptr<arrow::Table> table;
+        if (auto memory = registry.GetArrowDataset(output)) table = memory->GetArrowTable();
+        else if (auto stored = registry.GetParquetBackedDataset(output)) table = stored->ReadAll();
+        Check(table && table->num_rows() == 1000, "scaler output has every row");
+        std::vector<double> values;
+        for (const auto& chunk : table->GetColumnByName("value")->chunks()) {
+            if (chunk->type_id() == arrow::Type::FLOAT) {  // the scaler writes float32
+                const auto floats = std::static_pointer_cast<arrow::FloatArray>(chunk);
+                values.insert(values.end(), floats->raw_values(), floats->raw_values() + floats->length());
+            } else {
+                const auto doubles = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                values.insert(values.end(), doubles->raw_values(), doubles->raw_values() + doubles->length());
+            }
+        }
+        registry.UnregisterTabularDataset(output);
+        registry.UnregisterTabularDataset("ds_datainput_95101");
+        return values;
+    };
+    for (const std::string scaler : {"StandardScaler", "MinMaxScaler"}) {
+        const auto in_memory = scaled(scaler, false);
+        cyxwiz::SetDataBudgetBytes(1);
+        const auto streamed = scaled(scaler, true);
+        cyxwiz::SetDataBudgetBytes(0);
+        double worst = 0.0;
+        for (size_t i = 0; i < in_memory.size(); ++i) worst = std::max(worst, std::abs(in_memory[i] - streamed[i]));
+        Check(worst < 1e-6, "streamed and in-memory " + scaler + " agree (max difference " + std::to_string(worst) + ")");
+    }
+
+    // LogTransform (row by row) then a row-count check (passes its input
+    // through): streamed and in memory give the same rows and outcome.
+    auto log_graph = [&](bool disk, const std::string& expected) {
+        return std::string(R"({"nodes":[{"id":95201,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"value_col":"id"}},)"
+            R"({"id":95203,"type":"RowCountCheck","name":"Count","parameters":{"check_name":"all rows","expected_rows":")" + expected +
+            R"("}}],"links":[{"start_node":95201,"end_node":95202},{"start_node":95202,"end_node":95203}]})";
+    };
+    auto logged = [&](bool disk) {
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(log_graph(disk, "1000")),
+              std::string("log + check run (") + (disk ? "disk" : "memory") + "): " + executor.GetLastError());
+        const auto facts = executor.GetNodeRunFacts();
+        Check(facts.at(95203).outcome == "passed: 1000 rows (expected exactly 1000)",
+              "the streamed check counts every row: " + facts.at(95203).outcome);
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        const auto output = facts.at(95203).output_dataset;
+        std::shared_ptr<arrow::Table> table;
+        if (auto memory = registry.GetArrowDataset(output)) table = memory->GetArrowTable();
+        else if (auto stored = registry.GetParquetBackedDataset(output)) table = stored->ReadAll();
+        Check(table && table->num_rows() == 1000, "the check passes every row through");
+        std::vector<double> values;
+        for (const auto& chunk : table->GetColumnByName("id")->chunks()) {
+            const auto floats = std::static_pointer_cast<arrow::FloatArray>(chunk);
+            values.insert(values.end(), floats->raw_values(), floats->raw_values() + floats->length());
+        }
+        for (const auto& name : {facts.at(95202).output_dataset, output, std::string("ds_datainput_95201")})
+            registry.UnregisterTabularDataset(name);
+        return values;
+    };
+    // Readers of a table on disk (TOFIX154 step 5): the first rows read only
+    // the row groups they need; 0 rows give the columns; a plot's sample is
+    // row groups spread over the whole file.
+    {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        Check(registry.LoadTabularParquet(file.string(), "streaming_preview", true) ==
+                  cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked,
+              "the fixture opens on disk");
+        const auto preview = registry.ReadTablePreview("streaming_preview", 250);
+        Check(preview && preview->num_rows() == 250, "a preview reads its first 250 rows");
+        const auto columns = registry.ReadTablePreview("streaming_preview", 0);
+        Check(columns && columns->num_rows() == 0 && columns->num_columns() == 2, "0 rows give the columns");
+        const auto sample = registry.GetParquetBackedDataset("streaming_preview")->ReadSpreadRowGroups(300);
+        Check(sample && sample->num_rows() == 300, "a spread sample reads 3 of the 10 row groups");
+        auto ids = std::static_pointer_cast<arrow::Int64Array>(
+            arrow::Concatenate(sample->GetColumnByName("id")->chunks()).ValueOrDie());
+        Check(ids->Value(0) == 0 && ids->Value(299) >= 600, "the sample spans the file, not only its start");
+        registry.UnregisterTabularDataset("streaming_preview");
+    }
+
+    const auto logged_in_memory = logged(false);
+    cyxwiz::SetDataBudgetBytes(1);
+    const auto logged_streamed = logged(true);
+    {
+        cyxwiz::PipelineExecutor failing;
+        Check(!failing.ExecutePipeline(log_graph(true, "999")) &&
+                  failing.GetLastError().find("expected exactly 999 rows, found 1000") != std::string::npos,
+              "a streamed check that fails stops the run: " + failing.GetLastError());
+        cyxwiz::DataRegistry::Instance().UnregisterTabularDataset("ds_datainput_95201");
+    }
+    cyxwiz::SetDataBudgetBytes(0);
+    Check(logged_in_memory == logged_streamed, "streamed and in-memory LogTransform agree");
+    fs::remove_all(dir);
+    std::cout << "Streaming scaler passed\n";
 }
 
 void CheckJsonLinesInput() {
@@ -2355,6 +2645,10 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--json-lines") { CheckJsonLinesInput(); return 0; }
     if(argc==1) CheckJsonLinesInput();
     if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--lazy") { CheckLazyEvaluation(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--streaming") { CheckStreamingScaler(); CheckUniqueOnDisk(); return 0; }
+    if(argc==1) { CheckStreamingScaler(); CheckUniqueOnDisk(); }
+    if(argc==1) CheckLazyEvaluation();
     if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
     if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }
     if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); CheckGuidedOperations(); }
@@ -5910,6 +6204,25 @@ int main(int argc, char** argv) {
     Check(joined_table != nullptr, "Join output table exists");
     Check(joined_table->num_rows() == 3,
           "Join on x should match all rows in the self-join fixture");
+
+    // TOFIX154: the same self-join over two disk inputs under a tiny budget
+    // goes to a file; the repeated column name x is renamed, not refused.
+    {
+        std::string disk_join_json = join_json;
+        for (size_t at = 0; (at = disk_join_json.find(R"("has_header":"true")", at)) != std::string::npos;) {
+            disk_join_json.insert(at, R"("force_disk_backed":"true",)");
+            at += 60;
+        }
+        cyxwiz::SetDataBudgetBytes(1);
+        cyxwiz::PipelineExecutor disk_join;
+        Check(disk_join.ExecutePipeline(disk_join_json),
+              "a join of two disk inputs with a shared key name runs: " + disk_join.GetLastError());
+        const auto facts = disk_join.GetNodeRunFacts();
+        Check(facts.count(103) && facts.at(103).rows == 3, "the disk join matches every row");
+        Check(registry.IsParquetBackedDataset("ds_join_103"), "the disk join result stays on disk");
+        cyxwiz::SetDataBudgetBytes(0);
+        registry.UnregisterTabularDataset("ds_join_103");
+    }
 
     const fs::path join_left_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_join_left.csv";

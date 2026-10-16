@@ -1,10 +1,13 @@
 #include "duckdb_connector.h"
+#include "data_budget.h"
 #include <arrow/c/bridge.h>
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <unordered_map>
 #include <chrono>
+#include <filesystem>
+#include <thread>
 #include <sstream>
 
 namespace cyxwiz {
@@ -295,6 +298,30 @@ arrow::Status AppendDuckDBValueToArrowBuilder(const duckdb::Value& value, arrow:
 DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
     try {
         duckdb::DBConfig config;
+        // The data budget bounds DuckDB too; over it, sorts, joins and
+        // group-bys spill to the spill directory instead of failing. Set
+        // before external access is switched off, which locks temp_directory.
+        opened_budget_ = DataBudgetBytes();
+        opened_spill_ = DataSpillDirectory();
+        config.SetOptionByName("memory_limit",
+                               duckdb::Value(std::to_string(std::max<uint64_t>(64, opened_budget_ >> 20)) + "MB"));
+        // Each DuckDB thread needs working memory of its own: one per 256 MB
+        // of budget (a 5 GB sort under 244 MB failed with two threads, ran
+        // with one); more threads than the budget feeds fail instead of
+        // spilling.
+        const uint64_t threads = std::clamp<uint64_t>(opened_budget_ / (256ULL << 20), 1,
+                                                      std::max(1u, std::thread::hardware_concurrency()));
+        config.SetOptionByName("threads", duckdb::Value::BIGINT(static_cast<int64_t>(threads)));
+        const std::string& spill = opened_spill_;
+        std::error_code spill_error;
+        if (!spill.empty() && (std::filesystem::create_directories(spill, spill_error), !spill_error)) {
+            config.SetOptionByName("temp_directory", duckdb::Value(spill));
+            // With external access off DuckDB touches only allowed folders,
+            // its own spill folder included.
+            std::string folder = std::filesystem::path(spill).generic_string();
+            if (folder.back() != '/') folder += '/';
+            config.options.allowed_directories.insert(folder);
+        }
         config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
         config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
         config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
@@ -352,6 +379,72 @@ std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
     }
 }
 
+std::vector<std::string> DuckDBConnector::ResultColumnNames(const std::string& sql) {
+    if (!conn_) return {};
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) {
+            last_error_ = prepared->GetError();
+            return {};
+        }
+        return prepared->GetNames();
+    } catch (const std::exception& e) {
+        last_error_ = ErrorText(e);
+        return {};
+    }
+}
+
+namespace {
+// 'a''b' quoting for a file path in SQL (forward slashes).
+std::string SqlPathLiteral(const std::string& path) {
+    std::string text = "'";
+    for (char c : path) {
+        if (c == '\\') text += '/';
+        else if (c == '\'') text += "''";
+        else text += c;
+    }
+    return text + "'";
+}
+}  // namespace
+
+bool DuckDBConnector::RegisterParquetView(const std::string& name, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return false;
+    }
+    return Execute("CREATE OR REPLACE VIEW " + QuoteIdentifier(name) +
+                   " AS SELECT * FROM read_parquet(" + SqlPathLiteral(path) + ")");
+}
+
+bool DuckDBConnector::RegisterParquetTable(const std::string& name, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return false;
+    }
+    return Execute("CREATE OR REPLACE TABLE " + QuoteIdentifier(name) +
+                   " AS SELECT * FROM read_parquet(" + SqlPathLiteral(path) + ")");
+}
+
+int64_t DuckDBConnector::CopyQueryToParquet(const std::string& sql, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return -1;
+    }
+    try {
+        auto result = conn_->Query("COPY (" + sql + ") TO " + SqlPathLiteral(path) +
+                                   " (FORMAT PARQUET, ROW_GROUP_SIZE 131072, COMPRESSION ZSTD)");
+        if (result->HasError()) {
+            last_error_ = result->GetError();
+            return -1;
+        }
+        auto chunk = result->Fetch();
+        return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).GetValue<int64_t>() : 0;
+    } catch (const std::exception& e) {
+        last_error_ = ErrorText(e);
+        return -1;
+    }
+}
+
 void DuckDBConnector::Interrupt() {
     if (conn_) conn_->Interrupt();
 }
@@ -365,9 +458,15 @@ DuckDBConnector::DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db) 
     }
 }
 
+bool DuckDBConnector::MatchesDataBudget() const {
+    return opened_budget_ == DataBudgetBytes() && opened_spill_ == DataSpillDirectory();
+}
+
 std::unique_ptr<DuckDBConnector> DuckDBConnector::NewConnection() {
     if (!db_ || !conn_) return nullptr;
     std::unique_ptr<DuckDBConnector> c(new DuckDBConnector(SharedTag{}, db_));
+    c->opened_budget_ = opened_budget_;
+    c->opened_spill_ = opened_spill_;
     return c->IsReady() ? std::move(c) : nullptr;
 }
 
@@ -386,6 +485,11 @@ bool DuckDBConnector::RegisterTable(
     const std::string& table_name,
     std::shared_ptr<arrow::Table> arrow_table) {
 
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        spdlog::error(last_error_);
+        return false;
+    }
     if (!arrow_table) {
         last_error_ = "Cannot register null Arrow table";
         spdlog::error(last_error_);
@@ -456,6 +560,7 @@ bool DuckDBConnector::RegisterTable(
 }
 
 bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
+    if (!conn_) return false;
     try {
         const std::string existing = ExistingObjectKind(*conn_, table_name);
         if (!existing.empty()) {

@@ -2,6 +2,7 @@
 
 #include "graph_compiler.h"
 #include "dataset_batcher.h"
+#include "parquet_sequence_batcher.h"
 
 #include <memory>
 #include <string>
@@ -29,6 +30,17 @@ struct SequenceArrowBatcherBuildResult {
         return batcher != nullptr && error_message.empty();
     }
 };
+
+// Causal-LM token windows with the training set on disk (TOFIX154 step 6):
+// read a row group at a time (ParquetSequenceBatcher). Validation / Test are
+// their own sources (a file or a table in memory); ratio splitting a windows
+// file is refused, since a document could straddle a row group.
+SequenceArrowBatcherBuildResult BuildSequenceBatcherFromWindowSources(
+    const SequenceWindowSource& train,
+    const TrainingConfiguration& config,
+    int batch_size,
+    const SequenceWindowSource& validation = {},
+    const SequenceWindowSource& test = {});
 
 SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     const std::shared_ptr<ArrowDataset>& dataset,

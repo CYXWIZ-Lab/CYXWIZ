@@ -56,16 +56,7 @@ LogTransformOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::Invalid("LogTransform: input table is null");
     }
 
-    auto column = input->GetColumnByName(value_col_);
-    if (!column) {
-        return arrow::Status::KeyError(
-            "LogTransform: column '" + value_col_ + "' not found");
-    }
-    if (!IsNumericChunked(column)) {
-        return arrow::Status::TypeError(
-            "LogTransform: column '" + value_col_ +
-            "' has unsupported type '" + column->type()->ToString() + "'");
-    }
+    ARROW_RETURN_NOT_OK(BeginStream(input->schema()));
 
     const uint64_t planned_rows =
         static_cast<uint64_t>(std::max<int64_t>(0, input->num_rows()));
@@ -84,56 +75,60 @@ LogTransformOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             0.15f));
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
-    ReportProgress(progress_callback_, "read_column",
-                   "Reading column for log transform", 0.20f, 0,
+    ReportProgress(progress_callback_, "transform",
+                   "Applying log1p transform", 0.20f, 0,
                    planned_rows,
                    preflight_estimate.estimated_peak_bytes);
+    // The whole table is one batch of the stream.
+    ARROW_ASSIGN_OR_RAISE(auto out_table, ApplyBatch(input));
+    spdlog::info("LogTransform: applied log1p to '{}' ({} values)",
+                 value_col_, planned_rows);
+    ReportProgress(progress_callback_, "complete",
+                   "Log transform complete", 1.0f,
+                   planned_rows, planned_rows,
+                   preflight_estimate.estimated_peak_bytes);
+    return out_table;
+}
 
-    int col_idx = input->schema()->GetFieldIndex(value_col_);
+arrow::Status LogTransformOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
+    const auto field = schema ? schema->GetFieldByName(value_col_) : nullptr;
+    if (!field) {
+        return arrow::Status::KeyError(
+            "LogTransform: column '" + value_col_ + "' not found");
+    }
+    const auto id = field->type()->id();  // the types IsNumericChunked accepts
+    if (!arrow::is_integer(id) && id != arrow::Type::FLOAT && id != arrow::Type::DOUBLE) {
+        return arrow::Status::TypeError(
+            "LogTransform: column '" + value_col_ +
+            "' has unsupported type '" + field->type()->ToString() + "'");
+    }
+    return arrow::Status::OK();
+}
 
+arrow::Result<std::shared_ptr<arrow::Table>>
+LogTransformOperator::ApplyBatch(const std::shared_ptr<arrow::Table>& batch) {
+    const int col_idx = batch->schema()->GetFieldIndex(value_col_);
     std::vector<float> values;
     std::string bad_type;
     if (!ReadColumnAsFloat(
-            column, values, bad_type, GetCancellationQuery())) {
+            batch->column(col_idx), values, bad_type, GetCancellationQuery())) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::TypeError(
             "LogTransform: column '" + value_col_ +
             "' has unsupported type '" + bad_type + "'");
     }
-
-    ReportProgress(progress_callback_, "transform",
-                   "Applying log1p transform", 0.60f,
-                   static_cast<uint64_t>(values.size()),
-                   static_cast<uint64_t>(values.size()),
-                    preflight_estimate.estimated_peak_bytes);
-    // One implementation with the Log Transform tool, on the selected device.
-    const TransformResult transformed = DataTransform::LogTransform(
-        {std::vector<double>(values.begin(), values.end())}, "natural", /*use_log1p=*/true);
-    if (!transformed.success) {
-        return arrow::Status::Invalid("LogTransform: column '" + value_col_ + "': " + transformed.error_message);
+    if (!values.empty()) {
+        // One implementation with the Log Transform tool, on the selected device.
+        const TransformResult transformed = DataTransform::LogTransform(
+            {std::vector<double>(values.begin(), values.end())}, "natural", /*use_log1p=*/true);
+        if (!transformed.success) {
+            return arrow::Status::Invalid("LogTransform: column '" + value_col_ + "': " + transformed.error_message);
+        }
+        std::transform(transformed.transformed_data[0].begin(), transformed.transformed_data[0].end(), values.begin(),
+                       [](double v) { return static_cast<float>(v); });
     }
-    std::transform(transformed.transformed_data[0].begin(), transformed.transformed_data[0].end(), values.begin(),
-                   [](double v) { return static_cast<float>(v); });
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-
-    ReportProgress(progress_callback_, "write_output",
-                   "Writing transformed column", 0.90f,
-                   static_cast<uint64_t>(values.size()),
-                   static_cast<uint64_t>(values.size()),
-                    preflight_estimate.estimated_peak_bytes);
-    ARROW_ASSIGN_OR_RAISE(
-        auto out_table,
-        ReplaceColumnWithFloat(input, col_idx, values,
-                               static_cast<int64_t>(values.size())));
-
-    spdlog::info("LogTransform: applied log1p to '{}' ({} values)",
-                 value_col_, values.size());
-    ReportProgress(progress_callback_, "complete",
-                   "Log transform complete", 1.0f,
-                   static_cast<uint64_t>(values.size()),
-                   static_cast<uint64_t>(values.size()),
-                    preflight_estimate.estimated_peak_bytes);
-    return out_table;
+    return ReplaceColumnWithFloat(batch, col_idx, values, static_cast<int64_t>(values.size()));
 }
 
 } // namespace cyxwiz

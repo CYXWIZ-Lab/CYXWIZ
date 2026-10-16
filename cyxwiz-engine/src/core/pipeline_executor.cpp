@@ -8,9 +8,13 @@
 #include "archive_text_source.h"
 #include "html_document_text.h"
 #include "error_codes.h"
-#include "duckdb_connector.h"
 #include "data_registry.h"
+#include "data_budget.h"
+#include "sql_step_presentation.h"
+#include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
 #include "data_convert_service.h"
 #include "data_input_parameters.h"
 #include "data_input_formats.h"
@@ -3210,13 +3214,16 @@ PipelineExecutor::PipelineExecutor()
     , cancel_requested_(false)
     , deployment_ready_(false)
 {
-    // DuckDB for the operators that build SQL (FilterRows, SortRows, Join,
-    // GroupBy, ...): no file or network access, like the SQL step.
-    duckdb_ = std::make_unique<DuckDBConnector>();
-    spdlog::debug("[Data Studio] PipelineExecutor initialized with DuckDB");
+    // Steps that build SQL (FilterRows, SortRows, Join, GroupBy, ...) run it
+    // like the SQL step: RunStepSql, one restricted DuckDB per step.
 }
 
-PipelineExecutor::~PipelineExecutor() = default;
+PipelineExecutor::~PipelineExecutor() {
+    // Its copies of memory tables go with it; result files a dataset still
+    // uses stay until the next prune.
+    for (auto& entry : step_input_copies_) entry.second.table.reset();
+    RemoveUnusedStepFiles();
+}
 
 bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     if (executing_) {
@@ -3238,6 +3245,9 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     current_status_ = "Starting pipeline execution...";
     deployment_ready_ = false;
     deployment_dataset_.clear();
+    for (const auto& name : admitted_inputs_) DataRegistry::Instance().UnregisterTabularDataset(name);
+    admitted_inputs_.clear();
+    RemoveUnusedStepFiles();
 
     spdlog::info("[Data Studio] Starting pipeline execution");
 
@@ -3278,6 +3288,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     UpdateProgress(0.2f, "Pipeline validated");
 
     // Phase 8: Mark nodes that need execution (lazy evaluation)
+    RestoreRunCache(nodes);
     MarkDirtyNodes(nodes);
 
     int nodes_to_execute = 0;
@@ -3361,9 +3372,9 @@ void PipelineExecutor::RecordNodeRunFacts(const Node& node,
         node_started_seconds_.erase(started);
     }
     if (!output_dataset.empty()) {
-        if (const auto dataset = DataRegistry::Instance().GetArrowDataset(output_dataset)) {
-            facts.rows = dataset->GetNumRows();
-            facts.columns = dataset->GetNumColumns();
+        if (const auto table = DataRegistry::Instance().GetTableRef(output_dataset)) {
+            facts.rows = table->rows;
+            facts.columns = table->columns;
         }
     }
     const std::time_t wall = std::time(nullptr);
@@ -3411,8 +3422,9 @@ bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& c
                     " named inputs, got " + std::to_string(aliases.size()));
         return false;
     }
-    std::vector<SqlTransformInput> inputs;
+    std::vector<StepSqlInput> inputs;
     int64_t input_rows = 0;
+    auto& registry = DataRegistry::Instance();
     for (size_t pin = 0; pin < aliases.size(); ++pin) {
         const std::string dataset_name = aliases.size() == 1
             ? GetInputDatasetName(node, ctx)
@@ -3420,37 +3432,26 @@ bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& c
         if (dataset_name.empty()) {
             return false;
         }
-        auto dataset = DataRegistry::Instance().GetArrowDataset(dataset_name);
-        if (!dataset) {
+        const auto table = registry.GetTableRef(dataset_name);
+        if (!table) {
             ReportError("SQL step '" + node.name + "': input '" + aliases[pin] + "' dataset '" +
-                        dataset_name + "' is not an in-memory table");
+                        dataset_name + "' is not a table");
             return false;
         }
-        input_rows += dataset->GetArrowTable()->num_rows();
-        inputs.push_back({aliases[pin], dataset->GetArrowTable()});
+        input_rows += table->rows;
+        inputs.push_back({aliases[pin], dataset_name});
     }
 
-    SqlTransform transform;
-    {
-        std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        active_sql_ = &transform;
-        if (cancel_requested_) transform.Interrupt();
-    }
-    const auto result = transform.Run(param(kSqlQueryParameter), inputs);
-    {
-        std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        active_sql_ = nullptr;
-    }
-    if (!result.ok) {
-        ReportError("SQL step '" + node.name + "': " + result.error);
+    const std::string output_dataset_name = "ds_sql_" + std::to_string(node.id);
+    if (!RunStepSql(node, inputs, param(kSqlQueryParameter), output_dataset_name, true,
+                    "SQL step '" + node.name + "': ")) {
         return false;
     }
-    const std::string output_dataset_name = "ds_sql_" + std::to_string(node.id);
-    DataRegistry::Instance().RegisterArrowTable(result.table, output_dataset_name);
     ctx.node_results[node.id] = output_dataset_name;
-    spdlog::info("[Data Studio] SQL step '{}': {} input(s), {} rows in -> {} rows, {} columns",
-                 node.name, inputs.size(), input_rows, result.table->num_rows(),
-                 result.table->num_columns());
+    const auto output = registry.GetTableRef(output_dataset_name);
+    spdlog::info("[Data Studio] SQL step '{}': {} input(s), {} rows in -> {} rows, {} columns{}",
+                 node.name, inputs.size(), input_rows, output ? output->rows : 0, output ? output->columns : 0,
+                 output && output->kind == TableRef::Kind::Parquet ? " (on disk)" : "");
     return true;
 }
 
@@ -4290,6 +4291,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
     try {
         auto& registry = DataRegistry::Instance();
         std::shared_ptr<ArrowDataset> arrow_dataset;
+        // A table above the data budget's threshold stays a Parquet file;
+        // each step admits it (AdmitInputTable) or stops with the numbers.
+        bool disk_backed = false;
 
         if (source_type == "file") {
             // File input mode
@@ -4387,14 +4391,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 } else if (
                     backend ==
                     DataRegistry::TabularLoadBackend::DiskBacked) {
-                    ReportError(
-                        "DataInput: source opened as disk-backed Parquet, "
-                        "but Data Studio transformation operators currently "
-                        "require an in-memory Arrow table. Reduce the row or "
-                        "column selection, or use the disk-backed source for "
-                        "training until streaming pipeline operators are "
-                        "implemented.");
-                    return false;
+                    disk_backed = true;
+                    spdlog::info("[Pipeline] DataInput CSV backend: {}",
+                                 load_status.empty() ? "on disk" : load_status);
                 }
             } else if (file_type == "zip_text") {
                 const auto member = node.parameters.find("archive_member");
@@ -4412,7 +4411,17 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     arrow_dataset = registry.RegisterArrowTable(selected->GetArrowTable(), dataset_name);
                 }
             } else if (file_type == "parquet") {
-                arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
+                std::string load_status;
+                const auto backend = registry.LoadTabularParquet(
+                    file_path, dataset_name,
+                    OptionalBooleanParameterIsTrue(node.parameters, "force_disk_backed"),
+                    selected_columns, &load_status, ingestion_cache_root_);
+                if (backend == DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset = registry.GetArrowDataset(dataset_name);
+                } else if (backend == DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                }
+                spdlog::info("[Pipeline] DataInput Parquet backend: {}", load_status);
             } else if (file_type == "json") {
                 const auto lines = node.parameters.find("json_lines");
                 const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||
@@ -4450,7 +4459,8 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             return false;
         }
 
-        if (!arrow_dataset) {
+        const auto table = registry.GetTableRef(dataset_name);
+        if ((!arrow_dataset && !disk_backed) || !table) {
             ReportError("DataInput: Failed to load dataset");
             return false;
         }
@@ -4461,8 +4471,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             ctx.input_dataset = dataset_name;
         }
 
-        spdlog::info("[Pipeline] DataInput loaded {} rows, {} columns",
-                    arrow_dataset->GetNumRows(), arrow_dataset->GetNumColumns());
+        spdlog::info("[Pipeline] DataInput loaded {} rows, {} columns{}",
+                    table->rows, table->columns,
+                    table->kind == TableRef::Kind::Parquet ? " (on disk)" : "");
         return true;
 
     } catch (const std::exception& e) {
@@ -4476,7 +4487,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
 
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("DataOutput: No input connection or dataset not found");
+        ReportMissingInput("DataOutput");
         return false;
     }
 
@@ -4666,13 +4677,13 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
 
     try {
         auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("FilterRows: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
+        // The Arrow fast path reads rows: only for an input in memory.
+        const bool in_memory = registry.GetArrowDataset(input_dataset_name) != nullptr;
         std::string filter_expression;
         std::string filter_error;
         std::vector<FilterConditionToken> validated_tokens;
@@ -4685,9 +4696,15 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
         }
 
         std::shared_ptr<arrow::Table> result_table;
-        const auto arrow_attempt = TryApplyArrowEqualityFilter(
-            input_table, validated_tokens, result_table);
+        const auto arrow_attempt = in_memory
+            ? TryApplyArrowEqualityFilter(input_table, validated_tokens, result_table)
+            : ArrowFilterRowsAttempt::Unsupported;
         if (arrow_attempt == ArrowFilterRowsAttempt::Applied) {
+            if (!result_table) {
+                ReportError("FilterRows: Query execution failed");
+                return false;
+            }
+            registry.RegisterArrowTable(result_table, output_dataset_name);
             spdlog::info(
                 "[Data Studio] FilterRows used Arrow-native numeric equality");
         } else {
@@ -4695,33 +4712,21 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
             // inequalities, and Arrow types/kernels outside the narrow fast
             // path.
             std::string temp_table = "temp_" + std::to_string(node.id);
-            if (!duckdb_->RegisterTable(temp_table, input_table)) {
-                ReportError("FilterRows: Failed to register table with DuckDB");
-                return false;
-            }
-
             std::string sql = "SELECT * FROM " + temp_table + " WHERE " +
                               filter_expression;
-            result_table = duckdb_->Query(sql);
-
-            duckdb_->UnregisterTable(temp_table);
+            if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                            "FilterRows: ")) {
+                return false;
+            }
             spdlog::info(
                 "[Data Studio] FilterRows used DuckDB expression fallback");
         }
-
-        if (!result_table) {
-            ReportError("FilterRows: Query execution failed");
-            return false;
-        }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] FilterRows: {} -> {} rows",
-                    input_table->num_rows(), result_table->num_rows());
+                    DatasetRows(input_dataset_name), DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -4750,14 +4755,11 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
                 input_dataset_name, columns);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("SelectColumns: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::vector<std::string> selected_columns;
         std::string schema_error;
         if (!ResolveExistingColumns(input_table, "SelectColumns", columns,
@@ -4767,33 +4769,20 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
         }
         const std::string quoted_columns = JoinQuotedColumns(selected_columns);
 
-        // Register input table with DuckDB
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("SelectColumns: Failed to register table with DuckDB");
-            return false;
-        }
 
         // Execute SELECT columns query
         std::string sql = "SELECT " + quoted_columns + " FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("SelectColumns: Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "SelectColumns: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] SelectColumns: {} -> {} columns",
-                    input_table->num_columns(), result_table->num_columns());
+                    input_table->num_columns(), selected_columns.size());
         return true;
 
     } catch (const std::exception& e) {
@@ -4816,26 +4805,14 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
     spdlog::info("[Data Studio] Removing duplicates from '{}'", input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError(diagnostic_name + ": Input dataset not found in registry");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
+        auto input_table = InputSchemaTable(input_dataset_name);
         if (!input_table || !input_table->schema()) {
             ReportError(diagnostic_name + ": Input table schema is unavailable");
             return false;
         }
 
-        // Register input table with DuckDB
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError(diagnostic_name +
-                        ": Failed to register table with DuckDB");
-            return false;
-        }
 
         // Execute DISTINCT query
         std::string sql = "SELECT DISTINCT * FROM " + temp_table;
@@ -4847,7 +4824,6 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
             if (!ResolveExistingColumns(input_table, diagnostic_name,
                                         columns_it->second, dedupe_columns,
                                         column_error)) {
-                duckdb_->UnregisterTable(temp_table);
                 ReportError(column_error);
                 return false;
             }
@@ -4869,25 +4845,17 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
                   QuoteSqlIdentifier(rank_column) + " FROM " + temp_table +
                   ") WHERE " + QuoteSqlIdentifier(rank_column) + " = 1";
         }
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError(diagnostic_name + ": Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        diagnostic_name + ": ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] {}: {} -> {} rows",
-                    diagnostic_name, input_table->num_rows(),
-                    result_table->num_rows());
+                    diagnostic_name, DatasetRows(input_dataset_name),
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -5008,14 +4976,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
         operation_mode, strategy, input_dataset_name, save_state, state_path);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("FillMissing: Input dataset not found in registry");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
+        auto input_table = InputSchemaTable(input_dataset_name);
         if (!input_table) {
             ReportError("FillMissing: Input table is null");
             return false;
@@ -5087,25 +5048,19 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             return false;
         }
 
-        // Register input table with DuckDB
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("FillMissing: Failed to register table with DuckDB");
-            return false;
-        }
 
         FittedPreprocessingState state;
         if (operation_mode == "transform_only") {
             std::string state_error;
             if (!LoadFittedPreprocessingState(
                     state_path, "FillMissing", state, state_error)) {
-                duckdb_->UnregisterTable(temp_table);
                 ReportError("FillMissing: " + state_error);
                 return false;
             }
             if (!ValidateFittedPreprocessingStateSchema(
                     state, input_table->schema(), state_error)) {
-                duckdb_->UnregisterTable(temp_table);
                 ReportError(state_error);
                 return false;
             }
@@ -5113,7 +5068,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                 state.configuration.find("strategy");
             if (fitted_strategy == state.configuration.end() ||
                 fitted_strategy->second != strategy) {
-                duckdb_->UnregisterTable(temp_table);
                 ReportError(
                     "FillMissing: node strategy '" + strategy +
                     "' does not match the fitted artifact strategy '" +
@@ -5136,7 +5090,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                 state.input_schema_fingerprint);
         } else {
             state.operator_name = "FillMissing";
-            state.fit_rows = input_table->num_rows();
+            state.fit_rows = DatasetRows(input_dataset_name);
             state.input_schema_fingerprint =
                 FingerprintPreprocessingSchema(input_table->schema());
             state.configuration["strategy"] = strategy;
@@ -5153,7 +5107,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                     if (!BuildFillMissingConstantExpression(
                             field, fill_value, ignored_expression,
                             constant_error)) {
-                        duckdb_->UnregisterTable(temp_table);
                         ReportError(constant_error);
                         return false;
                     }
@@ -5179,7 +5132,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         input_table->schema()->field(field_index);
                     if ((strategy == "mean" || strategy == "median") &&
                         !IsNumericArrowType(field->type())) {
-                        duckdb_->UnregisterTable(temp_table);
                         ReportError(
                             "FillMissing: strategy '" + strategy +
                             "' requires numeric column '" + column +
@@ -5198,9 +5150,9 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                                      quoted;
                 }
                 aggregate_sql += " FROM " + temp_table;
-                auto fitted_table = duckdb_->Query(aggregate_sql);
+                auto fitted_table = FetchStepSql({{temp_table, input_dataset_name}}, aggregate_sql,
+                                                 "FillMissing: ");
                 if (!fitted_table || fitted_table->num_rows() != 1) {
-                    duckdb_->UnregisterTable(temp_table);
                     ReportError(
                         "FillMissing: could not compute fitted " + strategy +
                         " values from training data.");
@@ -5216,7 +5168,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         fitted_table->column(i)->chunk(0)->GetScalar(0);
                     if (!scalar_result.ok() ||
                         !scalar_result.ValueOrDie()->is_valid) {
-                        duckdb_->UnregisterTable(temp_table);
                         ReportError(
                             "FillMissing: column '" + column +
                             "' has no non-null training values, so " +
@@ -5266,7 +5217,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                     const auto text =
                         feature->string_values.find("fill_value");
                     if (text == feature->string_values.end()) {
-                        duckdb_->UnregisterTable(temp_table);
                         ReportError(
                             "FillMissing: state for column '" + field->name() +
                             "' has no fill value. Refit the artifact.");
@@ -5279,7 +5229,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                 if (!BuildFillMissingConstantExpression(
                         field, fitted_value, constant_expression,
                         constant_error)) {
-                    duckdb_->UnregisterTable(temp_table);
                     ReportError(constant_error);
                     return false;
                 }
@@ -5299,13 +5248,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("FillMissing: Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        "FillMissing: ")) {
             return false;
         }
 
@@ -5325,16 +5269,13 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                 state.input_schema_fingerprint);
         }
 
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
-
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info(
             "[Preprocessing] FillMissing completed mode={} strategy={} "
             "rows={} features={}",
-            operation_mode, strategy, result_table->num_rows(),
+            operation_mode, strategy, DatasetRows(output_dataset_name),
             state.features.size());
         return true;
 
@@ -5366,14 +5307,11 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
                 input_dataset_name, sort_columns, order);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("SortRows: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::vector<std::string> selected_columns;
         std::string schema_error;
         if (!ResolveExistingColumns(input_table, "SortRows", sort_columns,
@@ -5383,33 +5321,20 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
         }
         const std::string quoted_columns = JoinQuotedColumns(selected_columns);
 
-        // Register input table with DuckDB
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("SortRows: Failed to register table with DuckDB");
-            return false;
-        }
 
         // Execute ORDER BY query
         std::string sql = "SELECT * FROM " + temp_table +
                           " ORDER BY " + quoted_columns + " " + order;
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("SortRows: Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "SortRows: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] SortRows completed: {} rows", result_table->num_rows());
+        spdlog::info("[Data Studio] SortRows completed: {} rows", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -5460,17 +5385,12 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
         left_dataset_name, left_on, right_dataset_name, right_on, join_type);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto left_dataset = registry.GetArrowDataset(left_dataset_name);
-        auto right_dataset = registry.GetArrowDataset(right_dataset_name);
-
-        if (!left_dataset || !right_dataset) {
+        auto left_table = InputSchemaTable(left_dataset_name);
+        auto right_table = InputSchemaTable(right_dataset_name);
+        if (!left_table || !right_table) {
             ReportError("Join: Input datasets not found in registry");
             return false;
         }
-
-        auto left_table = left_dataset->GetArrowTable();
-        auto right_table = right_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnExists(left_table, "Join", left_on,
                                  "left input", schema_error) ||
@@ -5482,40 +5402,26 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
         const std::string quoted_left_on = QuoteSqlIdentifier(left_on);
         const std::string quoted_right_on = QuoteSqlIdentifier(right_on);
 
-        // Register both tables with DuckDB
+        // DuckDB reads both inputs under these names
         std::string left_temp = "temp_left_" + std::to_string(node.id);
         std::string right_temp = "temp_right_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(left_temp, left_table) ||
-            !duckdb_->RegisterTable(right_temp, right_table)) {
-            ReportError("Join: Failed to register tables with DuckDB");
-            return false;
-        }
 
         // Execute JOIN query
         std::string sql = "SELECT * FROM " + left_temp + " " + join_type + " JOIN " +
                          right_temp + " ON " + left_temp + "." + quoted_left_on +
                          " = " + right_temp + "." + quoted_right_on;
 
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp tables
-        duckdb_->UnregisterTable(left_temp);
-        duckdb_->UnregisterTable(right_temp);
-
-        if (!result_table) {
-            ReportError("Join: Query execution failed");
+        if (!RunStepSql(node, {{left_temp, left_dataset_name}, {right_temp, right_dataset_name}}, sql,
+                        output_dataset_name, false, "Join: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
+        const auto result = DataRegistry::Instance().GetTableRef(output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] Join completed: {} rows, {} columns",
-                    result_table->num_rows(), result_table->num_columns());
+                    result ? result->rows : 0, result ? result->columns : 0);
         return true;
 
     } catch (const std::exception& e) {
@@ -5551,14 +5457,11 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
                 input_dataset_name, group_columns, aggregations);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("GroupBy: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::vector<std::string> selected_columns;
         std::string schema_error;
         if (!ResolveExistingColumns(input_table, "GroupBy", group_columns,
@@ -5575,12 +5478,8 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
             return false;
         }
 
-        // Register input table with DuckDB
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("GroupBy: Failed to register table with DuckDB");
-            return false;
-        }
 
         // Execute GROUP BY query
         // Aggregations format: "COUNT(*) as count, SUM(amount) as total"
@@ -5588,23 +5487,14 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
                          aggregation_expressions +
                          " FROM " + temp_table + " GROUP BY " + quoted_group_columns;
 
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("GroupBy: Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "GroupBy: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] GroupBy completed: {} groups", result_table->num_rows());
+        spdlog::info("[Data Studio] GroupBy completed: {} groups", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -5626,6 +5516,13 @@ void PipelineExecutor::UpdateProgress(float progress, const std::string& status)
 void PipelineExecutor::ReportError(const std::string& error) {
     last_error_ = error;
     spdlog::error("[Data Studio] Pipeline execution error: {}", error);
+}
+
+void PipelineExecutor::ReportMissingInput(const std::string& step) {
+    // The input lookups (GetInputDatasetName, AdmitInputTable) report why they
+    // failed, e.g. an input over the data budget; keep that reason and add the
+    // generic one only when none was given.
+    if (last_error_.empty()) ReportError(step + ": No input connection or dataset not found");
 }
 
 void PipelineExecutor::NotifyNodeExecution(
@@ -5760,6 +5657,386 @@ std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionCon
     return input_dataset_names.front();
 }
 
+bool PipelineExecutor::StepReadsInputFiles(const Node& node) {
+    using gui::NodeType;
+    static const std::set<NodeType> sql_steps = {
+        NodeType::FilterRows, NodeType::SelectColumns, NodeType::RemoveDuplicateRows,
+        NodeType::FillMissingValues, NodeType::SortRows, NodeType::JoinTables, NodeType::GroupByAggregate,
+        NodeType::TextCleanNode, NodeType::TextTokenizer, NodeType::CountVectorizer,
+        NodeType::TimeSeriesWindow, NodeType::TimeSeriesFeatures, NodeType::TimeSeriesLag,
+        NodeType::Differencing, NodeType::PolynomialFeaturesNode, NodeType::BinningNode,
+        NodeType::RuleEngine, NodeType::UnitConverter, NodeType::ValueCounts, NodeType::CellExtractor,
+        NodeType::CellUpdater, NodeType::RowAppender, NodeType::Unpivot, NodeType::StringManipulation,
+        NodeType::MathFormula};
+    if (node.type == "SQLQuery" || (node.runtime_type && sql_steps.count(*node.runtime_type) > 0)) return true;
+    // Operators that stream read their input a row group at a time.
+    auto& factory = PipelineOperatorFactory::Instance();
+    if (!node.runtime_type || !factory.HasOperator(*node.runtime_type)) return false;
+    const auto op = factory.Create(*node.runtime_type);
+    return op && op->SupportsStreaming();
+}
+
+std::filesystem::path PipelineExecutor::PipelineCacheRoot() const {
+    if (!project_root_.empty()) return std::filesystem::path(project_root_) / "cache" / "pipeline";
+    std::error_code error;
+    return std::filesystem::temp_directory_path(error) / "cyxwiz" / "pipeline";
+}
+
+std::shared_ptr<arrow::Table> PipelineExecutor::InputSchemaTable(const std::string& dataset) const {
+    auto& registry = DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(dataset)) return memory->GetArrowTable();
+    if (const auto disk = registry.GetParquetBackedDataset(dataset))
+        return arrow::Table::MakeEmpty(disk->GetSchema()).ValueOr(nullptr);
+    return nullptr;
+}
+
+int64_t PipelineExecutor::DatasetRows(const std::string& dataset) const {
+    const auto table = DataRegistry::Instance().GetTableRef(dataset);
+    return table ? table->rows : 0;
+}
+
+std::string PipelineExecutor::StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
+                                            uint64_t& bytes, bool& on_disk) {
+    auto& registry = DataRegistry::Instance();
+    if (const auto disk = registry.GetParquetBackedDataset(dataset)) {
+        schema = disk->GetSchema();
+        bytes = disk->GetInMemoryBytesEstimate();
+        on_disk = true;
+        return disk->GetFilePath();
+    }
+    const auto memory = registry.GetArrowDataset(dataset);
+    const auto table = memory ? memory->GetArrowTable() : nullptr;
+    if (!table) {
+        ReportError("input dataset '" + dataset + "' is not a table");
+        return "";
+    }
+    schema = table->schema();
+    bytes = memory->GetMemoryUsage();
+    on_disk = false;
+    // Written once per table: a step reads the same copy as the steps before
+    // it, and a table that changes is a new table object.
+    auto& copy = step_input_copies_[dataset];
+    if (copy.table.lock() == table && std::filesystem::exists(copy.path)) return copy.path;
+    std::error_code error;
+    if (!copy.path.empty()) std::filesystem::remove(copy.path, error);
+    const auto folder = PipelineCacheRoot() / "inputs";
+    std::filesystem::create_directories(folder, error);
+    const auto path = (folder / (dataset + "_" + std::to_string(reinterpret_cast<uintptr_t>(table.get())) +
+                                 ".parquet")).string();
+    auto out = arrow::io::FileOutputStream::Open(path);
+    arrow::Status status = out.ok() ? parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 128 * 1024)
+                                    : out.status();
+    if (out.ok()) {
+        const auto closed = (*out)->Close();
+        if (status.ok()) status = closed;
+    }
+    if (!status.ok()) {
+        std::filesystem::remove(path, error);
+        ReportError("could not write '" + dataset + "' for DuckDB to read: " + status.ToString());
+        return "";
+    }
+    copy = {table, path};
+    return path;
+}
+
+void PipelineExecutor::RemoveUnusedStepFiles() {
+    std::error_code error;
+    for (auto it = step_input_copies_.begin(); it != step_input_copies_.end();) {
+        if (it->second.table.expired()) {
+            std::filesystem::remove(it->second.path, error);
+            it = step_input_copies_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    auto& registry = DataRegistry::Instance();
+    for (auto it = step_result_files_.begin(); it != step_result_files_.end();) {
+        const auto disk = registry.GetParquetBackedDataset(it->first);
+        if (disk && disk->GetFilePath() == it->second) {
+            ++it;
+            continue;
+        }
+        std::filesystem::remove(it->second, error);
+        it = error ? std::next(it) : step_result_files_.erase(it);  // still mapped: next time
+    }
+}
+
+bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                                            std::vector<SqlTransformInput>& files, uint64_t& input_bytes,
+                                            bool& any_on_disk) {
+    // The time-series steps order rows by DuckDB's rowid, which a table has
+    // and a view on a file does not: their input is loaded into DuckDB.
+    static const std::regex rowid_pattern(R"(\browid\b)", std::regex::icase);
+    const bool needs_rowid = std::regex_search(sql, rowid_pattern);
+    input_bytes = 0;
+    any_on_disk = false;
+    for (const auto& input : inputs) {
+        SqlTransformInput file;
+        file.alias = input.alias;
+        uint64_t bytes = 0;
+        bool on_disk = false;
+        file.parquet_path = StepInputFile(input.dataset, file.schema, bytes, on_disk);
+        file.load_file = needs_rowid;
+        if (file.parquet_path.empty()) return false;
+        input_bytes += bytes;
+        any_on_disk = any_on_disk || on_disk;
+        files.push_back(std::move(file));
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> PipelineExecutor::FetchStepSql(const std::vector<StepSqlInput>& inputs,
+                                                             const std::string& sql,
+                                                             const std::string& error_prefix) {
+    std::vector<SqlTransformInput> files;
+    uint64_t input_bytes = 0;
+    bool any_on_disk = false;
+    if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return nullptr;
+    SqlTransform transform;
+    transform.AllowAnyTypes();
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        active_sql_ = &transform;
+        if (cancel_requested_) transform.Interrupt();
+    }
+    const auto result = transform.Run(sql, files);
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        active_sql_ = nullptr;
+    }
+    if (!result.ok) {
+        ReportError(error_prefix + result.error);
+        return nullptr;
+    }
+    return result.table;
+}
+
+bool PipelineExecutor::RunStepSql(const Node& node, const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                                  const std::string& output_name, bool exact_types, const std::string& error_prefix) {
+    std::vector<SqlTransformInput> files;
+    uint64_t input_bytes = 0;
+    bool any_on_disk = false;
+    if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return false;
+    // A result from a large input may be large too: DuckDB writes it to a
+    // file instead of handing back a table (D1).
+    const bool to_file = any_on_disk || input_bytes > DataResultThresholdBytes();
+    const std::string result_path = NewStepResultPath(output_name);
+    std::error_code error;
+
+    SqlTransform transform;
+    if (!exact_types) transform.AllowAnyTypes();
+    if (to_file) transform.WriteResultTo(result_path);
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        active_sql_ = &transform;
+        if (cancel_requested_) transform.Interrupt();
+    }
+    const auto result = transform.Run(sql, files);
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        active_sql_ = nullptr;
+    }
+    if (!result.ok) {
+        if (to_file) std::filesystem::remove(result_path, error);
+        ReportError(error_prefix + result.error);
+        return false;
+    }
+    if (!to_file) {
+        DataRegistry::Instance().RegisterArrowTable(result.table, output_name);
+        return true;
+    }
+    return RegisterStepResultFile(node, output_name, result_path, result.rows_written);
+}
+
+std::string PipelineExecutor::NewStepResultPath(const std::string& output_name) const {
+    const auto results = PipelineCacheRoot() / "results";
+    std::error_code error;
+    std::filesystem::create_directories(results, error);
+    return (results / (output_name + "_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".parquet")).string();
+}
+
+bool PipelineExecutor::RegisterStepResultFile(const Node& node, const std::string& output_name,
+                                              const std::string& path, int64_t rows) {
+    // A result up to the threshold is read back into memory (as before);
+    // a larger one stays a Parquet file.
+    auto& registry = DataRegistry::Instance();
+    std::error_code error;
+    auto written = ParquetBackedDataset::Open(path, output_name);
+    if (!written) {
+        ReportError(node.name + ": could not open its result '" + path + "'");
+        return false;
+    }
+    if (written->GetInMemoryBytesEstimate() <= DataResultThresholdBytes()) {
+        auto table = written->ReadAll();
+        written.reset();
+        if (!table) {
+            ReportError(node.name + ": could not read its result '" + path + "'");
+            return false;
+        }
+        registry.RegisterArrowTable(table, output_name);
+        std::filesystem::remove(path, error);
+        return true;
+    }
+    registry.UnregisterTabularDataset(output_name);
+    registry.RegisterParquetBacked(output_name, written);
+    step_result_files_[output_name] = path;
+    spdlog::info("[Pipeline] {}: {} rows kept on disk ({})", node.name, rows, path);
+    return true;
+}
+
+bool PipelineExecutor::PassInputThrough(const Node& node, const std::string& input_dataset,
+                                        const std::string& output_name) {
+    // A check's output is its input: the same table, or the same file.
+    auto& registry = DataRegistry::Instance();
+    const auto disk = registry.GetParquetBackedDataset(input_dataset);
+    if (!disk) {
+        const auto memory = registry.GetArrowDataset(input_dataset);
+        if (!memory) {
+            ReportError(node.type + ": input dataset '" + input_dataset + "' is not a table");
+            return false;
+        }
+        registry.RegisterArrowTable(memory->GetArrowTable(), output_name);
+        return true;
+    }
+    auto same = ParquetBackedDataset::Open(disk->GetFilePath(), output_name);
+    if (!same) {
+        ReportError(node.type + ": could not open '" + disk->GetFilePath() + "'");
+        return false;
+    }
+    registry.UnregisterTabularDataset(output_name);
+    registry.RegisterParquetBacked(output_name, same);
+    return true;
+}
+
+bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator& op,
+                                            const std::string& input_dataset, const std::string& output_name) {
+    auto& registry = DataRegistry::Instance();
+    const auto disk = registry.GetParquetBackedDataset(input_dataset);
+    const auto memory = disk ? nullptr : registry.GetArrowDataset(input_dataset);
+    const auto memory_table = memory ? memory->GetArrowTable() : nullptr;
+    if (!disk && !memory_table) {
+        ReportError(node.type + ": input dataset '" + input_dataset + "' is not a table");
+        return false;
+    }
+    // One row group of a file, or 128K rows of a table, at a time.
+    constexpr int64_t kBatchRows = 128 * 1024;
+    const int batches = disk ? disk->GetNumRowGroups()
+                             : static_cast<int>((memory_table->num_rows() + kBatchRows - 1) / kBatchRows);
+    auto batch_at = [&](int index) -> std::shared_ptr<arrow::Table> {
+        if (disk) return disk->ReadRowGroup(index);
+        return memory_table->Slice(static_cast<int64_t>(index) * kBatchRows, kBatchRows);
+    };
+    const auto schema = disk ? disk->GetSchema() : memory_table->schema();
+    auto fail = [&](const std::string& message) {
+        ReportError(node.type + ": " + message);
+        return false;
+    };
+    if (auto status = op.BeginStream(schema); !status.ok()) return fail(status.ToString());
+    if (op.PassesInputThrough()) {
+        // A check reads every batch; its output is its input, not copied.
+        for (int index = 0; index < batches; ++index) {
+            if (cancel_requested_) return fail("cancelled");
+            const auto batch = batch_at(index);
+            if (!batch) return fail("could not read rows of '" + input_dataset + "'");
+            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+        }
+        if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
+        if (auto status = op.EndStream(); !status.ok()) return fail(status.ToString());
+        return PassInputThrough(node, input_dataset, output_name);
+    }
+    if (op.NeedsFitPass()) {
+        for (int index = 0; index < batches; ++index) {
+            if (cancel_requested_) return fail("cancelled");
+            const auto batch = batch_at(index);
+            if (!batch) return fail("could not read rows of '" + input_dataset + "'");
+            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+        }
+        if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
+    }
+    const std::string path = NewStepResultPath(output_name);
+    std::shared_ptr<arrow::io::FileOutputStream> out;
+    std::unique_ptr<parquet::arrow::FileWriter> writer;
+    std::error_code error;
+    auto abandon = [&](const std::string& message) {
+        if (writer) (void)writer->Close();
+        if (out) (void)out->Close();
+        std::filesystem::remove(path, error);
+        return fail(message);
+    };
+    int64_t rows = 0;
+    for (int index = 0; index < batches; ++index) {
+        if (cancel_requested_) return abandon("cancelled");
+        const auto batch = batch_at(index);
+        if (!batch) return abandon("could not read rows of '" + input_dataset + "'");
+        auto applied = op.ApplyBatch(batch);
+        if (!applied.ok()) return abandon(applied.status().ToString());
+        const auto table = applied.ValueOrDie();
+        if (!writer) {
+            auto opened = arrow::io::FileOutputStream::Open(path);
+            if (!opened.ok()) return abandon(opened.status().ToString());
+            out = *opened;
+            auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
+            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props);
+            if (!made.ok()) return abandon(made.status().ToString());
+            writer = std::move(*made);
+        }
+        if (auto status = writer->WriteTable(*table, kBatchRows); !status.ok()) return abandon(status.ToString());
+        rows += table->num_rows();
+    }
+    if (!writer) {
+        // No rows: an empty table with the output's schema.
+        auto applied = op.ApplyBatch(arrow::Table::MakeEmpty(schema).ValueOr(nullptr));
+        if (!applied.ok()) return fail(applied.status().ToString());
+        registry.RegisterArrowTable(applied.ValueOrDie(), output_name);
+        auto status = op.EndStream();
+        return status.ok() || fail(status.ToString());
+    }
+    auto closed = writer->Close();
+    if (closed.ok()) closed = out->Close();
+    writer.reset();
+    out.reset();
+    if (!closed.ok()) return abandon(closed.ToString());
+    if (auto status = op.EndStream(); !status.ok()) return abandon(status.ToString());
+    spdlog::info("[Pipeline] {}: streamed {} rows in {} batches", node.name, rows, batches);
+    return RegisterStepResultFile(node, output_name, path, rows);
+}
+
+std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::string& name) {
+    // Steps read their input as an in-memory table (TOFIX154 step 2). An input
+    // kept on disk is read whole when that fits the data budget (reading needs
+    // about twice the table); otherwise the run stops here, before loading.
+    auto& registry = DataRegistry::Instance();
+    if (registry.GetArrowDataset(name)) return name;
+    const auto disk = registry.GetParquetBackedDataset(name);
+    if (!disk) return name;  // not a table (images, text): the step reports it
+    // One copy per run, shared by the steps that read it; a copy from another
+    // run or executor may be stale and is replaced.
+    const std::string admitted = name + "_in_memory";
+    if (std::find(admitted_inputs_.begin(), admitted_inputs_.end(), admitted) != admitted_inputs_.end() &&
+        registry.GetArrowDataset(admitted))
+        return admitted;
+    registry.UnregisterTabularDataset(admitted);
+    const uint64_t table_bytes = disk->GetInMemoryBytesEstimate();
+    const uint64_t budget = DataBudgetBytes();
+    if (table_bytes * 2 > budget) {
+        ReportError(node.name + ": its input (" + sqlstep::FormatCount(disk->GetNumRows()) + " rows) is on disk and needs about " +
+                    FormatDataBytes(table_bytes * 2) + " of memory to read, over the data budget of " +
+                    FormatDataBytes(budget) + ". Select fewer columns in Data Input, or raise the data budget "
+                    "in Preferences > Data.");
+        return "";
+    }
+    spdlog::info("[Pipeline] {}: reading its input from disk ({} rows, about {})", node.name,
+                 disk->GetNumRows(), FormatDataBytes(table_bytes));
+    auto table = disk->ReadAll();
+    if (!table || !registry.RegisterArrowTable(table, admitted)) {
+        ReportError(node.name + ": could not read its input from '" + disk->GetFilePath() + "'");
+        return "";
+    }
+    admitted_inputs_.push_back(admitted);
+    return admitted;
+}
+
 std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
     const Node& node,
     ExecutionContext& ctx,
@@ -5784,7 +6061,10 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
                         std::to_string(input_node_id) + " not found");
             return {};
         }
-        dataset_names.push_back(*name);
+        // Steps that read files (SQL, streaming operators) are not admitted.
+        const std::string admitted = StepReadsInputFiles(node) ? *name : AdmitInputTable(node, *name);
+        if (admitted.empty()) return {};
+        dataset_names.push_back(admitted);
     }
     return dataset_names;
 }
@@ -5805,7 +6085,7 @@ std::string PipelineExecutor::GetInputDatasetForPin(
                         std::to_string(link.node_id));
             return {};
         }
-        return *result;
+        return StepReadsInputFiles(node) ? *result : AdmitInputTable(node, *result);
     }
     ReportError(node.type + ": required Data input pin " +
                 std::to_string(target_pin_index) + " is not connected");
@@ -5895,21 +6175,14 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         input_dataset_name = GetInputDatasetName(node, ctx);
     }
     if (input_dataset_name.empty()) {
-        ReportError(node.type + ": No input connection or dataset not found");
+        ReportMissingInput(node.type);
         return false;
     }
 
     auto& registry = DataRegistry::Instance();
-    auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-    if (!input_dataset) {
-        ReportError(node.type + ": input dataset '" + input_dataset_name +
-                    "' is not an in-memory Arrow dataset");
-        return false;
-    }
-
-    auto input_table = input_dataset->GetArrowTable();
+    auto input_table = InputSchemaTable(input_dataset_name);
     if (!input_table) {
-        ReportError(node.type + ": input Arrow table is null");
+        ReportError(node.type + ": input dataset '" + input_dataset_name + "' is not a table");
         return false;
     }
 
@@ -5956,6 +6229,47 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                                              schema_error)) {
         ReportError(schema_error);
         return false;
+    }
+
+    // An operator that streams runs a row group at a time when its input is
+    // on disk or large (TOFIX154 step 4); the others read it whole (admitted).
+    const auto input_ref = registry.GetTableRef(input_dataset_name);
+    if (op->SupportsStreaming() && input_ref &&
+        (input_ref->kind == TableRef::Kind::Parquet || input_ref->bytes > DataResultThresholdBytes())) {
+        if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+            ctx.node_outcomes[node.id] = std::move(outcome);
+        }
+        return true;
+    }
+
+    // A check that needs every row judges an input on disk with one query.
+    if (input_ref && input_ref->kind == TableRef::Kind::Parquet && op->PassesInputThrough()) {
+        if (const auto sql = op->CheckSql(); !sql.empty()) {
+            const auto verdict = FetchStepSql({{"input", input_dataset_name}}, sql, node.type + ": ");
+            if (!verdict) return false;
+            if (auto status = op->JudgeSql(verdict); !status.ok()) {
+                ReportError(node.type + ": " + status.ToString());
+                return false;
+            }
+            if (!PassInputThrough(node, input_dataset_name, output_dataset_name)) return false;
+            ctx.node_results[node.id] = output_dataset_name;
+            ctx.output_dataset = output_dataset_name;
+            if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+                ctx.node_outcomes[node.id] = std::move(outcome);
+            }
+            return true;
+        }
+    }
+
+    // Not streaming (this configuration needs every row at once): an input
+    // on disk is admitted now, read whole or stopped with the numbers.
+    if (input_ref && input_ref->kind == TableRef::Kind::Parquet) {
+        input_dataset_name = AdmitInputTable(node, input_dataset_name);
+        if (input_dataset_name.empty()) return false;
+        input_table = InputSchemaTable(input_dataset_name);
     }
 
     WarnIfDenseTextVectorizerMaterializationIsLarge(
@@ -6029,8 +6343,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         node.type == "TextCleanNode" ? "TextCleanNode" : "TextClean";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name +
-                    ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6053,13 +6366,11 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 
     try {
         auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, diagnostic_name, text_column,
                                "string", IsStringArrowType, schema_error)) {
@@ -6086,11 +6397,6 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
             QuoteSqlIdentifier(text_column + "_cleaned");
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError(diagnostic_name + ": Failed to register table");
-            return false;
-        }
-
         // Build SQL transformation chain
         std::string sql = "SELECT *, ";
         std::string transform = quoted_text_column;
@@ -6110,19 +6416,13 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 
         sql += transform + " AS " + quoted_output_column + " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError(diagnostic_name + ": Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] {} completed: {} rows",
-                     diagnostic_name, result_table->num_rows());
+                     diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6134,7 +6434,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextTokenize: No input connection or dataset not found");
+        ReportMissingInput("TextTokenize");
         return false;
     }
 
@@ -6153,14 +6453,11 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
                 method, text_column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TextTokenize: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, "TextTokenize", text_column,
                                "string", IsStringArrowType, schema_error)) {
@@ -6171,11 +6468,6 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
         const std::string quoted_tokens_column =
             QuoteSqlIdentifier(text_column + "_tokens");
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TextTokenize: Failed to register table");
-            return false;
-        }
 
         std::string sql;
         if (method == "word") {
@@ -6195,18 +6487,12 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
                   ", ' ') AS " + quoted_tokens_column + " FROM " + temp_table;
         }
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TextTokenize: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TextTokenize: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextTokenize completed: {} rows", result_table->num_rows());
+        spdlog::info("[Data Studio] TextTokenize completed: {} rows", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6218,7 +6504,7 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
 bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextVectorize: No input connection or dataset not found");
+        ReportMissingInput("TextVectorize");
         return false;
     }
 
@@ -6237,16 +6523,13 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
                 method, text_column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        // For MVP: Create simple word count features
+        // Full implementation would use TF-IDF or embeddings from backend
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TextVectorize: Input dataset not found");
             return false;
         }
-
-        // For MVP: Create simple word count features
-        // Full implementation would use TF-IDF or embeddings from backend
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, "TextVectorize", text_column,
                                "string", IsStringArrowType, schema_error)) {
@@ -6255,11 +6538,6 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
         }
         const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TextVectorize: Failed to register table");
-            return false;
-        }
 
         // Create simple features: text length, word count
         std::string sql = "SELECT *, "
@@ -6270,19 +6548,13 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
                          QuoteSqlIdentifier("word_count") + " "
                          "FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TextVectorize: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TextVectorize: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] TextVectorize completed: {} rows, basic features added",
-                    result_table->num_rows());
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6376,7 +6648,7 @@ bool PipelineExecutor::ExecuteNERSequenceBuilder(const Node& node,
 bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionContext& ctx) {
     const std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(node.type + ": No input connection or dataset not found");
+        ReportMissingInput(node.type);
         return false;
     }
 
@@ -6443,7 +6715,7 @@ bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionCont
 bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSWindow: No input connection or dataset not found");
+        ReportMissingInput("TSWindow");
         return false;
     }
 
@@ -6468,14 +6740,11 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
                 window_size, stride, target_column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TSWindow: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, "TSWindow", target_column,
                                "numeric", IsNumericArrowType,
@@ -6485,11 +6754,6 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
         }
         const std::string quoted_target_column = QuoteSqlIdentifier(target_column);
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSWindow: Failed to register table");
-            return false;
-        }
 
         // Create windows using LAG function
         std::string sql = "SELECT *, ";
@@ -6501,19 +6765,13 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSWindow: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TSWindow: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] TSWindow completed: {} rows with {} timestep windows",
-                    result_table->num_rows(), window_size);
+                    DatasetRows(output_dataset_name), window_size);
         return true;
 
     } catch (const std::exception& e) {
@@ -6525,7 +6783,7 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
 bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSFeatures: No input connection or dataset not found");
+        ReportMissingInput("TSFeatures");
         return false;
     }
 
@@ -6553,14 +6811,11 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
                 rolling_window, columns, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TSFeatures: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, "TSFeatures", columns,
                                "numeric", IsNumericArrowType,
@@ -6570,11 +6825,6 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
         }
         const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSFeatures: Failed to register table");
-            return false;
-        }
 
         // Create rolling statistics
         std::string sql = "SELECT *, "
@@ -6592,19 +6842,13 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
                          QuoteSqlIdentifier(columns + "_rolling_max") + " "
                          "FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSFeatures: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TSFeatures: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] TSFeatures completed: {} rows with rolling statistics",
-                    result_table->num_rows());
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6618,8 +6862,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         node.type == "TimeSeriesLag" ? "TimeSeriesLag" : "TSLag";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name +
-                    ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6635,14 +6878,11 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
                  diagnostic_name, lag_periods, columns, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, diagnostic_name, columns,
                                "numeric", IsNumericArrowType,
@@ -6652,11 +6892,6 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         }
         const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError(diagnostic_name + ": Failed to register table");
-            return false;
-        }
 
         // Parse lag periods (comma-separated)
         std::string sql = "SELECT *, ";
@@ -6675,19 +6910,13 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError(diagnostic_name + ": Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] {} completed: {} rows with lag features",
-                     diagnostic_name, result_table->num_rows());
+                     diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6699,7 +6928,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSDiff: No input connection or dataset not found");
+        ReportMissingInput("TSDiff");
         return false;
     }
 
@@ -6715,14 +6944,11 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
                 order, columns, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TSDiff: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, "TSDiff", columns,
                                "numeric", IsNumericArrowType,
@@ -6732,11 +6958,6 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
         }
         const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSDiff: Failed to register table");
-            return false;
-        }
 
         // Create difference features
         std::string sql = "SELECT *, ";
@@ -6748,19 +6969,13 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSDiff: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TSDiff: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] TSDiff completed: {} rows with difference features",
-                    result_table->num_rows());
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6779,8 +6994,7 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
                                                : "PolynomialFeatures";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name +
-                    ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6800,14 +7014,11 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
                  diagnostic_name, degree, column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, diagnostic_name, column,
                                "numeric", IsNumericArrowType, schema_error)) {
@@ -6815,11 +7026,6 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
             return false;
         }
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError(diagnostic_name + ": Failed to register table");
-            return false;
-        }
 
         const std::string quoted_column = QuoteSqlIdentifier(column);
         std::string sql = "SELECT *";
@@ -6844,19 +7050,13 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError(diagnostic_name + ": Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] {} completed: {} rows",
-                     diagnostic_name, result_table->num_rows());
+                     diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6870,7 +7070,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         node.type == "BinningNode" ? "BinningNode" : "Binning";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name + ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6896,14 +7096,11 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
                 diagnostic_name, method, n_bins, column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, diagnostic_name, column,
                                "numeric", IsNumericArrowType, schema_error)) {
@@ -6911,11 +7108,6 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
             return false;
         }
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError(diagnostic_name + ": Failed to register table");
-            return false;
-        }
 
         const std::string quoted_column = QuoteSqlIdentifier(column);
         const std::string quoted_bin_column = QuoteSqlIdentifier(column + "_bin");
@@ -6942,19 +7134,13 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
             return false;
         }
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError(diagnostic_name + ": Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
         spdlog::info("[Data Studio] {} completed: {} rows with {} bins",
-                    diagnostic_name, result_table->num_rows(), n_bins);
+                    diagnostic_name, DatasetRows(output_dataset_name), n_bins);
         return true;
 
     } catch (const std::exception& e) {
@@ -7028,7 +7214,52 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         }
     }
 
+    // The wiring: which node and output pin feeds each input.
+    auto mix = [&hash, prime](const std::string& text) {
+        for (char c : text) {
+            hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+            hash *= prime;
+        }
+        hash ^= 0xffULL;
+        hash *= prime;
+    };
+    mix(node.recipe);
+    for (size_t i = 0; i < node.inputs.size(); ++i) {
+        const auto pin = i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
+        mix(std::to_string(node.inputs[i]) + ":" + (pin ? std::to_string(*pin) : std::string("-")));
+    }
+    // A parameter naming a file (a source, a vocabulary, a fitted state) makes
+    // the node depend on that file's size and time, so an edited file reruns.
+    for (const auto& [key, value] : sorted_params) {
+        if (value.empty() || value.size() > 1024) continue;
+        std::error_code error;
+        const std::filesystem::path path = ResolveProjectDataPath(value, project_root_);
+        if (!std::filesystem::is_regular_file(path, error)) continue;
+        const auto size = std::filesystem::file_size(path, error);
+        const auto time = std::filesystem::last_write_time(path, error).time_since_epoch().count();
+        if (!error) mix(key + "@" + std::to_string(size) + "@" + std::to_string(time));
+    }
+
     return hash;
+}
+
+void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
+    auto& registry = DataRegistry::Instance();
+    for (auto& node : nodes) {
+        const auto it = run_cache_.find(node.id);
+        if (it == run_cache_.end()) continue;
+        const NodeRunCache& cache = it->second;
+        std::error_code error;
+        const bool output_kept = !cache.output.empty() && registry.GetTableRef(cache.output).has_value();
+        const bool artifact_kept = cache.model_artifact.empty() ||
+                                   std::filesystem::exists(cache.model_artifact, error);
+        if (!output_kept || !artifact_kept) {
+            run_cache_.erase(it);
+            continue;
+        }
+        node.last_execution_hash = cache.hash;
+        node.cached_output_dataset = cache.output;
+    }
 }
 
 void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
@@ -7125,11 +7356,30 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
             // this run fails at it, or before it, nothing stale is left that
             // looks current (a check that no longer holds).
             DataRegistry::Instance().UnregisterTabularDataset(OperatorOutputName(node.type, node.id));
+            // Its earlier output goes too (a pass-through output is another
+            // node's table and stays).
+            if (const auto cached = run_cache_.find(node.id); cached != run_cache_.end()) {
+                bool own_output = true;
+                for (const auto& [other_id, other] : run_cache_)
+                    if (other_id != node.id && other.output == cached->second.output) own_output = false;
+                if (own_output) DataRegistry::Instance().UnregisterTabularDataset(cached->second.output);
+                run_cache_.erase(cached);
+            }
+            {
+                // It reads "not run" until the run reaches it.
+                std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+                node_run_facts_.erase(node.id);
+            }
             NotifyNodeExecution(node, PipelineNodeExecutionEvent::Pending);
         } else {
             // Node doesn't need execution, use cached result
             if (!node.cached_output_dataset.empty()) {
                 ctx.node_results[node.id] = node.cached_output_dataset;
+                const NodeRunCache& cache = run_cache_.at(node.id);
+                for (const auto& [pin, dataset] : cache.pin_outputs) ctx.node_pin_results[{node.id, pin}] = dataset;
+                if (!cache.model_artifact.empty()) ctx.model_artifacts[node.id] = cache.model_artifact;
+                if (!cache.outcome.empty()) ctx.node_outcomes[node.id] = cache.outcome;
+                if (node.type == "DataInput" && ctx.input_dataset.empty()) ctx.input_dataset = cache.output;
                 spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
                 completed.insert(node.id);
                 NotifyNodeExecution(node, PipelineNodeExecutionEvent::Completed,
@@ -7147,6 +7397,9 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     if (total_nodes_to_execute == 0) {
         spdlog::info("[Data Studio] All nodes up-to-date, using cached results");
         UpdateProgress(1.0f, "All nodes up-to-date");
+        last_node_results_ = ctx.node_results;
+        last_node_pin_results_ = ctx.node_pin_results;
+        last_model_artifacts_ = ctx.model_artifacts;
         return true;
     }
 
@@ -7257,10 +7510,25 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                                        written == result.ctx.node_written.end() ? "" : written->second);
                 }
 
-                // Cache the output dataset name
+                // Cache the output for the next run on this executor; a node
+                // that wrote a file or prepared a deployment always runs.
                 auto result_it = ctx.node_results.find(node_id);
                 if (result_it != ctx.node_results.end()) {
                     node->cached_output_dataset = result_it->second;
+                    if (!result.ctx.node_written.count(node_id) && !result.ctx.deployment_ready) {
+                        NodeRunCache cache;
+                        cache.hash = node->last_execution_hash;
+                        cache.output = result_it->second;
+                        for (const auto& [key, dataset] : result.ctx.node_pin_results)
+                            if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
+                        if (const auto model = result.ctx.model_artifacts.find(node_id);
+                            model != result.ctx.model_artifacts.end())
+                            cache.model_artifact = model->second;
+                        if (const auto outcome = result.ctx.node_outcomes.find(node_id);
+                            outcome != result.ctx.node_outcomes.end())
+                            cache.outcome = outcome->second;
+                        run_cache_[node_id] = std::move(cache);
+                    }
                 }
 
                 float progress = base_progress +
@@ -7564,15 +7832,13 @@ bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx
         return false;
     }
 
+    const std::string output_dataset_name = "ds_ruleengine_" + std::to_string(node.id);
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("RuleEngine: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string case_expression;
         std::string rule_error;
         if (!BuildRuleEngineCaseExpression(input_table, rules, default_value,
@@ -7582,24 +7848,13 @@ bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx
         }
 
         const std::string temp_table = "temp_rule_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("RuleEngine: Failed to register table");
-            return false;
-        }
 
         const std::string sql = "SELECT *, " + case_expression + " AS " +
                                 QuoteSqlIdentifier(output_column) + " FROM " +
                                 temp_table;
-        auto output_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-        if (!output_table) {
-            ReportError("RuleEngine: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "RuleEngine: ")) {
             return false;
         }
-
-        const std::string output_dataset_name =
-            "ds_ruleengine_" + std::to_string(node.id);
-        registry.RegisterArrowTable(output_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -7625,14 +7880,11 @@ bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& 
         "ds_unitconverter_" + std::to_string(node.id);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("UnitConverter: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         if (!input_table || !input_table->schema()) {
             ReportError("UnitConverter: Input table is null");
             return false;
@@ -7667,10 +7919,6 @@ bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& 
         }
 
         const std::string temp_table = "temp_unit_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("UnitConverter: Failed to register table");
-            return false;
-        }
 
         std::string sql = "SELECT ";
         for (size_t i = 0; i < select_expressions.size(); ++i) {
@@ -7681,14 +7929,9 @@ bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& 
         }
         sql += " FROM " + temp_table;
 
-        auto output_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-        if (!output_table) {
-            ReportError("UnitConverter: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "UnitConverter: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(output_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -7713,9 +7956,8 @@ bool PipelineExecutor::ExecuteCalculatorNode(const Node& node, ExecutionContext&
     const std::string sql = "SELECT ROUND((" + calculator_expression + "), " +
                             std::to_string(precision) + ") AS result";
     try {
-        auto output_table = duckdb_->Query(sql);
+        auto output_table = FetchStepSql({}, sql, "CalculatorNode: ");
         if (!output_table) {
-            ReportError("CalculatorNode: Query failed");
             return false;
         }
 
@@ -9387,14 +9629,11 @@ bool PipelineExecutor::ExecuteValueCounts(const Node& node, ExecutionContext& ct
     const std::string column = TrimString(column_it->second);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("ValueCounts: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnExists(input_table, "ValueCounts", column,
                                  "input", schema_error)) {
@@ -9403,27 +9642,17 @@ bool PipelineExecutor::ExecuteValueCounts(const Node& node, ExecutionContext& ct
         }
 
         const std::string temp_table = "temp_valuecounts_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("ValueCounts: Failed to register table with DuckDB");
-            return false;
-        }
+        const std::string output_dataset_name =
+            "ds_valuecounts_" + std::to_string(node.id);
 
         const std::string quoted_column = QuoteSqlIdentifier(column);
         const std::string sql =
             "SELECT " + quoted_column + " AS value, COUNT(*) AS count FROM " +
             temp_table + " GROUP BY " + quoted_column +
             " ORDER BY count DESC, value ASC";
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("ValueCounts: Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "ValueCounts: ")) {
             return false;
         }
-
-        const std::string output_dataset_name =
-            "ds_valuecounts_" + std::to_string(node.id);
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -9884,14 +10113,7 @@ bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& 
                  row, column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("CellExtractor: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
+        auto input_table = InputSchemaTable(input_dataset_name);
         if (!input_table || !input_table->schema()) {
             ReportError("CellExtractor: Input table is null");
             return false;
@@ -9900,28 +10122,24 @@ bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& 
             ReportError("CellExtractor: column '" + column + "' not found");
             return false;
         }
-        if (row >= input_table->num_rows()) {
+        if (row >= DatasetRows(input_dataset_name)) {
             ReportError("CellExtractor: row index out of range");
             return false;
         }
 
         const std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("CellExtractor: Failed to register table");
-            return false;
-        }
 
         const std::string sql =
             "SELECT " + QuoteSqlIdentifier(column) + " AS value FROM " +
             temp_table + " LIMIT 1 OFFSET " + std::to_string(row);
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-        if (!result_table || result_table->num_rows() != 1) {
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        "CellExtractor: ")) {
+            return false;
+        }
+        if (DatasetRows(output_dataset_name) != 1) {
             ReportError("CellExtractor: Query failed");
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -9968,14 +10186,7 @@ bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ct
                  row, column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("CellUpdater: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
+        auto input_table = InputSchemaTable(input_dataset_name);
         if (!input_table || !input_table->schema()) {
             ReportError("CellUpdater: Input table is null");
             return false;
@@ -9985,7 +10196,7 @@ bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ct
             ReportError("CellUpdater: column '" + column + "' not found");
             return false;
         }
-        if (row >= input_table->num_rows()) {
+        if (row >= DatasetRows(input_dataset_name)) {
             ReportError("CellUpdater: row index out of range");
             return false;
         }
@@ -10000,10 +10211,6 @@ bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ct
         }
 
         const std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("CellUpdater: Failed to register table");
-            return false;
-        }
 
         std::vector<std::string> select_exprs;
         select_exprs.reserve(input_table->num_columns());
@@ -10029,14 +10236,10 @@ bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ct
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-        if (!result_table) {
-            ReportError("CellUpdater: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        "CellUpdater: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -10059,16 +10262,8 @@ bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ct
                  top_dataset_name, bottom_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto top_dataset = registry.GetArrowDataset(top_dataset_name);
-        auto bottom_dataset = registry.GetArrowDataset(bottom_dataset_name);
-        if (!top_dataset || !bottom_dataset) {
-            ReportError("RowAppender: Input datasets not found");
-            return false;
-        }
-
-        auto top_table = top_dataset->GetArrowTable();
-        auto bottom_table = bottom_dataset->GetArrowTable();
+        auto top_table = InputSchemaTable(top_dataset_name);
+        auto bottom_table = InputSchemaTable(bottom_dataset_name);
         if (!top_table || !bottom_table || !top_table->schema() ||
             !bottom_table->schema()) {
             ReportError("RowAppender: Input table is null");
@@ -10104,30 +10299,16 @@ bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ct
         const std::string top_table_name = "temp_top_" + std::to_string(node.id);
         const std::string bottom_table_name =
             "temp_bottom_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(top_table_name, top_table)) {
-            ReportError("RowAppender: Failed to register top table");
-            return false;
-        }
-        if (!duckdb_->RegisterTable(bottom_table_name, bottom_table)) {
-            duckdb_->UnregisterTable(top_table_name);
-            ReportError("RowAppender: Failed to register bottom table");
-            return false;
-        }
 
         const std::string selected_columns = JoinQuotedColumns(output_columns);
         const std::string sql = "SELECT " + selected_columns + " FROM " +
                                 top_table_name + " UNION ALL SELECT " +
                                 selected_columns + " FROM " +
                                 bottom_table_name;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(top_table_name);
-        duckdb_->UnregisterTable(bottom_table_name);
-        if (!result_table) {
-            ReportError("RowAppender: Query failed");
+        if (!RunStepSql(node, {{top_table_name, top_dataset_name}, {bottom_table_name, bottom_dataset_name}}, sql,
+                        output_dataset_name, false, "RowAppender: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -10260,14 +10441,11 @@ bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
                  input_dataset_name, requested_id_columns.size());
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("Unpivot: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         if (!input_table || !input_table->schema()) {
             ReportError("Unpivot: Input table is null");
             return false;
@@ -10306,10 +10484,6 @@ bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
         }
 
         const std::string temp_table = "temp_unpivot_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("Unpivot: Failed to register table");
-            return false;
-        }
 
         std::string sql;
         for (size_t value_index = 0; value_index < value_columns.size();
@@ -10328,14 +10502,9 @@ bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
                    " FROM " + temp_table;
         }
 
-        auto output_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-        if (!output_table) {
-            ReportError("Unpivot: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "Unpivot: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(output_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -10510,14 +10679,11 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
     spdlog::info("[Data Studio] String {} on column '{}'", operation, column);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("StringManipulation: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
         if (!RequireColumnKind(input_table, "StringManipulation", column,
                                "string", IsStringArrowType, schema_error)) {
@@ -10525,11 +10691,6 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
             return false;
         }
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("StringManipulation: Failed to register table");
-            return false;
-        }
 
         const std::string quoted_column = QuoteSqlIdentifier(column);
         const std::string quoted_output = QuoteSqlIdentifier(column + "_modified");
@@ -10572,15 +10733,9 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
 
         std::string sql =
             "SELECT *, " + expr + " AS " + quoted_output + " FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("StringManipulation: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "StringManipulation: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -10610,14 +10765,11 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
     spdlog::info("[Data Studio] MathFormula: {} = {}", output_column, formula);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("MathFormula: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
         std::string formula_expression;
         std::string formula_error;
         if (!BuildMathFormulaExpression(input_table, formula, formula_expression,
@@ -10628,22 +10780,11 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
 
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("MathFormula: Failed to register table");
-            return false;
-        }
-
         std::string sql = "SELECT *, (" + formula_expression + ") AS " +
                           QuoteSqlIdentifier(output_column) + " FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("MathFormula: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "MathFormula: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {

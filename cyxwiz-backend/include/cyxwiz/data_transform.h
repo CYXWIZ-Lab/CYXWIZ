@@ -97,6 +97,30 @@ public:
     static TransformResult Standardize(const std::vector<std::vector<double>>& data,
                                        const StandardizeOptions& options = {});
 
+    // Standardization in batches (data bigger than memory, TOFIX154): each
+    // batch's per-column moments come from the device (Moments), merge exactly
+    // across batches (CombineMoments, Chan et al.), and give the center and
+    // scale Standardize would use on all the data (StandardizeParameters).
+    struct ColumnMoments {
+        double count = 0.0;
+        double mean = 0.0;
+        double m2 = 0.0;  // sum of squared deviations from the mean
+        double min = 0.0;
+        double max = 0.0;
+    };
+    static bool Moments(const std::vector<std::vector<double>>& data, std::vector<ColumnMoments>& moments,
+                        std::string& error);
+    static void CombineMoments(ColumnMoments& total, const ColumnMoments& batch);
+    // False (with no center/scale) for missing or non-finite values.
+    static bool StandardizeParameters(const ColumnMoments& moments, const StandardizeOptions& options,
+                                      double& center, double& scale);
+
+    // Normalize with given per-column min and max (the streamed MinMaxScaler:
+    // the extremes merged over every batch); the same formula as Normalize.
+    static TransformResult NormalizeColumns(const std::vector<std::vector<double>>& data,
+                                            const std::vector<double>& lows, const std::vector<double>& highs,
+                                            double range_min = 0.0, double range_max = 1.0);
+
     // (x - center) / scale per column with given values (re-applying a fitted
     // scaler); one center and one scale per column, scales non-zero.
     static TransformResult ScaleColumns(const std::vector<std::vector<double>>& data,

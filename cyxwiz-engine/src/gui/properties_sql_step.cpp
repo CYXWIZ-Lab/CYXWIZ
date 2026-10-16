@@ -52,10 +52,11 @@ std::string SpacedType(const std::string& type) {
     return out;
 }
 
+// The dataset's columns (no rows; cheap enough for every frame), in memory
+// or on disk (TOFIX154); null when it is not registered.
 std::shared_ptr<arrow::Table> RegisteredTable(const std::string& dataset) {
     if (dataset.empty()) return nullptr;
-    auto handle = cyxwiz::DataRegistry::Instance().GetArrowDataset(dataset);
-    return handle ? handle->GetArrowTable() : nullptr;
+    return cyxwiz::DataRegistry::Instance().ReadTablePreview(dataset, 0);
 }
 
 const cyxwiz::PipelineNodeRunFacts* FactsFor(const NodeEditor* editor, int node_id) {
@@ -513,7 +514,8 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
             const std::string key = facts->output_dataset + "@" + facts->finished_at;
             if (key != view.preview_key) {
                 view.preview_key = key;
-                view.preview.SetTable(cyxwiz::DataTableFromArrow(*table, node.name, kPreviewRows));
+                const auto rows = cyxwiz::DataRegistry::Instance().ReadTablePreview(facts->output_dataset, kPreviewRows);
+                view.preview.SetTable(cyxwiz::DataTableFromArrow(rows ? *rows : *table, node.name, kPreviewRows));
                 view.preview.options.line_numbers = false;
                 view.preview.options.data_bars = false;
             }
