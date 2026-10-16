@@ -46,7 +46,6 @@ void ExportDialog::Open(ModelFormat initial_format) {
     export_progress_ = 0;
     export_total_ = 0;
     selected_format_ = model_export::IsAvailable(initial_format, kOnnxBuilt) ? initial_format : ModelFormat::CyxModel;
-    include_optimizer_state_ = true;
     include_training_history_ = true;
     include_graph_ = true;
     const std::string path =
@@ -210,9 +209,6 @@ void ExportDialog::RenderOptions() {
         ImGui::SameLine();
         ImGui::Checkbox("Training history", &include_training_history_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loss and accuracy per epoch.");
-        ImGui::SameLine();
-        ImGui::Checkbox("Optimizer state", &include_optimizer_state_);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("To resume training where it stopped.");
     } else if (selected_format_ == ModelFormat::ONNX) {
         ImGui::TextColored(t.text_dim, "Opset version");
         ImGui::SetNextItemWidth(100);
@@ -269,7 +265,8 @@ void ExportDialog::StartExport() {
     export_options_ = trained_metadata_;
     // Build export options
     export_options_.format = selected_format_;
-    export_options_.include_optimizer_state = include_optimizer_state_;
+    // The package does not carry optimizer state yet (no optimizer state API).
+    export_options_.include_optimizer_state = false;
     export_options_.include_training_history = include_training_history_;
     export_options_.include_graph = include_graph_;
     export_options_.compress = false;  // not implemented for CYXW v3

@@ -100,7 +100,6 @@ private:
     char description_[1024] = "";
 
     // Options
-    bool include_optimizer_state_ = true;
     bool include_training_history_ = true;
     bool include_graph_ = true;
     int opset_version_ = 17;

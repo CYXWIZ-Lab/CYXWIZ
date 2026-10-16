@@ -9,7 +9,7 @@ Pick one; only the formats this build can write are shown:
 
 | Format | What the file holds |
 | --- | --- |
-| CyxWiz package (`.cyxmodel`) | The weights with the graph, configuration and, as you choose, the training history and optimizer state. It opens again in CyxWiz. |
+| CyxWiz package (`.cyxmodel`) | The weights with the graph, configuration and, as you choose, the training history. Its graph opens again in CyxWiz. |
 | Weights only (`.safetensors`) | The parameter tensors only, readable by other frameworks (PyTorch, safetensors). No graph. |
 | ONNX (`.onnx`) | A model for inference in other runtimes, with an opset version. Shown only when the build includes the ONNX exporter. |
 
@@ -17,8 +17,8 @@ Pick one; only the formats this build can write are shown:
 
 - **File** starts as `<project>/exports/<graph name><extension>`; switching
   the format changes the extension. **Browse...** picks another file.
-- **Include** (package only): Graph, Training history, Optimizer state
-  (to resume training where it stopped).
+- **Include** (package only): Graph, Training history. The optimizer state
+  is not saved in a package yet; checkpoints keep it.
 - **Name** starts as the trained model's name, else the graph's file name.
   **Author** and **Description** are optional; left empty, they keep what the
   trained model already carries.

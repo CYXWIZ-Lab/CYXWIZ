@@ -9,8 +9,8 @@ namespace cyxwiz::model_export {
 std::vector<FormatChoice> AvailableFormats(bool onnx_built) {
     std::vector<FormatChoice> out = {
         {ModelFormat::CyxModel, "CyxWiz package (.cyxmodel)",
-         "Weights with the graph, configuration, optimizer state and training history, as you choose below. Opens "
-         "again in CyxWiz."},
+         "Weights with the graph, configuration and training history, as you choose below. Its graph opens again "
+         "in CyxWiz."},
         {ModelFormat::Safetensors, "Weights only (.safetensors)",
          "The parameter tensors only, readable by other frameworks; no graph or training package."},
     };
