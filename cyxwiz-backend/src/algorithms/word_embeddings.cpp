@@ -10,6 +10,7 @@
 
 #include "arrayfire_host_materialization.h"
 #include "arrayfire_indexed.h"
+#include "text_utf8.h"
 
 #include <arrayfire.h>
 
@@ -72,36 +73,15 @@ std::string AsciiLower(const std::string& word) {
     return lower;
 }
 
-// A letter or digit: ASCII letters and digits, and the letters of other
-// scripts (Latin, Greek and Cyrillic to Georgian, CJK, Hangul); punctuation,
-// symbols and emoji are not. Invalid UTF-8 counts as none.
+// A letter or digit (text_utf8::IsLetterOrDigit); punctuation, symbols and
+// emoji are not. Invalid UTF-8 counts as none.
 bool HasLetterOrDigit(const std::string& token) {
     for (size_t i = 0; i < token.size();) {
-        const unsigned char c = static_cast<unsigned char>(token[i]);
         char32_t cp = 0;
         size_t length = 1;
-        if (c < 0x80) {
-            cp = c;
-        } else if ((c & 0xE0) == 0xC0) {
-            cp = c & 0x1F;
-            length = 2;
-        } else if ((c & 0xF0) == 0xE0) {
-            cp = c & 0x0F;
-            length = 3;
-        } else if ((c & 0xF8) == 0xF0) {
-            cp = c & 0x07;
-            length = 4;
-        } else {
-            return false;
-        }
-        if (i + length > token.size()) return false;
-        for (size_t k = 1; k < length; ++k) cp = (cp << 6) | (static_cast<unsigned char>(token[i + k]) & 0x3F);
+        if (!text_utf8::Next(token, i, cp, length)) return false;
         i += length;
-        const bool ascii_alnum = (cp >= '0' && cp <= '9') || (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z');
-        const bool letter = (cp >= 0xC0 && cp <= 0x24F && cp != 0xD7 && cp != 0xF7) || (cp >= 0x370 && cp <= 0x1FFF) ||
-                            (cp >= 0x2C00 && cp <= 0x2DFF) || (cp >= 0x3040 && cp <= 0x9FFF) ||
-                            (cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0xF900 && cp <= 0xFAFF);
-        if (ascii_alnum || letter) return true;
+        if (text_utf8::IsLetterOrDigit(cp)) return true;
     }
     return false;
 }

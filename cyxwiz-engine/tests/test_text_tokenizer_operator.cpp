@@ -3,7 +3,9 @@
 #include <arrow/api.h>
 #include <parquet/arrow/reader.h>
 #include <arrow/io/file.h>
+#include <cyxwiz/text_processing.h>
 #include <cyxwiz/tokenizer.h>
+#include <clocale>
 #include <cstdlib>
 #include <sstream>
 
@@ -138,7 +140,46 @@ void RunOptionalExternalRoundTrip() {
 
 } // namespace
 
+// Word mode reads UTF-8 by character, whatever the C runtime's locale (the
+// embedded Python sets the user's code page): a curly apostrophe is
+// punctuation, accented and Cyrillic letters stay in their words and lowercase,
+// an emoji is its own token, and no token is a stray byte.
+void CheckUtf8Words() {
+    const std::string text =
+        "Don\xE2\x80\x99t CAF\xC3\x89 na\xC3\xAFve \xF0\x9F\x98\x8A \xD0\x9C\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0";
+    const std::vector<std::string> words = {"don", "t", "caf\xC3\xA9", "na\xC3\xAFve",
+                                            "\xD0\xBC\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0"};
+    for (const char* locale : {"C", ".1252"}) {
+        std::setlocale(LC_CTYPE, locale);
+        cyxwiz::Tokenizer tokenizer(cyxwiz::TokenizerType::Word);
+        tokenizer.SetLowercase(true);
+        tokenizer.Train({text});
+        Check(tokenizer.Tokenize(text).tokens == words, std::string("UTF-8 words in locale ") + locale);
+        const auto with_punct = cyxwiz::TextProcessing::Tokenize(text, "word", 2, true, false).tokens;
+        Check(with_punct.size() == 7 && with_punct[1] == "\xE2\x80\x99" && with_punct[5] == "\xF0\x9F\x98\x8A",
+              std::string("punctuation and emoji are whole characters in locale ") + locale);
+        Check(cyxwiz::TextProcessing::ToLowercase("\xC3\x89T\xC3\x89 \xD0\x9C") == "\xC3\xA9t\xC3\xA9 \xD0\xBC",
+              std::string("lowercase by character in locale ") + locale);
+        // "\xC3\xA0" (a grave) ends in the byte cp1252 calls a space.
+        Check(cyxwiz::TextProcessing::NormalizeWhitespace(" voil\xC3\xA0   x ") == "voil\xC3\xA0 x",
+              std::string("whitespace by character in locale ") + locale);
+        Check(cyxwiz::TextProcessing::RemovePunctuation("don\xE2\x80\x99t! \xF0\x9F\x98\x8A") == "dont ",
+              std::string("punctuation removed by character in locale ") + locale);
+        Check(cyxwiz::TextProcessing::CleanText("caf\xC3\xA9 \xF0\x9F\x98\x8A!", false, false, false, true) ==
+                  "caf\xC3\xA9 !",
+              std::string("special characters cleaned by character in locale ") + locale);
+        cyxwiz::Tokenizer characters(cyxwiz::TokenizerType::Character);
+        characters.SetLowercase(false);
+        characters.Train({text});
+        Check(characters.Tokenize("\xC3\xA9\xF0\x9F\x98\x8A" "a").tokens ==
+                  std::vector<std::string>({"\xC3\xA9", "\xF0\x9F\x98\x8A", "a"}),
+              std::string("Character mode splits by character in locale ") + locale);
+    }
+    std::setlocale(LC_CTYPE, "C");
+}
+
 int main() {
+    CheckUtf8Words();
     auto text = FinishStringArray({
         "Small text sample",
         "Another small sample",

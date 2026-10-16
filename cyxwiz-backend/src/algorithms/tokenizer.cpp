@@ -1,5 +1,6 @@
 #include "cyxwiz/tokenizer.h"
 #include "cyxwiz/text_processing.h"
+#include "text_utf8.h"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -209,9 +210,14 @@ std::vector<std::string> Tokenizer::Split(const std::string& text) const {
         case TokenizerType::SentencePieceBPE: break; // rejected by ValidateVocabulary
         case TokenizerType::SentencePieceUnigram: break; // rejected by ValidateVocabulary
         case TokenizerType::Character: {
+            // One token per UTF-8 character, not per byte.
             std::vector<std::string> chars;
-            for (char c : processed) {
-                chars.push_back(std::string(1, c));
+            for (size_t i = 0; i < processed.size();) {
+                char32_t cp = 0;
+                size_t length = 1;
+                text_utf8::Next(processed, i, cp, length);
+                chars.push_back(processed.substr(i, length));
+                i += length;
             }
             return chars;
         }

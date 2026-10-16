@@ -81,7 +81,10 @@ finds them.
    pin.
 
 Words are split as the Text Tokenizer's Word mode splits them: lowercased,
-runs of letters and digits.
+runs of letters and digits of any script, read by character ("café",
+"naïve" and Cyrillic words stay whole); punctuation such as a curly
+apostrophe, and emoji, end a word. A vocabulary file built before 2026-10-16
+can hold single-byte tokens (the pieces of such characters); rebuild it.
 
 ## Trained once, reused after
 
