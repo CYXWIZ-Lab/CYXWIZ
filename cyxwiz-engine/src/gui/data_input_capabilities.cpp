@@ -172,8 +172,8 @@ std::string CurrentApplySummary(
             break;
         case FileCategory::Text:
             summary = text_layout == TextLayout::CorpusSubdirs
-                ? "scan the corpus folder, tokenize text, and build vocabulary"
-                : "load the selected text file, tokenize text, and build vocabulary";
+                ? "read each class folder's texts; a Text Tokenizer node tokenizes them"
+                : "read the text and label columns; a Text Tokenizer node tokenizes them";
             break;
     }
 

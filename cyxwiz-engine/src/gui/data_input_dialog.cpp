@@ -244,25 +244,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
                     sizeof(text_label_column_) - 1);
             text_label_column_[sizeof(text_label_column_) - 1] = '\0';
         }
-        if (node_->parameters.count("text_tokenizer_type")) {
-            try { text_tokenizer_type_ = std::stoi(node_->parameters["text_tokenizer_type"]); }
-            catch (...) { text_tokenizer_type_ = 1; }
-        }
-        if (node_->parameters.count("text_max_length")) {
-            try { text_max_length_ = std::stoi(node_->parameters["text_max_length"]); }
-            catch (...) { text_max_length_ = 512; }
-        }
-        if (node_->parameters.count("text_lowercase")) {
-            text_lowercase_ = (node_->parameters["text_lowercase"] == "true");
-        }
-        if (node_->parameters.count("text_min_freq")) {
-            try { text_min_freq_ = std::stoi(node_->parameters["text_min_freq"]); }
-            catch (...) { text_min_freq_ = 1; }
-        }
-        if (node_->parameters.count("text_max_vocab_size")) {
-            try { text_max_vocab_size_ = std::stoi(node_->parameters["text_max_vocab_size"]); }
-            catch (...) { text_max_vocab_size_ = -1; }
-        }
 
         // Restore the audio layout strategy from node params (ClassSubdirs
         // vs FlatWithCSV + label CSV + column overrides). Mirrors image_layout_.

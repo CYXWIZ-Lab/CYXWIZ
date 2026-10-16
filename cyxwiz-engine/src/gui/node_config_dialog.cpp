@@ -1051,7 +1051,42 @@ void TokenizerDialog::Reset() {
     has_changes_ = false;
 }
 
+void TokenizerDialog::TakeColumnsFromInput() {
+    columns_from_input_checked_ = true;
+    if (!node_ || !node_editor_ || !IsTokenizerNode()) return;
+    if (node_->parameters.count("text_col") || node_->parameters.count("text_column")) return;
+    const auto& nodes = node_editor_->GetNodes();
+    const auto& links = node_editor_->GetLinks();
+    std::set<int> seen{node_->id};
+    std::vector<int> frontier{node_->id};
+    while (!frontier.empty()) {
+        const int to = frontier.back();
+        frontier.pop_back();
+        for (const auto& link : links) {
+            if (link.to_node != to || !seen.insert(link.from_node).second) continue;
+            const auto it = std::find_if(nodes.begin(), nodes.end(),
+                                         [&](const MLNode& n) { return n.id == link.from_node; });
+            if (it == nodes.end()) continue;
+            const auto text = it->parameters.find("text_column");
+            if (it->type != NodeType::DataInput || text == it->parameters.end() || text->second.empty()) {
+                frontier.push_back(it->id);
+                continue;
+            }
+            std::strncpy(text_col_, text->second.c_str(), sizeof(text_col_) - 1);
+            text_col_[sizeof(text_col_) - 1] = '\0';
+            if (const auto label = it->parameters.find("text_label_column");
+                label != it->parameters.end() && label_col_[0] == '\0') {
+                std::strncpy(label_col_, label->second.c_str(), sizeof(label_col_) - 1);
+                label_col_[sizeof(label_col_) - 1] = '\0';
+            }
+            has_changes_ = true;
+            return;
+        }
+    }
+}
+
 void TokenizerDialog::RenderContent() {
+    if (!columns_from_input_checked_) TakeColumnsFromInput();
     if (ImGui::BeginTabBar("TextPreprocessingTabs")) {
         if (IsTokenizerNode() && ImGui::BeginTabItem("Tokenizer")) {
             RenderTokenizerTab();

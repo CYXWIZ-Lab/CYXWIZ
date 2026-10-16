@@ -345,7 +345,8 @@ void TestTextAudit() {
     assert(result.HasErrors());
     assert(HasIssue(result, DatasetAuditSeverity::Error, "empty_dataset"));
     assert(HasIssue(result, DatasetAuditSeverity::Warning, "missing_label_column"));
-    assert(HasIssue(result, DatasetAuditSeverity::Warning, "empty_vocabulary"));
+    // Loading builds no vocabulary (the Text Tokenizer node does, TOFIX129 B-8).
+    assert(!HasIssue(result, DatasetAuditSeverity::Warning, "empty_vocabulary"));
 }
 
 void TestTextCsvSampleAudit() {

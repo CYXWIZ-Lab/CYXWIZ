@@ -16,9 +16,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
-#include <sstream>
 #include <stdexcept>
-#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -53,69 +51,40 @@ void RequireColumn(const std::shared_ptr<arrow::Table>& table,
     }
 }
 
-std::vector<std::string> CollectClassNames(
-    const std::shared_ptr<arrow::Table>& table,
-    const std::string& label_column) {
-    std::set<std::string> classes;
-    if (!table || label_column.empty()) {
-        return {};
-    }
+// Rows with text and the classes of those rows: an empty text is not a
+// sample (the same rule as the folder / JSON reader).
+struct TextTableStats {
+    size_t samples = 0;
+    std::vector<std::string> class_names;
+};
 
-    auto column = table->GetColumnByName(label_column);
-    if (!column) {
-        return {};
-    }
-
-    for (const auto& chunk : column->chunks()) {
-        if (!chunk) continue;
-        for (int64_t row = 0; row < chunk->length(); ++row) {
-            if (chunk->IsNull(row)) continue;
-            auto scalar = chunk->GetScalar(row);
-            if (!scalar.ok() || !*scalar || !(*scalar)->is_valid) continue;
-            classes.insert((*scalar)->ToString());
-        }
-    }
-    return {classes.begin(), classes.end()};
+std::string CellText(const arrow::Array& array, int64_t row) {
+    if (array.type_id() == arrow::Type::STRING)
+        return std::string(static_cast<const arrow::StringArray&>(array).GetView(row));
+    if (array.type_id() == arrow::Type::LARGE_STRING)
+        return std::string(static_cast<const arrow::LargeStringArray&>(array).GetView(row));
+    auto scalar = array.GetScalar(row);
+    return scalar.ok() && *scalar && (*scalar)->is_valid ? (*scalar)->ToString() : std::string();
 }
 
-size_t EstimateVocabularySize(const std::shared_ptr<arrow::Table>& table,
-                              const std::string& text_column,
-                              bool lowercase,
-                              int max_vocab) {
-    if (!table || text_column.empty()) {
-        return 0;
-    }
-    auto column = table->GetColumnByName(text_column);
-    if (!column) {
-        return 0;
-    }
-
-    const size_t cap = max_vocab > 0 ? static_cast<size_t>(max_vocab) : 0;
-    std::unordered_set<std::string> vocab;
-    for (const auto& chunk : column->chunks()) {
-        if (!chunk) continue;
-        for (int64_t row = 0; row < chunk->length(); ++row) {
-            if (chunk->IsNull(row)) continue;
-            auto scalar = chunk->GetScalar(row);
-            if (!scalar.ok() || !*scalar || !(*scalar)->is_valid) continue;
-            std::string text = (*scalar)->ToString();
-            if (lowercase) {
-                std::transform(text.begin(), text.end(), text.begin(),
-                               [](unsigned char c) {
-                                   return static_cast<char>(std::tolower(c));
-                               });
-            }
-            std::istringstream stream(text);
-            std::string token;
-            while (stream >> token) {
-                vocab.insert(std::move(token));
-                if (cap > 0 && vocab.size() >= cap) {
-                    return vocab.size();
-                }
-            }
+TextTableStats CountTextRows(const std::shared_ptr<arrow::Table>& table,
+                             const std::string& text_column,
+                             const std::string& label_column) {
+    TextTableStats stats;
+    const auto text = table->GetColumnByName(text_column);
+    const auto label = label_column.empty() ? nullptr : table->GetColumnByName(label_column);
+    std::set<std::string> classes;
+    for (int c = 0; c < text->num_chunks(); ++c) {
+        const auto& text_chunk = *text->chunk(c);
+        const auto label_chunk = label ? label->chunk(c) : nullptr;
+        for (int64_t row = 0; row < text_chunk.length(); ++row) {
+            if (text_chunk.IsNull(row) || CellText(text_chunk, row).empty()) continue;
+            ++stats.samples;
+            if (label_chunk && !label_chunk->IsNull(row)) classes.insert(CellText(*label_chunk, row));
         }
     }
-    return vocab.size();
+    stats.class_names.assign(classes.begin(), classes.end());
+    return stats;
 }
 
 }  // namespace
@@ -167,11 +136,6 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const std::string text_col   = ctx.text_column;
     const std::string label_col  = ctx.text_label_column;
     const bool has_labels        = ctx.text_has_labels;
-    const int tok_type           = ctx.text_tokenizer_type;
-    const int max_length         = ctx.text_max_length;
-    const bool lowercase         = ctx.text_lowercase;
-    const int min_freq           = ctx.text_min_freq;
-    const int max_vocab          = ctx.text_max_vocab_size;
 
     state->dataset_name = name;
     state->source_path  = path;
@@ -179,33 +143,12 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading text " + name,
-        [path, name, text_col, label_col, has_labels, tok_type, max_length,
-         lowercase, min_freq, max_vocab, state]
+        [path, name, text_col, label_col, has_labels, state]
         (cyxwiz::LambdaTask& task) {
             try {
-                task.ReportProgress(0.1f, "Building tokenizer");
-
-                cyxwiz::TextDatasetConfig probe_cfg;
-                probe_cfg.text_column  = text_col;
-                probe_cfg.label_column = label_col;
-                probe_cfg.has_labels   = has_labels;
-                switch (tok_type) {
-                    case 0: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Whitespace; break;
-                    case 2: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Character; break;
-                    case 3: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::ByteBPE; break;
-                    case 4: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::WordPiece; break;
-                    case 5: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::SentencePieceBPE; break;
-                    case 6: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::SentencePieceUnigram; break;
-                    default: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Word; break;
-                }
-                probe_cfg.max_length     = max_length;
-                probe_cfg.lowercase      = lowercase;
-                probe_cfg.do_padding     = true;
-                probe_cfg.do_truncation  = true;
-                probe_cfg.min_word_freq  = min_freq;
-                probe_cfg.max_vocab_size = max_vocab;
-
-                task.ReportProgress(0.75f, "Registering raw text table");
+                // Data Input only reads the text and its label (TOFIX129 B-8):
+                // the Text Tokenizer node tokenizes.
+                task.ReportProgress(0.1f, "Reading text");
 
                 auto& reg = cyxwiz::DataRegistry::Instance();
 
@@ -215,107 +158,69 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     throw std::runtime_error(source_check.message);
                 }
                 const std::string ext = LowerExtension(source);
-                const bool native_arrow_text_file =
-                    fs::is_regular_file(source) &&
-                    (ext == ".csv" || ext == ".tsv");
+                const bool delimited = fs::is_regular_file(source) && (ext == ".csv" || ext == ".tsv");
                 size_t num_samples = 0;
-                size_t num_classes = 0;
                 std::vector<std::string> class_names;
-                size_t vocab_size = 0;
+                std::shared_ptr<arrow::Table> raw_table;
 
-                if (native_arrow_text_file) {
-                    cyxwiz::TextDataset probe(path, probe_cfg);
-                    auto info = probe.GetInfo();
-                    const auto samples_check = ValidateTextSamples(info.num_samples, path);
-                    if (!samples_check.ok) {
-                        throw std::runtime_error(samples_check.message);
+                if (delimited || IsArrowNativeTextFile(source)) {
+                    std::shared_ptr<cyxwiz::ArrowDataset> raw_arrow;
+                    if (delimited) {
+                        const char delimiter = (ext == ".tsv") ? '\t' : ',';
+                        const auto csv_preflight = ValidateTextCsvRowWidths(path, delimiter);
+                        if (!csv_preflight.ok) {
+                            throw std::runtime_error(csv_preflight.message);
+                        }
+                        auto parse_options = arrow::csv::ParseOptions::Defaults();
+                        parse_options.delimiter = delimiter;
+                        parse_options.newlines_in_values = true;
+                        raw_arrow = cyxwiz::ArrowDataset::FromCSV(
+                            path, name, arrow::csv::ReadOptions::Defaults(), parse_options,
+                            arrow::csv::ConvertOptions::Defaults());
+                    } else {
+                        raw_arrow = cyxwiz::ArrowDataset::FromFile(path, name);
                     }
-
-                    const char delimiter = (ext == ".tsv") ? '\t' : ',';
-                    const auto csv_preflight =
-                        ValidateTextCsvRowWidths(path, delimiter);
-                    if (!csv_preflight.ok) {
-                        throw std::runtime_error(csv_preflight.message);
-                    }
-
-                    auto read_options = arrow::csv::ReadOptions::Defaults();
-                    auto parse_options = arrow::csv::ParseOptions::Defaults();
-                    auto convert_options = arrow::csv::ConvertOptions::Defaults();
-                    parse_options.delimiter = delimiter;
-                    parse_options.newlines_in_values = true;
-
-                    auto raw_arrow = cyxwiz::ArrowDataset::FromCSV(
-                        path, name, read_options, parse_options, convert_options);
                     if (!raw_arrow || !raw_arrow->GetArrowTable()) {
-                        throw std::runtime_error(
-                            "failed to register text CSV as Arrow table");
+                        throw std::runtime_error("failed to read the text table");
                     }
-                    if (!reg.RegisterArrowTable(raw_arrow->GetArrowTable(), name)) {
-                        throw std::runtime_error(
-                            "failed to store text CSV Arrow table");
-                    }
-                    num_samples = info.num_samples;
-                    num_classes = info.num_classes;
-                    class_names = info.class_names;
-                    vocab_size = probe.GetVocabSize();
-                } else if (IsArrowNativeTextFile(source)) {
-                    auto raw_arrow = cyxwiz::ArrowDataset::FromFile(path, name);
-                    if (!raw_arrow || !raw_arrow->GetArrowTable()) {
-                        throw std::runtime_error(
-                            "failed to load Arrow-native text table");
-                    }
-                    auto raw_table = raw_arrow->GetArrowTable();
+                    raw_table = raw_arrow->GetArrowTable();
                     RequireColumn(raw_table, text_col, "Text");
                     if (has_labels) {
                         RequireColumn(raw_table, label_col, "Label");
                     }
-                    if (!reg.RegisterArrowTable(raw_table, name)) {
-                        throw std::runtime_error(
-                            "failed to store Arrow-native text table");
-                    }
-
-                    class_names = has_labels
-                        ? CollectClassNames(raw_table, label_col)
-                        : std::vector<std::string>{};
-                    num_samples = static_cast<size_t>(raw_table->num_rows());
-                    num_classes = class_names.size();
-                    vocab_size = EstimateVocabularySize(raw_table, text_col,
-                                                        lowercase, max_vocab);
-                    spdlog::info("TextLoader: '{}' registered Arrow-native text table "
-                                 "from {}",
-                                 name, path);
+                    task.ReportProgress(0.6f, "Counting samples");
+                    auto combined = raw_table->CombineChunks();
+                    const auto stats = CountTextRows(combined.ok() ? *combined : raw_table, text_col,
+                                                     has_labels ? label_col : std::string());
+                    num_samples = stats.samples;
+                    class_names = stats.class_names;
                 } else {
-                    cyxwiz::TextDataset probe(path, probe_cfg);
-                    auto info = probe.GetInfo();
-                    const auto samples_check = ValidateTextSamples(info.num_samples, path);
-                    if (!samples_check.ok) {
-                        throw std::runtime_error(samples_check.message);
-                    }
-
-                    auto raw_table_result = cyxwiz::BuildRawTextArrowTable(
-                        probe, text_col, label_col);
-                    if (!raw_table_result.ok()) {
+                    cyxwiz::TextDatasetConfig raw_cfg;
+                    raw_cfg.text_column  = text_col;
+                    raw_cfg.label_column = label_col;
+                    raw_cfg.has_labels   = has_labels;
+                    cyxwiz::TextDataset raw(path, raw_cfg, cyxwiz::TextDatasetLoadMode::RawOnly);
+                    auto raw_table_result = cyxwiz::BuildRawTextArrowTable(raw, text_col, label_col);
+                    if (!raw_table_result.ok() || !raw_table_result.ValueOrDie()) {
                         throw std::runtime_error(
-                            "failed to build raw text Arrow table: " +
-                            raw_table_result.status().ToString());
+                            "failed to build raw text Arrow table" +
+                            (raw_table_result.ok() ? std::string() : ": " + raw_table_result.status().ToString()));
                     }
-                    auto raw_table = raw_table_result.ValueOrDie();
-                    if (!raw_table) {
-                        throw std::runtime_error(
-                            "failed to build raw text Arrow table");
-                    }
-                    if (!reg.RegisterArrowTable(raw_table, name)) {
-                        throw std::runtime_error(
-                            "failed to store raw text Arrow table");
-                    }
-                    spdlog::info("TextLoader: '{}' registered raw text Arrow table "
-                                 "from TextDataset adapter",
-                                 name);
+                    raw_table = raw_table_result.ValueOrDie();
+                    const auto info = raw.GetInfo();
                     num_samples = info.num_samples;
-                    num_classes = info.num_classes;
                     class_names = info.class_names;
-                    vocab_size = probe.GetVocabSize();
                 }
+                const auto samples_check = ValidateTextSamples(num_samples, path);
+                if (!samples_check.ok) {
+                    throw std::runtime_error(samples_check.message);
+                }
+                if (!reg.RegisterArrowTable(raw_table, name)) {
+                    throw std::runtime_error("failed to store the text table");
+                }
+                const size_t num_classes = class_names.size();
+                const auto stored = reg.GetArrowDataset(name);
+                const size_t table_bytes = stored ? stored->GetMemoryUsage() : 0;
 
                 task.ReportProgress(0.9f, "Registering text metadata");
 
@@ -324,17 +229,9 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 text_entry.text_column    = text_col;
                 text_entry.label_column   = label_col;
                 text_entry.has_labels     = has_labels;
-                text_entry.tokenizer_type = tok_type;
-                text_entry.max_length     = max_length;
-                text_entry.lowercase      = lowercase;
-                text_entry.do_padding     = true;
-                text_entry.do_truncation  = true;
-                text_entry.min_word_freq  = min_freq;
-                text_entry.max_vocab_size = max_vocab;
                 text_entry.num_samples    = num_samples;
                 text_entry.num_classes    = num_classes;
                 text_entry.class_names    = class_names;
-                text_entry.vocab_size     = vocab_size;
 
                 reg.RegisterTextDataset(name, text_entry);
 
@@ -342,17 +239,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 state->backend      = 5;
                 state->rows         = static_cast<int64_t>(num_samples);
                 state->cols         = 1;
-                // Rough bytes estimate: max_length tokens * sizeof(float)
-                // per sample. TextDatasetBatcher materializes the real
-                // tensors lazily so this is a ceiling, not an actual
-                // allocation.
-                size_t per_sample   = static_cast<size_t>(max_length) * sizeof(float);
-                state->bytes        = num_samples * per_sample;
+                state->bytes        = table_bytes;
                 state->num_classes  = num_classes;
-                state->vocab_size   = vocab_size;
                 state->message      = "Loaded " + std::to_string(num_samples) +
-                                      " text samples (" + std::to_string(num_classes) +
-                                      " classes, vocab " + std::to_string(vocab_size) + ")";
+                                      " text samples (" + std::to_string(num_classes) + " classes)";
                 auto audit = cyxwiz::DatasetAudit::AuditText(name, text_entry);
                 state->audit_errors = audit.ErrorCount();
                 state->audit_warnings = audit.WarningCount();
@@ -392,29 +282,24 @@ bool TextLoader::RestoreFromRegistry(const std::string& name,
     out.found   = true;
     out.rows    = static_cast<int64_t>(entry->num_samples);
     out.cols    = 1;
-    // Estimate: max_length * sizeof(float) per sample. Actual memory
-    // during training is dominated by the tokenized in-RAM corpus,
-    // not the training tensor batches.
-    const size_t per_sample = static_cast<size_t>(entry->max_length) * sizeof(float);
-    out.bytes   = entry->num_samples * per_sample;
+    const auto stored = cyxwiz::DataRegistry::Instance().GetArrowDataset(name);
+    out.bytes   = stored ? stored->GetMemoryUsage() : 0;
     out.backend = 5;
-    out.memory_is_estimate = true;
+    out.memory_is_estimate = false;
     out.status_message = "Loaded " + name + " (" +
         std::to_string(entry->num_samples) + " text samples, " +
-        std::to_string(entry->num_classes) + " classes, vocab " +
-        std::to_string(entry->vocab_size) + ")";
+        std::to_string(entry->num_classes) + " classes)";
     return true;
 }
 
 CompletedLoadDescription TextLoader::DescribeCompletedLoad(
     const AsyncLoadState& state) const {
     CompletedLoadDescription d;
-    d.memory_is_estimate = true;
+    d.memory_is_estimate = false;
 
     d.node_description_suffix =
         std::to_string(state.rows) + " samples, " +
-        std::to_string(state.num_classes) + " classes, vocab " +
-        std::to_string(state.vocab_size);
+        std::to_string(state.num_classes) + " classes";
 
     fs::path p(state.source_path);
     d.default_status_message = std::string("Loaded text from ") +
@@ -462,13 +347,8 @@ bool TextLoader::LaunchTraining(
 std::vector<ParamSchema> TextLoader::NodeParams() const {
     return {
         {"text_layout",         "0",    "0=SingleFile, 1=CorpusSubdirs"},
-        {"text_column",         "text", "Column with text for tokenization"},
+        {"text_column",         "text", "Column with the text"},
         {"text_label_column",   "label","Label column (single-file mode)"},
-        {"text_tokenizer_type", "1",    "0=Whitespace, 1=Word, 2=Character, 3=ByteBPE, 4=WordPiece, 5=SentencePieceBPE, 6=SentencePieceUnigram (optional provider)"},
-        {"text_max_length",     "512",  "Max tokens per sample"},
-        {"text_lowercase",      "true", "Lowercase before tokenization"},
-        {"text_min_freq",       "1",    "Min word frequency for vocab"},
-        {"text_max_vocab_size", "-1",   "Vocab cap (-1 = unlimited)"},
     };
 }
 

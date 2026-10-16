@@ -80,7 +80,6 @@ struct AsyncLoadState {
     std::string previous_source_path;
     std::string source_path;         // file_path or folder_path that was loaded
     size_t num_classes = 0;          // set by image/audio/text loaders
-    size_t vocab_size = 0;           // set by text loader
     int audit_errors = 0;            // metadata/data sanity audit result
     int audit_warnings = 0;
     std::string audit_message;       // compact status suffix for the UI
@@ -127,11 +126,6 @@ struct ApplyContext {
     std::string text_column;
     std::string text_label_column;
     bool text_has_labels = false;
-    int text_tokenizer_type = 1;
-    int text_max_length = 512;
-    bool text_lowercase = true;
-    int text_min_freq = 1;
-    int text_max_vocab_size = -1;
 
     // Image-specific (commit 3) ------------------------------------
     // image_layout mirrors DataInputDialog::ImageLayout as an int so

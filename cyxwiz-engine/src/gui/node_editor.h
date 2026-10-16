@@ -649,9 +649,14 @@ public:
         pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
     }
     // A Text Tokenizer after the Data Input `input_id`, reading its text and
-    // label columns, opened once it is on the canvas (Compile's "Add a Text
-    // Tokenizer", TOFIX129 B-8).
-    void AddTextTokenizerAfter(int input_id);
+    // label columns (the node's, unless given), opened once it is on the
+    // canvas (Compile's and Data Input's "Add a Text Tokenizer", TOFIX129 B-8).
+    void AddTextTokenizerAfter(int input_id, const std::string& text_column = {},
+                               const std::string& label_column = {});
+    // Opens the node's dialog at the start of the next canvas frame. A node
+    // dialog uses this to open another node's: opening it at once replaces
+    // the dialog that is still drawing (Properties keeps one).
+    void RequestOpenNode(int node_id) { pending_open_node_id_ = node_id; }
     // A node of `type` reading the step's result beside what already reads
     // it, below the step (Data Studio's Data Validator: its output is an
     // issues table, not the rows, so it must not take over the step's links).
@@ -1022,6 +1027,7 @@ private:
     };
     std::vector<PendingStepAfter> pending_steps_after_;
     void ApplyStepAfterInsert();
+    int pending_open_node_id_ = -1;
     void InsertStepAfter(const PendingStepAfter& request);
     // A node to select once ImNodes has drawn it (a new node is dropped from
     // the selection before its first frame).

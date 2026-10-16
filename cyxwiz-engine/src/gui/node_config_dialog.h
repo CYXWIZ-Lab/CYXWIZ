@@ -160,6 +160,10 @@ private:
     void RenderPaddingTab();
     void RenderPreviewTab();
     void LoadFromNode();
+    // A tokenizer with no columns set takes the text and label columns of
+    // the Data Input before it (TOFIX129 B-8), once, when first drawn.
+    void TakeColumnsFromInput();
+    bool columns_from_input_checked_ = false;
     bool BuildVocabularyFile();
     bool InspectVocabularyFile();
     bool IsTokenizerNode() const;
@@ -292,6 +296,9 @@ private:
     void RenderImageOptions();
     void RenderAudioOptions();
     void RenderTextOptions();
+    // The nodes after this input that turn its text into numbers (Text
+    // Tokenizer, vectorizers, Word Embeddings), or Add a Text Tokenizer.
+    void RenderTextTurnedIntoNumbersBy();
 
     // KNIME-style tabs
     void RenderTransformationTab();
@@ -370,11 +377,6 @@ private:
     // its vocabulary from the text corpus.
     char text_column_[128] = "text";
     char text_label_column_[128] = "label";
-    int text_tokenizer_type_ = 1;   // 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE, 4=WordPiece, 5=SentencePieceBPE, 6=SentencePieceUnigram
-    int text_max_length_ = 512;
-    bool text_lowercase_ = true;
-    int text_min_freq_ = 1;
-    int text_max_vocab_size_ = -1;  // -1 = unlimited
 
     AudioLayout audio_layout_ = AudioLayout::ClassSubdirs;
 

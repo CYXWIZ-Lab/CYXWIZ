@@ -588,6 +588,11 @@ void NodeEditor::ApplySubgraphRequest() {
 }
 
 void NodeEditor::ApplyStepAfterInsert() {
+    if (pending_open_node_id_ >= 0) {
+        const int id = pending_open_node_id_;
+        pending_open_node_id_ = -1;
+        OpenNodeConfiguration(id);
+    }
     if (deferred_focus_.node_id >= 0) {
         if (deferred_focus_.frames > 0) {
             --deferred_focus_.frames;
@@ -754,19 +759,21 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     if (request.open_dialog) OpenNodeConfiguration(step_id);
 }
 
-void NodeEditor::AddTextTokenizerAfter(int input_id) {
+void NodeEditor::AddTextTokenizerAfter(int input_id, const std::string& text_column,
+                                       const std::string& label_column) {
     const MLNode* input = FindNodeById(input_id);
     if (!input) return;
     std::map<std::string, std::string> parameters;
-    const auto column = [&](const char* key) {
+    const auto column = [&](const std::string& given, const char* key) {
+        if (!given.empty()) return given;
         const auto it = input->parameters.find(key);
         return it == input->parameters.end() ? std::string() : it->second;
     };
-    if (const auto text = column("text_column"); !text.empty()) {
+    if (const auto text = column(text_column, "text_column"); !text.empty()) {
         parameters["text_col"] = text;
         parameters["text_column"] = text;
     }
-    if (const auto label = column("text_label_column"); !label.empty()) parameters["label_col"] = label;
+    if (const auto label = column(label_column, "text_label_column"); !label.empty()) parameters["label_col"] = label;
     PendingStepAfter request{input_id, NodeType::TextTokenizer, false, {}, {}, std::move(parameters)};
     request.open_dialog = true;
     pending_steps_after_.push_back(std::move(request));

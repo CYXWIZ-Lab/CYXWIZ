@@ -48,3 +48,13 @@ the model without one (*CW-C-0203*, "gives text, and nothing turns it into
 numbers") and offers **Add a Text Tokenizer**: it adds the node after the
 Data Input, takes over its links, fills in the text and label columns and
 opens its dialog.
+
+Data Input's Text options set only the layout and the text and label
+columns. Under **Preprocessing (done by nodes)** the dialog names the nodes
+after it that turn the text into numbers (*Tokenized by Tokenizer (word),
+vocabulary sentiment_analysis_vocab.txt, 64 ids per row*), with **Open it**
+and **Show on canvas**, or offers **Add a Text Tokenizer**. A new Text
+Tokenizer takes its text and label columns from the Data Input before it.
+Apply reads the texts (an empty text is not a sample) and builds no
+vocabulary: the sentiment CSV loads in about 3 s (52,681 samples, 7
+classes, 30.4 MB).

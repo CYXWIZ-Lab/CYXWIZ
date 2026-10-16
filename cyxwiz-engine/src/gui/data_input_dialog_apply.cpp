@@ -155,16 +155,16 @@ void DataInputDialog::Apply() {
             node_->parameters["mono"] = mono_ ? "true" : "false";
         } else if (file_category_ == FileCategory::Text) {
             // Persist text dialog state so reopening the dialog restores
-            // the layout choice, column mapping, and tokenizer defaults.
+            // the layout choice and column mapping. Tokenizing is the Text
+            // Tokenizer node's (TOFIX129 B-8): the settings Data Input kept
+            // for it are dropped.
             node_->parameters["text_layout"] =
                 std::to_string(static_cast<int>(text_layout_));
             node_->parameters["text_column"] = text_column_;
             node_->parameters["text_label_column"] = text_label_column_;
-            node_->parameters["text_tokenizer_type"] = std::to_string(text_tokenizer_type_);
-            node_->parameters["text_max_length"] = std::to_string(text_max_length_);
-            node_->parameters["text_lowercase"] = text_lowercase_ ? "true" : "false";
-            node_->parameters["text_min_freq"] = std::to_string(text_min_freq_);
-            node_->parameters["text_max_vocab_size"] = std::to_string(text_max_vocab_size_);
+            for (const char* key : {"text_tokenizer_type", "text_max_length", "text_lowercase", "text_min_freq",
+                                    "text_max_vocab_size"})
+                node_->parameters.erase(key);
         }
 
         // Excel specific
@@ -316,11 +316,6 @@ void DataInputDialog::Apply() {
         // the user picked a label column.
         ctx.text_has_labels       = text_corpus_ready ||
                                     (strlen(text_label_column_) > 0);
-        ctx.text_tokenizer_type   = text_tokenizer_type_;
-        ctx.text_max_length       = text_max_length_;
-        ctx.text_lowercase        = text_lowercase_;
-        ctx.text_min_freq         = text_min_freq_;
-        ctx.text_max_vocab_size   = text_max_vocab_size_;
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
@@ -343,7 +338,7 @@ void DataInputDialog::Apply() {
         node_->parameters["dataset_name"] = loaded_dataset_name_;
         node_->parameters["data_loaded"]  = "false";
 
-        apply_status_message_ = std::string("Tokenizing ") +
+        apply_status_message_ = std::string("Reading ") +
             fs::path(text_source_path).filename().string() + "...";
         apply_status_timer_ = 0.0f;
 

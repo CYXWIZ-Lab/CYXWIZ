@@ -274,7 +274,7 @@ void DataInputDialog::RenderTextPreview() {
         ImGui::Text("Samples: %d text files", file_count);
         ImGui::Spacing();
         ImGui::TextDisabled("Each subdirectory name becomes a class label. "
-                            "Apply to tokenize + build vocab (runs on a worker thread).");
+                            "Apply reads the texts (runs on a worker thread).");
         return;
     }
 
