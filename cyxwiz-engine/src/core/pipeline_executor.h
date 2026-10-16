@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mutex>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <map>
@@ -20,11 +21,16 @@ namespace gui {
 enum class NodeType;
 }
 
+namespace arrow {
+class Schema;
+class Table;
+}
+
 namespace cyxwiz {
 
 // Forward declaration
-class DuckDBConnector;
 class SqlTransform;
+struct SqlTransformInput;
 struct PipelineRuntimeSupport;
 
 enum class PipelineNodeExecutionEvent : uint8_t {
@@ -274,8 +280,6 @@ private:
                             const std::string& error,
                             const std::string& written_path = {});
 
-    // DuckDB connector for SQL transformations
-    std::unique_ptr<DuckDBConnector> duckdb_;
     // SQL step running now, so RequestCancel can interrupt DuckDB.
     std::mutex active_sql_mutex_;
     SqlTransform* active_sql_ = nullptr;
@@ -395,6 +399,55 @@ private:
     std::string AdmitInputTable(const Node& node, const std::string& name);
     // A step without its input table: keeps the lookup's own reason.
     void ReportMissingInput(const std::string& step);
+
+    // SQL over files (TOFIX154 step 3). A step's inputs are Parquet files
+    // DuckDB reads in place: a disk table's own file, or a memory table
+    // written once (StepInputFile). The result comes back as a table, or,
+    // when an input is on disk or large, DuckDB writes it to the pipeline
+    // cache; a result above the data budget's threshold stays there on disk.
+    struct StepSqlInput {
+        std::string alias;
+        std::string dataset;
+    };
+    // `exact_types`: the SQL step's contract 1; the pipeline's own SQL
+    // (FilterRows, GroupBy, ...) takes any type DuckDB reads. Errors are
+    // reported as error_prefix + DuckDB's message.
+    bool RunStepSql(const Node& node, const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                    const std::string& output_name, bool exact_types, const std::string& error_prefix);
+    // A step's input for checking columns and types: the table in memory, or
+    // an empty table with the file's schema (its rows stay on disk).
+    std::shared_ptr<arrow::Table> InputSchemaTable(const std::string& dataset) const;
+    // A dataset's rows wherever it lives (0 when it is not a table).
+    int64_t DatasetRows(const std::string& dataset) const;
+    // A small query's result as a table (a fit step's statistics), over the
+    // same files; null after ReportError.
+    std::shared_ptr<arrow::Table> FetchStepSql(const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                                               const std::string& error_prefix);
+    // The SqlTransform inputs for a step: one file per input, the folders
+    // DuckDB may read; false after ReportError.
+    bool PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                              std::vector<SqlTransformInput>& files, std::vector<std::string>& folders,
+                              uint64_t& input_bytes, bool& any_on_disk);
+    // The Parquet file a dataset is read from ("" after ReportError).
+    std::string StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
+                              uint64_t& bytes, bool& on_disk);
+    // Steps that run SQL over their inputs' files (RunStepSql) and so are not
+    // admitted (read whole) first.
+    static bool StepReadsInputFiles(const Node& node);
+    // <project>/cache/pipeline, or <temp>/cyxwiz/pipeline outside a project.
+    std::filesystem::path PipelineCacheRoot() const;
+    // Parquet copies of memory tables, kept while their table lives.
+    struct StepInputCopy {
+        std::weak_ptr<arrow::Table> table;
+        std::string path;
+    };
+    std::map<std::string, StepInputCopy> step_input_copies_;
+    // Result files this executor wrote (output dataset -> file); one name per
+    // run, since Windows cannot replace a file that is still mapped.
+    std::map<std::string, std::string> step_result_files_;
+    // Removes the copies whose table is gone and the result files no dataset
+    // uses any more (at run start and when the executor goes).
+    void RemoveUnusedStepFiles();
     Node* FindNodeById(std::vector<Node>& nodes, int node_id);
     const Node* FindNodeById(const std::vector<Node>& nodes, int node_id) const;
 

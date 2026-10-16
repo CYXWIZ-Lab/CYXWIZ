@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <filesystem>
+#include <thread>
 #include <sstream>
 
 namespace cyxwiz {
@@ -304,10 +305,22 @@ DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
         opened_spill_ = DataSpillDirectory();
         config.SetOptionByName("memory_limit",
                                duckdb::Value(std::to_string(std::max<uint64_t>(64, opened_budget_ >> 20)) + "MB"));
+        // Each DuckDB thread needs working memory of its own (about 128 MB
+        // for a spilling sort); more threads than the budget feeds fail with
+        // "failed to pin block" instead of spilling.
+        const uint64_t threads = std::clamp<uint64_t>(opened_budget_ / (128ULL << 20), 1,
+                                                      std::max(1u, std::thread::hardware_concurrency()));
+        config.SetOptionByName("threads", duckdb::Value::BIGINT(static_cast<int64_t>(threads)));
         const std::string& spill = opened_spill_;
         std::error_code spill_error;
-        if (!spill.empty() && (std::filesystem::create_directories(spill, spill_error), !spill_error))
+        if (!spill.empty() && (std::filesystem::create_directories(spill, spill_error), !spill_error)) {
             config.SetOptionByName("temp_directory", duckdb::Value(spill));
+            // With external access off DuckDB touches only allowed folders,
+            // its own spill folder included.
+            std::string folder = std::filesystem::path(spill).generic_string();
+            if (folder.back() != '/') folder += '/';
+            config.options.allowed_directories.insert(folder);
+        }
         config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
         config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
         config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
@@ -362,6 +375,72 @@ std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
         return {};
     } catch (const std::exception& e) {
         return ErrorText(e);
+    }
+}
+
+std::vector<std::string> DuckDBConnector::ResultColumnNames(const std::string& sql) {
+    if (!conn_) return {};
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) {
+            last_error_ = prepared->GetError();
+            return {};
+        }
+        return prepared->GetNames();
+    } catch (const std::exception& e) {
+        last_error_ = ErrorText(e);
+        return {};
+    }
+}
+
+namespace {
+// 'a''b' quoting for a file path in SQL (forward slashes).
+std::string SqlPathLiteral(const std::string& path) {
+    std::string text = "'";
+    for (char c : path) {
+        if (c == '\\') text += '/';
+        else if (c == '\'') text += "''";
+        else text += c;
+    }
+    return text + "'";
+}
+}  // namespace
+
+bool DuckDBConnector::RegisterParquetView(const std::string& name, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return false;
+    }
+    return Execute("CREATE OR REPLACE VIEW " + QuoteIdentifier(name) +
+                   " AS SELECT * FROM read_parquet(" + SqlPathLiteral(path) + ")");
+}
+
+bool DuckDBConnector::RegisterParquetTable(const std::string& name, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return false;
+    }
+    return Execute("CREATE OR REPLACE TABLE " + QuoteIdentifier(name) +
+                   " AS SELECT * FROM read_parquet(" + SqlPathLiteral(path) + ")");
+}
+
+int64_t DuckDBConnector::CopyQueryToParquet(const std::string& sql, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return -1;
+    }
+    try {
+        auto result = conn_->Query("COPY (" + sql + ") TO " + SqlPathLiteral(path) +
+                                   " (FORMAT PARQUET, ROW_GROUP_SIZE 131072, COMPRESSION ZSTD)");
+        if (result->HasError()) {
+            last_error_ = result->GetError();
+            return -1;
+        }
+        auto chunk = result->Fetch();
+        return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).GetValue<int64_t>() : 0;
+    } catch (const std::exception& e) {
+        last_error_ = ErrorText(e);
+        return -1;
     }
 }
 

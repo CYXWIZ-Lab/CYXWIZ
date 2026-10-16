@@ -788,14 +788,29 @@ void CheckPipelineDataInputUsesProjectIngestionCache() {
           "the disk-backed Data Input reports its rows");
     Check(disk_facts.count(91003) && disk_facts.at(91003).rows == 2,
           "the step after it reads every row");
+    // Under a tiny budget: a SQL step (SortRows) still runs, DuckDB reading
+    // the file and writing its result to disk; a step that needs its input
+    // whole (StandardScaler) stops before loading.
     cyxwiz::SetDataBudgetBytes(1);
     cyxwiz::PipelineExecutor over_budget;
     over_budget.SetIngestionCacheRoot(cache_root.string());
-    Check(!over_budget.ExecutePipeline(disk_backed_json) &&
-              over_budget.GetLastError().find("over the data budget") != std::string::npos,
-          "a disk input over the data budget stops the step before loading: " +
-              over_budget.GetLastError());
+    Check(over_budget.ExecutePipeline(disk_backed_json),
+          "a SQL step runs over a file under any budget: " + over_budget.GetLastError());
+    Check(registry.IsParquetBackedDataset("ds_sort_91003") &&
+              over_budget.GetNodeRunFacts().at(91003).rows == 2,
+          "its result over the threshold stays on disk");
+    std::string scaler_json = disk_backed_json;
+    const std::string sort_step = R"({"id":91003,"type":"SortRows","name":"Rows","parameters":{"columns":"value","order":"DESC"}})";
+    scaler_json.replace(scaler_json.find(sort_step), sort_step.size(),
+        R"({"id":91003,"type":"StandardScaler","name":"Scale","parameters":{"columns":"value"}})");
+    cyxwiz::PipelineExecutor whole_table;
+    whole_table.SetIngestionCacheRoot(cache_root.string());
+    Check(!whole_table.ExecutePipeline(scaler_json) &&
+              whole_table.GetLastError().find("over the data budget") != std::string::npos,
+          "a step that reads its input whole stops before loading over the budget: " +
+              whole_table.GetLastError());
     cyxwiz::SetDataBudgetBytes(0);
+    registry.UnregisterTabularDataset("ds_sort_91003");
 
     registry.UnregisterTabularDataset("ds_datainput_91002");
     registry.UnregisterTabularDataset("ds_datainput_91002_in_memory");
@@ -5981,6 +5996,25 @@ int main(int argc, char** argv) {
     Check(joined_table != nullptr, "Join output table exists");
     Check(joined_table->num_rows() == 3,
           "Join on x should match all rows in the self-join fixture");
+
+    // TOFIX154: the same self-join over two disk inputs under a tiny budget
+    // goes to a file; the repeated column name x is renamed, not refused.
+    {
+        std::string disk_join_json = join_json;
+        for (size_t at = 0; (at = disk_join_json.find(R"("has_header":"true")", at)) != std::string::npos;) {
+            disk_join_json.insert(at, R"("force_disk_backed":"true",)");
+            at += 60;
+        }
+        cyxwiz::SetDataBudgetBytes(1);
+        cyxwiz::PipelineExecutor disk_join;
+        Check(disk_join.ExecutePipeline(disk_join_json),
+              "a join of two disk inputs with a shared key name runs: " + disk_join.GetLastError());
+        const auto facts = disk_join.GetNodeRunFacts();
+        Check(facts.count(103) && facts.at(103).rows == 3, "the disk join matches every row");
+        Check(registry.IsParquetBackedDataset("ds_join_103"), "the disk join result stays on disk");
+        cyxwiz::SetDataBudgetBytes(0);
+        registry.UnregisterTabularDataset("ds_join_103");
+    }
 
     const fs::path join_left_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_join_left.csv";

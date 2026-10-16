@@ -24,13 +24,18 @@ class DuckDBConnector;
 //   - input and result column types must round-trip exactly (boolean,
 //     integers, float, double, text). Anything else fails closed with the
 //     column named, instead of being silently turned into text; cast in SQL.
-// Inputs are copied into DuckDB (DuckDBConnector::RegisterTable); there is no
-// zero-copy claim.
+// An input is a table copied into DuckDB (DuckDBConnector::RegisterTable) or
+// a Parquet file DuckDB reads in place (a view, TOFIX154): the pipeline gives
+// files, so a step never holds its whole input in memory. The result comes
+// back as a table, or DuckDB writes it to a Parquet file (WriteResultTo).
 // Contract names and input-alias parsing: sql_step_contract.h.
 
 struct SqlTransformInput {
     std::string alias;
-    std::shared_ptr<arrow::Table> table;
+    std::shared_ptr<arrow::Table> table;   // copied in, or
+    std::string parquet_path;              // read in place (then `schema` is its schema)
+    bool load_file = false;                // the file loaded into a DuckDB table (rowid order)
+    std::shared_ptr<arrow::Schema> schema;
 };
 
 struct SqlTransformResult {
@@ -40,6 +45,7 @@ struct SqlTransformResult {
     std::shared_ptr<arrow::Table> table;
     std::string plan;       // Explain / Profile: DuckDB's plan as JSON
     std::string plan_text;  // Explain / Profile: DuckDB's plan as its text drawing
+    int64_t rows_written = -1;  // Run with WriteResultTo: the rows in the file
 };
 
 // What Run does after the same checks (TOFIX146 SQL Workbench):
@@ -53,7 +59,9 @@ enum class SqlRunMode { Run, Check, Explain, Profile };
 
 class SqlTransform {
 public:
-    SqlTransform();
+    // `readable_folders`: folders of the Parquet inputs and of the result
+    // file (DuckDB may read and write nothing else).
+    explicit SqlTransform(std::vector<std::string> readable_folders = {});
     ~SqlTransform();
     SqlTransform(const SqlTransform&) = delete;
     SqlTransform& operator=(const SqlTransform&) = delete;
@@ -66,7 +74,14 @@ public:
     // with cancelled = true.
     void Interrupt();
 
+    // Run writes the result to this Parquet file instead of returning it.
+    void WriteResultTo(std::string parquet_path) { output_path_ = std::move(parquet_path); }
+    // The pipeline's own SQL (FilterRows, GroupBy, ...): inputs and results
+    // of any type DuckDB reads, as before contract 1 (not the SQL step).
+    void AllowAnyTypes() { exact_types_ = false; }
 private:
+    std::string output_path_;
+    bool exact_types_ = true;
     std::unique_ptr<DuckDBConnector> connector_;
     std::mutex interrupt_mutex_;
     bool interrupted_ = false;

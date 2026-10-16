@@ -75,6 +75,22 @@ public:
     // Null when this connector is not ready.
     std::unique_ptr<DuckDBConnector> NewConnection();
 
+    // A read-only view of a Parquet file under `name`; no rows are copied
+    // (TOFIX154). The file's folder must be one the connection may read.
+    bool RegisterParquetView(const std::string& name, const std::string& path);
+    // The same file loaded into a DuckDB table (columnar, spills under the
+    // memory limit): for SQL that needs the table's rowid (input row order).
+    bool RegisterParquetTable(const std::string& name, const std::string& path);
+
+    // Writes the rows of a read-only SELECT to a Parquet file (128K-row
+    // groups): DuckDB streams them and spills as it needs, so the result is
+    // never whole in memory. The folder must be one the connection may write.
+    // Returns the number of rows, -1 on error (GetLastError).
+    int64_t CopyQueryToParquet(const std::string& sql, const std::string& path);
+
+    // The column names a query's result would have (bound, not run).
+    std::vector<std::string> ResultColumnNames(const std::string& sql);
+
     // True while the data budget and spill folder are the ones the database
     // was opened with (TOFIX154); owners reopen it when they change.
     bool MatchesDataBudget() const;
