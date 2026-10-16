@@ -518,6 +518,7 @@ DatasetHandle DataRegistry::LoadHDF5(const std::string& path, const std::string&
         return DatasetHandle();
     }
 #else
+    (void)path; (void)name; (void)config;
     spdlog::error("HDF5 support not compiled (HighFive library missing)");
     return DatasetHandle();
 #endif
@@ -694,6 +695,7 @@ bool DataRegistry::ExportHDF5(DatasetHandle handle, const std::string& filepath,
         return false;
     }
 #else
+    (void)handle; (void)filepath; (void)config;
     spdlog::error("HDF5 support not compiled (HighFive library missing)");
     return false;
 #endif
