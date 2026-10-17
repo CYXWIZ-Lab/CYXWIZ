@@ -207,7 +207,7 @@ public:
 
     /** Shared ownership for asynchronous test consumers: sequential or a graph. */
     std::shared_ptr<IExecutableModel> GetActiveModel() const;
-    // The active model as a layer stack (feature importance, generation),
+    // The active model as a layer stack (language-model generation),
     // sharing its ownership; nullptr for a graph with branches.
     std::shared_ptr<SequentialModel> GetActiveSequentialModel() const;
 

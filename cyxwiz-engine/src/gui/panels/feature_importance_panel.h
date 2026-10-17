@@ -14,7 +14,7 @@
 namespace cyxwiz {
 
 class DataTable;
-class SequentialModel;
+class IExecutableModel;
 struct ActiveModelInfo;
 
 /**
@@ -54,7 +54,9 @@ private:
     // Once per picked dataset: the model's label column becomes the target.
     void SuggestTarget(const std::string& label_column);
     void RenderDataSelector();
-    void RenderConfiguration(bool has_model);
+    // layer_stack: the active model is a layer stack (Weight-Based reads its
+    // first layer; a graph with branches has more than one first layer).
+    void RenderConfiguration(bool has_model, bool layer_stack);
     void RenderLoadingIndicator();
     void RenderResults();
     void RenderImportanceChart();
@@ -68,7 +70,7 @@ private:
 
     // Model: TrainingManager's active model, read each frame.
     std::function<void()> load_checkpoint_;
-    const SequentialModel* result_model_ = nullptr;  // the model the current result is for
+    const IExecutableModel* result_model_ = nullptr;  // the model the current result is for
 
     // Dataset
     ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)

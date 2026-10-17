@@ -12,6 +12,7 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/model_exporter.h"
 #include "../src/core/model_importer.h"
+#include <cyxwiz/feature_importance.h>
 #include "route_qualification_test_fixture.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/training_executor.h"
@@ -618,6 +619,68 @@ void CheckGraphTrainingKeepsBestCheckpoint() {
     std::cout << "  residual graph: training keeps and restores its best checkpoint\n";
 }
 
+// Feature importance on a graph with branches (TOFIX157): permutation and
+// drop-column importance run any model's forward pass. With weights that let
+// only feature 0 reach the output, feature 0 matters and the other seven are
+// exactly zero.
+void CheckGraphFeatureImportance() {
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed =
+        cyxwiz::ParseGraphDocument(ResidualGraphJson(gui::NodeType::MSELoss, "branch_rows"), document, error);
+    Check(parsed, "the importance graph parses: " + error);
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(document.nodes, document.links, true,
+                                         cyxwiz::GraphCompiler::Purpose::ModelImport);
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), "the importance graph builds: " + built.error_message);
+    if (!built.ok()) return;
+    auto& model = *built.model;
+
+    // Every weight 0, except one [6, 8] branch reading feature 0 and a head
+    // that sums the units: the output is a multiple of feature 0.
+    auto params = model.GetParameters();
+    bool first_branch = true;
+    for (auto& [name, tensor] : params) {
+        const auto shape = tensor.Shape();
+        std::vector<float> values(tensor.NumElements(), 0.0f);
+        if (shape == std::vector<size_t>{6, 8} && first_branch) {
+            for (size_t unit = 0; unit < 6; ++unit) values[unit * 8] = 1.0f;
+            first_branch = false;
+        } else if (shape == std::vector<size_t>{3, 6}) {
+            std::fill(values.begin(), values.end(), 1.0f);
+        }
+        tensor = cyxwiz::Tensor(shape, values.data());
+    }
+    model.SetParameters(params);
+    model.SetTraining(false);
+    const cyxwiz::FeatureImportanceAnalyzer::ModelForward forward = [&model](const cyxwiz::Tensor& input) {
+        return model.Forward(input);
+    };
+
+    std::vector<std::vector<double>> X(40, std::vector<double>(8));
+    for (size_t r = 0; r < X.size(); ++r)
+        for (size_t f = 0; f < 8; ++f) X[r][f] = std::sin(0.7 * static_cast<double>(r * 8 + f + 1));
+    std::vector<double> y;
+    for (const auto& row : X) y.push_back(36.0 * row[0]);  // 6 units x 6 head weights, first output
+    const auto clean = forward(cyxwiz::Tensor({X.size(), 8}, std::vector<float>(X.size() * 8, 0.0f).data()));
+    Check(clean.Shape() == std::vector<size_t>({X.size(), 3}), "the graph gives 3 outputs per row");
+
+    for (int method = 0; method < 2; ++method) {
+        const auto result = method == 0
+            ? cyxwiz::FeatureImportanceAnalyzer::ComputePermutationImportance(forward, X, y, {}, 5, "mse")
+            : cyxwiz::FeatureImportanceAnalyzer::ComputeDropColumnImportance(forward, X, y, {}, "mse");
+        const std::string label = method == 0 ? "permutation" : "drop-column";
+        Check(result.success, label + " importance runs on the graph model: " + result.error_message);
+        bool others_zero = result.importances.size() == 8;
+        for (size_t f = 1; f < result.importances.size(); ++f)
+            others_zero = others_zero && std::abs(result.importances[f]) < 1e-9;
+        Check(result.importances.size() == 8 && result.importances[0] > 0.0 && others_zero,
+              label + ": feature 0 matters, the other seven are zero");
+    }
+    std::cout << "  residual graph: permutation and drop-column importance find the one feature that matters\n";
+}
+
 void RunCase(const json& c) {
     const std::string name = c.at("name").get<std::string>();
     const auto graph = BuildGraph(c);
@@ -802,6 +865,11 @@ int main(int, char** argv) {
         CheckGraphPackageRoundTrip();
     } catch (const std::exception& e) {
         Check(false, std::string("the graph package round trip threw: ") + e.what());
+    }
+    try {
+        CheckGraphFeatureImportance();
+    } catch (const std::exception& e) {
+        Check(false, std::string("feature importance on the graph model threw: ") + e.what());
     }
     try {
         CheckGraphTrainingKeepsBestCheckpoint();

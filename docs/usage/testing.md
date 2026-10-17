@@ -14,7 +14,8 @@ model it trained in this session is the one tested. It saves and exports as a
 CyxWiz package with its graph (see Exporting a model). **Load Checkpoint for
 Testing** builds the graph's own model and loads the checkpoint into it, and
 training with *save best checkpoint* keeps and restores its best epoch, as
-for a layer stack. Not yet for such a graph: Feature Importance.
+for a layer stack. Feature Importance measures it too (Permutation and
+Drop-Column; see feature_importance.md).
 
 ## Test Results
 

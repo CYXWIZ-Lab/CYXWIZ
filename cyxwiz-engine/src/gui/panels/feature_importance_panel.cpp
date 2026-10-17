@@ -8,6 +8,7 @@
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include "../../core/training_manager.h"
+#include "../../core/executable_model.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <implot.h>
@@ -41,26 +42,22 @@ void FeatureImportancePanel::Render() {
         // The active model: the last trained model or a loaded checkpoint, the
         // same one Test and Inference use. A result for another model is stale.
         auto& training = TrainingManager::Instance();
-        const std::shared_ptr<SequentialModel> model = training.GetActiveSequentialModel();
+        const std::shared_ptr<IExecutableModel> model = training.GetActiveModel();
         if (model.get() != result_model_ && !is_computing_.load()) {
             has_result_ = false;
             result_model_ = nullptr;
         }
 
         ui::BeginSettingsColumn("feature_importance", 300.0f);
-        RenderModel(model != nullptr, training.GetActiveModelInfo(), model ? model->Size() : 0);
+        RenderModel(model != nullptr, training.GetActiveModelInfo(), model ? model->LayerCount() : 0);
         SuggestTarget(training.GetActiveModelInfo().effective_label_column);
         RenderDataSelector();
-        RenderConfiguration(model != nullptr);
+        RenderConfiguration(model != nullptr, !model || model->AsSequentialModel() != nullptr);
         ui::BeginResultsArea();
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else if (has_result_) {
             RenderResults();
-        } else if (!model && training.GetActiveModel()) {
-            ui::EmptyState(ICON_FA_STAR, "Not for this model yet",
-                           "The active model is a graph with branches; feature importance measures a model whose "
-                           "layers run one after another. Test (Train > Test) works for it.");
         } else if (!model) {
             ui::EmptyState(ICON_FA_STAR, "Nothing to measure yet",
                            "Run training (Train menu) or load a checkpoint. The model then shows here, "
@@ -157,7 +154,7 @@ void FeatureImportancePanel::RenderDataSelector() {
     }
 }
 
-void FeatureImportancePanel::RenderConfiguration(bool has_model) {
+void FeatureImportancePanel::RenderConfiguration(bool has_model, bool layer_stack) {
     ui::SettingsSection("Method");
     const char* methods[] = {"Permutation Importance", "Drop-Column Importance", "Weight-Based"};
     ui::FieldLabel("Method");
@@ -184,6 +181,9 @@ void FeatureImportancePanel::RenderConfiguration(bool has_model) {
 
     ImGui::Spacing();
     const char* reason = !has_model                 ? "Needs an active model"
+                       : method_ == 2 && !layer_stack
+                           ? "Weight-Based reads the first layer; a graph with branches feeds its inputs to several. "
+                             "Use Permutation or Drop-Column."
                        : !current_table_            ? "Pick a dataset first"
                        : target_column_ < 0         ? "Pick the target column"
                        : selected_features_.empty() ? "Select at least one feature"
@@ -483,7 +483,7 @@ void FeatureImportancePanel::PrepareData() {
 
 void FeatureImportancePanel::RunImportanceAnalysis() {
     auto& training = TrainingManager::Instance();
-    std::shared_ptr<SequentialModel> model = training.GetActiveSequentialModel();
+    std::shared_ptr<IExecutableModel> model = training.GetActiveModel();
     if (is_computing_.load() || !model || !current_table_ || target_column_ < 0) return;
     const std::optional<ProcessDeviceSelection> model_device = training.GetActiveModelInfo().model_device;
 
@@ -529,6 +529,12 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
                 }
             }
             FeatureImportanceResult result;
+            // Any model's forward pass in evaluation mode (a layer stack or a
+            // graph with branches).
+            model->SetTraining(false);
+            const FeatureImportanceAnalyzer::ModelForward forward = [&model](const Tensor& input) {
+                return model->Forward(input);
+            };
 
             switch (method) {
                 case 0: {
@@ -541,7 +547,7 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
                     };
 
                     result = FeatureImportanceAnalyzer::ComputePermutationImportance(
-                        *model, X, y, names, repeats, scoring, callback);
+                        forward, X, y, names, repeats, scoring, callback);
                     break;
                 }
 
@@ -549,14 +555,20 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
                     // Drop-column importance
                     spdlog::info("Computing drop-column importance");
                     result = FeatureImportanceAnalyzer::ComputeDropColumnImportance(
-                        *model, X, y, names, scoring);
+                        forward, X, y, names, scoring);
                     break;
                 }
 
                 case 2: {
                     // Weight-based importance
                     spdlog::info("Computing weight-based importance");
-                    result = FeatureImportanceAnalyzer::ComputeWeightImportance(*model, names);
+                    if (SequentialModel* stack = model->AsSequentialModel()) {
+                        result = FeatureImportanceAnalyzer::ComputeWeightImportance(*stack, names);
+                    } else {
+                        result.success = false;
+                        result.error_message = "Weight-Based reads the first layer; a graph with branches feeds its "
+                                               "inputs to several. Use Permutation or Drop-Column.";
+                    }
                     break;
                 }
             }

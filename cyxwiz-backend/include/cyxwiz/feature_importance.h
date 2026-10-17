@@ -32,13 +32,18 @@ struct CYXWIZ_API FeatureImportanceResult {
  */
 class CYXWIZ_API FeatureImportanceAnalyzer {
 public:
+    // The trained model's forward pass in evaluation mode: a batch of rows
+    // [n_samples x n_features] in, its outputs out. Any model fits (a layer
+    // stack, or a graph with branches, TOFIX157).
+    using ModelForward = std::function<Tensor(const Tensor& input)>;
+
     /**
      * Compute permutation importance
      *
      * For each feature, shuffle its values and measure the decrease in model performance.
      * Features whose shuffling causes larger performance drops are more important.
      *
-     * @param model The trained SequentialModel
+     * @param forward The trained model's forward pass (evaluation mode)
      * @param X Input features [n_samples x n_features]
      * @param y True labels [n_samples]
      * @param feature_names Optional names for features
@@ -48,7 +53,7 @@ public:
      * @return FeatureImportanceResult with importance scores
      */
     static FeatureImportanceResult ComputePermutationImportance(
-        SequentialModel& model,
+        const ModelForward& forward,
         const std::vector<std::vector<double>>& X,
         const std::vector<double>& y,
         const std::vector<std::string>& feature_names = {},
@@ -65,7 +70,7 @@ public:
      *
      * Note: This simplified version doesn't actually retrain - it sets the column to zero.
      *
-     * @param model The trained SequentialModel
+     * @param forward The trained model's forward pass (evaluation mode)
      * @param X Input features [n_samples x n_features]
      * @param y True labels [n_samples]
      * @param feature_names Optional names for features
@@ -73,7 +78,7 @@ public:
      * @return FeatureImportanceResult with importance scores
      */
     static FeatureImportanceResult ComputeDropColumnImportance(
-        SequentialModel& model,
+        const ModelForward& forward,
         const std::vector<std::vector<double>>& X,
         const std::vector<double>& y,
         const std::vector<std::string>& feature_names = {},
@@ -101,7 +106,7 @@ private:
      * @return Score (higher is better for accuracy, lower magnitude is better for MSE)
      */
     static double EvaluateModel(
-        SequentialModel& model,
+        const ModelForward& forward,
         const std::vector<std::vector<double>>& X,
         const std::vector<double>& y,
         const std::string& scoring
