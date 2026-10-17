@@ -33,7 +33,6 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
     ${_cyxwiz_engine_src}/core/guarded_extension_module.cpp
-    ${_cyxwiz_engine_src}/core/extension_gradient_check.cpp
     ${_cyxwiz_engine_src}/core/stacked_metric_loss.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_mining.cpp
     ${_cyxwiz_engine_src}/core/spatial_batch_layout.cpp

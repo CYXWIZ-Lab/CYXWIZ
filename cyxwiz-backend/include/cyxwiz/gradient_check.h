@@ -4,9 +4,11 @@
 // P2 step 2.4, decision D1: extension authors write the gradient and the
 // engine checks it). Central differences of L = sum(Forward(x) * r) for a
 // fixed random r, compared with Backward(r) for the input and GetGradients()
-// for every parameter. Used by both routes: C++ plugins and Python nodes.
+// for every parameter. Lives in the backend so both routes run the same
+// code: the Engine (C++ plugin nodes, Properties) and pycyxwiz.gradcheck.
 
-#include <cyxwiz/sequential.h>
+#include "api_export.h"
+#include "sequential.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -44,11 +46,11 @@ struct GradientCheckResult {
 // dimension. Callers that use a factory pass it the shape without the batch
 // (CreateModule takes one sample's shape, as the model builder passes it).
 // The module runs in evaluation mode.
-GradientCheckResult CheckModuleGradients(
+CYXWIZ_API GradientCheckResult CheckModuleGradients(
     const std::function<std::unique_ptr<Module>(const std::vector<size_t>& input_shape)>& make,
     const GradientCheckOptions& options = {});
 
 // "Passed: largest relative error 3.1e-07 (tolerance 2.0e-02)".
-std::string DescribeGradientCheck(const GradientCheckResult& result);
+CYXWIZ_API std::string DescribeGradientCheck(const GradientCheckResult& result);
 
 }  // namespace cyxwiz

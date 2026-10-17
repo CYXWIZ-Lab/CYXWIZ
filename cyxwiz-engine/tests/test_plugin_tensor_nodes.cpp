@@ -3,7 +3,7 @@
 // manager, its Softsign and Snake register as trainable extension nodes,
 // pass the gradient check through the engine's factory, and train inside the
 // tiny causal-LM example graph.
-#include "../src/core/extension_gradient_check.h"
+#include <cyxwiz/gradient_check.h>
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/plugin/plugin_manager.h"

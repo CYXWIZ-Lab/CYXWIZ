@@ -1,7 +1,7 @@
 // The gradient checker (TOFIX125 P2 step 2.4): passes correct hand-written
 // gradients, including built-in backend modules as a control, and fails
 // wrong ones, for the input and for parameters.
-#include "../src/core/extension_gradient_check.h"
+#include <cyxwiz/gradient_check.h>
 
 #include <cyxwiz/sequential.h>
 

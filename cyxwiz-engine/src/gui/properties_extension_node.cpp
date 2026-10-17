@@ -7,7 +7,7 @@
 
 #include "node_editor.h"
 #include "properties_rows.h"
-#include "../core/extension_gradient_check.h"
+#include <cyxwiz/gradient_check.h>
 #include "../core/extension_node_registry.h"
 #include "../core/extension_properties_presentation.h"
 #include "../plugin/plugin_manager.h"

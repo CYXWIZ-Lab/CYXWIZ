@@ -188,6 +188,7 @@ set(BACKEND_SOURCES
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
+    src/algorithms/gradient_check.cpp
     src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/feedforward_modules.cpp
     src/algorithms/sequential/spatial_modules.cpp
