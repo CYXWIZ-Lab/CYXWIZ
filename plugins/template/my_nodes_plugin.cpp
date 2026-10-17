@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// From the CyxWiz plugin SDK template: replace this licence with your own when you make it yours.
 // My Nodes: a CyxWiz plugin with one trainable node.
 //
 // Bent Identity  y = (sqrt(x^2 + 1) - 1) / 2 + x

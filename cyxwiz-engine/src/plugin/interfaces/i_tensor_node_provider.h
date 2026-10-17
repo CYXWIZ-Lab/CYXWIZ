@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 // Trainable extension nodes from a C++ plugin (TOFIX125 P2, plugin API 1.1).

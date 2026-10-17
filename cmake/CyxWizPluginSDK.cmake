@@ -11,6 +11,7 @@
 # <folder>/lib              the backend's import library
 # <folder>/lib/cmake/CyxWizSDK  find_package(CyxWizSDK) -> CyxWiz::PluginSDK
 # <folder>/template         the template plugin (plugins/template)
+# <folder>/LICENSE, NOTICE  Apache-2.0 for every file in the SDK
 
 include(CMakePackageConfigHelpers)
 
@@ -59,6 +60,9 @@ install(FILES
             "${_cyxwiz_sdk_cmake}/CyxWizSDKConfigVersion.cmake"
             "${CMAKE_SOURCE_DIR}/cmake/sdk/CyxWizPluginHelpers.cmake"
         DESTINATION lib/cmake/CyxWizSDK COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# Apache-2.0 (owner 2026-10-17, the plugin-SDK part of TOFIX142).
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/sdk/LICENSE" "${CMAKE_SOURCE_DIR}/cmake/sdk/NOTICE"
+        DESTINATION . COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
 install(FILES
             "${CMAKE_SOURCE_DIR}/plugins/template/CMakeLists.txt"
             "${CMAKE_SOURCE_DIR}/plugins/template/plugin.json"

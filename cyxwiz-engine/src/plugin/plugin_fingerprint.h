@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 // Build fingerprint of a plugin (TOFIX125 P5 step 5.1, Part D6, decision

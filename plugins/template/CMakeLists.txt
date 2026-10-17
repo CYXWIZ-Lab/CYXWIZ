@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 cmake_minimum_required(VERSION 3.20)
 project(my_nodes LANGUAGES CXX)
 

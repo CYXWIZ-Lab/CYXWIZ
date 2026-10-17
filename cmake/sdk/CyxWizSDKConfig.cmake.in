@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 # CyxWiz plugin SDK @CYXWIZ_SDK_VERSION@ (TOFIX125 P5 step 5.3).
 #
 #   find_package(CyxWizSDK @CYXWIZ_SDK_VERSION_MAJOR@.@CYXWIZ_SDK_VERSION_MINOR@ REQUIRED)

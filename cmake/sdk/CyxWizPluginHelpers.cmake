@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 # Helpers for CyxWiz C++ plugins (TOFIX125 P5 step 5.3). Used by plugins
 # built inside the CyxWiz tree and, installed beside CyxWizSDKConfig.cmake,
 # by plugins built against the SDK.
