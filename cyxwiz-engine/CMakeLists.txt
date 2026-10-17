@@ -412,6 +412,7 @@ set(ENGINE_SOURCES
     src/core/editor/folding.cpp
     src/core/editor/outline.cpp
     src/core/live_graph_compile.cpp
+    src/extension/python/python_node_factory.cpp
     src/core/extension_node_presentation.cpp
     src/core/remote_job_presentation.cpp
     src/core/reservation_presentation.cpp
@@ -6930,6 +6931,25 @@ add_test(NAME python_node_bundle COMMAND test_python_node_bundle)
 add_executable(test_python_node_approvals tests/test_python_node_approvals.cpp)
 target_link_libraries(test_python_node_approvals PRIVATE cyxwiz-training-core)
 add_test(NAME python_node_approvals COMMAND test_python_node_approvals)
+
+# Python nodes train through their bundle's factory (TOFIX125 P4 step 4.3).
+# Starts its own interpreter: the Python the build uses, pycyxwiz as built.
+if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
+    get_filename_component(_cyxwiz_test_python_home "${Python3_EXECUTABLE}" DIRECTORY)
+    add_executable(test_python_node_training
+        tests/test_python_node_training.cpp
+        src/extension/python/python_node_factory.cpp
+    )
+    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core pybind11::embed)
+    target_compile_definitions(test_python_node_training PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
+        CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_node_training>"
+        CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
+    add_dependencies(test_python_node_training pycyxwiz)
+    add_test(NAME python_node_training COMMAND test_python_node_training)
+endif()
 
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)

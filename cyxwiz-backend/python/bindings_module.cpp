@@ -6,6 +6,7 @@
 
 #include "cyxwiz/gradient_check.h"
 
+#include <cstdint>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -273,6 +274,16 @@ void BindModuleBase(py::module_& m) {
         .def("parameter_names", [](Module& self) {
                 return AsPythonModule(self).ParameterNames();
             }, "Names of the parameters added with add_parameter");
+
+    // The C++ module behind a Python module object, for the Engine (Part C3
+    // option A): an address, so the Engine needs no pybind11 type registry
+    // shared with this module. The caller keeps the object alive.
+    m.def("_module_address", [](py::object module) {
+        if (!py::isinstance<Module>(module)) {
+            throw py::type_error("_module_address expects a pycyxwiz.Module");
+        }
+        return reinterpret_cast<std::uintptr_t>(module.cast<Module*>());
+    }, py::arg("module"));
 }
 
 void BindGradientCheck(py::module_& m) {

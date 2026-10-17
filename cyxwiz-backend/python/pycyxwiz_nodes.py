@@ -250,6 +250,57 @@ def gradcheck(cls, settings=None, **options):
     return _cyx.gradcheck(lambda shape: create(cls, settings, list(shape)[1:]), **options)
 
 
+# --- used by the Engine (TOFIX125 P4): a bundle's code, imported privately --
+
+_engine_modules = {}
+
+
+def _engine_load(folder, private_name):
+    """Imports <folder>/node.py as the module `private_name` (once).
+
+    The name includes the bundle's hash, so an edited bundle loads fresh and
+    two bundles never collide. The folder is not added to sys.path: a
+    bundle must not shadow real packages.
+    """
+    import importlib.util
+    import os
+    import sys
+
+    module = _engine_modules.get(private_name)
+    if module is not None:
+        return module
+    spec = importlib.util.spec_from_file_location(private_name, os.path.join(folder, "node.py"))
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load node.py from %s" % folder)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[private_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[private_name]
+        raise
+    _engine_modules[private_name] = module
+    return module
+
+
+def _engine_class(folder, private_name, entry_class):
+    cls = getattr(_engine_load(folder, private_name), entry_class, None)
+    if cls is None:
+        raise LookupError("node.py has no class %s" % entry_class)
+    _require_node(cls)
+    return cls
+
+
+def _engine_create(folder, private_name, entry_class, settings, input_shape):
+    """(module, its C++ address) for the Engine's model builder."""
+    module = create(_engine_class(folder, private_name, entry_class), settings, input_shape)
+    return module, _cyx._module_address(module)
+
+
+def _engine_output_shape(folder, private_name, entry_class, settings, input_shape):
+    return output_shape(_engine_class(folder, private_name, entry_class), settings, input_shape)
+
+
 def _source_file(cls):
     import inspect
     module = __import__("sys").modules.get(cls.__module__)
