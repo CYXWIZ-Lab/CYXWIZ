@@ -125,6 +125,14 @@ nodes/
 | `content_hash` is the SHA-256 of `node.py` | The Engine uses it to notice a changed bundle and to approve code |
 | Bundling again replaces `node.json` and `node.py` | Edit the `.py`, bundle again |
 
+`content_hash` covers `node.py` byte for byte. If you keep bundles in git,
+stop git from changing their line endings, or the Engine reports
+"node.py changed since the bundle was written". Add to `.gitattributes`:
+
+```
+*.cyxnode/** -text
+```
+
 The manifest of the example above (`node.json`, Snake's entry shortened):
 
 ```json

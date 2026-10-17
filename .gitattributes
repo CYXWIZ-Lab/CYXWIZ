@@ -1,2 +1,4 @@
 # Word vector fixtures are compared byte for byte (CRLF and binary cases): no line-ending conversion.
 cyxwiz-engine/tests/computation_truth/fixtures/word_embeddings/** -text
+# Python node bundles: node.py is hashed byte for byte (content_hash), so no line-ending conversion.
+*.cyxnode/** -text

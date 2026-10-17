@@ -1,0 +1,82 @@
+{
+  "bundle_format": 1,
+  "id": "com.example.acts",
+  "nodes": [
+    {
+      "name": "Softsign",
+      "version": "1.0.0",
+      "entry": "node.py:Softsign",
+      "tier": "activation",
+      "display_name": "Softsign",
+      "category": "Activation",
+      "role": "activation",
+      "description": "x / (1 + |x|)",
+      "shape_rule": "same_as_input",
+      "inputs": [
+        {
+          "name": "Input",
+          "type": "Tensor"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Output",
+          "type": "Tensor"
+        }
+      ],
+      "parameters": [],
+      "verification": {
+        "status": "passed",
+        "checked_on": "2026-10-17",
+        "tolerance": 0.02,
+        "max_relative_error": 4.5356058735651614e-05,
+        "where": "input"
+      }
+    },
+    {
+      "name": "Snake",
+      "version": "1.0.0",
+      "entry": "node.py:Snake",
+      "tier": "module",
+      "display_name": "Snake",
+      "category": "Activation",
+      "role": "activation",
+      "description": "x + sin^2(a x) / a, learnable a",
+      "shape_rule": "same_as_input",
+      "inputs": [
+        {
+          "name": "Input",
+          "type": "Tensor"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Output",
+          "type": "Tensor"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "initial_a",
+          "type": "float",
+          "default": "1.0",
+          "validation": "0.01-",
+          "description": "Starting value of a",
+          "choices": []
+        }
+      ],
+      "verification": {
+        "status": "passed",
+        "checked_on": "2026-10-17",
+        "tolerance": 0.02,
+        "max_relative_error": 0.0013223678240592562,
+        "where": "input"
+      }
+    }
+  ],
+  "requires": {
+    "pycyxwiz": ">=0.2.0",
+    "python_packages": []
+  },
+  "content_hash": "sha256:bcffe763ca1defc79c152f8221da10377c1c2c51d38913d253bb44ecfb247d0d"
+}
