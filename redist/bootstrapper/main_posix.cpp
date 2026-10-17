@@ -270,6 +270,16 @@ int main(int argc, char** argv) {
         installer_mode = true;
         ++first_forwarded_argument;
     }
+    // Runs the base's plugin check tool with the active runtime's library
+    // path, in the caller's folder so relative plugin paths work (TOFIX125 P5).
+    bool plugin_check_mode = false;
+    if (!installer_mode && argc > first_forwarded_argument &&
+        std::string_view(argv[first_forwarded_argument]) == "--plugin-check") {
+        plugin_check_mode = true;
+        ++first_forwarded_argument;
+    }
+    std::error_code caller_directory_error;
+    const auto caller_directory = std::filesystem::current_path(caller_directory_error);
 
     cyxwiz::runtime::ActiveRuntime runtime;
     std::string error;
@@ -290,14 +300,18 @@ int main(int argc, char** argv) {
     const auto launched_executable = installer_mode
         ? runtime.base_directory /
               cyxwiz::runtime::CurrentInstallerManagerExecutableName()
+        : plugin_check_mode
+        ? runtime.base_directory / cyxwiz::runtime::CurrentPluginCheckExecutableName()
         : runtime.engine_executable;
     if (!std::filesystem::is_regular_file(launched_executable)) {
         return Fail(
             runtime.runtime_root,
-            installer_mode
-                ? "active base does not contain the CyxWiz Installer"
-                : "active base does not contain the CyxWiz Engine");
+            installer_mode    ? "active base does not contain the CyxWiz Installer"
+            : plugin_check_mode ? "active base does not contain cyxwiz-plugin-check"
+                              : "active base does not contain the CyxWiz Engine");
     }
+    const std::filesystem::path working_directory =
+        plugin_check_mode && !caller_directory_error ? caller_directory : runtime.base_directory;
 
     std::vector<std::string> child_arguments{launched_executable.string()};
     if (installer_mode) {
@@ -310,7 +324,7 @@ int main(int argc, char** argv) {
     }
     const auto child = LaunchAndWait(
         launched_executable, std::move(child_arguments),
-        runtime.base_directory, runtime, !installer_mode);
+        working_directory, runtime, !installer_mode);
     if (!child.started) return Fail(runtime.runtime_root, child.message);
     engine_ownership.reset();
     if (::unsetenv("CYXWIZ_RUNTIME_USE_TOKEN") != 0)
@@ -318,12 +332,13 @@ int main(int argc, char** argv) {
 
     cyxwiz::runtime::AppendBootstrapDiagnostic(
         runtime.runtime_root,
-        std::string(installer_mode ? "launched installer runtime_set="
-                                   : "launched runtime_set=") +
+        std::string(installer_mode      ? "launched installer runtime_set="
+                    : plugin_check_mode ? "launched plugin check runtime_set="
+                                        : "launched runtime_set=") +
             runtime.runtime_set_id +
             " generation=" + std::to_string(runtime.generation) +
             " base=" + runtime.base_pack_id);
-    if (!installer_mode) {
+    if (!installer_mode && !plugin_check_mode) {
         cyxwiz::runtime::ActiveRuntimeState launched_runtime;
         launched_runtime.runtime_set_id = runtime.runtime_set_id;
         launched_runtime.generation = runtime.generation;

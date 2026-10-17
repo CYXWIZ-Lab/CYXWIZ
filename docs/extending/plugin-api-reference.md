@@ -270,6 +270,11 @@ returning an `AnalyticsResult`.
 | `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.2) |
 | `CyxWizSDK_TEMPLATE_DIR` | The template plugin's folder |
 
+The SDK is in every installation (`runtime/base/<base>/sdk`, see the
+quickstart) and is licensed under the Apache License 2.0 (`sdk/LICENSE`,
+`sdk/NOTICE`); every SDK header starts with
+`SPDX-License-Identifier: Apache-2.0`.
+
 Inside the CyxWiz source tree `CyxWiz::PluginSDK` and
 `cyxwiz_plugin_folder` exist too, so one `CMakeLists.txt` builds a plugin in
 the tree and against the SDK (the template and
@@ -278,10 +283,13 @@ the tree and against the SDK (the template and
 ## 12. `cyxwiz-plugin-check`
 
 ```
-cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
+cyxwiz-runtime-bootstrapper --plugin-check <plugin folder> [<plugin folder> ...]
 ```
 
-Built with the Engine (`bin/` of a CyxWiz build). For each folder it reads
+Ships with the Engine (`runtime/base/<base>/cyxwiz-plugin-check`); start it
+through the launcher in the installation folder, as above, which gives it the
+Engine's runtime libraries and keeps your current folder for relative paths.
+In a source build run `bin/Release/cyxwiz-plugin-check` directly. For each folder it reads
 `plugin.json`, loads the library (fingerprint first), initialises the plugin,
 lists the nodes it registers and runs the gradient check on each trainable
 node with its default settings. Exit code 0 when every folder loads and

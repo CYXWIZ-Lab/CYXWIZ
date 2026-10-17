@@ -5,8 +5,7 @@ How to write a C++ plugin whose nodes train inside CyxWiz. Start with the
 Every type, field and CMake name is listed in the
 [API reference](plugin-api-reference.md).
 
-> Checked 2026-10-17 against plugin API 1.2.0. This guide grows as the
-> feature is built; sections marked *Later* describe what is planned.
+> Checked 2026-10-17 against plugin API 1.2.0.
 
 Code in this guide is taken from
 `plugins/examples/activation_nodes/activation_nodes_plugin.cpp`, which the
@@ -387,9 +386,3 @@ with the current SDK is enough.
 | Tensors | Use `cyxwiz::Tensor` operations. Do not mix in raw ArrayFire arrays: they are column-major, `Tensor` is row-major |
 | Remote training | Graphs with extension nodes do not train on a Server Node yet; the Engine refuses with a message |
 | Export | Models with extension nodes cannot be exported yet |
-
-## 11. Later
-
-| Topic | Stage |
-|---|---|
-| The SDK as an optional installer component and a download (today: `cmake --install` from a CyxWiz build, see the quickstart) | P5 |

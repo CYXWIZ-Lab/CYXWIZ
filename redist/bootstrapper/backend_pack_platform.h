@@ -99,4 +99,14 @@ constexpr std::string_view CurrentInstallerManagerExecutableName() {
 #endif
 }
 
+// The C++ plugin check tool in the base (TOFIX125 P5), started with
+// `cyxwiz-runtime-bootstrapper --plugin-check <plugin folder>...`.
+constexpr std::string_view CurrentPluginCheckExecutableName() {
+#ifdef _WIN32
+    return "cyxwiz-plugin-check.exe";
+#else
+    return "cyxwiz-plugin-check";
+#endif
+}
+
 }  // namespace cyxwiz::runtime

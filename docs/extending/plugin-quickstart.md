@@ -91,7 +91,21 @@ package and a template.
 
 ### Get the SDK
 
-From a Release build of CyxWiz:
+Every CyxWiz installation carries it, in the `sdk` folder of the Engine's
+runtime:
+
+| Installed for | SDK folder |
+|---|---|
+| You (Windows default) | `%LOCALAPPDATA%\Programs\CyxWiz\runtime\base\<base>\sdk` |
+| All users (Windows) | `%ProgramFiles%\CyxWiz\runtime\base\<base>\sdk` |
+| Linux, macOS | `runtime/base/<base>/sdk` under the CyxWiz installation folder |
+
+`<base>` is the one folder in `runtime\base`, for example
+`cyxwiz-base-0.2.0-6-win64-x86_64`. Copy the SDK somewhere of your own if you
+like: it is a plain folder, under the Apache License 2.0 (its `LICENSE` and
+`NOTICE`), so plugins you build with it can use any licence.
+
+From a Release build of the CyxWiz sources you can also install it yourself:
 
 ```bash
 cmake --install <build folder> --config Release --component plugin_sdk --prefix <SDK folder>
@@ -129,11 +143,15 @@ uses, and keeps the debug information.
 
 ### Check it, load it
 
+In an installed CyxWiz, run the check through the CyxWiz launcher, which
+gives it the Engine's runtime libraries:
+
 ```bash
-<CyxWiz build folder>/bin/Release/cyxwiz-plugin-check my_nodes/build/my_nodes
+"%LOCALAPPDATA%\Programs\CyxWiz\cyxwiz-runtime-bootstrapper.exe" --plugin-check my_nodes/build/my_nodes
 ```
 
-loads the folder the way the Engine does (manifest, build fingerprint,
+(with a source build: `<build folder>/bin/Release/cyxwiz-plugin-check my_nodes/build/my_nodes`).
+It loads the folder the way the Engine does (manifest, build fingerprint,
 permissions) and runs the gradient check on every trainable node:
 
 ```
@@ -154,4 +172,4 @@ Then in the Engine: **Plugin Manager > Install...** and choose
    [node contract](node-contract.md). The example plugin
    (`plugins/examples/activation_nodes/`) shows a node with a setting and a
    learnable weight; it builds against the SDK the same way.
-3. Rebuild, run `cyxwiz-plugin-check`, and in the Engine press **Refresh**.
+3. Rebuild, run the check, and in the Engine press **Refresh**.
