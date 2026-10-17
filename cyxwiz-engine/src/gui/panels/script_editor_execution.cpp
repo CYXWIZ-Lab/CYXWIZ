@@ -32,7 +32,7 @@ void ScriptEditorPanel::StopScript() {
 }
 
 void ScriptEditorPanel::RunScript() {
-    if (!IsActiveTabEditable() || !scripting_engine_) return;
+    if (!IsActiveTabRunnable() || !scripting_engine_) return;
 
     // Don't start if already running
     if (script_running_) {
@@ -204,7 +204,7 @@ std::string ScriptEditorPanel::DedentCode(const std::string& code) {
 }
 
 void ScriptEditorPanel::RunSelection() {
-    if (!IsActiveTabTextMode() || !scripting_engine_) return;
+    if (!IsActiveTabTextMode() || !IsActiveTabRunnable() || !scripting_engine_) return;
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
@@ -236,7 +236,7 @@ void ScriptEditorPanel::RunSelection() {
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
-    if (!IsActiveTabTextMode() || !scripting_engine_) return;
+    if (!IsActiveTabTextMode() || !IsActiveTabRunnable() || !scripting_engine_) return;
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];

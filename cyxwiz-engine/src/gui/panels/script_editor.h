@@ -261,6 +261,9 @@ private:
     int FindTabIndex(std::uint64_t document_id) const;
     bool IsActiveTabEditable() const;
     bool IsActiveTabTextMode() const;  // editable and showing its text buffer (not notebook mode)
+    // Python the Engine can run (a .py / .cyx file or a notebook); Markdown,
+    // JSON or text open to edit only, with no Run, Debug or Python status.
+    bool IsActiveTabRunnable() const;
 
     // Rendering functions
     void RenderTabBar();

@@ -318,6 +318,12 @@ int ScriptEditorPanel::FindTabIndex(std::uint64_t document_id) const {
     return -1;
 }
 
+bool ScriptEditorPanel::IsActiveTabRunnable() const {
+    if (!IsActiveTabEditable()) return false;
+    const auto& tab = tabs_[active_tab_index_];
+    return tab->cell_mode || tab->editor.LanguageIsPython();
+}
+
 bool ScriptEditorPanel::IsActiveTabEditable() const {
     if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
         return false;
