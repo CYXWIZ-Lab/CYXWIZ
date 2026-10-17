@@ -5586,6 +5586,14 @@ set_target_properties(test_one_vs_rest_curves PROPERTIES
 )
 add_test(NAME one_vs_rest_curves COMMAND test_one_vs_rest_curves)
 
+# ===== Test: the data budget leaves the device room (TOFIX157 A1) =====
+add_executable(test_data_budget tests/test_data_budget.cpp)
+if(WIN32)
+    target_compile_definitions(test_data_budget PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_budget PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME data_budget COMMAND test_data_budget)
+
 # ===== Test: where the palettes put a node (TOFIX157) =====
 add_executable(test_node_palette tests/test_node_palette.cpp src/core/node_palette.cpp src/core/preparation_recipe.cpp)
 target_include_directories(test_node_palette PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

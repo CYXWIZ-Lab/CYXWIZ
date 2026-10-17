@@ -42,9 +42,29 @@ inline uint64_t PhysicalMemoryBytes() {
 
 inline uint64_t DefaultDataBudgetBytes() { return PhysicalMemoryBytes() / 2; }
 
-inline uint64_t DataBudgetBytes() {
+// The compute device's start-up memory (TOFIX157 A1): starting ArrayFire
+// takes about 0.5-0.9 GB on any backend (measured in TOFIX154, done154
+// section 10), apart from the data. The budget never reaches into it, so a
+// budget near the machine's memory still leaves the device room to start.
+inline constexpr uint64_t kDeviceStartupReserveBytes = 1ULL << 30;
+
+// What the user set (0: the default), before the device reserve.
+inline uint64_t RequestedDataBudgetBytes() {
     const uint64_t set = data_budget_detail::Override().load();
     return set > 0 ? set : DefaultDataBudgetBytes();
+}
+
+// The most data may use: this PC's memory less the device reserve.
+inline uint64_t MaxDataBudgetBytes() {
+    const uint64_t total = PhysicalMemoryBytes();
+    return total > kDeviceStartupReserveBytes * 2 ? total - kDeviceStartupReserveBytes : total / 2;
+}
+
+// What data may use: the requested budget, kept out of the device reserve.
+inline uint64_t DataBudgetBytes() {
+    const uint64_t requested = RequestedDataBudgetBytes();
+    const uint64_t most = MaxDataBudgetBytes();
+    return requested < most ? requested : most;
 }
 
 inline void SetDataBudgetBytes(uint64_t bytes) { data_budget_detail::Override().store(bytes); }

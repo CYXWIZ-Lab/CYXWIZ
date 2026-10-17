@@ -13,6 +13,13 @@ of this PC's memory; the line under the field shows the budget in use and the
 table size above which tables stay on disk (a quarter of the budget). The
 setting is Engine-wide and applies at once.
 
+The compute device keeps its own share: starting it takes about 1 GB, so data
+may use at most this PC's memory less 1 GB, whatever is set. A second line
+under the field says so ("The compute device takes about 1.0 GB of this PC's
+47.9 GB when it starts; data may use at most 46.9 GB."), and a budget above
+that is used as the most, with a warning ("58.6 GB is more than that: data
+gets 46.9 GB.").
+
 The budget decides:
 
 - **Loading**: a Data Input whose table is larger than a quarter of the budget
@@ -113,8 +120,8 @@ three sizes (most of it the device). Without a cap the steps run 3-4 times
 faster than before this change.
 
 - **The GPU or CPU device needs memory of its own**: starting ArrayFire (any
-  backend) takes about 500 MB on top of the data, so device steps (scalers,
-  transforms, training) need that much free beyond the budget.
+  backend) takes about 0.5-0.9 GB on top of the data. The budget never takes
+  the last 1 GB of this PC's memory, so the device always has room to start.
 - **Time grows with the data**, disk space too: a sort or a join of a large
   table writes temporary files about the size of its input.
 - A tool for measuring: `cyxwiz-bench-out-of-core` (in the build's `bin`
