@@ -5585,6 +5585,15 @@ set_target_properties(test_one_vs_rest_curves PROPERTIES
 )
 add_test(NAME one_vs_rest_curves COMMAND test_one_vs_rest_curves)
 
+# ===== Test: console text a 16-bit font can draw (TOFIX157) =====
+add_executable(test_drawable_text tests/test_drawable_text.cpp)
+target_link_libraries(test_drawable_text PRIVATE imgui::imgui)
+if(WIN32)
+    target_compile_definitions(test_drawable_text PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_drawable_text PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME drawable_text COMMAND test_drawable_text)
+
 # ===== Test: kept tests, a test's rows saved as a project file (TOFIX157) =====
 add_executable(test_kept_tests
     tests/test_kept_tests.cpp

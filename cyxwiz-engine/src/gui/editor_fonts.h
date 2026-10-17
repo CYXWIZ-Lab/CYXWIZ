@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <string>
+#include <string_view>
 
 namespace cyxwiz::gui {
 
@@ -68,12 +70,21 @@ inline char32_t ResolveTerminalDisplayCodepoint(ImFont *font,
       font->FindGlyphNoFallback(static_cast<ImWchar>(codepoint))) {
     return codepoint;
   }
+  const auto has = [font](char32_t c) {
+    return font && font->FindGlyphNoFallback(static_cast<ImWchar>(c));
+  };
   if (codepoint == 0x2605)
     return U'*';
-  if (codepoint == 0x2714)
-    return U'+';
-  if (codepoint == 0x2718)
-    return U'x';
+  // Check marks (incl. the emoji U+2705) as the heavy check mark, crosses as
+  // the heavy ballot X, when the font has them.
+  if (codepoint == 0x2714 || codepoint == 0x2705 || codepoint == 0x2713 ||
+      codepoint == 0x2611)
+    return codepoint != 0x2714 && has(0x2714) ? U'\u2714' : U'+';
+  if (codepoint == 0x2718 || codepoint == 0x274C || codepoint == 0x274E ||
+      codepoint == 0x2716 || codepoint == 0x2717)
+    return codepoint != 0x2718 && has(0x2718) ? U'\u2718' : U'x';
+  if (codepoint == 0x26A0)
+    return U'!';
   if (codepoint >= 0x2800 && codepoint <= 0x28FF) {
     constexpr std::array<char32_t, 4> spinner_fallbacks = {U'|', U'/', U'-',
                                                            U'\\'};
@@ -81,6 +92,54 @@ inline char32_t ResolveTerminalDisplayCodepoint(ImFont *font,
                              spinner_fallbacks.size()];
   }
   return U'?';
+}
+
+// Text a font can draw (TOFIX157): ImWchar is 16 bits here, so an emoji
+// (above U+FFFF) and the invisible variation selector or joiner that follows
+// one would each draw as "?". They are left out; a check, a cross or a
+// warning sign becomes a sign the font has (ResolveTerminalDisplayCodepoint);
+// any other character the font lacks still shows as "?". Plain ASCII is
+// returned as it is.
+inline std::string DrawableText(ImFont *font, std::string_view utf8) {
+  bool ascii = true;
+  for (unsigned char c : utf8)
+    if (c >= 0x80) {
+      ascii = false;
+      break;
+    }
+  if (ascii)
+    return std::string(utf8);
+  std::string out;
+  out.reserve(utf8.size());
+  const auto put = [&out](char32_t c) {
+    if (c < 0x80) {
+      out += static_cast<char>(c);
+    } else if (c < 0x800) {
+      out += static_cast<char>(0xC0 | (c >> 6));
+      out += static_cast<char>(0x80 | (c & 0x3F));
+    } else if (c < 0x10000) {
+      out += static_cast<char>(0xE0 | (c >> 12));
+      out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+      out += static_cast<char>(0x80 | (c & 0x3F));
+    }
+  };
+  for (size_t i = 0; i < utf8.size();) {
+    const unsigned char lead = static_cast<unsigned char>(utf8[i]);
+    const size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
+    if (i + length > utf8.size() || (length == 1 && lead >= 0x80)) {
+      put(U'?');  // a broken byte sequence
+      ++i;
+      continue;
+    }
+    char32_t c = length == 1 ? lead : lead & (0xFF >> (length + 1));
+    for (size_t k = 1; k < length; ++k)
+      c = (c << 6) | (static_cast<unsigned char>(utf8[i + k]) & 0x3F);
+    i += length;
+    if (c > 0xFFFF || c == 0xFE0F || c == 0xFE0E || c == 0x200D)
+      continue;  // emoji and the selectors / joiners that go with them
+    put(c < 0x80 ? c : ResolveTerminalDisplayCodepoint(font, c));
+  }
+  return out;
 }
 
 inline int EditorFontIndexForScale(float scale) {

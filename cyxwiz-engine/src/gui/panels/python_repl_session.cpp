@@ -629,7 +629,8 @@ void PythonReplSession::RenderEntry(int index, const Entry &entry) {
     if (indent > 0.0f)
       ImGui::Indent(indent);
     ImGui::PushStyleColor(ImGuiCol_Text, color);
-    std::string body = text;
+    // Emoji and their selectors left out rather than drawn as "?" (TOFIX157).
+    std::string body = cyxwiz::gui::DrawableText(ImGui::GetFont(), text);
     while (!body.empty() && (body.back() == '\n' || body.back() == '\r'))
       body.pop_back();
     ImGui::TextUnformatted(body.c_str(), body.c_str() + body.size());
