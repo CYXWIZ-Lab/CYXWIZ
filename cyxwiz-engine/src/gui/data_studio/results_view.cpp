@@ -334,9 +334,14 @@ void ResultsView::RenderClassifier() {
 
     ImGui::TextColored(t.text_dim, "CONFUSION (ROWS: TRUE CLASS, COLUMNS: PREDICTED)");
     const int k = static_cast<int>(r.classes.size());
+    // A scrolling table with height 0 fills the rest of the window: size it
+    // to its rows (the header and one per class) and the scrollbar.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float confusion_h = static_cast<float>(k + 1) * (ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f) +
+                              style.ScrollbarSize + style.CellPadding.y * 2.0f;
     if (k <= 20 && ImGui::BeginTable("##confusion", k + 1, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
                                                               ImGuiTableFlags_ScrollX,
-                                     ImVec2(0.0f, 0.0f))) {
+                                     ImVec2(0.0f, confusion_h))) {
         ImGui::TableSetupColumn("");
         for (const auto& c : r.classes) ImGui::TableSetupColumn(c.c_str());
         ImGui::TableHeadersRow();
