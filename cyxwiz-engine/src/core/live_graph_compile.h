@@ -67,6 +67,10 @@ private:
         TrainingConfiguration config;
         std::map<size_t, long long> layer_parameters;
         bool parameters_counted = false;
+        // Counting was asked for (it may still have failed). A compile made
+        // while training ran is redone once training ends, so its count
+        // appears without an edit.
+        bool parameters_requested = false;
     };
 
     void Collect();

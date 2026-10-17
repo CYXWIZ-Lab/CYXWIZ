@@ -90,7 +90,8 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
         seen_revision_ = revision;
         last_change_ = now;
     }
-    const bool up_to_date = result_ && result_->revision == revision;
+    const bool up_to_date = result_ && result_->revision == revision &&
+                            (result_->parameters_requested || !count_parameters);
     const bool running = pending_.valid();
     if (up_to_date || running || now - last_change_ < debounce) return;
     if (nodes.empty()) {
@@ -103,6 +104,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
         [nodes, links, revision, count_parameters, root = project_root]() {
             auto result = std::make_shared<Result>();
             result->revision = revision;
+            result->parameters_requested = count_parameters;
             // allow_unloaded_data: the canvas view compiles from the saved
             // data contract; data readiness is reported as issues.
             const QuietModelBuildScope quiet;  // no Console lines per edit

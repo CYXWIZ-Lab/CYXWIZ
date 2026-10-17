@@ -4207,6 +4207,36 @@ set_target_properties(test_compiled_node_presentation PROPERTIES
 add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# ===== Test: live compile recounts parameters after training (TOFIX123/TOFIX125) =====
+add_executable(test_live_graph_compile
+    tests/test_live_graph_compile.cpp
+    src/core/live_graph_compile.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_include_directories(test_live_graph_compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_live_graph_compile PRIVATE
+    cyxwiz-training-core
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_live_graph_compile PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_live_graph_compile PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME live_graph_compile COMMAND test_live_graph_compile)
+
 # ===== Test: compile report, blocked training, memory risk (TOFIX129 B3) =====
 add_executable(test_data_input_presentation
     tests/test_data_input_presentation.cpp
