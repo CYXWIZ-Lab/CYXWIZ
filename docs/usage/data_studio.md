@@ -405,7 +405,8 @@ rail (or the last step); its format and file are set in its dialog.
 ## Results
 
 A model's results next to the data. Pick **Language model previews** or
-**Classifier test**.
+**Test run**. The job's line counts what there is to show (*test: 72 rows ·
+2 preview runs*, and any evaluation nodes in the graph).
 
 **Language model previews** reads the generation previews a causal language
 model's training writes each epoch (`checkpoints/<graph>/<run>/
@@ -429,12 +430,34 @@ that wrote previews, newest first; **Epoch** picks one of its epochs.
 These are the run's few preview prompts; the full table of an evaluation set
 comes from batch evaluation (TOFIX149 item 4).
 
-**Classifier test** reads the latest test run's per-row predictions (the
-`test_predictions` table, published when a classifier is tested):
+**Test run** reads the latest test run's per-row predictions (the
+`test_predictions` table, published when a model is tested with Train > Test).
+Its `row_id` column is each test row's row in the tested table (counted from
+0), and the table's name is kept with it, so the results join back to the
+data. A classifier:
 
 - **Accuracy** and the number of wrong rows;
 - **Confusion**: true classes down, predicted across (the class names come from
   the score columns), right answers green;
 - **precision** and **recall** per class (recall under 60% in amber);
-- **Worst rows**: the wrong rows the model was most sure of, by their place in
-  the test set.
+- **Worst rows**: the wrong rows the model was most sure of, by their **dataset
+  row** (counted from 1, as the Table Viewer counts).
+
+A regression model (its `test_predictions` has `true_value`,
+`predicted_value` and `error` = predicted - true; with several targets
+`true_0`, `predicted_0`, `error_0`, ...):
+
+- **MAE**, **RMSE** and **Bias** (the mean error: positive predicts high);
+- **Largest errors**: the rows furthest off, by dataset row (the first target
+  when there are several).
+
+**Error by column value** (both kinds): pick a column of the tested table and
+see where the model goes wrong. Each value of the column gets its test rows and
+the share wrong (a classifier) or the mean |error| (regression), highest first;
+a value above the overall error by a quarter or more is amber. A number column
+with more than 20 values is cut into five ranges of about equal rows; a text
+column keeps its 20 most common values and puts the rest under *(other
+values)*. A table on disk is read one row group at a time (a task in Task
+View). It needs the tested table still loaded; when it was re-loaded with fewer
+rows, the run is refused as changed since the test. A test from a source that
+does not report rows (images, audio, older runs) says so: test again.

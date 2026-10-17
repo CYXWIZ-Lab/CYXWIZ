@@ -5452,6 +5452,7 @@ add_test(NAME data_studio_publish COMMAND test_data_studio_publish)
 add_executable(test_data_studio_results
     tests/test_data_studio_results.cpp
     src/core/data_studio_results.cpp
+    src/core/test_predictions_table.cpp
 )
 target_include_directories(test_data_studio_results PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_data_studio_results PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)

@@ -459,6 +459,9 @@ bool ParquetArrowBatcher::LoadNextRowGroup() {
         return LoadNextRowGroup();  // try the next one
     }
 
+    current_group_first_row_ = 0;
+    for (int g = 0; g < group_idx; ++g) current_group_first_row_ += dataset_->GetRowGroupSize(g);
+
     // Build a row index for this group and shuffle it if shuffling is enabled.
     const int64_t rows_in_group = current_table_->num_rows();
     current_row_indices_.clear();
@@ -640,6 +643,9 @@ Batch ParquetArrowBatcher::GetNextBatch() {
         const size_t rows_available = current_row_indices_.size() - current_row_cursor_;
         const size_t rows_needed = capacity - rows_filled;
         const size_t rows_this_sweep = std::min(rows_available, rows_needed);
+        for (size_t b = 0; b < rows_this_sweep; ++b)
+            batch.row_ids.push_back(current_group_first_row_ +
+                                    static_cast<int64_t>(current_row_indices_[current_row_cursor_ + b]));
 
         // Extract feature columns for the selected rows. Parquet row group
         // tables are usually single-chunked (one chunk per column), so take

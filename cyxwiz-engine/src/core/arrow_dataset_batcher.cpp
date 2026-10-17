@@ -513,6 +513,8 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
         size_t actual_batch_size = batch_end - batch_start;
         batch.size = actual_batch_size;
+        batch.row_ids.assign(indices_.begin() + static_cast<std::ptrdiff_t>(batch_start),
+                             indices_.begin() + static_cast<std::ptrdiff_t>(batch_end));
 
         // Get Arrow table
         auto table = dataset_->GetArrowTable();

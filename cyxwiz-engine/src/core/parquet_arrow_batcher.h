@@ -150,6 +150,7 @@ private:
     // Current position within the epoch
     size_t current_group_position_ = 0;  // index into epoch_group_order_
     std::shared_ptr<arrow::Table> current_table_;
+    int64_t current_group_first_row_ = 0;      // the file row of the current table's row 0
     std::vector<size_t> current_row_indices_;  // row order within the current table
     size_t current_row_cursor_ = 0;            // next row to emit (index into current_row_indices_)
 

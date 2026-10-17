@@ -174,6 +174,10 @@ void DataStudioPanel::RefreshView() {
                 }
         }
     }
+    if (results_) {
+        in.preview_runs = results_->PreviewRunCount();
+        in.test_rows = results_->TestRowCount();
+    }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
     if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);

@@ -307,7 +307,10 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     // Setup metrics
     regression_metrics_.Reset();
     const bool regression_mode = UsesContinuousTargetMetrics(config_);
-    UpdateMetrics([regression_mode](TestingMetrics& m) {
+    const std::string source_dataset = use_arrow_dataset_ && arrow_dataset_       ? arrow_dataset_->GetName()
+                                       : use_parquet_dataset_ && parquet_dataset_ ? parquet_dataset_->GetName()
+                                                                                  : std::string();
+    UpdateMetrics([regression_mode, &source_dataset](TestingMetrics& m) {
         m.current_batch = 0;
         m.total_batches = 0;
         m.total_samples = 0;
@@ -324,6 +327,12 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.predictions.clear();
         m.ground_truth.clear();
         m.confidences.clear();
+        m.regression_truth.clear();
+        m.regression_predictions.clear();
+        m.regression_width = 0;
+        m.regression_note.clear();
+        m.row_ids.clear();
+        m.source_dataset = source_dataset;
         m.class_probabilities.clear();
         m.probability_classes = 0;
         m.roc.reset();
@@ -519,15 +528,35 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
     const float* target_data = batch.labels.Data<float>();
 
     const size_t output_width = config_.output_size;
+    // The samples' dataset rows; a batch without them leaves row_ids shorter
+    // than the samples, which readers take as "rows not known".
+    if (batch.row_ids.size() == batch.size) {
+        UpdateMetrics([&batch](TestingMetrics& m) {
+            m.row_ids.insert(m.row_ids.end(), batch.row_ids.begin(), batch.row_ids.end());
+        });
+    }
     if (UsesContinuousTargetMetrics(config_)) {
         const size_t value_count = batch.size * output_width;
         regression_metrics_.Add(
             pred_data, target_data, value_count, output_width);
-        UpdateMetrics([this, &batch, value_count](TestingMetrics& m) {
+        UpdateMetrics([this, &batch, value_count, pred_data, target_data, output_width](TestingMetrics& m) {
             m.total_samples += static_cast<int>(batch.size);
             m.total_target_values += value_count;
             m.test_mae = regression_metrics_.Mae();
             m.test_rmse = regression_metrics_.Rmse();
+            // Kept up to kMaxRegressionValues per side (about 80 MB each);
+            // past that the per-row table is skipped.
+            constexpr size_t kMaxRegressionValues = 20'000'000;
+            if (!m.regression_note.empty()) return;
+            if (m.regression_truth.size() + value_count > kMaxRegressionValues) {
+                m.regression_truth.clear();
+                m.regression_predictions.clear();
+                m.regression_note = "Per-row results skipped: the test set has too many values to keep";
+                return;
+            }
+            m.regression_width = static_cast<int>(output_width);
+            m.regression_truth.insert(m.regression_truth.end(), target_data, target_data + value_count);
+            m.regression_predictions.insert(m.regression_predictions.end(), pred_data, pred_data + value_count);
         });
         return;
     }

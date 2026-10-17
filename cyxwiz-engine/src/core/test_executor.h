@@ -94,6 +94,17 @@ struct TestingMetrics {
     std::vector<int> predictions;
     std::vector<int> ground_truth;
     std::vector<float> confidences;
+    // Regression: the true and predicted targets per sample, row-major
+    // [samples][regression_width]; empty when the test set has too many
+    // values to keep (regression_note says so).
+    std::vector<float> regression_truth;
+    std::vector<float> regression_predictions;
+    int regression_width = 0;
+    std::string regression_note;
+    // The dataset row of each sample (as Batch::row_ids), in the table named
+    // source_dataset; empty when the test batcher does not report rows.
+    std::vector<int64_t> row_ids;
+    std::string source_dataset;
 
     // Per-sample class probabilities, row-major [total_samples][probability_classes]
     // (binary: P(class 0), P(class 1)), kept for the ROC / PR curves. Empty when

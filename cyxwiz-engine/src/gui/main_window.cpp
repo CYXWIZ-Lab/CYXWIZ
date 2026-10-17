@@ -1309,17 +1309,30 @@ MainWindow::MainWindow()
     const std::weak_ptr<int> test_window_lifetime = test_callback_lifetime_;
     cyxwiz::TestManager::Instance().SetOnTestingEnd([this, test_window_lifetime](bool success, const cyxwiz::TestingMetrics& metrics) {
         if (test_window_lifetime.expired()) return;
-        if (success && !metrics.regression_mode && !metrics.causal_lm_mode && !metrics.ground_truth.empty()) {
+        if (success && !metrics.causal_lm_mode) {
             // The run's per-sample results as the "test_predictions" table, so
-            // the ROC / PR nodes and panels can read them like any dataset.
-            std::vector<std::string> class_names;
-            for (const auto& c : metrics.per_class_metrics) class_names.push_back(c.class_name);
-            if (auto table = cyxwiz::BuildTestPredictionsTable(metrics.ground_truth, metrics.predictions,
-                                                               metrics.confidences, metrics.class_probabilities,
-                                                               metrics.probability_classes, class_names)) {
+            // Results and the ROC / PR nodes can read them like any dataset;
+            // row_id joins them back to the tested table's columns.
+            const cyxwiz::TestPredictionsSource source{metrics.row_ids, metrics.source_dataset};
+            std::shared_ptr<arrow::Table> table;
+            if (metrics.regression_mode) {
+                table = cyxwiz::BuildRegressionPredictionsTable(metrics.regression_truth, metrics.regression_predictions,
+                                                                metrics.regression_width, source);
+            } else if (!metrics.ground_truth.empty()) {
+                std::vector<std::string> class_names;
+                for (const auto& c : metrics.per_class_metrics) class_names.push_back(c.class_name);
+                table = cyxwiz::BuildTestPredictionsTable(metrics.ground_truth, metrics.predictions, metrics.confidences,
+                                                          metrics.class_probabilities, metrics.probability_classes,
+                                                          class_names, source);
+            }
+            if (table) {
                 cyxwiz::DataRegistry::Instance().RegisterArrowTable(table, cyxwiz::kTestPredictionsDataset);
-                spdlog::info("Published {} test predictions as '{}'", table->num_rows(),
-                             cyxwiz::kTestPredictionsDataset);
+                spdlog::info("Published {} test predictions as '{}'{}", table->num_rows(),
+                             cyxwiz::kTestPredictionsDataset,
+                             table->GetColumnByName("row_id") ? " (rows of '" + metrics.source_dataset + "')" : "");
+            } else {
+                // No per-row results kept: an older run's table must not stand in.
+                cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(cyxwiz::kTestPredictionsDataset);
             }
         }
         if (test_results_panel_) {

@@ -99,6 +99,14 @@ int main() {
     Check(JobOfView(v, Job::Ready).state == "no split", "ML readiness: " + JobOfView(v, Job::Ready).state);
     Check(JobOfView(v, Job::Publish).state == "1 output", "Publish: " + JobOfView(v, Job::Publish).state);
     Check(JobOfView(v, Job::Results).state == "nothing yet", "Results: " + JobOfView(v, Job::Results).state);
+    {
+        // Preview runs and a test run count without an evaluation node (TOFIX157 B2).
+        Input with_results = in;
+        with_results.preview_runs = 2;
+        with_results.test_rows = 1507;
+        const std::string state = JobOfView(Build(with_results), Job::Results).state;
+        Check(state == "test: 1,507 rows \xC2\xB7 2 preview runs", "Results with runs: " + state);
+    }
 
     const auto& prep = JobOfView(v, Job::Prepare).chips;
     Check(prep.size() == 2 && prep[0].name == "Preparation Recipe" && prep[0].note == "tier1_paragraphs" &&

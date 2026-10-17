@@ -1,6 +1,7 @@
 #include "test_predictions_table.h"
 
 #include <arrow/api.h>
+#include <arrow/util/key_value_metadata.h>
 
 #include <set>
 
@@ -14,6 +15,28 @@ std::shared_ptr<arrow::Array> Finish(arrow::ArrayBuilder& builder) {
     return array;
 }
 
+// The row_id column first, when the source knows one row per sample.
+bool AddRowIds(const TestPredictionsSource& source, size_t rows, std::vector<std::shared_ptr<arrow::Field>>& fields,
+               std::vector<std::shared_ptr<arrow::Array>>& columns) {
+    if (source.row_ids.size() != rows) return true;
+    arrow::Int64Builder ids;
+    if (!ids.AppendValues(source.row_ids).ok()) return false;
+    fields.push_back(arrow::field("row_id", arrow::int64()));
+    columns.push_back(Finish(ids));
+    return columns.back() != nullptr;
+}
+
+std::shared_ptr<arrow::Table> MakeTable(const TestPredictionsSource& source,
+                                        std::vector<std::shared_ptr<arrow::Field>> fields,
+                                        const std::vector<std::shared_ptr<arrow::Array>>& columns) {
+    for (const auto& column : columns) {
+        if (!column) return nullptr;
+    }
+    std::shared_ptr<arrow::KeyValueMetadata> metadata;
+    if (!source.dataset.empty()) metadata = arrow::key_value_metadata({kTestPredictionsSourceKey}, {source.dataset});
+    return arrow::Table::Make(arrow::schema(std::move(fields), metadata), columns);
+}
+
 }  // namespace
 
 std::shared_ptr<arrow::Table> BuildTestPredictionsTable(const std::vector<int>& ground_truth,
@@ -21,11 +44,16 @@ std::shared_ptr<arrow::Table> BuildTestPredictionsTable(const std::vector<int>& 
                                                         const std::vector<float>& confidences,
                                                         const std::vector<float>& class_probabilities,
                                                         int probability_classes,
-                                                        const std::vector<std::string>& class_names) {
+                                                        const std::vector<std::string>& class_names,
+                                                        const TestPredictionsSource& source) {
     const size_t rows = ground_truth.size();
     if (rows == 0 || predictions.size() != rows || confidences.size() != rows) return nullptr;
     const size_t classes = probability_classes > 1 ? static_cast<size_t>(probability_classes) : 0;
     const bool with_scores = classes > 0 && class_probabilities.size() == rows * classes;
+
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    if (!AddRowIds(source, rows, fields, columns)) return nullptr;
 
     arrow::Int64Builder truth;
     arrow::Int64Builder predicted;
@@ -36,15 +64,17 @@ std::shared_ptr<arrow::Table> BuildTestPredictionsTable(const std::vector<int>& 
             return nullptr;
         }
     }
-    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("true_class", arrow::int64()),
-                                                         arrow::field("predicted_class", arrow::int64()),
-                                                         arrow::field("confidence", arrow::float64())};
-    std::vector<std::shared_ptr<arrow::Array>> columns = {Finish(truth), Finish(predicted), Finish(confidence)};
+    fields.push_back(arrow::field("true_class", arrow::int64()));
+    fields.push_back(arrow::field("predicted_class", arrow::int64()));
+    fields.push_back(arrow::field("confidence", arrow::float64()));
+    columns.push_back(Finish(truth));
+    columns.push_back(Finish(predicted));
+    columns.push_back(Finish(confidence));
 
     if (with_scores) {
         // Binary: the positive class's probability; multi-class: one per class.
         const size_t first = classes == 2 ? 1 : 0;
-        std::set<std::string> used = {"true_class", "predicted_class", "confidence"};
+        std::set<std::string> used = {"row_id", "true_class", "predicted_class", "confidence"};
         for (size_t c = first; c < classes; ++c) {
             std::string name = classes == 2 ? "score" : "score_" + std::to_string(c);
             if (classes > 2 && c < class_names.size() && !class_names[c].empty() &&
@@ -60,10 +90,39 @@ std::shared_ptr<arrow::Table> BuildTestPredictionsTable(const std::vector<int>& 
             columns.push_back(Finish(score));
         }
     }
-    for (const auto& column : columns) {
-        if (!column) return nullptr;
+    return MakeTable(source, std::move(fields), columns);
+}
+
+std::shared_ptr<arrow::Table> BuildRegressionPredictionsTable(const std::vector<float>& truth,
+                                                              const std::vector<float>& predicted, int width,
+                                                              const TestPredictionsSource& source) {
+    if (width < 1 || truth.empty() || truth.size() != predicted.size() || truth.size() % static_cast<size_t>(width))
+        return nullptr;
+    const size_t targets = static_cast<size_t>(width);
+    const size_t rows = truth.size() / targets;
+
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    if (!AddRowIds(source, rows, fields, columns)) return nullptr;
+    for (size_t t = 0; t < targets; ++t) {
+        const std::string suffix = targets == 1 ? "_value" : "_" + std::to_string(t);
+        arrow::DoubleBuilder true_values;
+        arrow::DoubleBuilder predicted_values;
+        arrow::DoubleBuilder errors;
+        for (size_t i = 0; i < rows; ++i) {
+            const double y = truth[i * targets + t];
+            const double p = predicted[i * targets + t];
+            if (!true_values.Append(y).ok() || !predicted_values.Append(p).ok() || !errors.Append(p - y).ok())
+                return nullptr;
+        }
+        fields.push_back(arrow::field("true" + suffix, arrow::float64()));
+        fields.push_back(arrow::field("predicted" + suffix, arrow::float64()));
+        fields.push_back(arrow::field(targets == 1 ? "error" : "error_" + std::to_string(t), arrow::float64()));
+        columns.push_back(Finish(true_values));
+        columns.push_back(Finish(predicted_values));
+        columns.push_back(Finish(errors));
     }
-    return arrow::Table::Make(arrow::schema(fields), columns);
+    return MakeTable(source, std::move(fields), columns);
 }
 
 }  // namespace cyxwiz

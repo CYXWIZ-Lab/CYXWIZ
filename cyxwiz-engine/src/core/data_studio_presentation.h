@@ -52,6 +52,10 @@ struct Input {
     std::string graph_name;    // the graph file's stem
     std::vector<GraphNode> nodes;
     std::vector<Dataset> datasets;
+    // What Results can show besides evaluation nodes: training runs that wrote
+    // generation previews, and the latest test run's rows (test_predictions).
+    size_t preview_runs = 0;
+    int64_t test_rows = 0;
 };
 
 enum class Tone { Plain, Ok, Warn, Error };
