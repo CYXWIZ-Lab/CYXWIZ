@@ -378,10 +378,12 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
             }
             if (guided_step->ops.empty()) DimText("No operations yet.");
             if (toggled) {
-                // Write the query again from the operations, as the editor would.
-                const auto again = cyxwiz::guided::GenerateSql(*guided_step, guided_step->saved_context);
-                node.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(*guided_step);
-                node.parameters["query"] = again.sql;
+                // Saved as the editors save it: a last "Add checks" becomes
+                // Check nodes after the step, the query is written from the rest.
+                const auto saved = cyxwiz::guided::SaveStep(*guided_step);
+                node.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(saved.step);
+                node.parameters["query"] = saved.generated.sql;
+                if (!saved.checks.empty() && node_editor_) node_editor_->RequestChecksAfter(node.id, saved.checks);
                 NotifyEdited();
             }
             if (ui::SecondaryButton("Edit in guided editor")) ConfigureNode(&node);

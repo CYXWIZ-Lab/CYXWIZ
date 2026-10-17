@@ -274,7 +274,9 @@ least, at most; all rows or the rows where a column is true or has a value),
 numeric column in a **range**. A failing check stops the run with the count and
 the first offending value; nothing after it runs, and its result from an
 earlier run is dropped. A guided step's **Add checks** become these nodes when
-the step is saved. **Validate** lists them all and adds new ones.
+the step is saved: in Prepare, in the SQL Workbench, or by switching the
+operation on in Properties (they need to be its last operation that is on).
+**Validate** lists them all and adds new ones.
 
 ## Validate
 

@@ -34,6 +34,7 @@ class TrainingDashboardPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
 struct TaskInfo;
+namespace guided { struct CheckNode; }
 }
 
 namespace cyxwiz {
@@ -673,6 +674,10 @@ public:
         request.branch = true;
         pending_steps_after_.push_back(std::move(request));
     }
+    // A guided step's checks as Check nodes right after it, in order (TOFIX148
+    // D4; Prepare, the SQL Workbench and Properties): a collapsed recipe
+    // holding the step opens first, since they are placed on the canvas.
+    void RequestChecksAfter(int step_id, const std::vector<cyxwiz::guided::CheckNode>& checks);
     // The same with an empty guided SQL step.
     void RequestGuidedStepAfter(int step_id) { pending_steps_after_.push_back({step_id, NodeType::SQLQuery, true, {}, {}, {}}); }
     // The same with an SQL step running `query` (Data Studio's "Turn into SQL

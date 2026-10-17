@@ -610,6 +610,19 @@ void NodeEditor::ApplyStepAfterInsert() {
     for (const auto& request : requests) InsertStepAfter(request);
 }
 
+void NodeEditor::RequestChecksAfter(int step_id, const std::vector<cyxwiz::guided::CheckNode>& checks) {
+    if (checks.empty()) return;
+    for (const auto& data : subgraphs_) {
+        if (data.expanded) continue;
+        const bool member = std::any_of(data.internal_nodes.begin(), data.internal_nodes.end(),
+                                        [&](const MLNode& internal) { return internal.id == step_id; });
+        if (member) RequestSubgraphAction(data.subgraph_node_id, SubgraphRequest::Expand);
+    }
+    // Requested last first: each goes right after the step.
+    for (auto it = checks.rbegin(); it != checks.rend(); ++it)
+        RequestStepAfter(step_id, NodeType::RowCountCheck, it->name, it->parameters);
+}
+
 int NodeEditor::BranchSource(int step_id) const {
     for (const auto& data : subgraphs_) {
         const bool member = std::any_of(data.internal_nodes.begin(), data.internal_nodes.end(),

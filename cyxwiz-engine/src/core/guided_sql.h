@@ -110,4 +110,16 @@ struct SplitChecks {
 };
 SplitChecks SplitOffChecks(const GuidedStep& step);
 
+// A guided step written to its node outside the guided editor (Properties'
+// on / off switches, TOFIX157): its last "Add checks" split off as Check
+// nodes, as Prepare and the SQL Workbench do on save, and the query written
+// from what stays, with the step's saved context. While `generated.ok` is
+// false nothing is split off: the step keeps its operations as they are.
+struct SavedStep {
+    GuidedStep step;                // what the node keeps (saved_context too)
+    Generated generated;            // its query
+    std::vector<CheckNode> checks;  // Check nodes to add after the step, in order
+};
+SavedStep SaveStep(const GuidedStep& step);
+
 }  // namespace cyxwiz::guided
