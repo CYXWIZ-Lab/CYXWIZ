@@ -14,6 +14,7 @@
 #include "cyxwiz/rl_interface.h"
 #include "cyxwiz/data_loader.h"
 #include "bindings_tensor.h"
+#include "bindings_module.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
 #include "cyxwiz/distributed/cpu_backend.h"
@@ -2224,36 +2225,9 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Mish", cyxwiz::ModuleType::Mish)
         .export_values();
 
-    // Module base class
-    py::class_<cyxwiz::Module>(m, "Module")
-        .def("forward", &cyxwiz::Module::Forward,
-             py::arg("input"),
-             "Forward pass through the module")
-        .def("backward", &cyxwiz::Module::Backward,
-             py::arg("grad_output"),
-             "Backward pass")
-        .def("get_parameters", &cyxwiz::Module::GetParameters,
-             "Get module parameters")
-        .def("set_parameters", &cyxwiz::Module::SetParameters,
-             py::arg("params"),
-             "Set module parameters")
-        .def("get_gradients", &cyxwiz::Module::GetGradients,
-             "Get parameter gradients")
-        .def("has_parameters", &cyxwiz::Module::HasParameters,
-             "Check if module has trainable parameters")
-        .def("get_name", &cyxwiz::Module::GetName,
-             "Get module name")
-        .def("set_training", &cyxwiz::Module::SetTraining,
-             py::arg("training"),
-             "Set training mode")
-        .def("is_training", &cyxwiz::Module::IsTraining,
-             "Check if in training mode")
-        .def("freeze", &cyxwiz::Module::Freeze,
-             "Freeze module (disable parameter updates)")
-        .def("unfreeze", &cyxwiz::Module::Unfreeze,
-             "Unfreeze module (enable parameter updates)")
-        .def("is_trainable", &cyxwiz::Module::IsTrainable,
-             "Check if module is trainable");
+    // Module base class; Python subclasses become real modules (TOFIX125 P3).
+    pycyxwiz_bindings::BindModuleBase(m);
+    pycyxwiz_bindings::BindGradientCheck(m);
 
     // LinearModule
     py::class_<cyxwiz::LinearModule, cyxwiz::Module>(m, "LinearModule")
@@ -2357,6 +2331,10 @@ PYBIND11_MODULE(pycyxwiz, m) {
     py::class_<cyxwiz::SequentialModel>(m, "Sequential",
         "Sequential model container for building neural networks")
         .def(py::init<>(), "Create an empty Sequential model")
+
+        .def("add", &pycyxwiz_bindings::AddModuleToSequential, py::arg("module"),
+             "Append a module: a built-in one or a subclass of pycyxwiz.Module. "
+             "The model keeps the Python object alive")
 
         // Layer addition methods (since templates can't be directly exposed)
         .def("add_linear", [](cyxwiz::SequentialModel& self, size_t in_features, size_t out_features, bool use_bias) {
@@ -3172,4 +3150,6 @@ Example queries:
         s_rl_paused.store(val);
     }, py::arg("value"), "Set RL training pause flag");
 
+    // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
+    pycyxwiz_bindings::InstallNodesSubmodule(m);
 }
