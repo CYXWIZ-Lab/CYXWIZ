@@ -840,6 +840,18 @@ int main(int argc, char** argv) {
     Check(explicit_split_batchers.num_test_samples == 2,
           "explicit Arrow DataSplit test split should contain 2 held-out samples");
 
+    // Validation 0 with a Test share (TOFIX157): the rows after Train are
+    // the Test set, and Validation is empty.
+    auto test_only_config = explicit_split_config;
+    test_only_config.val_ratio = 0.0f;
+    test_only_config.test_ratio = 0.50f;
+    auto test_only_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        test_only_config, MakeMultiGroupDataset(), "label", /*batch_size=*/2);
+    Check(test_only_batchers.num_train_samples == 3 &&
+              test_only_batchers.num_val_samples == 0 &&
+              test_only_batchers.num_test_samples == 3,
+          "Arrow DataSplit with Validation 0 should test the rows after Train");
+
     auto stratified_split_config = MakeConfig();
     stratified_split_config.has_data_split = true;
     stratified_split_config.train_ratio = 0.50f;
@@ -1070,6 +1082,19 @@ int main(int argc, char** argv) {
           "train pointer should target Parquet train owner");
     auto parquet_batch = parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
+
+    // Validation 0 with a Test share on disk, as in memory.
+    auto parquet_test_only_config = MakeConfig();
+    parquet_test_only_config.has_data_split = true;
+    parquet_test_only_config.train_ratio = 0.50f;
+    parquet_test_only_config.val_ratio = 0.0f;
+    parquet_test_only_config.test_ratio = 0.50f;
+    auto parquet_test_only = cyxwiz::BuildParquetTrainingBatchers(
+        parquet_test_only_config, parquet_dataset, "label", /*batch_size=*/2);
+    const size_t parquet_rows = static_cast<size_t>(parquet_source->GetArrowTable()->num_rows());
+    Check(parquet_test_only.num_val_samples == 0 && parquet_test_only.num_test_samples > 0 &&
+              parquet_test_only.num_train_samples + parquet_test_only.num_test_samples == parquet_rows,
+          "Parquet DataSplit with Validation 0 should test the rows after Train");
 
     auto parquet_prefetch_config = MakeConfig();
     parquet_prefetch_config.prefetch_factor = 2;
@@ -1651,6 +1676,8 @@ int main(int argc, char** argv) {
     prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
+    test_only_batchers = cyxwiz::TrainingBatcherSet{};
+    parquet_test_only = cyxwiz::TrainingBatcherSet{};
     stratified_batchers = cyxwiz::TrainingBatcherSet{};
     balanced_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
