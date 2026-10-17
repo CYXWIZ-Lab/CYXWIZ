@@ -2,6 +2,8 @@
 
 How to write a C++ plugin whose nodes train inside CyxWiz. Start with the
 [quickstart](plugin-quickstart.md) if you have not built the example yet.
+Every type, field and CMake name is listed in the
+[API reference](plugin-api-reference.md).
 
 > Checked 2026-10-17 against plugin API 1.2.0. This guide grows as the
 > feature is built; sections marked *Later* describe what is planned.
@@ -391,4 +393,3 @@ with the current SDK is enough.
 | Topic | Stage |
 |---|---|
 | The SDK as an optional installer component and a download (today: `cmake --install` from a CyxWiz build, see the quickstart) | P5 |
-| API reference for every interface | P5 |
