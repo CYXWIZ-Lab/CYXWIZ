@@ -24,7 +24,6 @@ void DataInputDialog::Apply() {
     if (IsHdf5Source()) {
         apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
         apply_success_ = false;
-        apply_status_timer_ = 8.0f;
         return;
     }
 
@@ -42,6 +41,7 @@ void DataInputDialog::Apply() {
                 loaded_dataset_name_ = existing->second;
                 loaded_rows_ = restored.rows;
                 loaded_cols_ = restored.cols;
+                loaded_classes_ = restored.classes;
                 loaded_memory_bytes_ = restored.bytes;
                 loaded_backend_ = restored.backend;
                 loaded_memory_is_estimate_ = restored.memory_is_estimate;
@@ -56,7 +56,6 @@ void DataInputDialog::Apply() {
                 apply_success_ = true;
                 apply_status_message_ = "Already loaded - reused " +
                     existing->second;
-                apply_status_timer_ = 5.0f;
                 apply_in_progress_ = false;
                 spdlog::info(
                     "DataInputDialog: unchanged Apply reused registered dataset '{}'",
@@ -142,29 +141,36 @@ void DataInputDialog::Apply() {
         node_->parameters["max_rows"] = std::to_string(max_rows_);
         // Files are read as UTF-8; the encoding choice it saved was never read.
         node_->parameters.erase("encoding");
+        // A time series keeps its rows in the order of its time column.
+        if (file_category_ == FileCategory::TimeSeries && time_column_[0] != '\0')
+            node_->parameters["time_column"] = time_column_;
+        else
+            node_->parameters.erase("time_column");
 
         if (file_category_ == FileCategory::Image) {
-            node_->parameters["target_width"] = std::to_string(target_width_);
-            node_->parameters["target_height"] = std::to_string(target_height_);
-            node_->parameters["normalize"] = normalize_images_ ? "true" : "false";
-            node_->parameters["rgb"] = rgb_mode_ ? "true" : "false";
+            // The size and normalizing are the Resize / Normalize nodes'
+            // (TOFIX129 B-9); the settings Data Input kept, unused, go.
+            for (const char* key : {"target_width", "target_height", "normalize", "rgb"})
+                node_->parameters.erase(key);
             node_->parameters["labels_csv"] = labels_csv_;
             node_->parameters["image_layout"] = std::to_string(static_cast<int>(image_layout_));
         } else if (file_category_ == FileCategory::Audio) {
             node_->parameters["sample_rate"] = std::to_string(sample_rate_);
-            node_->parameters["mono"] = mono_ ? "true" : "false";
+            node_->parameters["max_duration"] = std::to_string(duration_sec_);
+            // Audio is always mixed to mono; the checkbox did nothing.
+            node_->parameters.erase("mono");
         } else if (file_category_ == FileCategory::Text) {
             // Persist text dialog state so reopening the dialog restores
-            // the layout choice, column mapping, and tokenizer defaults.
+            // the layout choice and column mapping. Tokenizing is the Text
+            // Tokenizer node's (TOFIX129 B-8): the settings Data Input kept
+            // for it are dropped.
             node_->parameters["text_layout"] =
                 std::to_string(static_cast<int>(text_layout_));
             node_->parameters["text_column"] = text_column_;
             node_->parameters["text_label_column"] = text_label_column_;
-            node_->parameters["text_tokenizer_type"] = std::to_string(text_tokenizer_type_);
-            node_->parameters["text_max_length"] = std::to_string(text_max_length_);
-            node_->parameters["text_lowercase"] = text_lowercase_ ? "true" : "false";
-            node_->parameters["text_min_freq"] = std::to_string(text_min_freq_);
-            node_->parameters["text_max_vocab_size"] = std::to_string(text_max_vocab_size_);
+            for (const char* key : {"text_tokenizer_type", "text_max_length", "text_lowercase", "text_min_freq",
+                                    "text_max_vocab_size"})
+                node_->parameters.erase(key);
         }
 
         // Excel specific
@@ -230,7 +236,6 @@ void DataInputDialog::Apply() {
             "not a single file. Set the Folder path in the Image Loading "
             "Options section above.";
         apply_success_ = false;
-        apply_status_timer_ = 8.0f;
         node_->parameters["data_loaded"] = "false";
         apply_in_progress_ = false;
         has_changes_ = false;
@@ -255,9 +260,9 @@ void DataInputDialog::Apply() {
     //
     // TextDataset's constructor auto-detects file vs directory from the
     // path itself, so the only thing differing between the two paths is
-    // which field we pull the source from. The worker body runs the
-    // tokenizer + vocab build, then calls RegisterTextDataset under its
-    // own lock. PollAsyncLoadResult drains the result onto the UI thread
+    // which field we pull the source from. The worker body reads the
+    // texts and labels, then calls RegisterTextDataset under its own
+    // lock. PollAsyncLoadResult drains the result onto the UI thread
     // on the next frame.
     const bool text_single_ready =
         file_category_ == FileCategory::Text &&
@@ -270,8 +275,8 @@ void DataInputDialog::Apply() {
     if ((text_single_ready || text_corpus_ready)) {
         // Text load — routes through TextLoader. Branch takes priority
         // over the tabular branch below because a CSV file with Text
-        // category selected needs the tokenizer / vocab pipeline, not
-        // the plain Arrow path. TextDataset auto-detects file vs
+        // category selected registers text metadata, not just the plain
+        // Arrow path. TextDataset auto-detects file vs
         // directory from the source path, so we just pick the right
         // field (file_path_ for SingleFile, folder_path_ for
         // CorpusSubdirs) and the loader forwards it.
@@ -286,7 +291,6 @@ void DataInputDialog::Apply() {
         if (!loader) {
             apply_status_message_ = "No loader registered for Text";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: TextLoader not registered");
@@ -316,18 +320,12 @@ void DataInputDialog::Apply() {
         // the user picked a label column.
         ctx.text_has_labels       = text_corpus_ready ||
                                     (strlen(text_label_column_) > 0);
-        ctx.text_tokenizer_type   = text_tokenizer_type_;
-        ctx.text_max_length       = text_max_length_;
-        ctx.text_lowercase        = text_lowercase_;
-        ctx.text_min_freq         = text_min_freq_;
-        ctx.text_max_vocab_size   = text_max_vocab_size_;
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: text validate - {}", err);
@@ -343,9 +341,8 @@ void DataInputDialog::Apply() {
         node_->parameters["dataset_name"] = loaded_dataset_name_;
         node_->parameters["data_loaded"]  = "false";
 
-        apply_status_message_ = std::string("Tokenizing ") +
+        apply_status_message_ = std::string("Reading ") +
             fs::path(text_source_path).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -387,7 +384,6 @@ void DataInputDialog::Apply() {
             // this should never fire in practice.
             apply_status_message_ = "No loader registered for this category";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: no loader for tabular category");
@@ -418,7 +414,6 @@ void DataInputDialog::Apply() {
                 apply_status_message_ =
                     "Select at least one column in the Transformation tab";
                 apply_success_ = false;
-                apply_status_timer_ = 7.0f;
                 apply_in_progress_ = false;
                 spdlog::warn("DataInputDialog: column projection is empty");
                 return;
@@ -431,13 +426,19 @@ void DataInputDialog::Apply() {
                 apply_status_message_ =
                     "The selected label column must remain included";
                 apply_success_ = false;
-                apply_status_timer_ = 7.0f;
                 apply_in_progress_ = false;
                 spdlog::warn(
                     "DataInputDialog: selected label column '{}' was excluded",
                     label_column);
                 return;
             }
+        }
+        if (file_category_ == FileCategory::TimeSeries && time_column_[0] != '\0' && !included_columns.empty() &&
+            std::find(included_columns.begin(), included_columns.end(), time_column_) == included_columns.end()) {
+            apply_status_message_ = "The time column must remain included";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            return;
         }
         node_->parameters["selected_columns"] =
             nlohmann::json(included_columns).dump();
@@ -462,13 +463,13 @@ void DataInputDialog::Apply() {
         ctx.json_lines         = json_lines_;
         ctx.excel_sheet_idx    = sheet_idx_;
         ctx.label_column       = node_->parameters["label_column"];
+        ctx.time_column        = file_category_ == FileCategory::TimeSeries ? time_column_ : "";
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: tabular validate - {}", err);
@@ -490,7 +491,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Loading ") +
             fs::path(file_path_).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -518,7 +518,6 @@ void DataInputDialog::Apply() {
         if (!loader) {
             apply_status_message_ = "No loader registered for Audio";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: AudioLoader not registered");
@@ -543,21 +542,12 @@ void DataInputDialog::Apply() {
         ctx.audio_labeled_subdirs  = (audio_layout_ == AudioLayout::ClassSubdirs);
         ctx.audio_target_sr        = sample_rate_;
         ctx.audio_max_duration     = duration_sec_;
-        // Feature-extraction knobs are not yet exposed in the dialog
-        // UI; pass the same defaults the pre-refactor code baked in
-        // so existing training graphs see identical tensor shapes.
-        ctx.audio_n_fft            = 512;
-        ctx.audio_hop_length       = 256;
-        ctx.audio_n_mels           = 128;
-        ctx.audio_n_mfcc           = 13;
-        ctx.audio_feature_type     = 1;  // MelSpectrogram
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: audio validate - {}", err);
@@ -575,7 +565,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Scanning ") +
             fs::path(folder_path_).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -608,7 +597,6 @@ void DataInputDialog::Apply() {
         if (!loader) {
             apply_status_message_ = "No loader registered for Image";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: ImageLoader not registered");
@@ -629,16 +617,12 @@ void DataInputDialog::Apply() {
         ctx.previous_dataset_name = previous_dataset_name;
         ctx.image_labels_csv      = labels_csv_;
         ctx.image_layout          = static_cast<int>(image_layout_);
-        ctx.image_width           = target_width_;
-        ctx.image_height          = target_height_;
-        ctx.image_channels        = rgb_mode_ ? 3 : 1;
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: image validate - {}", err);
@@ -656,7 +640,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Scanning ") +
             fs::path(folder_path_).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -668,8 +651,7 @@ void DataInputDialog::Apply() {
         return;
     }
 
-    apply_in_progress_ = false;
-    apply_status_timer_ = 5.0f;  // Show for 5 seconds
+    apply_in_progress_ = false;  // Show for 5 seconds
 
     has_changes_ = false;
     spdlog::info("DataInputDialog: Applied settings");
@@ -705,6 +687,7 @@ void DataInputDialog::PollAsyncLoadResult() {
         loaded_dataset_name_ = state->previous_dataset_name;
         loaded_rows_ = restored.rows;
         loaded_cols_ = restored.cols;
+        loaded_classes_ = restored.classes;
         loaded_memory_bytes_ = restored.bytes;
         loaded_backend_ = restored.backend;
         loaded_memory_is_estimate_ = restored.memory_is_estimate;
@@ -723,6 +706,9 @@ void DataInputDialog::PollAsyncLoadResult() {
     if (state->success) {
         loaded_rows_ = state->rows;
         loaded_cols_ = state->cols;
+        // Image, audio and text loads count their classes; a table's label
+        // column is counted in Profile.
+        loaded_classes_ = state->backend >= 3 ? static_cast<int64_t>(state->num_classes) : -1;
         loaded_memory_bytes_ = state->bytes;
         loaded_backend_ = state->backend;
         loaded_dataset_name_ = state->dataset_name;
@@ -819,22 +805,38 @@ void DataInputDialog::PollAsyncLoadResult() {
             ? std::string("Failed to load data")
             : state->message;
 
+        // A load under the same name that failed after registering (the time
+        // order) gives the registry back its earlier table first.
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        if (state->previous_dataset_name == state->dataset_name && !registry.GetArrowDataset(state->dataset_name) &&
+            !registry.GetParquetBackedDataset(state->dataset_name) &&
+            (state->previous_arrow_dataset || state->previous_parquet_dataset)) {
+            registry.RestoreTabularDataset(state->previous_dataset_name, state->previous_arrow_dataset,
+                                           state->previous_parquet_dataset, state->previous_source_path);
+        }
         // Failed replacements leave the prior registration intact. Restore
         // the node's runtime state so it remains usable.
         if (restore_previous_node_state()) {
             apply_status_message_ +=
                 " Previous loaded dataset remains active.";
+        } else {
+            // Nothing stays loaded: the strip and Memory tab say so.
+            data_load_state_ = DataLoadState::NotLoaded;
+            loaded_dataset_name_.clear();
+            loaded_rows_ = 0;
+            loaded_cols_ = 0;
+            loaded_classes_ = -1;
+            loaded_memory_bytes_ = 0;
         }
         spdlog::error("DataInputDialog: async load failed - {}", apply_status_message_);
     }
 
-    if (apply_started_at_ != std::chrono::steady_clock::time_point{}) {
+    // A failed Apply keeps the time of the load that stays.
+    if (apply_success_ && apply_started_at_ != std::chrono::steady_clock::time_point{}) {
         const auto elapsed = std::chrono::steady_clock::now() - apply_started_at_;
         last_load_elapsed_ms_ =
             std::chrono::duration<float, std::milli>(elapsed).count();
     }
-
-    apply_status_timer_ = 5.0f;  // 5 second fade-out
     apply_in_progress_ = false;
 }
 } // namespace gui

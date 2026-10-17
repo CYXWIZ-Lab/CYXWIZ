@@ -1,6 +1,7 @@
 // DataInputDialog memory and audit tabs.
 
 #include "node_config_dialog.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 
 #include <algorithm>
@@ -13,12 +14,10 @@
 namespace gui {
 
 void DataInputDialog::RenderMemoryTab() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Memory Management");
+    ImGui::TextUnformatted("Memory");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -32,6 +31,14 @@ void DataInputDialog::RenderMemoryTab() {
                 ImGui::TextColored(t.info, "On disk (Parquet)");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
+            } else if (loaded_backend_ == 3) {
+                ImGui::TextColored(t.success, "Lazy-loaded");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- decoded per batch at the Resize size; nothing is held");
+            } else if (loaded_backend_ == 4) {
+                ImGui::TextColored(t.success, "Lazy-loaded");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- decoded per batch by the feature node; nothing is held");
             } else if (loaded_memory_is_estimate_) {
                 ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();
@@ -59,14 +66,10 @@ void DataInputDialog::RenderMemoryTab() {
 
             ImGui::Spacing();
 
-            ImGui::PushStyleColor(ImGuiCol_Button, t.error);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, cyxwiz::ui::Mix(t.error, t.text_bright, 0.15f));
-            if (ImGui::Button("Unload from Memory", ImVec2(180, 0))) {
+            if (cyxwiz::ui::DangerButton("Unload from memory", true, nullptr, cyxwiz::ui::ButtonSize::Small))
                 UnloadDataset();
-            }
-            ImGui::PopStyleColor(2);
             ImGui::SameLine();
-            ImGui::TextDisabled("Free RAM by removing cached data");
+            ImGui::TextDisabled("frees it until the next Apply or run");
             break;
         }
         case DataLoadState::OnDisk:
@@ -93,7 +96,7 @@ void DataInputDialog::RenderMemoryTab() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Advanced");
+    ImGui::TextUnformatted("Advanced");
     ImGui::Spacing();
     if (ImGui::Checkbox("Force disk-backed cache", &force_disk_backed_)) {
         has_changes_ = true;
@@ -187,14 +190,14 @@ ImVec4 AuditSeverityColor(const std::string& severity,
 }  // namespace
 
 void DataInputDialog::RenderAuditTab() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    const ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-    const ImVec4 ok_color(0.35f, 0.85f, 0.45f, 1.0f);
-    const ImVec4 warn_color(0.95f, 0.72f, 0.25f, 1.0f);
-    const ImVec4 err_color(0.95f, 0.35f, 0.35f, 1.0f);
+    // The status vocabulary's colours, from the theme.
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    const ImVec4 ok_color = t.success;
+    const ImVec4 warn_color = t.warning;
+    const ImVec4 err_color = t.error;
 
     ImGui::Spacing();
-    ImGui::TextColored(accent, "DATASET AUDIT");
+    ImGui::TextUnformatted("Dataset audit");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -233,7 +236,7 @@ void DataInputDialog::RenderAuditTab() {
         ImGui::Text("Columns: %lld", static_cast<long long>(loaded_cols_));
     }
     if (loaded_backend_ > 0) {
-        ImGui::Text("Backend: %d", loaded_backend_);
+        ImGui::Text("Read by: %s", BackendSummary());
     }
 
     ImGui::Spacing();
@@ -241,7 +244,7 @@ void DataInputDialog::RenderAuditTab() {
     ImGui::Spacing();
 
     if (ImGui::BeginTable("DatasetAuditSummary", 2,
-        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg,
+        ImGuiTableFlags_RowBg,
         ImVec2(0, 0))) {
         ImGui::TableSetupColumn("Check", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -273,7 +276,7 @@ void DataInputDialog::RenderAuditTab() {
         if (audit_issue_lines_.empty()) {
             ImGui::TextDisabled("No issue details are available for this session.");
         } else if (ImGui::BeginTable("DatasetAuditIssues", 3,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_RowBg |
             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
             ImVec2(0, 240.0f))) {
             ImGui::TableSetupColumn("Severity", ImGuiTableColumnFlags_WidthFixed, 90.0f);

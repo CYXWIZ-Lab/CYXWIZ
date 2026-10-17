@@ -350,53 +350,31 @@ void DataInputDialog::UpdateRAMEstimate() {
 }
 
 void DataInputDialog::BrowseFile() {
-    cyxwiz::FileDialogs::FilterList filters;
-
-    switch (file_category_) {
-        case FileCategory::Tabular:
-        case FileCategory::TimeSeries:
-            filters = {{"Supported Table and Document Data", cyxwiz::data_input::ExtensionFilter()}};
-            for (const auto& format : cyxwiz::data_input::kSourceFormats) {
-                if (!format.executable) continue;
-                const auto extensions = cyxwiz::data_input::ExtensionFilter(format);
-                if (!extensions.empty()) filters.emplace_back(format.label, extensions);
-            }
-            if (cyxwiz::data_input::kHdf5BuildAvailable) {
-                const auto* hdf5 = cyxwiz::data_input::FindFormat("hdf5");
-                filters.emplace_back("HDF5 (inspection only)", cyxwiz::data_input::ExtensionFilter(*hdf5));
-            }
-            filters.emplace_back("All Files", "*");
-            break;
-        case FileCategory::Image:
-            filters = {{"Image Files", "jpg,jpeg,png,bmp,gif,tiff,webp"}, {"All Files", "*"}};
-            break;
-        case FileCategory::Audio:
-            filters = {{"Audio Files", "wav,mp3,flac,ogg,m4a,aac"}, {"All Files", "*"}};
-            break;
-        case FileCategory::Text:
-            filters = {{"Text Data", "csv,tsv,json,jsonl,txt"}, {"CSV", "csv"},
-                       {"TSV", "tsv"}, {"JSON", "json,jsonl"}, {"Plain Text", "txt"}, {"All Files", "*"}};
-            break;
+    // A file is a table, a text document set or a ZIP of documents.
+    cyxwiz::FileDialogs::FilterList filters = {{"Supported Table and Document Data",
+                                                 cyxwiz::data_input::ExtensionFilter()}};
+    for (const auto& format : cyxwiz::data_input::kSourceFormats) {
+        if (!format.executable) continue;
+        const auto extensions = cyxwiz::data_input::ExtensionFilter(format);
+        if (!extensions.empty()) filters.emplace_back(format.label, extensions);
     }
-
+    filters.emplace_back("Text (JSON, TXT)", "json,jsonl,txt");
+    if (cyxwiz::data_input::kHdf5BuildAvailable) {
+        const auto* hdf5 = cyxwiz::data_input::FindFormat("hdf5");
+        filters.emplace_back("HDF5 (inspection only)", cyxwiz::data_input::ExtensionFilter(*hdf5));
+    }
+    filters.emplace_back("All Files", "*");
     if (auto selected = cyxwiz::FileDialogs::OpenFile(
             "Select Data File", filters, file_path_[0] == '\0' ? nullptr : file_path_)) {
-        strncpy(file_path_, selected->c_str(), sizeof(file_path_) - 1);
-        file_path_[sizeof(file_path_) - 1] = '\0';
-        DetectFileType();
-        DetectFileCategory();
-        RefreshColumnList();
-        has_changes_ = true;
+        SetSource(*selected);
     }
 }
 
 void DataInputDialog::BrowseFolder() {
+    // A folder of images, audio or text files (in class subfolders or flat).
     if (auto selected = cyxwiz::FileDialogs::SelectFolder(
-            "Select Image Folder", folder_path_[0] == '\0' ? nullptr : folder_path_)) {
-        strncpy(folder_path_, selected->c_str(), sizeof(folder_path_) - 1);
-        folder_path_[sizeof(folder_path_) - 1] = '\0';
-        has_changes_ = true;
-        preview_loaded_ = false;
+            "Select Data Folder", folder_path_[0] == '\0' ? nullptr : folder_path_)) {
+        SetSource(*selected);
     }
 }
 
@@ -407,15 +385,6 @@ std::string DataInputDialog::CurrentSourcePath() const {
 
 std::string DataInputDialog::CurrentSourceLabel() const {
     return data_input::CurrentSourceLabel(file_category_, text_layout_);
-}
-
-std::string DataInputDialog::CurrentApplySummary() const {
-    return data_input::CurrentApplySummary(
-        file_category_,
-        text_layout_,
-        force_disk_backed_,
-        max_rows_,
-        skip_rows_);
 }
 
 const char* DataInputDialog::BackendSummary() const {

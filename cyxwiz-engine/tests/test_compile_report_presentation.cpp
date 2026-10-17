@@ -228,12 +228,38 @@ void CheckMemoryRisk() {
 
 }  // namespace
 
+void CheckTextNotTokenized() {
+    Input in;
+    in.mode = Mode::Compile;
+    in.graph_name = "mental_health";
+    in.compiled_ok = false;
+    in.issues = {{IssueLevel::Error, 1, "Sentiment CSV",
+                  "'Sentiment CSV' gives text, and nothing turns it into numbers before the model: add a Text "
+                  "Tokenizer after it (or a TF-IDF / Count vectorizer)",
+                  errors::Compiler::TextNotTokenized}};
+    const Report r = BuildReport(in);
+    Check(r.findings.size() == 1 && r.findings[0].add_node == AddNodeFix::TextTokenizer &&
+              r.findings[0].code == "CW-C-0203" && !r.findings[0].open_dialog,
+          "text not tokenized: the fix adds a Text Tokenizer after the Data Input");
+    Check(BuildReport(SentimentNotLoaded()).findings[0].add_node == AddNodeFix::None, "other findings add nothing");
+    in.issues = {{IssueLevel::Error, 1, "Cats", "'Cats' gives images, and no Resize sets their size",
+                  errors::Compiler::ImageNotResized},
+                 {IssueLevel::Error, 2, "Speech", "'Speech' gives audio, and no node turns it into features",
+                  errors::Compiler::AudioFeaturesMissing}};
+    const Report media = BuildReport(in);
+    Check(media.findings.size() == 2 && media.findings[0].add_node == AddNodeFix::Resize &&
+              media.findings[1].add_node == AddNodeFix::AudioFeatures,
+          "images without Resize offer Add a Resize; audio without features offers the feature nodes");
+}
+
 int main() {
     CheckFailedCompile();
     CheckReady();
     CheckBlocked();
     CheckAttentionFirst();
     CheckMemoryRisk();
-    std::cout << "compile report presentation: failed, ready, blocked, placement, memory risk. OK\n";
+    CheckTextNotTokenized();
+    std::cout << "compile report presentation: failed, ready, blocked, placement, memory risk, text not "
+                 "tokenized. OK\n";
     return 0;
 }

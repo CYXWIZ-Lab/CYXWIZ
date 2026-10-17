@@ -43,6 +43,11 @@ QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const Fi
 // split here).
 QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0,
                              const std::string& words_table = {});
+// The number in a result's first row, NaN when the column is missing or its
+// value is NULL (DuckDB's count_if over no rows is NULL, for example when a
+// filter keeps none).
+double Number(const std::shared_ptr<arrow::Table>& t, const std::string& col);
+
 // Missing values per column (nulls plus the texts marked as missing), under
 // the other widgets' filters: a row with "rows" and one count per column.
 QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::vector<std::string>& columns,

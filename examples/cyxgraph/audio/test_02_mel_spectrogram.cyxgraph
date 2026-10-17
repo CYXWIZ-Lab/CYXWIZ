@@ -1,7 +1,7 @@
 {
   "id": "audio_test_02_mel_spectrogram",
   "name": "Audio Test 2 — MelSpectrogram node override",
-  "description": "Phase 2.1 audio test 2: Graph-driven MelSpectrogram feature extraction. Drops an explicit MelSpectrogram node with n_mels=64 into the pipeline. The graph compiler's ExtractMelSpectrogram extractor populates config.audio_preprocessing, AudioDatasetBatcher applies the override, and the feature shape changes from the dialog default [128 x 313] to [64 x 313]. Expected logs: 'GraphCompiler: MelSpectrogram n_mels=64, n_fft=512, hop=256' and 'audio feature extraction driven by graph node (type=2)'. Input_size drops to 20032 (exactly half of the fallback's 40064), first Dense layer sees 20032 features instead of 40064. Use this pattern when you want fewer mel bins for faster training or when your audio is narrow-band.",
+  "description": "Phase 2.1 audio test 2: Graph-driven MelSpectrogram feature extraction. Drops an explicit MelSpectrogram node with n_mels=64 into the pipeline. The graph compiler's ExtractMelSpectrogram extractor populates config.audio_preprocessing, AudioDatasetBatcher applies the override, and the feature shape is [64 x 313] instead of the [128 x 313] of a Mel Spectrogram at its default 128 bins. Expected logs: 'GraphCompiler: MelSpectrogram n_mels=64, n_fft=512, hop=256' and 'audio feature extraction driven by graph node (type=2)'. Input_size drops to 20032 (exactly half of 128 bins' 40064), first Dense layer sees 20032 features instead of 40064. Use this pattern when you want fewer mel bins for faster training or when your audio is narrow-band.",
   "category": "Training Pipeline",
   "tags": ["audio", "test", "phase2", "mel-spectrogram", "feature-extraction", "training"],
   "parameters": [
@@ -47,6 +47,7 @@
       {"from": "fc2", "to": "relu2"},
       {"from": "relu2", "to": "fc3"},
       {"from": "fc3", "to": "loss"},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
       {"from": "loss", "to": "optimizer"},
       {"from": "optimizer", "to": "output"}
     ]

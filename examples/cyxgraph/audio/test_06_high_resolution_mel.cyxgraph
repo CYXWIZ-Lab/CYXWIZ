@@ -51,6 +51,7 @@
       {"from": "relu2", "to": "drop2"},
       {"from": "drop2", "to": "fc3"},
       {"from": "fc3", "to": "loss"},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
       {"from": "loss", "to": "optimizer"},
       {"from": "optimizer", "to": "output"}
     ]

@@ -1,7 +1,7 @@
 #pragma once
 
-// Engine-side batchers for the pre-Arrow dataset types: DataRegistry
-// DatasetHandle datasets and registered text datasets. The shared training and
+// Engine-side batchers for the pre-Arrow DataRegistry DatasetHandle datasets.
+// The shared training and
 // test executors only run IBatchers; these factories adapt the Engine's own
 // dataset types to them (TOFIX118 P2), with the same setup the executors
 // used to do inline - registry preprocessing and statistics, augmentation,
@@ -47,10 +47,5 @@ ExternalBatcherFactory LegacyTrainingBatcherFactory(DatasetHandle dataset);
 std::unique_ptr<IBatcher> BuildLegacyTestBatcher(const TrainingConfiguration& config, const DatasetHandle& dataset,
                                                  int batch_size);
 ExternalTestSource LegacyTestSource(DatasetHandle dataset);
-
-// Test-phase batcher for a registered text dataset (carries its class names).
-std::unique_ptr<IBatcher> BuildTextTestBatcher(const TrainingConfiguration& config,
-                                               const DataRegistry::TextDatasetEntry& entry, int batch_size);
-ExternalTestSource TextTestSource(DataRegistry::TextDatasetEntry entry);
 
 }  // namespace cyxwiz

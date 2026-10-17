@@ -556,9 +556,8 @@ void DataRegistry::RegisterAudioDataset(const std::string& name,
     std::lock_guard<std::mutex> lock(mutex_);
     InvalidateTabularPublicationUnlocked(name);
     audio_dataset_entries_[name] = entry;
-    spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, feature_type={}, sr={}",
-                 name, entry.num_samples, entry.num_classes,
-                 entry.feature_type, entry.target_sr);
+    spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, sr={}",
+                 name, entry.num_samples, entry.num_classes, entry.target_sr);
 }
 
 bool DataRegistry::IsAudioDataset(const std::string& name) const {
@@ -591,10 +590,8 @@ void DataRegistry::RegisterTextDataset(const std::string& name,
     std::lock_guard<std::mutex> lock(mutex_);
     InvalidateTabularPublicationUnlocked(name);
     text_dataset_entries_[name] = entry;
-    spdlog::info("RegisterTextDataset '{}': {} samples, {} classes, "
-                 "vocab_size={}, tokenizer_type={}, max_length={}",
-                 name, entry.num_samples, entry.num_classes,
-                 entry.vocab_size, entry.tokenizer_type, entry.max_length);
+    spdlog::info("RegisterTextDataset '{}': {} samples, {} classes",
+                 name, entry.num_samples, entry.num_classes);
 }
 
 bool DataRegistry::IsTextDataset(const std::string& name) const {
@@ -710,8 +707,6 @@ const bool kGraphDatasetCatalogInstalled = [] {
         if (!entry) return std::nullopt;
         GraphTextDatasetInfo info;
         info.num_samples = entry->num_samples;
-        info.vocab_size = entry->vocab_size;
-        info.max_length = entry->max_length;
         return info;
     };
     catalog.source_path = [](const std::string& name) {

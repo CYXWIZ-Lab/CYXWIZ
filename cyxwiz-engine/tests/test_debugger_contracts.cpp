@@ -19,48 +19,18 @@
 #include "../src/core/debug_support_bundle_builder.h"
 #include "../src/core/debug_windows_crash_importer.h"
 #include "../src/core/annotation_manager.h"
-#include "../src/core/data_registry.h"
 #include "../src/core/error_codes.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/preflight_validator.h"
-#include "../src/core/text_preprocessing_tracer.h"
 #include "../src/core/training_trace_collector.h"
 
 #include <arrow/api.h>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
-
-namespace cyxwiz {
-
-DataRegistry& DataRegistry::Instance() {
-    static DataRegistry registry;
-    return registry;
-}
-
-void DataRegistry::RegisterTextDataset(const std::string& name,
-                                       const TextDatasetEntry& entry) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    text_dataset_entries_[name] = entry;
-}
-
-const DataRegistry::TextDatasetEntry* DataRegistry::GetTextDatasetEntry(
-    const std::string& name) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = text_dataset_entries_.find(name);
-    return it == text_dataset_entries_.end() ? nullptr : &it->second;
-}
-
-void DataRegistry::UnregisterTextDataset(const std::string& name) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    text_dataset_entries_.erase(name);
-}
-
-} // namespace cyxwiz
 
 namespace {
 
@@ -4426,214 +4396,6 @@ void TestDebugRunStoreContract() {
     std::filesystem::remove_all(test_root);
 }
 
-void TestTextPreprocessingTraceContract() {
-    const auto test_root =
-        std::filesystem::temp_directory_path() / "cyxwiz_debugger_text_trace";
-    std::filesystem::remove_all(test_root);
-    std::filesystem::create_directories(test_root);
-
-    const auto csv_path = test_root / "debug_text.csv";
-    {
-        std::ofstream file(csv_path);
-        file << "text,label\n";
-        file << "Hello stable debugger trace,positive\n";
-        file << "Short row,negative\n";
-    }
-
-    const std::string dataset_name = "debugger_contract_text_dataset";
-    cyxwiz::DataRegistry::TextDatasetEntry entry;
-    entry.source_path = csv_path.string();
-    entry.text_column = "text";
-    entry.label_column = "label";
-    entry.has_labels = true;
-    entry.tokenizer_type = 1;
-    entry.max_length = 6;
-    entry.lowercase = true;
-    entry.do_padding = true;
-    entry.do_truncation = true;
-    entry.min_word_freq = 1;
-    entry.max_vocab_size = -1;
-
-    cyxwiz::DataRegistry::Instance().RegisterTextDataset(dataset_name, entry);
-
-    cyxwiz::TrainingConfiguration config;
-    config.dataset_name = dataset_name;
-    config.preprocessing_domain = cyxwiz::PreprocessingDomain::Text;
-    config.text_preprocessing.has_tokenizer_node = true;
-    config.text_preprocessing.has_vocabulary_node = true;
-    config.text_preprocessing.has_padding_node = true;
-    config.text_preprocessing.tokenizer_type = 1;
-    config.text_preprocessing.lowercase = true;
-    config.text_preprocessing.do_padding = true;
-    config.text_preprocessing.do_truncation = true;
-    config.text_preprocessing.max_length = 6;
-    config.text_preprocessing.min_word_freq = 1;
-    config.text_preprocessing.max_vocab_size = -1;
-
-    std::vector<gui::MLNode> nodes = {
-        MakeNode(11, gui::NodeType::TextTokenizer, "Text Tokenizer"),
-        MakeNode(12, gui::NodeType::TextVocabulary, "Text Vocabulary"),
-        MakeNode(13, gui::NodeType::TextPadding, "Text Padding"),
-    };
-
-    cyxwiz::TextPreprocessingTracer tracer;
-    const auto traces = tracer.TraceSample(config, nodes, "text-trace-run", 0);
-
-    Check(traces.size() == 3,
-          "text preprocessing tracer should emit tokenizer, vocab, and padding traces");
-
-    const cyxwiz::DebugTraceRecord& tokenizer = traces[0];
-    Check(tokenizer.run_id == "text-trace-run",
-          "tokenizer trace should carry run id");
-    Check(tokenizer.node_id == 11, "tokenizer trace should bind to tokenizer node");
-    Check(tokenizer.phase == "TextTokenizer",
-          "tokenizer trace phase should be stable");
-    Check(tokenizer.role == cyxwiz::DebugTraceRole::PreprocessingOutput,
-          "tokenizer trace should be preprocessing output");
-    Check(tokenizer.status == "ok", "tokenizer trace should succeed");
-    Check(tokenizer.payload["success"].get<bool>(),
-          "tokenizer trace should mark success");
-    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(tokenizer),
-          "tokenizer trace should use canonical node trace schema");
-    Check(tokenizer.payload["output_rank"].get<size_t>() == 1,
-          "tokenizer trace should expose output rank");
-    Check(tokenizer.payload["output_numel"].get<size_t>() ==
-              tokenizer.output_shape[0],
-          "tokenizer trace should expose output element count");
-    Check(tokenizer.payload["dataset"].get<std::string>() == dataset_name,
-          "tokenizer payload should include dataset");
-    Check(tokenizer.payload["sample_index"].get<size_t>() == 0,
-          "tokenizer payload should include sample index");
-    Check(tokenizer.payload["raw_text_preview"].get<std::string>().find("Hello") != std::string::npos,
-          "tokenizer payload should include raw text preview");
-    Check(tokenizer.payload["token_count"].get<size_t>() >= 4,
-          "tokenizer payload should include token count");
-    Check(tokenizer.payload["tokens_preview"].is_array(),
-          "tokenizer payload should include token preview");
-    Check(tokenizer.payload["diagnostic_phase"].get<std::string>() == "TextTokenizer",
-          "tokenizer trace should expose text diagnostic phase");
-    Check(tokenizer.payload["component"].get<std::string>() == "TextTokenizer",
-          "tokenizer trace should expose diagnostic component");
-    Check(tokenizer.payload["source_file"].get<std::string>().find(
-              "text_preprocessing_tracer.cpp") != std::string::npos,
-          "tokenizer trace should expose source file");
-    Check(tokenizer.payload["source_symbol"].get<std::string>() ==
-              "cyxwiz::TextPreprocessingTracer::TraceSample",
-          "tokenizer trace should expose source symbol");
-
-    const cyxwiz::DebugTraceRecord& vocab = traces[1];
-    Check(vocab.node_id == 12, "vocab trace should bind to vocab node");
-    Check(vocab.phase == "TextVocabulary", "vocab trace phase should be stable");
-    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(vocab),
-          "vocab trace should use canonical node trace schema");
-    Check(vocab.payload["success"].get<bool>(),
-          "vocab trace should mark success");
-    Check(vocab.payload["output_rank"].get<size_t>() == 1,
-          "vocab trace should expose output rank");
-    Check(vocab.payload["output_numel"].get<size_t>() == vocab.output_shape[0],
-          "vocab trace should expose output element count");
-    Check(vocab.payload["vocab_size"].get<size_t>() > 0,
-          "vocab payload should include vocab size");
-    Check(vocab.payload["vocab_hits"].get<int>() > 0,
-          "vocab payload should include hits");
-    Check(vocab.payload["unknown_token_count"].get<int>() >= 0,
-          "vocab payload should include unknown-token count");
-    Check(vocab.payload["unknown_token_ratio"].get<float>() >= 0.0f,
-          "vocab payload should include unknown-token ratio");
-    Check(vocab.payload["token_ids_preview"].is_array(),
-          "vocab payload should include token id preview");
-
-    const cyxwiz::DebugTraceRecord& padding = traces[2];
-    Check(padding.node_id == 13, "padding trace should bind to padding node");
-    Check(padding.phase == "TextPadding", "padding trace phase should be stable");
-    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(padding),
-          "padding trace should use canonical node trace schema");
-    Check(padding.payload["success"].get<bool>(),
-          "padding trace should mark success");
-    Check(padding.output_shape == std::vector<size_t>{6},
-          "padding output shape should reflect configured max length");
-    Check(padding.payload["output_rank"].get<size_t>() == 1,
-          "padding trace should expose output rank");
-    Check(padding.payload["output_numel"].get<size_t>() == 6,
-          "padding trace should expose output element count");
-    Check(padding.payload["max_length"].get<int>() == 6,
-          "padding payload should include max length");
-    Check(padding.payload["final_sequence_length"].get<size_t>() == 6,
-          "padding payload should include final sequence length");
-    Check(padding.payload["pad_count"].get<int>() >= 0,
-          "padding payload should include pad count");
-    Check(padding.payload["pad_ratio"].get<float>() >= 0.0f,
-          "padding payload should include pad ratio");
-    Check(padding.payload.contains("truncated"),
-          "padding payload should include truncation flag");
-
-    auto truncated_config = config;
-    truncated_config.text_preprocessing.max_length = 2;
-    const auto truncated_traces =
-        tracer.TraceSample(truncated_config, nodes, "text-trace-truncated-run", 0);
-    Check(truncated_traces.size() == 3,
-          "truncated text preprocessing trace should preserve trace count");
-    const cyxwiz::DebugTraceRecord& truncated_padding = truncated_traces[2];
-    Check(truncated_padding.status == "warning",
-          "truncated padding trace should warn");
-    Check(!truncated_padding.payload["success"].get<bool>(),
-          "truncated padding trace should mark unsuccessful");
-    Check(truncated_padding.payload["issue_count"].get<size_t>() == 1,
-          "truncated padding trace should expose issue count");
-    Check(truncated_padding.payload["warning_count"].get<size_t>() == 1,
-          "truncated padding trace should expose warning count");
-    Check(truncated_padding.payload["error_count"].get<size_t>() == 0,
-          "truncated padding trace should expose zero error count");
-    Check(truncated_padding.payload["primary_warning_code"].get<std::string>() ==
-              cyxwiz::errors::Compiler::InvalidParameter,
-          "truncated padding trace should expose primary warning code");
-    Check(truncated_padding.payload["issue_codes"][0].get<std::string>() ==
-              cyxwiz::errors::Compiler::InvalidParameter,
-          "truncated padding trace should expose warning issue code");
-
-    cyxwiz::DataRegistry::Instance().UnregisterTextDataset(dataset_name);
-    const auto missing_traces =
-        tracer.TraceSample(config, nodes, "missing-text-trace-run", 0);
-    Check(missing_traces.size() == 1,
-          "text preprocessing tracer should report missing dataset trace");
-    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(missing_traces[0]),
-          "missing text dataset trace should use canonical node trace schema");
-    Check(!missing_traces[0].payload["success"].get<bool>(),
-          "missing text dataset trace should mark unsuccessful");
-    Check(missing_traces[0].payload["error_code"].get<std::string>() ==
-              cyxwiz::errors::Runtime::InputDatasetMissing,
-          "missing text dataset trace should expose runtime input code");
-    Check(!missing_traces[0].issues.empty() &&
-              missing_traces[0].issues[0].error_code ==
-                  cyxwiz::errors::Runtime::InputDatasetMissing,
-          "missing text dataset issue should expose runtime input code");
-    Check(missing_traces[0].payload["issue_count"].get<size_t>() == 1,
-          "missing text dataset trace should expose issue count");
-    Check(missing_traces[0].payload["error_count"].get<size_t>() == 1,
-          "missing text dataset trace should expose error count");
-    Check(missing_traces[0].payload["warning_count"].get<size_t>() == 0,
-          "missing text dataset trace should expose zero warning count");
-    Check(missing_traces[0].payload["primary_error_code"].get<std::string>() ==
-              cyxwiz::errors::Runtime::InputDatasetMissing,
-          "missing text dataset trace should expose primary error code");
-    Check(missing_traces[0].payload["issue_codes"][0].get<std::string>() ==
-              cyxwiz::errors::Runtime::InputDatasetMissing,
-          "missing text dataset trace should expose issue code summary");
-    Check(missing_traces[0].payload["diagnostic_phase"].get<std::string>() ==
-              "data_source",
-          "missing text dataset trace should expose data-source phase");
-    Check(missing_traces[0].payload["component"].get<std::string>() ==
-              "TextDataset",
-          "missing text dataset trace should expose component");
-    Check(missing_traces[0].payload["source_file"].get<std::string>().find(
-              "text_preprocessing_tracer.cpp") != std::string::npos,
-          "missing text dataset trace should expose source file");
-    Check(missing_traces[0].payload["source_symbol"].get<std::string>() ==
-              "cyxwiz::TextPreprocessingTracer::TraceSample",
-          "missing text dataset trace should expose source symbol");
-    std::filesystem::remove_all(test_root);
-}
-
 } // namespace
 
 void TestErrorCodeTimelineCarriedForwardIssueOnce() {
@@ -4691,7 +4453,6 @@ int main() {
     TestSmokeRunResultValueContract();
     TestPreflightIssueCodeContract();
     TestDebugRunStoreContract();
-    TestTextPreprocessingTraceContract();
     std::cout << "Debugger contract tests passed\n";
     return 0;
 }

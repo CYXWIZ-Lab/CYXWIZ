@@ -17,6 +17,7 @@
 #include "core/guided_sql.h"
 #include "core/sql_plan.h"
 #include "core/sql_transform.h"
+#include "core/filter_condition.h"
 #include "core/dataset_profiler.h"
 #include "core/plot/node_result_plan.h"
 #include "core/graph_document.h"
@@ -6200,6 +6201,93 @@ int main(int argc, char** argv) {
           "FilterRows string condition should keep one matching row");
     Check(ReadStringValue(string_filtered_table, "phrase", 0) == "tea cup",
           "FilterRows string condition should keep the expected row");
+
+    // The Row Filter dialog's condition ("quoted" names) runs the same way.
+    {
+        cyxwiz::FilterRow row;
+        row.column = "phrase";
+        row.kind = cyxwiz::FilterValueKind::Text;
+        row.value = "tea cup";
+        nlohmann::json graph = nlohmann::json::parse(filter_string_json);
+        graph["nodes"][1]["id"] = 198;
+        graph["nodes"][1]["parameters"]["condition"] = cyxwiz::BuildFilterCondition({row});
+        graph["links"][0]["end_node"] = 198;
+        cyxwiz::PipelineExecutor dialog_executor;
+        Check(dialog_executor.ExecutePipeline(graph.dump()),
+              "the dialog's condition runs: " + dialog_executor.GetLastError());
+        auto dialog_filtered = registry.GetArrowDataset("ds_filter_198");
+        Check(dialog_filtered && dialog_filtered->GetArrowTable()->num_rows() == 1,
+              "the dialog's condition keeps the matching row");
+    }
+
+    // is empty / is not empty: a missing number, and missing or '' text.
+    {
+        const fs::path empty_csv = fs::temp_directory_path() / "cyxwiz_filter_empty.csv";
+        {
+            std::ofstream out(empty_csv);
+            out << "name,score\na,1\n,2\nc,\nd,4\n";
+        }
+        const auto run = [&](int id, const std::string& condition) -> int64_t {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({
+                    {{"id", id}, {"type", "DataInput"}, {"name", "Input"},
+                     {"parameters", {{"source_type", "file"}, {"file_path", empty_csv.string()},
+                                     {"type", "csv"}, {"has_header", "true"}}}},
+                    {{"id", id + 1}, {"type", "FilterRows"}, {"name", "Filter"},
+                     {"parameters", {{"condition", condition}}}}})},
+                {"links", nlohmann::json::array({{{"start_node", id}, {"end_node", id + 1}}})}};
+            cyxwiz::PipelineExecutor executor;
+            if (!executor.ExecutePipeline(graph.dump())) {
+                std::cerr << condition << ": " << executor.GetLastError() << "\n";
+                return -1;
+            }
+            auto out = registry.GetArrowDataset("ds_filter_" + std::to_string(id + 1));
+            return out ? out->GetArrowTable()->num_rows() : -1;
+        };
+        Check(run(93101, "\"name\" IS NOT EMPTY") == 3, "text that is not empty: 3 of 4 rows");
+        Check(run(93103, "name is empty") == 1, "empty text ('' or missing): 1 row");
+        Check(run(93105, "\"score\" IS EMPTY") == 1, "a missing number: 1 row");
+        Check(run(93107, "name IS EMPTY OR score IS EMPTY") == 2, "either empty: 2 rows");
+        Check(run(93109, "score IS NOT EMPTY AND score >= 2") == 2, "an empty test joins comparisons");
+        Check(run(93111, "score IS 5") == -1, "IS needs EMPTY");
+        fs::remove(empty_csv);
+    }
+
+    // A time series Data Input keeps its rows in the order of its time column.
+    {
+        const fs::path series_csv = fs::temp_directory_path() / "cyxwiz_time_series_order.csv";
+        {
+            std::ofstream out(series_csv);
+            out << "date,sales\n2024-03-01,30\n2024-01-01,10\n,99\n2024-02-01,20\n";
+        }
+        const auto load = [&](int id, const std::string& time_column, std::string& error) {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({
+                    {{"id", id}, {"type", "DataInput"}, {"name", "Series"},
+                     {"parameters", {{"source_type", "file"}, {"file_path", series_csv.string()}, {"type", "csv"},
+                                     {"has_header", "true"}, {"file_category", "timeseries"},
+                                     {"time_column", time_column}}}}})},
+                {"links", nlohmann::json::array()}};
+            cyxwiz::PipelineExecutor executor;
+            const bool ok = executor.ExecutePipeline(graph.dump());
+            error = executor.GetLastError();
+            return ok ? registry.GetArrowDataset("ds_datainput_" + std::to_string(id)) : nullptr;
+        };
+        std::string error;
+        auto sorted = load(93121, "date", error);
+        Check(sorted != nullptr, "a time series loads sorted: " + error);
+        const auto series_table = sorted->GetArrowTable();
+        // Read as text: the registry narrows integer columns.
+        std::string sales;
+        const auto column = series_table->GetColumnByName("sales");
+        for (int64_t i = 0; i < column->length(); ++i) sales += (*column->GetScalar(i))->ToString() + " ";
+        Check(sales == "10 20 30 99 ", "rows in date order, the missing date last (got " + sales + ")");
+        auto unsorted = load(93123, "", error);
+        Check(unsorted && unsorted->GetArrowTable()->num_rows() == 4, "no time column keeps the file's order");
+        Check(!load(93125, "when", error) && error.find("when") != std::string::npos,
+              "an unknown time column is refused by name: " + error);
+        fs::remove(series_csv);
+    }
 
     const std::string filter_missing_column_json =
         R"({"nodes":[)"

@@ -562,10 +562,8 @@ void ValidateDenseTextVectorizerMaterializerMemory(
     }
 
     size_t sample_count = 0;
-    size_t full_vocab_size = 0;
     if (const auto text_info = GraphTextDatasetInfoFor(config.dataset_name)) {
         sample_count = text_info->num_samples;
-        full_vocab_size = text_info->vocab_size;
     }
     if (sample_count == 0) {
         if (auto arrow_ds = GraphArrowDataset(config.dataset_name)) {
@@ -602,13 +600,7 @@ void ValidateDenseTextVectorizerMaterializerMemory(
 
     std::ostringstream msg;
     msg << TextVectorizerName(vectorizer_node->type)
-        << " dense output is large: rows=" << sample_count;
-    if (full_vocab_size > 0) {
-        msg << ", full_vocab=" << full_vocab_size;
-    } else {
-        msg << ", full_vocab=unknown";
-    }
-    msg
+        << " dense output is large: rows=" << sample_count
         << ", max_features=" << max_features
         << ", ngram_range=" << ngram_range
         << ", stop_words=" << stop_words
@@ -662,7 +654,6 @@ void ValidateSparseFeatureTrainingContract(
     const auto* vectorizer = sparse_vectorizers.front();
     const size_t sparse_width = ParsePositiveSizeParam(
         *vectorizer, "max_features", 2000);
-    config.text_preprocessing.has_vectorizer_node = true;
     config.text_preprocessing.max_length = static_cast<int>(sparse_width);
     config.input_size = sparse_width;
     config.input_shape = {sparse_width};
@@ -2086,17 +2077,6 @@ void ApplyTextInputShape(TrainingConfiguration& config) {
     }
 
     int max_length = config.text_preprocessing.max_length;
-    const bool graph_overrides_length =
-        config.text_preprocessing.has_tokenizer_node ||
-        config.text_preprocessing.has_vectorizer_node ||
-        config.text_preprocessing.has_padding_node;
-
-    if (!graph_overrides_length && !config.dataset_name.empty()) {
-        if (const auto text_info = GraphTextDatasetInfoFor(config.dataset_name)) {
-            max_length = text_info->max_length;
-        }
-    }
-
     if (max_length <= 0) {
         max_length = 1;
     }
@@ -6024,12 +6004,12 @@ TrainingConfiguration GraphCompiler::Compile(
     //     batch size vs row count) run on the pre-materialized CSV —
     //     validating the user's raw column pick, not the post-window
     //     x_0..x_n schema.
-    //   - Audio / Text: either the graph has extractor nodes (Spectrogram
-    //     / MelSpec / MFCC for audio, TextTokenizer / TextVocabulary /
-    //     TextPadding for text) that populate config.audio_preprocessing
-    //     / text_preprocessing later, or we fall back to the dialog-
-    //     baked defaults on the registry entry. The end-of-Compile()
-    //     log reports which mode won.
+    //   - Audio: either the graph has extractor nodes (Spectrogram /
+    //     MelSpec / MFCC) that populate config.audio_preprocessing later,
+    //     or we fall back to the dialog-baked defaults on the registry
+    //     entry. The end-of-Compile() log reports which mode won.
+    //   - Text: tokenizing runs only in the Text Tokenizer (or a
+    //     vectorizer) operator; text without one is refused.
     if (dataset_node) {
         auto cat_it = dataset_node->parameters.find("file_category");
         const std::string cat = (cat_it != dataset_node->parameters.end())
@@ -6069,25 +6049,18 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (is_image) {
 
-            // Check 1: Resize node required for image datasets.
-            // Without it, images load at their native (variable) size,
-            // which can't be batched AND can cause massive tensors that
-            // OOM the GPU. This is the most critical image check.
-            bool has_resize = false;
-            for (const auto& node : nodes) {
-                if (node.type == gui::NodeType::Resize) {
-                    has_resize = true;
-                    break;
-                }
-            }
+            // Check 1: a Resize node on the training path sets the size
+            // every image is decoded at (Data Input only loads, TOFIX129
+            // B-9): images of different sizes cannot share a batch.
+            const bool has_resize = std::any_of(nodes.begin(), nodes.end(), [&](const gui::MLNode& node) {
+                return node.type == gui::NodeType::Resize && ContainsWhenFiltered(training_path_ids, node.id);
+            });
             if (!has_resize) {
                 AddIssue(config, IssueLevel::Error,
-                         "Image datasets require a Resize node to set target "
-                         "dimensions. Without it, images load at their native "
-                         "size which can exceed GPU memory. Add a Resize node "
-                         "between DataInput and the first layer (e.g. "
-                         "Resize 64x64 for fast training, 224x224 for accuracy).",
-                         dataset_node->id, dataset_node->name);
+                         "'" + dataset_node->name + "' gives images, and no Resize sets their size: images of "
+                         "different sizes cannot share a batch. Add a Resize after the Data Loader (64 x 64 "
+                         "trains fast, 224 x 224 keeps more detail)",
+                         dataset_node->id, dataset_node->name, errors::Compiler::ImageNotResized);
             }
 
             // Check 2: Flatten required before Dense layers for images.
@@ -6241,31 +6214,34 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    // Audio preprocessing mode summary — surface whether the graph's
-    // feature node overrode the dialog defaults, or whether we fell
-    // back. Useful for debugging "why isn't my MelSpectrogram n_mels=64
-    // taking effect" without having to grep through the logs for
-    // individual extractor calls.
-    if (config.preprocessing_domain == PreprocessingDomain::Audio) {
-        if (config.audio_preprocessing.has_feature_node) {
-            CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction driven by graph "
-                         "node (type={})",
-                         static_cast<int>(config.audio_preprocessing.feature_type));
-        } else {
-            CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction uses dialog defaults "
-                         "(no Spectrogram/MelSpectrogram/MFCC node in graph)");
-        }
+    // Audio features come from a Spectrogram, Mel Spectrogram or MFCC node
+    // (Data Input only loads, TOFIX129 B-9).
+    if (config.preprocessing_domain == PreprocessingDomain::Audio && config.audio_preprocessing.has_feature_node) {
+        CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction driven by graph node (type={})",
+                            static_cast<int>(config.audio_preprocessing.feature_type));
+    } else if (config.preprocessing_domain == PreprocessingDomain::Audio && dataset_node) {
+        AddIssue(config, IssueLevel::Error,
+                 "'" + dataset_node->name + "' gives audio, and no node turns it into features: add a Mel "
+                 "Spectrogram, Spectrogram or MFCC after the Data Loader",
+                 dataset_node->id, dataset_node->name, errors::Compiler::AudioFeaturesMissing);
     }
 
-    // Text preprocessing is no longer extracted into TrainingConfiguration.
-    // TextTokenizer is a real Arrow operator; TextVocabulary/TextPadding
-    // fold into it during PipelineMaterializer. If no materialized Arrow
-    // table is selected, TextDatasetBatcher uses the dialog-baked defaults
-    // from DataRegistry::TextDatasetEntry.
-    if (config.preprocessing_domain == PreprocessingDomain::Text) {
-        CYXWIZ_BUILDER_INFO("GraphCompiler: text preprocessing nodes are materialized "
-                     "through Arrow operators; legacy text fallback uses dialog "
-                     "defaults from the registered dataset");
+    // Data Input only loads text (TOFIX129 B-8); a node turns it into
+    // numbers: a Text Tokenizer (ids), a TF-IDF or Count vectorizer, or Word
+    // Embeddings. Without one on the training path the model would get raw
+    // strings.
+    if (config.preprocessing_domain == PreprocessingDomain::Text && dataset_node) {
+        const bool text_to_numbers = std::any_of(nodes.begin(), nodes.end(), [&](const gui::MLNode& node) {
+            return ContainsWhenFiltered(training_path_ids, node.id) &&
+                   (node.type == gui::NodeType::TextTokenizer || node.type == gui::NodeType::TFIDFVectorizer ||
+                    node.type == gui::NodeType::CountVectorizer || node.type == gui::NodeType::WordEmbeddings);
+        });
+        if (!text_to_numbers) {
+            AddIssue(config, IssueLevel::Error,
+                     "'" + dataset_node->name + "' gives text, and nothing turns it into numbers before the "
+                     "model: add a Text Tokenizer after it (or a TF-IDF / Count vectorizer)",
+                     dataset_node->id, dataset_node->name, errors::Compiler::TextNotTokenized);
+        }
     }
 
     // Import rebuilds weights/architecture; training previews require live data
@@ -7050,11 +7026,9 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
 //
 // Each extractor sets has_feature_node=true (except AudioAugmentation,
 // which sets has_augmentation=true) and copies the GUI node's parameters
-// into config.audio_preprocessing. AudioDatasetBatcher later merges this
-// into its AudioDatasetConfig, overriding the dialog-baked defaults on
-// AudioDatasetEntry. If no audio feature node is found in the graph,
-// has_feature_node stays false and the batcher uses the dialog defaults
-// — "fallback mode", the standard UX.
+// into config.audio_preprocessing. AudioDatasetBatcher builds its
+// AudioDatasetConfig features from this alone; without a feature node the
+// compiler reports CW-C-0205 and the batcher refuses.
 
 static void ExtractSpectrogram(const gui::MLNode& node, TrainingConfiguration& config) {
     config.audio_preprocessing.has_feature_node = true;
@@ -7126,26 +7100,14 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
 // --- Text preprocessing (Arrow materializer path) ---
 // TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
 // still extracts its shape contract so recurrent preflight uses the graph's
-// current max_length instead of the registered dataset's dialog default.
+// current max_length.
 static void ExtractTextTokenizerShape(
     const gui::MLNode& node,
     TrainingConfiguration& config) {
-    config.text_preprocessing.has_tokenizer_node = true;
-    config.text_preprocessing.has_padding_node = true;
     if (node.parameters.count("max_length")) {
         config.text_preprocessing.max_length =
             static_cast<int>(ParseSizeParam(node.parameters, "max_length", 512));
     }
-    if (node.parameters.count("tokenizer_type")) {
-        config.text_preprocessing.tokenizer_type =
-            static_cast<int>(ParseSizeParam(node.parameters, "tokenizer_type", 1));
-    }
-    config.text_preprocessing.lowercase =
-        ParseBoolParam(node.parameters, "lowercase", config.text_preprocessing.tokenizer_type != 3);
-    config.text_preprocessing.do_padding =
-        ParseBoolParam(node.parameters, "padding", true);
-    config.text_preprocessing.do_truncation =
-        ParseBoolParam(node.parameters, "truncation", true);
     if (node.parameters.count("pad_value")) {
         config.text_preprocessing.pad_value =
             static_cast<int>(ParseSizeParam(node.parameters, "pad_value", 0));
@@ -7157,7 +7119,6 @@ static void ExtractTextTokenizerShape(
 static void ExtractTextVectorizerShape(
     const gui::MLNode& node,
     TrainingConfiguration& config) {
-    config.text_preprocessing.has_vectorizer_node = true;
     const int max_features = static_cast<int>(
         ParseSizeParam(node.parameters, "max_features", 2000));
     config.text_preprocessing.max_length = std::max(1, max_features);

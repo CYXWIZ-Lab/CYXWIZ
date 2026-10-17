@@ -310,6 +310,10 @@ public:
     // Apache Arrow columnar data support (Data Studio foundation)
     std::shared_ptr<class ArrowDataset> LoadArrowTable(const std::string& path, const std::string& name = "");
     std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
+    // Puts an in-memory table's rows in ascending order of `column` (missing
+    // values last), keeping its name and source file: a time series in time
+    // order. False with `error` when the table is not in memory or lacks it.
+    bool SortArrowTableByColumn(const std::string& name, const std::string& column, std::string& error);
     // A reservation for the current registration (including absence). Copies
     // share validity; any writer of this name invalidates all outstanding copies.
     class TabularPublicationToken {
@@ -452,11 +456,11 @@ public:
     void UnregisterImageDataset(const std::string& name);
 
     // --- Audio dataset registry (Phase 2) ---
-    // Same lightweight-metadata pattern as images. The actual AudioDataset
-    // is constructed at training start by AudioDatasetBatcher using the
-    // feature config from this entry. Audio files (wav/flac/ogg/aiff) are
-    // loaded lazily per GetItem() so we don't need to scan the whole
-    // dataset at registration time — we just record what's there.
+    // Same lightweight-metadata pattern as images: only the loading
+    // settings. AudioDatasetBatcher builds the AudioDataset at training
+    // start with these and the features from the graph's Spectrogram /
+    // MelSpectrogram / MFCC node. Audio files (wav/flac/ogg/aiff) are
+    // decoded per GetItem(), so registration just records what's there.
     struct AudioDatasetEntry {
         std::string folder_path;
         bool labeled_subdirs = true;     // false = flat directory, no labels
@@ -469,27 +473,13 @@ public:
         std::string filename_col;
         std::string label_col;
 
-        // Feature extraction config — drives what AudioDataset produces
-        // for each sample. 0=Spectrogram, 1=MelSpectrogram, 2=MFCC.
-        int feature_type = 1;            // default MelSpectrogram
-        int target_sr = 16000;
-        int n_fft = 512;
-        int hop_length = 256;
-        int n_mels = 128;
-        float fmin = 0.0f;
-        float fmax = 0.0f;
-        int n_mfcc = 13;
+        int target_sr = 16000;           // resample to this rate (mono)
         float max_duration = 5.0f;       // seconds; pad/truncate to this length
 
-        // Populated by the dialog after a quick directory scan + probe
+        // Populated by the dialog after a directory scan
         size_t num_samples = 0;
         size_t num_classes = 0;
         std::vector<std::string> class_names;
-        // Actual feature shape from a first-sample probe, so the Memory
-        // tab can compute "if fully cached" estimates without re-probing
-        // on every dialog reopen. Zero if probe hasn't happened yet.
-        int feature_rows = 0;
-        int feature_cols = 0;
     };
     void RegisterAudioDataset(const std::string& name, const AudioDatasetEntry& entry);
     bool IsAudioDataset(const std::string& name) const;
@@ -497,36 +487,19 @@ public:
     void UnregisterAudioDataset(const std::string& name);
 
     // --- Text dataset registry (Phase 3) ---
-    // Same lightweight-metadata pattern as images/audio. The actual
-    // TextDataset (which owns the tokenizer + vocabulary) is constructed
-    // at training start by TextDatasetBatcher using the tokenizer config
-    // from this entry. For sources that build a vocab from the corpus,
-    // the DataInputDialog's Apply path runs a probe TextDataset once so
-    // we can store num_samples / num_classes / vocab_size without having
-    // to re-tokenize on every dialog reopen.
+    // Metadata for a raw text dataset. The texts and labels themselves are
+    // registered as an Arrow table under the same name; tokenizing happens
+    // only in the Text Tokenizer node, which materializes its own table.
     struct TextDatasetEntry {
         std::string source_path;         // CSV / JSON / TXT / folder
         std::string text_column;         // CSV column holding the text
         std::string label_column;        // CSV column holding the label (empty = no labels)
         bool has_labels = true;
 
-        // Dialog-baked defaults — overridable by graph preprocessing
-        // nodes (TextTokenizer / TextVocabulary / TextPadding).
-        // tokenizer_type: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
-        int tokenizer_type = 1;
-        int max_length = 512;
-        bool lowercase = true;
-        bool do_padding = true;
-        bool do_truncation = true;
-        int min_word_freq = 1;
-        int max_vocab_size = -1;         // -1 = unlimited
-        std::string vocab_file;          // optional pre-built vocab path
-
-        // Populated by a probe pass inside DataInputDialog::Apply
+        // Filled when the Data Input loads the dataset
         size_t num_samples = 0;
         size_t num_classes = 0;
         std::vector<std::string> class_names;
-        size_t vocab_size = 0;           // after building vocabulary from corpus
     };
     void RegisterTextDataset(const std::string& name, const TextDatasetEntry& entry);
     bool IsTextDataset(const std::string& name) const;
@@ -800,9 +773,7 @@ private:
     // training start by AudioDatasetBatcher.
     std::map<std::string, AudioDatasetEntry> audio_dataset_entries_;
 
-    // Text dataset entries (Phase 3) — same pattern as audio/images.
-    // The actual tokenizing TextDataset is constructed at training
-    // start by TextDatasetBatcher.
+    // Text dataset entries (Phase 3) — metadata beside the raw Arrow table.
     std::map<std::string, TextDatasetEntry> text_dataset_entries_;
 
     mutable std::mutex mutex_;

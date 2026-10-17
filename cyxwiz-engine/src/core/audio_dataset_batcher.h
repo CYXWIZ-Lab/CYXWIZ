@@ -11,6 +11,9 @@
 
 namespace cyxwiz {
 
+inline constexpr const char* kAudioFeaturesMissingMessage =
+    "audio needs a Mel Spectrogram, Spectrogram or MFCC node after the Data Loader";
+
 /**
  * AudioDatasetBatcher — IBatcher implementation for audio datasets.
  *
@@ -32,11 +35,10 @@ namespace cyxwiz {
  */
 class AudioDatasetBatcher : public IBatcher {
 public:
-    // preprocess_config is populated by the audio-domain extractors in
-    // GraphCompiler (Spectrogram/MelSpectrogram/MFCC/AudioAugmentation
-    // nodes). When preprocess_config.has_feature_node is false, the
-    // batcher falls back to the dialog-baked feature config stored on
-    // the AudioDatasetEntry — the "no node required" UX.
+    // The entry gives the loading settings; preprocess_config (filled by the
+    // Spectrogram/MelSpectrogram/MFCC/AudioAugmentation extractors in
+    // GraphCompiler) gives the features. Without a feature node the batcher
+    // refuses: it holds no dataset and GetNumSamples() is 0.
     AudioDatasetBatcher(const DataRegistry::AudioDatasetEntry& entry,
                         const AudioPreprocessingConfig& preprocess_config,
                         int batch_size,

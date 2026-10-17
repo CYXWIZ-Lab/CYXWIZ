@@ -47,16 +47,13 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                       std::shared_ptr<AsyncLoadState> state) {
     if (!state) return 0;
 
-    // Cross-Apply cleanup: drop the prior image registration owned by
-    // this node before probing again. Re-applying the same folder on
-    // the same node keeps the same base dataset_name ("cat_dog"), so
-    // only clearing when the name changes leaves the old datasets_
-    // entry alive and forces DataRegistry::GenerateUniqueName() to
-    // drift to "cat_dog_1". That in turn desynchronizes the node's
-    // persisted dataset_name from the registry if the dialog closes
-    // before the async completion callback updates the node params.
+    // Re-applying the same folder: drop its registration first, or
+    // DataRegistry::GenerateUniqueName() drifts to "cat_dog_1" and the node's
+    // dataset_name no longer matches the registry. A previous dataset under
+    // another name stays until this load succeeds (PollAsyncLoadResult drops
+    // it then, and keeps it when this one fails).
     auto& registry = cyxwiz::DataRegistry::Instance();
-    if (!ctx.previous_dataset_name.empty()) {
+    if (!ctx.previous_dataset_name.empty() && ctx.previous_dataset_name == ctx.dataset_name) {
         registry.UnregisterImageDataset(ctx.previous_dataset_name);
     }
 
@@ -65,17 +62,15 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const std::string csv    = ctx.image_labels_csv;
     const std::string name   = ctx.dataset_name;
     const int layout         = ctx.image_layout;
-    const int w              = ctx.image_width  > 0 ? ctx.image_width  : 224;
-    const int h              = ctx.image_height > 0 ? ctx.image_height : 224;
-    const int c              = ctx.image_channels > 0 ? ctx.image_channels : 3;
 
     state->dataset_name = name;
+    state->previous_dataset_name = ctx.previous_dataset_name;
     state->source_path  = folder;
 
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading images " + name,
-        [folder, csv, name, layout, w, h, c, state]
+        [folder, csv, name, layout, state]
         (cyxwiz::LambdaTask& task) {
             try {
                 task.ReportProgress(0.1f, "Scanning folder");
@@ -123,16 +118,13 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 // the actual key stored in DataRegistry::datasets_.
                 reg.RegisterImageDataset(canonical_name, img_entry);
 
-                size_t per_image = static_cast<size_t>(w) *
-                                   static_cast<size_t>(h) *
-                                   static_cast<size_t>(c) * sizeof(float);
-
                 state->success      = true;
                 state->backend      = 3;
                 state->dataset_name = canonical_name;  // may have been uniquified
                 state->rows         = static_cast<int64_t>(info.num_samples);
                 state->cols         = 1;
-                state->bytes        = info.num_samples * per_image;
+                // Decoded per batch at the graph's Resize size: nothing is held.
+                state->bytes        = 0;
                 state->num_classes  = info.num_classes;
                 state->message      = "Loaded " +
                     std::to_string(info.num_samples) + " images (" +
@@ -167,36 +159,16 @@ void ImageLoader::Unregister(const std::string& name) {
 }
 
 bool ImageLoader::RestoreFromRegistry(const std::string& name,
-                                      const gui::MLNode& node,
+                                      const gui::MLNode& /*node*/,
                                       RestoreState& out) const {
     auto* entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry(name);
     if (!entry) return false;
 
-    // Read the persisted target_width / target_height / rgb params off
-    // the node so the restored Memory tab shows the same byte estimate
-    // the user saw at Apply. Falls back to the 224×224×3 default for
-    // nodes that predate those params.
-    int w = 224, h = 224, c = 3;
-    auto tw_it  = node.parameters.find("target_width");
-    auto th_it  = node.parameters.find("target_height");
-    auto rgb_it = node.parameters.find("rgb");
-    if (tw_it != node.parameters.end()) {
-        try { int v = std::stoi(tw_it->second); if (v > 0) w = v; } catch (...) {}
-    }
-    if (th_it != node.parameters.end()) {
-        try { int v = std::stoi(th_it->second); if (v > 0) h = v; } catch (...) {}
-    }
-    if (rgb_it != node.parameters.end()) {
-        c = (rgb_it->second == "false" || rgb_it->second == "0") ? 1 : 3;
-    }
-    const size_t per_image = static_cast<size_t>(w) *
-                             static_cast<size_t>(h) *
-                             static_cast<size_t>(c) * sizeof(float);
-
     out.found   = true;
     out.rows    = static_cast<int64_t>(entry->num_images);
+    out.classes = static_cast<int64_t>(entry->num_classes);
     out.cols    = 1;
-    out.bytes   = entry->num_images * per_image;
+    out.bytes   = 0;  // decoded per batch
     out.backend = 3;
     out.memory_is_estimate = true;
     out.status_message = "Loaded " + name + " (" +
@@ -251,10 +223,6 @@ std::vector<ParamSchema> ImageLoader::NodeParams() const {
     return {
         {"image_layout",   "0",    "0=ClassSubdirs, 1=FlatWithCSV"},
         {"labels_csv",     "",     "Labels CSV path (FlatWithCSV mode)"},
-        {"target_width",   "224",  "Resize target width"},
-        {"target_height",  "224",  "Resize target height"},
-        {"normalize",      "true", "Normalize to [0,1]"},
-        {"rgb",            "true", "RGB (true) vs grayscale (false)"},
     };
 }
 

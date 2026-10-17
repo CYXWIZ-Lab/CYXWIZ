@@ -80,11 +80,6 @@ int main() {
                    "TextPadding max_length must be greater than zero"),
           "bad TextPadding max_length should be a preflight error");
 
-    Check(!config.text_preprocessing.has_vocabulary_node,
-          "preflight should not depend on text_preprocessing flags");
-    Check(!config.text_preprocessing.has_padding_node,
-          "preflight should not depend on text_preprocessing padding flag");
-
     std::cout << "Text preflight node validation passed\n";
     return 0;
 }

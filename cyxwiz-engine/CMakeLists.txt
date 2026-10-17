@@ -162,9 +162,7 @@ set(ENGINE_SOURCES
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
-    src/core/text_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
-    src/core/text_test_source.cpp
     src/core/text_arrow_adapter.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
@@ -184,6 +182,7 @@ set(ENGINE_SOURCES
     src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/filter_condition.cpp  # Row Filter condition language (TOFIX129 B-5)
     src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
@@ -228,7 +227,6 @@ set(ENGINE_SOURCES
     src/core/debug_training_graph_diff.cpp
     src/core/debug_error_code_timeline.cpp
     src/core/preflight_validator.cpp
-    src/core/text_preprocessing_tracer.cpp
     src/core/smoke_run_executor.cpp
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
@@ -380,6 +378,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/data_input_presentation.cpp
     src/core/test_results_presentation.cpp
     src/core/test_results_export.cpp
     src/core/model_export_presentation.cpp
@@ -417,6 +416,7 @@ set(ENGINE_SOURCES
     src/core/remote_job_presentation.cpp
     src/core/reservation_presentation.cpp
     src/gui/node_config_dialog.cpp
+    src/gui/filter_dialog.cpp
     src/gui/quality_analyzer_dialog.cpp
     src/gui/word_embeddings_dialog.cpp
     src/gui/embedding_dialog.cpp
@@ -1761,7 +1761,6 @@ add_executable(test_debug_executor
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/text_arrow_adapter.cpp
-    src/core/text_dataset_batcher.cpp
     src/core/formats/text_dataset.cpp
 )
 target_link_libraries(test_debug_executor PRIVATE cyxwiz-training-core)
@@ -2912,6 +2911,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/filter_condition.cpp
     src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
@@ -4208,6 +4208,29 @@ add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ===== Test: compile report, blocked training, memory risk (TOFIX129 B3) =====
+add_executable(test_data_input_presentation
+    tests/test_data_input_presentation.cpp
+    src/core/data_input_presentation.cpp
+)
+target_include_directories(test_data_input_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_data_input_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_input_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME data_input_presentation COMMAND test_data_input_presentation)
+
+# ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
+add_executable(test_filter_condition
+    tests/test_filter_condition.cpp
+    src/core/filter_condition.cpp
+)
+target_include_directories(test_filter_condition PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_filter_condition PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_filter_condition PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME filter_condition COMMAND test_filter_condition)
+
 add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp
     src/core/compile_report_presentation.cpp
@@ -4467,7 +4490,11 @@ add_test(NAME separate_windows_contract COMMAND test_separate_windows)
 add_executable(test_data_preview_controls
     tests/test_data_preview_controls.cpp
     src/gui/data_preview_table_renderer.cpp
+    src/gui/ui_buttons.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
 )
+target_include_directories(test_data_preview_controls PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_data_preview_controls PRIVATE imgui::imgui)
 if(WIN32)
     target_compile_definitions(test_data_preview_controls PRIVATE NOMINMAX)
@@ -5074,46 +5101,6 @@ set_target_properties(test_text_arrow_adapter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: Text Dataset Batcher Arrow Delegation =====
-add_executable(test_text_dataset_batcher_arrow
-    tests/test_text_dataset_batcher_arrow.cpp
-    src/core/text_dataset_batcher.cpp
-    src/core/text_arrow_adapter.cpp
-    src/core/formats/text_dataset.cpp
-    src/core/node_executors/text_tokenizer_operator.cpp
-    src/core/node_executors/word_embeddings_operator.cpp
-    src/core/fasttext_model_store.cpp
-    src/core/word_vectors_training_record.cpp
-    src/core/word_embeddings_presentation.cpp
-    src/core/node_executors/tree_classification_utils.cpp
-    src/core/node_executors/text_token_windows.cpp
-)
-target_link_libraries(test_text_dataset_batcher_arrow PRIVATE cyxwiz-training-core)
-
-target_include_directories(test_text_dataset_batcher_arrow PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_text_dataset_batcher_arrow PRIVATE
-    Arrow::arrow_shared
-    Parquet::parquet_shared
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_text_dataset_batcher_arrow PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_text_dataset_batcher_arrow PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
 # ===== Test: Image/Audio Train-only drop_last =====
 add_executable(test_modality_batcher_drop_last
     tests/test_modality_batcher_drop_last.cpp
@@ -5213,8 +5200,6 @@ add_executable(test_debugger_contracts
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/preflight_validator.cpp
-    src/core/text_preprocessing_tracer.cpp
-    src/core/formats/text_dataset.cpp
 )
 target_link_libraries(test_debugger_contracts PRIVATE cyxwiz-training-core)
 
@@ -7057,7 +7042,6 @@ cyxwiz_enable_pch(cyxwiz-graph-compile-check)
 cyxwiz_enable_pch(test_compiled_node_presentation)
 cyxwiz_enable_pch(test_data_preview_service)
 cyxwiz_enable_pch(test_training_manager_session)
-cyxwiz_enable_pch(test_text_dataset_batcher_arrow)
 cyxwiz_enable_pch(test_modality_batcher_drop_last)
 cyxwiz_enable_pch(test_debugger_contracts)
 cyxwiz_enable_pch(test_cnn_graph_training)

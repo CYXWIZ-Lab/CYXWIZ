@@ -5,6 +5,7 @@
 #include "parquet_backed_dataset.h"
 #include "data_budget.h"
 #include <arrow/compute/api.h>  // for arrow::compute::Cast (integer column compaction)
+#include <arrow/array/concatenate.h>  // SortArrowTableByColumn
 #include <limits>              // for std::numeric_limits (Arrow block_size cap)
 
 #include "annotation_manager.h"
@@ -1990,6 +1991,93 @@ bool DataRegistry::ExportArrowToJSON(const std::string& dataset_name, const std:
         dataset_name, output_path);
     // TODO: Implement proper JSON export using nlohmann/json
     return false;
+}
+
+bool DataRegistry::SortArrowTableByColumn(const std::string& name, const std::string& column,
+                                          std::string& error) {
+    const auto dataset = GetArrowDataset(name);
+    if (!dataset || !dataset->GetArrowTable()) {
+        error = "'" + name + "' is not a table in memory";
+        return false;
+    }
+    const auto table = dataset->GetArrowTable();
+    const auto chunked = table->GetColumnByName(column);
+    if (!chunked) {
+        error = "The time column '" + column + "' is not in the table";
+        return false;
+    }
+    const auto fail = [&](const arrow::Status& status) {
+        error = "Could not sort by '" + column + "': " + status.ToString();
+        return false;
+    };
+    // This Arrow build has no sort kernel (no arrow_compute): order the row
+    // numbers here, then Take. Text compares as text; numbers, dates and
+    // times through int64 / float64; missing values go last; ties keep
+    // the file's order.
+    auto joined = arrow::Concatenate(chunked->chunks());
+    if (!joined.ok()) return fail(joined.status());
+    const auto values = *joined;
+    const auto type = values->type_id();
+    std::vector<int64_t> order(static_cast<size_t>(values->length()));
+    for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int64_t>(i);
+    const auto nulls_last = [&](int64_t a, int64_t b, const auto& less) {
+        const bool na = values->IsNull(a), nb = values->IsNull(b);
+        if (na || nb) return !na && nb;
+        return less(a, b);
+    };
+    if (type == arrow::Type::STRING || type == arrow::Type::LARGE_STRING) {
+        const auto text = [&](int64_t row) {
+            return type == arrow::Type::STRING
+                ? std::static_pointer_cast<arrow::StringArray>(values)->GetView(row)
+                : std::static_pointer_cast<arrow::LargeStringArray>(values)->GetView(row);
+        };
+        std::stable_sort(order.begin(), order.end(), [&](int64_t a, int64_t b) {
+            return nulls_last(a, b, [&](int64_t x, int64_t y) { return text(x) < text(y); });
+        });
+    } else if (arrow::is_floating(type)) {
+        auto cast = arrow::compute::Cast(*values, arrow::float64());
+        if (!cast.ok()) return fail(cast.status());
+        const auto numbers = std::static_pointer_cast<arrow::DoubleArray>(*cast);
+        std::stable_sort(order.begin(), order.end(), [&](int64_t a, int64_t b) {
+            return nulls_last(a, b, [&](int64_t x, int64_t y) { return numbers->Value(x) < numbers->Value(y); });
+        });
+    } else if (arrow::is_integer(type) || arrow::is_temporal(type) || type == arrow::Type::BOOL) {
+        std::shared_ptr<arrow::Array> as_int = values;
+        if (type != arrow::Type::INT64) {
+            // Dates and times are stored as integers: read them as such.
+            std::shared_ptr<arrow::Array> storage = values;
+            if (arrow::is_temporal(type)) {
+                auto view = values->View(arrow::bit_width(type) == 32 ? arrow::int32() : arrow::int64());
+                if (!view.ok()) return fail(view.status());
+                storage = *view;
+            }
+            auto cast = arrow::compute::Cast(*storage, arrow::int64());
+            if (!cast.ok()) return fail(cast.status());
+            as_int = *cast;
+        }
+        const auto numbers = std::static_pointer_cast<arrow::Int64Array>(as_int);
+        std::stable_sort(order.begin(), order.end(), [&](int64_t a, int64_t b) {
+            return nulls_last(a, b, [&](int64_t x, int64_t y) { return numbers->Value(x) < numbers->Value(y); });
+        });
+    } else {
+        error = "The time column '" + column + "' holds " + values->type()->ToString() +
+                ", which cannot be put in order";
+        return false;
+    }
+    arrow::Int64Builder builder;
+    if (auto status = builder.AppendValues(order); !status.ok()) return fail(status);
+    std::shared_ptr<arrow::Array> indices;
+    if (auto status = builder.Finish(&indices); !status.ok()) return fail(status);
+    auto sorted = arrow::compute::Take(arrow::Datum(table), arrow::Datum(indices));
+    if (!sorted.ok()) return fail(sorted.status());
+    auto combined = sorted->table()->CombineChunks();
+    if (!combined.ok()) return fail(combined.status());
+    // Same name, same source file: only the row order changes.
+    std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
+    arrow_datasets_[name] = std::make_shared<ArrowDataset>(*combined, name);
+    last_access_times_[name] = std::chrono::steady_clock::now();
+    return true;
 }
 
 } // namespace cyxwiz

@@ -118,7 +118,8 @@ only those rows (the widget you clicked keeps showing all its values, so you
 can pick another). The filter bar lists the conditions ("album_type =
 single · 2,219 of 8,582 rows"); click a condition to remove it, or **Clear
 all**. Clicking the same bar again removes its filter. Filters are saved in
-the node.
+the node. A filter that keeps no rows leaves the other widgets empty
+("No missing values in these rows" in Missing values, 0 in a count).
 
 Example (Spotify): click *single* in album_type: 2,219 of 8,582 rows, the
 target mean 46.36 (all rows 52.36).
@@ -144,6 +145,13 @@ inferred ones.
   min, max, distinct, missing) and field, or a table's columns and rows.
   **All settings in the Plot window** opens the full Plot window on the
   same data; changes there go back into the widget.
+- **View large** (the expand button at the right of a plot's title) opens
+  the plot in its own window, which you can resize, maximize, dock or move
+  to another screen. The window has the plot toolbar (Fit, Log Y, Legend,
+  Export) and zooms on its own. It follows the filters, and a click on a
+  bar or bin there filters the dashboard like a click on the card. The card
+  keeps its plot; the button on it brings the window to the front. Closing
+  the window (or the dashboard) closes the large view.
 - **Size and place**: width (1 to 12 columns) and height, **Earlier** /
   **Later** to move it, **Remove widget**.
 - **Re-query** runs every widget's query again.

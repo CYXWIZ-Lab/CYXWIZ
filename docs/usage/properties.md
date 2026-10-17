@@ -16,8 +16,8 @@ coloured) and the type's badge when it has one (for example *Coming Soon*).
 
 Nodes that are set up in a window of their own have the primary button:
 **Open Dialog...** (Data Input, Data Output, Data Convert, Data Loader, Data
-Split, Embedding, Tokenizer, CSV and Excel readers, Filter rows), **Open Plot
-window** (Plot) or **Open Dashboard** (Dashboard).
+Split, Embedding, Tokenizer, Filter rows, SQL Query, Quality Analyzer, Word
+Embeddings), **Open Plot window** (Plot) or **Open Dashboard** (Dashboard).
 
 **Actions** holds everything else:
 

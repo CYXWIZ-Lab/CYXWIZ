@@ -5,6 +5,7 @@
 #include <cyxwiz/model_evaluation.h>
 #include "project_data_path.h"
 #include "sql_transform.h"
+#include "filter_condition.h"
 #include "archive_text_source.h"
 #include "html_document_text.h"
 #include "error_codes.h"
@@ -856,186 +857,6 @@ bool BuildFillMissingConstantExpression(
     return false;
 }
 
-enum class FilterConditionTokenKind {
-    Identifier,
-    StringLiteral,
-    NumericLiteral,
-    BooleanLiteral,
-    ComparisonOperator,
-    And,
-    Or,
-    LeftParen,
-    RightParen,
-    End,
-};
-
-struct FilterConditionToken {
-    FilterConditionTokenKind kind = FilterConditionTokenKind::End;
-    std::string value;
-};
-
-bool TokenizeFilterRowsCondition(const std::string& condition,
-                                 std::vector<FilterConditionToken>& tokens,
-                                 std::string& error) {
-    size_t index = 0;
-    while (index < condition.size()) {
-        const unsigned char ch =
-            static_cast<unsigned char>(condition[index]);
-        if (std::isspace(ch)) {
-            ++index;
-            continue;
-        }
-
-        if (std::isalpha(ch) || condition[index] == '_') {
-            const size_t start = index;
-            while (index < condition.size()) {
-                const unsigned char current =
-                    static_cast<unsigned char>(condition[index]);
-                if (!std::isalnum(current) && condition[index] != '_') {
-                    break;
-                }
-                ++index;
-            }
-            const std::string value = condition.substr(start, index - start);
-            const std::string upper_value = ToUpperAscii(value);
-            if (upper_value == "AND") {
-                tokens.push_back({FilterConditionTokenKind::And, value});
-            } else if (upper_value == "TRUE" || upper_value == "FALSE") {
-                tokens.push_back({FilterConditionTokenKind::BooleanLiteral, upper_value});
-            } else if (upper_value == "OR") {
-                tokens.push_back({FilterConditionTokenKind::Or, value});
-            } else {
-                tokens.push_back({FilterConditionTokenKind::Identifier, value});
-            }
-            continue;
-        }
-
-        if (condition[index] == '"') {
-            ++index;
-            std::string value;
-            bool closed = false;
-            while (index < condition.size()) {
-                if (condition[index] == '"') {
-                    if (index + 1 < condition.size() &&
-                        condition[index + 1] == '"') {
-                        value += '"';
-                        index += 2;
-                        continue;
-                    }
-                    ++index;
-                    closed = true;
-                    break;
-                }
-                value += condition[index++];
-            }
-            if (!closed) {
-                error = "FilterRows: unterminated quoted column name";
-                return false;
-            }
-            tokens.push_back({FilterConditionTokenKind::Identifier, value});
-            continue;
-        }
-
-        if (condition[index] == '\'') {
-            ++index;
-            std::string value;
-            bool closed = false;
-            while (index < condition.size()) {
-                if (condition[index] == '\'') {
-                    if (index + 1 < condition.size() &&
-                        condition[index + 1] == '\'') {
-                        value += '\'';
-                        index += 2;
-                        continue;
-                    }
-                    ++index;
-                    closed = true;
-                    break;
-                }
-                value += condition[index++];
-            }
-            if (!closed) {
-                error = "FilterRows: unterminated string literal";
-                return false;
-            }
-            tokens.push_back(
-                {FilterConditionTokenKind::StringLiteral, value});
-            continue;
-        }
-
-        const bool starts_numeric =
-            std::isdigit(ch) || condition[index] == '.' ||
-            ((condition[index] == '-' || condition[index] == '+') &&
-             index + 1 < condition.size() &&
-             (std::isdigit(static_cast<unsigned char>(condition[index + 1])) ||
-              condition[index + 1] == '.'));
-        if (starts_numeric) {
-            const size_t start = index;
-            while (index < condition.size()) {
-                const char current = condition[index];
-                if (!std::isdigit(static_cast<unsigned char>(current)) &&
-                    current != '.' && current != '-' && current != '+' &&
-                    current != 'e' && current != 'E') {
-                    break;
-                }
-                ++index;
-            }
-            const std::string value = condition.substr(start, index - start);
-            if (!IsValidNumericLiteral(value)) {
-                error = "FilterRows: invalid numeric literal '" + value + "'";
-                return false;
-            }
-            tokens.push_back(
-                {FilterConditionTokenKind::NumericLiteral, value});
-            continue;
-        }
-
-        if (condition[index] == '(') {
-            tokens.push_back({FilterConditionTokenKind::LeftParen, "("});
-            ++index;
-            continue;
-        }
-        if (condition[index] == ')') {
-            tokens.push_back({FilterConditionTokenKind::RightParen, ")"});
-            ++index;
-            continue;
-        }
-
-        std::string op;
-        if (condition[index] == '=' || condition[index] == '!' ||
-            condition[index] == '<' || condition[index] == '>') {
-            op += condition[index++];
-            if (index < condition.size()) {
-                const char next = condition[index];
-                if ((op == "=" && next == '=') ||
-                    (op == "!" && next == '=') ||
-                    (op == "<" && (next == '=' || next == '>')) ||
-                    (op == ">" && next == '=')) {
-                    op += next;
-                    ++index;
-                }
-            }
-            if (op == "==") {
-                op = "=";
-            }
-            if (op == "!") {
-                error = "FilterRows: unsupported comparison operator '!'";
-                return false;
-            }
-            tokens.push_back(
-                {FilterConditionTokenKind::ComparisonOperator, op});
-            continue;
-        }
-
-        error = "FilterRows: unsupported token '" +
-                std::string(1, condition[index]) + "'";
-        return false;
-    }
-
-    tokens.push_back({FilterConditionTokenKind::End, {}});
-    return true;
-}
-
 class FilterRowsConditionParser {
 public:
     FilterRowsConditionParser(const std::shared_ptr<arrow::Table>& table,
@@ -1117,6 +938,25 @@ private:
             return false;
         }
 
+        if (Peek().kind == FilterConditionTokenKind::Is) {
+            // column IS [NOT] EMPTY: missing, and for text also ''.
+            Consume();
+            const bool negated = Peek().kind == FilterConditionTokenKind::Not;
+            if (negated) Consume();
+            if (Peek().kind != FilterConditionTokenKind::Empty) {
+                error = "FilterRows: expected EMPTY after IS for column '" + column + "'";
+                return false;
+            }
+            Consume();
+            const std::string name = QuoteSqlIdentifier(column);
+            const bool text = IsStringArrowType(table_->schema()->field(column_index)->type());
+            if (negated) {
+                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : name + " IS NOT NULL";
+            } else {
+                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : name + " IS NULL";
+            }
+            return true;
+        }
         if (Peek().kind != FilterConditionTokenKind::ComparisonOperator) {
             error = "FilterRows: expected a comparison operator after column '" +
                     column + "'";
@@ -1193,7 +1033,7 @@ bool BuildFilterRowsConditionExpression(
     std::string& error,
     std::vector<FilterConditionToken>* validated_tokens = nullptr) {
     std::vector<FilterConditionToken> tokens;
-    if (!TokenizeFilterRowsCondition(condition, tokens, error)) {
+    if (!TokenizeFilterCondition(condition, tokens, error)) {
         return false;
     }
     FilterRowsConditionParser parser(table, tokens);
@@ -4460,6 +4300,25 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
         } else {
             ReportError("DataInput: Unknown source type: " + source_type);
             return false;
+        }
+
+        // A time series keeps its rows in the order of its time column.
+        const auto category = node.parameters.find("file_category");
+        const auto time_column = node.parameters.find("time_column");
+        if (category != node.parameters.end() && category->second == "timeseries" &&
+            time_column != node.parameters.end() && !time_column->second.empty() &&
+            (arrow_dataset || disk_backed)) {
+            if (disk_backed) {
+                ReportError("DataInput: the table is kept on disk, so its rows cannot be put in time order; "
+                            "clear Time column or sort the file first");
+                return false;
+            }
+            std::string sort_error;
+            if (!registry.SortArrowTableByColumn(dataset_name, time_column->second, sort_error)) {
+                ReportError("DataInput: " + sort_error);
+                return false;
+            }
+            arrow_dataset = registry.GetArrowDataset(dataset_name);
         }
 
         const auto table = registry.GetTableRef(dataset_name);

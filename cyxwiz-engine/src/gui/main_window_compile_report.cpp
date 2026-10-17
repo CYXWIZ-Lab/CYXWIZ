@@ -117,7 +117,8 @@ void MainWindow::RenderCompileResultPopup() {
     const auto& r = compile_report_;
     const std::string window = r.title + kId;
     NextWindowFits(860.0f, 640.0f);
-    int focus_node = -1, open_node = -1;
+    int focus_node = -1, open_node = -1, add_tokenizer_after = -1, add_after_input = -1;
+    gui::NodeType add_type = gui::NodeType::Resize;
     bool open_data_studio = false, train = false;
     if (ImGui::BeginPopupModal(window.c_str(), nullptr)) {
         const auto& t = cyxwiz::ui::CurrentTokens();
@@ -167,6 +168,25 @@ void MainWindow::RenderCompileResultPopup() {
                     if (f.open_dialog && node_editor_) {
                         meta.Next(ImGui::CalcTextSize("Open its dialog").x);
                         if (cyxwiz::ui::LinkButton("Open its dialog")) open_node = f.node_id;
+                    }
+                    if (f.add_node == cyxwiz::compile_report::AddNodeFix::TextTokenizer && node_editor_) {
+                        meta.Next(ImGui::CalcTextSize("Add a Text Tokenizer").x);
+                        if (cyxwiz::ui::LinkButton("Add a Text Tokenizer")) add_tokenizer_after = f.node_id;
+                    }
+                    // Resize and audio features go where the data enters the model.
+                    const auto add_link = [&](const char* label, gui::NodeType type) {
+                        meta.Next(ImGui::CalcTextSize(label).x);
+                        if (cyxwiz::ui::LinkButton(label)) {
+                            add_after_input = f.node_id;
+                            add_type = type;
+                        }
+                    };
+                    if (f.add_node == cyxwiz::compile_report::AddNodeFix::Resize && node_editor_)
+                        add_link("Add a Resize", gui::NodeType::Resize);
+                    if (f.add_node == cyxwiz::compile_report::AddNodeFix::AudioFeatures && node_editor_) {
+                        add_link("Add Mel Spectrogram", gui::NodeType::MelSpectrogram);
+                        add_link("Add Spectrogram", gui::NodeType::Spectrogram);
+                        add_link("Add MFCC", gui::NodeType::MFCC);
                     }
                     if (f.open_data_studio && data_studio_panel_) {
                         meta.Next(ImGui::CalcTextSize("Open Data Studio").x);
@@ -289,7 +309,8 @@ void MainWindow::RenderCompileResultPopup() {
             close = cyxwiz::ui::PrimaryButton("Close");
             ImGui::SetItemDefaultFocus();
         }
-        if (close || train || EscapePressedHere() || focus_node >= 0 || open_node >= 0 || open_data_studio)
+        if (close || train || EscapePressedHere() || focus_node >= 0 || open_node >= 0 || open_data_studio ||
+            add_tokenizer_after >= 0 || add_after_input >= 0)
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -297,6 +318,8 @@ void MainWindow::RenderCompileResultPopup() {
     // Actions run after the modal closes.
     if (focus_node >= 0 && node_editor_) node_editor_->FocusNode(focus_node);
     if (open_node >= 0 && node_editor_) node_editor_->OpenNodeConfiguration(open_node);
+    if (add_tokenizer_after >= 0 && node_editor_) node_editor_->AddTextTokenizerAfter(add_tokenizer_after);
+    if (add_after_input >= 0 && node_editor_) node_editor_->AddModelInputStepAfter(add_after_input, add_type);
     if (open_data_studio && data_studio_panel_) {
         data_studio_panel_->SetVisible(true);
         if (compile_result_config_.backing != report::Backing::NotLoaded && !compile_result_config_.dataset.empty())

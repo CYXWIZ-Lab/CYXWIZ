@@ -112,8 +112,8 @@ struct GraphPreprocessingConfig {
 /**
  * Audio feature-extraction type. Driven by whichever preprocessing node
  * the user dropped on the canvas (Spectrogram / MelSpectrogram / MFCC).
- * None means no feature node was found → fall back to dialog defaults
- * from the AudioDatasetEntry.
+ * None means no feature node was found; the compiler and the audio batcher
+ * refuse that (CW-C-0205).
  */
 enum class AudioFeatureType {
     None = 0,
@@ -127,9 +127,8 @@ enum class AudioFeatureType {
  *
  * Populated by audio-domain extractors in the graph compiler when a
  * Spectrogram / MelSpectrogram / MFCC / AudioAugmentation node is
- * present in the graph. Otherwise stays at default and
- * AudioDatasetBatcher falls back to the dialog-baked defaults on
- * DataRegistry::AudioDatasetEntry.
+ * present in the graph. Audio training needs a feature node; the
+ * AudioDatasetEntry carries only the loading settings.
  *
  * Shape matches what backend MelConfig / MFCCConfig accept — the
  * batcher translates this into the AudioDatasetConfig fed into
@@ -137,7 +136,6 @@ enum class AudioFeatureType {
  */
 struct AudioPreprocessingConfig {
     // True iff a Spectrogram/MelSpectrogram/MFCC node was found.
-    // When false, batcher uses dialog defaults (fallback mode).
     bool has_feature_node = false;
     AudioFeatureType feature_type = AudioFeatureType::None;
 
@@ -166,36 +164,11 @@ struct AudioPreprocessingConfig {
 };
 
 /**
- * Legacy text preprocessing override bundle.
- *
- * GraphCompiler no longer populates this from TextTokenizer /
- * TextVocabulary / TextPadding nodes. Those graph nodes route through
- * Arrow materialization: TextTokenizer is the real operator, while
- * TextVocabulary and TextPadding fold into its params in
- * PipelineMaterializer.
- *
- * This struct remains for explicit compatibility callers that construct
- * TextDatasetBatcher directly with overrides. When all presence flags are
- * false, TextDatasetBatcher uses the dialog-baked defaults on
- * DataRegistry::TextDatasetEntry.
+ * Text shape contract the compiler reads from the graph: the reachable Text
+ * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
+ * Tokenizing itself runs in PipelineMaterializer.
  */
 struct TextPreprocessingConfig {
-    bool has_tokenizer_node = false;
-    bool has_vectorizer_node = false;
-    // tokenizer_type: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
-    int tokenizer_type = 1;
-    bool lowercase = true;
-    bool do_padding = true;
-    bool do_truncation = true;
-
-    // Vocabulary override for explicit compatibility callers.
-    bool has_vocabulary_node = false;
-    int min_word_freq = 1;
-    int max_vocab_size = -1;         // -1 = unlimited
-    std::string vocab_file;          // optional pre-built vocab path
-
-    // Padding override for explicit compatibility callers.
-    bool has_padding_node = false;
     int max_length = 512;
     int pad_value = 0;
 };
@@ -523,9 +496,7 @@ struct TrainingConfiguration {
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when
-    // preprocessing_domain == Audio. When has_feature_node is false,
-    // AudioDatasetBatcher falls back to the dialog defaults from
-    // AudioDatasetEntry.
+    // preprocessing_domain == Audio.
     AudioPreprocessingConfig audio_preprocessing;
 
     // Preprocessing - text-specific legacy override bundle. Graph text

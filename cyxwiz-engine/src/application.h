@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -52,6 +53,10 @@ private:
     // draws in it; it is the one destroyed at shutdown.
     ImPlotContext* implot_context_ = nullptr;
     std::unique_ptr<gui::MainWindow> main_window_;
+    // The last exception out of a frame, logged once and then counted.
+    std::string render_failure_;
+    std::chrono::steady_clock::time_point render_failure_logged_{};
+    int render_failures_ = 0;
     std::unique_ptr<network::GRPCClient> grpc_client_;
     std::unique_ptr<network::JobManager> job_manager_;
 
