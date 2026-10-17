@@ -1987,12 +1987,32 @@ void CheckEvaluationTableFamilyContract(
                   meta->outputs.front().type == gui::PinType::Dataset,
               "evaluation node should use one Dataset table input/output: " +
                   TypeId(type));
+        Check(!meta->outputs.front().required,
+              "an evaluation node's table need not be read further (an unread required output blocks Train): " +
+                  TypeId(type));
         const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
         Check(support.mode ==
                   cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
               "evaluation node should retain PipelineExecutor ownership: " +
                   TypeId(type));
     }
+
+    // Test Evaluation (TOFIX157): one test table in, four result tables
+    // out, none of which must be read further (an unread required output
+    // fails Compile and so blocks Train).
+    const auto* evaluation = metadata.GetMetadata(gui::NodeType::TestEvaluationNode);
+    Check(evaluation != nullptr && evaluation->category == gui::NodeCategory::Analytics &&
+              evaluation->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              evaluation->inputs.size() == 1 && HasInputType(evaluation, "Data", gui::PinType::Dataset) &&
+              evaluation->outputs.size() == 4,
+          "Test Evaluation: one Dataset input, four outputs");
+    if (evaluation)
+        for (const auto& output : evaluation->outputs)
+            Check(output.type == gui::PinType::Dataset && !output.required,
+                  "Test Evaluation output is an optional Dataset: " + output.name);
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::TestEvaluationNode).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "Test Evaluation runs in the PipelineExecutor");
 
     const auto* regression =
         metadata.GetMetadata(gui::NodeType::RegressionMetricsNode);

@@ -2,6 +2,7 @@
 #include "label_vocabulary.h"
 #include "label_column_resolver.h"
 #include "split_partitioning.h"
+#include "class_balance.h"
 
 #include <arrow/api.h>
 #include <spdlog/spdlog.h>
@@ -513,6 +514,8 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
         size_t actual_batch_size = batch_end - batch_start;
         batch.size = actual_batch_size;
+        batch.row_ids.assign(indices_.begin() + static_cast<std::ptrdiff_t>(batch_start),
+                             indices_.begin() + static_cast<std::ptrdiff_t>(batch_end));
 
         // Get Arrow table
         auto table = dataset_->GetArrowTable();
@@ -1017,26 +1020,7 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
         class_counts.push_back(entry.second.size());
     }
 
-    const auto minmax = std::minmax_element(
-        class_counts.begin(), class_counts.end());
-    size_t target_count = *minmax.second;
-    if (balance_target_ == "min") {
-        target_count = *minmax.first;
-    } else if (balance_target_ == "median") {
-        auto sorted = class_counts;
-        std::sort(sorted.begin(), sorted.end());
-        target_count = sorted[sorted.size() / 2];
-    } else if (!balance_target_.empty() &&
-               std::all_of(balance_target_.begin(), balance_target_.end(),
-                           [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
-        try {
-            target_count = std::max<size_t>(
-                1, static_cast<size_t>(std::stoull(balance_target_)));
-        } catch (...) {
-            target_count = *minmax.second;
-        }
-    }
-
+    const size_t target_count = BalanceTargetCount(class_counts, balance_target_);
     if (target_count == 0) {
         return;
     }

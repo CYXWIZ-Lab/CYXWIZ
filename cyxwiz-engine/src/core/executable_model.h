@@ -42,17 +42,19 @@ public:
     virtual void SetParameters(const std::map<std::string, Tensor>& params) = 0;
     virtual std::map<std::string, Tensor> GetGradients() = 0;
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
+    // Layers that hold parameters (graph operations such as Add are not counted).
+    virtual size_t LayerCount() const = 0;
 
-    // Transitional compatibility for checkpoint/export paths that still need
-    // a real SequentialModel. GraphExecutableModel will return nullptr here.
+    // For checkpoint / export / save paths that still need a real
+    // SequentialModel; a graph model (GraphExecutableModel) returns nullptr.
     virtual SequentialModel* AsSequentialModel() { return nullptr; }
     virtual const SequentialModel* AsSequentialModel() const { return nullptr; }
-    virtual std::unique_ptr<SequentialModel> ReleaseSequentialModel() { return nullptr; }
 };
 
 class SequentialExecutableModel final : public IExecutableModel {
 public:
-    explicit SequentialExecutableModel(std::unique_ptr<SequentialModel> model);
+    // Owns the model, or shares it (a test of a model someone else holds).
+    explicit SequentialExecutableModel(std::shared_ptr<SequentialModel> model);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -68,13 +70,13 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     void UpdateParameters(Optimizer* optimizer) override;
+    size_t LayerCount() const override { return model_->Size(); }
 
     SequentialModel* AsSequentialModel() override { return model_.get(); }
     const SequentialModel* AsSequentialModel() const override { return model_.get(); }
-    std::unique_ptr<SequentialModel> ReleaseSequentialModel() override;
 
 private:
-    std::unique_ptr<SequentialModel> model_;
+    std::shared_ptr<SequentialModel> model_;
 };
 
 } // namespace cyxwiz

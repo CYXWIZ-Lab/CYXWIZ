@@ -128,11 +128,6 @@ public:
     std::shared_ptr<ArrowDataset> Slice(int64_t offset, int64_t length) const;
 
     /**
-     * Export to CSV file
-     */
-    bool ExportCSV(const std::string& path) const;
-
-    /**
      * Export to Parquet file
      */
     bool ExportParquet(const std::string& path, bool compress = true) const;

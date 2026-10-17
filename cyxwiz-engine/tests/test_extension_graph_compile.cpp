@@ -250,6 +250,32 @@ void TestLoadNoteBecomesWarning() {
 
 }  // namespace
 
+// An evaluation node at the end of a branch (its table is read by nobody)
+// adds no error: an unread required output fails Compile and so blocks Train
+// (TOFIX157: the evaluation nodes' outputs are optional).
+void TestEvaluationBranchDoesNotBlock() {
+    for (const auto type : {gui::NodeType::ConfusionMatrixNode, gui::NodeType::ClassificationMetricsNode,
+                            gui::NodeType::RegressionMetricsNode, gui::NodeType::ROCCurveNode,
+                            gui::NodeType::PRCurveNode, gui::NodeType::TestEvaluationNode}) {
+        json graph = json::parse(kTrainingBenchmarkGraphJson);
+        graph["nodes"].push_back({{"id", 60},
+                                  {"type", static_cast<int>(type)},
+                                  {"category", static_cast<int>(gui::NodeCategory::Analytics)},
+                                  {"name", "Evaluation"},
+                                  {"description", ""},
+                                  {"parameters", {{"actual_col", "a"}, {"predicted_col", "b"}, {"score_col", "s"}}},
+                                  {"pos_x", 0.0},
+                                  {"pos_y", 400.0}});
+        graph["links"].push_back({{"id", 901}, {"from_node", 1}, {"from_pin", 2}, {"from_pin_index", 0},
+                                  {"to_node", 60}, {"to_pin", 0}, {"to_pin_index", 0}, {"link_type", 0}});
+        const auto config = Compile(graph);
+        for (const auto& issue : config.issues)
+            Check(!(issue.node_id == 60 && issue.level == cyxwiz::IssueLevel::Error),
+                  "an evaluation node at the end of a branch adds no error: " + issue.message);
+        Check(ErrorCount(config) == g_baseline_errors, "the graph's errors are unchanged by an evaluation branch");
+    }
+}
+
 int main() {
     TestBaseline();
     TestMissingOnPath();
@@ -257,6 +283,7 @@ int main() {
     TestTrainableOnPathCompiles();
     TestOffPath();
     TestLoadNoteBecomesWarning();
+    TestEvaluationBranchDoesNotBlock();
     std::cout << "test_extension_graph_compile: all checks passed\n";
     return 0;
 }

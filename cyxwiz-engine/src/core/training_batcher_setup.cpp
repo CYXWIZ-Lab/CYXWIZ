@@ -163,6 +163,14 @@ std::string FormatFloatVector(const std::vector<float>& values) {
     return out.str();
 }
 
+// A Data Split with no Validation share and a Test share, sliced in row
+// order. The batchers give Validation every row after Train when its share is
+// 0 (their two-way rule), so that slice is the Test holdout and the Test
+// slice is empty: the caller swaps the two.
+bool HoldoutIsTestOnly(const TrainingConfiguration& config) {
+    return config.has_data_split && config.val_ratio <= 0.0f && config.test_ratio > 0.0f;
+}
+
 } // namespace
 
 void AttachTrainingBatcherPrefetchWrappers(
@@ -476,6 +484,9 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         result.arrow_test->SetOneHotEncoding(config.output_size);
     }
 
+    // A stratified or time-series split marks each row's partition instead.
+    if (partition_col.empty() && HoldoutIsTestOnly(config)) std::swap(result.arrow_val, result.arrow_test);
+
     result.num_train_samples = result.arrow_train->GetNumSamples();
     result.num_val_samples = result.arrow_val->GetNumSamples();
     result.num_test_samples = result.arrow_test->GetNumSamples();
@@ -533,11 +544,6 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     const std::string partition_col = config.is_time_series
         ? kSplitPartitionColumn : "";
     const bool continuous_target = UsesContinuousTargetMetrics(config);
-    if (config.balance_classes && !continuous_target) {
-        spdlog::warn("TrainingExecutor: DataLoader class balancing is not "
-                     "available for disk-backed Parquet datasets yet; training "
-                     "uses the row-group train split without resampling");
-    }
     const std::string effective_label =
         !config.target.primary_column.empty()
             ? config.target.primary_column
@@ -587,6 +593,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
             result.parquet_test->SetRowSplit(split);
         }
     }
+    // After the split: balancing counts the train split's classes (TOFIX157 A3).
+    if (config.balance_classes && !continuous_target)
+        result.parquet_train->SetClassBalancing(config.balance_mode, config.balance_target,
+                                                static_cast<uint32_t>(std::max(0, config.balance_seed)));
 
     if (continuous_target) {
         const size_t target_width =
@@ -632,6 +642,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         result.parquet_val->SetOneHotEncoding(config.output_size);
         result.parquet_test->SetOneHotEncoding(config.output_size);
     }
+
+    // A stratified split gives every share its rows; a time series has its partitions.
+    if (partition_col.empty() && !(config.stratified && !continuous_target) && HoldoutIsTestOnly(config))
+        std::swap(result.parquet_val, result.parquet_test);
 
     result.num_train_samples = result.parquet_train->GetNumSamples();
     result.num_val_samples = result.parquet_val->GetNumSamples();

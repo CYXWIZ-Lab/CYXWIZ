@@ -703,7 +703,7 @@ bool InferBertEncoderConfigFromGraph(
 } // namespace
 
 ExportResult ModelExporter::Export(
-    SequentialModel& model,
+    IExecutableModel& model,
     const Optimizer* optimizer,
     const TrainingMetrics* training_metrics,
     const std::string& graph_json,
@@ -720,6 +720,16 @@ ExportResult ModelExporter::Export(
     }
 
     ExportResult result;
+    // ONNX and GGUF are written from a layer stack.
+    SequentialModel* stack = model.AsSequentialModel();
+    if (!stack && (format == ModelFormat::ONNX || format == ModelFormat::GGUF)) {
+        result.success = false;
+        result.error_message = errors::FormatError(
+            errors::Serialization::ExportFormatUnavailable,
+            "A graph with branches exports to a CyxWiz package (.cyxmodel) or Safetensors, not this format yet");
+        last_error_ = result.error_message;
+        return result;
+    }
 
     switch (format) {
         case ModelFormat::CyxModel:
@@ -728,7 +738,7 @@ ExportResult ModelExporter::Export(
             break;
 
         case ModelFormat::ONNX:
-            result = ExportONNX(model, output_path, options, progress_cb);
+            result = ExportONNX(*stack, output_path, options, progress_cb);
             break;
 
         case ModelFormat::Safetensors:
@@ -736,7 +746,7 @@ ExportResult ModelExporter::Export(
             break;
 
         case ModelFormat::GGUF:
-            result = ExportGGUF(model, output_path, options, progress_cb);
+            result = ExportGGUF(*stack, output_path, options, progress_cb);
             break;
 
         default:
@@ -756,6 +766,34 @@ ExportResult ModelExporter::Export(
 
 ExportResult ModelExporter::ExportCyxModel(
     SequentialModel& model,
+    const Optimizer* optimizer,
+    const TrainingMetrics* training_metrics,
+    const std::string& graph_json,
+    const std::string& output_path,
+    const ExportOptions& options,
+    ProgressCallback progress_cb
+) {
+    return WriteCyxModel(model.GetParameters(), model.Size(), true, optimizer, training_metrics, graph_json,
+                         output_path, options, progress_cb);
+}
+
+ExportResult ModelExporter::ExportCyxModel(
+    IExecutableModel& model,
+    const Optimizer* optimizer,
+    const TrainingMetrics* training_metrics,
+    const std::string& graph_json,
+    const std::string& output_path,
+    const ExportOptions& options,
+    ProgressCallback progress_cb
+) {
+    return WriteCyxModel(model.GetParameters(), model.LayerCount(), model.AsSequentialModel() != nullptr,
+                         optimizer, training_metrics, graph_json, output_path, options, progress_cb);
+}
+
+ExportResult ModelExporter::WriteCyxModel(
+    const std::map<std::string, Tensor>& params,
+    size_t layer_count,
+    bool layer_stack,
     const Optimizer* optimizer,
     const TrainingMetrics* training_metrics,
     const std::string& graph_json,
@@ -838,7 +876,7 @@ ExportResult ModelExporter::ExportCyxModel(
             InferBertEncoderConfigFromGraph(graph_json, inferred_bert_config);
 
         // 1. Create manifest
-        ModelManifest manifest = CreateManifest(model, training_metrics,
+        ModelManifest manifest = CreateManifest(params, layer_count, layer_stack, training_metrics,
                                                 resolved_options);
         if (resolved_options.sequence_create_causal_lm_targets) {
             manifest.model_family = "causal_lm";
@@ -927,7 +965,6 @@ ExportResult ModelExporter::ExportCyxModel(
         std::map<std::string, std::vector<int64_t>> weight_shapes;
         std::map<std::string, TensorDType> weight_dtypes;
 
-        auto params = model.GetParameters();
         result.num_parameters = 0;
         result.total_tensor_bytes = 0;
 
@@ -946,7 +983,7 @@ ExportResult ModelExporter::ExportCyxModel(
             result.total_tensor_bytes += tensor.NumBytes();
         }
 
-        result.num_layers = static_cast<int>(model.Size());
+        result.num_layers = static_cast<int>(layer_count);
         manifest.num_parameters = result.num_parameters;
         manifest.num_layers = result.num_layers;
 
@@ -983,6 +1020,16 @@ ExportResult ModelExporter::ExportCyxModel(
 
         // Update manifest flags
         manifest.has_graph = options.include_graph && !graph_json.empty();
+        // A graph model is rebuilt from its graph: without it the weights
+        // cannot be placed.
+        if (!layer_stack && !manifest.has_graph) {
+            result.success = false;
+            result.error_message = errors::FormatError(
+                errors::Serialization::ModelSaveFailed,
+                "A graph with branches needs its graph in the package (Include: Graph)");
+            last_error_ = result.error_message;
+            return result;
+        }
 
         if (progress_cb) progress_cb(5, 6, "Writing .cyxmodel file...");
 
@@ -1311,7 +1358,7 @@ ExportResult ModelExporter::ExportONNX(
 }
 
 ExportResult ModelExporter::ExportSafetensors(
-    SequentialModel& model,
+    IExecutableModel& model,
     const std::string& output_path,
     const ExportOptions& options,
     ProgressCallback progress_cb
@@ -1416,7 +1463,7 @@ ExportResult ModelExporter::ExportSafetensors(
         if (progress_cb) progress_cb(3, 3, "Export complete!");
 
         result.success = true;
-        result.num_layers = static_cast<int>(model.Size());
+        result.num_layers = static_cast<int>(model.LayerCount());
         result.file_size_bytes = std::filesystem::file_size(output_path);
 
         spdlog::info("Exported model to Safetensors: {} ({} tensors, {} bytes)",
@@ -1569,17 +1616,10 @@ std::vector<int64_t> ModelExporter::GetTensorShape(const Tensor& tensor) {
     return result;
 }
 
-int ModelExporter::CountParameters(SequentialModel& model) {
-    int total = 0;
-    auto params = model.GetParameters();
-    for (const auto& [name, tensor] : params) {
-        total += static_cast<int>(tensor.NumElements());
-    }
-    return total;
-}
-
 ModelManifest ModelExporter::CreateManifest(
-    SequentialModel& model,
+    const std::map<std::string, Tensor>& params,
+    size_t layer_count,
+    bool layer_stack,
     const TrainingMetrics* metrics,
     const ExportOptions& options
 ) {
@@ -1598,12 +1638,13 @@ ModelManifest ModelExporter::CreateManifest(
 
     // Model info
     manifest.model_name = options.model_name.empty() ? "Untitled Model" : options.model_name;
-    manifest.model_type = "SequentialModel";
+    manifest.model_type = layer_stack ? "SequentialModel" : "GraphModel";
     manifest.model_family = "";
     manifest.supports_generation = false;
     manifest.generation_output_contract = "";
-    manifest.num_parameters = CountParameters(model);
-    manifest.num_layers = static_cast<int>(model.Size());
+    manifest.num_parameters = 0;
+    for (const auto& [name, tensor] : params) manifest.num_parameters += static_cast<int>(tensor.NumElements());
+    manifest.num_layers = static_cast<int>(layer_count);
 
     // Training summary (if available)
     if (metrics) {

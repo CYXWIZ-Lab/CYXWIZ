@@ -229,6 +229,7 @@ set(ENGINE_SOURCES
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
+    src/core/node_palette.cpp  # TOFIX157 palette curation
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
@@ -275,6 +276,7 @@ set(ENGINE_SOURCES
     src/core/studio_debugger_presentation.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
@@ -351,6 +353,7 @@ set(ENGINE_SOURCES
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
     src/core/test_predictions_table.cpp
+    src/core/test_predictions_metrics.cpp
     src/core/graph_compile_task.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
@@ -423,6 +426,8 @@ set(ENGINE_SOURCES
     src/core/compile_report_presentation.cpp
     src/core/data_input_presentation.cpp
     src/core/test_results_presentation.cpp
+    src/core/test_evaluation_tables.cpp
+    src/core/kept_tests.cpp
     src/core/test_results_export.cpp
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
@@ -603,6 +608,7 @@ set(ENGINE_SOURCES
     src/gui/panels/variable_explorer.cpp
     src/gui/variables_view.cpp
     src/gui/panels/test_results_panel.cpp
+    src/gui/panels/test_errors_by_value.cpp
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp
     src/gui/panels/deployment_dialog.cpp
@@ -3048,6 +3054,14 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
     src/core/node_executors/row_count_check_operator.cpp
+    # Test Evaluation node (TOFIX157)
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_predictions_metrics.cpp
+    src/core/test_predictions_table.cpp
+    src/core/test_evaluation_tables.cpp
+    src/core/test_results_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
     tests/support/stb_image_impl.cpp
@@ -4368,6 +4382,7 @@ add_test(NAME compile_report_presentation COMMAND test_compile_report_presentati
 add_executable(test_test_results_presentation
     tests/test_test_results_presentation.cpp
     src/core/test_results_presentation.cpp
+    src/core/test_evaluation_tables.cpp
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
     src/core/test_results_export.cpp
@@ -5016,6 +5031,7 @@ endfunction()
 add_executable(test_testing_device_handoff
     tests/test_testing_device_handoff.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     src/core/sequence_arrow_batcher.cpp
@@ -5033,6 +5049,7 @@ add_executable(test_causal_lm_testing
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp)
 configure_training_executor_harness(test_causal_lm_testing)
@@ -5052,7 +5069,10 @@ configure_training_executor_harness(test_training_executor_arrow_parquet)
 target_sources(test_training_executor_arrow_parquet PRIVATE tests/test_training_randomness.cpp)
 target_sources(test_training_executor_arrow_parquet PRIVATE
     tests/test_training_spatial_ingress.cpp
+    src/core/test_predictions_metrics.cpp
+    src/core/test_predictions_table.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     src/core/sequence_arrow_batcher.cpp)
@@ -5616,6 +5636,7 @@ add_test(NAME data_studio_publish COMMAND test_data_studio_publish)
 add_executable(test_data_studio_results
     tests/test_data_studio_results.cpp
     src/core/data_studio_results.cpp
+    src/core/test_predictions_table.cpp
 )
 target_include_directories(test_data_studio_results PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_data_studio_results PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
@@ -5728,6 +5749,49 @@ set_target_properties(test_one_vs_rest_curves PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME one_vs_rest_curves COMMAND test_one_vs_rest_curves)
+
+# ===== Test: the data budget leaves the device room (TOFIX157 A1) =====
+add_executable(test_data_budget tests/test_data_budget.cpp)
+if(WIN32)
+    target_compile_definitions(test_data_budget PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_budget PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME data_budget COMMAND test_data_budget)
+
+# ===== Test: where the palettes put a node (TOFIX157) =====
+add_executable(test_node_palette tests/test_node_palette.cpp src/core/node_palette.cpp src/core/preparation_recipe.cpp)
+target_include_directories(test_node_palette PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_node_palette PRIVATE nlohmann_json::nlohmann_json imgui::imgui)
+if(WIN32)
+    target_compile_definitions(test_node_palette PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_node_palette PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME node_palette COMMAND test_node_palette)
+
+# ===== Test: console text a 16-bit font can draw (TOFIX157) =====
+add_executable(test_drawable_text tests/test_drawable_text.cpp)
+target_link_libraries(test_drawable_text PRIVATE imgui::imgui)
+if(WIN32)
+    target_compile_definitions(test_drawable_text PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_drawable_text PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME drawable_text COMMAND test_drawable_text)
+
+# ===== Test: kept tests, a test's rows saved as a project file (TOFIX157) =====
+add_executable(test_kept_tests
+    tests/test_kept_tests.cpp
+    src/core/kept_tests.cpp
+    src/core/test_predictions_table.cpp
+)
+target_link_libraries(test_kept_tests PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
+if(WIN32)
+    target_compile_definitions(test_kept_tests PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_kept_tests PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME kept_tests COMMAND test_kept_tests)
 
 # ===== Test: the test run's per-sample results as a table (TOFIX140 ROC / PR) =====
 add_executable(test_test_predictions_table
@@ -6082,12 +6146,28 @@ set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
 # ===== Test: branched graphs (Split) match PyTorch (TOFIX140 A2) =====
 add_executable(test_branch_graph_training
     tests/test_branch_graph_training.cpp
+    # Save / Export / Import of the graph model (TOFIX157)
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/inference/text_inference_input.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
+    # Run Test on the graph model (TOFIX157)
+    src/core/test_executor.cpp
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 target_link_libraries(test_branch_graph_training PRIVATE cyxwiz-training-core)
 
@@ -6415,6 +6495,7 @@ set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
 add_executable(test_metric_graph_training
     tests/test_metric_graph_training.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
 )

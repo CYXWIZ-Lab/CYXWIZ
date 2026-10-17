@@ -1534,43 +1534,38 @@ void TrainingExecutor::Train(
                 best_val_loss = current.val_loss;
                 epochs_without_improvement = 0;
                 if (checkpoint_manager && save_best_checkpoint) {
-                    if (SequentialModel* sequential_model =
-                            model_->AsSequentialModel()) {
-                        if (checkpoint_manager->SaveBestModel(
-                                *sequential_model,
-                                optimizer_.get(),
-                                current,
-                                current.val_loss)) {
-                            if (scheduler_controller_) {
-                                TrainingSchedulerResumeState scheduler_state;
-                                std::string scheduler_error;
-                                if (!scheduler_controller_->ExportResumeState(
-                                        scheduler_state,
-                                        scheduler_error)) {
-                                    throw std::runtime_error(
-                                        "TrainingExecutor: best checkpoint "
-                                        "scheduler state export failed: " +
-                                        scheduler_error);
-                                }
-                                best_scheduler_state =
-                                    std::move(scheduler_state);
+                    // Any model: a checkpoint holds its parameter map (a graph
+                    // with branches too, TOFIX157).
+                    if (checkpoint_manager->SaveBestModel(
+                            *model_,
+                            optimizer_.get(),
+                            current,
+                            current.val_loss)) {
+                        if (scheduler_controller_) {
+                            TrainingSchedulerResumeState scheduler_state;
+                            std::string scheduler_error;
+                            if (!scheduler_controller_->ExportResumeState(
+                                    scheduler_state,
+                                    scheduler_error)) {
+                                throw std::runtime_error(
+                                    "TrainingExecutor: best checkpoint "
+                                    "scheduler state export failed: " +
+                                    scheduler_error);
                             }
-                            TrainingTraceCollector::Instance()
-                                .RecordCheckpointSaved(
-                                    epoch,
-                                    checkpoint_manager->GetBestCheckpoint(),
-                                    current.val_loss,
-                                    current.val_accuracy,
-                                    true);
-                            spdlog::info(
-                                "TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
-                                epoch,
-                                current.val_loss);
+                            best_scheduler_state =
+                                std::move(scheduler_state);
                         }
-                    } else {
-                        spdlog::warn(
-                            "TrainingExecutor: save_best_checkpoint is not available for graph executable models yet");
-                        checkpoint_manager.reset();
+                        TrainingTraceCollector::Instance()
+                            .RecordCheckpointSaved(
+                                epoch,
+                                checkpoint_manager->GetBestCheckpoint(),
+                                current.val_loss,
+                                current.val_accuracy,
+                                true);
+                        spdlog::info(
+                            "TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
+                            epoch,
+                            current.val_loss);
                     }
                 }
             } else {
@@ -1711,12 +1706,8 @@ void TrainingExecutor::Train(
     if (!stop_requested_.load() && checkpoint_manager && save_best_checkpoint) {
         const std::string best_checkpoint = checkpoint_manager->GetBestCheckpoint();
         if (!best_checkpoint.empty()) {
-            std::optional<CheckpointMetadata> restored;
-            if (SequentialModel* sequential_model = model_->AsSequentialModel()) {
-                restored = checkpoint_manager->LoadCheckpoint(*sequential_model,
-                                                              optimizer_.get(),
-                                                              "best");
-            }
+            const std::optional<CheckpointMetadata> restored =
+                checkpoint_manager->LoadCheckpoint(*model_, optimizer_.get(), "best");
             if (restored) {
                 if (scheduler_controller_ && best_scheduler_state) {
                     std::string scheduler_error;

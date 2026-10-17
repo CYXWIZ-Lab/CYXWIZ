@@ -60,11 +60,12 @@ struct View {
     std::string note;              // quick test, 1-NN explanation
     std::vector<Chip> chips;
     std::vector<Tile> tiles;
-    std::vector<std::pair<std::string, std::string>> facts;  // best / worst classes, pair and retrieval metrics
+    std::vector<std::pair<std::string, std::string>> facts;  // best / worst classes, pair and retrieval metrics, regression bias
     std::vector<ClassRow> classes;
     MatrixView matrix;
     size_t correct = 0;
-    std::vector<int> mistakes;     // indices of misclassified test samples
+    std::vector<int> mistakes;     // indices of misclassified test samples, most confident first
+    std::vector<int> largest_errors;  // regression: every kept row, largest mean |error| first
     std::vector<ComparisonRow> comparison;
     std::string comparison_note;
 };

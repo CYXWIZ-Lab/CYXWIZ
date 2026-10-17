@@ -186,7 +186,6 @@ public:
 
     // Tools menu callbacks
     void SetLoadCheckpointCallback(std::function<void()> cb) { load_checkpoint_callback_ = cb; }
-    void SetSaveModelCallback(std::function<void()> cb) { save_model_callback_ = cb; }
     void SetRunQuickTestCallback(std::function<void()> cb) { run_quick_test_callback_ = cb; }
     void SetCompareTestResultsCallback(std::function<void()> cb) { compare_test_results_callback_ = cb; }
     void SetExportTestReportCallback(std::function<void()> cb) { export_test_report_callback_ = cb; }
@@ -645,7 +644,6 @@ private:
 
     // Tools menu callbacks
     std::function<void()> load_checkpoint_callback_;
-    std::function<void()> save_model_callback_;
     std::function<void()> run_quick_test_callback_;
     std::function<void()> compare_test_results_callback_;
     std::function<void()> export_test_report_callback_;

@@ -45,7 +45,8 @@ void ExportDialog::Open(ModelFormat initial_format) {
     show_result_ = false;
     export_progress_ = 0;
     export_total_ = 0;
-    selected_format_ = model_export::IsAvailable(initial_format, kOnnxBuilt) ? initial_format : ModelFormat::CyxModel;
+    selected_format_ = model_export::IsAvailable(initial_format, kOnnxBuilt, LayerStack()) ? initial_format
+                                                                                         : ModelFormat::CyxModel;
     include_training_history_ = true;
     include_graph_ = true;
     const std::string path =
@@ -62,7 +63,7 @@ void ExportDialog::Close() {
 }
 
 void ExportDialog::SetModelData(
-    SequentialModel* model,
+    std::shared_ptr<IExecutableModel> model,
     const Optimizer* optimizer,
     const TrainingMetrics* metrics,
     const std::string& graph_json,
@@ -70,13 +71,17 @@ void ExportDialog::SetModelData(
     const ExportOptions& trained_metadata,
     std::optional<ProcessDeviceSelection> model_device
 ) {
-    model_ = model;
+    model_ = std::move(model);
     model_device_ = model_device;
     optimizer_ = optimizer;
     metrics_ = metrics;
     graph_json_ = graph_json;
     graph_hash_ = graph_hash;
     trained_metadata_ = trained_metadata;
+}
+
+bool ExportDialog::LayerStack() const {
+    return !model_ || model_->AsSequentialModel() != nullptr;
 }
 
 void ExportDialog::Render() {
@@ -146,7 +151,7 @@ void ExportDialog::Render() {
 
 void ExportDialog::RenderFormatSelection() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const auto choices = model_export::AvailableFormats(kOnnxBuilt);
+    const auto choices = model_export::AvailableFormats(kOnnxBuilt, LayerStack());
     std::vector<const char*> labels;
     int selected = 0;
     for (size_t i = 0; i < choices.size(); ++i) {
@@ -189,8 +194,14 @@ void ExportDialog::RenderOptions() {
     ImGui::Spacing();
     if (selected_format_ == ModelFormat::CyxModel) {
         ImGui::TextColored(t.text_dim, "Include");
+        // A graph with branches is rebuilt from its graph: always included.
+        if (!LayerStack()) include_graph_ = true;
+        ImGui::BeginDisabled(!LayerStack());
         ImGui::Checkbox("Graph", &include_graph_);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The node graph, to open and edit it in CyxWiz.");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(LayerStack() ? "The node graph, to open and edit it in CyxWiz."
+                                           : "Always included: a graph with branches is rebuilt from its graph.");
         ImGui::SameLine();
         ImGui::Checkbox("Training history", &include_training_history_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loss and accuracy per epoch.");
@@ -228,7 +239,7 @@ void ExportDialog::RenderProgress() {
 
 void ExportDialog::RenderButtons() {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (model_) ImGui::TextColored(t.text_dim, "%zu layers", model_->Size());
+    if (model_) ImGui::TextColored(t.text_dim, "%zu layers%s", model_->LayerCount(), LayerStack() ? "" : ", with branches");
     const bool can_export = output_path_[0] != '\0' && model_ && !is_exporting_ && !completion_pending_.load();
     const float right = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) + ImGui::GetStyle().ItemSpacing.x +
                         ui::ButtonWidth("Export", ui::ButtonSize::Regular);
@@ -267,7 +278,7 @@ void ExportDialog::StartExport() {
         export_thread_->join();
     }
 
-    SequentialModel* model = model_;
+    std::shared_ptr<IExecutableModel> model = model_;
     const Optimizer* optimizer = optimizer_;
     const TrainingMetrics* metrics = metrics_;
     const std::string graph_json = graph_json_;

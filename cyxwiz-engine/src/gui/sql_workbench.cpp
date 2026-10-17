@@ -162,9 +162,7 @@ void SqlWorkbenchDialog::Apply() {
         node->parameters[cyxwiz::guided::kGuidedOpsParameter] = guided_.Json();
         AddMessage("Saved the operations and their query to the step.", false);
         if (!checks.empty() && node_editor_) {
-            // Requested last first: each goes right after the step.
-            for (auto it = checks.rbegin(); it != checks.rend(); ++it)
-                node_editor_->RequestStepAfter(node_id_, NodeType::RowCountCheck, it->name, it->parameters);
+            node_editor_->RequestChecksAfter(node_id_, checks);
             AddMessage("Its " + std::to_string(checks.size()) + " check(s) became Check nodes after the step.", false);
         }
     } else {
@@ -511,8 +509,8 @@ void SqlWorkbenchDialog::ExportResult(bool parquet) {
     const auto path = cyxwiz::FileDialogs::SaveFile("Export result", filters, nullptr, name.c_str());
     if (!path) return;
     auto& registry = cyxwiz::DataRegistry::Instance();
-    const bool ok = parquet ? registry.ExportArrowToParquet(result_dataset_, *path)
-                            : registry.ExportArrowToCSV(result_dataset_, *path);
+    const bool ok = parquet ? registry.ExportTableParquet(result_dataset_, *path)
+                            : registry.ExportTableCSV(result_dataset_, *path);
     AddMessage(ok ? "Exported " + sqlstep::FormatCount(result_->num_rows()) + " rows to " + *path
                   : "Export to " + *path + " failed (see the Console).",
                !ok);

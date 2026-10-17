@@ -48,7 +48,7 @@ void CheckOrderedTextAggregation() {
         arrow::field("book\"name", arrow::utf8()), arrow::field("verse text", arrow::utf8()),
         arrow::field("verse", arrow::int64()), arrow::field("flag", arrow::boolean())}), {g, w, s, f});
     Require(registry.RegisterArrowTable(table, "ordered_text_fixture") != nullptr, "register input");
-    Require(registry.ExportArrowToParquet("ordered_text_fixture", input.string()), "write fixture");
+    Require(registry.ExportTableParquet("ordered_text_fixture", input.string()), "write fixture");
     const json base_params = {{"group_columns", "book\"name"},
         {"aggregations", "STRING_AGG(verse text) AS chapter_text, COUNT(*) AS n, SUM(verse) AS total"},
         {"text_order_by", "verse"}};

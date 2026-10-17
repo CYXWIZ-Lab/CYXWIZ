@@ -58,7 +58,7 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::ExportExcel: case NodeType::ExportSQL:
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
-        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
+        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode: case NodeType::TestEvaluationNode:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
         default:
@@ -98,6 +98,7 @@ const char* TypeLabel(NodeType type) {
         case NodeType::ROCCurveNode: return "ROC Curve";
         case NodeType::PRCurveNode: return "PR Curve";
         case NodeType::ClassificationMetricsNode: return "Classification Metrics";
+        case NodeType::TestEvaluationNode: return "Test Evaluation";
         case NodeType::RegressionMetricsNode: return "Regression Metrics";
         default: return nullptr;  // grouped by the caller
     }
@@ -280,7 +281,15 @@ View Build(const Input& in) {
                 break;
             case Job::Ready: break;  // after the split sets, below
             case Job::Publish: jv.state = count ? Plural(count, "output", "outputs") : "no output"; break;
-            case Job::Results: jv.state = count ? Plural(count, "evaluation node", "evaluation nodes") : "nothing yet"; break;
+            case Job::Results: {
+                std::vector<std::string> parts;
+                if (in.test_rows > 0) parts.push_back("test: " + Thousands(in.test_rows) + (in.test_rows == 1 ? " row" : " rows"));
+                if (in.preview_runs) parts.push_back(Plural(in.preview_runs, "preview run", "preview runs"));
+                if (count) parts.push_back(Plural(count, "evaluation node", "evaluation nodes"));
+                for (size_t i = 0; i < parts.size(); ++i) jv.state += (i ? " \xC2\xB7 " : "") + parts[i];
+                if (parts.empty()) jv.state = "nothing yet";
+                break;
+            }
         }
     }
 

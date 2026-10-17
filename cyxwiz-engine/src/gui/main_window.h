@@ -221,6 +221,9 @@ public:
     void OnProjectVenvReady(const std::string& project_root);
 
 private:
+    // The Export Model dialog for the trained model (a layer stack or a graph
+    // with branches); format_index is a ModelFormat.
+    void OpenModelExport(int format_index);
     void RenderDockSpace();
     void BuildInitialDockLayout();
     void RegisterPanelsWithSidebar();

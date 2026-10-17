@@ -1,5 +1,6 @@
 #pragma once
 
+#include <arrow/buffer.h>
 #include <arrow/csv/options.h>
 #include <arrow/csv/reader.h>
 #include <arrow/io/api.h>
@@ -148,6 +149,46 @@ inline bool CsvSourceSamplesContainDecimalValues(
     return false;
 }
 
+// Sees every byte a CSV reader takes from its source, in order (TOFIX157: the
+// source's digest while it is converted). `restart` is called each time the
+// source is opened again; the bytes after it are the ones that count.
+struct CsvSourceObserver {
+    std::function<void()> restart;
+    std::function<void(const uint8_t*, int64_t)> bytes;
+};
+
+// An input stream that hands what it reads to an observer.
+class ObservedInputStream : public arrow::io::InputStream {
+public:
+    ObservedInputStream(std::shared_ptr<arrow::io::InputStream> input, const CsvSourceObserver* observer)
+        : input_(std::move(input)), observer_(observer) {}
+    arrow::Status Close() override { return input_->Close(); }
+    bool closed() const override { return input_->closed(); }
+    arrow::Result<int64_t> Tell() const override { return input_->Tell(); }
+    arrow::Result<int64_t> Read(int64_t nbytes, void* out) override {
+        ARROW_ASSIGN_OR_RAISE(const int64_t n, input_->Read(nbytes, out));
+        if (n > 0) observer_->bytes(static_cast<const uint8_t*>(out), n);
+        return n;
+    }
+    arrow::Result<std::shared_ptr<arrow::Buffer>> Read(int64_t nbytes) override {
+        ARROW_ASSIGN_OR_RAISE(auto buffer, input_->Read(nbytes));
+        if (buffer && buffer->size() > 0) observer_->bytes(buffer->data(), buffer->size());
+        return buffer;
+    }
+
+private:
+    std::shared_ptr<arrow::io::InputStream> input_;
+    const CsvSourceObserver* observer_;
+};
+
+// The source as a reader reads it: observed when an observer is given.
+inline std::shared_ptr<arrow::io::InputStream> ObservedCsvSource(std::shared_ptr<arrow::io::ReadableFile> file,
+                                                                 const CsvSourceObserver* observer) {
+    if (!observer || !observer->bytes) return file;
+    if (observer->restart) observer->restart();
+    return std::make_shared<ObservedInputStream>(std::move(file), observer);
+}
+
 inline arrow::Result<std::shared_ptr<arrow::csv::StreamingReader>>
 MakeStableCsvStreamingReader(
     const std::string& path,
@@ -156,7 +197,8 @@ MakeStableCsvStreamingReader(
     arrow::csv::ConvertOptions convert_options,
     size_t* promoted_integer_columns = nullptr,
     bool promote_inferred_integers = false,
-    std::shared_ptr<arrow::io::ReadableFile>* input_source = nullptr) {
+    std::shared_ptr<arrow::io::ReadableFile>* input_source = nullptr,
+    const CsvSourceObserver* observer = nullptr) {
     if (promoted_integer_columns) {
         *promoted_integer_columns = 0;
     }
@@ -167,7 +209,7 @@ MakeStableCsvStreamingReader(
 
     auto reader_result = arrow::csv::StreamingReader::Make(
         arrow::io::default_io_context(),
-        input,
+        ObservedCsvSource(input, observer),
         read_options,
         parse_options,
         convert_options);
@@ -192,7 +234,7 @@ MakeStableCsvStreamingReader(
     if (input_source) *input_source = input;
     return arrow::csv::StreamingReader::Make(
         arrow::io::default_io_context(),
-        input,
+        ObservedCsvSource(input, observer),
         read_options,
         parse_options,
         convert_options);

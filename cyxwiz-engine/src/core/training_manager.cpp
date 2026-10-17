@@ -299,9 +299,15 @@ bool TrainingManager::StartTrainingExternal(
         "Training Model (Resolved Roles)", "Training from resolved dataset roles");
 }
 
-std::shared_ptr<SequentialModel> TrainingManager::GetActiveModel() const {
+std::shared_ptr<IExecutableModel> TrainingManager::GetActiveModel() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return last_trained_model_;
+}
+
+std::shared_ptr<SequentialModel> TrainingManager::GetActiveSequentialModel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!last_trained_model_ || !last_trained_model_->AsSequentialModel()) return nullptr;
+    return std::shared_ptr<SequentialModel>(last_trained_model_, last_trained_model_->AsSequentialModel());
 }
 
 ActiveModelInfo TrainingManager::GetActiveModelInfo() const {
@@ -390,10 +396,12 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         return result;
     }
 
-    auto built = BuildSequentialFromConfig(prepared);
+    // The graph's own model: a layer stack, or a graph with branches
+    // (TOFIX157; its layers alone were tested as a stack before).
+    auto built = BuildExecutableFromConfig(prepared);
     if (!built.ok() || !built.model) {
         result.error_message = built.error_message.empty()
-            ? "The active graph could not build a sequential model for this checkpoint."
+            ? "The active graph could not build a model for this checkpoint."
             : built.error_message;
         return result;
     }
@@ -419,7 +427,7 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         return result;
     }
 
-    auto loaded_model = std::shared_ptr<SequentialModel>(std::move(built.model));
+    std::shared_ptr<IExecutableModel> loaded_model(std::move(built.model));
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (was_cancelled()) {
@@ -1275,34 +1283,6 @@ void TrainingManager::ClearTrainedModel() {
     last_metrics_ = TrainingMetrics();
     active_model_info_ = ActiveModelInfo{};
     spdlog::info("TrainingManager: Cleared preserved trained model");
-}
-
-bool TrainingManager::SaveModel(const std::string& path,
-                                 const std::string& name,
-                                 const std::string& description) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!last_trained_model_) {
-        spdlog::error("TrainingManager::SaveModel: No trained model available");
-        return false;
-    }
-
-    // Set metadata if provided
-    if (!name.empty()) {
-        last_trained_model_->SetName(name);
-    }
-    if (!description.empty()) {
-        last_trained_model_->SetDescription(description);
-    }
-
-    // Save the model
-    if (last_trained_model_->Save(path)) {
-        spdlog::info("TrainingManager::SaveModel: Model saved to {}", path);
-        return true;
-    }
-
-    spdlog::error("TrainingManager::SaveModel: Failed to save model to {}", path);
-    return false;
 }
 
 } // namespace cyxwiz

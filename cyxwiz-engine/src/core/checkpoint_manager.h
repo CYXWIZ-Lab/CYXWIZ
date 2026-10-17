@@ -12,6 +12,8 @@
 
 namespace cyxwiz {
 
+class IExecutableModel;
+
 /**
  * Checkpoint metadata stored alongside model weights
  */
@@ -105,8 +107,11 @@ public:
      * @param checkpoint_name Name for this checkpoint (e.g., "epoch_10", "best")
      * @return Path to saved checkpoint directory, or empty if failed
      */
+    // Model: SequentialModel or IExecutableModel (a graph with branches,
+    // TOFIX157); only its parameter map is read or written.
+    template <typename Model>
     std::string SaveCheckpoint(
-        const SequentialModel& model,
+        const Model& model,
         const Optimizer* optimizer,
         const TrainingMetrics& metrics,
         const std::string& checkpoint_name = ""
@@ -119,8 +124,9 @@ public:
      * @param checkpoint_name Name of checkpoint to load, or empty for latest
      * @return Metadata from checkpoint, or nullopt if failed
      */
+    template <typename Model>
     std::optional<CheckpointMetadata> LoadCheckpoint(
-        SequentialModel& model,
+        Model& model,
         Optimizer* optimizer = nullptr,
         const std::string& checkpoint_name = ""
     );
@@ -145,8 +151,9 @@ public:
      * @param val_loss Current validation loss
      * @return true if this was the best model and was saved
      */
+    template <typename Model>
     bool SaveBestModel(
-        const SequentialModel& model,
+        const Model& model,
         const Optimizer* optimizer,
         const TrainingMetrics& metrics,
         float val_loss
@@ -228,12 +235,14 @@ private:
     /**
      * Save model parameters to directory
      */
-    bool SaveModelParameters(const std::filesystem::path& dir, const SequentialModel& model);
+    template <typename Model>
+    bool SaveModelParameters(const std::filesystem::path& dir, const Model& model);
 
     /**
      * Load model parameters from directory
      */
-    bool LoadModelParameters(const std::filesystem::path& dir, SequentialModel& model);
+    template <typename Model>
+    bool LoadModelParameters(const std::filesystem::path& dir, Model& model);
 
     /**
      * Save a single tensor to binary file
@@ -264,9 +273,10 @@ private:
  * tokenizer must match it: from metadata.json, or for checkpoints written
  * before TOFIX143 from the same run's generation_previews/*.json.
  */
+template <typename Model>
 std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(
     const std::filesystem::path& checkpoint,
-    SequentialModel& model,
+    Model& model,
     const std::string& expected_tokenizer_sha256,
     std::string& error);
 

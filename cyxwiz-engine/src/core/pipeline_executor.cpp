@@ -1,6 +1,7 @@
 #include "pipeline_executor.h"
 #include "dataset_lineage.h"
 #include "sha256_digest.h"
+#include "hashing_output_stream.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/model_evaluation.h>
 #include "project_data_path.h"
@@ -10,10 +11,13 @@
 #include "html_document_text.h"
 #include "error_codes.h"
 #include "data_registry.h"
+#include "test_evaluation_tables.h"
+#include "test_predictions_metrics.h"
 #include "data_budget.h"
 #include "sql_step_presentation.h"
 #include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
+#include <arrow/io/buffered.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include "data_convert_service.h"
@@ -169,7 +173,7 @@ void WarnIfDenseTextVectorizerMaterializationIsLarge(
     const std::string stop_words =
         ParameterOrDefault(parameters, "stop_words", "english");
     spdlog::warn(
-        "[Data Studio] {} dense materialization may pressure host memory: "
+        "[Pipeline] {} dense materialization may pressure host memory: "
         "rows={}, max_features={}, ngram_range={}, stop_words={}, "
         "estimated feature allocation={}. Lower max_features, sample rows, "
         "or use the future sparse path before scaling this graph.",
@@ -1081,7 +1085,7 @@ ArrowFilterRowsAttempt TryApplyArrowEqualityFilter(
             arrow::Scalar::Parse(field->type(), tokens[2].value);
         if (!scalar_result.ok()) {
             spdlog::debug(
-                "[Data Studio] FilterRows Arrow scalar parse unavailable for "
+                "[Pipeline] FilterRows Arrow scalar parse unavailable for "
                 "'{}' (type={}): {}",
                 field->name(), field->type()->ToString(),
                 scalar_result.status().ToString());
@@ -1130,7 +1134,7 @@ ArrowFilterRowsAttempt TryApplyArrowEqualityFilter(
         arrow::compute::FilterOptions::Defaults());
     if (!filter_result.ok() || filter_result->kind() != arrow::Datum::TABLE) {
         spdlog::debug(
-            "[Data Studio] FilterRows Arrow filtering unavailable for '{}': {}",
+            "[Pipeline] FilterRows Arrow filtering unavailable for '{}': {}",
             field->name(), filter_result.status().ToString());
         return ArrowFilterRowsAttempt::Unsupported;
     }
@@ -3067,7 +3071,7 @@ PipelineExecutor::~PipelineExecutor() {
 
 bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     if (executing_) {
-        last_error_ = errors::FormatError(
+        Error() = errors::FormatError(
             errors::Runtime::InvalidState,
             "Pipeline is already executing");
         return false;
@@ -3081,7 +3085,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     progress_ = 0.0f;
     stop_requested_ = false;
     cancel_requested_ = false;
-    last_error_ = "";
+    Error() = "";
     current_status_ = "Starting pipeline execution...";
     deployment_ready_ = false;
     deployment_dataset_.clear();
@@ -3089,14 +3093,14 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     admitted_inputs_.clear();
     RemoveUnusedStepFiles();
 
-    spdlog::info("[Data Studio] Starting pipeline execution");
+    spdlog::info("[Pipeline] Starting pipeline execution");
 
     // Parse pipeline
     std::vector<Node> nodes;
     if (!ParsePipeline(pipeline_json, nodes)) {
-        const std::string parse_error = last_error_.empty()
+        const std::string parse_error = Error().empty()
             ? "Failed to parse pipeline"
-            : "Failed to parse pipeline: " + last_error_;
+            : "Failed to parse pipeline: " + Error();
         ReportError(parse_error);
         executing_ = false;
         NotifyCompletion(false);
@@ -3104,9 +3108,9 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     }
 
     if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
-        ReportError(last_error_.empty()
+        ReportError(Error().empty()
                         ? "Failed to resolve preprocessing artifact paths"
-                        : last_error_);
+                        : Error());
         executing_ = false;
         NotifyCompletion(false);
         return false;
@@ -3116,9 +3120,9 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
 
     // Validate pipeline
     if (!ValidatePipeline(nodes)) {
-        const std::string validation_error = last_error_.empty()
+        const std::string validation_error = Error().empty()
             ? "Pipeline validation failed"
-            : "Pipeline validation failed: " + last_error_;
+            : "Pipeline validation failed: " + Error();
         ReportError(validation_error);
         executing_ = false;
         NotifyCompletion(false);
@@ -3138,7 +3142,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         }
     }
 
-    spdlog::debug("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
+    spdlog::debug("[Pipeline] Lazy evaluation: {} of {} nodes need execution",
                  nodes_to_execute, nodes.size());
     UpdateProgress(0.25f, "Marked " + std::to_string(nodes_to_execute) + " nodes for execution");
 
@@ -3155,14 +3159,14 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     // Deployment status is set inside ExecuteParallel
     NotifyCompletion(true);
 
-    spdlog::info("[Data Studio] Pipeline execution completed successfully");
+    spdlog::info("[Pipeline] Pipeline execution completed successfully");
     return true;
 }
 
 void PipelineExecutor::StopExecution() {
     if (executing_) {
         stop_requested_ = true;
-        spdlog::info("[Data Studio] Stop requested for pipeline execution");
+        spdlog::info("[Pipeline] Stop requested for pipeline execution");
     }
 }
 
@@ -3238,9 +3242,9 @@ void PipelineExecutor::RequestCancel() {
     cancel_requested_ = true;
     {
         std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        if (active_sql_) active_sql_->Interrupt();
+        for (SqlTransform* sql : active_sql_) sql->Interrupt();
     }
-    spdlog::info("[Data Studio] Cancellation requested");
+    spdlog::info("[Pipeline] Cancellation requested");
 }
 
 bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& ctx) {
@@ -3289,7 +3293,7 @@ bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& c
     }
     ctx.node_results[node.id] = output_dataset_name;
     const auto output = registry.GetTableRef(output_dataset_name);
-    spdlog::info("[Data Studio] SQL step '{}': {} input(s), {} rows in -> {} rows, {} columns{}",
+    spdlog::info("[Pipeline] SQL step '{}': {} input(s), {} rows in -> {} rows, {} columns{}",
                  node.name, inputs.size(), input_rows, output ? output->rows : 0, output ? output->columns : 0,
                  output && output->kind == TableRef::Kind::Parquet ? " (on disk)" : "");
     return true;
@@ -3334,14 +3338,14 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
                                       [end_node](const Node& n) { return n.id == end_node; });
 
             if (start_it == nodes.end()) {
-                last_error_ = errors::FormatError(
+                Error() = errors::FormatError(
                     errors::Runtime::PipelineMalformed,
                     "Link references missing start node id: " +
                         std::to_string(start_node));
                 return false;
             }
             if (end_it == nodes.end()) {
-                last_error_ = errors::FormatError(
+                Error() = errors::FormatError(
                     errors::Runtime::PipelineMalformed,
                     "Link references missing end node id: " +
                         std::to_string(end_node));
@@ -3375,7 +3379,7 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
                 all_pinned = all_pinned && input.end_pin_index.has_value();
                 if (input.end_pin_index.has_value() &&
                     !seen_pins.insert(*input.end_pin_index).second) {
-                    last_error_ = errors::FormatError(
+                    Error() = errors::FormatError(
                         errors::Runtime::PipelineMalformed,
                         "Node " + std::to_string(end_node) +
                             " has multiple links targeting input pin " +
@@ -3407,7 +3411,7 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
         return true;
 
     } catch (const std::exception& e) {
-        last_error_ = errors::FormatError(
+        Error() = errors::FormatError(
             errors::Runtime::PipelineMalformed,
             "JSON parse error",
             e.what());
@@ -3559,7 +3563,7 @@ PipelineExecutor::ResolveNodeRuntimeSupport(const Node& node) const {
 bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
     // Check that there's at least one node
     if (nodes.empty()) {
-        last_error_ = errors::FormatError(
+        Error() = errors::FormatError(
             errors::Runtime::PipelineMalformed,
             "Pipeline is empty");
         return false;
@@ -3568,7 +3572,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
     std::set<int> ids;
     for (const auto& node : nodes) {
         if (!ids.insert(node.id).second) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::PipelineMalformed,
                 "Pipeline contains duplicate node id: " +
                     std::to_string(node.id));
@@ -3579,14 +3583,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
     for (const auto& node : nodes) {
         for (int input_id : node.inputs) {
             if (ids.find(input_id) == ids.end()) {
-                last_error_ = errors::FormatError(
+                Error() = errors::FormatError(
                     errors::Runtime::PipelineMalformed,
                     "Node '" + node.name + "' has missing input node id: " +
                         std::to_string(input_id));
                 return false;
             }
             if (input_id == node.id) {
-                last_error_ = errors::FormatError(
+                Error() = errors::FormatError(
                     errors::Runtime::PipelineMalformed,
                     "Node '" + node.name + "' cannot connect to itself");
                 return false;
@@ -3595,14 +3599,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
 
         for (int output_id : node.outputs) {
             if (ids.find(output_id) == ids.end()) {
-                last_error_ = errors::FormatError(
+                Error() = errors::FormatError(
                     errors::Runtime::PipelineMalformed,
                     "Node '" + node.name + "' has missing output node id: " +
                         std::to_string(output_id));
                 return false;
             }
             if (output_id == node.id) {
-                last_error_ = errors::FormatError(
+                Error() = errors::FormatError(
                     errors::Runtime::PipelineMalformed,
                     "Node '" + node.name + "' cannot connect to itself");
                 return false;
@@ -3629,7 +3633,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
 
         if (is_data_convert && node.inputs.empty() &&
             !HasNonEmptyParameter(node.parameters, "input_path")) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::InputDatasetMissing,
                 "DataConvert node '" + node.name +
                     "' requires either input_path or one input connection");
@@ -3637,7 +3641,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         if (is_source && !node.inputs.empty() && !is_data_convert) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::PipelineMalformed,
                 "Source node '" + node.name +
                     "' must not have input connections");
@@ -3645,7 +3649,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         if (!is_source && node.inputs.empty()) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::InputDatasetMissing,
                 "Node '" + node.name + "' requires an input connection");
             return false;
@@ -3653,7 +3657,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
 
         if (required_input_count.has_value() &&
             static_cast<int>(node.inputs.size()) != *required_input_count) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::PipelineMalformed,
                 "Node '" + node.name + "' requires exactly " +
                     std::to_string(*required_input_count) +
@@ -3662,7 +3666,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         if (!required_input_count.has_value() && node.inputs.size() > 1) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::PipelineMalformed,
                 "Node '" + node.name +
                     "' has multiple inputs, but node type '" + node.type +
@@ -3674,7 +3678,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 MissingRequiredParameter(node.type, node.parameters,
                                          runtime_support.required_parameters);
             missing_parameter != nullptr) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::InvalidParameter,
                 "Node '" + node.name + "' of type '" + node.type +
                     "' is missing required parameter '" + missing_parameter +
@@ -3690,14 +3694,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 runtime_support.integer_parameters,
                 runtime_support.float_parameters,
                 parameter_error)) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::InvalidParameter,
                 "Node '" + node.name + "': " + parameter_error);
             return false;
         }
 
         if (runtime_support.mode == PipelineRuntimeSupportMode::Unknown) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::UnsupportedNode,
                 "Node '" + node.name + "' has unsupported node type '" +
                     node.type + "' for PipelineExecutor");
@@ -3712,7 +3716,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 message += ": ";
                 message += runtime_support.fail_closed_reason;
             }
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::UnsupportedNode,
                 message);
             return false;
@@ -3740,24 +3744,24 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         const bool save_state = OptionalBooleanParameterOrDefault(
             node.parameters, "save_state", false);
         if (operation_mode == "transform_only" && state_path.empty()) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::InvalidParameter,
                 "Preprocessing node '" + node.name +
                     "' is set to Transform Only but State artifact path is "
                     "empty. Fit it on training data with Save fitted state "
                     "enabled, then select that artifact.");
-            spdlog::error("[Preprocessing] {}", last_error_);
+            spdlog::error("[Preprocessing] {}", Error());
             return false;
         }
         if (operation_mode == "fit_transform" && save_state &&
             state_path.empty()) {
-            last_error_ = errors::FormatError(
+            Error() = errors::FormatError(
                 errors::Runtime::InvalidParameter,
                 "Preprocessing node '" + node.name +
                     "' has Save fitted state enabled but State artifact path "
                     "is empty. Choose a .cyxstate.json path or disable "
                     "saving.");
-            spdlog::error("[Preprocessing] {}", last_error_);
+            spdlog::error("[Preprocessing] {}", Error());
             return false;
         }
 
@@ -3790,7 +3794,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             for (const auto& role : source_roles) {
                 if (role == "dev" || role == "validation" ||
                     role == "test" || role == "inference") {
-                    last_error_ = errors::FormatError(
+                    Error() = errors::FormatError(
                         errors::Runtime::InvalidParameter,
                         "Preprocessing node '" + node.name +
                             "' cannot Fit + Transform data whose Dataset role "
@@ -3798,7 +3802,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                             "'. This would leak evaluation data into fitted "
                             "statistics. Change Mode to Transform Only and "
                             "select the training state artifact.");
-                    spdlog::error("[Preprocessing] {}", last_error_);
+                    spdlog::error("[Preprocessing] {}", Error());
                     return false;
                 }
             }
@@ -3856,13 +3860,13 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         if (visited.size() != nodes.size()) {
-            last_error_ = "Pipeline contains disconnected nodes";
+            Error() = "Pipeline contains disconnected nodes";
             return false;
         }
     }
 
     if (TopologicalSort(nodes).empty() && !nodes.empty()) {
-        last_error_ = "Pipeline contains a cycle";
+        Error() = "Pipeline contains a cycle";
         return false;
     }
 
@@ -3912,7 +3916,7 @@ std::vector<int> PipelineExecutor::TopologicalSort(const std::vector<Node>& node
 }
 
 bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
-    spdlog::debug("[Data Studio] Executing node: {} (type: {})", node.name, node.type);
+    spdlog::debug("[Pipeline] Executing node: {} (type: {})", node.name, node.type);
 
     const auto support = ResolveNodeRuntimeSupport(node);
     if (support.mode == PipelineRuntimeSupportMode::FailClosed &&
@@ -4010,6 +4014,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRegressionMetrics(node, ctx);
     case gui::NodeType::ClassificationMetricsNode:
         return ExecuteClassificationMetrics(node, ctx);
+    case gui::NodeType::TestEvaluationNode:
+        return ExecuteTestEvaluation(node, ctx);
     case gui::NodeType::ConfusionMatrixNode:
         return ExecuteConfusionMatrix(node, ctx);
     case gui::NodeType::ROCCurveNode:
@@ -4080,7 +4086,7 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
             : "auto";
     std::string dataset_name = "ds_input_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Loading file: {} as dataset '{}' (format: {})",
+    spdlog::info("[Pipeline] Loading file: {} as dataset '{}' (format: {})",
                  file_path, dataset_name, format);
 
     try {
@@ -4106,7 +4112,7 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
             ctx.input_dataset = dataset_name;
         }
 
-        spdlog::info("[Data Studio] FileInput loaded {} rows, {} columns",
+        spdlog::info("[Pipeline] FileInput loaded {} rows, {} columns",
                     arrow_dataset->GetNumRows(), arrow_dataset->GetNumColumns());
         return true;
 
@@ -4365,22 +4371,19 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
     }
     const std::string output_path = ResolveDatasetExportPath(
         node.parameters, input_dataset_name, extension, export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
 
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 
     try {
+        // In memory or on disk: written a piece at a time (TOFIX157).
         auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("DataOutput: Input dataset not found in registry");
-            return false;
-        }
-
+        TabularExport written;
         bool success = false;
         if (format == "csv") {
-            success = registry.ExportArrowToCSV(input_dataset_name, output_path);
+            success = registry.ExportTableCSV(input_dataset_name, output_path, &written);
         } else if (format == "parquet") {
-            success = registry.ExportArrowToParquet(input_dataset_name, output_path);
+            success = registry.ExportTableParquet(input_dataset_name, output_path, &written);
         }
 
         if (!success) {
@@ -4392,7 +4395,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         ctx.node_results[node.id] = input_dataset_name;
         ctx.output_dataset = output_path;
         ctx.node_written[node.id] = output_path;
-        WriteExportLineage(node, ctx, input_dataset_name, output_path, format);
+        WriteExportLineage(node, ctx, written, output_path, format);
 
         spdlog::info("[Pipeline] DataOutput successfully exported to {}", output_path);
         return true;
@@ -4534,7 +4537,7 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
     const std::string& condition = condition_it->second;
     std::string output_dataset_name = "ds_filter_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Filtering rows from '{}' with condition: {}",
+    spdlog::info("[Pipeline] Filtering rows from '{}' with condition: {}",
                 input_dataset_name, condition);
 
     try {
@@ -4568,7 +4571,7 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
             }
             registry.RegisterArrowTable(result_table, output_dataset_name);
             spdlog::info(
-                "[Data Studio] FilterRows used Arrow-native numeric equality");
+                "[Pipeline] FilterRows used Arrow-native numeric equality");
         } else {
             // Preserve the general SQL path for compound expressions,
             // inequalities, and Arrow types/kernels outside the narrow fast
@@ -4581,13 +4584,13 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
                 return false;
             }
             spdlog::info(
-                "[Data Studio] FilterRows used DuckDB expression fallback");
+                "[Pipeline] FilterRows used DuckDB expression fallback");
         }
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] FilterRows: {} -> {} rows",
+        spdlog::info("[Pipeline] FilterRows: {} -> {} rows",
                     DatasetRows(input_dataset_name), DatasetRows(output_dataset_name));
         return true;
 
@@ -4613,7 +4616,7 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
     const std::string& columns = columns_it->second;
     std::string output_dataset_name = "ds_select_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Selecting columns from '{}': {}",
+    spdlog::info("[Pipeline] Selecting columns from '{}': {}",
                 input_dataset_name, columns);
 
     try {
@@ -4643,7 +4646,7 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] SelectColumns: {} -> {} columns",
+        spdlog::info("[Pipeline] SelectColumns: {} -> {} columns",
                     input_table->num_columns(), selected_columns.size());
         return true;
 
@@ -4664,7 +4667,7 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
 
     std::string output_dataset_name = "ds_dedup_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Removing duplicates from '{}'", input_dataset_name);
+    spdlog::info("[Pipeline] Removing duplicates from '{}'", input_dataset_name);
 
     try {
         auto input_table = InputSchemaTable(input_dataset_name);
@@ -4715,7 +4718,7 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] {}: {} -> {} rows",
+        spdlog::info("[Pipeline] {}: {} -> {} rows",
                     diagnostic_name, DatasetRows(input_dataset_name),
                     DatasetRows(output_dataset_name));
         return true;
@@ -4753,8 +4756,9 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
         output_path = ResolveDatasetExportPath(
             node.parameters, output_name, extension, export_root_, project_root_);
     }
+    const auto writing = LockExportPath(output_path);
 
-    spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
+    spdlog::info("[Pipeline] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -4775,9 +4779,9 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
         if (!output_path.empty()) {
             bool success = false;
             if (format == "csv") {
-                success = registry.ExportArrowToCSV(input_dataset_name, output_path);
+                success = registry.ExportTableCSV(input_dataset_name, output_path);
             } else if (format == "parquet") {
-                success = registry.ExportArrowToParquet(input_dataset_name, output_path);
+                success = registry.ExportTableParquet(input_dataset_name, output_path);
             }
 
             if (!success) {
@@ -4790,7 +4794,7 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
         ctx.node_results[node.id] = output_name;
         ctx.output_dataset = output_path.empty() ? output_name : output_path;
 
-        spdlog::info("[Data Studio] Dataset saved successfully as '{}'",
+        spdlog::info("[Pipeline] Dataset saved successfully as '{}'",
                      ctx.output_dataset);
         return true;
 
@@ -5165,7 +5169,7 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
     const std::string& sort_columns = columns_it->second;
     std::string output_dataset_name = "ds_sort_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Sorting '{}' by columns: {} {}",
+    spdlog::info("[Pipeline] Sorting '{}' by columns: {} {}",
                 input_dataset_name, sort_columns, order);
 
     try {
@@ -5196,7 +5200,7 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] SortRows completed: {} rows", DatasetRows(output_dataset_name));
+        spdlog::info("[Pipeline] SortRows completed: {} rows", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -5243,7 +5247,7 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
     std::string output_dataset_name = "ds_join_" + std::to_string(node.id);
 
     spdlog::info(
-        "[Data Studio] Joining '{}' ({}) and '{}' ({}) using {} join",
+        "[Pipeline] Joining '{}' ({}) and '{}' ({}) using {} join",
         left_dataset_name, left_on, right_dataset_name, right_on, join_type);
 
     try {
@@ -5282,7 +5286,7 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] Join completed: {} rows, {} columns",
+        spdlog::info("[Pipeline] Join completed: {} rows, {} columns",
                     result ? result->rows : 0, result ? result->columns : 0);
         return true;
 
@@ -5315,7 +5319,7 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
     const std::string& aggregations = agg_it->second;
     std::string output_dataset_name = "ds_groupby_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] GroupBy on '{}': columns={}, agg={}",
+    spdlog::info("[Pipeline] GroupBy on '{}': columns={}, agg={}",
                 input_dataset_name, group_columns, aggregations);
 
     try {
@@ -5356,7 +5360,7 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] GroupBy completed: {} groups", DatasetRows(output_dataset_name));
+        spdlog::info("[Pipeline] GroupBy completed: {} groups", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -5367,24 +5371,50 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
 
 void PipelineExecutor::UpdateProgress(float progress, const std::string& status) {
     progress_ = progress;
-    if (!status.empty()) {
-        current_status_ = status;
+    std::string shown;
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        if (!status.empty()) current_status_ = status;
+        shown = current_status_;
     }
     if (progress_callback_) {
-        progress_callback_(progress, current_status_);
+        progress_callback_(progress, shown);
     }
 }
 
+namespace {
+// The error slot of the node task on this thread (PipelineExecutor::Error).
+thread_local std::string* task_error = nullptr;
+
+struct TaskErrorScope {
+    explicit TaskErrorScope(std::string& error) { task_error = &error; }
+    ~TaskErrorScope() { task_error = nullptr; }
+};
+}  // namespace
+
+std::string& PipelineExecutor::Error() { return task_error ? *task_error : last_error_; }
+
+void PipelineExecutor::StartSql(SqlTransform& transform) {
+    std::lock_guard<std::mutex> lock(active_sql_mutex_);
+    active_sql_.insert(&transform);
+    if (cancel_requested_) transform.Interrupt();
+}
+
+void PipelineExecutor::EndSql(SqlTransform& transform) {
+    std::lock_guard<std::mutex> lock(active_sql_mutex_);
+    active_sql_.erase(&transform);
+}
+
 void PipelineExecutor::ReportError(const std::string& error) {
-    last_error_ = error;
-    spdlog::error("[Data Studio] Pipeline execution error: {}", error);
+    Error() = error;
+    spdlog::error("[Pipeline] Pipeline execution error: {}", error);
 }
 
 void PipelineExecutor::ReportMissingInput(const std::string& step) {
     // The input lookups (GetInputDatasetName, AdmitInputTable) report why they
     // failed, e.g. an input over the data budget; keep that reason and add the
     // generic one only when none was given.
-    if (last_error_.empty()) ReportError(step + ": No input connection or dataset not found");
+    if (Error().empty()) ReportError(step + ": No input connection or dataset not found");
 }
 
 void PipelineExecutor::NotifyNodeExecution(
@@ -5460,7 +5490,7 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
                                   ? name_it->second
                                   : "deployed_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Preparing dataset '{}' for Node Editor deployment as '{}'",
+    spdlog::info("[Pipeline] Preparing dataset '{}' for Node Editor deployment as '{}'",
                 input_dataset_name, deployment_name);
 
     try {
@@ -5487,7 +5517,7 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
         ctx.node_results[node.id] = deployment_name;
         ctx.output_dataset = deployment_name;
 
-        spdlog::info("[Data Studio] Dataset ready for deployment: '{}'", deployment_name);
+        spdlog::info("[Pipeline] Dataset ready for deployment: '{}'", deployment_name);
         return true;
 
     } catch (const std::exception& e) {
@@ -5531,6 +5561,9 @@ bool PipelineExecutor::StepReadsInputFiles(const Node& node) {
         NodeType::CellUpdater, NodeType::RowAppender, NodeType::Unpivot, NodeType::StringManipulation,
         NodeType::MathFormula};
     if (node.type == "SQLQuery" || (node.runtime_type && sql_steps.count(*node.runtime_type) > 0)) return true;
+    // Exports write a table on disk a row group at a time (TOFIX157).
+    if (node.type == "DataOutput" || node.type == "ExportCSV" || node.type == "ExportJSON" || node.type == "ExportParquet")
+        return true;
     // Operators that stream read their input a row group at a time.
     auto& factory = PipelineOperatorFactory::Instance();
     if (!node.runtime_type || !factory.HasOperator(*node.runtime_type)) return false;
@@ -5576,8 +5609,16 @@ std::string PipelineExecutor::StepInputFile(const std::string& dataset, std::sha
     bytes = memory->GetMemoryUsage();
     on_disk = false;
     // Written once per table: a step reads the same copy as the steps before
-    // it, and a table that changes is a new table object.
-    auto& copy = step_input_copies_[dataset];
+    // it (or a sibling writing it now), and a table that changes is a new
+    // table object.
+    const auto name_lock = NameLock("input:" + dataset);
+    std::lock_guard<std::mutex> writing(*name_lock);
+    StepInputCopy* found = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        found = &step_input_copies_[dataset];  // map nodes stay put; erased only between runs
+    }
+    auto& copy = *found;
     if (copy.table.lock() == table && std::filesystem::exists(copy.path)) return copy.path;
     std::error_code error;
     if (!copy.path.empty()) std::filesystem::remove(copy.path, error);
@@ -5601,7 +5642,22 @@ std::string PipelineExecutor::StepInputFile(const std::string& dataset, std::sha
     return path;
 }
 
+std::shared_ptr<std::mutex> PipelineExecutor::NameLock(const std::string& key) {
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    auto& entry = name_locks_[key];
+    if (!entry) entry = std::make_shared<std::mutex>();
+    return entry;
+}
+
+std::unique_lock<std::mutex> PipelineExecutor::LockExportPath(const std::string& path) {
+    if (path.empty()) return {};
+    // The lock lives in name_locks_ until the next run starts.
+    return std::unique_lock<std::mutex>(*NameLock("export:" + path));
+}
+
 void PipelineExecutor::RemoveUnusedStepFiles() {
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    name_locks_.clear();
     std::error_code error;
     for (auto it = step_input_copies_.begin(); it != step_input_copies_.end();) {
         if (it->second.table.expired()) {
@@ -5656,16 +5712,9 @@ std::shared_ptr<arrow::Table> PipelineExecutor::FetchStepSql(const std::vector<S
     if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return nullptr;
     SqlTransform transform;
     transform.AllowAnyTypes();
-    {
-        std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        active_sql_ = &transform;
-        if (cancel_requested_) transform.Interrupt();
-    }
+    StartSql(transform);
     const auto result = transform.Run(sql, files);
-    {
-        std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        active_sql_ = nullptr;
-    }
+    EndSql(transform);
     if (!result.ok) {
         ReportError(error_prefix + result.error);
         return nullptr;
@@ -5688,16 +5737,9 @@ bool PipelineExecutor::RunStepSql(const Node& node, const std::vector<StepSqlInp
     SqlTransform transform;
     if (!exact_types) transform.AllowAnyTypes();
     if (to_file) transform.WriteResultTo(result_path);
-    {
-        std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        active_sql_ = &transform;
-        if (cancel_requested_) transform.Interrupt();
-    }
+    StartSql(transform);
     const auto result = transform.Run(sql, files);
-    {
-        std::lock_guard<std::mutex> lock(active_sql_mutex_);
-        active_sql_ = nullptr;
-    }
+    EndSql(transform);
     if (!result.ok) {
         if (to_file) std::filesystem::remove(result_path, error);
         ReportError(error_prefix + result.error);
@@ -5742,7 +5784,10 @@ bool PipelineExecutor::RegisterStepResultFile(const Node& node, const std::strin
     }
     registry.UnregisterTabularDataset(output_name);
     registry.RegisterParquetBacked(output_name, written);
-    step_result_files_[output_name] = path;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        step_result_files_[output_name] = path;
+    }
     spdlog::info("[Pipeline] {}: {} rows kept on disk ({})", node.name, rows, path);
     return true;
 }
@@ -5875,12 +5920,18 @@ std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::strin
     // One copy per run, shared by the steps that read it; a copy from another
     // run or executor may be stale and is replaced.
     const std::string admitted = name + "_in_memory";
-    if (std::find(admitted_inputs_.begin(), admitted_inputs_.end(), admitted) != admitted_inputs_.end() &&
-        registry.GetArrowDataset(admitted))
-        return admitted;
+    // A sibling reading the same input now: wait for it, then share its copy.
+    const auto name_lock = NameLock("admit:" + name);
+    std::lock_guard<std::mutex> reading(*name_lock);
+    bool this_run = false;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        this_run = std::find(admitted_inputs_.begin(), admitted_inputs_.end(), admitted) != admitted_inputs_.end();
+    }
+    if (this_run && registry.GetArrowDataset(admitted)) return admitted;
     registry.UnregisterTabularDataset(admitted);
     const uint64_t table_bytes = disk->GetInMemoryBytesEstimate();
-    const uint64_t budget = DataBudgetBytes();
+    const uint64_t budget = DataBudgetShareBytes();  // siblings running now read theirs too
     if (table_bytes * 2 > budget) {
         ReportError(node.name + ": its input (" + sqlstep::FormatCount(disk->GetNumRows()) + " rows) is on disk and needs about " +
                     FormatDataBytes(table_bytes * 2) + " of memory to read, over the data budget of " +
@@ -5895,7 +5946,10 @@ std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::strin
         ReportError(node.name + ": could not read its input from '" + disk->GetFilePath() + "'");
         return "";
     }
-    admitted_inputs_.push_back(admitted);
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        admitted_inputs_.push_back(admitted);
+    }
     return admitted;
 }
 
@@ -6187,11 +6241,11 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
             return false;
         }
         ctx.model_artifacts[node.id] = model_path->second;
-        spdlog::info("[Data Studio] {} Model output registered: '{}'",
+        spdlog::info("[Pipeline] {} Model output registered: '{}'",
                      node.type, model_path->second);
     }
 
-    spdlog::debug("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
+    spdlog::debug("[Pipeline] {} routed through PipelineOperatorFactory: {} rows, {} columns",
                  node.type, output_table->num_rows(), output_table->num_columns());
     return true;
 }
@@ -6223,7 +6277,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 
     std::string output_dataset_name = "ds_textclean_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] {} on column '{}' from '{}'",
+    spdlog::info("[Pipeline] {} on column '{}' from '{}'",
                  diagnostic_name, text_column, input_dataset_name);
 
     try {
@@ -6251,7 +6305,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
             if (!registry.RegisterArrowTable(table, output_dataset_name))
                 throw std::runtime_error("Failed to register parsed HTML result");
             ctx.node_results[node.id] = output_dataset_name;
-            spdlog::info("[Data Studio] {} parsed HTML completed: {} rows; original text and source fields preserved", diagnostic_name, table->num_rows());
+            spdlog::info("[Pipeline] {} parsed HTML completed: {} rows; original text and source fields preserved", diagnostic_name, table->num_rows());
             return true;
         }
         const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
@@ -6283,7 +6337,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] {} completed: {} rows",
+        spdlog::info("[Pipeline] {} completed: {} rows",
                      diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
@@ -6311,7 +6365,7 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
 
     std::string output_dataset_name = "ds_texttokenize_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TextTokenize ({}) on column '{}' from '{}'",
+    spdlog::info("[Pipeline] TextTokenize ({}) on column '{}' from '{}'",
                 method, text_column, input_dataset_name);
 
     try {
@@ -6354,7 +6408,7 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextTokenize completed: {} rows", DatasetRows(output_dataset_name));
+        spdlog::info("[Pipeline] TextTokenize completed: {} rows", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -6381,7 +6435,7 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
 
     std::string output_dataset_name = "ds_textvectorize_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TextVectorize ({}) on column '{}' from '{}'",
+    spdlog::info("[Pipeline] TextVectorize ({}) on column '{}' from '{}'",
                 method, text_column, input_dataset_name);
 
     try {
@@ -6415,7 +6469,7 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextVectorize completed: {} rows, basic features added",
+        spdlog::info("[Pipeline] TextVectorize completed: {} rows, basic features added",
                     DatasetRows(output_dataset_name));
         return true;
 
@@ -6561,7 +6615,7 @@ bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionCont
 
         registry.RegisterArrowTable(vocabulary_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
-        spdlog::info("[Data Studio] {} built {} entries from column '{}'",
+        spdlog::info("[Pipeline] {} built {} entries from column '{}'",
                      node.type, vocabulary.Size(), column);
         return true;
     } catch (const std::exception& e) {
@@ -6598,7 +6652,7 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
 
     std::string output_dataset_name = "ds_tswindow_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSWindow (size={}, stride={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] TSWindow (size={}, stride={}) on '{}' from '{}'",
                 window_size, stride, target_column, input_dataset_name);
 
     try {
@@ -6632,7 +6686,7 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSWindow completed: {} rows with {} timestep windows",
+        spdlog::info("[Pipeline] TSWindow completed: {} rows with {} timestep windows",
                     DatasetRows(output_dataset_name), window_size);
         return true;
 
@@ -6669,7 +6723,7 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
 
     std::string output_dataset_name = "ds_tsfeatures_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSFeatures (window={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] TSFeatures (window={}) on '{}' from '{}'",
                 rolling_window, columns, input_dataset_name);
 
     try {
@@ -6709,7 +6763,7 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSFeatures completed: {} rows with rolling statistics",
+        spdlog::info("[Pipeline] TSFeatures completed: {} rows with rolling statistics",
                     DatasetRows(output_dataset_name));
         return true;
 
@@ -6736,7 +6790,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_tslag_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] {} (periods={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] {} (periods={}) on '{}' from '{}'",
                  diagnostic_name, lag_periods, columns, input_dataset_name);
 
     try {
@@ -6777,7 +6831,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] {} completed: {} rows with lag features",
+        spdlog::info("[Pipeline] {} completed: {} rows with lag features",
                      diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
@@ -6802,7 +6856,7 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_tsdiff_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSDiff (order={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] TSDiff (order={}) on '{}' from '{}'",
                 order, columns, input_dataset_name);
 
     try {
@@ -6836,7 +6890,7 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSDiff completed: {} rows with difference features",
+        spdlog::info("[Pipeline] TSDiff completed: {} rows with difference features",
                     DatasetRows(output_dataset_name));
         return true;
 
@@ -6872,7 +6926,7 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
 
     std::string output_dataset_name = "ds_poly_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] {} (degree={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] {} (degree={}) on '{}' from '{}'",
                  diagnostic_name, degree, column, input_dataset_name);
 
     try {
@@ -6917,7 +6971,7 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] {} completed: {} rows",
+        spdlog::info("[Pipeline] {} completed: {} rows",
                      diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
@@ -6954,7 +7008,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_binning_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] {} (method={}, bins={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] {} (method={}, bins={}) on '{}' from '{}'",
                 diagnostic_name, method, n_bins, column, input_dataset_name);
 
     try {
@@ -7001,7 +7055,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] {} completed: {} rows with {} bins",
+        spdlog::info("[Pipeline] {} completed: {} rows with {} bins",
                     diagnostic_name, DatasetRows(output_dataset_name), n_bins);
         return true;
 
@@ -7131,10 +7185,10 @@ void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
         if (current_hash != node.last_execution_hash) {
             node.needs_execution = true;
             node.last_execution_hash = current_hash;
-            spdlog::debug("[Data Studio] Node {} marked dirty (parameters changed)", node.name);
+            spdlog::debug("[Pipeline] Node {} marked dirty (parameters changed)", node.name);
         } else {
             node.needs_execution = false;
-            spdlog::debug("[Data Studio] Node {} cache valid", node.name);
+            spdlog::debug("[Pipeline] Node {} cache valid", node.name);
         }
     }
 
@@ -7150,7 +7204,7 @@ void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
                     if (input_node && input_node->needs_execution) {
                         node.needs_execution = true;
                         changed = true;
-                        spdlog::debug("[Data Studio] Node {} marked dirty (upstream dependency changed)",
+                        spdlog::debug("[Pipeline] Node {} marked dirty (upstream dependency changed)",
                                      node.name);
                         break;
                     }
@@ -7201,13 +7255,12 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
         ~ClearRunNodes() { nodes = nullptr; }
     } clear_run_nodes{run_nodes_};
     std::set<int> completed;
-    std::set<int> executing;
     ExecutionContext ctx;
-    std::mutex execution_mutex;
 
     struct NodeExecutionResult {
         bool success = false;
         ExecutionContext ctx;
+        std::string error;  // why the node failed (its own, not a sibling's)
     };
 
     int total_nodes_to_execute = 0;
@@ -7242,7 +7295,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 if (!cache.model_artifact.empty()) ctx.model_artifacts[node.id] = cache.model_artifact;
                 if (!cache.outcome.empty()) ctx.node_outcomes[node.id] = cache.outcome;
                 if (node.type == "DataInput" && ctx.input_dataset.empty()) ctx.input_dataset = cache.output;
-                spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
+                spdlog::info("[Pipeline] Using cached result for node: {}", node.name);
                 completed.insert(node.id);
                 NotifyNodeExecution(node, PipelineNodeExecutionEvent::Completed,
                                     "Using cached result for " + node.name);
@@ -7250,14 +7303,14 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 ReportError("Cached node '" + node.name +
                             "' has no cached output dataset and cannot be marked complete");
                 NotifyNodeExecution(node, PipelineNodeExecutionEvent::Error,
-                                    last_error_);
+                                    Error());
                 return false;
             }
         }
     }
 
     if (total_nodes_to_execute == 0) {
-        spdlog::info("[Data Studio] All nodes up-to-date, using cached results");
+        spdlog::info("[Pipeline] All nodes up-to-date, using cached results");
         UpdateProgress(1.0f, "All nodes up-to-date");
         last_node_results_ = ctx.node_results;
         last_node_pin_results_ = ctx.node_pin_results;
@@ -7269,151 +7322,156 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     float base_progress = 0.3f;
     float progress_range = 0.7f;
 
-    while (completed.size() < nodes.size()) {
-        // Check for cancellation
-        if (cancel_requested_) {
-            ReportError("Pipeline execution cancelled by user");
-            return false;
-        }
+    // Independent branches run at once (TOFIX157 A2): a node starts as soon
+    // as its inputs are done and a slot is free, whatever its siblings are
+    // doing. Each task works on its own copy of the context; results merge
+    // here, on this thread. After a failure or Cancel nothing new starts, and
+    // the nodes running finish and report their own outcome.
+    constexpr size_t kMaxRunningNodes = 4;
+    std::map<int, std::future<NodeExecutionResult>> running;
+    bool failed = false;
 
-        // Find nodes ready to execute
-        auto ready = FindReadyNodes(nodes, completed);
-
-        if (ready.empty() && executing.empty()) {
-            // Deadlock or cycle detected
-            ReportError("Pipeline execution stuck (possible cycle or missing dependencies)");
-            return false;
-        }
-
-        if (ready.empty()) {
-            // Wait a bit for executing nodes to complete
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        // Execute ready nodes in parallel (up to 4 concurrent for now)
-        const size_t max_parallel = std::min<size_t>(4, ready.size());
-        std::vector<std::future<NodeExecutionResult>> futures;
-        std::vector<int> batch_node_ids;
-
-        for (size_t i = 0; i < max_parallel && i < ready.size(); i++) {
-            int node_id = ready[i];
-            auto* node = FindNodeById(nodes, node_id);
-            if (!node) continue;
-
-            batch_node_ids.push_back(node_id);
-            executing.insert(node_id);
-
-            // Execute node asynchronously
-            futures.push_back(std::async(std::launch::async,
-                [this, node, &ctx, &execution_mutex]() mutable {
-                    NodeExecutionResult result;
-                    result.ctx.node_results = ctx.node_results;
-                    result.ctx.node_pin_results = ctx.node_pin_results;
-                    result.ctx.model_artifacts = ctx.model_artifacts;
-                    result.ctx.node_outcomes = ctx.node_outcomes;  // the checks above it (lineage)
-                    std::lock_guard<std::mutex> lock(execution_mutex);
-                    NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
-                                        "Executing " + node->name);
-                    RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Executing, "", "", "");
-                    result.success = ExecuteNode(*node, result.ctx);
-                    return result;
-                }
-            ));
-
-            spdlog::debug("[Data Studio] Started executing node: {} (parallel batch)", node->name);
-        }
-
-        // Wait for batch to complete
-        for (size_t i = 0; i < futures.size(); i++) {
-            NodeExecutionResult result = futures[i].get();
-            int node_id = batch_node_ids[i];
-            auto* node = FindNodeById(nodes, node_id);
-
-            executing.erase(node_id);
-
-            if (result.success && node) {
-                for (const auto& [result_node_id, dataset_name] : result.ctx.node_results) {
-                    ctx.node_results[result_node_id] = dataset_name;
-                }
-                for (const auto& [result_pin, dataset_name] : result.ctx.node_pin_results) {
-                    ctx.node_pin_results[result_pin] = dataset_name;
-                }
-                for (const auto& [result_node_id, artifact_path] :
-                     result.ctx.model_artifacts) {
-                    ctx.model_artifacts[result_node_id] = artifact_path;
-                }
-                if (result.ctx.deployment_ready) {
-                    ctx.deployment_ready = true;
-                    ctx.deployment_dataset = result.ctx.deployment_dataset;
-                }
-                if (!result.ctx.output_dataset.empty()) {
-                    ctx.output_dataset = result.ctx.output_dataset;
-                }
-                if (!result.ctx.deployment_dataset.empty()) {
-                    ctx.deployment_dataset = result.ctx.deployment_dataset;
-                }
-
-                for (const auto& [result_node_id, outcome] : result.ctx.node_outcomes) {
-                    ctx.node_outcomes[result_node_id] = outcome;
-                }
-
-                completed.insert(node_id);
-                nodes_executed++;
-                NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Completed,
-                                    "Completed " + node->name);
-                {
-                    const auto dataset = result.ctx.node_results.find(node_id);
-                    const auto outcome = result.ctx.node_outcomes.find(node_id);
-                    const auto written = result.ctx.node_written.find(node_id);
-                    RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Completed,
-                                       dataset == result.ctx.node_results.end() ? "" : dataset->second,
-                                       outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "",
-                                       written == result.ctx.node_written.end() ? "" : written->second);
-                }
-
-                // Cache the output for the next run on this executor; a node
-                // that wrote a file or prepared a deployment always runs.
-                auto result_it = ctx.node_results.find(node_id);
-                if (result_it != ctx.node_results.end()) {
-                    node->cached_output_dataset = result_it->second;
-                    if (!result.ctx.node_written.count(node_id) && !result.ctx.deployment_ready) {
-                        NodeRunCache cache;
-                        cache.hash = node->last_execution_hash;
-                        cache.output = result_it->second;
-                        for (const auto& [key, dataset] : result.ctx.node_pin_results)
-                            if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
-                        if (const auto model = result.ctx.model_artifacts.find(node_id);
-                            model != result.ctx.model_artifacts.end())
-                            cache.model_artifact = model->second;
-                        if (const auto outcome = result.ctx.node_outcomes.find(node_id);
-                            outcome != result.ctx.node_outcomes.end())
-                            cache.outcome = outcome->second;
-                        run_cache_[node_id] = std::move(cache);
-                    }
-                }
-
-                float progress = base_progress +
-                    (progress_range * nodes_executed / total_nodes_to_execute);
-                UpdateProgress(progress,
-                    "Completed " + node->name + " (" +
-                    std::to_string(nodes_executed) + "/" +
-                    std::to_string(total_nodes_to_execute) + ")");
-
-                spdlog::info("[Data Studio] Completed node: {} ({}/{})",
-                           node->name, nodes_executed, total_nodes_to_execute);
-            } else {
-                // Execution failed
-                if (node) {
-                    const std::string error = last_error_.empty()
-                        ? "Pipeline node execution failed"
-                        : last_error_;
-                    NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Error, error);
-                    RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Error, "", "", error);
-                }
-                return false;
+    while (true) {
+        if (!failed && !cancel_requested_) {
+            for (const int node_id : FindReadyNodes(nodes, completed)) {
+                if (running.size() >= kMaxRunningNodes) break;
+                if (running.count(node_id)) continue;
+                auto* node = FindNodeById(nodes, node_id);
+                if (!node) continue;
+                ExecutionContext task_ctx;
+                task_ctx.node_results = ctx.node_results;
+                task_ctx.node_pin_results = ctx.node_pin_results;
+                task_ctx.model_artifacts = ctx.model_artifacts;
+                task_ctx.node_outcomes = ctx.node_outcomes;  // the checks above it (lineage)
+                running.emplace(node_id, std::async(std::launch::async,
+                    [this, node, task_ctx = std::move(task_ctx)]() mutable {
+                        NodeExecutionResult result;
+                        result.ctx = std::move(task_ctx);
+                        TaskErrorScope error_scope(result.error);
+                        // A new thread starts on ArrayFire's default device.
+                        Device::ActivateProcessDeviceOnThisThread();
+                        NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
+                                            "Executing " + node->name);
+                        RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Executing, "", "", "");
+                        DataBudgetShare budget_share;
+                        result.success = ExecuteNode(*node, result.ctx);
+                        return result;
+                    }));
+                spdlog::debug("[Pipeline] Started executing node: {} ({} running)", node->name, running.size());
             }
         }
+        if (running.empty()) break;
+
+        // The first node that finishes.
+        auto finished = running.end();
+        while (finished == running.end()) {
+            for (auto it = running.begin(); it != running.end(); ++it) {
+                if (it->second.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    finished = it;
+                    break;
+                }
+            }
+            if (finished == running.end())
+                running.begin()->second.wait_for(std::chrono::milliseconds(10));
+        }
+        const int node_id = finished->first;
+        NodeExecutionResult result = finished->second.get();
+        running.erase(finished);
+        auto* node = FindNodeById(nodes, node_id);
+
+        if (result.success && node) {
+            for (const auto& [result_node_id, dataset_name] : result.ctx.node_results) {
+                ctx.node_results[result_node_id] = dataset_name;
+            }
+            for (const auto& [result_pin, dataset_name] : result.ctx.node_pin_results) {
+                ctx.node_pin_results[result_pin] = dataset_name;
+            }
+            for (const auto& [result_node_id, artifact_path] :
+                 result.ctx.model_artifacts) {
+                ctx.model_artifacts[result_node_id] = artifact_path;
+            }
+            if (result.ctx.deployment_ready) {
+                ctx.deployment_ready = true;
+                ctx.deployment_dataset = result.ctx.deployment_dataset;
+            }
+            if (!result.ctx.output_dataset.empty()) {
+                ctx.output_dataset = result.ctx.output_dataset;
+            }
+            if (!result.ctx.deployment_dataset.empty()) {
+                ctx.deployment_dataset = result.ctx.deployment_dataset;
+            }
+
+            for (const auto& [result_node_id, outcome] : result.ctx.node_outcomes) {
+                ctx.node_outcomes[result_node_id] = outcome;
+            }
+
+            completed.insert(node_id);
+            nodes_executed++;
+            NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Completed,
+                                "Completed " + node->name);
+            {
+                const auto dataset = result.ctx.node_results.find(node_id);
+                const auto outcome = result.ctx.node_outcomes.find(node_id);
+                const auto written = result.ctx.node_written.find(node_id);
+                RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Completed,
+                                   dataset == result.ctx.node_results.end() ? "" : dataset->second,
+                                   outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "",
+                                   written == result.ctx.node_written.end() ? "" : written->second);
+            }
+
+            // Cache the output for the next run on this executor; a node
+            // that wrote a file or prepared a deployment always runs.
+            auto result_it = ctx.node_results.find(node_id);
+            if (result_it != ctx.node_results.end()) {
+                node->cached_output_dataset = result_it->second;
+                if (!result.ctx.node_written.count(node_id) && !result.ctx.deployment_ready) {
+                    NodeRunCache cache;
+                    cache.hash = node->last_execution_hash;
+                    cache.output = result_it->second;
+                    for (const auto& [key, dataset] : result.ctx.node_pin_results)
+                        if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
+                    if (const auto model = result.ctx.model_artifacts.find(node_id);
+                        model != result.ctx.model_artifacts.end())
+                        cache.model_artifact = model->second;
+                    if (const auto outcome = result.ctx.node_outcomes.find(node_id);
+                        outcome != result.ctx.node_outcomes.end())
+                        cache.outcome = outcome->second;
+                    run_cache_[node_id] = std::move(cache);
+                }
+            }
+
+            float progress = base_progress +
+                (progress_range * nodes_executed / total_nodes_to_execute);
+            UpdateProgress(progress,
+                "Completed " + node->name + " (" +
+                std::to_string(nodes_executed) + "/" +
+                std::to_string(total_nodes_to_execute) + ")");
+
+            spdlog::info("[Pipeline] Completed node: {} ({}/{})",
+                       node->name, nodes_executed, total_nodes_to_execute);
+        } else if (node) {
+            // The run stops at the first failure; it is the run's error.
+            const std::string error = result.error.empty()
+                ? "Pipeline node execution failed"
+                : result.error;
+            if (!failed) last_error_ = error;
+            failed = true;
+            NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Error, error);
+            RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Error, "", "", error);
+        } else {
+            failed = true;
+        }
+    }
+
+    if (cancel_requested_) {
+        ReportError("Pipeline execution cancelled by user");
+        return false;
+    }
+    if (failed) return false;
+    if (completed.size() < nodes.size()) {
+        // Deadlock or cycle detected
+        ReportError("Pipeline execution stuck (possible cycle or missing dependencies)");
+        return false;
     }
 
     last_node_results_ = ctx.node_results;
@@ -7424,7 +7482,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     if (ctx.deployment_ready) {
         deployment_ready_ = true;
         deployment_dataset_ = ctx.deployment_dataset;
-        spdlog::info("[Data Studio] Deployment ready: '{}'", deployment_dataset_);
+        spdlog::info("[Pipeline] Deployment ready: '{}'", deployment_dataset_);
     }
 
     return true;
@@ -7450,30 +7508,45 @@ const PipelineExecutor::Node* PipelineExecutor::FindNodeById(
 
 namespace {
 
-// An input file's SHA-256, kept per path, size and time so a run does not
-// hash an unchanged file again.
-std::string CachedFileDigest(const std::filesystem::path& path, uint64_t& bytes) {
-    static std::mutex mutex;
-    static std::map<std::string, std::string> cache;
+// An input file for the lineage. Its SHA-256 is known when the file was
+// hashed before, by path, size and time (also while a large CSV was
+// converted); otherwise a file up to the data budget's result threshold is
+// hashed now, and a larger one (a Parquet file opened in place) is not read
+// again just for this: its size and write time identify it (TOFIX157).
+LineageFile LineageInput(const std::filesystem::path& path, const std::filesystem::path& digest_store) {
+    LineageFile input;
+    input.path = path.string();
+    const std::string stamp = FileStamp(path, &input.bytes);
+    if (stamp.empty()) return input;
     std::error_code ec;
-    bytes = std::filesystem::file_size(path, ec);
-    if (ec) return {};
-    const auto time = std::filesystem::last_write_time(path, ec).time_since_epoch().count();
-    const std::string key = path.string() + "|" + std::to_string(bytes) + "|" + std::to_string(time);
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (!ec) {
+        const auto wall = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
+        std::tm local{};
+#if defined(_WIN32)
+        localtime_s(&local, &wall);
+#else
+        localtime_r(&wall, &local);
+#endif
+        std::ostringstream text;
+        text << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+        input.modified = text.str();
     }
-    std::string digest, error;
-    if (!Sha256File(path, digest, error)) return {};
-    std::lock_guard<std::mutex> lock(mutex);
-    cache[key] = digest;
-    return digest;
+    input.sha256 = KnownFileDigest(stamp, digest_store);
+    if (!input.sha256.empty()) return input;
+    if (input.bytes > DataResultThresholdBytes()) {
+        input.note = "not hashed: larger than the data budget's result threshold (" + FormatDataBytes(DataResultThresholdBytes()) +
+                     "); size and write time identify it";
+        return input;
+    }
+    std::string error;
+    if (Sha256File(path, input.sha256, error)) RememberFileDigest(stamp, digest_store, input.sha256);
+    return input;
 }
 
 }  // namespace
 
-void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionContext& ctx, const std::string& input_dataset,
+void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionContext& ctx, const TabularExport& written,
                                           const std::string& output_path, const std::string& format) {
     if (!run_nodes_) return;
     // The steps above the export, in run order (inputs before the steps that read them).
@@ -7517,10 +7590,9 @@ void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionConte
         if (n->type == "DataInput") {
             const auto file = n->parameters.find("file_path");
             if (file != n->parameters.end() && !file->second.empty()) {
-                LineageFile input;
-                input.path = ResolveProjectDataPath(file->second, project_root_);
-                input.sha256 = CachedFileDigest(input.path, input.bytes);
-                lineage.inputs.push_back(std::move(input));
+                const std::filesystem::path store =
+                    ingestion_cache_root_.empty() ? ParquetBackedDataset::GetCacheDir() : ingestion_cache_root_;
+                lineage.inputs.push_back(LineageInput(ResolveProjectDataPath(file->second, project_root_), store));
             }
         }
         if (!n->recipe.empty()) lineage.recipe = n->recipe;  // the nearest recipe above the export wins
@@ -7528,18 +7600,16 @@ void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionConte
     }
     lineage.recipe_revision = RecipeRevision(lineage.steps, lineage.recipe);
     lineage.checks = LineageChecks(lineage.steps);
-    if (const auto dataset = DataRegistry::Instance().GetArrowDataset(input_dataset)) {
-        lineage.rows = dataset->GetNumRows();
-        lineage.columns = dataset->GetNumColumns();
-        if (const auto table = dataset->GetArrowTable())
-            for (const auto& field : table->schema()->fields()) lineage.schema.emplace_back(field->name(), field->type()->ToString());
+    // What the export wrote, hashed while it was written (TOFIX157).
+    lineage.rows = written.rows;
+    if (written.schema) {
+        lineage.columns = written.schema->num_fields();
+        for (const auto& field : written.schema->fields()) lineage.schema.emplace_back(field->name(), field->type()->ToString());
     }
     lineage.output.path = output_path;
+    lineage.output.bytes = written.bytes;
+    lineage.output.sha256 = written.sha256;
     std::string error;
-    std::error_code ec;
-    lineage.output.bytes = std::filesystem::file_size(output_path, ec);
-    if (!Sha256File(output_path, lineage.output.sha256, error))
-        spdlog::warn("Lineage of '{}': the output could not be hashed ({})", output_path, error);
     if (!WriteLineage(lineage, error)) {
         spdlog::warn("Lineage of '{}' not written: {}", output_path, error);
         return;
@@ -7557,22 +7627,19 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
 
     const std::string output_path = ResolveDatasetExportPath(
         node.parameters, input_dataset_name, ".csv", export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
 
-    spdlog::info("[Data Studio] Exporting to CSV: {}", output_path);
-    auto& registry = DataRegistry::Instance();
-    if (!registry.GetArrowDataset(input_dataset_name)) {
-        ReportError("ExportCSV: Input dataset not found in registry");
-        return false;
-    }
-    if (!registry.ExportArrowToCSV(input_dataset_name, output_path)) {
-        ReportError("ExportCSV: Export failed");
+    spdlog::info("[Pipeline] Exporting to CSV: {}", output_path);
+    TabularExport written;
+    if (!DataRegistry::Instance().ExportTableCSV(input_dataset_name, output_path, &written)) {
+        ReportError("ExportCSV: Export failed (see the log)");
         return false;
     }
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     ctx.node_written[node.id] = output_path;
-    WriteExportLineage(node, ctx, input_dataset_name, output_path, "csv");
+    WriteExportLineage(node, ctx, written, output_path, "csv");
     return true;
 }
 
@@ -7585,59 +7652,65 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
 
     const std::string output_path = ResolveDatasetExportPath(
         node.parameters, input_dataset_name, ".json", export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
 
-    spdlog::info("[Data Studio] Exporting to JSON: {}", output_path);
-    auto& registry = DataRegistry::Instance();
-    auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-    if (!input_dataset) {
-        ReportError("ExportJSON: Input dataset not found in registry");
+    spdlog::info("[Pipeline] Exporting to JSON: {}", output_path);
+    // An array of objects, written a piece at a time (a table on disk one
+    // row group at a time) and hashed as it is written (TOFIX157).
+    auto file = arrow::io::FileOutputStream::Open(output_path);
+    if (!file.ok()) {
+        ReportError("ExportJSON: Failed to open output file: " + file.status().ToString());
         return false;
     }
-
-    auto table = input_dataset->GetArrowTable();
-    if (!table || !table->schema()) {
-        ReportError("ExportJSON: Input table is null");
+    auto hashed = std::make_shared<HashingOutputStream>(*file);
+    auto buffered = arrow::io::BufferedOutputStream::Create(1 << 20, arrow::default_memory_pool(), hashed);
+    if (!buffered.ok()) {
+        ReportError("ExportJSON: " + buffered.status().ToString());
         return false;
     }
-
-    std::ofstream output(output_path, std::ios::binary);
-    if (!output) {
-        ReportError("ExportJSON: Failed to open output file");
+    const auto output = *buffered;
+    TabularExport written;
+    std::string error;
+    const auto write = [&](const std::string& text, std::string& why) {
+        const auto status = output->Write(text.data(), static_cast<int64_t>(text.size()));
+        if (!status.ok()) why = "Failed to write output file: " + status.ToString();
+        return status.ok();
+    };
+    bool ok = write("[\n", error) &&
+              DataRegistry::Instance().VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+                  std::vector<std::string> names;
+                  for (const auto& field : piece->schema()->fields()) names.push_back(QuoteJsonString(field->name()) + ": ");
+                  std::string text;
+                  for (int64_t row = 0; row < piece->num_rows(); ++row) {
+                      text += written.rows + row > 0 ? ",\n  {" : "  {";
+                      for (int column = 0; column < piece->num_columns(); ++column) {
+                          auto scalar = piece->column(column)->GetScalar(row);
+                          if (!scalar.ok()) {
+                              why = "Failed to read scalar value";
+                              return false;
+                          }
+                          text += (column > 0 ? ", " : "") + names[static_cast<size_t>(column)] + ScalarToJsonValue(*scalar);
+                      }
+                      text += "}";
+                      if (text.size() > (1u << 20) && !write(text, why)) return false;
+                      if (text.size() > (1u << 20)) text.clear();
+                  }
+                  written.rows += piece->num_rows();
+                  return write(text, why);
+              }, &written.schema, error) &&
+              write(written.rows > 0 ? "\n]\n" : "]\n", error);
+    const auto closed = output->Close();
+    if (!ok || !closed.ok()) {
+        ReportError("ExportJSON: " + (ok ? closed.ToString() : error));
         return false;
     }
-
-    output << "[\n";
-    for (int64_t row = 0; row < table->num_rows(); ++row) {
-        output << "  {";
-        for (int column = 0; column < table->num_columns(); ++column) {
-            if (column > 0) {
-                output << ", ";
-            }
-            output << QuoteJsonString(table->schema()->field(column)->name())
-                   << ": ";
-            auto scalar_result = table->column(column)->GetScalar(row);
-            if (!scalar_result.ok()) {
-                ReportError("ExportJSON: Failed to read scalar value");
-                return false;
-            }
-            output << ScalarToJsonValue(*scalar_result);
-        }
-        output << "}";
-        if (row + 1 < table->num_rows()) {
-            output << ",";
-        }
-        output << "\n";
-    }
-    output << "]\n";
-    if (!output) {
-        ReportError("ExportJSON: Failed to write output file");
-        return false;
-    }
+    written.bytes = hashed->bytes();
+    written.sha256 = hashed->Finish();
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     ctx.node_written[node.id] = output_path;
-    WriteExportLineage(node, ctx, input_dataset_name, output_path, "json");
+    WriteExportLineage(node, ctx, written, output_path, "json");
     return true;
 }
 
@@ -7650,22 +7723,19 @@ bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& 
 
     const std::string output_path = ResolveDatasetExportPath(
         node.parameters, input_dataset_name, ".parquet", export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
 
-    spdlog::info("[Data Studio] Exporting to Parquet: {}", output_path);
-    auto& registry = DataRegistry::Instance();
-    if (!registry.GetArrowDataset(input_dataset_name)) {
-        ReportError("ExportParquet: Input dataset not found in registry");
-        return false;
-    }
-    if (!registry.ExportArrowToParquet(input_dataset_name, output_path)) {
-        ReportError("ExportParquet: Export failed");
+    spdlog::info("[Pipeline] Exporting to Parquet: {}", output_path);
+    TabularExport written;
+    if (!DataRegistry::Instance().ExportTableParquet(input_dataset_name, output_path, &written)) {
+        ReportError("ExportParquet: Export failed (see the log)");
         return false;
     }
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     ctx.node_written[node.id] = output_path;
-    WriteExportLineage(node, ctx, input_dataset_name, output_path, "parquet");
+    WriteExportLineage(node, ctx, written, output_path, "parquet");
     return true;
 }
 
@@ -8364,7 +8434,7 @@ bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionConte
                 : (1.0 - (sum_squared_error / ss_total));
 
         spdlog::info(
-            "[Data Studio] RegressionMetricsNode: count={}, MSE={:.10g}, "
+            "[Pipeline] RegressionMetricsNode: count={}, MSE={:.10g}, "
             "RMSE={:.10g}, MAE={:.10g}, R2={:.10g}",
             count, mse, rmse, mae, r2);
 
@@ -8630,6 +8700,75 @@ bool PipelineExecutor::ExecuteClassificationMetrics(const Node& node, ExecutionC
         ReportError("ClassificationMetricsNode error: " + std::string(e.what()));
         return false;
     }
+}
+
+bool PipelineExecutor::ExecuteTestEvaluation(const Node& node, ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Test Evaluation: no input; connect a test's predictions (a Data Input of a kept test)");
+        return false;
+    }
+    auto& registry = DataRegistry::Instance();
+    // The whole table, in memory or on disk (a test's rows are one per test sample).
+    std::vector<std::shared_ptr<arrow::Table>> pieces;
+    std::shared_ptr<arrow::Schema> schema;
+    std::string error;
+    if (!registry.VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string&) {
+            pieces.push_back(piece);
+            return true;
+        }, &schema, error)) {
+        ReportError("Test Evaluation: cannot read the input: " + error);
+        return false;
+    }
+    std::shared_ptr<arrow::Table> rows;
+    if (pieces.size() == 1) {
+        rows = pieces.front();
+    } else {
+        auto joined = arrow::ConcatenateTables(pieces);
+        if (!joined.ok()) {
+            ReportError("Test Evaluation: " + joined.status().ToString());
+            return false;
+        }
+        rows = *joined;
+    }
+    TestingMetrics run;
+    if (!rows || !MetricsFromPredictionsTable(*rows, run, error)) {
+        ReportError("Test Evaluation: the input is not a test's predictions: " + error);
+        return false;
+    }
+    size_t worst_rows = 20;
+    if (const auto it = node.parameters.find("worst_rows"); it != node.parameters.end()) {
+        try {
+            worst_rows = static_cast<size_t>(std::clamp(std::stoll(TrimString(it->second)), 1LL, 10000LL));
+        } catch (const std::exception&) {
+            ReportError("Test Evaluation: worst_rows must be a whole number");
+            return false;
+        }
+    }
+    TestEvaluationTables tables;
+    if (!BuildTestEvaluationTables(run, worst_rows, tables, error)) {
+        ReportError("Test Evaluation: " + error);
+        return false;
+    }
+    const std::string base = "ds_test_evaluation_" + std::to_string(node.id);
+    if (!registry.RegisterArrowTable(tables.metrics, base)) {
+        ReportError("Test Evaluation: cannot register its metrics");
+        return false;
+    }
+    ctx.node_results[node.id] = base;
+    const std::shared_ptr<arrow::Table> extra[] = {tables.confusion, tables.per_class, tables.worst_rows};
+    for (int pin = 1; pin <= 3; ++pin) {
+        const std::string name = base + "_pin" + std::to_string(pin);
+        if (!registry.RegisterArrowTable(extra[pin - 1], name)) {
+            ReportError("Test Evaluation: cannot register output " + std::to_string(pin + 1));
+            return false;
+        }
+        ctx.node_pin_results[{node.id, pin}] = name;
+    }
+    spdlog::info("Test Evaluation node {}: {} test rows{}", node.id, run.total_samples,
+                 run.regression_mode ? ", MAE " + std::to_string(run.test_mae)
+                                     : ", accuracy " + std::to_string(run.test_accuracy));
+    return true;
 }
 
 bool PipelineExecutor::ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx) {
@@ -9898,7 +10037,7 @@ bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& 
     }
 
     std::string output_dataset_name = "ds_renamed_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] Renaming columns in '{}'", input_dataset_name);
+    spdlog::info("[Pipeline] Renaming columns in '{}'", input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -9971,7 +10110,7 @@ bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& 
             : 0;
 
     std::string output_dataset_name = "ds_cell_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] CellExtractor row={} column='{}' from '{}'",
+    spdlog::info("[Pipeline] CellExtractor row={} column='{}' from '{}'",
                  row, column, input_dataset_name);
 
     try {
@@ -10044,7 +10183,7 @@ bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ct
     }
 
     std::string output_dataset_name = "ds_cell_update_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] CellUpdater row={} column='{}' from '{}'",
+    spdlog::info("[Pipeline] CellUpdater row={} column='{}' from '{}'",
                  row, column, input_dataset_name);
 
     try {
@@ -10120,7 +10259,7 @@ bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ct
     const std::string& bottom_dataset_name = input_dataset_names[1];
     std::string output_dataset_name = "ds_row_append_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] RowAppender appending '{}' and '{}'",
+    spdlog::info("[Pipeline] RowAppender appending '{}' and '{}'",
                  top_dataset_name, bottom_dataset_name);
 
     try {
@@ -10195,7 +10334,7 @@ bool PipelineExecutor::ExecuteColumnAppender(const Node& node, ExecutionContext&
     std::string output_dataset_name =
         "ds_column_append_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] ColumnAppender appending '{}' and '{}'",
+    spdlog::info("[Pipeline] ColumnAppender appending '{}' and '{}'",
                  left_dataset_name, right_dataset_name);
 
     try {
@@ -10299,7 +10438,7 @@ bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
     const std::string output_dataset_name =
         "ds_unpivot_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Unpivot '{}' with {} id columns",
+    spdlog::info("[Pipeline] Unpivot '{}' with {} id columns",
                  input_dataset_name, requested_id_columns.size());
 
     try {
@@ -10386,7 +10525,7 @@ bool PipelineExecutor::ExecuteRowToColumnNames(const Node& node, ExecutionContex
     int row_index = (row_idx_it != node.parameters.end()) ? std::stoi(row_idx_it->second) : 0;
 
     std::string output_dataset_name = "ds_newheaders_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] Promoting row {} to column names", row_index);
+    spdlog::info("[Pipeline] Promoting row {} to column names", row_index);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -10474,7 +10613,7 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
             : -1;
 
     std::string output_dataset_name = "ds_cropped_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] Cropping table rows {}:{}", start_row, end_row);
+    spdlog::info("[Pipeline] Cropping table rows {}:{}", start_row, end_row);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -10538,7 +10677,7 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
     }
 
     std::string output_dataset_name = "ds_string_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] String {} on column '{}'", operation, column);
+    spdlog::info("[Pipeline] String {} on column '{}'", operation, column);
 
     try {
         auto input_table = InputSchemaTable(input_dataset_name);
@@ -10624,7 +10763,7 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
     }
 
     std::string output_dataset_name = "ds_math_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] MathFormula: {} = {}", output_column, formula);
+    spdlog::info("[Pipeline] MathFormula: {} = {}", output_column, formula);
 
     try {
         auto input_table = InputSchemaTable(input_dataset_name);

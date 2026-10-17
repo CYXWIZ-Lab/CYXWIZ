@@ -1,4 +1,5 @@
 #include "checkpoint_manager.h"
+#include "executable_model.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -69,8 +70,9 @@ CheckpointManager::CheckpointManager(const std::string& checkpoint_dir)
     }
 }
 
+template <typename Model>
 std::string CheckpointManager::SaveCheckpoint(
-    const SequentialModel& model,
+    const Model& model,
     const Optimizer* optimizer,
     const TrainingMetrics& metrics,
     const std::string& checkpoint_name)
@@ -148,8 +150,9 @@ std::string CheckpointManager::SaveCheckpoint(
     return checkpoint_path.string();
 }
 
+template <typename Model>
 std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint(
-    SequentialModel& model,
+    Model& model,
     Optimizer* optimizer,
     const std::string& checkpoint_name)
 {
@@ -263,8 +266,9 @@ CheckpointInspection CheckpointManager::InspectCheckpoint(
     return inspection;
 }
 
+template <typename Model>
 bool CheckpointManager::SaveBestModel(
-    const SequentialModel& model,
+    const Model& model,
     const Optimizer* optimizer,
     const TrainingMetrics& metrics,
     float val_loss)
@@ -479,14 +483,15 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
     }
 }
 
-bool CheckpointManager::SaveModelParameters(const fs::path& dir, const SequentialModel& model) {
+template <typename Model>
+bool CheckpointManager::SaveModelParameters(const fs::path& dir, const Model& model) {
     try {
         fs::path model_dir = dir / "model";
         fs::create_directories(model_dir);
 
         // Get all parameters from the model
         // Note: We need const_cast here because GetParameters isn't const
-        auto& mutable_model = const_cast<SequentialModel&>(model);
+        auto& mutable_model = const_cast<Model&>(model);
         auto params = mutable_model.GetParameters();
 
         spdlog::debug("CheckpointManager: Saving {} parameters", params.size());
@@ -532,7 +537,8 @@ bool CheckpointManager::SaveModelParameters(const fs::path& dir, const Sequentia
     }
 }
 
-bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel& model) {
+template <typename Model>
+bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
     try {
         fs::path model_dir = dir / "model";
         if (!fs::exists(model_dir)) {
@@ -831,9 +837,10 @@ std::string TokenizerFromRunPreviews(const fs::path& checkpoint, std::string& er
 
 } // namespace
 
+template <typename Model>
 std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(
     const fs::path& checkpoint,
-    SequentialModel& model,
+    Model& model,
     const std::string& expected_tokenizer_sha256,
     std::string& error) {
     error.clear();
@@ -880,5 +887,20 @@ std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(
     }
     return loaded;
 }
+
+// The two model kinds a checkpoint holds (TOFIX157): a layer stack, or any
+// executable model (a graph with branches).
+#define CYXWIZ_CHECKPOINT_MODEL(Model)                                                                    \
+    template std::string CheckpointManager::SaveCheckpoint<Model>(const Model&, const Optimizer*,          \
+                                                                  const TrainingMetrics&, const std::string&); \
+    template std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint<Model>(Model&, Optimizer*, \
+                                                                                        const std::string&); \
+    template bool CheckpointManager::SaveBestModel<Model>(const Model&, const Optimizer*,                \
+                                                          const TrainingMetrics&, float);              \
+    template std::optional<CheckpointMetadata> LoadWarmStartCheckpoint<Model>(                           \
+        const fs::path&, Model&, const std::string&, std::string&);
+CYXWIZ_CHECKPOINT_MODEL(SequentialModel)
+CYXWIZ_CHECKPOINT_MODEL(IExecutableModel)
+#undef CYXWIZ_CHECKPOINT_MODEL
 
 } // namespace cyxwiz

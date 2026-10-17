@@ -29,6 +29,13 @@ DataStudioPanel::DataStudioPanel() {
     validate_ = std::make_unique<ValidateView>();
     validate_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     results_ = std::make_unique<ResultsView>();
+    // Keep as node: the kept file's Data Input and Test Evaluation node,
+    // added when CyxWiz Studio draws (brought forward first).
+    results_->on_keep = [this](const std::string& path, const std::string& name) {
+        if (!node_editor_) return;
+        if (open_node_editor_callback_) open_node_editor_callback_();
+        node_editor_->AddKeptTest(path, name);
+    };
     publish_ = std::make_unique<PublishView>();
     publish_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     readiness_ = std::make_unique<ReadinessView>();
@@ -173,6 +180,11 @@ void DataStudioPanel::RefreshView() {
                     n.input_from = {link.from};
                 }
         }
+    }
+    if (results_) {
+        in.preview_runs = results_->PreviewRunCount();
+        in.test_rows = results_->TestRowCount();
+        results_->graph_name = in.graph_name;
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);

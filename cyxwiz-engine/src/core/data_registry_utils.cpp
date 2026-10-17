@@ -422,6 +422,47 @@ void DataRegistry::RegisterParquetBacked(
                  dataset->GetFileSizeBytes() / (1024.0 * 1024.0));
 }
 
+std::string DataRegistry::TabularLoadKey(const std::string& path, const std::string& options) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return {};
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (ec) return {};
+    return NormalizeTabularSourcePath(path) + "|size=" + std::to_string(size) +
+           "|time=" + std::to_string(time.time_since_epoch().count()) + "|" + options;
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::ShareLoadedTableUnlocked(const std::string& key, const std::string& name,
+                                                                     const std::string& source_path,
+                                                                     std::string* shared_from) {
+    if (key.empty()) return nullptr;
+    for (const auto& [other, load] : tabular_loads_) {
+        if (load.key != key) continue;
+        const auto dataset = load.dataset.lock();
+        const auto it = arrow_datasets_.find(other);
+        if (!dataset || it == arrow_datasets_.end() || it->second != dataset) continue;  // replaced since
+        if (shared_from) *shared_from = other;
+        if (other == name) return dataset;
+        auto shared = std::make_shared<ArrowDataset>(dataset->GetArrowTable(), name);
+        InvalidateTabularPublicationUnlocked(name);
+        arrow_datasets_[name] = shared;
+        parquet_backed_datasets_.erase(name);
+        sparse_feature_datasets_.erase(name);
+        materialization_provenance_.erase(name);
+        RememberTabularSourcePathUnlocked(name, source_path);
+        last_access_times_[name] = std::chrono::steady_clock::now();
+        tabular_loads_[name] = {key, shared};
+        return shared;
+    }
+    return nullptr;
+}
+
+void DataRegistry::RecordTabularLoadUnlocked(const std::string& name, const std::string& key,
+                                             const std::shared_ptr<ArrowDataset>& dataset) {
+    if (key.empty() || !dataset) tabular_loads_.erase(name);
+    else tabular_loads_[name] = {key, dataset};
+}
+
 void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     InvalidateTabularPublicationUnlocked(name);
@@ -429,6 +470,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     bool removed_parquet = false;
     bool removed_sparse = false;
     materialization_provenance_.erase(name);
+    tabular_loads_.erase(name);
 
     auto arrow_it = arrow_datasets_.find(name);
     if (arrow_it != arrow_datasets_.end()) {
@@ -653,6 +695,7 @@ void DataRegistry::ClearAllTabularDatasets() {
 
     arrow_datasets_.clear();
     materialization_provenance_.clear();
+    tabular_loads_.clear();
     parquet_backed_datasets_.clear();
     sparse_feature_datasets_.clear();
     tabular_source_paths_by_name_.clear();

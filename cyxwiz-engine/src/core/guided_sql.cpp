@@ -985,4 +985,18 @@ SplitChecks SplitOffChecks(const GuidedStep& step) {
     return out;
 }
 
+SavedStep SaveStep(const GuidedStep& step) {
+    SavedStep out;
+    out.step = step;
+    out.generated = GenerateSql(step, step.saved_context);
+    if (!out.generated.ok) return out;
+    SplitChecks split = SplitOffChecks(step);
+    if (split.checks.empty()) return out;
+    split.step.saved_context = step.saved_context;
+    out.step = std::move(split.step);
+    out.generated = GenerateSql(out.step, out.step.saved_context);
+    out.checks = std::move(split.checks);
+    return out;
+}
+
 }  // namespace cyxwiz::guided

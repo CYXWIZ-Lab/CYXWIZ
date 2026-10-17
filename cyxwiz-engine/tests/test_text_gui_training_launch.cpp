@@ -6,6 +6,8 @@
 #include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/node_executors/text_column_utils.h"
+#include "../src/core/parquet_arrow_batcher.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
@@ -18,6 +20,8 @@
 #include "../src/gui/panels/training_plot_panel.h"
 
 #include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
 
 #include <atomic>
 #include <cmath>
@@ -1065,6 +1069,77 @@ std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
 
 } // namespace cyxwiz
 
+// TOFIX157 A4: a text table on disk tokenizes a row group at a time, and the
+// result is the table the in-memory tokenizer makes: the same vocabulary, the
+// same tok_i and y, the classes numbered in file order (a class first seen in
+// a later row group keeps its place). Training reads it from disk.
+void CheckTokenizerStreamsOnDisk(const std::filesystem::path& work_dir) {
+    constexpr const char* kName = "tokenizer_on_disk";
+    const std::vector<std::string> words = {"happy", "sad", "text", "sample", "pipeline", "example", "calm",
+                                            "angry", "small", "another"};
+    std::vector<std::string> texts, labels;
+    for (int i = 0; i < 40; ++i) {
+        std::string text;
+        for (int w = 0; w < 2 + i % 4; ++w) text += (w ? " " : "") + words[(i * 3 + w * 7) % words.size()];
+        if (i % 9 == 0) text += " Rare" + std::to_string(i);  // seen once: min_word_freq 2 drops it
+        texts.push_back(text);
+        labels.push_back(i < 12 ? (i % 2 ? "positive" : "negative") : i % 3 == 0 ? "neutral" : i % 2 ? "positive" : "negative");
+    }
+    auto schema = arrow::schema({arrow::field("text", arrow::utf8()), arrow::field("label", arrow::utf8())});
+    auto table = arrow::Table::Make(schema, {FinishStringArray(texts), FinishStringArray(labels)}, 40);
+
+    auto tokenizer = MakeTokenizerNode();
+    tokenizer.parameters["max_length"] = "5";
+    tokenizer.parameters["min_word_freq"] = "2";
+    tokenizer.parameters["max_vocab_size"] = "10";  // a cap that cuts ties: the order must match too
+    const std::vector<gui::MLNode> nodes = {MakeDataInputNode(kName), tokenizer};
+    const std::vector<gui::NodeLink> links = {{1, 1, 0, 2, 0, gui::LinkType::TensorFlow}};
+
+    auto memory = cyxwiz::PipelineMaterializer::MaterializeTable(nodes, links, table, kName);
+    Check(memory.success && memory.table, "in-memory tokenizer runs: " + memory.error_message);
+
+    // 7 row groups of 6 rows; "neutral" first appears in the third.
+    const auto path = work_dir / "tokenizer_on_disk.parquet";
+    std::remove(path.string().c_str());
+    {
+        auto out = arrow::io::FileOutputStream::Open(path.string());
+        Check(out.ok() && parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 6).ok() &&
+                  (*out)->Close().ok(),
+              "write the text table in row groups of 6");
+    }
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto disk = cyxwiz::ParquetBackedDataset::Open(path.string(), kName);
+    Check(disk && disk->GetNumRowGroups() == 7, "the text table is on disk in 7 row groups");
+    registry.RegisterParquetBacked(kName, disk);
+    auto streamed = cyxwiz::PipelineMaterializer::Materialize(nodes, links, registry, kName);
+    Check(streamed.success && streamed.operators_applied == 1,
+          "a Word tokenizer streams over a table on disk: " + streamed.error_message);
+    const std::string materialized = std::string(kName) + cyxwiz::PipelineMaterializer::kMaterializedSuffix;
+    auto result = registry.GetParquetBackedDataset(materialized);
+    Check(result != nullptr, "the tokenized table stays on disk");
+    if (result && memory.table) {
+        auto read = result->ReadAll();
+        Check(read && read->Equals(*memory.table, /*check_metadata=*/false),
+              "streamed tok_i and y equal the in-memory table");
+        const auto memory_y = memory.table->schema()->GetFieldByName("y");
+        const auto disk_y = result->GetSchema()->GetFieldByName("y");
+        Check(memory_y && disk_y && cyxwiz::ClassNamesOfField(*disk_y) == cyxwiz::ClassNamesOfField(*memory_y) &&
+                  cyxwiz::ClassNamesOfField(*disk_y) == std::vector<std::string>({"negative", "positive", "neutral"}),
+              "the class names survive on disk, in file order");
+        cyxwiz::ParquetArrowBatcher batcher(result, "y", 8, false, 1.0f, true);
+        auto batch = batcher.GetNextBatch();
+        Check(batch.IsValid() && batch.data.Shape().size() == 2 && batch.data.Shape()[1] == 5,
+              "training reads 5 token columns from disk");
+        Check(batcher.GetNumSamples() == 40, "training sees all 40 rows");
+    }
+    registry.UnregisterTabularDataset(materialized);
+    registry.UnregisterTabularDataset(kName);
+    disk.reset();
+    result.reset();
+    std::remove(path.string().c_str());
+    std::cout << "Tokenizer streams on disk passed\n";
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 &&
         std::string(argv[1]) == "--training-status-contract-only") {
@@ -1142,21 +1217,27 @@ int main(int argc, char** argv) {
     Check(parquet_dataset != nullptr,
           "materializer scope Parquet fixture should open");
     registry.RegisterParquetBacked(kScopeParquetDatasetName, parquet_dataset);
-    // A table on disk runs only operators that stream (TOFIX154); the text
-    // tokenizer needs every row, so the run stops and says why.
-    const std::vector<gui::MLNode> parquet_scope_nodes = {
+    // A table on disk runs only operators that stream (TOFIX154). A tokenizer
+    // that needs every row (ByteBPE without a saved vocabulary) stops the run
+    // and says why; a Word tokenizer streams (TOFIX157 A4).
+    auto bpe_node = MakeTokenizerNode();
+    bpe_node.parameters["tokenizer_type"] = "3";
+    bpe_node.parameters["lowercase"] = "false";
+    bpe_node.parameters["max_vocab_size"] = "300";
+    const std::vector<gui::MLNode> parquet_bpe_nodes = {
         MakeDataInputNode(kScopeParquetDatasetName),
-        MakeTokenizerNode(),
+        bpe_node,
     };
     auto parquet_scope = cyxwiz::PipelineMaterializer::Materialize(
-        parquet_scope_nodes, links, registry, kScopeParquetDatasetName);
+        parquet_bpe_nodes, links, registry, kScopeParquetDatasetName);
     Check(!parquet_scope.success &&
               parquet_scope.error_message.find("needs every row at once") != std::string::npos,
-          "Parquet-backed source with a tokenizer should stop with the reason: " +
+          "Parquet-backed source with a ByteBPE tokenizer should stop with the reason: " +
               parquet_scope.error_message);
     Check(!parquet_scope.skipped_unsupported_source,
           "Parquet-backed source is no longer skipped silently");
     registry.UnregisterTabularDataset(kScopeParquetDatasetName);
+    CheckTokenizerStreamsOnDisk(work_dir);
     parquet_dataset.reset();
     std::remove(parquet_path.string().c_str());
 

@@ -363,6 +363,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSDiff",
         "TSFeatures",
         "TSLag",
+        "TestEvaluationNode",
         "TSWindow",
         "ValueCounts",
         "WordEmbeddings",
@@ -836,6 +837,42 @@ void CheckPipelineDataInputUsesProjectIngestionCache() {
     Check(restored_dataset && restored_dataset->GetNumRows() == 2,
           "Pipeline DataInput should restore the cached Arrow dataset");
 
+    // The same file loaded again under another name (Apply after a run, or a
+    // run after Apply) shares the table instead of a second copy (TOFIX157);
+    // a changed file is read again.
+    {
+        std::string status;
+        Check(registry.LoadTabularCSV(csv_path.string(), "applied_91001", true, ',', 0, 0, false,
+                                      cyxwiz::ParseMissingValueTokens(""), {}, '.', true, {}, &status,
+                                      cache_root.string()) == cyxwiz::DataRegistry::TabularLoadBackend::InMemory,
+              "the second load of the same CSV runs");
+        auto applied = registry.GetArrowDataset("applied_91001");
+        Check(applied && applied->GetArrowTable() == restored_dataset->GetArrowTable() &&
+                  status.find("Shared with ds_datainput_91001") != std::string::npos,
+              "the same CSV with the same options shares the loaded table (" + status + ")");
+        Check(registry.LoadTabularCSV(csv_path.string(), "applied_rows_91001", true, ',', 0, 1, false,
+                                      cyxwiz::ParseMissingValueTokens(""), {}, '.', true, {}, &status,
+                                      cache_root.string()) == cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+                  registry.GetArrowDataset("applied_rows_91001")->GetNumRows() == 1,
+              "another option (max_rows 1) reads its own table");
+        {
+            std::ofstream csv(csv_path, std::ios::binary | std::ios::app);
+            csv << "2020-01-01 00:00:20,3\n";
+        }
+        Check(registry.LoadTabularCSV(csv_path.string(), "applied_changed_91001", true, ',', 0, 0, false,
+                                      cyxwiz::ParseMissingValueTokens(""), {}, '.', true, {}, &status,
+                                      cache_root.string()) == cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+                  registry.GetArrowDataset("applied_changed_91001")->GetNumRows() == 3,
+              "a changed file is read again (" + status + ")");
+        registry.UnregisterTabularDataset("applied_91001");
+        registry.UnregisterTabularDataset("applied_rows_91001");
+        registry.UnregisterTabularDataset("applied_changed_91001");
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);  // the two rows the cases below read
+        csv << "timestamp,value\n"
+            << "2020-01-01 00:00:00,1\n"
+            << "2020-01-01 00:00:10,2\n";
+    }
+
     registry.UnregisterTabularDataset("ds_datainput_91001");
     const std::string disk_backed_json =
         R"({"nodes":[)"
@@ -1010,6 +1047,100 @@ void CheckFocusedExportOutputPaths() {
         const auto& facts = lineage_executor.GetNodeRunFacts();
         Check(facts.count(90011) && facts.at(90011).written_path == lineage_out.string(), "run facts record the written path");
         registry.UnloadDataset("ds_datainput_90009");
+
+        // Over the data budget's result threshold (TOFIX157): a CSV converted
+        // to Parquet is hashed while it is converted (no second read); a
+        // Parquet file opened in place is not read just to hash it: size and
+        // write time identify it.
+        const fs::path big_csv = parquet_dir / "lineage_big.csv";
+        {
+            std::ofstream out(big_csv, std::ios::binary | std::ios::trunc);
+            out << "id,value\n";
+            for (int i = 0; i < 200; ++i) out << i << "," << i * 3 << "\n";
+        }
+        const fs::path big_parquet = parquet_dir / "lineage_big.parquet";
+        auto lineage_graph = [&](const fs::path& source, const std::string& type, const fs::path& out) {
+            return std::string(R"({"nodes":[{"id":90021,"type":"DataInput","name":"Input","parameters":{"source_type":"file","file_path":")") +
+                   JsonEscapePath(source.string()) + R"(","type":")" + type +
+                   R"(","has_header":"true","force_disk_backed":"true"}},{"id":90022,"type":"ExportParquet","name":"Export","parameters":{"path":")" +
+                   JsonEscapePath(out.string()) + R"("}}],"links":[{"start_node":90021,"end_node":90022}]})";
+        };
+        const fs::path big_out = parquet_dir / "lineage_big_out.parquet";
+        const fs::path cache_root = fs::temp_directory_path() / "cyxwiz_lineage_digest_cache";
+        std::error_code cleanup_error;
+        fs::remove_all(cache_root, cleanup_error);
+        cyxwiz::SetDataBudgetBytes(2048);
+        {
+            cyxwiz::PipelineExecutor converting;
+            converting.SetIngestionCacheRoot(cache_root.string());
+            Check(converting.ExecutePipeline(lineage_graph(big_csv, "csv", big_out)),
+                  "a large CSV exports: " + converting.GetLastError());
+            cyxwiz::DatasetLineage converted;
+            Check(cyxwiz::ReadLineage(big_out.string(), converted, lineage_error), "lineage of the large CSV: " + lineage_error);
+            std::string big_digest;
+            Check(cyxwiz::Sha256File(big_csv, big_digest, lineage_error) && converted.inputs.size() == 1 &&
+                      converted.inputs[0].sha256 == big_digest && converted.inputs[0].note.empty() &&
+                      !converted.inputs[0].modified.empty(),
+                  "the large CSV's SHA-256 comes from its conversion");
+            Check(cyxwiz::KnownFileDigest(cyxwiz::FileStamp(big_csv), cache_root) == big_digest,
+                  "the digest is kept beside the ingestion cache");
+            registry.UnregisterTabularDataset("ds_datainput_90021");
+        }
+        {
+            // A Parquet file of the same rows, opened in place.
+            cyxwiz::PipelineExecutor writer;
+            Check(writer.ExecutePipeline(lineage_graph(big_csv, "csv", big_parquet)), "write the large Parquet: " + writer.GetLastError());
+            registry.UnregisterTabularDataset("ds_datainput_90021");
+            cyxwiz::PipelineExecutor in_place;
+            in_place.SetIngestionCacheRoot(cache_root.string());
+            Check(in_place.ExecutePipeline(lineage_graph(big_parquet, "parquet", big_out)),
+                  "a large Parquet exports: " + in_place.GetLastError());
+            cyxwiz::DatasetLineage opened;
+            Check(cyxwiz::ReadLineage(big_out.string(), opened, lineage_error), "lineage of the large Parquet: " + lineage_error);
+            Check(opened.inputs.size() == 1 && opened.inputs[0].sha256.empty() &&
+                      opened.inputs[0].note.find("not hashed") != std::string::npos && opened.inputs[0].bytes > 0 &&
+                      !opened.inputs[0].modified.empty(),
+                  "a large Parquet opened in place is identified by size and time, not read again");
+            Check(cyxwiz::SummarizeLineage(opened).inputs.find("not hashed") != std::string::npos,
+                  "the lineage summary says the input was not hashed");
+            registry.UnregisterTabularDataset("ds_datainput_90021");
+        }
+        cyxwiz::SetDataBudgetBytes(0);
+
+        // Exports write a table on disk a row group at a time (TOFIX157):
+        // with a 1-byte budget nothing can be read whole, yet CSV, JSON and
+        // Parquet exports of the 200 rows run, and the output's SHA-256 in
+        // the lineage (hashed while writing) is the file's.
+        cyxwiz::SetDataBudgetBytes(1);
+        for (const std::string format : {"csv", "json", "parquet"}) {
+            const fs::path out = parquet_dir / ("streamed." + format);
+            const std::string type = format == "csv" ? "ExportCSV" : format == "json" ? "ExportJSON" : "ExportParquet";
+            const std::string graph =
+                std::string(R"({"nodes":[{"id":90031,"type":"DataInput","name":"Input","parameters":{"source_type":"file","file_path":")") +
+                JsonEscapePath(big_parquet.string()) +
+                R"(","type":"parquet","force_disk_backed":"true"}},{"id":90032,"type":")" + type +
+                R"(","name":"Export","parameters":{"path":")" + JsonEscapePath(out.string()) +
+                R"("}}],"links":[{"start_node":90031,"end_node":90032}]})";
+            cyxwiz::PipelineExecutor streaming;
+            Check(streaming.ExecutePipeline(graph), format + " export of a table on disk under a 1-byte budget: " + streaming.GetLastError());
+            Check(registry.IsParquetBackedDataset("ds_datainput_90031") && !registry.GetArrowDataset("ds_datainput_90031_in_memory"),
+                  format + ": the input stayed on disk (not read whole)");
+            cyxwiz::DatasetLineage streamed;
+            Check(cyxwiz::ReadLineage(out.string(), streamed, lineage_error), format + " lineage: " + lineage_error);
+            std::string digest;
+            Check(cyxwiz::Sha256File(out, digest, lineage_error) && streamed.output.sha256 == digest &&
+                      streamed.output.bytes == fs::file_size(out) && streamed.rows == 200 && streamed.columns == 2,
+                  format + ": rows, size and the SHA-256 hashed while writing match the file");
+            registry.UnregisterTabularDataset("ds_datainput_90031");
+        }
+        {
+            std::ifstream json(parquet_dir / "streamed.json");
+            const std::string text((std::istreambuf_iterator<char>(json)), std::istreambuf_iterator<char>());
+            Check(text.rfind("[\n  {\"id\": 0, \"value\": 0},\n  {\"id\": 1, \"value\": 3},", 0) == 0 &&
+                      text.size() > 4 && text.compare(text.size() - 4, 4, "}\n]\n") == 0,
+                  "the JSON export is an array of objects, as before: " + text.substr(0, 60));
+        }
+        cyxwiz::SetDataBudgetBytes(0);
     }
 
     registry.UnloadDataset("ds_datainput_90001");
@@ -1373,6 +1504,69 @@ void CheckNodeRunFacts() {
     Check(failed.count(93102) && failed.at(93102).rows == 3, "nodes before the failure keep their facts");
     fs::remove_all(dir);
     std::cout << "Node run facts passed\n";
+}
+
+void CheckSiblingBranchesRunAtOnce() {
+    // TOFIX157 A2: two branches from one Data Input run at the same time; a
+    // failing branch stops the run with its own error, and its sibling still
+    // reports how it ended.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_sibling_branches";
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    {
+        std::ofstream file(csv);
+        file << "id\n";
+        for (int i = 0; i < 20000; ++i) file << i << "\n";
+    }
+    const std::string slow = "SELECT CAST(sum(hash(id * r.range) % 1000) AS BIGINT) AS s FROM input, range(4000) r";
+    auto graph = [&](const std::string& second_query) {
+        return R"({"nodes":[{"id":95101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":95102,"type":"SQLQuery","name":"Left","parameters":{"sql_contract_version":"1","input_alias":"input","query":")" + slow +
+            R"("}},{"id":95103,"type":"SQLQuery","name":"Right","parameters":{"sql_contract_version":"1","input_alias":"input","query":")" + second_query +
+            R"("}}],"links":[{"start_node":95101,"end_node":95102},{"start_node":95101,"end_node":95103}]})";
+    };
+    struct Seen {
+        std::mutex mutex;
+        std::map<int, std::pair<std::chrono::steady_clock::time_point, std::chrono::steady_clock::time_point>> spans;
+        std::map<int, cyxwiz::PipelineNodeExecutionEvent> last;
+    };
+    auto watch = [](cyxwiz::PipelineExecutor& executor, Seen& seen) {
+        executor.SetNodeExecutionCallback([&seen](int id, cyxwiz::PipelineNodeExecutionEvent event, const std::string&) {
+            std::lock_guard<std::mutex> lock(seen.mutex);
+            const auto now = std::chrono::steady_clock::now();
+            if (event == cyxwiz::PipelineNodeExecutionEvent::Executing) seen.spans[id].first = now;
+            if (event == cyxwiz::PipelineNodeExecutionEvent::Completed || event == cyxwiz::PipelineNodeExecutionEvent::Error)
+                seen.spans[id].second = now;
+            seen.last[id] = event;
+        });
+    };
+
+    Seen both;
+    cyxwiz::PipelineExecutor executor;
+    watch(executor, both);
+    const bool ran = executor.ExecutePipeline(graph(slow));
+    Check(ran, "two sibling branches: " + executor.GetLastError());
+    const auto& left = both.spans[95102];
+    const auto& right = both.spans[95103];
+    Check(std::max(left.first, right.first) < std::min(left.second, right.second),
+          "the sibling branches overlap in time");
+    const auto facts = executor.GetNodeRunFacts();
+    Check(facts.count(95102) && facts.at(95102).rows == 1 && facts.count(95103) && facts.at(95103).rows == 1,
+          "each branch has its result");
+
+    Seen failing_seen;
+    cyxwiz::PipelineExecutor failing;
+    watch(failing, failing_seen);
+    Check(!failing.ExecutePipeline(graph("SELECT no_such_column FROM input")), "a failing branch stops the run");
+    Check(failing.GetLastError().find("no_such_column") != std::string::npos,
+          "the run's error is the failing branch's: " + failing.GetLastError());
+    Check(failing_seen.last[95102] == cyxwiz::PipelineNodeExecutionEvent::Completed &&
+              failing_seen.last[95103] == cyxwiz::PipelineNodeExecutionEvent::Error,
+          "the sibling still reports how it ended");
+    fs::remove_all(dir);
+    std::cout << "Sibling branches run at once passed\n";
 }
 
 void CheckLazyEvaluation() {
@@ -2720,6 +2914,8 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--streaming") { CheckStreamingScaler(); CheckUniqueOnDisk(); return 0; }
     if(argc==1) { CheckStreamingScaler(); CheckUniqueOnDisk(); }
     if(argc==1) CheckLazyEvaluation();
+    if(argc==2 && std::string(argv[1])=="--siblings") { CheckSiblingBranchesRunAtOnce(); return 0; }
+    if(argc==1) CheckSiblingBranchesRunAtOnce();
     if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
     if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }
     if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); CheckGuidedOperations(); }
@@ -7828,6 +8024,64 @@ int main(int argc, char** argv) {
               std::string::npos,
           "ClassificationMetricsNode empty-pair error should be specific: " +
               empty_classification_metrics_executor.GetLastError());
+
+    // Test Evaluation (TOFIX157): a test's per-row table through a Data Input
+    // (a kept test) gives the Test Results panel's figures on four outputs.
+    {
+        const fs::path rows_path = fs::temp_directory_path() / "cyxwiz_tofix157_kept_test.csv";
+        {
+            std::ofstream csv(rows_path, std::ios::binary | std::ios::trunc);
+            csv << "row_id,true_class,predicted_class,confidence\n"
+                << "106,1,0,0.91\n6,3,1,0.40\n30,2,2,0.99\n37,3,3,0.98\n";
+        }
+        const std::string evaluation_json =
+            R"({"nodes":[)"
+            R"({"id":870,"type":"DataInput","name":"Kept test","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(rows_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":871,"type":"TestEvaluationNode","name":"Test Evaluation","parameters":{"worst_rows":"20"}})"
+            R"(],"links":[{"start_node":870,"end_node":871}]})";
+        cyxwiz::PipelineExecutor evaluation_executor;
+        Check(evaluation_executor.ExecutePipeline(evaluation_json),
+              "TestEvaluationNode should read a kept test: " + evaluation_executor.GetLastError());
+        const auto metrics = registry.GetArrowDataset("ds_test_evaluation_871");
+        const auto worst = registry.GetArrowDataset("ds_test_evaluation_871_pin3");
+        Check(metrics && worst && registry.GetArrowDataset("ds_test_evaluation_871_pin1") &&
+                  registry.GetArrowDataset("ds_test_evaluation_871_pin2"),
+              "TestEvaluationNode registers its four outputs");
+        if (metrics && worst) {
+            Check(ReadStringValue(metrics->GetArrowTable(), "metric", 0) == "accuracy" &&
+                      std::fabs(ReadNumericValue(metrics->GetArrowTable(), "value", 0) - 0.5) < 1e-6,
+                  "TestEvaluationNode accuracy: 2 of 4");
+            Check(worst->GetArrowTable()->num_rows() == 2 &&
+                      std::fabs(ReadNumericValue(worst->GetArrowTable(), "dataset_row", 0) - 107.0) < 1e-9 &&
+                      std::fabs(ReadNumericValue(worst->GetArrowTable(), "dataset_row", 1) - 7.0) < 1e-9,
+                  "TestEvaluationNode worst rows: most confident first, dataset rows counted from 1");
+        }
+        const std::string not_a_test_json =
+            R"({"nodes":[)"
+            R"({"id":872,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":873,"type":"TestEvaluationNode","name":"Test Evaluation","parameters":{}})"
+            R"(],"links":[{"start_node":872,"end_node":873}]})";
+        cyxwiz::PipelineExecutor not_a_test_executor;
+        Check(!not_a_test_executor.ExecutePipeline(not_a_test_json) &&
+                  not_a_test_executor.GetLastError().find("not a test's predictions") != std::string::npos,
+              "TestEvaluationNode refuses a table that is not a test's: " + not_a_test_executor.GetLastError());
+        const std::string bad_worst_rows_json =
+            R"({"nodes":[)"
+            R"({"id":874,"type":"DataInput","name":"Kept test","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(rows_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":875,"type":"TestEvaluationNode","name":"Test Evaluation","parameters":{"worst_rows":"0"}})"
+            R"(],"links":[{"start_node":874,"end_node":875}]})";
+        cyxwiz::PipelineExecutor bad_worst_rows_executor;
+        Check(!bad_worst_rows_executor.ExecutePipeline(bad_worst_rows_json) &&
+                  bad_worst_rows_executor.GetLastError().find("worst_rows") != std::string::npos,
+              "TestEvaluationNode worst_rows 0 fails validation: " + bad_worst_rows_executor.GetLastError());
+        fs::remove(rows_path);
+    }
 
     const std::string confusion_matrix_json =
         R"({"nodes":[)"

@@ -34,6 +34,7 @@ class TrainingDashboardPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
 struct TaskInfo;
+namespace guided { struct CheckNode; }
 }
 
 namespace cyxwiz {
@@ -124,6 +125,12 @@ struct NodeAddSearchState {
     float search_debounce_timer_ = 0.0f;      // Time remaining before search triggers
     std::string last_search_query_;           // Last processed query
     bool search_dirty_ = false;               // True if search needs to be updated
+
+    // Palette curation (TOFIX157): matches that cannot run yet are counted
+    // and listed only after "Show"; the dropdown's height as drawn.
+    bool show_cant_run = false;
+    int cant_run_matches = 0;
+    float dropdown_height = 0.0f;
 };
 
 // Node implementation status for template/coming soon nodes
@@ -146,6 +153,10 @@ struct SearchableNode {
     bool support_blocked = false;  // Derived from NodeMetadata::support_axes
     std::string support_state;     // Compact central support state value
     std::string support_reason;    // Compact central support reason
+    // Palette curation (TOFIX157, core/node_palette): a table step's group
+    // under Advanced operations ("Rows", ...), or a node that cannot run yet.
+    std::string advanced_group;
+    bool cant_run = false;
 };
 
 // Alignment types for arranging selected nodes
@@ -542,6 +553,10 @@ public:
     // Data > Import Dataset: a new Data Input node with its dialog open (data
     // enters the Engine only through Data Input nodes).
     void AddDataInputAndConfigure();
+    // Keep as node (Data Studio > Results, TOFIX157): a Data Input named
+    // `name` reading the kept test's Parquet file and a Test Evaluation node
+    // after it, in free space; the run loads the file.
+    void AddKeptTest(const std::string& path, const std::string& name);
 
     // Delete currently selected nodes
     void DeleteSelectedNodes();
@@ -674,6 +689,10 @@ public:
         request.branch = true;
         pending_steps_after_.push_back(std::move(request));
     }
+    // A guided step's checks as Check nodes right after it, in order (TOFIX148
+    // D4; Prepare, the SQL Workbench and Properties): a collapsed recipe
+    // holding the step opens first, since they are placed on the canvas.
+    void RequestChecksAfter(int step_id, const std::vector<cyxwiz::guided::CheckNode>& checks);
     // The same with an empty guided SQL step.
     void RequestGuidedStepAfter(int step_id) { pending_steps_after_.push_back({step_id, NodeType::SQLQuery, true, {}, {}, {}}); }
     // The same with an SQL step running `query` (Data Studio's "Turn into SQL
@@ -723,12 +742,6 @@ private:
     void ConfigureNode(int node_id);
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
-
-    // Unified Canvas Phase 3: Categorized node palette helpers
-    void ShowCategorizedNodeMenu();
-    void RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon);
-    static const char* GetCategoryIcon(NodeCategory category);
-    static const char* GetCategoryName(NodeCategory category);
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -970,6 +983,9 @@ private:
         ImVec2 position;  // Grid space position where node should be created
         std::unordered_map<std::string, std::string> initial_parameters;
         bool open_configuration = false;  // open the node's dialog once it exists
+        // A node of this type reading it, added to its right and linked.
+        std::optional<NodeType> then_type;
+        std::string then_name;
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)

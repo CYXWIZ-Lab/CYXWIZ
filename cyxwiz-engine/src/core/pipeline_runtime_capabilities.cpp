@@ -709,6 +709,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"DataProfiler", gui::NodeType::DataProfiler},
         {"RegressionMetricsNode", gui::NodeType::RegressionMetricsNode},
         {"ClassificationMetricsNode", gui::NodeType::ClassificationMetricsNode},
+        {"TestEvaluationNode", gui::NodeType::TestEvaluationNode},
         {"ConfusionMatrixNode", gui::NodeType::ConfusionMatrixNode},
         {"ROCCurveNode", gui::NodeType::ROCCurveNode},
         {"PRCurveNode", gui::NodeType::PRCurveNode},
@@ -984,6 +985,7 @@ const std::vector<PipelineIntegerParameterRuntimeCapability>&
 GetPipelineIntegerParameterRuntimeCapabilities() {
     static const std::vector<PipelineIntegerParameterRuntimeCapability> capabilities = {
         {"TSWindow", "window_size", 1, false},
+        {"TestEvaluationNode", "worst_rows", 1, false},
         {"TSWindow", "stride", 1, false},
         {"TSFeatures", "rolling_window", 1, false},
         {"TimeSeriesLag", "lag_periods", 1, true},

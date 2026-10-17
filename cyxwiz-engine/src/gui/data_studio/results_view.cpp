@@ -3,27 +3,28 @@
 #include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
 #include "../../core/project_manager.h"
+#include "../../core/kept_tests.h"
+#include "../../core/test_predictions_metrics.h"
 #include "../../core/test_predictions_table.h"
+#include "../panels/test_results_panel.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
+#include <arrow/api.h>
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
+#include <ctime>
+#include <filesystem>
 
 namespace cyxwiz {
 
 namespace {
 
 std::string Of(size_t n, size_t of) { return std::to_string(n) + " of " + std::to_string(of); }
-
-std::string Percent(double x) {
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%.1f%%", x * 100.0);
-    return buf;
-}
 
 // A figure with its label under it, as the board's summary tiles.
 void Tile(const char* label, const std::string& value, const std::string& note, const ImVec4& colour) {
@@ -72,11 +73,11 @@ void ResultsView::Render() {
     RefreshRuns();
     const bool have_predictions = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset) != nullptr;
     if (!source_chosen_) source_ = runs_.empty() && have_predictions ? 1 : 0;
-    static const char* kSources[] = {"Language model previews", "Classifier test"};
+    static const char* kSources[] = {"Language model previews", "Test run"};
     if (ui::SegmentedControl("##results_source", kSources, 2, &source_)) source_chosen_ = true;
     ImGui::Spacing();
     if (source_ == 0) RenderPreviews();
-    else RenderClassifier();
+    else RenderTest();
 }
 
 void ResultsView::RenderPreviews() {
@@ -249,103 +250,140 @@ void ResultsView::RenderPreviews() {
     ImGui::PopTextWrapPos();
 }
 
-void ResultsView::RenderClassifier() {
-    const ui::Tokens& t = ui::CurrentTokens();
+size_t ResultsView::PreviewRunCount() {
+    RefreshRuns();
+    return runs_.size();
+}
+
+int64_t ResultsView::TestRowCount() const {
     const auto dataset = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset);
     const auto table = dataset ? dataset->GetArrowTable() : nullptr;
+    return table ? table->num_rows() : 0;
+}
+
+void ResultsView::RenderTest() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    RenderKeepDialog();
+    const auto dataset = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset);
+    const auto table = dataset ? dataset->GetArrowTable() : nullptr;
+    ImGui::PushTextWrapPos(0.0f);
     if (!table) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "No test run in this session. Test a classifier (Train > Test); its per-row predictions are "
-                                       "published as \"test_predictions\" and show here: accuracy, confusion per class, the worst rows.");
+        ImGui::TextColored(t.text_dim, "No test run in this session. Test a model (Train > Test > Run Test): its results open in "
+                                       "the Test Results panel, and its per-row predictions are published as "
+                                       "\"test_predictions\".");
         ImGui::PopTextWrapPos();
         return;
     }
+    // The run read back from its table: the same calculation and words as
+    // the Test Results panel.
     const std::string key = std::to_string(reinterpret_cast<uintptr_t>(table.get())) + "#" + std::to_string(table->num_rows());
     if (key != predictions_key_) {
         predictions_key_ = key;
-        classifier_ = studio::ClassifierFromPredictions(table);
+        TestingMetrics run;
+        test_error_.clear();
+        if (MetricsFromPredictionsTable(*table, run, test_error_)) test_view_ = test_report::BuildView(run, nullptr);
     }
-    if (!classifier_.ok) {
-        ImGui::TextColored(t.error, "The test predictions cannot be read: %s", classifier_.error.c_str());
+    if (!test_error_.empty()) {
+        ImGui::TextColored(t.error, "The test predictions cannot be read: %s", test_error_.c_str());
+        ImGui::PopTextWrapPos();
         return;
     }
-    const auto& r = classifier_;
-    Tile("Accuracy", Percent(r.accuracy), std::to_string(r.rows) + " test rows", r.accuracy >= 0.9 ? t.success : r.accuracy >= 0.6 ? t.warning : t.error);
-    ImGui::SameLine(0.0f, 28.0f);
-    Tile("Wrong", std::to_string(r.rows - static_cast<int64_t>(r.accuracy * static_cast<double>(r.rows) + 0.5)), "rows", t.text);
+    ImGui::TextColored(t.text_dim, "LATEST TEST");
+    ImGui::TextColored(TestToneColour(test_view_.headline_tone), "%s", test_view_.headline.c_str());
+    ImGui::TextColored(t.text_dim, "%s", test_view_.subtitle.c_str());
+    std::string chips;
+    for (const auto& chip : test_view_.chips) chips += (chips.empty() ? "" : " \xC2\xB7 ") + chip.text;
+    if (!chips.empty()) ImGui::TextColored(t.text_faint, "%s", chips.c_str());
     ImGui::Spacing();
-
-    ImGui::TextColored(t.text_dim, "CONFUSION (ROWS: TRUE CLASS, COLUMNS: PREDICTED)");
-    const int k = static_cast<int>(r.classes.size());
-    if (k <= 20 && ImGui::BeginTable("##confusion", k + 1, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
-                                                              ImGuiTableFlags_ScrollX,
-                                     ImVec2(0.0f, 0.0f))) {
-        ImGui::TableSetupColumn("");
-        for (const auto& c : r.classes) ImGui::TableSetupColumn(c.c_str());
-        ImGui::TableHeadersRow();
-        for (int a = 0; a < k; ++a) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(t.text_dim, "%s", r.classes[static_cast<size_t>(a)].c_str());
-            for (int b = 0; b < k; ++b) {
-                ImGui::TableNextColumn();
-                const int64_t v = r.confusion[static_cast<size_t>(a)][static_cast<size_t>(b)];
-                ImGui::TextColored(a == b ? t.success : v ? t.error : t.text_faint, "%lld", static_cast<long long>(v));
-            }
-        }
-        ImGui::EndTable();
-    } else if (k > 20) {
-        ImGui::TextColored(t.text_faint, "%d classes: the per-class table below lists them.", k);
-    }
-    ImGui::Spacing();
-    if (ImGui::BeginTable("##per_class", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
-        ImGui::TableSetupColumn("class");
-        ImGui::TableSetupColumn("rows");
-        ImGui::TableSetupColumn("precision");
-        ImGui::TableSetupColumn("recall");
-        ImGui::TableHeadersRow();
-        for (const auto& c : r.per_class) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(c.name.c_str());
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(c.support));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Percent(c.precision).c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextColored(c.recall < 0.6 ? t.warning : t.text, "%s", Percent(c.recall).c_str());
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::TextColored(t.text_dim, "WORST ROWS (WRONG, MOST CONFIDENT FIRST)");
-    if (r.worst.empty()) {
-        ImGui::TextColored(t.success, "No wrong row.");
-    } else if (ImGui::BeginTable("##worst", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
-        ImGui::TableSetupColumn("test row");
-        ImGui::TableSetupColumn("true");
-        ImGui::TableSetupColumn("predicted");
-        ImGui::TableSetupColumn("confidence");
-        ImGui::TableHeadersRow();
-        for (const auto& w : r.worst) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(w.row));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(w.truth.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextColored(t.error, "%s", w.predicted.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Percent(w.confidence).c_str());
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_faint, "From the latest test run (the \"test_predictions\" table). Rows are numbered in the test set's "
-                                     "order; joining them back to the dataset's columns (error rate by column value) needs the test "
-                                     "split's row ids (a follow-up).");
+    ImGui::TextColored(t.text_dim, "The Test Results panel shows the rest: %s", test_view_.classification
+        ? "the confusion matrix, the classes, the curves, every row by its dataset row, and the error by the values of a column."
+        : "every row by its dataset row, the largest errors first, and the error by the values of a column.");
     ImGui::PopTextWrapPos();
+    if (ui::SecondaryButton("Open Test Results", static_cast<bool>(on_open_test_results), "Not available here") &&
+        on_open_test_results)
+        on_open_test_results();
+    RenderKeptTests();
+}
+
+std::string ResultsView::KeepBlocker(bool graph_open) const {
+    if (!DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset)) return "Test a model first (Train > Test > Run Test)";
+    if (ProjectManager::Instance().GetProjectRoot().empty()) return "Open or create a project: the test is kept in its results folder";
+    if (!graph_open) return "No graph is open";
+    return "";
+}
+
+void ResultsView::RenderKeepDialog() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (keep_requested_) {
+        keep_requested_ = false;
+        const std::string name = (graph_name.empty() || graph_name == "unsaved graph" ? std::string("Model") : graph_name) + " test";
+        std::snprintf(keep_name_, sizeof(keep_name_), "%s", name.c_str());
+        ImGui::OpenPopup("Keep this test as a node");
+    }
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Keep this test as a node", nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
+    const auto dataset = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset);
+    const auto rows = dataset ? dataset->GetArrowTable() : nullptr;
+    const std::string root = ProjectManager::Instance().GetProjectRoot();
+    const std::string file = KeptTestFileName(keep_name_, std::time(nullptr));
+    ImGui::TextColored(t.text_dim, "Name");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputText("##keep_name", keep_name_, sizeof(keep_name_));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::Text("Saves the %lld test rows to results/tests/%s in the project.", static_cast<long long>(rows ? rows->num_rows() : 0),
+                file.c_str());
+    ImGui::TextColored(t.text_dim, "Adds a Data Input reading that file and a Test Evaluation node after it. The file is a snapshot: "
+                                   "testing again does not change it. Its rows still point at the tested table, so the "
+                                   "worst rows and the error by column value keep working.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    const bool named = keep_name_[0] != '\0';
+    if (ui::PrimaryButton("Keep", named && rows && !root.empty(), "Give it a name")) {
+        const std::filesystem::path relative = std::filesystem::path("results") / "tests" / file;
+        std::string error;
+        keep_failed_ = !WriteKeptTest(*rows, keep_name_, KeptTestsFolder(root) / file, error);
+        if (keep_failed_) {
+            keep_note_ = "Could not keep the test: " + error;
+        } else {
+            if (on_keep) on_keep(relative.generic_string(), keep_name_);
+            keep_note_ = "Kept as " + relative.generic_string() + ": added the Data Input \"" + std::string(keep_name_) +
+                         "\" and a Test Evaluation node (Ctrl+Z on the canvas removes them; the file stays).";
+            kept_time_ = -1.0;  // list it now
+        }
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void ResultsView::RenderKeptTests() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const std::string root = ProjectManager::Instance().GetProjectRoot();
+    const double now = ImGui::GetTime();
+    if (kept_time_ < 0.0 || now - kept_time_ > 2.0) {
+        kept_time_ = now;
+        kept_ = root.empty() ? std::vector<KeptTest>{} : ListKeptTests(KeptTestsFolder(root));
+    }
+    if (!keep_note_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(keep_failed_ ? t.error : t.success, "%s", keep_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (kept_.empty()) return;
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "KEPT TESTS");
+    for (const auto& k : kept_) {
+        ImGui::PushID(k.path.string().c_str());
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(k.name.c_str());
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_faint, "%s", ("results/tests/" + k.path.filename().string()).c_str());
+        ImGui::SameLine();
+        if (ui::LinkButton("Open") && on_open_kept) on_open_kept(k.path.string());
+        ImGui::PopID();
+    }
 }
 
 }  // namespace cyxwiz

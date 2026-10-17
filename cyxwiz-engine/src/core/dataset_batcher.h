@@ -72,6 +72,10 @@ struct Batch {
     Tensor labels;        // [batch_size] or [batch_size, num_classes] if one-hot
     size_t size = 0;      // Actual batch size (may be < requested for last batch)
     BatchInspectionMetadata inspection;
+    // The dataset row (0-based, in the table the batcher reads) of each
+    // sample; empty when the batcher does not know its rows. A test run keeps
+    // them in test_predictions so results join back to the data.
+    std::vector<int64_t> row_ids;
 
     bool IsValid() const { return size > 0; }
     bool HasSparseFeatures() const {

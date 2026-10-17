@@ -597,6 +597,9 @@ enum class NodeType {
     // ===== Appended Classic Model Predictor (TOFIX145) =====
     ClassicModelPredictor, // Apply a fitted classic ML model (Model input or saved file)
 
+    // ===== Appended Test Evaluation (TOFIX157) =====
+    TestEvaluationNode, // A kept test's results: metrics, confusion, per class, worst rows
+
     // Special sentinel value
     Unknown
 };

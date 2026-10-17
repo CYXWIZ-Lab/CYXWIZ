@@ -202,7 +202,7 @@ void ScriptEditorPanel::ToggleBreakpointAtCursor() {
 }
 
 void ScriptEditorPanel::Debug() {
-    if (!IsActiveTabEditable() || !scripting_engine_ || debug_run_.active) return;
+    if (!IsActiveTabRunnable() || !scripting_engine_ || debug_run_.active) return;
     if (scripting_engine_->IsScriptRunning()) {
         spdlog::warn("Debug: another run holds the interpreter");
         return;

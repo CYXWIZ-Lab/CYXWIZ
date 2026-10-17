@@ -56,11 +56,14 @@ void ScriptEditorPanel::RenderTabBar() {
     const bool text_mode = IsActiveTabTextMode();
     const bool engine_busy = scripting_engine_ && scripting_engine_->IsScriptRunning();
     const bool notebook = has_tab && tabs_[active_tab_index_]->cell_mode;
+    // A Markdown, JSON or text file has nothing to run: no run actions.
+    const bool runnable = !has_tab || IsActiveTabRunnable();
 
     // Run actions at the right; the tabs take the rest (scroll arrows when crowded).
     const float gap = t.space_sm;
     float actions_w = ui::ButtonWidth(ICON_FA_PLAY "  Run", ui::ButtonSize::Small);
-    if (notebook) actions_w = ui::ButtonWidth("Debug cell", ui::ButtonSize::Small);
+    if (!runnable) actions_w = 0.0f;
+    else if (notebook) actions_w = ui::ButtonWidth("Debug cell", ui::ButtonSize::Small);
     else if (narrow) actions_w += gap + ui::ButtonWidth("\xC2\xB7\xC2\xB7\xC2\xB7", ui::ButtonSize::Small);
     else actions_w += 2.0f * gap + ui::ButtonWidth("Run selection", ui::ButtonSize::Small) + ui::ButtonWidth("Debug", ui::ButtonSize::Small);
 
@@ -100,6 +103,7 @@ void ScriptEditorPanel::RenderTabBar() {
         if (shown_wanted && !IsActiveTabTextMode()) request_focus_ = false;
     }
     ImGui::EndChild();
+    if (!runnable) return;
 
     ImGui::SameLine(0.0f, t.space_md);
     const char* why = !has_tab ? "Open or write a script first" : "Another script is running";
@@ -275,9 +279,11 @@ void ScriptEditorPanel::RenderStatusBar() {
         }
     }
 
-    // Right side: indentation, encoding, line endings, Python, sandbox.
+    // Right side: indentation, encoding, line endings, Python, sandbox (the
+    // last two only for a file that runs).
     RefreshPythonStatus();
     const bool text_file = !tab->is_large_file && !tab->cell_mode;
+    const bool runs = IsActiveTabRunnable();
     char spaces[32];
     std::snprintf(spaces, sizeof(spaces), "Spaces: %d", tab_size_);
     const std::string encoding = tab->format.bom ? "UTF-8 with BOM" : "UTF-8";
@@ -285,10 +291,13 @@ void ScriptEditorPanel::RenderStatusBar() {
     std::vector<std::string> right;
     if (!narrow) {
         if (text_file) right = {spaces, encoding, eol};
-        right.push_back(python_status_);
-        right.push_back(sandbox);
+        if (runs) {
+            right.push_back(python_status_);
+            right.push_back(sandbox);
+        }
     } else {
-        right = {python_status_, "\xC2\xB7\xC2\xB7\xC2\xB7"};
+        right = {"\xC2\xB7\xC2\xB7\xC2\xB7"};
+        if (runs) right.insert(right.begin(), python_status_);
     }
     float right_w = ProblemCountsWidth(*tab) + 16.0f;
     for (const auto& s : right) right_w += ImGui::CalcTextSize(s.c_str()).x + 16.0f;
@@ -296,7 +305,7 @@ void ScriptEditorPanel::RenderStatusBar() {
     // Nothing may be pushed out of sight: when even the narrow set does not
     // fit, only "···" stays and the Python line moves into its menu.
     bool python_in_menu = false;
-    if (narrow && ImGui::GetCursorPosX() + right_w > ImGui::GetWindowContentRegionMax().x) {
+    if (narrow && runs && ImGui::GetCursorPosX() + right_w > ImGui::GetWindowContentRegionMax().x) {
         python_in_menu = true;
         right_w = ImGui::CalcTextSize("\xC2\xB7\xC2\xB7\xC2\xB7").x + 16.0f;
     }
@@ -337,14 +346,18 @@ void ScriptEditorPanel::RenderStatusBar() {
             if (StatusItem("eol", eol, true, "Line endings: click to switch between LF and CRLF"))
                 set_eol(tab->format.eol == scriptfile::LineEnding::CRLF ? scriptfile::LineEnding::LF : scriptfile::LineEnding::CRLF);
         }
-        next();
-        StatusItem("python", python_status_, false, python_tooltip_.c_str());
+        if (runs) {
+            next();
+            StatusItem("python", python_status_, false, python_tooltip_.c_str());
+        }
         next();
         ProblemCountsItem(*tab);
-        next();
-        StatusItem("sandbox", sandbox, false, "Security > Enable Sandbox");
+        if (runs) {
+            next();
+            StatusItem("sandbox", sandbox, false, "Security > Enable Sandbox");
+        }
     } else {
-        if (!python_in_menu) {
+        if (runs && !python_in_menu) {
             next();
             StatusItem("python", python_status_, false, python_tooltip_.c_str());
         }
@@ -372,7 +385,7 @@ void ScriptEditorPanel::RenderStatusBar() {
             if (ImGui::MenuItem("CRLF line endings", nullptr, tab->format.eol == scriptfile::LineEnding::CRLF))
                 set_eol(tab->format.eol == scriptfile::LineEnding::CRLF ? scriptfile::LineEnding::LF : scriptfile::LineEnding::CRLF);
         }
-        ImGui::TextDisabled("%s", sandbox.c_str());
+        if (runs) ImGui::TextDisabled("%s", sandbox.c_str());
         if (python_in_menu) ImGui::TextDisabled("%s", python_status_.c_str());
         ImGui::EndPopup();
     }

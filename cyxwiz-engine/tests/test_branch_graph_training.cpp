@@ -10,16 +10,29 @@
 #include "../src/core/graph_executable_model.h"
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
+#include "../src/core/model_exporter.h"
+#include "../src/core/model_importer.h"
+#include <cyxwiz/feature_importance.h>
+#include "route_qualification_test_fixture.h"
+#include "../src/core/arrow_dataset.h"
+#include "../src/core/training_executor.h"
+#include "../src/core/checkpoint_manager.h"
+#include "../src/gui/node_import_guardrails.h"
+#include "../src/core/formats/cyxmodel_format.h"
+#include "../src/core/test_executor.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -238,6 +251,436 @@ void PrintIssues(const cyxwiz::TrainingConfiguration& config) {
     }
 }
 
+// One batch: the rows a test reads (TOFIX157, Run Test on a graph model).
+class OneBatch final : public cyxwiz::IBatcher {
+public:
+    OneBatch(cyxwiz::Tensor data, cyxwiz::Tensor labels) : data_(std::move(data)), labels_(std::move(labels)) {}
+    cyxwiz::Batch GetNextBatch() override {
+        cyxwiz::Batch batch;
+        if (done_) return batch;
+        done_ = true;
+        batch.data = data_;
+        batch.labels = labels_;
+        batch.size = data_.Shape().front();
+        return batch;
+    }
+    void Reset() override { done_ = false; }
+    bool IsEpochComplete() const override { return done_; }
+    size_t GetNumBatches() const override { return 1; }
+    size_t GetNumSamples() const override { return data_.Shape().front(); }
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+private:
+    cyxwiz::Tensor data_, labels_;
+    bool done_ = false;
+};
+
+// Run Test on the trained graph (TOFIX157): TestExecutor runs the graph model
+// it is handed (it ran only a SequentialModel: "No model is active").
+void CheckTestRunsGraphModel(const std::string& name, const cyxwiz::TrainingConfiguration& config,
+                             std::shared_ptr<cyxwiz::IExecutableModel> model, const cyxwiz::Tensor& input) {
+    model->SetTraining(false);
+    const cyxwiz::Tensor expected = model->Forward(input);
+    const auto out_shape = expected.Shape();
+    const size_t rows = out_shape.front();
+    const size_t width = expected.NumElements() / rows;
+    const float* out = expected.ReadData<float>();
+    cyxwiz::ExternalTestSource source;
+    source.make_batcher = [input, out_shape](const cyxwiz::TrainingConfiguration&, int) -> std::unique_ptr<cyxwiz::IBatcher> {
+        return std::make_unique<OneBatch>(input, cyxwiz::Tensor::Zeros(out_shape));
+    };
+    cyxwiz::TestExecutor test(config, source);
+    test.SetModel(model);
+    test.Test(static_cast<int>(rows));
+    const auto m = test.GetMetrics();
+    Check(m.is_complete && m.total_samples == static_cast<int>(rows),
+          name + ": Run Test runs the graph model (" + m.status_message + ")");
+    if (m.regression_mode) {
+        Check(m.regression_predictions.size() == rows * width, name + ": a prediction per output value");
+        for (size_t i = 0; i < m.regression_predictions.size() && i < rows * width; ++i)
+            Check(std::abs(m.regression_predictions[i] - out[i]) < 1e-4f, name + ": the test's output is the model's");
+    } else {
+        Check(m.predictions.size() == rows, name + ": a prediction per row");
+        for (size_t r = 0; r < m.predictions.size() && r < rows; ++r) {
+            size_t best = 0;
+            for (size_t k = 1; k < width; ++k)
+                if (out[r * width + k] > out[r * width + best]) best = k;
+            Check(m.predictions[r] == static_cast<int>(best), name + ": the test's class is the model's argmax");
+        }
+    }
+    std::cout << "  " << name << ": Run Test runs the graph model (" << rows << " rows)\n";
+}
+
+// Save / Export a graph with branches (TOFIX157): the CyxWiz package holds its
+// weights and its graph, marked GraphModel; without the graph, or as ONNX, it
+// is refused.
+void CheckGraphModelExports(const std::string& name, cyxwiz::IExecutableModel& model) {
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_export";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / (name + ".cyxmodel");
+    std::filesystem::remove(path);
+    const std::string graph_json = R"({"nodes":[],"links":[],"case":")" + name + R"("})";
+    cyxwiz::ModelExporter exporter;
+    cyxwiz::ExportOptions options;
+    options.model_name = name;
+    const auto exported = exporter.ExportCyxModel(model, nullptr, nullptr, graph_json, path.string(), options);
+    Check(exported.success, name + ": a graph model exports to .cyxmodel: " + exported.error_message);
+    Check(exported.num_layers == static_cast<int>(model.LayerCount()), name + ": the package counts its layers");
+
+    cyxwiz::formats::CyxModelFormat format;
+    cyxwiz::ModelManifest manifest;
+    std::string read_graph;
+    cyxwiz::TrainingConfig config;
+    std::map<std::string, std::vector<uint8_t>> weights;
+    std::map<std::string, std::vector<int64_t>> shapes;
+    Check(format.Extract(path.string(), manifest, read_graph, config, nullptr, weights, shapes, nullptr,
+                         cyxwiz::ImportOptions{}),
+          name + ": the package reads back: " + format.GetLastError());
+    Check(manifest.model_type == "GraphModel" && manifest.has_graph && read_graph == graph_json,
+          name + ": marked GraphModel, with its graph (" + manifest.model_type + ")");
+    const auto params = model.GetParameters();
+    bool same = weights.size() == params.size();
+    for (const auto& [key, tensor] : params) {
+        const auto found = weights.find(key);
+        same = same && found != weights.end() && found->second.size() == tensor.NumBytes() &&
+               std::memcmp(found->second.data(), tensor.ReadData(), tensor.NumBytes()) == 0;
+    }
+    Check(same, name + ": every weight is in the package, byte for byte");
+
+    auto no_graph = options;
+    no_graph.include_graph = false;
+    const auto refused = exporter.ExportCyxModel(model, nullptr, nullptr, graph_json, (dir / "no_graph.cyxmodel").string(),
+                                                 no_graph);
+    Check(!refused.success && refused.error_message.find("needs its graph") != std::string::npos,
+          name + ": without its graph the package is refused: " + refused.error_message);
+    auto onnx = options;
+    onnx.format = cyxwiz::ModelFormat::ONNX;
+    const auto onnx_refused = exporter.Export(model, nullptr, nullptr, graph_json, (dir / "model.onnx").string(), onnx);
+    Check(!onnx_refused.success && onnx_refused.error_message.find("graph with branches") != std::string::npos,
+          name + ": ONNX is refused for a graph with branches: " + onnx_refused.error_message);
+    std::filesystem::remove_all(dir);
+    std::cout << "  " << name << ": saved as a CyxWiz package with its graph\n";
+}
+
+// A graph with branches, written as the editor saves it (factory nodes, links
+// by pin index), goes into a CyxWiz package and comes back as the same graph
+// model: the same outputs for the same rows. As a layer stack the package is
+// refused (it built the layers alone before, TOFIX157).
+std::string EditorGraphJson(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links) {
+    // The header the editor writes (the current data boundary).
+    json document = gui::detail::CreateSerializedGraphDocument("1.0");
+    document["nodes"] = json::array();
+    document["links"] = json::array();
+    const auto pin_index = [](const std::vector<gui::NodePin>& pins, int id) {
+        for (size_t i = 0; i < pins.size(); ++i)
+            if (pins[i].id == id) return static_cast<int>(i);
+        return -1;
+    };
+    const auto node_of = [&](int id) -> const gui::MLNode& {
+        return *std::find_if(nodes.begin(), nodes.end(), [id](const gui::MLNode& n) { return n.id == id; });
+    };
+    for (const auto& node : nodes)
+        document["nodes"].push_back({{"id", node.id}, {"type", static_cast<int>(node.type)}, {"name", node.name},
+                                     {"parameters", node.parameters}});
+    for (const auto& link : links)
+        document["links"].push_back({{"id", link.id}, {"from_node", link.from_node}, {"from_pin", link.from_pin},
+                                     {"to_node", link.to_node}, {"to_pin", link.to_pin},
+                                     {"link_type", static_cast<int>(link.type)},
+                                     {"from_pin_index", pin_index(node_of(link.from_node).outputs, link.from_pin)},
+                                     {"to_pin_index", pin_index(node_of(link.to_node).inputs, link.to_pin)}});
+    return document.dump(4);
+}
+
+// Data Input -> Data Split -> Data Loader -> {Dense a, Dense b} -> Add -> Dense head (3) -> loss <- labels;
+// SGD (the data path of the branching example graph), as the editor saves it.
+std::string ResidualGraphJson(gui::NodeType loss_type, const std::string& dataset_name) {
+    // The nodes get the pins the saved-graph loader gives them (the node list
+    // is loaded first), then links are made between those pins.
+    int next_link = 1;
+    json listed = gui::detail::CreateSerializedGraphDocument("1.0");
+    listed["nodes"] = json::array();
+    listed["links"] = json::array();
+    const auto make = [&](gui::NodeType type, const std::string& name,
+                          std::map<std::string, std::string> parameters = {}) -> int {
+        const int id = static_cast<int>(listed["nodes"].size()) + 1;
+        listed["nodes"].push_back({{"id", id}, {"type", static_cast<int>(type)}, {"name", name},
+                                   {"parameters", parameters}});
+        return id;
+    };
+    const int data = make(gui::NodeType::DataInput, "Rows", {{"dataset_name", dataset_name}, {"shape", "[8]"}});
+    const int split = make(gui::NodeType::DataSplit, "Split");
+    const int loader = make(gui::NodeType::DataLoader, "Loader");
+    const int a = make(gui::NodeType::Dense, "Dense a", {{"units", "6"}});
+    const int b = make(gui::NodeType::Dense, "Dense b", {{"units", "6"}});
+    const int add = make(gui::NodeType::Add, "Add");
+    const int head = make(gui::NodeType::Dense, "Head", {{"units", "3"}});
+    const int loss = make(loss_type, "Loss");
+    const int sgd = make(gui::NodeType::SGD, "SGD");
+    cyxwiz::GraphDocument listed_document;
+    std::string list_error;
+    const bool listed_ok = cyxwiz::ParseGraphDocument(listed.dump(), listed_document, list_error);
+    Check(listed_ok, "the node list loads: " + list_error);
+    std::vector<gui::MLNode> nodes = listed_document.nodes;
+    std::vector<gui::NodeLink> links;
+    const auto node_of = [&](int id) -> gui::MLNode& {
+        return *std::find_if(nodes.begin(), nodes.end(), [id](const gui::MLNode& n) { return n.id == id; });
+    };
+    const auto pin = [&](int node, bool input, gui::PinType type, int nth = 0) {
+        const auto& pins = input ? node_of(node).inputs : node_of(node).outputs;
+        for (const auto& p : pins)
+            if (p.type == type && nth-- == 0) return p.id;
+        std::string have;
+        for (const auto& p : pins) have += " " + p.name + "(" + std::to_string(static_cast<int>(p.type)) + ")";
+        Check(false, node_of(node).name + ": no " + (input ? "input" : "output") + " pin of type " +
+                         std::to_string(static_cast<int>(type)) + "; pins:" + have);
+        return -1;
+    };
+    const auto connect = [&](int from, gui::PinType from_type, int to, gui::PinType to_type, int to_nth = 0) {
+        gui::NodeLink link;
+        link.id = next_link++;
+        link.from_node = from;
+        link.from_pin = pin(from, false, from_type);
+        link.to_node = to;
+        link.to_pin = pin(to, true, to_type, to_nth);
+        links.push_back(link);
+    };
+    // Each output of a data node to the next node's input of the same type.
+    const auto pass_through = [&](int from, int to) {
+        auto& inputs = node_of(to).inputs;
+        std::map<gui::PinType, int> seen;
+        for (const auto& out : node_of(from).outputs) {
+            const int nth = seen[out.type]++;
+            int match = nth;
+            for (const auto& in : inputs) {
+                if (in.type != out.type || match-- != 0) continue;
+                gui::NodeLink link;
+                link.id = next_link++;
+                link.from_node = from;
+                link.from_pin = out.id;
+                link.to_node = to;
+                link.to_pin = in.id;
+                links.push_back(link);
+                break;
+            }
+        }
+    };
+    pass_through(data, split);
+    pass_through(split, loader);
+    connect(loader, gui::PinType::Tensor, a, gui::PinType::Tensor);
+    connect(loader, gui::PinType::Tensor, b, gui::PinType::Tensor);
+    connect(a, gui::PinType::Tensor, add, gui::PinType::Tensor, 0);
+    connect(b, gui::PinType::Tensor, add, gui::PinType::Tensor, 1);
+    connect(add, gui::PinType::Tensor, head, gui::PinType::Tensor);
+    connect(head, gui::PinType::Tensor, loss, gui::PinType::Tensor);
+    connect(loader, gui::PinType::Labels, loss, gui::PinType::Labels);
+    connect(loss, gui::PinType::Loss, sgd, gui::PinType::Loss);
+    return EditorGraphJson(nodes, links);
+}
+
+void CheckGraphPackageRoundTrip() {
+    const std::string graph_json = ResidualGraphJson(gui::NodeType::MSELoss, "branch_rows");
+
+    // What Import does with the file: the shared loader, then ModelImport.
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed = cyxwiz::ParseGraphDocument(graph_json, document, error);
+    Check(parsed, "the editor-format graph parses: " + error);
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(document.nodes, document.links, true,
+                                         cyxwiz::GraphCompiler::Purpose::ModelImport);
+    if (!config.is_valid) PrintIssues(config);
+    Check(config.is_valid && !config.graph_op_node_ids.empty(), "the residual graph compiles with branches");
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), "the residual graph builds: " + built.error_message);
+    if (!built.ok()) return;
+    std::shared_ptr<cyxwiz::IExecutableModel> trained(std::move(built.model));
+
+    const size_t rows = 5, width = 8;
+    std::vector<float> values(rows * width);
+    for (size_t i = 0; i < values.size(); ++i) values[i] = std::sin(0.37f * static_cast<float>(i));
+    const cyxwiz::Tensor input({rows, width}, values.data());
+    trained->SetTraining(false);
+    const cyxwiz::Tensor expected = trained->Forward(input);
+
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_roundtrip";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "residual.cyxmodel";
+    std::filesystem::remove(path);
+    cyxwiz::ModelExporter exporter;
+    const auto exported = exporter.ExportCyxModel(*trained, nullptr, nullptr, graph_json, path.string(),
+                                                  cyxwiz::ExportOptions{});
+    Check(exported.success, "the residual graph model exports: " + exported.error_message);
+
+    cyxwiz::ModelImporter importer;
+    std::shared_ptr<cyxwiz::IExecutableModel> loaded;
+    const auto imported = importer.ImportExecutableModel(path.string(), loaded, cyxwiz::ImportOptions{});
+    Check(imported.success && loaded, "the package imports: " + imported.error_message);
+    Check(dynamic_cast<cyxwiz::GraphExecutableModel*>(loaded.get()) != nullptr, "it comes back as a graph model");
+    if (loaded) {
+        loaded->SetTraining(false);
+        const cyxwiz::Tensor output = loaded->Forward(input);
+        bool same = output.Shape() == expected.Shape();
+        for (size_t i = 0; same && i < expected.NumElements(); ++i)
+            same = std::abs(output.ReadData<float>()[i] - expected.ReadData<float>()[i]) < 1e-6f;
+        Check(same, "the imported graph model gives the same outputs");
+    }
+
+    cyxwiz::SequentialModel stack;
+    const auto as_stack = importer.ImportCyxModel(path.string(), stack, cyxwiz::ImportOptions{});
+    Check(!as_stack.success && as_stack.error_message.find("graph with branches") != std::string::npos,
+          "as a layer stack the package is refused: " + as_stack.error_message);
+
+    // A checkpoint of the graph model loads into the model its graph builds
+    // (Load Checkpoint for Testing does the same): the same outputs.
+    cyxwiz::CheckpointManager saving((dir / "checkpoints").string());
+    cyxwiz::TrainingMetrics metrics;
+    metrics.current_epoch = 1;
+    const std::string saved = saving.SaveCheckpoint(*trained, nullptr, metrics, "graph_epoch_1");
+    Check(!saved.empty(), "a graph model's checkpoint saves: " + saving.GetLastError());
+    auto rebuilt = cyxwiz::BuildExecutableFromConfig(config);
+    Check(rebuilt.ok(), "the graph builds again: " + rebuilt.error_message);
+    if (rebuilt.ok() && !saved.empty()) {
+        cyxwiz::CheckpointManager loading((dir / "checkpoints").string());
+        const auto metadata = loading.LoadCheckpoint(*rebuilt.model, nullptr, "graph_epoch_1");
+        Check(metadata.has_value(), "the checkpoint loads into the graph model: " + loading.GetLastError());
+        rebuilt.model->SetTraining(false);
+        const cyxwiz::Tensor output = rebuilt.model->Forward(input);
+        bool same = output.Shape() == expected.Shape();
+        for (size_t i = 0; same && i < expected.NumElements(); ++i)
+            same = std::abs(output.ReadData<float>()[i] - expected.ReadData<float>()[i]) < 1e-6f;
+        Check(same, "the graph model from the checkpoint gives the same outputs");
+    }
+    std::filesystem::remove_all(dir);
+    std::cout << "  residual graph: exported, imported and checkpointed as the same graph model\n";
+}
+
+// Training a graph with branches with "save best checkpoint" (TOFIX157): the
+// best epoch's checkpoint is written and restored when validation stops
+// improving, as for a layer stack (it was skipped for graph models).
+void CheckGraphTrainingKeepsBestCheckpoint() {
+    constexpr const char* kDataset = "branch_train_rows";
+    const size_t rows = 24;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    for (int f = 0; f < 8; ++f) {
+        arrow::FloatBuilder builder;
+        for (size_t r = 0; r < rows; ++r) (void)builder.Append(std::sin(0.3f * static_cast<float>(r * 8 + f)));
+        std::shared_ptr<arrow::Array> column;
+        (void)builder.Finish(&column);
+        columns.push_back(column);
+        fields.push_back(arrow::field("x" + std::to_string(f), arrow::float32()));
+    }
+    arrow::Int32Builder labels;
+    for (size_t r = 0; r < rows; ++r) (void)labels.Append(static_cast<int32_t>(r % 3));
+    std::shared_ptr<arrow::Array> label_column;
+    (void)labels.Finish(&label_column);
+    columns.push_back(label_column);
+    fields.push_back(arrow::field("label", arrow::int32()));
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(arrow::Table::Make(arrow::schema(fields), columns),
+                                                          kDataset);
+
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed = cyxwiz::ParseGraphDocument(ResidualGraphJson(gui::NodeType::CrossEntropyLoss, kDataset),
+                                                   document, error);
+    Check(parsed, "the training graph parses: " + error);
+    cyxwiz::GraphCompiler compiler;
+    auto config = compiler.Compile(document.nodes, document.links, true);
+    if (!config.is_valid) PrintIssues(config);
+    Check(config.is_valid && !config.graph_op_node_ids.empty(), "the training graph compiles with branches");
+
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_best";
+    std::filesystem::remove_all(dir);
+    config.dataset_name = kDataset;
+    config.epochs = 5;
+    config.batch_size = 4;
+    config.learning_rate = 0.0f;  // validation loss stays put: the run stops at epoch 2, restoring epoch 1
+    config.validation_freq = 1;
+    config.early_stopping_patience = 1;
+    config.save_best_checkpoint = true;
+    config.checkpoint_dir = dir.string();
+    config.shuffle = false;
+    config.num_workers = 0;
+    config.log_interval = 0;
+
+    cyxwiz::test::InstallQualifiedRouteSnapshot();  // a test run trains on this PC's devices
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(config.epochs, config.batch_size, nullptr, nullptr,
+                   [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
+    Check(final_metrics.is_complete, "the graph model trains: " + final_metrics.status_message);
+    Check(!final_metrics.checkpoint_used.empty() && final_metrics.restored_checkpoint_epoch == 1 &&
+              final_metrics.active_model_provenance == "restored_best_checkpoint",
+          "the graph model's best checkpoint is kept and restored (" + final_metrics.active_model_provenance +
+              ", epoch " + std::to_string(final_metrics.restored_checkpoint_epoch) + ")");
+    std::filesystem::remove_all(dir);
+    std::cout << "  residual graph: training keeps and restores its best checkpoint\n";
+}
+
+// Feature importance on a graph with branches (TOFIX157): permutation and
+// drop-column importance run any model's forward pass. With weights that let
+// only feature 0 reach the output, feature 0 matters and the other seven are
+// exactly zero.
+void CheckGraphFeatureImportance() {
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed =
+        cyxwiz::ParseGraphDocument(ResidualGraphJson(gui::NodeType::MSELoss, "branch_rows"), document, error);
+    Check(parsed, "the importance graph parses: " + error);
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(document.nodes, document.links, true,
+                                         cyxwiz::GraphCompiler::Purpose::ModelImport);
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), "the importance graph builds: " + built.error_message);
+    if (!built.ok()) return;
+    auto& model = *built.model;
+
+    // Every weight 0, except one [6, 8] branch reading feature 0 and a head
+    // that sums the units: the output is a multiple of feature 0.
+    auto params = model.GetParameters();
+    bool first_branch = true;
+    for (auto& [name, tensor] : params) {
+        const auto shape = tensor.Shape();
+        std::vector<float> values(tensor.NumElements(), 0.0f);
+        if (shape == std::vector<size_t>{6, 8} && first_branch) {
+            for (size_t unit = 0; unit < 6; ++unit) values[unit * 8] = 1.0f;
+            first_branch = false;
+        } else if (shape == std::vector<size_t>{3, 6}) {
+            std::fill(values.begin(), values.end(), 1.0f);
+        }
+        tensor = cyxwiz::Tensor(shape, values.data());
+    }
+    model.SetParameters(params);
+    model.SetTraining(false);
+    const cyxwiz::FeatureImportanceAnalyzer::ModelForward forward = [&model](const cyxwiz::Tensor& input) {
+        return model.Forward(input);
+    };
+
+    std::vector<std::vector<double>> X(40, std::vector<double>(8));
+    for (size_t r = 0; r < X.size(); ++r)
+        for (size_t f = 0; f < 8; ++f) X[r][f] = std::sin(0.7 * static_cast<double>(r * 8 + f + 1));
+    std::vector<double> y;
+    for (const auto& row : X) y.push_back(36.0 * row[0]);  // 6 units x 6 head weights, first output
+    const auto clean = forward(cyxwiz::Tensor({X.size(), 8}, std::vector<float>(X.size() * 8, 0.0f).data()));
+    Check(clean.Shape() == std::vector<size_t>({X.size(), 3}), "the graph gives 3 outputs per row");
+
+    for (int method = 0; method < 2; ++method) {
+        const auto result = method == 0
+            ? cyxwiz::FeatureImportanceAnalyzer::ComputePermutationImportance(forward, X, y, {}, 5, "mse")
+            : cyxwiz::FeatureImportanceAnalyzer::ComputeDropColumnImportance(forward, X, y, {}, "mse");
+        const std::string label = method == 0 ? "permutation" : "drop-column";
+        Check(result.success, label + " importance runs on the graph model: " + result.error_message);
+        bool others_zero = result.importances.size() == 8;
+        for (size_t f = 1; f < result.importances.size(); ++f)
+            others_zero = others_zero && std::abs(result.importances[f]) < 1e-9;
+        Check(result.importances.size() == 8 && result.importances[0] > 0.0 && others_zero,
+              label + ": feature 0 matters, the other seven are zero");
+    }
+    std::cout << "  residual graph: permutation and drop-column importance find the one feature that matters\n";
+}
+
 void RunCase(const json& c) {
     const std::string name = c.at("name").get<std::string>();
     const auto graph = BuildGraph(c);
@@ -389,6 +832,9 @@ void RunCase(const json& c) {
                    name + " input gradient with the merge links made in reverse");
         std::cout << "  " << name << ": reversed merge links give the same result\n";
     }
+    std::shared_ptr<cyxwiz::IExecutableModel> trained(std::move(built.model));
+    CheckTestRunsGraphModel(name, config, trained, ReadTensor(c.at("input")));
+    CheckGraphModelExports(name, *trained);
 }
 
 std::filesystem::path FixturePath(const char* argv0) {
@@ -414,6 +860,21 @@ int main(int, char** argv) {
         } catch (const std::exception& e) {
             Check(false, c.at("name").get<std::string>() + " threw: " + e.what());
         }
+    }
+    try {
+        CheckGraphPackageRoundTrip();
+    } catch (const std::exception& e) {
+        Check(false, std::string("the graph package round trip threw: ") + e.what());
+    }
+    try {
+        CheckGraphFeatureImportance();
+    } catch (const std::exception& e) {
+        Check(false, std::string("feature importance on the graph model threw: ") + e.what());
+    }
+    try {
+        CheckGraphTrainingKeepsBestCheckpoint();
+    } catch (const std::exception& e) {
+        Check(false, std::string("the graph training with a best checkpoint threw: ") + e.what());
     }
 
     // The compiler refuses the splits the runtime cannot run, on the node.

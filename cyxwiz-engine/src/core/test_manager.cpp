@@ -51,7 +51,7 @@ bool TestManager::StartTesting(
     TrainingConfiguration config,
     ExternalTestSource source,
     int batch_size,
-    std::shared_ptr<SequentialModel> model,
+    std::shared_ptr<IExecutableModel> model,
     TestCompleteCallback on_complete,
     std::optional<ProcessDeviceSelection> model_device)
 {
@@ -133,7 +133,7 @@ bool TestManager::StartTestingArrow(
     std::string label_column,
     TestDatasetScope dataset_scope,
     int batch_size,
-    std::shared_ptr<SequentialModel> model,
+    std::shared_ptr<IExecutableModel> model,
     TestCompleteCallback on_complete,
     std::optional<ProcessDeviceSelection> model_device)
 {
@@ -217,7 +217,7 @@ bool TestManager::StartTestingParquet(
     std::string label_column,
     TestDatasetScope dataset_scope,
     int batch_size,
-    std::shared_ptr<SequentialModel> model,
+    std::shared_ptr<IExecutableModel> model,
     TestCompleteCallback on_complete,
     std::optional<ProcessDeviceSelection> model_device)
 {

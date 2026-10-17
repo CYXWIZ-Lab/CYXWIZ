@@ -68,8 +68,9 @@ struct GraphTrainingJobResult {
     TrainingFailureKind failure = TrainingFailureKind::None;  // category of `error`
     TrainingMetrics metrics;      // final metrics when it ran
     GraphTrainingJobTiming timing;
-    // Trained model (for export); on cancel, the partially trained model.
-    std::unique_ptr<SequentialModel> model;
+    // Trained model (sequential or a graph with branches); on cancel, the
+    // partially trained model.
+    std::unique_ptr<IExecutableModel> model;
 };
 
 // Loads the graph's inputs, compiles, trains to completion on the calling

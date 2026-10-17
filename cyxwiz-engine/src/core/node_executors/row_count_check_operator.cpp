@@ -370,7 +370,7 @@ arrow::Status RowCountCheckOperator::EndFit() {
                                           ", found ", counted_,
                                           ". Nothing downstream ran; fix the data or the expectation.");
         }
-        spdlog::info("[Data Studio] {} passed: {} {} (expected {})", label, counted_, what, expectation);
+        spdlog::info("[Pipeline] {} passed: {} {} (expected {})", label, counted_, what, expectation);
         last_outcome_ = "passed: " + std::to_string(counted_) + " " + what + " (expected " + expectation + ")";
         return arrow::Status::OK();
     }

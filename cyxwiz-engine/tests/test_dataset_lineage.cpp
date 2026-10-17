@@ -119,6 +119,23 @@ int main() {
     Check(s.checks_ok, "checks ok");
     Same(s.written, "2026-10-15 14:28:41 from berean_v3_tier1_paragraphs.cyxgraph", "written");
 
+    // A large input not read to hash it (TOFIX157): its note and write time
+    // round trip, and the summary says so.
+    {
+        DatasetLineage large = l;
+        large.inputs = {{"D:/data/big.parquet", 6000000000ull, "", "2026-10-16 23:00:00",
+                         "not hashed: larger than the data budget's result threshold (1.00 GB); size and write time identify it"}};
+        Check(WriteLineage(large, error), "write the large input: " + error);
+        DatasetLineage read;
+        Check(ReadLineage(out.string(), read, error), "read the large input: " + error);
+        Check(read.inputs.size() == 1 && read.inputs[0].sha256.empty() && read.inputs[0].modified == "2026-10-16 23:00:00" &&
+                  read.inputs[0].note == large.inputs[0].note,
+              "note and write time round trip");
+        Same(SummarizeLineage(read).inputs, "big.parquet \xC2\xB7 5.59 GB \xC2\xB7 not hashed (large file; size and time identify it)",
+             "summary of an input not hashed");
+        Check(WriteLineage(l, error), "write back: " + error);
+    }
+
     back.checks[1].passed = false;
     const LineageSummary f = SummarizeLineage(back);
     Same(f.checks, "1 of 2 pass: 'Check: Law' did not", "a failed check named");

@@ -671,6 +671,100 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     std::filesystem::remove(path, ignored);
 }
 
+// Class balancing on disk (TOFIX157 A3): the in-memory rules on a table
+// that stays on disk. The row-split fixture's train split holds 560 rows of
+// class 0 and 240 of class 1 (rows 0-559 and 700-939, unshuffled).
+void TestParquetClassBalancing(const std::filesystem::path& work_dir) {
+    constexpr int kRows = 1000;
+    std::vector<float> ids, noise;
+    std::vector<int32_t> labels;
+    for (int i = 0; i < kRows; ++i) {
+        ids.push_back(static_cast<float>(i));
+        noise.push_back(static_cast<float>(i % 7));
+        labels.push_back(i < 700 ? 0 : 1);
+    }
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                 arrow::field("label", arrow::int32())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray(ids), FinishFloatArray(noise), FinishIntArray(labels)},
+                                    kRows);
+    cyxwiz::ArrowDataset source(table, "balance_source");
+    const auto path = work_dir / "cyxwiz_parquet_class_balance.parquet";
+    WriteParquetWithRowGroupSize(source, path.string(), 100);
+    auto dataset = cyxwiz::ParquetBackedDataset::Open(path.string(), "balance");
+    Check(dataset != nullptr, "class balancing fixture opens");
+
+    auto balanced = [&](const std::string& mode, const std::string& target, int seed) {
+        auto config = MakeConfig();
+        config.has_data_split = true;
+        config.stratified = true;
+        config.train_ratio = 0.8f;
+        config.val_ratio = 0.1f;
+        config.test_ratio = 0.1f;
+        config.split_seed = 17;
+        config.balance_classes = true;
+        config.balance_mode = mode;
+        config.balance_target = target;
+        config.balance_seed = seed;
+        return cyxwiz::BuildParquetTrainingBatchers(config, dataset, "label", /*batch_size=*/64);
+    };
+    // How often each row is served in one epoch.
+    auto served = [&](cyxwiz::IBatcher& batcher) {
+        std::vector<int> times(kRows, 0);
+        batcher.Reset();
+        while (!batcher.IsEpochComplete()) {
+            auto batch = batcher.GetNextBatch();
+            if (!batch.IsValid()) break;
+            const auto* features = batch.data.Data<float>();
+            for (size_t r = 0; r < batch.data.Shape()[0]; ++r) ++times[static_cast<int>(features[r * 2])];
+        }
+        return times;
+    };
+    auto class_total = [](const std::vector<int>& times, int cls) {
+        int total = 0;
+        for (int i = 0; i < kRows; ++i)
+            if ((i < 700 ? 0 : 1) == cls) total += times[i];
+        return total;
+    };
+
+    // Oversample to the largest class: 560 each; every class-1 row twice,
+    // 80 of them a third time; class 0 once each.
+    auto over = balanced("oversample", "max", 11);
+    Check(over.num_train_samples == 1120 && over.num_val_samples == 100 && over.num_test_samples == 100,
+          "oversample: 1120 train rows, validation and test unchanged (" + std::to_string(over.num_train_samples) + ")");
+    const auto over_times = served(*over.train);
+    Check(class_total(over_times, 0) == 560 && class_total(over_times, 1) == 560, "oversample: 560 rows per class");
+    int twice = 0, thrice = 0, once = 0;
+    for (int i = 0; i < kRows; ++i) {
+        if (i >= 700 && i < 940) (over_times[i] == 2 ? twice : over_times[i] == 3 ? thrice : once)++;
+        if (i < 560) Check(over_times[i] == 1, "oversample: a class-0 train row once");
+        if ((i >= 560 && i < 700) || i >= 940) Check(over_times[i] == 0, "oversample: no held-out row");
+    }
+    Check(twice == 160 && thrice == 80 && once == 0, "oversample: class-1 rows twice (160) or three times (80)");
+    Check(served(*over.train) != over_times, "oversample: each epoch draws other rows for the third copy");
+
+    // Undersample to the smallest: 240 distinct rows of each class.
+    auto under = balanced("undersample", "min", 11);
+    Check(under.num_train_samples == 480, "undersample: 480 train rows");
+    const auto under_times = served(*under.train);
+    Check(class_total(under_times, 0) == 240 && class_total(under_times, 1) == 240, "undersample: 240 per class");
+    Check(std::all_of(under_times.begin(), under_times.end(), [](int t) { return t <= 1; }),
+          "undersample: no row twice");
+
+    // Weighted sampler: the epoch keeps its 800 rows, about half each class,
+    // the same for the same seed.
+    auto weighted = balanced("weighted_sampler", "max", 19);
+    Check(weighted.num_train_samples == 800, "weighted sampler: 800 train rows");
+    const auto weighted_times = served(*weighted.train);
+    const int weighted_one = class_total(weighted_times, 1);
+    Check(class_total(weighted_times, 0) + weighted_one == 800 && weighted_one > 340 && weighted_one < 460,
+          "weighted sampler: about half the draws class 1 (" + std::to_string(weighted_one) + ")");
+    auto weighted_again = balanced("weighted_sampler", "max", 19);
+    Check(served(*weighted_again.train) == weighted_times, "weighted sampler: the same seed, the same rows");
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 void TestTextLabels(const std::filesystem::path& work_dir) {
     arrow::StringBuilder labels;
     for (const char* v : {"north", "east", "north", "delta", "east", "delta", "north", "east"})
@@ -839,6 +933,18 @@ int main(int argc, char** argv) {
           "explicit Arrow DataSplit val split should contain 1 sample");
     Check(explicit_split_batchers.num_test_samples == 2,
           "explicit Arrow DataSplit test split should contain 2 held-out samples");
+
+    // Validation 0 with a Test share (TOFIX157): the rows after Train are
+    // the Test set, and Validation is empty.
+    auto test_only_config = explicit_split_config;
+    test_only_config.val_ratio = 0.0f;
+    test_only_config.test_ratio = 0.50f;
+    auto test_only_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        test_only_config, MakeMultiGroupDataset(), "label", /*batch_size=*/2);
+    Check(test_only_batchers.num_train_samples == 3 &&
+              test_only_batchers.num_val_samples == 0 &&
+              test_only_batchers.num_test_samples == 3,
+          "Arrow DataSplit with Validation 0 should test the rows after Train");
 
     auto stratified_split_config = MakeConfig();
     stratified_split_config.has_data_split = true;
@@ -1070,6 +1176,19 @@ int main(int argc, char** argv) {
           "train pointer should target Parquet train owner");
     auto parquet_batch = parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
+
+    // Validation 0 with a Test share on disk, as in memory.
+    auto parquet_test_only_config = MakeConfig();
+    parquet_test_only_config.has_data_split = true;
+    parquet_test_only_config.train_ratio = 0.50f;
+    parquet_test_only_config.val_ratio = 0.0f;
+    parquet_test_only_config.test_ratio = 0.50f;
+    auto parquet_test_only = cyxwiz::BuildParquetTrainingBatchers(
+        parquet_test_only_config, parquet_dataset, "label", /*batch_size=*/2);
+    const size_t parquet_rows = static_cast<size_t>(parquet_source->GetArrowTable()->num_rows());
+    Check(parquet_test_only.num_val_samples == 0 && parquet_test_only.num_test_samples > 0 &&
+              parquet_test_only.num_train_samples + parquet_test_only.num_test_samples == parquet_rows,
+          "Parquet DataSplit with Validation 0 should test the rows after Train");
 
     auto parquet_prefetch_config = MakeConfig();
     parquet_prefetch_config.prefetch_factor = 2;
@@ -1651,6 +1770,8 @@ int main(int argc, char** argv) {
     prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
+    test_only_batchers = cyxwiz::TrainingBatcherSet{};
+    parquet_test_only = cyxwiz::TrainingBatcherSet{};
     stratified_batchers = cyxwiz::TrainingBatcherSet{};
     balanced_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
@@ -1693,6 +1814,7 @@ int main(int argc, char** argv) {
     fs::remove(multi_step_ts_parquet_path);
     TestTextLabels(fs::temp_directory_path());
     TestParquetRowSplit(fs::temp_directory_path());
+    TestParquetClassBalancing(fs::temp_directory_path());
     fs::remove_all(work_dir);
 
     std::cout << "Training batcher setup passed\n";

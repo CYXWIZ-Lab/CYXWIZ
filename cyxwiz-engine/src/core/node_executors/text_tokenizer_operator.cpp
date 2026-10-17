@@ -474,6 +474,318 @@ bool TextTokenizerOperator::Configure(
     return true;
 }
 
+TextTokenizerOperator::TextTokenizerOperator() = default;
+TextTokenizerOperator::~TextTokenizerOperator() = default;
+
+Tokenizer TextTokenizerOperator::MakeTokenizer() const {
+    TokenizerType tt = TokenizerType::Word;
+    switch (tokenizer_type_) {
+        case 0: tt = TokenizerType::Whitespace; break;
+        case 2: tt = TokenizerType::Character; break;
+        case 3: tt = TokenizerType::ByteBPE; break;
+        case 4: tt = TokenizerType::WordPiece; break;
+        case 5: tt = TokenizerType::SentencePieceBPE; break;
+        case 6: tt = TokenizerType::SentencePieceUnigram; break;
+        default: tt = TokenizerType::Word; break;
+    }
+    Tokenizer tokenizer(tt);
+    if (bpe_piece_policy_ == "leading_space_v2")
+        tokenizer.SetBPEFitPiecePolicy(ByteBPEPiecePolicy::LeadingSpaceV2);
+    if (bpe_initial_unit_ == "unicode_character")
+        tokenizer.SetBPEFitInitialUnit(BPEInitialUnit::UnicodeCharacter);
+    tokenizer.SetCancellationQuery(GetCancellationQuery());
+    tokenizer.SetLowercase(lowercase_);
+    tokenizer.SetMaxLength(max_length_);
+    tokenizer.SetPadding(true);
+    tokenizer.SetTruncation(true);
+    return tokenizer;
+}
+
+void TextTokenizerOperator::CheckLoadedVocabulary(const Tokenizer& tokenizer) const {
+    tokenizer.ValidateVocabulary();
+    if (!bpe_initial_unit_.empty()) {
+        const auto expected = bpe_initial_unit_ == "byte" ? BPEInitialUnit::Byte : BPEInitialUnit::UnicodeCharacter;
+        if (tokenizer.GetVocabulary().GetBPEInitialUnit() != expected)
+            throw std::invalid_argument("BPE initial unit differs from vocab_file; follow the saved vocabulary or select a new file for refitting");
+    }
+    if (!bpe_piece_policy_.empty()) {
+        const auto expected = bpe_piece_policy_ == "leading_space_v2"
+            ? ByteBPEPiecePolicy::LeadingSpaceV2 : ByteBPEPiecePolicy::WhitespaceV1;
+        if (tokenizer.GetVocabulary().GetBPEPiecePolicy() != expected)
+            throw std::invalid_argument("ByteBPE piece policy differs from vocab_file; select the artifact policy or a new vocabulary path for refitting");
+    }
+}
+
+arrow::Status TextTokenizerOperator::SaveBuiltVocabulary(const Tokenizer& tokenizer) const {
+    const std::filesystem::path path(vocab_file_);
+    if (path.has_parent_path()) {
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            return arrow::Status::IOError(
+                "TextTokenizer: failed to create vocabulary directory '" +
+                path.parent_path().string() + "': " + ec.message());
+        }
+    }
+    if (!tokenizer.GetVocabulary().SaveToFile(vocab_file_)) {
+        return arrow::Status::IOError(
+            "TextTokenizer: failed to save built vocab_file '" +
+            vocab_file_ + "'");
+    }
+    spdlog::info("TextTokenizer: built and saved vocabulary '{}' with {} entries",
+                 vocab_file_, tokenizer.GetVocabulary().Size());
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildWideTable(
+    const std::vector<std::string>& texts, const Tokenizer& tokenizer, const std::vector<int>& labels,
+    const std::vector<std::string>& class_names, const WideProgress& report_progress) {
+    const auto report = [&](const std::string& stage, const std::string& message, double progress,
+                            uint64_t processed, uint64_t total) {
+        if (report_progress) report_progress(stage, message, progress, processed, total);
+    };
+    const uint64_t total_rows = static_cast<uint64_t>(texts.size());
+    // Encode + pad. EncodeBatch then PadBatch produces the final
+    // [num_samples, max_length] int matrix.
+    report("Tokenizing rows", "Encoding and padding text rows", 0.40, 0, total_rows);
+    std::vector<std::vector<int>> encoded;
+    try {
+        encoded = tokenizer.EncodeBatch(texts);
+    } catch (const std::exception& e) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        return arrow::Status::Invalid("TextTokenizer: ", e.what());
+    }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+    auto padded = tokenizer.PadBatch(encoded, max_length_);
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+    if (pad_value_ != tokenizer.GetVocabulary().PadIndex()) {
+        const int tokenizer_pad = tokenizer.GetVocabulary().PadIndex();
+        size_t row_index = 0;
+        for (auto& row : padded) {
+            if ((row_index & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
+            for (int& id : row) {
+                if (id == tokenizer_pad) {
+                    id = pad_value_;
+                }
+            }
+            ++row_index;
+        }
+    }
+
+    const size_t n = padded.size();
+    report("Rows tokenized", "Encoded and padded " + std::to_string(n) + " text rows", 0.55,
+           static_cast<uint64_t>(n), total_rows);
+
+    // Build wide output columns: tok_0 .. tok_{max-1}, y.
+    report("Building Arrow columns", "Allocating token output columns", 0.60, 0, static_cast<uint64_t>(n));
+    arrow::MemoryPool* pool = arrow::default_memory_pool();
+    std::vector<std::unique_ptr<arrow::FloatBuilder>> tok_builders;
+    tok_builders.reserve(max_length_);
+    for (int i = 0; i < max_length_; ++i) {
+        tok_builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
+        ARROW_RETURN_NOT_OK(tok_builders.back()->Reserve(static_cast<int64_t>(n)));
+    }
+    arrow::Int32Builder label_builder(pool);
+    if (!labels.empty()) {
+        ARROW_RETURN_NOT_OK(label_builder.Reserve(static_cast<int64_t>(n)));
+    }
+
+    for (size_t r = 0; r < n; ++r) {
+        if ((r & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
+        const auto& row = padded[r];
+        for (int i = 0; i < max_length_; ++i) {
+            const float v = (i < static_cast<int>(row.size()))
+                ? static_cast<float>(row[i]) : 0.0f;
+            ARROW_RETURN_NOT_OK(tok_builders[i]->Append(v));
+        }
+        if (!labels.empty()) {
+            ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
+        }
+        if ((r + 1) == n || ((r + 1) % 1024) == 0) {
+            const double row_progress =
+                n == 0 ? 0.90 : 0.60 + (0.30 * static_cast<double>(r + 1) /
+                                        static_cast<double>(n));
+            report("Building token rows", "Writing token rows to Arrow columns", row_progress,
+                   static_cast<uint64_t>(r + 1), static_cast<uint64_t>(n));
+        }
+    }
+
+    report("Finishing Arrow table", "Finalizing tokenized Arrow table", 0.95, static_cast<uint64_t>(n),
+           static_cast<uint64_t>(n));
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    arrays.reserve(max_length_ + (labels.empty() ? 0 : 1));
+    fields.reserve(max_length_ + (labels.empty() ? 0 : 1));
+    for (int i = 0; i < max_length_; ++i) {
+        std::shared_ptr<arrow::Array> arr;
+        ARROW_RETURN_NOT_OK(tok_builders[i]->Finish(&arr));
+        arrays.push_back(std::move(arr));
+        fields.push_back(arrow::field("tok_" + std::to_string(i), arrow::float32()));
+    }
+    // A label column with no rows (a streamed row group of none) still has its y.
+    if (!labels.empty() || (!label_col_.empty() && n == 0)) {
+        std::shared_ptr<arrow::Array> arr;
+        ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
+        arrays.push_back(std::move(arr));
+        // The class numbers keep their names (Run Test shows them).
+        fields.push_back(class_names.empty()
+                             ? arrow::field("y", arrow::int32())
+                             : arrow::field("y", arrow::int32(), true, ClassNamesMetadata(class_names)));
+    }
+    return arrow::Table::Make(arrow::schema(fields), arrays, static_cast<int64_t>(n));
+}
+
+bool TextTokenizerOperator::SupportsStreaming() const {
+    if (output_mode_ != "wide") return false;
+    if (!vocab_file_.empty() && std::filesystem::exists(vocab_file_)) return true;
+    const auto type = MakeTokenizer().GetType();
+    return type == TokenizerType::Whitespace || type == TokenizerType::Word || type == TokenizerType::Character;
+}
+
+arrow::Status TextTokenizerOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
+    const auto text_field = schema ? schema->GetFieldByName(text_col_) : nullptr;
+    if (!text_field) {
+        return arrow::Status::KeyError("TextTokenizer: text column '" + text_col_ + "' not found");
+    }
+    const auto text_type = text_field->type()->id();
+    if (text_type != arrow::Type::STRING && text_type != arrow::Type::LARGE_STRING) {
+        return arrow::Status::TypeError("TextTokenizer: text column '" + text_col_ +
+                                        "' must be string/large_string, got '" + text_field->type()->ToString() + "'");
+    }
+    stream_string_labels_ = false;
+    if (!label_col_.empty()) {
+        const auto label_field = schema->GetFieldByName(label_col_);
+        if (!label_field) {
+            return arrow::Status::KeyError("TextTokenizer: label column '" + label_col_ + "' not found");
+        }
+        const auto label_type = label_field->type()->id();
+        stream_string_labels_ = label_type == arrow::Type::STRING || label_type == arrow::Type::LARGE_STRING;
+    }
+    stream_tokenizer_ = std::make_unique<Tokenizer>(MakeTokenizer());
+    stream_counts_.clear();
+    stream_label_ids_.clear();
+    stream_class_names_.clear();
+    stream_vocab_ready_ = false;
+    if (!vocab_file_.empty() && std::filesystem::exists(vocab_file_)) {
+        if (!stream_tokenizer_->GetVocabulary().LoadFromFile(vocab_file_)) {
+            return arrow::Status::Invalid("TextTokenizer: failed to load vocab_file '" + vocab_file_ + "'");
+        }
+        try {
+            CheckLoadedVocabulary(*stream_tokenizer_);
+        } catch (const std::exception& e) {
+            return arrow::Status::Invalid("TextTokenizer: ", e.what());
+        }
+        stream_vocab_ready_ = true;
+    } else if (!vocab_file_.empty() && !vocab_build_if_missing_) {
+        return arrow::Status::Invalid(
+            "TextTokenizer: vocab_file '" + vocab_file_ +
+            "' does not exist. Enable vocab_build_if_missing, build it from the TextTokenizer dialog, or remove vocab_file to train in memory.");
+    }
+    return arrow::Status::OK();
+}
+
+arrow::Status TextTokenizerOperator::FitBatch(const std::shared_ptr<arrow::Table>& batch) {
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+    std::string bad_type;
+    if (!stream_vocab_ready_) {
+        std::vector<std::string> texts;
+        if (!ReadColumnAsStrings(batch->GetColumnByName(text_col_), texts, bad_type, GetCancellationQuery())) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            return arrow::Status::TypeError("TextTokenizer: text column '" + text_col_ +
+                                            "' must be string/large_string, got '" + bad_type + "'");
+        }
+        try {
+            stream_tokenizer_->CountTokens(texts, stream_counts_);
+        } catch (const std::exception& e) {
+            return arrow::Status::Invalid("TextTokenizer: ", e.what());
+        }
+    }
+    if (stream_string_labels_) {
+        // The classes in file order, as ReadLabelColumnAsInt numbers them over
+        // the whole column.
+        std::vector<int> ids;
+        std::vector<std::string> names;
+        if (!ReadLabelColumnAsInt(batch->GetColumnByName(label_col_), ids, names, bad_type, GetCancellationQuery())) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            return arrow::Status::TypeError("TextTokenizer: label column '" + label_col_ +
+                                            "' has unsupported type '" + bad_type + "'");
+        }
+        for (const auto& name : names) {
+            if (stream_label_ids_.emplace(name, static_cast<int>(stream_class_names_.size())).second)
+                stream_class_names_.push_back(name);
+        }
+    }
+    return arrow::Status::OK();
+}
+
+arrow::Status TextTokenizerOperator::EndFit() {
+    if (!stream_vocab_ready_) {
+        try {
+            stream_tokenizer_->TrainFromCounts(stream_counts_, min_word_freq_, max_vocab_size_);
+            CheckLoadedVocabulary(*stream_tokenizer_);
+        } catch (const std::exception& e) {
+            return arrow::Status::Invalid("TextTokenizer: ", e.what());
+        }
+        stream_counts_.clear();
+        if (!vocab_file_.empty()) ARROW_RETURN_NOT_OK(SaveBuiltVocabulary(*stream_tokenizer_));
+        stream_vocab_ready_ = true;
+    }
+    last_vocab_size_ = stream_tokenizer_->GetVocabulary().Size();
+    spdlog::info("TextTokenizer: vocabulary of {} entries counted a row group at a time, {} classes",
+                 last_vocab_size_, stream_class_names_.size());
+    return arrow::Status::OK();
+}
+
+arrow::Status TextTokenizerOperator::StreamLabels(const std::shared_ptr<arrow::Table>& batch,
+                                                  std::vector<int>& labels) {
+    labels.clear();
+    if (label_col_.empty()) return arrow::Status::OK();
+    std::vector<std::string> names;
+    std::string bad_type;
+    if (!ReadLabelColumnAsInt(batch->GetColumnByName(label_col_), labels, names, bad_type, GetCancellationQuery())) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        return arrow::Status::TypeError("TextTokenizer: label column '" + label_col_ +
+                                        "' has unsupported type '" + bad_type + "'");
+    }
+    if (!stream_string_labels_) return arrow::Status::OK();
+    // Batch-local ids to the classes of the whole file.
+    for (int& id : labels) {
+        const auto found = stream_label_ids_.find(names[static_cast<size_t>(id)]);
+        if (found == stream_label_ids_.end())
+            return arrow::Status::Invalid("TextTokenizer: label '" + names[static_cast<size_t>(id)] +
+                                          "' was not seen while counting");
+        id = found->second;
+    }
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::ApplyBatch(
+    const std::shared_ptr<arrow::Table>& batch) {
+    if (!stream_tokenizer_ || !stream_vocab_ready_) {
+        return arrow::Status::Invalid("TextTokenizer: ApplyBatch before the vocabulary is ready");
+    }
+    std::vector<std::string> texts;
+    std::string bad_type;
+    if (!ReadColumnAsStrings(batch->GetColumnByName(text_col_), texts, bad_type, GetCancellationQuery())) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        return arrow::Status::TypeError("TextTokenizer: text column '" + text_col_ +
+                                        "' must be string/large_string, got '" + bad_type + "'");
+    }
+    std::vector<int> labels;
+    ARROW_RETURN_NOT_OK(StreamLabels(batch, labels));
+    return BuildWideTable(texts, *stream_tokenizer_, labels, stream_class_names_, {});
+}
+
+arrow::Status TextTokenizerOperator::EndStream() {
+    stream_tokenizer_.reset();
+    stream_label_ids_.clear();
+    return arrow::Status::OK();
+}
+
 arrow::Result<std::shared_ptr<arrow::Table>>
 TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     CYXWIZ_PROFILE_ZONE("CyxWiz TextTokenizer Materializer");
@@ -503,51 +815,12 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         progress_callback_(event);
     };
 
-    auto make_tokenizer = [&]() {
-        TokenizerType tt = TokenizerType::Word;
-        switch (tokenizer_type_) {
-            case 0: tt = TokenizerType::Whitespace; break;
-            case 2: tt = TokenizerType::Character; break;
-            case 3: tt = TokenizerType::ByteBPE; break;
-            case 4: tt = TokenizerType::WordPiece; break;
-            case 5: tt = TokenizerType::SentencePieceBPE; break;
-            case 6: tt = TokenizerType::SentencePieceUnigram; break;
-            default: tt = TokenizerType::Word; break;
-        }
-        Tokenizer tokenizer(tt);
-        if (bpe_piece_policy_ == "leading_space_v2")
-            tokenizer.SetBPEFitPiecePolicy(ByteBPEPiecePolicy::LeadingSpaceV2);
-        if (bpe_initial_unit_ == "unicode_character")
-            tokenizer.SetBPEFitInitialUnit(BPEInitialUnit::UnicodeCharacter);
-        tokenizer.SetCancellationQuery(GetCancellationQuery());
-        tokenizer.SetLowercase(lowercase_);
-        tokenizer.SetMaxLength(max_length_);
-        tokenizer.SetPadding(true);
-        tokenizer.SetTruncation(true);
-        return tokenizer;
-    };
-
-    auto validate_vocabulary = [&](const Tokenizer& tokenizer) {
-        tokenizer.ValidateVocabulary();
-        if (!bpe_initial_unit_.empty()) {
-            const auto expected = bpe_initial_unit_ == "byte" ? BPEInitialUnit::Byte : BPEInitialUnit::UnicodeCharacter;
-            if (tokenizer.GetVocabulary().GetBPEInitialUnit() != expected)
-                throw std::invalid_argument("BPE initial unit differs from vocab_file; follow the saved vocabulary or select a new file for refitting");
-        }
-        if (!bpe_piece_policy_.empty()) {
-            const auto expected = bpe_piece_policy_ == "leading_space_v2"
-                ? ByteBPEPiecePolicy::LeadingSpaceV2 : ByteBPEPiecePolicy::WhitespaceV1;
-            if (tokenizer.GetVocabulary().GetBPEPiecePolicy() != expected)
-                throw std::invalid_argument("ByteBPE piece policy differs from vocab_file; select the artifact policy or a new vocabulary path for refitting");
-        }
-    };
-
     if (output_mode_ == "decode") {
         if (vocab_file_.empty()) {
             return arrow::Status::Invalid(
                 "TextTokenizer: decode output_mode requires vocab_file");
         }
-        Tokenizer tokenizer = make_tokenizer();
+        Tokenizer tokenizer = MakeTokenizer();
         if (!std::filesystem::exists(vocab_file_) ||
             !tokenizer.GetVocabulary().LoadFromFile(vocab_file_)) {
             return arrow::Status::Invalid(
@@ -555,7 +828,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "' for decode");
         }
         try {
-            validate_vocabulary(tokenizer);
+            CheckLoadedVocabulary(tokenizer);
         } catch (const std::exception& e) {
             return arrow::Status::Invalid("TextTokenizer: ", e.what());
         }
@@ -643,7 +916,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // Build tokenizer + vocab from the corpus. Round-trip inspection checks
     // encode/decode identity for the artifact itself, so it must not pad or
     // truncate source text by the training context length.
-    Tokenizer tokenizer = make_tokenizer();
+    Tokenizer tokenizer = MakeTokenizer();
     if (output_mode_ == "roundtrip") {
         tokenizer.SetPadding(false);
         tokenizer.SetTruncation(false);
@@ -670,23 +943,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                         estimated_token_matrix_bytes);
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        const std::filesystem::path path(vocab_file_);
-        if (path.has_parent_path()) {
-            std::error_code ec;
-            std::filesystem::create_directories(path.parent_path(), ec);
-            if (ec) {
-                return arrow::Status::IOError(
-                    "TextTokenizer: failed to create vocabulary directory '" +
-                    path.parent_path().string() + "': " + ec.message());
-            }
-        }
-        if (!tokenizer.GetVocabulary().SaveToFile(vocab_file_)) {
-            return arrow::Status::IOError(
-                "TextTokenizer: failed to save built vocab_file '" +
-                vocab_file_ + "'");
-        }
-        spdlog::info("TextTokenizer: built and saved vocabulary '{}' with {} entries",
-                     vocab_file_, tokenizer.GetVocabulary().Size());
+        ARROW_RETURN_NOT_OK(SaveBuiltVocabulary(tokenizer));
     } else if (!vocab_file_.empty()) {
         return arrow::Status::Invalid(
             "TextTokenizer: vocab_file '" + vocab_file_ +
@@ -701,7 +958,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     }
-    validate_vocabulary(tokenizer);
+    CheckLoadedVocabulary(tokenizer);
     } catch (const std::exception& e) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::Invalid("TextTokenizer: ", e.what());
@@ -733,50 +990,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
     if (output_mode_=="causal_windows") return BuildTokenWindows(input,texts,tokenizer);
 
-    // Encode + pad. EncodeBatch then PadBatch produces the final
-    // [num_samples, max_length] int matrix.
-    report_progress("Tokenizing rows",
-                    "Encoding and padding text rows",
-                    0.40,
-                    0,
-                    total_rows,
-                    estimated_token_matrix_bytes);
-    std::vector<std::vector<int>> encoded;
-    try {
-        encoded = tokenizer.EncodeBatch(texts);
-    } catch (const std::exception& e) {
-        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        return arrow::Status::Invalid("TextTokenizer: ", e.what());
-    }
-    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-    auto padded = tokenizer.PadBatch(encoded, max_length_);
-    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-    if (pad_value_ != tokenizer.GetVocabulary().PadIndex()) {
-        const int tokenizer_pad = tokenizer.GetVocabulary().PadIndex();
-        size_t row_index = 0;
-        for (auto& row : padded) {
-            if ((row_index & 1023) == 0) {
-                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-            }
-            for (int& id : row) {
-                if (id == tokenizer_pad) {
-                    id = pad_value_;
-                }
-            }
-            ++row_index;
-        }
-    }
-
-    const size_t n = padded.size();
-    report_progress("Rows tokenized",
-                    "Encoded and padded " + std::to_string(n) +
-                    " text rows",
-                    0.55,
-                    static_cast<uint64_t>(n),
-                    total_rows,
-                    estimated_token_matrix_bytes);
-
-    // Read label column if specified.
+    // Class ids first (one per row), then the token rows.
     std::vector<int> labels;
     std::vector<std::string> class_names;
     if (!label_col_.empty()) {
@@ -794,86 +1008,18 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "TextTokenizer: label column '" + label_col_ +
                 "' has unsupported type '" + lbad + "'");
         }
-        if (labels.size() != n) {
+        if (labels.size() != texts.size()) {
             return arrow::Status::Invalid(
                 "TextTokenizer: label count (" + std::to_string(labels.size()) +
-                ") differs from text count (" + std::to_string(n) + ")");
+                ") differs from text count (" + std::to_string(texts.size()) + ")");
         }
     }
-
-    // Build wide output columns: tok_0 .. tok_{max-1}, y.
-    report_progress("Building Arrow columns",
-                    "Allocating token output columns",
-                    0.60,
-                    0,
-                    static_cast<uint64_t>(n),
-                    estimated_token_matrix_bytes);
-    arrow::MemoryPool* pool = arrow::default_memory_pool();
-    std::vector<std::unique_ptr<arrow::FloatBuilder>> tok_builders;
-    tok_builders.reserve(max_length_);
-    for (int i = 0; i < max_length_; ++i) {
-        tok_builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
-        ARROW_RETURN_NOT_OK(tok_builders.back()->Reserve(static_cast<int64_t>(n)));
-    }
-    arrow::Int32Builder label_builder(pool);
-    if (!labels.empty()) {
-        ARROW_RETURN_NOT_OK(label_builder.Reserve(static_cast<int64_t>(n)));
-    }
-
-    for (size_t r = 0; r < n; ++r) {
-        if ((r & 1023) == 0) {
-            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        }
-        const auto& row = padded[r];
-        for (int i = 0; i < max_length_; ++i) {
-            const float v = (i < static_cast<int>(row.size()))
-                ? static_cast<float>(row[i]) : 0.0f;
-            ARROW_RETURN_NOT_OK(tok_builders[i]->Append(v));
-        }
-        if (!labels.empty()) {
-            ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
-        }
-        if ((r + 1) == n || ((r + 1) % 1024) == 0) {
-            const double row_progress =
-                n == 0 ? 0.90 : 0.60 + (0.30 * static_cast<double>(r + 1) /
-                                        static_cast<double>(n));
-            report_progress("Building token rows",
-                            "Writing token rows to Arrow columns",
-                            row_progress,
-                            static_cast<uint64_t>(r + 1),
-                            static_cast<uint64_t>(n),
-                            estimated_token_matrix_bytes);
-        }
-    }
-
-    report_progress("Finishing Arrow table",
-                    "Finalizing tokenized Arrow table",
-                    0.95,
-                    static_cast<uint64_t>(n),
-                    static_cast<uint64_t>(n),
-                    estimated_token_matrix_bytes);
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
-    std::vector<std::shared_ptr<arrow::Field>> fields;
-    arrays.reserve(max_length_ + (labels.empty() ? 0 : 1));
-    fields.reserve(max_length_ + (labels.empty() ? 0 : 1));
-    for (int i = 0; i < max_length_; ++i) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(tok_builders[i]->Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("tok_" + std::to_string(i), arrow::float32()));
-    }
-    if (!labels.empty()) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
-        arrays.push_back(std::move(arr));
-        // The class numbers keep their names (Run Test shows them).
-        fields.push_back(class_names.empty()
-                             ? arrow::field("y", arrow::int32())
-                             : arrow::field("y", arrow::int32(), true, ClassNamesMetadata(class_names)));
-    }
-
-    auto out_schema = arrow::schema(fields);
-    auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
+    ARROW_ASSIGN_OR_RAISE(auto out_table, BuildWideTable(texts, tokenizer, labels, class_names,
+        [&](const std::string& stage, const std::string& message, double progress, uint64_t processed,
+            uint64_t total) {
+            report_progress(stage, message, progress, processed, total, estimated_token_matrix_bytes);
+        }));
+    const size_t n = static_cast<size_t>(out_table->num_rows());
 
     spdlog::info("TextTokenizer: {} samples tokenized, vocab_size={}, "
                  "max_length={}, classes={}",

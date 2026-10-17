@@ -163,6 +163,17 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             cyxwiz::FormatDataBytes(cyxwiz::DefaultDataBudgetBytes()).c_str(),
                             cyxwiz::FormatDataBytes(cyxwiz::DataBudgetBytes()).c_str(),
                             cyxwiz::FormatDataBytes(cyxwiz::DataResultThresholdBytes()).c_str());
+                        // The device's share (TOFIX157 A1): kept apart from the data.
+                        ImGui::TextDisabled(
+                            "The compute device takes about %s of this PC's %s when it starts; data may use at most %s.",
+                            cyxwiz::FormatDataBytes(cyxwiz::kDeviceStartupReserveBytes).c_str(),
+                            cyxwiz::FormatDataBytes(cyxwiz::PhysicalMemoryBytes()).c_str(),
+                            cyxwiz::FormatDataBytes(cyxwiz::MaxDataBudgetBytes()).c_str());
+                        if (cyxwiz::RequestedDataBudgetBytes() > cyxwiz::DataBudgetBytes())
+                            ImGui::TextColored(ui::CurrentTokens().warning,
+                                               "%s is more than that: data gets %s.",
+                                               cyxwiz::FormatDataBytes(cyxwiz::RequestedDataBudgetBytes()).c_str(),
+                                               cyxwiz::FormatDataBytes(cyxwiz::DataBudgetBytes()).c_str());
                         ImGui::PopTextWrapPos();
                     }
 

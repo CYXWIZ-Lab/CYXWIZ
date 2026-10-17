@@ -274,7 +274,9 @@ least, at most; all rows or the rows where a column is true or has a value),
 numeric column in a **range**. A failing check stops the run with the count and
 the first offending value; nothing after it runs, and its result from an
 earlier run is dropped. A guided step's **Add checks** become these nodes when
-the step is saved. **Validate** lists them all and adds new ones.
+the step is saved: in Prepare, in the SQL Workbench, or by switching the
+operation on in Properties (they need to be its last operation that is on).
+**Validate** lists them all and adds new ones.
 
 ## Validate
 
@@ -373,8 +375,15 @@ Publish, Run step or Execute Pipeline. Publish shows the selected output's:
 - **Made by**: the recipe and its revision (the first 12 hex digits of the
   SHA-256 of its steps' types and settings, so any change to a step changes
   it) and the number of steps;
-- **Inputs**: each Data Input's file with its size and SHA-256;
-- **Result**: rows, columns, the file's size and SHA-256;
+- **Inputs**: each Data Input's file with its size and SHA-256. A file is
+  hashed once (the digest is kept by path, size and write time in the
+  project's `cache/ingestion/digests`). A CSV over the data budget's result
+  threshold is hashed while it is converted, so it is not read again. A
+  larger file never read in full (a Parquet file opened in place) shows *not
+  hashed (large file; size and time identify it)*, and the lineage file holds
+  its write time;
+- **Result**: rows, columns, the file's size and SHA-256 (hashed while the
+  file is written, so the export is not read back);
 - **Checks**: *4 of 4 pass*, or the first one that did not;
 - **Written**: when, from which graph file.
 
@@ -398,7 +407,8 @@ rail (or the last step); its format and file are set in its dialog.
 ## Results
 
 A model's results next to the data. Pick **Language model previews** or
-**Classifier test**.
+**Test run**. The job's line counts what there is to show (*test: 72 rows ·
+2 preview runs*, and any evaluation nodes in the graph).
 
 **Language model previews** reads the generation previews a causal language
 model's training writes each epoch (`checkpoints/<graph>/<run>/
@@ -422,12 +432,46 @@ that wrote previews, newest first; **Epoch** picks one of its epochs.
 These are the run's few preview prompts; the full table of an evaluation set
 comes from batch evaluation (TOFIX149 item 4).
 
-**Classifier test** reads the latest test run's per-row predictions (the
-`test_predictions` table, published when a classifier is tested):
+**Test run** shows the latest test in a few lines: its headline (*Accuracy
+94.44%*, *MAE 0.1234*), how many rows it tested and its other figures, read
+back from the run's per-row predictions (the `test_predictions` table,
+published when a model is tested with Train > Test) with the same calculation
+and words as the Test Results panel. **Open Test Results** opens that panel,
+the one full view of a test: the confusion matrix, the classes, the curves,
+each prediction with its dataset row, a regression's rows by error, and the
+error by the values of a column of the tested table (see
+[testing.md](testing.md)).
 
-- **Accuracy** and the number of wrong rows;
-- **Confusion**: true classes down, predicted across (the class names come from
-  the score columns), right answers green;
-- **precision** and **recall** per class (recall under 60% in amber);
-- **Worst rows**: the wrong rows the model was most sure of, by their place in
-  the test set.
+`test_predictions` has a `row_id` column (each test row's row in the tested
+table, counted from 0), and its metadata keeps the tested table's name, the
+class names, the loss and the time, so the results join back to the data and
+a copy read back later gives the whole run.
+
+**Keep as node** (on the *In the graph* line of Results) keeps the latest test
+for later: testing again replaces `test_predictions`, a kept test stays. Give
+it a name (the graph's name and *test* to start with); **Keep**:
+
+- saves the test's rows once as `results/tests/<name>_<date>_<time>.parquet`
+  in the project (an existing file is never replaced), with its tested table,
+  class names, loss and time and the name it was kept under;
+- adds a **Data Input** named after it reading that file and a **Test
+  Evaluation** node after it, in free space on the canvas (Ctrl+Z removes
+  them; the file stays). The line under the jobs then counts *1 evaluation
+  node*.
+
+The **Test Evaluation** node (Analytics) reads any test's per-row table (a
+kept test, or `test_predictions` itself) and gives the Test Results panel's
+figures as four tables:
+
+| Output | Columns |
+| --- | --- |
+| Metrics | `metric`, `value`: accuracy, macro precision / recall / F1, weighted F1, AUC, loss, rows (regression: MAE, RMSE, bias, loss, rows) |
+| Confusion | `true`, `predicted`, `count` (a classifier) |
+| Per class | `class`, `rows`, `precision`, `recall`, `f1` (a classifier) |
+| Worst rows | `dataset_row` (counted from 1), `true`, `predicted`, `confidence`: the most confident mistakes; regression: `error`, the largest errors first |
+
+*Worst rows* keeps 20 rows (Properties: **worst_rows**). A table that is not a
+test's is refused (*not a test's predictions*).
+
+**Kept tests** under the latest test lists the project's kept tests, newest
+first; **Open** shows one in Test Results.

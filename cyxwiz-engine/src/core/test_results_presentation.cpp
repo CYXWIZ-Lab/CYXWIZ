@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 
 namespace cyxwiz::test_report {
@@ -216,6 +217,33 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
             if (m.predictions[i] == m.ground_truth[i]) ++v.correct;
             else v.mistakes.push_back(static_cast<int>(i));
         }
+        // The most confident mistakes first: the rows worth a look.
+        if (m.confidences.size() >= samples)
+            std::stable_sort(v.mistakes.begin(), v.mistakes.end(), [&m](int a, int b) {
+                return m.confidences[static_cast<size_t>(a)] > m.confidences[static_cast<size_t>(b)];
+            });
+    }
+
+    // A regression's kept rows: the bias (mean of predicted - true over every
+    // target value) and the rows by their mean |error|, largest first.
+    if (m.regression_mode && m.regression_width > 0 && !m.regression_truth.empty() &&
+        m.regression_truth.size() == m.regression_predictions.size()) {
+        const size_t width = static_cast<size_t>(m.regression_width);
+        const size_t rows = m.regression_truth.size() / width;
+        std::vector<double> row_error(rows, 0.0);
+        double bias = 0.0;
+        for (size_t i = 0; i < rows * width; ++i) {
+            const double e = static_cast<double>(m.regression_predictions[i]) - m.regression_truth[i];
+            bias += e;
+            row_error[i / width] += std::abs(e) / static_cast<double>(width);
+        }
+        bias /= static_cast<double>(rows * width);
+        v.facts.emplace_back("Bias", (bias >= 0.0 ? "+" : "") + Fixed(bias, 4) +
+                                         (bias > 0.0 ? " (predicts high)" : bias < 0.0 ? " (predicts low)" : ""));
+        v.largest_errors.resize(rows);
+        for (size_t i = 0; i < rows; ++i) v.largest_errors[i] = static_cast<int>(i);
+        std::stable_sort(v.largest_errors.begin(), v.largest_errors.end(),
+                         [&row_error](int a, int b) { return row_error[static_cast<size_t>(a)] > row_error[static_cast<size_t>(b)]; });
     }
 
     if (previous && !IsFailedRun(*previous)) AddComparison(v, *previous, m);

@@ -301,7 +301,7 @@ DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
         // The data budget bounds DuckDB too; over it, sorts, joins and
         // group-bys spill to the spill directory instead of failing. Set
         // before external access is switched off, which locks temp_directory.
-        opened_budget_ = DataBudgetBytes();
+        opened_budget_ = DataBudgetShareBytes();
         opened_spill_ = DataSpillDirectory();
         config.SetOptionByName("memory_limit",
                                duckdb::Value(std::to_string(std::max<uint64_t>(64, opened_budget_ >> 20)) + "MB"));
@@ -312,7 +312,12 @@ DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
         const uint64_t threads = std::clamp<uint64_t>(opened_budget_ / (256ULL << 20), 1,
                                                       std::max(1u, std::thread::hardware_concurrency()));
         config.SetOptionByName("threads", duckdb::Value::BIGINT(static_cast<int64_t>(threads)));
-        const std::string& spill = opened_spill_;
+        // A folder of its own under the spill directory: DuckDBs running at
+        // once (sibling branches) would otherwise share spill file names.
+        static std::atomic<uint64_t> opened{0};
+        const std::string spill = opened_spill_.empty() ? std::string() :
+            (std::filesystem::path(opened_spill_) /
+             (std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" + std::to_string(++opened))).string();
         std::error_code spill_error;
         if (!spill.empty() && (std::filesystem::create_directories(spill, spill_error), !spill_error)) {
             config.SetOptionByName("temp_directory", duckdb::Value(spill));
@@ -327,7 +332,13 @@ DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
         config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
         for (auto& dir : allowed_directories) config.options.allowed_directories.insert(std::move(dir));
         config.SetOptionByName("lock_configuration", duckdb::Value::BOOLEAN(true));
-        db_ = std::make_unique<duckdb::DuckDB>(nullptr, &config);
+        // The spill folder goes with the database (connections made by
+        // NewConnection share it).
+        db_ = std::shared_ptr<duckdb::DuckDB>(new duckdb::DuckDB(nullptr, &config), [spill](duckdb::DuckDB* db) {
+            delete db;
+            std::error_code ignored;
+            if (!spill.empty()) std::filesystem::remove_all(spill, ignored);
+        });
         conn_ = std::make_unique<duckdb::Connection>(*db_);
         spdlog::debug("DuckDB connector initialized (in-memory, no file or network access)");
     } catch (const std::exception& e) {
@@ -459,7 +470,7 @@ DuckDBConnector::DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db) 
 }
 
 bool DuckDBConnector::MatchesDataBudget() const {
-    return opened_budget_ == DataBudgetBytes() && opened_spill_ == DataSpillDirectory();
+    return opened_budget_ == DataBudgetShareBytes() && opened_spill_ == DataSpillDirectory();
 }
 
 std::unique_ptr<DuckDBConnector> DuckDBConnector::NewConnection() {

@@ -306,11 +306,11 @@ public:
     Optimizer* GetOptimizer() { return optimizer_.get(); }
 
     /**
-     * Release ownership of the model (transfers ownership to caller)
+     * Release ownership of the trained model (transfers ownership to caller):
+     * a sequential model or a graph with branches (TOFIX157), for Test and,
+     * when sequential (AsSequentialModel), Save / Export.
      */
-    std::unique_ptr<SequentialModel> ReleaseModel() {
-        return model_ ? model_->ReleaseSequentialModel() : nullptr;
-    }
+    std::unique_ptr<IExecutableModel> ReleaseModel() { return std::move(model_); }
 
     /**
      * Release ownership of the optimizer (transfers ownership to caller)

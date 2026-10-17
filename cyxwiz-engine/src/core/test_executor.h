@@ -5,6 +5,7 @@
 #include "dataset_batcher.h"
 #include "data_registry.h"
 #include "test_dataset_selection.h"
+#include "executable_model.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
@@ -94,6 +95,17 @@ struct TestingMetrics {
     std::vector<int> predictions;
     std::vector<int> ground_truth;
     std::vector<float> confidences;
+    // Regression: the true and predicted targets per sample, row-major
+    // [samples][regression_width]; empty when the test set has too many
+    // values to keep (regression_note says so).
+    std::vector<float> regression_truth;
+    std::vector<float> regression_predictions;
+    int regression_width = 0;
+    std::string regression_note;
+    // The dataset row of each sample (as Batch::row_ids), in the table named
+    // source_dataset; empty when the test batcher does not report rows.
+    std::vector<int64_t> row_ids;
+    std::string source_dataset;
 
     // Per-sample class probabilities, row-major [total_samples][probability_classes]
     // (binary: P(class 0), P(class 1)), kept for the ROC / PR curves. Empty when
@@ -121,6 +133,14 @@ struct TestingMetrics {
 /**
  * Callback types for testing progress
  */
+// The end of a classifier test: per-class precision / recall / F1 from the
+// confusion matrix (a class without a name gets "Class N"), the macro and
+// support-weighted averages, accuracy, and the ROC / precision-recall curves
+// from the kept class probabilities. A test run and a test read back from its
+// per-row table (test_predictions_metrics.h) both finish with it, so every
+// view shows the same numbers.
+void FinishClassifierMetrics(TestingMetrics& m);
+
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 
@@ -193,6 +213,10 @@ public:
      */
     // Pass the recorded owner when handing off from a different thread.
     // Omitting it means the calling thread owns the supplied model's tensors.
+    // Any trained model: sequential or a graph with branches (TOFIX157).
+    void SetModel(std::shared_ptr<IExecutableModel> model,
+                  std::optional<ProcessDeviceSelection> model_device = std::nullopt);
+    // A layer stack someone else holds (shared, not copied).
     void SetModel(std::shared_ptr<SequentialModel> model,
                   std::optional<ProcessDeviceSelection> model_device = std::nullopt);
 
@@ -222,7 +246,7 @@ private:
     TestingMetrics metrics_;
 
     // Model and loss (no optimizer needed for testing)
-    std::shared_ptr<SequentialModel> model_;
+    std::shared_ptr<IExecutableModel> model_;
     std::optional<ProcessDeviceSelection> model_device_;
     std::unique_ptr<Loss> loss_;
     RegressionMetricAccumulator regression_metrics_;
@@ -249,17 +273,6 @@ private:
     // the 1-NN / Pair / Retrieval evaluation of the test rows.
     void TestMetricLearning(IBatcher& rows, int batch_size);
 
-    /**
-     * Compute per-class metrics from confusion matrix
-     */
-    void ComputePerClassMetrics();
-
-    /**
-     * Compute macro and weighted averages
-     */
-    void ComputeAggregateMetrics();
-    // ROC / precision-recall from the kept class probabilities (TOFIX140).
-    void ComputeCurves();
     void ApplyLabelClassNames(const std::vector<std::string>& names);
 
     /**

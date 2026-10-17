@@ -35,6 +35,10 @@ inline constexpr size_t kPreparationRecipeMaxInputs = 8;
 
 // True when a node of this type may be a step inside a recipe.
 bool IsPreparationRecipeStepType(gui::NodeType type);
+// The kind of step a recipe step type is, as the palette groups them under
+// Advanced operations (TOFIX157): "Rows", "Columns", "Text", "Combine" or
+// "SQL and checks"; nullptr for a type that is not a recipe step.
+const char* RecipeStepGroup(gui::NodeType type);
 
 // Why this subgraph record cannot be a Preparation Recipe, or empty when it can.
 // `wrapper` is the wrapper node and `record` its entry in the document's

@@ -15,6 +15,7 @@
 
 // Forward declarations for Arrow
 namespace arrow {
+    class Schema;
     class Table;
 }
 
@@ -277,6 +278,17 @@ private:
  * - Memory management
  * - Dataset discovery
  */
+
+// What an export wrote: its rows, the file's size and SHA-256 (hashed as it
+// was written) and the table's schema (DataRegistry::ExportTableCSV / Parquet,
+// the JSON export; the lineage reads it).
+struct TabularExport {
+    int64_t rows = 0;
+    uint64_t bytes = 0;
+    std::string sha256;
+    std::shared_ptr<arrow::Schema> schema;
+};
+
 class DataRegistry {
 public:
     // Singleton access
@@ -612,9 +624,19 @@ public:
     std::shared_ptr<class ArrowDataset> LoadMLDatasetToArrow(const std::string& ml_type, const std::string& name);
 
     // Arrow export methods (for DataOutput node)
-    bool ExportArrowToCSV(const std::string& dataset_name, const std::string& output_path);
-    bool ExportArrowToParquet(const std::string& dataset_name, const std::string& output_path);
-    bool ExportArrowToJSON(const std::string& dataset_name, const std::string& output_path);
+    // The table under `name`, in memory or on disk, a piece at a time: the
+    // in-memory table, or one row group of a table on disk, so a reader needs
+    // memory for a row group, not the table (TOFIX157). False with `error`
+    // when the name is not a table, a row group cannot be read, or `visit`
+    // returns false (it sets `error` then).
+    bool VisitTablePieces(const std::string& name,
+                          const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
+                          std::shared_ptr<arrow::Schema>* schema, std::string& error);
+    // Writes the table under `name` (in memory or on disk) a piece at a time:
+    // CSV with a header and commas; Parquet with Snappy and row groups of up
+    // to 1,048,576 rows. `written` gets what was written.
+    bool ExportTableCSV(const std::string& name, const std::string& output_path, TabularExport* written = nullptr);
+    bool ExportTableParquet(const std::string& name, const std::string& output_path, TabularExport* written = nullptr);
 
     // Dataset unloading
     void UnloadDataset(const std::string& name);
@@ -743,6 +765,28 @@ private:
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
     std::map<std::string, MaterializationProvenance> materialization_provenance_;
+    // How each table LoadTabularCSV / LoadTabularParquet put in memory was
+    // loaded: the source file (path, size, time) and every option that
+    // changes the table. A second load of the same thing under another name
+    // shares that table instead of reading the file again (TOFIX157: Apply
+    // and a pipeline run each held their own copy of a Data Input). Weak:
+    // the entry counts only while that very dataset is still registered.
+    struct TabularLoad {
+        std::string key;
+        std::weak_ptr<class ArrowDataset> dataset;
+    };
+    std::map<std::string, TabularLoad> tabular_loads_;
+    // The key of a load of `path` with these options; empty when the file
+    // cannot be read (nothing is shared then).
+    static std::string TabularLoadKey(const std::string& path, const std::string& options);
+    // Registers `name` over the table of a dataset loaded with this key and
+    // returns it (the same dataset when `name` is that one); null when none
+    // is. `shared_from` gets the name it shares with.
+    std::shared_ptr<class ArrowDataset> ShareLoadedTableUnlocked(const std::string& key, const std::string& name,
+                                                                 const std::string& source_path,
+                                                                 std::string* shared_from);
+    void RecordTabularLoadUnlocked(const std::string& name, const std::string& key,
+                                   const std::shared_ptr<class ArrowDataset>& dataset);
     // Weak reservations avoid revisions/tombstones and cannot retain datasets.
     std::map<std::string, std::weak_ptr<const void>> tabular_publication_tokens_;
 

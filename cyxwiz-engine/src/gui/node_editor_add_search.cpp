@@ -5,9 +5,11 @@
 #include "icons.h"
 #include "../core/node_metadata.h"
 #include "../core/node_metadata_registry.h"
+#include "../core/node_palette.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
 #include "separate_windows.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -178,7 +180,11 @@ void NodeEditor::InitializeSearchableNodes() {
     // disabled by the click handler below.
     for (const auto* meta : reg.GetAllMetadata()) {
         if (!meta) continue;
+        const auto placed = cyxwiz::palette::PlaceNode(*meta);
+        if (placed.place == cyxwiz::palette::Place::Hidden) continue;
         SearchableNode node;
+        node.advanced_group = placed.advanced_group;
+        node.cant_run = placed.place == cyxwiz::palette::Place::CantRun;
         node.type = meta->type;
         node.name = meta->name;
         node.category = cyxwiz::GetCategoryDisplayName(meta->category);
@@ -230,13 +236,14 @@ void NodeEditor::InitializeSearchableNodes() {
 // Update filtered results based on current search query
 void NodeEditor::UpdateNodeAddSearchResults() {
     filtered_nodes_.clear();
+    node_add_search_.cant_run_matches = 0;
 
     std::string query(node_add_search_.search_buffer);
 
     // If query is empty, show all nodes
     if (query.empty()) {
         for (auto& node : all_searchable_nodes_) {
-            filtered_nodes_.push_back({100, &node});  // Default score
+            if (!node.cant_run) filtered_nodes_.push_back({100, &node});  // Default score
         }
     } else {
         // Score each node
@@ -253,15 +260,42 @@ void NodeEditor::UpdateNodeAddSearchResults() {
             }
         }
 
-        // Sort by score (highest first)
-        std::sort(filtered_nodes_.begin(), filtered_nodes_.end(),
-            [](const auto& a, const auto& b) { return a.first > b.first; });
+        // What runs first, then the table steps (Advanced operations), each
+        // by score; what cannot run yet is counted, listed only after "Show".
+        const auto rank = [](const SearchableNode* n) { return n->cant_run ? 2 : n->advanced_group.empty() ? 0 : 1; };
+        std::stable_sort(filtered_nodes_.begin(), filtered_nodes_.end(), [&](const auto& a, const auto& b) {
+            const int ra = rank(a.second), rb = rank(b.second);
+            return ra != rb ? ra < rb : a.first > b.first;
+        });
     }
+    std::vector<std::pair<int, SearchableNode*>> cant_run;
+    for (auto it = filtered_nodes_.begin(); it != filtered_nodes_.end();) {
+        if (it->second->cant_run) {
+            cant_run.push_back(*it);
+            it = filtered_nodes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    node_add_search_.cant_run_matches = static_cast<int>(cant_run.size());
 
-    // Limit to top 15 results
-    if (filtered_nodes_.size() > 15) {
-        filtered_nodes_.resize(15);
+    // Limit to top 15 results, keeping room for up to 5 table steps so weak
+    // matches of other nodes never push them out (then the ones that cannot
+    // run yet, when shown).
+    if (query.empty()) {
+        if (filtered_nodes_.size() > 15) filtered_nodes_.resize(15);
+    } else {  // sorted: what runs, then the table steps
+        const auto first_advanced = std::find_if(filtered_nodes_.begin(), filtered_nodes_.end(),
+                                                 [](const auto& n) { return !n.second->advanced_group.empty(); });
+        std::vector<std::pair<int, SearchableNode*>> advanced(first_advanced, filtered_nodes_.end());
+        filtered_nodes_.erase(first_advanced, filtered_nodes_.end());
+        if (advanced.size() > 5) advanced.resize(5);
+        const size_t room = 15 - advanced.size();
+        if (filtered_nodes_.size() > room) filtered_nodes_.resize(room);
+        filtered_nodes_.insert(filtered_nodes_.end(), advanced.begin(), advanced.end());
     }
+    if (node_add_search_.show_cant_run)
+        filtered_nodes_.insert(filtered_nodes_.end(), cant_run.begin(), cant_run.end());
 
     // Reset selection if out of bounds
     if (node_add_search_.selected_index >= static_cast<int>(filtered_nodes_.size())) {
@@ -441,11 +475,14 @@ void NodeEditor::ShowNodeAddSearch() {
     std::string query(node_add_search_.search_buffer);
     bool has_search_text = !query.empty();
 
-    if (node_add_search_.show_results && has_search_text && !filtered_nodes_.empty()) {
+    const bool cant_run_footer = node_add_search_.cant_run_matches > 0;
+    if (node_add_search_.show_results && has_search_text && (!filtered_nodes_.empty() || cant_run_footer)) {
         ImVec2 dropdown_pos(search_pos.x, search_pos.y + search_height + 2);
         float dropdown_width = search_width;
         float item_height = 40.0f;
-        float dropdown_height = std::min(item_height * filtered_nodes_.size() + 8, 400.0f);
+        const float footer_height = cant_run_footer ? ImGui::GetFrameHeightWithSpacing() + 4.0f : 0.0f;
+        float dropdown_height = std::min(item_height * filtered_nodes_.size() + 8 + footer_height, 400.0f);
+        node_add_search_.dropdown_height = dropdown_height;
 
         // Create a separate floating window for dropdown results
         ::gui::NextWindowFollowsCurrent();
@@ -535,7 +572,10 @@ void NodeEditor::ShowNodeAddSearch() {
                 }
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 18));
-                ImGui::TextColored(t.text_dim, "%s", node->category.c_str());
+                if (!node->advanced_group.empty())
+                    ImGui::TextColored(t.text_dim, "Advanced operation \xC2\xB7 %s", node->advanced_group.c_str());
+                else
+                    ImGui::TextColored(t.text_dim, "%s", node->category.c_str());
 
                 if (is_blocked && !node->support_reason.empty()) {
                     ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 31));
@@ -544,6 +584,18 @@ void NodeEditor::ShowNodeAddSearch() {
                 }
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x, item_pos.y + item_height));
+            }
+            // What matched but cannot run yet: counted, listed on request.
+            if (cant_run_footer) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0f);
+                const int n = node_add_search_.cant_run_matches;
+                const std::string label = node_add_search_.show_cant_run
+                    ? std::string("Hide the ") + std::to_string(n) + " that can't run yet"
+                    : std::to_string(n) + " more can't run yet \xC2\xB7 Show";
+                if (cyxwiz::ui::LinkButton(label.c_str())) {
+                    node_add_search_.show_cant_run = !node_add_search_.show_cant_run;
+                    UpdateNodeAddSearchResults();
+                }
             }
         }
         ImGui::End();
@@ -555,7 +607,7 @@ void NodeEditor::ShowNodeAddSearch() {
     if (node_add_search_.show_results && !input_focused && ImGui::IsMouseClicked(0)) {
         ImVec2 mouse_pos = ImGui::GetMousePos();
         ImVec2 dropdown_check_pos(search_pos.x, search_pos.y);
-        float dropdown_height = 32.0f * filtered_nodes_.size() + search_height + 10;
+        const float dropdown_height = node_add_search_.dropdown_height + search_height + 10;
 
         if (mouse_pos.x < dropdown_check_pos.x || mouse_pos.x > dropdown_check_pos.x + search_width ||
             mouse_pos.y < dropdown_check_pos.y || mouse_pos.y > dropdown_check_pos.y + dropdown_height) {

@@ -2,6 +2,7 @@
 
 #include "api_export.h"
 #include <iosfwd>
+#include <cstdint>
 #include <array>
 #include <functional>
 #include <memory>
@@ -157,6 +158,17 @@ public:
     void Train(const std::vector<std::string>& documents,
                int min_freq = 1,
                int max_vocab_size = -1);
+
+    // Train in two steps, so a corpus bigger than memory trains a piece at a
+    // time (TOFIX157 A4): CountTokens adds a piece's token counts to `counts`,
+    // and TrainFromCounts builds the vocabulary Train builds from all of them
+    // (same order, same ties). Whitespace, Word and Character only: ByteBPE,
+    // WordPiece and SentencePiece throw std::invalid_argument.
+    void CountTokens(const std::vector<std::string>& documents,
+                     std::unordered_map<std::string, int64_t>& counts) const;
+    void TrainFromCounts(const std::unordered_map<std::string, int64_t>& counts,
+                         int min_freq = 1,
+                         int max_vocab_size = -1);
 
     // Vocabulary access
     void SetVocabulary(const Vocabulary& vocab) { vocab_ = vocab; }

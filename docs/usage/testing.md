@@ -9,6 +9,23 @@ After training, test the model on the graph's test split:
 The test runs in the background (Task View) and opens **Test Results** when it
 ends. **Train > Test > View Test Results** opens the panel again later.
 
+A graph with branches (Split, Add, Concatenate) is tested like any other: the
+model it trained in this session is the one tested. It saves and exports as a
+CyxWiz package with its graph (see Exporting a model). **Load Checkpoint for
+Testing** builds the graph's own model and loads the checkpoint into it, and
+training with *save best checkpoint* keeps and restores its best epoch, as
+for a layer stack. Feature Importance measures it too (Permutation and
+Drop-Column; see feature_importance.md).
+
+**Train > Test > Load Checkpoint for Testing...** opens a folder picker in
+the project's `checkpoints` folder, in front of the Engine, listing each
+training run (`train-<id>`). Pick a run (its best checkpoint is used) or a
+checkpoint folder. The graph on the canvas must compile with its Data Inputs
+applied; otherwise the load stops and lists what to fix. Every file and
+folder picker in the Engine opens where the Engine asks (the project's folder
+for that kind of file, or the project's own folder), not in the folder
+Windows last used.
+
 ## Test Results
 
 The header shows the headline figure (accuracy for classification; 1-NN
@@ -19,6 +36,11 @@ other figures as chips (loss, F1, samples per second).
 If a test fails, the panel says *The test failed* with the reason, above the
 last successful results (a failed run is never compared against).
 
+**Showing** (when a project is open) picks the latest run or a kept test (Data
+Studio > Results > Keep as node keeps a test in the project's `results/tests`
+folder). A kept test shows every tab but Comparison (the latest run and the
+one before); a new test run shows itself again.
+
 Tabs (the tab bar scrolls when the panel is narrow):
 
 | Tab | What it shows |
@@ -27,8 +49,13 @@ Tabs (the tab bar scrolls when the panel is narrow):
 | Confusion matrix | Rows are the true class, columns the predicted class, as **Counts** or **Share of each true class**. The largest confusion is written under it ("true Depression predicted as Suicidal (641)"). Hover a cell for its numbers. |
 | Classes | One row per class: precision, recall, F1, found (TP), false alarms (FP), missed (FN), support. Click a header to sort, type to filter by name. |
 | Curves | ROC and precision-recall curves (classification). |
-| Predictions | Every test sample's true class, predicted class and confidence; **All** or **Only mistakes**. |
+| Predictions | Every test sample's true class, predicted class and confidence; **All** or **Only mistakes** (the most confident mistakes first). A regression lists every row's true and predicted value and error; **All** or **Largest errors first** (with several targets the first is shown, and the order uses each row's mean error over all of them). **Dataset row** is the row of the tested table (counted from 1, as the Table Viewer counts) when the test recorded it. |
+| By column value | Where the model goes wrong: pick a column of the tested table; each value gets its test rows and the share wrong (a classifier) or the mean \|error\| (regression), highest first; a value above the overall error by a quarter or more is amber. A number column with more than 20 values is cut into five ranges of about equal rows; a text column keeps its 20 most common values and puts the rest under *(other values)*. A table on disk is read one row group at a time (a task in Task View). It needs the tested table loaded; one re-loaded with fewer rows is refused as changed since the test. |
 | Comparison | The latest run beside the previous one, with the change of each figure. **Train > Test > Compare Test Results...** opens this tab. |
+
+The Overview of a regression also has its **Bias** (the mean of predicted -
+true: positive predicts high). Data Studio > Results > Test run repeats the
+headline of the latest test and opens this panel.
 
 Class names come from the data: a Text Tokenizer's label keeps the class
 names of its label column, so the sentiment demo shows *Anxiety*, *Normal*,
@@ -37,8 +64,9 @@ names of its label column, so the sentiment demo shows *Anxiety*, *Normal*,
 ## Footer
 
 - **Export CSV...** and **Export JSON...** save what the panel shows (the
-  metrics, every class with its name, the confusion matrix, each prediction;
-  JSON also has the curves and the quick-test flag). The save dialog starts
+  metrics, every class with its name, the confusion matrix, each prediction
+  with its dataset row, a regression's rows, the tested table's name; JSON also
+  has the curves and the quick-test flag). The save dialog starts
   in the project's `exports` folder; a note says where the file went.
   **Train > Test > Export Test Report...** is the same JSON export.
 - **Clear** empties the panel.

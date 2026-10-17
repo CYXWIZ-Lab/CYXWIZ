@@ -7,6 +7,7 @@
 #include "console.h"
 #include "../core/runtime_log_presentation.h"
 #include "../core/runtime_log_store.h"
+#include "editor_fonts.h"
 #include "icons.h"
 #include "ui_buttons.h"
 
@@ -942,7 +943,8 @@ void Console::RenderInspectorTable(const cyxwiz::RuntimeLogInspectorResult *resu
       }
       ImGui::TableSetColumnIndex(7);
       const auto line = cyxwiz::logs::FirstLine(event.message);
-      ImGui::TextColored(problem || selected ? kBright : kText, "%s%s", line.text.c_str(),
+      ImGui::TextColored(problem || selected ? kBright : kText, "%s%s",
+                         cyxwiz::gui::DrawableText(ImGui::GetFont(), line.text).c_str(),
                          line.more_lines ? "  [...]" : "");
       if (line.more_lines)
         Tooltip("More lines follow. Select the row to see the whole message.");
@@ -1015,7 +1017,7 @@ void Console::RenderInspectorDetails(const cyxwiz::RuntimeLogInspectorResult *re
 
   // Full message: wrapped, selectable.
   const float field_w = ImGui::GetContentRegionAvail().x;
-  std::string wrapped = WrapForWidth(event.message, field_w - 20.0f);
+  std::string wrapped = WrapForWidth(cyxwiz::gui::DrawableText(ImGui::GetFont(), event.message), field_w - 20.0f);
   const int lines = 1 + static_cast<int>(std::count(wrapped.begin(), wrapped.end(), '\n'));
   const float msg_h = std::min(8, std::max(1, lines)) * ImGui::GetTextLineHeight() +
                       ImGui::GetStyle().FramePadding.y * 2.0f + 2.0f;

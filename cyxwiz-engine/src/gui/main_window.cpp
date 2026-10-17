@@ -190,6 +190,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/test_predictions_metrics.h"
 #include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
@@ -822,6 +823,18 @@ MainWindow::MainWindow()
             node_editor_->QueueDashboardWidget(node_id, dataset, widget);
         };
     }
+    // Results > Test run opens the whole run in Test Results (TOFIX157).
+    data_studio_panel_->SetOpenTestResultsCallback([this]() {
+        if (!test_results_panel_) return;
+        test_results_panel_->Show();
+        ::gui::BringToFront(test_results_panel_->GetName());
+    });
+    // ... and a kept test (Keep as node).
+    data_studio_panel_->SetOpenKeptTestCallback([this](const std::string& path) {
+        if (!test_results_panel_) return;
+        test_results_panel_->ShowKeptTest(path);
+        ::gui::BringToFront(test_results_panel_->GetName());
+    });
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
         if (table_viewer_ && table) {
@@ -1312,17 +1325,19 @@ MainWindow::MainWindow()
     const std::weak_ptr<int> test_window_lifetime = test_callback_lifetime_;
     cyxwiz::TestManager::Instance().SetOnTestingEnd([this, test_window_lifetime](bool success, const cyxwiz::TestingMetrics& metrics) {
         if (test_window_lifetime.expired()) return;
-        if (success && !metrics.regression_mode && !metrics.causal_lm_mode && !metrics.ground_truth.empty()) {
+        if (success && !metrics.causal_lm_mode) {
             // The run's per-sample results as the "test_predictions" table, so
-            // the ROC / PR nodes and panels can read them like any dataset.
-            std::vector<std::string> class_names;
-            for (const auto& c : metrics.per_class_metrics) class_names.push_back(c.class_name);
-            if (auto table = cyxwiz::BuildTestPredictionsTable(metrics.ground_truth, metrics.predictions,
-                                                               metrics.confidences, metrics.class_probabilities,
-                                                               metrics.probability_classes, class_names)) {
+            // Results and the ROC / PR nodes can read them like any dataset;
+            // row_id joins them back to the tested table's columns.
+            const std::shared_ptr<arrow::Table> table = cyxwiz::PredictionsTableFromMetrics(metrics);
+            if (table) {
                 cyxwiz::DataRegistry::Instance().RegisterArrowTable(table, cyxwiz::kTestPredictionsDataset);
-                spdlog::info("Published {} test predictions as '{}'", table->num_rows(),
-                             cyxwiz::kTestPredictionsDataset);
+                spdlog::info("Published {} test predictions as '{}'{}", table->num_rows(),
+                             cyxwiz::kTestPredictionsDataset,
+                             table->GetColumnByName("row_id") ? " (rows of '" + metrics.source_dataset + "')" : "");
+            } else {
+                // No per-row results kept: an older run's table must not stand in.
+                cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(cyxwiz::kTestPredictionsDataset);
             }
         }
         if (test_results_panel_) {
@@ -1338,86 +1353,8 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Save Model callback (native CyxWiz format)
-    toolbar_->SetSaveModelCallback([]() {
-        auto& tm = cyxwiz::TrainingManager::Instance();
-        if (!tm.HasTrainedModel()) {
-            spdlog::warn("No trained model available to save");
-            return;
-        }
-
-        // Show save file dialog
-        auto result = cyxwiz::FileDialogs::SaveModel();
-        if (result) {
-            std::string path = *result;
-            // Remove extension if present (our save adds .json and .bin)
-            if (path.size() > 9 && path.substr(path.size() - 9) == ".cyxmodel") {
-                path = path.substr(0, path.size() - 9);
-            }
-
-            // Get model name from filename
-            std::filesystem::path file_path(path);
-            std::string model_name = file_path.stem().string();
-            std::string model_desc = "Model trained with CyxWiz Engine";
-
-            if (tm.SaveModel(path, model_name, model_desc)) {
-                spdlog::info("Model saved successfully to: {}", path);
-            } else {
-                spdlog::error("Failed to save model to: {}", path);
-            }
-        }
-    });
-
     // Set up Export Model callback
-    toolbar_->SetExportModelCallback([this](int format_index) {
-        if (export_dialog_) {
-            cyxwiz::ModelFormat requested_format = cyxwiz::ModelFormat::CyxModel;
-            if (format_index >= 0 && format_index <= 3) {
-                requested_format = static_cast<cyxwiz::ModelFormat>(format_index);
-            }
-
-            // Get trained model from TrainingManager
-            auto& tm = cyxwiz::TrainingManager::Instance();
-            if (tm.HasTrainedModel()) {
-                auto* model = tm.GetLastTrainedModel();
-                auto* optimizer = tm.GetLastOptimizer();
-                auto& metrics = tm.GetLastMetrics();
-
-                // Get current graph JSON from node editor
-                std::string graph_json;
-                if (node_editor_) {
-                    graph_json = node_editor_->GetGraphJson();
-                }
-
-                const auto trained_info = tm.GetActiveModelInfo();
-                const auto nodes = node_editor_
-                    ? node_editor_->GetNodes()
-                    : std::vector<MLNode>{};
-                const auto links = node_editor_
-                    ? node_editor_->GetLinks()
-                    : std::vector<NodeLink>{};
-                export_dialog_->SetModelData(
-                    model,
-                    optimizer,
-                    &metrics,
-                    graph_json,
-                    node_editor_
-                        ? HashGraphStructure(nodes, links)
-                        : 0,
-                    trained_info.evaluation_config
-                        ? cyxwiz::TrainingExportMetadata(*trained_info.evaluation_config)
-                        : cyxwiz::ExportOptions{},
-                    trained_info.model_device);
-                spdlog::info("Loaded trained model into Export dialog");
-            } else {
-                spdlog::warn("No trained model available for export");
-            }
-
-            if (node_editor_) export_dialog_->SetSourceGraph(node_editor_->GetCurrentFilePath());
-            export_dialog_->Open(requested_format);
-            spdlog::info("Opened Export Model dialog (format index: {})", format_index);
-        }
-    });
+    toolbar_->SetExportModelCallback([this](int format_index) { OpenModelExport(format_index); });
 
     export_dialog_->SetExportCompleteCallback(
         [this](const cyxwiz::ExportResult& result,
@@ -6307,6 +6244,56 @@ void MainWindow::LoadCheckpointForTesting() {
             spdlog::info(
                 "LoadCheckpoint: active model is ready for Tools > Test");
         });
+}
+
+void MainWindow::OpenModelExport(int format_index) {
+    if (export_dialog_) {
+        cyxwiz::ModelFormat requested_format = cyxwiz::ModelFormat::CyxModel;
+        if (format_index >= 0 && format_index <= 3) {
+            requested_format = static_cast<cyxwiz::ModelFormat>(format_index);
+        }
+
+        // Get trained model from TrainingManager
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        if (tm.HasTrainedModel()) {
+            auto model = tm.GetActiveModel();
+            auto* optimizer = tm.GetLastOptimizer();
+            auto& metrics = tm.GetLastMetrics();
+
+            // Get current graph JSON from node editor
+            std::string graph_json;
+            if (node_editor_) {
+                graph_json = node_editor_->GetGraphJson();
+            }
+
+            const auto trained_info = tm.GetActiveModelInfo();
+            const auto nodes = node_editor_
+                ? node_editor_->GetNodes()
+                : std::vector<MLNode>{};
+            const auto links = node_editor_
+                ? node_editor_->GetLinks()
+                : std::vector<NodeLink>{};
+            export_dialog_->SetModelData(
+                model,
+                optimizer,
+                &metrics,
+                graph_json,
+                node_editor_
+                    ? HashGraphStructure(nodes, links)
+                    : 0,
+                trained_info.evaluation_config
+                    ? cyxwiz::TrainingExportMetadata(*trained_info.evaluation_config)
+                    : cyxwiz::ExportOptions{},
+                trained_info.model_device);
+            spdlog::info("Loaded trained model into Export dialog");
+        } else {
+            spdlog::warn("No trained model available for export");
+        }
+
+        if (node_editor_) export_dialog_->SetSourceGraph(node_editor_->GetCurrentFilePath());
+        export_dialog_->Open(requested_format);
+        spdlog::info("Opened Export Model dialog (format index: {})", format_index);
+    }
 }
 
 } // namespace gui

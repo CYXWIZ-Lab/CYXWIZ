@@ -247,14 +247,7 @@ void PrepareView::SaveDraft() {
                                 : "Saved to the step (Ctrl+Z on the canvas undoes it).";
     message_error_ = false;
     if (!checks.empty()) {
-        // Added on the canvas: a collapsed recipe opens first; requested last
-        // first, each goes right after the step.
-        if (!editor_->GetNodeForConfiguration(loaded_)) {
-            const int recipe = RecipeOf(loaded_);
-            if (recipe >= 0) editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::Expand);
-        }
-        for (auto it = checks.rbegin(); it != checks.rend(); ++it)
-            editor_->RequestStepAfter(loaded_, ::gui::NodeType::RowCountCheck, it->name, it->parameters);
+        editor_->RequestChecksAfter(loaded_, checks);
         message_ = "Saved; its " + std::to_string(checks.size()) + " check(s) became Check nodes after the step (Ctrl+Z on the canvas undoes it).";
     }
 }

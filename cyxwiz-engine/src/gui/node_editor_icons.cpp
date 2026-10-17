@@ -412,6 +412,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_COPY;
             case NodeType::RegressionMetricsNode:
             case NodeType::ClassificationMetricsNode:
+            case NodeType::TestEvaluationNode:
                 return ICON_TI_LIST_NUMBERS;
 
             // Data Preprocessing Nodes
@@ -605,6 +606,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
             case NodeType::ClassificationMetricsNode:
+            case NodeType::TestEvaluationNode:
                 return ICON_RI_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
@@ -966,6 +968,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
             case NodeType::ClassificationMetricsNode:
+            case NodeType::TestEvaluationNode:
                 return ICON_LU_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
@@ -1284,6 +1287,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
             case NodeType::ClassificationMetricsNode:
+            case NodeType::TestEvaluationNode:
                 return ICON_IO_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
@@ -1602,6 +1606,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
             case NodeType::ClassificationMetricsNode:
+            case NodeType::TestEvaluationNode:
                 return ICON_PH_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
@@ -2158,6 +2163,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_COPY;
         case NodeType::RegressionMetricsNode:
         case NodeType::ClassificationMetricsNode:
+        case NodeType::TestEvaluationNode:
             return ICON_FA_CALCULATOR;
 
         // Data Preprocessing Nodes

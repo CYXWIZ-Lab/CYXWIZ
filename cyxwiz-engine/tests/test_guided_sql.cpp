@@ -237,9 +237,39 @@ void TestChecksBecomeNodes() {
           "an operation that is off after the checks does not count");
 }
 
+// Properties' on / off switches save the step as the editors do (TOFIX157):
+// switching on a last "Add checks" splits it off as Check nodes and writes the
+// query without it; with an error nothing is split off.
+void TestSaveStepFromSwitches() {
+    guided::GuidedStep step;
+    step.saved_context = SermonContext();
+    step.ops.push_back({"keep_rows", true, {{"match", "all"}, {"conditions", json::array({{{"column", "text"}, {"op", "is not empty"}, {"value", ""}}})}}});
+    step.ops.push_back({"add_checks", false,
+                        {{"checks", json::array({{{"kind", "unique"}, {"column", "sermon_id"}},
+                                                 {{"kind", "not_empty"}, {"column", "title"}}})}}});
+    const auto off = guided::SaveStep(step);
+    Check(off.checks.empty() && off.step.ops.size() == 2 && off.generated.ok, "checks switched off stay in the step");
+
+    step.ops[1].on = true;  // the switch in Properties
+    const auto on = guided::SaveStep(step);
+    Check(on.checks.size() == 2 && on.checks[0].name == "Check: sermon_id unique" && on.checks[1].name == "Check: title not empty",
+          "switched on: the checks become Check nodes, in order");
+    Check(on.step.ops.size() == 1 && on.step.ops[0].type == "keep_rows", "and leave the step");
+    Check(on.generated.ok && on.generated.sql.find("Check failed") == std::string::npos,
+          "the saved query no longer runs them: " + on.generated.sql);
+    Check(on.generated.sql == guided::GenerateSql(on.step, step.saved_context).sql, "written from what stays");
+    Check(on.step.saved_context.columns.size() == step.saved_context.columns.size(), "the saved context stays with the step");
+
+    // An operation with an error (a condition without a column): nothing is split off.
+    step.ops.insert(step.ops.begin() + 1, {"keep_rows", true, {{"match", "all"}, {"conditions", json::array({{{"column", ""}, {"op", "is not empty"}, {"value", ""}}})}}});
+    const auto broken = guided::SaveStep(step);
+    Check(!broken.generated.ok && broken.checks.empty() && broken.step.ops.size() == 3, "an error: nothing split off");
+}
+
 int main() {
     TestMoveOp();
     TestChecksBecomeNodes();
+    TestSaveStepFromSwitches();
     TestEmptyStepPassesThrough();
     TestLibrary();
     TestJson();

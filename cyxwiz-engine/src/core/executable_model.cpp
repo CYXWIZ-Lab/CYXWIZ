@@ -4,7 +4,7 @@
 
 namespace cyxwiz {
 
-SequentialExecutableModel::SequentialExecutableModel(std::unique_ptr<SequentialModel> model)
+SequentialExecutableModel::SequentialExecutableModel(std::shared_ptr<SequentialModel> model)
     : model_(std::move(model)) {
     if (!model_) {
         throw std::invalid_argument("SequentialExecutableModel requires a model");
@@ -52,10 +52,6 @@ std::map<std::string, Tensor> SequentialExecutableModel::GetGradients() {
 
 void SequentialExecutableModel::UpdateParameters(Optimizer* optimizer) {
     model_->UpdateParameters(optimizer);
-}
-
-std::unique_ptr<SequentialModel> SequentialExecutableModel::ReleaseSequentialModel() {
-    return std::move(model_);
 }
 
 } // namespace cyxwiz

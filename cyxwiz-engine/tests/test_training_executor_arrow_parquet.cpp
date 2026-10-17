@@ -11,6 +11,7 @@
 #include "../src/core/sequence_training_step.h"
 #include "../src/core/sequence_vocabulary.h"
 #include "../src/core/test_executor.h"
+#include "../src/core/test_predictions_metrics.h"
 #include "../src/core/training_batcher_setup.h"
 #include "../src/core/training_executor.h"
 #include "../src/core/training_trace_collector.h"
@@ -34,6 +35,7 @@
 #include <functional>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -833,6 +835,207 @@ void TestArrowParquetSeedDeterminism(
     Check(CollectBatchLabels(*first_parquet.train) ==
               CollectBatchLabels(*second_parquet.train),
           "matching Parquet seeds should reproduce the complete label order");
+}
+
+// Batch::row_ids (TOFIX157 B2): each sample names its row of the table, in
+// shuffled order and across the Parquet row groups (one row per group here);
+// Train and Test rows split the table, and a test run keeps the Test rows.
+void TestBatchRowIds(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& arrow_dataset,
+    const std::shared_ptr<cyxwiz::ParquetBackedDataset>& parquet_dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "row-ids");
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.batch_size = 4;
+    config.shuffle = true;
+    config.dataloader_seed = 97;
+
+    const auto table = arrow_dataset->GetArrowTable();
+    const auto x0 = std::static_pointer_cast<arrow::FloatArray>(
+        table->GetColumnByName("x0")->chunk(0));
+    const auto check_rows = [&](cyxwiz::IBatcher& batcher, const std::string& name) {
+        batcher.Reset();
+        std::vector<int64_t> seen;
+        while (!batcher.IsEpochComplete()) {
+            const cyxwiz::Batch batch = batcher.GetNextBatch();
+            if (!batch.IsValid()) break;
+            Check(batch.row_ids.size() == batch.size, name + ": one row id per sample");
+            const float* features = batch.data.Data<float>();
+            for (size_t b = 0; b < batch.size; ++b) {
+                const int64_t row = batch.row_ids[b];
+                Check(row >= 0 && row < x0->length() && features[b * 2] == x0->Value(row),
+                      name + ": the row id's x0 is the sample's first feature");
+                seen.push_back(row);
+            }
+        }
+        std::sort(seen.begin(), seen.end());
+        std::vector<int64_t> all(static_cast<size_t>(table->num_rows()));
+        std::iota(all.begin(), all.end(), int64_t{0});
+        Check(seen == all, name + ": every row once");
+    };
+    auto arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        config, arrow_dataset, "label", config.batch_size);
+    auto parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        config, parquet_dataset, "label", config.batch_size);
+    check_rows(*arrow_batchers.train, "Arrow");
+    check_rows(*parquet_batchers.train, "Parquet");
+
+    config.train_ratio = 0.5f;
+    config.val_ratio = 0.2f;
+    config.test_ratio = 0.3f;
+    config.shuffle = false;
+    auto split = cyxwiz::BuildArrowTrainingBatchers(
+        config, arrow_dataset, "label", config.batch_size);
+    Check(split.arrow_test != nullptr && split.val != nullptr, "Arrow test split");
+    if (split.arrow_test && split.val) {
+        const auto rows_of = [](cyxwiz::IBatcher& batcher) {
+            std::vector<int64_t> rows;
+            batcher.Reset();
+            while (!batcher.IsEpochComplete()) {
+                const cyxwiz::Batch batch = batcher.GetNextBatch();
+                if (!batch.IsValid()) break;
+                rows.insert(rows.end(), batch.row_ids.begin(), batch.row_ids.end());
+            }
+            return rows;
+        };
+        const std::vector<int64_t> test_rows = rows_of(*split.arrow_test);
+        std::vector<int64_t> every = rows_of(*split.train);
+        const std::vector<int64_t> val_rows = rows_of(*split.val);
+        every.insert(every.end(), val_rows.begin(), val_rows.end());
+        every.insert(every.end(), test_rows.begin(), test_rows.end());
+        std::sort(every.begin(), every.end());
+        std::vector<int64_t> all(static_cast<size_t>(table->num_rows()));
+        std::iota(all.begin(), all.end(), int64_t{0});
+        Check(!test_rows.empty() && every == all, "Train, Validation and Test rows split the table");
+
+        // A test run keeps them, with the tested table's name, for
+        // test_predictions; Arrow and Parquet agree.
+        const auto run_test = [&](cyxwiz::TestExecutor& executor) {
+            auto model = std::make_shared<cyxwiz::SequentialModel>();
+            model->Add<cyxwiz::LinearModule>(2, 2, true);
+            executor.SetModel(model);
+            executor.Test(config.batch_size);
+            return executor.GetMetrics();
+        };
+        cyxwiz::TestExecutor arrow_test(config, arrow_dataset, "label",
+                                        cyxwiz::TestDatasetScope::ConfiguredTestSplit);
+        const auto arrow_metrics = run_test(arrow_test);
+        Check(arrow_metrics.is_complete && arrow_metrics.row_ids == test_rows &&
+                  arrow_metrics.row_ids.size() == arrow_metrics.ground_truth.size(),
+              "an Arrow test run keeps the test rows");
+        Check(arrow_metrics.source_dataset == arrow_dataset->GetName(),
+              "an Arrow test run names its table");
+        cyxwiz::TestExecutor parquet_test(config, parquet_dataset, "label",
+                                          cyxwiz::TestDatasetScope::ConfiguredTestSplit);
+        const auto parquet_metrics = run_test(parquet_test);
+        Check(parquet_metrics.is_complete && parquet_metrics.row_ids == test_rows,
+              "a Parquet test run keeps the same test rows");
+        Check(parquet_metrics.source_dataset == parquet_dataset->GetName(),
+              "a Parquet test run names its table");
+
+        // The run as its per-row table and back gives the same results: one
+        // calculation for the panel, Results and a kept test (TOFIX157).
+        {
+            const auto rows = cyxwiz::PredictionsTableFromMetrics(arrow_metrics);
+            Check(rows != nullptr, "a classifier run becomes its table");
+            cyxwiz::TestingMetrics back;
+            std::string why;
+            Check(rows && cyxwiz::MetricsFromPredictionsTable(*rows, back, why), "the table reads back: " + why);
+            Check(back.ground_truth == arrow_metrics.ground_truth && back.predictions == arrow_metrics.predictions &&
+                      back.row_ids == arrow_metrics.row_ids && back.source_dataset == arrow_metrics.source_dataset,
+                  "read back: the same rows, row ids and table");
+            Check(back.confusion_matrix.matrix == arrow_metrics.confusion_matrix.matrix &&
+                      back.total_samples == arrow_metrics.total_samples &&
+                      back.correct_predictions == arrow_metrics.correct_predictions,
+                  "read back: the same confusion matrix");
+            CheckNear(back.test_accuracy, arrow_metrics.test_accuracy, 1e-6, "read back: accuracy");
+            CheckNear(back.macro_f1, arrow_metrics.macro_f1, 1e-6, "read back: macro F1");
+            CheckNear(back.weighted_f1, arrow_metrics.weighted_f1, 1e-6, "read back: weighted F1");
+            CheckNear(back.test_loss, arrow_metrics.test_loss, 1e-4, "read back: the loss from the metadata");
+            Check(back.per_class_metrics.size() == arrow_metrics.per_class_metrics.size(), "read back: the classes");
+            for (size_t c = 0; c < back.per_class_metrics.size() && c < arrow_metrics.per_class_metrics.size(); ++c) {
+                Check(back.per_class_metrics[c].class_name == arrow_metrics.per_class_metrics[c].class_name,
+                      "read back: class names");
+                CheckNear(back.per_class_metrics[c].precision, arrow_metrics.per_class_metrics[c].precision, 1e-6,
+                          "read back: precision per class");
+                CheckNear(back.per_class_metrics[c].recall, arrow_metrics.per_class_metrics[c].recall, 1e-6,
+                          "read back: recall per class");
+            }
+            Check(back.roc.has_value() == arrow_metrics.roc.has_value() && back.curves_note == arrow_metrics.curves_note,
+                  "read back: the same curves");
+            if (back.roc && arrow_metrics.roc && back.roc->success && arrow_metrics.roc->success)
+                CheckNear(back.roc->auc, arrow_metrics.roc->auc, 1e-5, "read back: ROC AUC");
+        }
+
+        // A stratified, shuffled split: each test row's true class is the
+        // table's label at its row id.
+        auto stratified = config;
+        stratified.stratified = true;
+        stratified.shuffle = true;
+        stratified.split_seed = 7;
+        stratified.train_ratio = 0.34f;
+        stratified.val_ratio = 0.0f;
+        stratified.test_ratio = 0.66f;
+        const auto labels = table->GetColumnByName("label");
+        const auto check_stratified = [&](cyxwiz::TestExecutor& executor, const std::string& name) {
+            const auto m = run_test(executor);
+            Check(m.is_complete && !m.row_ids.empty() && m.row_ids.size() == m.ground_truth.size(),
+                  name + ": a stratified test run keeps its rows");
+            for (size_t i = 0; i < m.row_ids.size(); ++i) {
+                const auto scalar = labels->GetScalar(m.row_ids[i]);
+                Check(scalar.ok(), name + ": the row id is a row of the table");
+                const auto value = (*scalar)->CastTo(arrow::float64());
+                Check(value.ok() &&
+                          static_cast<int>(std::static_pointer_cast<arrow::DoubleScalar>(*value)->value) == m.ground_truth[i],
+                      name + ": a stratified test row's class is its row's label");
+            }
+        };
+        cyxwiz::TestExecutor arrow_stratified(stratified, arrow_dataset, "label",
+                                              cyxwiz::TestDatasetScope::ConfiguredTestSplit);
+        check_stratified(arrow_stratified, "Arrow");
+        cyxwiz::TestExecutor parquet_stratified(stratified, parquet_dataset, "label",
+                                                cyxwiz::TestDatasetScope::ConfiguredTestSplit);
+        check_stratified(parquet_stratified, "Parquet");
+    }
+
+    // A regression test keeps each row's true and predicted targets.
+    const auto regression = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeRegressionTable(), "row_ids_regression");
+    auto regression_config = MakeRegressionConfig(work_dir / "row-ids-regression");
+    regression_config.train_ratio = 1.0f;
+    regression_config.val_ratio = 0.0f;
+    regression_config.test_ratio = 0.0f;
+    regression_config.has_data_split = true;
+    regression_config.shuffle = false;
+    cyxwiz::TestExecutor regression_test(regression_config, regression, "target",
+                                         cyxwiz::TestDatasetScope::EntireProvidedDataset);
+    auto model = std::make_shared<cyxwiz::SequentialModel>();
+    model->Add<cyxwiz::LinearModule>(2, 2, true);
+    regression_test.SetModel(model);
+    regression_test.Test(4);
+    const auto r = regression_test.GetMetrics();
+    Check(r.is_complete && r.regression_mode && r.regression_width == 2,
+          "a regression test keeps two targets per row");
+    Check(r.regression_truth.size() == 12 && r.regression_predictions.size() == 12 &&
+              r.row_ids == std::vector<int64_t>({0, 1, 2, 3, 4, 5}),
+          "six rows of two targets, with their rows");
+    Check(std::abs(r.regression_truth[0] - 1.5f) < 1e-6f &&
+              std::abs(r.regression_truth[1] + 0.5f) < 1e-6f &&
+              std::abs(r.regression_truth[11] - 1.5f) < 1e-6f,
+          "the true targets are the table's");
+    const auto regression_rows = cyxwiz::PredictionsTableFromMetrics(r);
+    cyxwiz::TestingMetrics back;
+    std::string why;
+    Check(regression_rows && cyxwiz::MetricsFromPredictionsTable(*regression_rows, back, why),
+          "a regression run reads back from its table: " + why);
+    Check(back.regression_mode && back.regression_width == 2 && back.regression_truth == r.regression_truth &&
+              back.row_ids == r.row_ids,
+          "read back: the regression's rows");
+    CheckNear(back.test_mae, r.test_mae, 1e-5, "read back: MAE");
+    CheckNear(back.test_rmse, r.test_rmse, 1e-5, "read back: RMSE");
 }
 
 void TestSequenceBatchContract() {
@@ -4191,6 +4394,34 @@ void TestRegressionTargetTransform(
     CheckNear(metrics.Rmse(), std::sqrt(52.0), 1e-6,
               "target-scaled RMSE should be reported in original units");
 
+    // A test of a scaled target keeps each row's values in the target's own
+    // units, so the per-row table agrees with MAE / RMSE.
+    {
+        auto config = MakeRegressionConfig(work_dir / "scaled-regression-rows");
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.shuffle = false;
+        config.regression_target_transform = transform;
+        cyxwiz::TestExecutor scaled(config,
+                                    std::make_shared<cyxwiz::ArrowDataset>(MakeRegressionTable(), "scaled_regression_rows"),
+                                    "target", cyxwiz::TestDatasetScope::EntireProvidedDataset);
+        auto model = std::make_shared<cyxwiz::SequentialModel>();
+        model->Add<cyxwiz::LinearModule>(2, 2, true);
+        scaled.SetModel(model);
+        scaled.Test(3);
+        const auto r = scaled.GetMetrics();
+        Check(r.is_complete && r.regression_truth.size() == 12 && r.regression_predictions.size() == 12,
+              "a scaled regression test keeps two targets per row");
+        CheckNear(r.regression_truth[0], 115.0, 1e-4, "the first target is scaled back (1.5 * 10 + 100)");
+        CheckNear(r.regression_truth[1], 199.0, 1e-4, "the second target is scaled back (-0.5 * 2 + 200)");
+        double abs_sum = 0.0;
+        for (size_t i = 0; i < r.regression_truth.size(); ++i)
+            abs_sum += std::abs(static_cast<double>(r.regression_predictions[i]) - r.regression_truth[i]);
+        CheckNear(abs_sum / 12.0, r.test_mae, 1e-3, "the rows' mean absolute error is the run's MAE");
+    }
+
     auto wrong_order = transform;
     wrong_order.target_columns = {"target_1", "target"};
     Check(!cyxwiz::ResolveRegressionTargetTransform(wrong_order, error),
@@ -4508,6 +4739,7 @@ int main(int argc, char** argv) {
 
     TestArrowParquetBatchBoundaryParity(dataset, parquet_dataset, work_dir);
     TestArrowParquetSeedDeterminism(dataset, parquet_dataset, work_dir);
+    TestBatchRowIds(dataset, parquet_dataset, work_dir);
     TestParquetLifecycleCadence(parquet_dataset, work_dir);
 
     {

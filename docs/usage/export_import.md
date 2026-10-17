@@ -13,6 +13,14 @@ Pick one; only the formats this build can write are shown:
 | Weights only (`.safetensors`) | The parameter tensors only, readable by other frameworks (PyTorch, safetensors). No graph. |
 | ONNX (`.onnx`) | A model for inference in other runtimes, with an opset version. Shown only when the build includes the ONNX exporter. |
 
+A graph with branches (Split, Add, Concatenate, multi-input layers) exports
+to a CyxWiz package or to weights only. The package always includes its
+graph (the **Graph** box stays on and says why): the graph is what rebuilds
+the model around the weights. ONNX is not offered for such a graph yet. The
+footer reads "9 layers, with branches" (the 17-node example
+`blobs_multibranch_classifier`: 1,972 parameters, 26.2 KB). A CyxWiz package
+is how any trained model is saved; there is no separate Save Model.
+
 ## File and details
 
 - **File** starts as `<project>/exports/<graph name><extension>`; switching
@@ -47,7 +55,10 @@ background, once per chosen file, and the dialog shows:
 - the layers with their shapes (the first 40, then "and N more").
 
 **Open its graph** loads the package's graph onto the canvas and closes the
-dialog. The weights are not loaded: train the graph, or load one of its
+dialog. A package of a graph with branches loads back as that graph model
+(ModelImporter::ImportExecutableModel), with the same outputs; read as a
+layer stack it is refused ("the package holds a graph with branches"), where
+it used to keep the layers and drop the branches. The weights are not loaded: train the graph, or load one of its
 training checkpoints with **Train > Test > Load Checkpoint for Testing**. A
 weights-only file has no graph, so the button stays off and says why. A file
 that is not a model says *This file could not be read* with the reason

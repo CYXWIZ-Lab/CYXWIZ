@@ -13,6 +13,13 @@ of this PC's memory; the line under the field shows the budget in use and the
 table size above which tables stay on disk (a quarter of the budget). The
 setting is Engine-wide and applies at once.
 
+The compute device keeps its own share: starting it takes about 1 GB, so data
+may use at most this PC's memory less 1 GB, whatever is set. A second line
+under the field says so ("The compute device takes about 1.0 GB of this PC's
+47.9 GB when it starts; data may use at most 46.9 GB."), and a budget above
+that is used as the most, with a warning ("58.6 GB is more than that: data
+gets 46.9 GB.").
+
 The budget decides:
 
 - **Loading**: a Data Input whose table is larger than a quarter of the budget
@@ -21,12 +28,27 @@ The budget decides:
   in blocks sized from the budget. Selecting columns of a large Parquet file
   writes only those columns, one row group at a time. The Data Input's Memory
   tab option **Force disk-backed cache** keeps any file on disk.
+- **One copy per file**: a table in memory is held once. When the same file is
+  loaded again with the same options (Apply on the Data Input, then a run of
+  the graph, or the other way round), the second load shares the table that is
+  already there ("Shared with ... (already loaded)" in the log) instead of
+  reading the file again. A changed file, or other options (columns, rows,
+  delimiter, missing values), is read again.
 - **Results**: a step's result larger than a quarter of the budget stays a
   Parquet file in `cache/pipeline/results`; a smaller one is in memory as
   before.
 - **DuckDB**: its memory limit is the budget, it uses one thread per 256 MB of
   budget, and sorts, joins and group-bys spill to `cache/duckdb_tmp` instead
-  of failing.
+  of failing. Each DuckDB spills to a folder of its own there, removed when it
+  closes.
+- **Branches**: steps on different branches of a graph run at the same time
+  (up to four at once): a step starts as soon as the steps it reads are done.
+  Steps running at once share the budget: with two running, each gets half
+  for DuckDB and for reading a table on disk whole. A step alone has all of
+  it. When a step fails, nothing new starts; the steps already running finish
+  and the run reports the failing step's error. Two branches reading the same
+  table share one copy, and two exports to the same file write it one after
+  the other.
 
 ## How each step reads a large table
 
@@ -36,6 +58,7 @@ The budget decides:
 | Standard Scaler, Log Transform | one row group at a time (the scaler fits on all rows first, then scales) | one row group |
 | Checks (row count, allowed values, not empty, range) | one row group at a time; the rows pass through uncopied | one row group |
 | The `unique` check | one DuckDB query (group by the columns) over the file; the rows pass through uncopied | within the budget |
+| Export CSV / JSON / Parquet, Data Output, and Export in the SQL Workbench | write the table one row group at a time (a table in memory in one go), hashing the file as it is written for the lineage | one row group |
 | Models, clustering, PCA, Robust Scaler, and other steps | read their input whole when it fits | stop before loading otherwise |
 
 When a step must read its input whole and it does not fit, the run stops
@@ -49,27 +72,42 @@ before loading, for example:
 
 A Data Input kept on disk can feed training:
 
-- **Steps before the Data Loader** (Standard and Min-Max Scaler, Log Transform, checks) run one
-  row group at a time: each fitting step reads the file once to fit, then one
-  last pass writes the prepared table to a Parquet file
-  (`cache/materialized/streamed` in the project) that training reads. It is
-  prepared again on each run (not cached), and the previous file is removed.
-  A step there that needs every row at once (a tokenizer, a vectorizer, PCA,
-  the Robust Scaler) stops the run before training with the reason, for
-  example:
+- **Steps before the Data Loader** (Standard and Min-Max Scaler, Log
+  Transform, Text Tokenizer, checks) run one row group at a time: each fitting
+  step reads the file once to fit, then one last pass writes the prepared
+  table to a Parquet file (`cache/materialized/streamed` in the project) that
+  training reads. It is prepared again on each run (not cached), and the
+  previous file is removed.
+- **Text classification on disk**: the Text Tokenizer (with Text Vocabulary
+  and Text Padding) counts its vocabulary a row group at a time, then writes
+  each row group's `tok_0 ... tok_n` and `y`. The result is the table it makes
+  in memory: the same vocabulary, the same token ids, the classes numbered in
+  file order (their names kept for Run Test). This works with a Word,
+  Whitespace or Character tokenizer, or with any tokenizer given a saved
+  vocabulary file (`vocab_file`; with *build if missing* the counted
+  vocabulary is saved there). A step that needs every row at once (ByteBPE or
+  WordPiece without a saved vocabulary, a vectorizer, PCA, the Robust Scaler)
+  stops the run before training with the reason, for example:
 
   > 'Text Tokenizer' needs every row at once, and 'corpus' is kept on disk.
   > Before the Data Loader a table on disk runs only steps that stream
-  > (Standard Scaler, Min-Max Scaler, Log Transform, checks); raise the data
-  > budget (Preferences > Data) to load it in memory.
+  > (Standard Scaler, Min-Max Scaler, Log Transform, Text Tokenizer with a
+  > Word, Whitespace or Character tokenizer or a saved vocabulary, checks);
+  > raise the data budget (Preferences > Data) to load it in memory.
 
 - **A table on disk** trains a row group at a time, with the Data Split
   made row by row as in memory: without stratification Train is the first
   rows of the file, then Validation, then Test; with **Stratified** each
   class gets its share (in file order, or drawn by the split seed when
   shuffling). The split takes one byte of memory per row (100 MB for 100
-  million rows). Class balancing in the Data Loader is not available on disk
-  yet (a warning says so).
+  million rows). **Class balancing** in the Data Loader works on disk with
+  the same modes and targets as in memory (oversample, undersample, weighted
+  sampler; min, median, a number or the largest class): one pass over the
+  label column counts each class, and each epoch every train row is served
+  as many times as a seeded draw gives it as its row group is read, with no
+  list of rows kept. Oversample to 560 rows of a 240-row class serves each
+  row twice and a different 80 of them a third time each epoch. Not with a
+  time-series split (a warning says so).
 - **Causal-LM token windows** (a `tokens` list column) on disk are read one
   row group at a time while training: memory holds one row group's windows.
   The row-group order is shuffled every epoch, and the windows within each
@@ -106,8 +144,8 @@ three sizes (most of it the device). Without a cap the steps run 3-4 times
 faster than before this change.
 
 - **The GPU or CPU device needs memory of its own**: starting ArrayFire (any
-  backend) takes about 500 MB on top of the data, so device steps (scalers,
-  transforms, training) need that much free beyond the budget.
+  backend) takes about 0.5-0.9 GB on top of the data. The budget never takes
+  the last 1 GB of this PC's memory, so the device always has room to start.
 - **Time grows with the data**, disk space too: a sort or a join of a large
   table writes temporary files about the size of its input.
 - A tool for measuring: `cyxwiz-bench-out-of-core` (in the build's `bin`

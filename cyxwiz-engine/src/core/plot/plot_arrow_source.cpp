@@ -1,5 +1,7 @@
 #include "plot_arrow_source.h"
 
+#include "../arrow_number.h"
+
 #include <arrow/api.h>
 
 #include <algorithm>
@@ -10,23 +12,8 @@ namespace cyxwiz::plot {
 
 namespace {
 
-bool IsNumeric(const arrow::DataType& t) {
-    switch (t.id()) {
-        case arrow::Type::INT8:
-        case arrow::Type::INT16:
-        case arrow::Type::INT32:
-        case arrow::Type::INT64:
-        case arrow::Type::UINT8:
-        case arrow::Type::UINT16:
-        case arrow::Type::UINT32:
-        case arrow::Type::UINT64:
-        case arrow::Type::HALF_FLOAT:
-        case arrow::Type::FLOAT:
-        case arrow::Type::DOUBLE:
-        case arrow::Type::BOOL: return true;
-        default: return false;
-    }
-}
+// A plotted number: the shared number types, and bool as 0 / 1.
+bool IsNumeric(const arrow::DataType& t) { return IsArrowNumber(t.id()) || t.id() == arrow::Type::BOOL; }
 
 template <typename ArrayType>
 void AppendNumbers(const arrow::Array& chunk, size_t take, std::vector<double>& out) {
@@ -83,30 +70,6 @@ void AppendTextChunk(const arrow::Array& chunk, size_t take, std::vector<std::st
     for (int64_t i = 0; i < chunk.length() && out.size() < take; ++i) {
         auto s = chunk.GetScalar(i);
         out.push_back(s.ok() && (*s)->is_valid ? (*s)->ToString() : std::string());
-    }
-}
-
-// One value of a chunk (NaN / "" when null).
-double NumberAt(const arrow::Array& a, int64_t i) {
-    if (a.IsNull(i)) return NAN;
-    switch (a.type_id()) {
-        case arrow::Type::INT8: return static_cast<const arrow::Int8Array&>(a).Value(i);
-        case arrow::Type::INT16: return static_cast<const arrow::Int16Array&>(a).Value(i);
-        case arrow::Type::INT32: return static_cast<const arrow::Int32Array&>(a).Value(i);
-        case arrow::Type::INT64: return static_cast<double>(static_cast<const arrow::Int64Array&>(a).Value(i));
-        case arrow::Type::UINT8: return static_cast<const arrow::UInt8Array&>(a).Value(i);
-        case arrow::Type::UINT16: return static_cast<const arrow::UInt16Array&>(a).Value(i);
-        case arrow::Type::UINT32: return static_cast<const arrow::UInt32Array&>(a).Value(i);
-        case arrow::Type::UINT64: return static_cast<double>(static_cast<const arrow::UInt64Array&>(a).Value(i));
-        case arrow::Type::FLOAT: return static_cast<const arrow::FloatArray&>(a).Value(i);
-        case arrow::Type::DOUBLE: return static_cast<const arrow::DoubleArray&>(a).Value(i);
-        case arrow::Type::BOOL: return static_cast<const arrow::BooleanArray&>(a).Value(i) ? 1.0 : 0.0;
-        default: {
-            auto sc = a.GetScalar(i);
-            if (!sc.ok() || !(*sc)->is_valid) return NAN;
-            auto d = (*sc)->CastTo(arrow::float64());
-            return d.ok() ? std::static_pointer_cast<arrow::DoubleScalar>(*d)->value : NAN;
-        }
     }
 }
 
@@ -189,7 +152,7 @@ Source SourceFromArrowRows(const arrow::Table& table, const std::vector<std::str
                 else col.text.emplace_back();
                 continue;
             }
-            if (col.numeric) col.numbers.push_back(NumberAt(chunk, i));
+            if (col.numeric) col.numbers.push_back(ArrowNumberAt(chunk, i));
             else col.text.push_back(TextAt(chunk, i));
         }
         src.columns.push_back(std::move(col));
