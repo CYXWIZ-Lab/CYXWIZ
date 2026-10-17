@@ -492,14 +492,27 @@ void Tokenizer::Train(const std::vector<std::string>& documents,
         TrainWordPiece(documents, min_freq, max_vocab_size);
         return;
     }
-    std::unordered_map<std::string, int> freq;
+    std::unordered_map<std::string, int64_t> freq;
+    CountTokens(documents, freq);
+    TrainFromCounts(freq, min_freq, max_vocab_size);
+}
+
+void Tokenizer::CountTokens(const std::vector<std::string>& documents,
+                            std::unordered_map<std::string, int64_t>& counts) const {
+    if (type_ != TokenizerType::Whitespace && type_ != TokenizerType::Word && type_ != TokenizerType::Character)
+        throw std::invalid_argument("counting tokens a piece at a time needs a Whitespace, Word or Character tokenizer");
     for (const auto& doc : documents) {
         for (const auto& token : Split(doc)) {
-            ++freq[token];
+            ++counts[token];
         }
     }
+}
 
-    std::vector<std::pair<std::string, int>> sorted;
+void Tokenizer::TrainFromCounts(const std::unordered_map<std::string, int64_t>& freq,
+                                int min_freq, int max_vocab_size) {
+    if (type_ != TokenizerType::Whitespace && type_ != TokenizerType::Word && type_ != TokenizerType::Character)
+        throw std::invalid_argument("training from counts needs a Whitespace, Word or Character tokenizer");
+    std::vector<std::pair<std::string, int64_t>> sorted;
     sorted.reserve(freq.size());
     for (const auto& [token, count] : freq) {
         if (count >= min_freq) {

@@ -586,6 +586,7 @@ MaterializeTableResult PipelineMaterializer::MaterializeParquetStreamed(
                     "PipelineMaterializer: '" + node->name + "' needs every row at once, and '" +
                         source_dataset_name + "' is kept on disk. Before the Data Loader a table on disk "
                         "runs only steps that stream (Standard Scaler, Min-Max Scaler, Log Transform, "
+                        "Text Tokenizer with a Word, Whitespace or Character tokenizer or a saved vocabulary, "
                         "checks); raise the data budget (Preferences > Data) to load it in memory.", node);
                 return result;
             }
@@ -671,7 +672,7 @@ MaterializeTableResult PipelineMaterializer::MaterializeParquetStreamed(
     // The output, a row group at a time.
     std::error_code fs_error;
     std::filesystem::create_directories(std::filesystem::path(output_path).parent_path(), fs_error);
-    const std::string tmp_path = output_path + ".tmp";
+    const std::string tmp_path = ParquetBackedDataset::UniqueTempPath(output_path);
     std::shared_ptr<arrow::io::FileOutputStream> out;
     std::unique_ptr<parquet::arrow::FileWriter> writer;
     auto abandon = [&](size_t k, const std::string& message) {
@@ -700,7 +701,11 @@ MaterializeTableResult PipelineMaterializer::MaterializeParquetStreamed(
             if (!opened.ok()) return abandon(0, opened.status().ToString());
             out = *opened;
             auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
-            auto made = parquet::arrow::FileWriter::Open(*batch->schema(), arrow::default_memory_pool(), out, props);
+            // The Arrow schema goes with the file: field metadata (a label's
+            // class names) survives the round trip.
+            auto arrow_props = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+            auto made = parquet::arrow::FileWriter::Open(*batch->schema(), arrow::default_memory_pool(), out, props,
+                                                         arrow_props);
             if (!made.ok()) return abandon(0, made.status().ToString());
             writer = std::move(*made);
         }

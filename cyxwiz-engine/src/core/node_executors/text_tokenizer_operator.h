@@ -3,7 +3,14 @@
 #include "pipeline_operator.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -55,6 +62,9 @@ class Tokenizer;
 
 class TextTokenizerOperator : public IPipelineOperator {
 public:
+    TextTokenizerOperator();
+    ~TextTokenizerOperator() override;
+
     std::string GetName() const override { return "TextTokenizer"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
@@ -71,7 +81,34 @@ public:
 
     size_t GetLastVocabSize() const { return last_vocab_size_; }
 
+    // Wide rows stream a row group at a time (TOFIX157 A4), so a table kept
+    // on disk tokenizes without being read whole: the fit pass counts the
+    // tokens (Whitespace, Word, Character) and the string labels' classes in
+    // file order; EndFit builds the vocabulary Apply would (saving vocab_file
+    // when asked); ApplyBatch writes each row group's tok_i and y. A saved
+    // vocab_file streams with any tokenizer.
+    bool SupportsStreaming() const override;
+    bool NeedsFitPass() const override { return true; }
+    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
+    arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;
+    arrow::Status EndFit() override;
+    arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
+    arrow::Status EndStream() override;
+
 private:
+    Tokenizer MakeTokenizer() const;
+    // A loaded or built vocabulary against the node's BPE settings (throws).
+    void CheckLoadedVocabulary(const Tokenizer& tokenizer) const;
+    arrow::Status SaveBuiltVocabulary(const Tokenizer& tokenizer) const;
+    // Rows tok_0..tok_{max_length-1} (float32) and y (int32, class names in
+    // its metadata) from texts and their class ids (none: no y).
+    using WideProgress = std::function<void(const std::string& stage, const std::string& message, double progress,
+                                            uint64_t processed, uint64_t total)>;
+    arrow::Result<std::shared_ptr<arrow::Table>> BuildWideTable(
+        const std::vector<std::string>& texts, const Tokenizer& tokenizer, const std::vector<int>& labels,
+        const std::vector<std::string>& class_names, const WideProgress& report);
+    // A row group's class ids: string labels by the fit pass's classes.
+    arrow::Status StreamLabels(const std::shared_ptr<arrow::Table>& batch, std::vector<int>& labels);
     arrow::Status ValidateWindowInput(const std::shared_ptr<arrow::Table>& input) const;
     arrow::Result<std::shared_ptr<arrow::Table>> BuildTokenWindows(
         const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer,
@@ -99,6 +136,14 @@ private:
     bool vocab_build_if_missing_ = false;
     size_t last_vocab_size_ = 0;
     PipelineOperatorProgressCallback progress_callback_;
+
+    // Streaming state (BeginStream to EndStream).
+    std::unique_ptr<Tokenizer> stream_tokenizer_;
+    bool stream_vocab_ready_ = false;
+    std::unordered_map<std::string, int64_t> stream_counts_;
+    bool stream_string_labels_ = false;
+    std::map<std::string, int> stream_label_ids_;
+    std::vector<std::string> stream_class_names_;
 };
 
 } // namespace cyxwiz

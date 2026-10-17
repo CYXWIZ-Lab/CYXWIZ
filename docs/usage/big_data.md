@@ -72,19 +72,28 @@ before loading, for example:
 
 A Data Input kept on disk can feed training:
 
-- **Steps before the Data Loader** (Standard and Min-Max Scaler, Log Transform, checks) run one
-  row group at a time: each fitting step reads the file once to fit, then one
-  last pass writes the prepared table to a Parquet file
-  (`cache/materialized/streamed` in the project) that training reads. It is
-  prepared again on each run (not cached), and the previous file is removed.
-  A step there that needs every row at once (a tokenizer, a vectorizer, PCA,
-  the Robust Scaler) stops the run before training with the reason, for
-  example:
+- **Steps before the Data Loader** (Standard and Min-Max Scaler, Log
+  Transform, Text Tokenizer, checks) run one row group at a time: each fitting
+  step reads the file once to fit, then one last pass writes the prepared
+  table to a Parquet file (`cache/materialized/streamed` in the project) that
+  training reads. It is prepared again on each run (not cached), and the
+  previous file is removed.
+- **Text classification on disk**: the Text Tokenizer (with Text Vocabulary
+  and Text Padding) counts its vocabulary a row group at a time, then writes
+  each row group's `tok_0 ... tok_n` and `y`. The result is the table it makes
+  in memory: the same vocabulary, the same token ids, the classes numbered in
+  file order (their names kept for Run Test). This works with a Word,
+  Whitespace or Character tokenizer, or with any tokenizer given a saved
+  vocabulary file (`vocab_file`; with *build if missing* the counted
+  vocabulary is saved there). A step that needs every row at once (ByteBPE or
+  WordPiece without a saved vocabulary, a vectorizer, PCA, the Robust Scaler)
+  stops the run before training with the reason, for example:
 
   > 'Text Tokenizer' needs every row at once, and 'corpus' is kept on disk.
   > Before the Data Loader a table on disk runs only steps that stream
-  > (Standard Scaler, Min-Max Scaler, Log Transform, checks); raise the data
-  > budget (Preferences > Data) to load it in memory.
+  > (Standard Scaler, Min-Max Scaler, Log Transform, Text Tokenizer with a
+  > Word, Whitespace or Character tokenizer or a saved vocabulary, checks);
+  > raise the data budget (Preferences > Data) to load it in memory.
 
 - **A table on disk** trains a row group at a time, with the Data Split
   made row by row as in memory: without stratification Train is the first
