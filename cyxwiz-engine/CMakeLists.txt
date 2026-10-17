@@ -186,6 +186,7 @@ set(ENGINE_SOURCES
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
+    src/core/node_palette.cpp  # TOFIX157 palette curation
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
@@ -5584,6 +5585,16 @@ set_target_properties(test_one_vs_rest_curves PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME one_vs_rest_curves COMMAND test_one_vs_rest_curves)
+
+# ===== Test: where the palettes put a node (TOFIX157) =====
+add_executable(test_node_palette tests/test_node_palette.cpp src/core/node_palette.cpp src/core/preparation_recipe.cpp)
+target_include_directories(test_node_palette PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_node_palette PRIVATE nlohmann_json::nlohmann_json imgui::imgui)
+if(WIN32)
+    target_compile_definitions(test_node_palette PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_node_palette PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME node_palette COMMAND test_node_palette)
 
 # ===== Test: console text a 16-bit font can draw (TOFIX157) =====
 add_executable(test_drawable_text tests/test_drawable_text.cpp)

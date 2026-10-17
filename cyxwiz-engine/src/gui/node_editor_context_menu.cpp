@@ -4,6 +4,7 @@
  */
 
 #include "node_editor.h"
+#include "../core/node_palette.h"
 #include "icons.h"
 #include "properties.h"
 #include "../core/node_metadata.h"
@@ -185,8 +186,12 @@ void NodeEditor::ShowContextMenu() {
     std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
     const bool is_searching = !search_lower.empty();
 
-    // Group nodes by category label (from searchable list)
+    // Group nodes by category label (from searchable list). Palette curation
+    // (TOFIX157, core/node_palette): table steps go under Advanced operations
+    // by their group, nodes that cannot run yet under Can't run yet.
     std::map<std::string, std::vector<SearchableNode*>> grouped;
+    std::map<std::string, std::vector<SearchableNode*>> advanced;
+    std::vector<SearchableNode*> cant_run;
     for (auto& node : all_searchable_nodes_) {
         if (node.status == NodeImplementationStatus::Deprecated) {
             continue;
@@ -204,66 +209,79 @@ void NodeEditor::ShowContextMenu() {
                 continue;
             }
         }
-        grouped[node.category].push_back(&node);
+        if (node.cant_run) cant_run.push_back(&node);
+        else if (!node.advanced_group.empty()) advanced[node.advanced_group].push_back(&node);
+        else grouped[node.category].push_back(&node);
     }
 
-    if (grouped.empty()) {
-        ImGui::TextDisabled("No matches");
-    } else {
-        // When searching, show flat list; otherwise use submenus
-        if (is_searching) {
-            for (auto& [category, nodes] : grouped) {
-                ImGui::TextDisabled("%s", category.c_str());
-                for (auto* node : nodes) {
-                    const bool is_unavailable =
-                        node->status == NodeImplementationStatus::Template ||
-                        node->support_blocked;
-                    if (is_unavailable) ImGui::BeginDisabled();
-                    if (ImGui::MenuItem(node->name.c_str())) {
-                        if (!is_unavailable && node->type != NodeType::Unknown) {
-                            AddNode(node->type, node->type == NodeType::PluginCustom
-                                                    ? node->extension_type_id
-                                                    : node->name);
-                            context_menu_search_[0] = '\0';
-                            ImGui::CloseCurrentPopup();
-                        }
-                    }
-                    if (is_unavailable) {
-                        if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
-                            ImGui::SetTooltip("%s", node->tooltip.c_str());
-                        }
-                        ImGui::EndDisabled();
-                    }
-                }
+    // One node as a menu item: added on click, or disabled with its reason.
+    const auto item = [&](SearchableNode* node, const std::string& label) {
+        const bool is_unavailable =
+            node->status == NodeImplementationStatus::Template || node->support_blocked || node->cant_run;
+        if (is_unavailable) ImGui::BeginDisabled();
+        if (ImGui::MenuItem(label.c_str())) {
+            if (!is_unavailable && node->type != NodeType::Unknown) {
+                AddNode(node->type, node->type == NodeType::PluginCustom ? node->extension_type_id : node->name);
+                context_menu_search_[0] = '\0';
+                ImGui::CloseCurrentPopup();
             }
-        } else {
-            // Use submenus with > indicator for categories
-            for (auto& [category, nodes] : grouped) {
-                if (ImGui::BeginMenu(category.c_str())) {
-                    for (auto* node : nodes) {
-                        const bool is_unavailable =
-                            node->status == NodeImplementationStatus::Template ||
-                            node->support_blocked;
-                        if (is_unavailable) ImGui::BeginDisabled();
-                        if (ImGui::MenuItem(node->name.c_str())) {
-                            if (!is_unavailable && node->type != NodeType::Unknown) {
-                                AddNode(node->type, node->type == NodeType::PluginCustom
-                                                        ? node->extension_type_id
-                                                        : node->name);
-                                context_menu_search_[0] = '\0';
-                                ImGui::CloseCurrentPopup();
-                            }
-                        }
-                        if (is_unavailable) {
-                            if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
-                                ImGui::SetTooltip("%s", node->tooltip.c_str());
-                            }
-                            ImGui::EndDisabled();
-                        }
-                    }
+        }
+        if (is_unavailable) {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !node->tooltip.empty()) {
+                ImGui::SetTooltip("%s", node->tooltip.c_str());
+            }
+            ImGui::EndDisabled();
+        }
+    };
+
+    if (grouped.empty() && advanced.empty() && cant_run.empty()) {
+        ImGui::TextDisabled("No matches");
+    } else if (is_searching) {
+        // When searching, show a flat list.
+        for (auto& [category, nodes] : grouped) {
+            ImGui::TextDisabled("%s", category.c_str());
+            for (auto* node : nodes) item(node, node->name);
+        }
+        for (const auto& group : cyxwiz::palette::AdvancedGroups()) {
+            const auto found = advanced.find(group);
+            if (found == advanced.end()) continue;
+            ImGui::TextDisabled("Advanced operation \xC2\xB7 %s", group.c_str());
+            for (auto* node : found->second) item(node, node->name);
+        }
+        if (!cant_run.empty()) {
+            ImGui::TextDisabled("%s", cyxwiz::palette::kCantRunYet);
+            for (auto* node : cant_run) item(node, node->name + "  (" + node->category + ")");
+        }
+    } else {
+        // Use submenus with > indicator for categories
+        for (auto& [category, nodes] : grouped) {
+            if (ImGui::BeginMenu(category.c_str())) {
+                for (auto* node : nodes) item(node, node->name);
+                ImGui::EndMenu();
+            }
+        }
+        if (!advanced.empty() || !cant_run.empty()) ImGui::Separator();
+        if (!advanced.empty() && ImGui::BeginMenu(cyxwiz::palette::kAdvancedOperations)) {
+            for (const auto& group : cyxwiz::palette::AdvancedGroups()) {
+                const auto found = advanced.find(group);
+                if (found == advanced.end()) continue;
+                if (ImGui::BeginMenu(group.c_str())) {
+                    for (auto* node : found->second) item(node, node->name);
                     ImGui::EndMenu();
                 }
             }
+            ImGui::EndMenu();
+        }
+        if (!cant_run.empty() && ImGui::BeginMenu(cyxwiz::palette::kCantRunYet)) {
+            std::map<std::string, std::vector<SearchableNode*>> by_category;
+            for (auto* node : cant_run) by_category[node->category].push_back(node);
+            for (auto& [category, nodes] : by_category) {
+                if (ImGui::BeginMenu(category.c_str())) {
+                    for (auto* node : nodes) item(node, node->name);
+                    ImGui::EndMenu();
+                }
+            }
+            ImGui::EndMenu();
         }
     }
 

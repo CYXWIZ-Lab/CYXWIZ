@@ -1,6 +1,7 @@
 #include "node_browser_panel.h"
 #include "../node_editor.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/node_palette.h"
 #include "../../core/extension_node_registry.h"
 #include "../../plugin/plugin_manager.h"
 #include "../ui_buttons.h"
@@ -10,6 +11,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <map>
 #include <cmath>
 
 namespace gui {
@@ -184,6 +186,22 @@ void NodeBrowserPanel::Render() {
             // Search results mode - show as grid
             auto results = registry.Search(search_query_, true);
             results = ApplySupportFilter(results);
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                const auto rank = [](const cyxwiz::NodeMetadata* m) {
+                    switch (cyxwiz::palette::PlaceNode(*m).place) {
+                    case cyxwiz::palette::Place::Category: return 0;
+                    case cyxwiz::palette::Place::Advanced: return 1;
+                    case cyxwiz::palette::Place::CantRun: return 2;
+                    case cyxwiz::palette::Place::Hidden: return 3;
+                    }
+                    return 3;
+                };
+                results.erase(std::remove_if(results.begin(), results.end(),
+                                             [&](const cyxwiz::NodeMetadata* m) { return rank(m) == 3; }),
+                              results.end());
+                std::stable_sort(results.begin(), results.end(),
+                                 [&](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return rank(a) < rank(b); });
+            }
             results.erase(std::remove_if(results.begin(), results.end(),
                                          [](const cyxwiz::NodeMetadata* m) {
                                              return m->type == cyxwiz::NodeType::PluginCustom;
@@ -209,7 +227,7 @@ void NodeBrowserPanel::Render() {
             RenderExtensionSection(true);
         } else if (showing_all_in_category_) {
             // Showing all nodes in a specific category
-            auto nodes = registry.GetByCategory(current_category_, true);
+            auto nodes = Curated(registry.GetByCategory(current_category_, true));
             nodes = ApplySupportFilter(nodes);
             RenderNodeGrid(nodes);
         } else {
@@ -221,6 +239,10 @@ void NodeBrowserPanel::Render() {
                 } else {
                     RenderCategorySection(category);
                 }
+            }
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                RenderAdvancedSection();
+                RenderCantRunSection();
             }
         }
 
@@ -710,9 +732,78 @@ void NodeBrowserPanel::RenderFilterTags() {
     ImGui::PopStyleVar(2);
 }
 
+std::vector<const cyxwiz::NodeMetadata*> NodeBrowserPanel::Curated(std::vector<const cyxwiz::NodeMetadata*> nodes) const {
+    if (support_filter_mode_ != SupportFilterMode::All) return nodes;
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
+                               [](const cyxwiz::NodeMetadata* m) {
+                                   return !m || cyxwiz::palette::PlaceNode(*m).place != cyxwiz::palette::Place::Category;
+                               }),
+                nodes.end());
+    return nodes;
+}
+
+void NodeBrowserPanel::RenderAdvancedSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    std::map<std::string, std::vector<const cyxwiz::NodeMetadata*>> by_group;
+    size_t count = 0;
+    for (const auto* m : cyxwiz::NodeMetadataRegistry::Instance().GetAllMetadata()) {
+        if (!m) continue;
+        const auto placed = cyxwiz::palette::PlaceNode(*m);
+        if (placed.place != cyxwiz::palette::Place::Advanced) continue;
+        by_group[placed.advanced_group].push_back(m);
+        ++count;
+    }
+    if (count == 0) return;
+    const std::string label = std::string(cyxwiz::palette::kAdvancedOperations) + "  " + std::to_string(count) + "###advanced_operations";
+    if (!ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
+        ImGui::Spacing();
+        return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "Table steps a Preparation Recipe holds. Data Studio > Prepare adds them for you; "
+                                   "add one here for a graph built step by step.");
+    ImGui::PopTextWrapPos();
+    for (const auto& group : cyxwiz::palette::AdvancedGroups()) {
+        auto& nodes = by_group[group];
+        if (nodes.empty()) continue;
+        std::sort(nodes.begin(), nodes.end(),
+                  [](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return a->name < b->name; });
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "%s", group.c_str());
+        RenderNodeGrid(nodes);
+    }
+    ImGui::TreePop();
+    ImGui::Spacing();
+}
+
+void NodeBrowserPanel::RenderCantRunSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    std::vector<const cyxwiz::NodeMetadata*> nodes;
+    for (const auto* m : cyxwiz::NodeMetadataRegistry::Instance().GetAllMetadata())
+        if (m && cyxwiz::palette::PlaceNode(*m).place == cyxwiz::palette::Place::CantRun) nodes.push_back(m);
+    if (nodes.empty()) return;
+    // By category, then name: what is missing where.
+    std::sort(nodes.begin(), nodes.end(), [](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) {
+        const std::string ca = cyxwiz::GetCategoryDisplayName(a->category), cb = cyxwiz::GetCategoryDisplayName(b->category);
+        return ca != cb ? ca < cb : a->name < b->name;
+    });
+    const std::string label = std::string(cyxwiz::palette::kCantRunYet) + "  " + std::to_string(nodes.size()) + "###cant_run_yet";
+    if (!ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
+        ImGui::Spacing();
+        return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "What the Engine cannot run yet; each leaves this list when it runs. A saved graph that "
+                                   "has one still opens and says why it cannot run. Hover a node for the reason.");
+    ImGui::PopTextWrapPos();
+    RenderNodeGrid(nodes);
+    ImGui::TreePop();
+    ImGui::Spacing();
+}
+
 void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
-    auto nodes = registry.GetByCategory(category, true);
+    auto nodes = Curated(registry.GetByCategory(category, true));
     nodes = ApplySupportFilter(nodes);
 
     if (nodes.empty()) return;

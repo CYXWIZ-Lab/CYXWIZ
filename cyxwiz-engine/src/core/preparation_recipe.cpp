@@ -62,9 +62,8 @@ bool IsKnownContract(const std::string& version) {
 
 }  // namespace
 
-bool IsPreparationRecipeStepType(gui::NodeType type) {
+const char* RecipeStepGroup(gui::NodeType type) {
     switch (type) {
-    // Row operations
     case gui::NodeType::FilterRows:
     case gui::NodeType::SortRows:
     case gui::NodeType::RemoveDuplicateRows:
@@ -72,7 +71,7 @@ bool IsPreparationRecipeStepType(gui::NodeType type) {
     case gui::NodeType::FillMissingValues:
     case gui::NodeType::TableCropper:
     case gui::NodeType::RowToColumnNames:
-    // Column operations
+        return "Rows";
     case gui::NodeType::SelectColumns:
     case gui::NodeType::RenameColumns:
     case gui::NodeType::ColumnAppender:
@@ -82,24 +81,26 @@ bool IsPreparationRecipeStepType(gui::NodeType type) {
     case gui::NodeType::MathFormula:
     case gui::NodeType::RuleEngine:
     case gui::NodeType::Unpivot:
-    // Text operations
+        return "Columns";
     case gui::NodeType::TextCleanNode:
     case gui::NodeType::JSONPathExtractor:
     case gui::NodeType::RegexTester:
-    // Aggregation and combination
+        return "Text";
     case gui::NodeType::GroupByAggregate:
     case gui::NodeType::JoinTables:
     case gui::NodeType::RowAppender:
-    // SQL step (contract 1)
+        return "Combine";
+    // The SQL step (contract 1) and the checks.
     case gui::NodeType::SQLQuery:
-    // Checks
     case gui::NodeType::RowCountCheck:
     case gui::NodeType::DataValidator:
-        return true;
+        return "SQL and checks";
     default:
-        return false;
+        return nullptr;
     }
 }
+
+bool IsPreparationRecipeStepType(gui::NodeType type) { return RecipeStepGroup(type) != nullptr; }
 
 std::string PreparationRecipeRejection(const json& wrapper, const json& record) {
     const std::string label = NodeLabel(wrapper);

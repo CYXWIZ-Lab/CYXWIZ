@@ -102,6 +102,13 @@ private:
     void RenderSearchBar();
     void RenderFilterTags();
     void RenderCategorySection(cyxwiz::NodeCategory category);
+    // Palette curation (TOFIX157, core/node_palette): with the All filter a
+    // category keeps the nodes that run and are not table steps; the table
+    // steps show under Advanced operations and the rest under Can't run yet,
+    // both closed until opened.
+    std::vector<const cyxwiz::NodeMetadata*> Curated(std::vector<const cyxwiz::NodeMetadata*> nodes) const;
+    void RenderAdvancedSection();
+    void RenderCantRunSection();
     void RenderNodeGrid(const std::vector<const cyxwiz::NodeMetadata*>& nodes, int max_visible = -1);
     // extension: set for an extension node, whose identity is its type id.
     void RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width,

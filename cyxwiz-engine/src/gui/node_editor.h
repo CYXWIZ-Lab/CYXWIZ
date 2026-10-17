@@ -125,6 +125,12 @@ struct NodeAddSearchState {
     float search_debounce_timer_ = 0.0f;      // Time remaining before search triggers
     std::string last_search_query_;           // Last processed query
     bool search_dirty_ = false;               // True if search needs to be updated
+
+    // Palette curation (TOFIX157): matches that cannot run yet are counted
+    // and listed only after "Show"; the dropdown's height as drawn.
+    bool show_cant_run = false;
+    int cant_run_matches = 0;
+    float dropdown_height = 0.0f;
 };
 
 // Node implementation status for template/coming soon nodes
@@ -147,6 +153,10 @@ struct SearchableNode {
     bool support_blocked = false;  // Derived from NodeMetadata::support_axes
     std::string support_state;     // Compact central support state value
     std::string support_reason;    // Compact central support reason
+    // Palette curation (TOFIX157, core/node_palette): a table step's group
+    // under Advanced operations ("Rows", ...), or a node that cannot run yet.
+    std::string advanced_group;
+    bool cant_run = false;
 };
 
 // Alignment types for arranging selected nodes
