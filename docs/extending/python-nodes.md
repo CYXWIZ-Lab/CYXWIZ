@@ -197,6 +197,20 @@ under its field without Python.
 **Errors** in your `forward` or `backward` stop training with the node's
 name, the Python message and the traceback.
 
+**Speed.** Each batch a Python node takes the interpreter lock and calls
+your Python code. Measured 2026-10-17 (GTX 1050 Ti, `bench_python_node_cost`):
+
+| Softsign | forward + backward of a [32, 32] batch | Time per epoch, tiny causal-LM example |
+|---|---|---|
+| C++ plugin | 221 us | 0.0998 s |
+| Python node | 474 us | 0.1015 s |
+
+About 0.25 ms more per batch: invisible in a model whose layers do real
+work, noticeable with very small batches. Python nodes do not run in
+parallel with each other or with a script running in the Engine (one
+interpreter lock), and converting to NumPy inside a node copies to the CPU
+and back.
+
 ## 7. Not yet
 
 | Coming | Stage |

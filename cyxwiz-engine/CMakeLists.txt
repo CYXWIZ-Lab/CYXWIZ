@@ -6965,6 +6965,23 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
     add_dependencies(test_python_node_training pycyxwiz)
     add_test(NAME python_node_training COMMAND test_python_node_training)
+
+    # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
+    add_executable(bench_python_node_cost
+        tests/bench_python_node_cost.cpp
+        src/extension/python/python_node_factory.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/plugin_loader.cpp
+    )
+    target_link_libraries(bench_python_node_cost PRIVATE
+        cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui pybind11::embed)
+    target_compile_definitions(bench_python_node_cost PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
+        CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:bench_python_node_cost>"
+        CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
+    add_dependencies(bench_python_node_cost pycyxwiz activation_nodes)
 endif()
 
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
