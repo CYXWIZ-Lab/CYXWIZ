@@ -214,7 +214,11 @@ void QueryEditor::RenderResult() {
     if (!save_note_.empty()) ImGui::TextColored(t.text_dim, "%s", save_note_.c_str());
 
     // The Table Viewer's grid on the window background: sort, select, copy.
-    result_grid_.Render("##query_result_grid");
+    // It fills the space left, and keeps about ten rows when little is left
+    // (a short Data Studio column): the job area then scrolls to it.
+    const float min_grid_h = ImGui::GetTextLineHeightWithSpacing() * 12.0f;
+    const float grid_h = ImGui::GetContentRegionAvail().y < min_grid_h ? min_grid_h : 0.0f;
+    result_grid_.Render("##query_result_grid", ImVec2(0.0f, grid_h));
 }
 
 }  // namespace cyxwiz
