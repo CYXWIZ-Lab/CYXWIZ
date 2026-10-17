@@ -11,6 +11,7 @@
 #include "../core/extension_node_registry.h"
 #include "../core/extension_properties_presentation.h"
 #include "../plugin/plugin_manager.h"
+#include "python_bundle_ui.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "ui_widgets.h"
@@ -97,6 +98,11 @@ cyxwiz::ui::StatusStyle GradientStatus(cyxwiz::ExtensionGradientState state) {
             s.label = "Could not check";
             return s;
         }
+        case cyxwiz::ExtensionGradientState::NeedsApproval: {
+            auto s = cyxwiz::ui::StatusStyleFor(Status::NeedsDriverUpdate);
+            s.label = "Code not approved";
+            return s;
+        }
         case cyxwiz::ExtensionGradientState::NotChecked:
         case cyxwiz::ExtensionGradientState::Stale: break;
     }
@@ -167,8 +173,10 @@ bool SettingEditor(const cyxwiz::ExtensionSettingRow& row, std::string& value) {
     return false;
 }
 
-void RenderGradientCard(const MLNode& node, const cyxwiz::ExtensionGradientView& gradient) {
+void RenderGradientCard(const MLNode& node, const cyxwiz::ExtensionNodeDescriptor& descriptor,
+                        const cyxwiz::ExtensionPropertiesView& view) {
     const auto& t = cyxwiz::ui::CurrentTokens();
+    const auto& gradient = view.gradient;
     auto& state = Gradients();
     cyxwiz::ui::BeginCard("gradient_check");
     const auto status = GradientStatus(gradient.state);
@@ -176,6 +184,22 @@ void RenderGradientCard(const MLNode& node, const cyxwiz::ExtensionGradientView&
     Wrapped(t.text, gradient.status_line);
     Wrapped(t.text_dim, gradient.next_step);
     ImGui::Spacing();
+    if (gradient.state == cyxwiz::ExtensionGradientState::NeedsApproval) {
+        // A Python bundle whose code is not approved (TOFIX125 P4 step 4.5).
+        if (cyxwiz::ui::PrimaryButton(gradient.button_label.c_str(), true, nullptr, cyxwiz::ui::ButtonSize::Small)) {
+            cyxwiz::python_ui::RequestApproval(descriptor.provider_id);
+        }
+        ImGui::SameLine(0.0f, t.space_md);
+        if (cyxwiz::ui::LinkButton("View code")) {
+            if (const auto* bundle = cyxwiz::python_ui::FindBundle(descriptor.provider_id)) {
+                cyxwiz::python_ui::OpenCode(*bundle);
+            }
+        }
+        Wrapped(t.text_dim, view.bundled_check);
+        cyxwiz::ui::EndCard();
+        return;
+    }
+    Wrapped(t.text_dim, view.bundled_check);
     if (cyxwiz::ui::SecondaryButton(gradient.button_label.c_str(), gradient.button_enabled,
                                     gradient.button_disabled_reason.empty() ? "The check is running"
                                                                             : gradient.button_disabled_reason.c_str())) {
@@ -224,6 +248,8 @@ void RenderInstalledExtensionProperties(MLNode& node, const cyxwiz::ExtensionNod
         in.provider_version = plugin->manifest.version.ToString();
     }
     in.parameters = &node.parameters;
+    in.python_bundle = descriptor.source == cyxwiz::ExtensionSource::PythonBundle;
+    in.needs_approval = in.python_bundle && !cyxwiz::python_ui::StateOf(descriptor.provider_id).approved;
     if (descriptor.kind == cyxwiz::ExtensionNodeKind::TensorLayer) in.shape_error = ShapeError(descriptor.type_id, values);
     const auto record = gradients.records.find(node.id);
     in.last_check = record != gradients.records.end() ? &record->second : nullptr;
@@ -264,7 +290,7 @@ void RenderInstalledExtensionProperties(MLNode& node, const cyxwiz::ExtensionNod
 
     if (view.gradient.shown) {
         ImGui::Spacing();
-        RenderGradientCard(node, view.gradient);
+        RenderGradientCard(node, descriptor, view);
     }
 }
 

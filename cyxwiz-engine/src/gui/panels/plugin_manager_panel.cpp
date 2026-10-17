@@ -6,6 +6,8 @@
 #include "../../plugin/security/permission_store.h"
 #include "../../core/async_task_manager.h"
 #include "../ui_tokens.h"
+#include "../python_bundle_ui.h"
+#include "../../extension/python/python_node_provider.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -131,6 +133,7 @@ void PluginManagerPanel::RenderToolbar() {
         mgr.InitializeAll();
         plugin::RecordLoadedPlugins(mgr);
         ReloadStartupList();
+        if (auto* bundles = python_ui::Provider()) bundles->Rescan();  // Python node bundles too
         spdlog::info("PluginManagerPanel: Refreshed plugin list");
     }
 
@@ -181,6 +184,10 @@ void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::Loaded
                 ImGui::TextDisabled("No plugins match '%s'", filter.c_str());
             }
         }
+        // Python node bundles (TOFIX125 P4 step 4.5, mockup row 6).
+        ImGui::Spacing();
+        ImGui::Spacing();
+        python_ui::RenderBundleSection(filter);
     }
     ImGui::EndChild();
 }

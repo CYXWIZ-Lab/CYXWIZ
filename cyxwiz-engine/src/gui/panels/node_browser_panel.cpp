@@ -1,4 +1,5 @@
 #include "node_browser_panel.h"
+#include "../python_bundle_ui.h"
 #include "../node_editor.h"
 #include "../../core/node_metadata_registry.h"
 #include "../../core/extension_node_registry.h"
@@ -853,6 +854,7 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
             provider_names.emplace_back(provider_id, plugin->manifest.name);
         }
     }
+    for (auto& name : cyxwiz::python_ui::BundleNames()) provider_names.push_back(std::move(name));
 
     // Section header, as other categories draw it, with the summary.
     const std::string cat_name = cyxwiz::GetCategoryDisplayName(cyxwiz::NodeCategory::Plugin);

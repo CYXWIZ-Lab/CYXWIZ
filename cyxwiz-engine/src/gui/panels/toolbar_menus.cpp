@@ -20,6 +20,7 @@
 #include "../../plugin/plugin_session.h"
 #include "../../plugin/registries/plugin_panel_registry.h"
 #include "../separate_windows.h"
+#include "../python_bundle_ui.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -183,6 +184,7 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
         in.loaded_plugins.push_back({p->manifest.id, p->manifest.name, cyxwiz::PluginMenuDetail(adds),
                                      adds.trainable_nodes + adds.simulation_nodes > 0});
     }
+    for (const auto& b : python_ui::MenuEntries()) in.python_bundles.push_back({b.id, b.name, b.detail, true});
     return in;
 }
 

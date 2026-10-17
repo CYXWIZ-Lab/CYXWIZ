@@ -8,6 +8,8 @@
 #include "../core/file_dialogs.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
+#include "file_browser_launch.h"
+#include "python_bundle_ui.h"
 #include "icons.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
@@ -16,6 +18,7 @@
 #include <imgui.h>
 
 #include <cstring>
+#include <filesystem>
 #include <set>
 #include <string>
 
@@ -66,8 +69,17 @@ void RenderMissingExtension(const MLNode& node, RenderNodePropertiesContext cont
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
-    if (cyxwiz::ui::PrimaryButton("Open Plugin Manager", context.node_editor != nullptr,
-                                  "The node editor is not available", cyxwiz::ui::ButtonSize::Small)) {
+    if (!node.extension_content_hash.empty()) {
+        // A Python bundle node (saved with its code hash): show where bundles go.
+        const auto roots = cyxwiz::python_ui::CurrentRoots();
+        const auto folder = roots.project_nodes.empty() ? roots.user_nodes : roots.project_nodes;
+        if (cyxwiz::ui::PrimaryButton("Open nodes folder", true, nullptr, cyxwiz::ui::ButtonSize::Small)) {
+            std::error_code ec;
+            std::filesystem::create_directories(folder, ec);
+            cyxwiz::LaunchAssetInFileBrowser(folder.string(), true);
+        }
+    } else if (cyxwiz::ui::PrimaryButton("Open Plugin Manager", context.node_editor != nullptr,
+                                         "The node editor is not available", cyxwiz::ui::ButtonSize::Small)) {
         context.node_editor->OpenPluginManager();
     }
     auto& open = OpenMissingDetails();

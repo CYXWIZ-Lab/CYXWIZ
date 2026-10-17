@@ -48,6 +48,7 @@
 #include "../core/keyboard_shortcuts.h"
 #include "../extension/python/python_node_factory.h"
 #include "../extension/python/python_node_provider.h"
+#include "python_bundle_ui.h"
 #include "frame_metrics.h"
 #include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
@@ -2692,6 +2693,8 @@ void MainWindow::OpenScriptFile(const std::string& file_path) {
 MainWindow::~MainWindow() {
     spdlog::info("MainWindow destructor: starting cleanup");
     cyxwiz::ProjectManager::Instance().SetCloseGuard(nullptr);
+    cyxwiz::python_ui::SetProvider(nullptr);
+    cyxwiz::python_ui::SetOpenCodeHandler(nullptr);
     test_callback_lifetime_.reset();
     if (test_preparation_task_) test_preparation_task_->RequestCancel();
     auto& test_manager = cyxwiz::TestManager::Instance();
@@ -3344,6 +3347,7 @@ void MainWindow::Render() {
 
     // Render permission approval dialogs
     cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
+    cyxwiz::python_ui::RenderApprovalDialog();
 
     // Render original panels
     TimedRender("node editor", node_editor_);
@@ -3410,6 +3414,10 @@ void MainWindow::UpdatePythonNodes() {
         if (!python_node_provider_) {
             python_node_provider_ =
                 std::make_unique<cyxwiz::PythonNodeProvider>(cyxwiz::PythonNodeApprovals::User());
+            cyxwiz::python_ui::SetProvider(python_node_provider_.get());
+            cyxwiz::python_ui::SetOpenCodeHandler([this](const std::filesystem::path& path) {
+                OpenScriptFile(path.string());
+            });
         }
         std::vector<std::filesystem::path> roots;
         auto& projects = cyxwiz::ProjectManager::Instance();
