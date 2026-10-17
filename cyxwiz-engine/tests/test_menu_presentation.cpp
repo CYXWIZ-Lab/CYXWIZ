@@ -303,6 +303,18 @@ int main() {
         none.plugin_panels.clear();
         none.loaded_plugins.clear();
         Check(Find(BuildMenuModel(none), "apps.plugin") == nullptr, "no plugins, no entries");
+        // Python node bundles are listed under their own heading (TOFIX125 P4 step 4.5).
+        MenuInputs bundles = none;
+        bundles.python_bundles = {{"com.example.acts", "example-acts", "2 nodes \xC2\xB7 not approved", true}};
+        const MenuModel bundle_model = BuildMenuModel(bundles);
+        const MenuItem* bundle = Find(bundle_model, "apps.plugin", "com.example.acts");
+        Check(bundle && bundle->label == "example-acts" && bundle->detail == "2 nodes \xC2\xB7 not approved",
+              "a Python bundle opens its nodes");
+        bool heading = false;
+        for (const auto& menu : bundle_model.menus) {
+            for (const auto& item : menu.items) heading = heading || item.label == "Python node bundles";
+        }
+        Check(heading, "under the heading Python node bundles");
         Check(Find(model, "help.tutorial", "getting_started")->checked, "completed tutorial is checked");
         Check(Find(model, "account.sign_out") != nullptr && Find(model, "account.sign_in") == nullptr,
               "signed in account menu");

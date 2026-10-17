@@ -42,7 +42,9 @@ struct ExtensionGradientRecord {
     std::map<std::string, std::string> parameters;  // the settings it ran with
 };
 
-enum class ExtensionGradientState { NotChecked, Checking, Passed, Failed, CouldNotCheck, Stale };
+// NeedsApproval: a Python bundle node whose code is not approved yet; the
+// card's button then opens the approval dialog (TOFIX125 P4 step 4.5).
+enum class ExtensionGradientState { NotChecked, Checking, Passed, Failed, CouldNotCheck, Stale, NeedsApproval };
 
 struct ExtensionGradientView {
     bool shown = false;  // trainable nodes only
@@ -63,6 +65,10 @@ struct ExtensionPropertiesInputs {
     std::string shape_error;       // the factory's refusal for these settings
     const ExtensionGradientRecord* last_check = nullptr;
     bool checking = false;
+    // A node from a Python bundle: "Python node" in the subtitle, "the node's
+    // code" and "the bundle's author" where a plugin's say "the plugin".
+    bool python_bundle = false;
+    bool needs_approval = false;  // its bundle's code is not approved yet
 };
 
 struct ExtensionPropertiesView {
@@ -71,6 +77,7 @@ struct ExtensionPropertiesView {
     std::string no_settings_text;  // "This node has no settings." when none
     std::string general_error;     // a refusal that names no setting
     ExtensionGradientView gradient;
+    std::string bundled_check;     // Python: "When bundled: gradient passed, largest error 1.3e-03 (2026-10-17)."
 };
 
 ExtensionPropertiesView BuildExtensionPropertiesView(const ExtensionPropertiesInputs& inputs);

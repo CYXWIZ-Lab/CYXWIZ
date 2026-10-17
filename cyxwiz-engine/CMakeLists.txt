@@ -388,6 +388,7 @@ set(ENGINE_SOURCES
     src/core/menu_presentation.cpp
     src/core/extension_properties_presentation.cpp
     src/core/plugin_presentation.cpp
+    src/core/python_bundle_presentation.cpp
     src/plugin/plugin_session.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
@@ -6932,6 +6933,15 @@ add_test(NAME python_node_bundle COMMAND test_python_node_bundle)
 add_executable(test_python_node_approvals tests/test_python_node_approvals.cpp)
 target_link_libraries(test_python_node_approvals PRIVATE cyxwiz-training-core)
 add_test(NAME python_node_approvals COMMAND test_python_node_approvals)
+
+# Python node bundles in the GUI: cards, approval, create from script (TOFIX125 P4 step 4.5)
+add_executable(test_python_bundle_presentation
+    tests/test_python_bundle_presentation.cpp
+    src/core/python_bundle_presentation.cpp
+    src/core/plugin_presentation.cpp
+)
+target_link_libraries(test_python_bundle_presentation PRIVATE cyxwiz-training-core)
+add_test(NAME python_bundle_presentation COMMAND test_python_bundle_presentation)
 
 # Python node provider: scan, approval, refresh (TOFIX125 P4 step 4.4). No Python needed.
 add_executable(test_python_node_provider

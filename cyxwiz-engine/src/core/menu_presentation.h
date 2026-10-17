@@ -78,6 +78,8 @@ struct MenuInputs {
     std::vector<NamedEntry> tutorials;      // checked = completed
     std::vector<NamedEntry> plugin_panels;  // checked = visible, group = category
     std::vector<LoadedPluginEntry> loaded_plugins;
+    // Python node bundles (TOFIX125 P4 step 4.5): detail "2 nodes Â· not approved".
+    std::vector<LoadedPluginEntry> python_bundles;
 };
 
 struct MenuItem {

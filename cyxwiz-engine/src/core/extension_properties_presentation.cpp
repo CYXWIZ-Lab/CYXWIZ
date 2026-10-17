@@ -70,15 +70,25 @@ ExtensionGradientView BuildGradient(const ExtensionPropertiesInputs& in,
     if (!view.shown) return view;
 
     const ExtensionGradientRecord* record = in.last_check;
+    const std::string refuser = in.python_bundle ? "the node's code" : "the plugin";
+    const std::string author = in.python_bundle ? "the bundle's author" : "the plugin's author";
+    if (in.needs_approval) {
+        view.state = ExtensionGradientState::NeedsApproval;
+        view.status_line = "The code of the bundle " + in.descriptor->provider_id +
+                           " has not been approved, so this node cannot be built, checked or trained yet.";
+        view.button_label = "Approve code...";
+        return view;
+    }
     // The plugin refuses these settings: the node cannot be built, so there
     // is nothing to check (an old result would describe other settings).
     if (!in.shape_error.empty()) {
         view.state = ExtensionGradientState::CouldNotCheck;
         view.status_line = "Could not check: " + in.shape_error;
-        view.next_step = "Fix the setting the plugin refused, then check the gradient.";
+        view.next_step = "Fix the setting " + refuser + " refused, then check the gradient.";
         view.button_label = record ? "Check again" : "Check gradient";
         view.button_enabled = false;
-        view.button_disabled_reason = "The plugin refuses the current settings";
+        view.button_disabled_reason = (in.python_bundle ? std::string("The node's code") : std::string("The plugin")) +
+                                      " refuses the current settings";
         return view;
     }
     if (in.checking) {
@@ -99,7 +109,7 @@ ExtensionGradientView BuildGradient(const ExtensionPropertiesInputs& in,
     if (!record->error.empty()) {
         view.state = ExtensionGradientState::CouldNotCheck;
         view.status_line = record->summary.empty() ? "Could not check: " + record->error : record->summary;
-        view.next_step = "The node could not be run on the check's inputs. Fix the settings, or tell the plugin's author.";
+        view.next_step = "The node could not be run on the check's inputs. Fix the settings, or tell " + author + ".";
     } else if (record->parameters != values) {
         view.state = ExtensionGradientState::Stale;
         view.status_line = "Settings changed since the last check. Check again before you train.";
@@ -111,7 +121,7 @@ ExtensionGradientView BuildGradient(const ExtensionPropertiesInputs& in,
         view.status_line = record->summary + ".";
         view.next_step =
             "The node's backward step does not match what its forward step computes. Training can still run, "
-            "but the node may learn wrongly. Tell the plugin's author.";
+            "but the node may learn wrongly. Tell " + author + ".";
     }
 
     if (record->error.empty()) {
@@ -152,12 +162,24 @@ ExtensionPropertiesView BuildExtensionPropertiesView(const ExtensionPropertiesIn
     static const std::map<std::string, std::string> kNone;
     const auto& parameters = in.parameters ? *in.parameters : kNone;
 
-    view.subtitle = in.provider_name.empty() ? d.provider_id : in.provider_name;
-    if (!in.provider_version.empty()) view.subtitle += " " + in.provider_version;
+    if (in.python_bundle) {
+        view.subtitle = "Python node \xC2\xB7 " + d.provider_id + (d.version.empty() ? "" : " " + d.version);
+        const auto& v = d.verification;
+        if (v.status == ExtensionVerification::Status::Passed || v.status == ExtensionVerification::Status::Failed) {
+            view.bundled_check = std::string("When bundled: gradient ") +
+                                 (v.status == ExtensionVerification::Status::Passed ? "passed" : "failed") +
+                                 ", largest error " + FormatGradientError(v.max_relative_error) +
+                                 (v.checked_on.empty() ? "" : " (" + v.checked_on + ")") + ".";
+        }
+    } else {
+        view.subtitle = in.provider_name.empty() ? d.provider_id : in.provider_name;
+        if (!in.provider_version.empty()) view.subtitle += " " + in.provider_version;
+    }
     if (!d.menu_category.empty()) view.subtitle += " \xC2\xB7 " + d.menu_category;
 
     const auto values = ExtensionSettingValues(d, parameters);
-    bool error_placed = in.shape_error.empty();
+    // Unapproved code: its refusal is the approval message the card shows.
+    bool error_placed = in.shape_error.empty() || in.needs_approval;
     for (const auto& definition : d.metadata.parameters) {
         ExtensionSettingRow row;
         row.key = definition.name;

@@ -751,7 +751,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
     {
         Menu m{"apps", "Apps", {}};
         auto& i = m.items;
-        if (in.plugin_panels.empty() && in.loaded_plugins.empty()) {
+        if (in.plugin_panels.empty() && in.loaded_plugins.empty() && in.python_bundles.empty()) {
             i.push_back(Head("No plugins loaded"));
         } else {
             std::string group;
@@ -779,6 +779,18 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                     ? Action(f, "apps.plugin", p.name, "Shows the nodes this plugin adds in the Node Browser.", opts)
                     : Action(f, "apps.plugin_manager", p.name, "Shows this plugin in the Plugin Manager.", opts);
                 item.detail = p.detail;
+                i.push_back(std::move(item));
+            }
+        }
+        if (!in.python_bundles.empty()) {
+            if (in.loaded_plugins.empty() && !in.plugin_panels.empty()) i.push_back(Sep());
+            i.push_back(Head("Python node bundles"));
+            for (const auto& b : in.python_bundles) {
+                Opts opts;
+                opts.argument = b.id;
+                MenuItem item =
+                    Action(f, "apps.plugin", b.name, "Shows the nodes this Python bundle adds in the Node Browser.", opts);
+                item.detail = b.detail;
                 i.push_back(std::move(item));
             }
         }

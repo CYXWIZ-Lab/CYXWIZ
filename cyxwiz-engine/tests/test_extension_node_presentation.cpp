@@ -202,6 +202,52 @@ void TestExactTypeName() {
     Check(!cyxwiz::IsExtensionTypeName(dense, "MuJoCoPlant"), "a built-in node never matches");
 }
 
+// Python node bundles (TOFIX125 P4 step 4.5).
+void TestPythonBundleNodes() {
+    cyxwiz::ExtensionNodeDescriptor snake;
+    snake.provider_id = "com.example.acts";
+    snake.type_name = "Snake";
+    snake.type_id = "com.example.acts:Snake";
+    snake.version = "1.0.0";
+    snake.content_hash = "sha256:bcffe763ca1defc79c152f8221da10377c1c2c51d38913d253bb44ecfb247d0d";
+    snake.source = cyxwiz::ExtensionSource::PythonBundle;
+    snake.source_path = "D:/tmp/t125/pyproj/nodes/example-acts.cyxnode";
+    snake.kind = cyxwiz::ExtensionNodeKind::TensorLayer;
+    snake.menu_category = "Activation";
+    snake.metadata.name = "Snake";
+
+    const auto palette = cyxwiz::BuildExtensionPalette({snake});
+    Check(palette.size() == 1 && palette[0].python_bundle, "a bundle node is marked in the palette");
+    auto mixed = cyxwiz::BuildExtensionPalette(MuJoCoNodes());
+    mixed.push_back(palette[0]);
+    Check(cyxwiz::ExtensionPaletteSummary(mixed, {}) == "6 nodes from 1 plugin and 1 Python bundle",
+          "summary counts plugins and bundles: " + cyxwiz::ExtensionPaletteSummary(mixed, {}));
+    Check(cyxwiz::ExtensionPaletteSummary(palette, {{"com.example.acts", "example-acts"}}) ==
+              "1 node from example-acts",
+          "one bundle: its name");
+
+    cyxwiz::ExtensionPythonState not_approved;
+    const auto facts = cyxwiz::BuildExtensionInfoFacts(snake, {}, &not_approved);
+    Check(facts.category_line == "Python nodes / Activation", "category line: " + facts.category_line);
+    Check(facts.chips == std::vector<std::string>{"Python node", "Trainable node", "Code not approved"},
+          "chips for an unapproved Python node");
+    std::map<std::string, std::string> rows(facts.provided_by.begin(), facts.provided_by.end());
+    Check(rows["Python bundle"] == "example-acts (com.example.acts)" && rows["Approval"] == "Not approved yet" &&
+              rows["Code sha256"] == "bcffe763ca1d\xE2\x80\xA6" && rows["Folder"] == snake.source_path &&
+              rows.count("Plugin") == 0 && rows.count("Author") == 0,
+          "rows: bundle, approval, code hash, folder; no plugin rows");
+    cyxwiz::ExtensionPythonState approved{true, "2026-10-17"};
+    const auto ok = cyxwiz::BuildExtensionInfoFacts(snake, {}, &approved);
+    std::map<std::string, std::string> ok_rows(ok.provided_by.begin(), ok.provided_by.end());
+    Check(ok_rows["Approval"] == "Approved 2026-10-17" && ok.chips.size() == 2, "approved: no warning chip");
+
+    gui::MLNode missing = Node("com.example.acts:Snake", true);
+    missing.extension_content_hash = snake.content_hash;
+    const auto card = cyxwiz::BuildExtensionMissingCard(missing);
+    Check(card.lines.size() == 2 && card.lines[1].find("Put the Python bundle com.example.acts in this project's nodes folder") == 0,
+          "a missing bundle node says where to put the bundle: " + (card.lines.size() > 1 ? card.lines[1] : ""));
+}
+
 }  // namespace
 
 int main() {
@@ -210,6 +256,7 @@ int main() {
     TestInfoFacts();
     TestMissingCard();
     TestExactTypeName();
+    TestPythonBundleNodes();
     std::cout << "test_extension_node_presentation: all checks passed\n";
     return 0;
 }

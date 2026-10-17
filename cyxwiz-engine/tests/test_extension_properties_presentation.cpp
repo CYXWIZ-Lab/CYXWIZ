@@ -230,6 +230,45 @@ int main() {
         Equal(view.settings[0].type_note, "Choice. Default dense", "choice note");
     }
 
+    // A Python bundle node (TOFIX125 P4 step 4.5).
+    {
+        auto python_snake = Snake();
+        python_snake.provider_id = "com.example.acts";
+        python_snake.version = "1.0.0";
+        python_snake.source = cyxwiz::ExtensionSource::PythonBundle;
+        python_snake.verification.status = cyxwiz::ExtensionVerification::Status::Passed;
+        python_snake.verification.max_relative_error = 1.3e-3;
+        python_snake.verification.checked_on = "2026-10-17";
+        const std::map<std::string, std::string> params{{"initial_a", "1.0"}};
+        auto in = Inputs(python_snake, params);
+        in.python_bundle = true;
+        in.needs_approval = true;
+        in.shape_error = "the code of Python node bundle com.example.acts is not approved yet";
+        const auto view = cyxwiz::BuildExtensionPropertiesView(in);
+        Equal(view.subtitle, "Python node \xC2\xB7 com.example.acts 1.0.0 \xC2\xB7 Activations", "python subtitle");
+        Check(view.gradient.state == cyxwiz::ExtensionGradientState::NeedsApproval &&
+                  view.gradient.button_label == "Approve code..." && view.gradient.button_enabled,
+              "unapproved: the card asks for approval");
+        Check(view.general_error.empty() && view.settings[0].error.empty(),
+              "the approval refusal is not shown as a settings error");
+        Equal(view.bundled_check, "When bundled: gradient passed, largest error 1.3e-03 (2026-10-17).",
+              "the bundle's own check is shown");
+
+        in.needs_approval = false;
+        in.shape_error = "initial_a must be at least 0.01";
+        const auto refused = cyxwiz::BuildExtensionPropertiesView(in);
+        Equal(refused.gradient.next_step, "Fix the setting the node's code refused, then check the gradient.",
+              "python wording for a refusal");
+        Equal(refused.gradient.button_disabled_reason, "The node's code refuses the current settings",
+              "python wording for the disabled button");
+        in.shape_error.clear();
+        const auto failed_record = Record(false, 0.5, "Failed: largest relative error 5.0e-01", params);
+        in.last_check = &failed_record;
+        const auto failed = cyxwiz::BuildExtensionPropertiesView(in);
+        Check(failed.gradient.next_step.find("Tell the bundle's author.") != std::string::npos,
+              "python wording for a failed check");
+    }
+
     std::cout << "test_extension_properties_presentation: all checks passed\n";
     return 0;
 }
