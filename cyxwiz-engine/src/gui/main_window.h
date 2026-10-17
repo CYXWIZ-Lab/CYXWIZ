@@ -19,6 +19,7 @@ struct DebugArtifactConsistencyInput;
 
 namespace cyxwiz {
 class LiveGraphCompile;
+class PythonNodeProvider;
 }  // namespace cyxwiz
 
 namespace gui {
@@ -348,6 +349,13 @@ private:
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
     void UpdateLiveCompile();
+    // Python node bundles (TOFIX125 P4): registered from <project>/nodes,
+    // the user nodes folder and plugin nodes/ folders; Python is started
+    // here, on the UI thread, when a Python node needs it.
+    std::unique_ptr<cyxwiz::PythonNodeProvider> python_node_provider_;
+    double python_nodes_checked_at_ = -1.0;
+    std::string python_start_error_logged_;
+    void UpdatePythonNodes();
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;

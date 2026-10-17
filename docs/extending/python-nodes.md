@@ -168,9 +168,38 @@ The manifest of the example above (`node.json`, Snake's entry shortened):
 `verification.status` is `passed`, `failed` or `not_checked` (with `error`
 saying why, for example a default setting the node refuses).
 
-## 6. Not yet
+## 6. Use the bundle in the Engine
+
+The Engine lists every bundle it finds in these folders, without starting
+Python:
+
+| Folder | Scope |
+|---|---|
+| `<project>/nodes/` | This project; wins over a bundle with the same id elsewhere |
+| `%APPDATA%\cyxwiz\nodes\` (`~/.cyxwiz/nodes/` elsewhere) | Every project of this user |
+| `nodes/` inside a loaded plugin's folder | Delivered with that plugin |
+
+Copy or bundle into one of them; the Engine notices new, edited and removed
+bundles within two seconds, without a restart.
+
+**Approval.** A bundle's code runs only after you approve that exact code
+(its `content_hash`). Until then its nodes appear in the palette, save and
+load like any node, and compiling a graph that uses one says *the code of
+Python node bundle ... is not approved yet*. Editing `node.py` (and
+bundling again) needs a new approval. Approvals are kept per user in
+`%APPDATA%\cyxwiz\node_approvals.json`.
+
+**Python** starts by itself the first time an approved Python node is built
+(a project must be open). Settings are checked against the manifest before
+that, with the same messages as `nodes.create`, so a refused value shows
+under its field without Python.
+
+**Errors** in your `forward` or `backward` stop training with the node's
+name, the Python message and the traceback.
+
+## 7. Not yet
 
 | Coming | Stage |
 |---|---|
-| The node in the Engine's palette, Properties and training | P4 |
+| Approving a bundle from the Plugin Manager; "Create node from script" in the Script Editor | P4 step 4.5 |
 | Nodes with several inputs or outputs | Later |

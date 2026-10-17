@@ -46,6 +46,8 @@
 #include "../core/compute_runtime_paths.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
+#include "../extension/python/python_node_factory.h"
+#include "../extension/python/python_node_provider.h"
 #include "frame_metrics.h"
 #include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
@@ -3180,6 +3182,7 @@ void MainWindow::Render() {
         }
         cyxwiz::DatasetCatalog::Instance().SetLabels(std::move(labels));
     }
+    UpdatePythonNodes();
     UpdateLiveCompile();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
@@ -3396,6 +3399,45 @@ static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
     // Draw the indicator line at the TOP of the active tab
     ImU32 indicator_color = ImGui::ColorConvertFloat4ToU32(style.active_indicator_color);
     draw_list->AddRectFilled(tab_min, tab_max, indicator_color);
+}
+
+void MainWindow::UpdatePythonNodes() {
+    // Bundles: every 2 s, cheap (file names, sizes and times; node.json is
+    // read only when something changed).
+    const double now = ImGui::GetTime();
+    if (python_nodes_checked_at_ < 0.0 || now - python_nodes_checked_at_ >= 2.0) {
+        python_nodes_checked_at_ = now;
+        if (!python_node_provider_) {
+            python_node_provider_ =
+                std::make_unique<cyxwiz::PythonNodeProvider>(cyxwiz::PythonNodeApprovals::User());
+        }
+        std::vector<std::filesystem::path> roots;
+        auto& projects = cyxwiz::ProjectManager::Instance();
+        if (projects.HasActiveProject()) {
+            roots.push_back(cyxwiz::PythonNodeProvider::ProjectNodesFolder(projects.GetProjectRoot()));
+        }
+        roots.push_back(cyxwiz::UserPythonNodesFolder());
+        for (const auto* plugin : cyxwiz::plugin::PluginManager::Instance().GetAllPlugins()) {
+            if (plugin) roots.push_back(plugin->plugin_dir / "nodes");
+        }
+        python_node_provider_->Refresh(roots);
+    }
+
+    // Python itself: started here, on the UI thread, when a Python node
+    // needed it (the factories never start it).
+    auto& runtime = cyxwiz::PythonNodeRuntime::Instance();
+    if (!runtime.Wanted() || !scripting_engine_) return;
+    runtime.ClearWanted();
+    if (scripting_engine_->IsInitialized()) return;
+    std::string error;
+    if (scripting_engine_->StartPython(&error)) {
+        spdlog::info("Python started for Python nodes");
+        python_start_error_logged_.clear();
+        if (live_compile_) live_compile_->Invalidate();  // build and count the Python nodes now
+    } else if (error != python_start_error_logged_) {
+        python_start_error_logged_ = error;
+        spdlog::warn("Python nodes need Python, which did not start: {}", error);
+    }
 }
 
 void MainWindow::UpdateLiveCompile() {

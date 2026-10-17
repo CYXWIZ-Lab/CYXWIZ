@@ -413,6 +413,7 @@ set(ENGINE_SOURCES
     src/core/editor/outline.cpp
     src/core/live_graph_compile.cpp
     src/extension/python/python_node_factory.cpp
+    src/extension/python/python_node_provider.cpp
     src/core/extension_node_presentation.cpp
     src/core/remote_job_presentation.cpp
     src/core/reservation_presentation.cpp
@@ -6931,6 +6932,21 @@ add_test(NAME python_node_bundle COMMAND test_python_node_bundle)
 add_executable(test_python_node_approvals tests/test_python_node_approvals.cpp)
 target_link_libraries(test_python_node_approvals PRIVATE cyxwiz-training-core)
 add_test(NAME python_node_approvals COMMAND test_python_node_approvals)
+
+# Python node provider: scan, approval, refresh (TOFIX125 P4 step 4.4). No Python needed.
+add_executable(test_python_node_provider
+    tests/test_python_node_provider.cpp
+    src/extension/python/python_node_provider.cpp
+    src/extension/python/python_node_factory.cpp
+)
+target_link_libraries(test_python_node_provider PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_python_node_provider PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+if(CYXWIZ_HAS_PYTHON)
+    # The factory as the Engine builds it; the test never starts Python.
+    target_link_libraries(test_python_node_provider PRIVATE pybind11::embed)
+    target_compile_definitions(test_python_node_provider PRIVATE CYXWIZ_HAS_PYTHON)
+endif()
+add_test(NAME python_node_provider COMMAND test_python_node_provider)
 
 # Python nodes train through their bundle's factory (TOFIX125 P4 step 4.3).
 # Starts its own interpreter: the Python the build uses, pycyxwiz as built.
