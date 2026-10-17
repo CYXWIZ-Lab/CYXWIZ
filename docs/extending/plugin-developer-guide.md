@@ -390,6 +390,5 @@ with the current SDK is enough.
 
 | Topic | Stage |
 |---|---|
-| A packaged SDK: headers, libraries, `find_package(CyxWizSDK)`, a template project, an installer component | P5 |
+| The SDK as an optional installer component and a download (today: `cmake --install` from a CyxWiz build, see the quickstart) | P5 |
 | API reference for every interface | P5 |
-| Python nodes | P3, P4 |

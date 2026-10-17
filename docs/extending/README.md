@@ -38,7 +38,8 @@ numerically. Both follow one [node contract](node-contract.md).
 | Typed settings shown in Properties | Autograd: you write the backward step yourself |
 | Numerical gradient check in Properties | Training on a remote Server Node (refused with a message) |
 | Saving and reopening graphs; a missing plugin shows its nodes as "Not installed" | Exporting a model with extension nodes to ONNX or Python |
-| Plugins load again when the Engine starts | A packaged SDK you can use outside the CyxWiz source tree |
+| Plugins load again when the Engine starts | The plugin SDK in the installer (today it is installed from a CyxWiz build) |
 | Apps menu lists every loaded plugin and Python node bundle | |
+| C++ plugins built outside the CyxWiz sources, against the plugin SDK (`find_package(CyxWizSDK)`, template, `cyxwiz-plugin-check`) | |
 | Trainable modules written in Python, trained with pycyxwiz; `gradcheck`; `pycyxwiz.nodes` decorators and `bundle()` | |
 | Python nodes in the Engine: bundles listed, approved per code, trained; Create node from script | |

@@ -18,6 +18,7 @@ cmake_install.cmake
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake
+!cmake/sdk/*.cmake
 !tests/smoke/run_oneapi_operation_matrix.cmake
 
 # Compiled files

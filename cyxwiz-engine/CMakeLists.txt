@@ -114,6 +114,8 @@ target_include_directories(cyxwiz-plugin-sdk INTERFACE "${CYXWIZ_PLUGIN_SDK_INCL
 # plugin includes the backend, the ArrayFire version.
 target_include_directories(cyxwiz-plugin-sdk INTERFACE $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
 target_compile_features(cyxwiz-plugin-sdk INTERFACE cxx_std_20)
+# CyxWiz::PluginSDK, the plugin helpers and the SDK install rules.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
 
 # The Engine's side of the plugin system: registries, permissions,
 # signatures, crash isolation and the fingerprint check. Linked by the Engine
@@ -6969,6 +6971,18 @@ add_executable(test_plugin_tensor_nodes
 target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
 target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_dependencies(test_plugin_tensor_nodes activation_nodes)
+
+# ===== Tool: load plugin folders and check their nodes (TOFIX125 P5 step 5.3) =====
+add_executable(cyxwiz-plugin-check
+    tests/tool_plugin_check.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(cyxwiz-plugin-check PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+if(WIN32)
+    target_compile_definitions(cyxwiz-plugin-check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)

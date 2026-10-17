@@ -3,9 +3,9 @@
 Build the example plugin that ships with CyxWiz, load it, and train a model
 with its nodes. Then copy it to start your own.
 
-> Checked 2026-10-17 against plugin API 1.2.0. Today a plugin is built
-> inside the CyxWiz source tree; a packaged SDK for outside builds comes
-> later (stage P5).
+> Checked 2026-10-17 against plugin API 1.2.0. Sections 1-4 use the example
+> inside the CyxWiz source tree; section 5 builds your own plugin anywhere,
+> against the CyxWiz plugin SDK.
 
 ## 1. The example plugin
 
@@ -85,16 +85,73 @@ not train until the plugin is loaded.
 
 ## 5. Start your own plugin
 
-1. Copy `plugins/examples/activation_nodes/` to a new folder under
-   `plugins/`.
-2. In `plugin.json` give it its own `id` (lower case: `a-z`, `0-9`, `.`,
-   `-`, `_`; for example `com.yourname.my-nodes`), `name`, `version` and
-   library path.
-3. In `CMakeLists.txt` rename the library target.
-4. Add `add_subdirectory(plugins/<your folder>)` next to the example's line
-   in the root `CMakeLists.txt`.
-5. Replace the two modules with yours, following the
+Your plugin does not need the CyxWiz sources: it builds against the plugin
+SDK, a folder with the headers, the backend's import library, a CMake
+package and a template.
+
+### Get the SDK
+
+From a Release build of CyxWiz:
+
+```bash
+cmake --install <build folder> --config Release --component plugin_sdk --prefix <SDK folder>
+```
+
+| In the SDK folder | What it is |
+|---|---|
+| `include/` | The plugin headers (`plugin/...`) and the backend headers (`cyxwiz/...`). They need only the C++ standard library |
+| `lib/` | The backend's import library; at run time your plugin uses the Engine's copy |
+| `lib/cmake/CyxWizSDK/` | `find_package(CyxWizSDK)`: the target `CyxWiz::PluginSDK` and `cyxwiz_plugin_folder()` |
+| `template/` | My Nodes: one trainable node (Bent Identity) that builds as delivered |
+
+### Build the template
+
+```bash
+cp -r <SDK folder>/template my_nodes
+cmake -S my_nodes -B my_nodes/build -DCMAKE_PREFIX_PATH=<SDK folder>
+cmake --build my_nodes/build --config Release
+```
+
+The template's `CMakeLists.txt` is the whole build:
+
+```cmake
+find_package(CyxWizSDK REQUIRED)
+add_library(my_nodes SHARED my_nodes_plugin.cpp)
+target_link_libraries(my_nodes PRIVATE CyxWiz::PluginSDK)
+cyxwiz_plugin_folder(my_nodes)
+```
+
+`cyxwiz_plugin_folder` makes `build/my_nodes/` the plugin folder:
+`plugin.json` and `bin/my_nodes.dll`. Use the Engine's compiler family
+(Visual Studio 2019 or later on Windows). A **Debug** build also loads: the
+SDK builds every configuration with the release C++ runtime, as the Engine
+uses, and keeps the debug information.
+
+### Check it, load it
+
+```bash
+<CyxWiz build folder>/bin/Release/cyxwiz-plugin-check my_nodes/build/my_nodes
+```
+
+loads the folder the way the Engine does (manifest, build fingerprint,
+permissions) and runs the gradient check on every trainable node:
+
+```
+  ok   node com.example.my-nodes:BentIdentity: Passed: largest relative error 5.8e-06 in input (tolerance 2.0e-02)
+cyxwiz-plugin-check: all plugins pass
+```
+
+Then in the Engine: **Plugin Manager > Install...** and choose
+`my_nodes/build/my_nodes`. Bent Identity appears under Activations.
+
+### Make it yours
+
+1. In `plugin.json` give it its own `id` (lower case: `a-z`, `0-9`, `.`,
+   `-`, `_`; for example `com.yourname.my-nodes`), `name` and `version`; if
+   you rename the library target, change the library paths too.
+2. Replace `BentIdentityModule` with your module, following the
    [developer guide](plugin-developer-guide.md) and the
-   [node contract](node-contract.md).
-6. Build, press **Refresh**, and run **Check gradient** on each node before
-   you train.
+   [node contract](node-contract.md). The example plugin
+   (`plugins/examples/activation_nodes/`) shows a node with a setting and a
+   learnable weight; it builds against the SDK the same way.
+3. Rebuild, run `cyxwiz-plugin-check`, and in the Engine press **Refresh**.
