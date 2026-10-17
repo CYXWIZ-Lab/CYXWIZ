@@ -40,6 +40,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cfloat>
 #include <memory>
 #include <chrono>
 #include <map>
@@ -681,6 +682,22 @@ void NodeEditor::Render() {
             spdlog::info("Added node: {} (ID: {}) at position ({}, {})",
                         pending.name, node.id, position.x, position.y);
             if (pending.open_configuration) configure_ids.push_back(node.id);
+
+            // A node reading it, to its right (a kept test's Test Evaluation).
+            if (pending.then_type && !node.outputs.empty()) {
+                MLNode then = CreateNode(*pending.then_type, pending.then_name);
+                if (!then.inputs.empty()) {
+                    links_.push_back({next_link_id_++, node.id, node.outputs.front().id, then.id, then.inputs.front().id,
+                                      LinkType::TensorFlow});
+                    const int then_id = then.id;
+                    nodes_.push_back(std::move(then));
+                    ImNodes::SetNodeGridSpacePos(then_id, ImVec2(position.x + 260.0f, position.y));
+                    ImNodes::ClearNodeSelection();
+                    ImNodes::SelectNode(then_id);
+                    selected_node_id_ = then_id;
+                    spdlog::info("Added node: {} (ID: {}) reading node {}", pending.then_name, then_id, node.id);
+                }
+            }
         }
         if (!pending_nodes_.empty()) {
             RebuildPinLookup();  // Rebuild pin lookup after adding nodes
@@ -4002,6 +4019,30 @@ void NodeEditor::AddDataInputFromAsset(const std::string& path) {
     pending_nodes_.push_back(std::move(pending));
     spdlog::info("Asset Browser queued Data Input source {}", path);
 }
+void NodeEditor::AddKeptTest(const std::string& path, const std::string& name) {
+    // Below the graph, at its left edge, clear of its nodes and links (an
+    // empty graph: where FindEmptyPosition puts a node).
+    ImVec2 position(-99999.0f, -99999.0f);
+    if (!cached_node_positions_.empty()) {
+        float left = FLT_MAX, bottom = -FLT_MAX;
+        for (const auto& [id, at] : cached_node_positions_) {
+            left = std::min(left, at.x);
+            bottom = std::max(bottom, at.y);
+        }
+        position = ImVec2(left, bottom + 200.0f);
+    }
+    PendingNode pending{NodeType::DataInput, name, position};
+    pending.initial_parameters["file_path"] = path;
+    pending.initial_parameters["source_type"] = "file";
+    pending.initial_parameters["file_type"] = "parquet";
+    pending.initial_parameters["configured"] = "false";
+    pending.initial_parameters["data_loaded"] = "false";
+    pending.then_type = NodeType::TestEvaluationNode;
+    pending.then_name = "Test Evaluation";
+    pending_nodes_.push_back(std::move(pending));
+    spdlog::info("Keep as node: queued Data Input '{}' ({}) and a Test Evaluation node", name, path);
+}
+
 void NodeEditor::AddDataInputAndConfigure() {
     ImVec2 panning = ImNodes::EditorContextGetPanning();
     PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};

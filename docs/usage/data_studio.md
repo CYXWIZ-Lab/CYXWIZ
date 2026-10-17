@@ -444,3 +444,32 @@ error by the values of a column of the tested table (see
 table, counted from 0), and its metadata keeps the tested table's name, the
 class names, the loss and the time, so the results join back to the data and
 a copy read back later gives the whole run.
+
+**Keep as node** (on the *In the graph* line of Results) keeps the latest test
+for later: testing again replaces `test_predictions`, a kept test stays. Give
+it a name (the graph's name and *test* to start with); **Keep**:
+
+- saves the test's rows once as `results/tests/<name>_<date>_<time>.parquet`
+  in the project (an existing file is never replaced), with its tested table,
+  class names, loss and time and the name it was kept under;
+- adds a **Data Input** named after it reading that file and a **Test
+  Evaluation** node after it, in free space on the canvas (Ctrl+Z removes
+  them; the file stays). The line under the jobs then counts *1 evaluation
+  node*.
+
+The **Test Evaluation** node (Analytics) reads any test's per-row table (a
+kept test, or `test_predictions` itself) and gives the Test Results panel's
+figures as four tables:
+
+| Output | Columns |
+| --- | --- |
+| Metrics | `metric`, `value`: accuracy, macro precision / recall / F1, weighted F1, AUC, loss, rows (regression: MAE, RMSE, bias, loss, rows) |
+| Confusion | `true`, `predicted`, `count` (a classifier) |
+| Per class | `class`, `rows`, `precision`, `recall`, `f1` (a classifier) |
+| Worst rows | `dataset_row` (counted from 1), `true`, `predicted`, `confidence`: the most confident mistakes; regression: `error`, the largest errors first |
+
+*Worst rows* keeps 20 rows (Properties: **worst_rows**). A table that is not a
+test's is refused (*not a test's predictions*).
+
+**Kept tests** under the latest test lists the project's kept tests, newest
+first; **Open** shows one in Test Results.

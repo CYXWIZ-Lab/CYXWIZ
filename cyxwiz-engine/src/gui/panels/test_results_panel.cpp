@@ -2,6 +2,7 @@
 #include "../../core/compiled_node_presentation.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/project_manager.h"
+#include "../../core/kept_tests.h"
 #include "../../core/test_predictions_metrics.h"
 #include "../../core/test_results_export.h"
 #include "../ui_buttons.h"
@@ -77,6 +78,7 @@ void TestResultsPanel::SetResults(const TestingMetrics& results) {
         }
         results_ = results;
         has_results_ = true;
+        showing_kept_ = false;
         failure_message_.clear();
     }
     export_note_.clear();
@@ -99,7 +101,38 @@ void TestResultsPanel::ExportReport() {
     ExportToJSON();
 }
 
+bool TestResultsPanel::LoadKeptTest(const std::string& path) {
+    std::string error;
+    const auto rows = ReadKeptTest(path, error);
+    TestingMetrics kept;
+    if (!rows || !MetricsFromPredictionsTable(*rows, kept, error)) {
+        kept_error_ = "Cannot open the kept test " + path + ": " + error;
+        spdlog::warn("TestResultsPanel: {}", kept_error_);
+        return false;
+    }
+    std::string name = std::filesystem::path(path).stem().string();
+    if (const auto metadata = rows->schema()->metadata()) {
+        const int at = metadata->FindKey(kKeptTestNameKey);
+        if (at >= 0 && !metadata->value(at).empty()) name = metadata->value(at);
+    }
+    kept_results_ = std::move(kept);
+    kept_name_ = name;
+    kept_path_ = path;
+    kept_error_.clear();
+    showing_kept_ = true;
+    view_dirty_ = true;
+    return true;
+}
+
+void TestResultsPanel::ShowKeptTest(const std::string& path) {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    LoadKeptTest(path);
+    Show();
+}
+
 void TestResultsPanel::ShowComparison() {
+    showing_kept_ = false;  // Comparison is the latest run and the one before
+    view_dirty_ = true;
     Show();
     select_comparison_tab_ = true;
 }
@@ -110,8 +143,9 @@ void TestResultsPanel::Render() {
     if (ImGui::Begin(name_.c_str(), &visible_)) {
         std::lock_guard<std::mutex> lock(results_mutex_);
         if (view_dirty_) {
-            view_ = test_report::BuildView(results_, has_previous_ ? &previous_results_ : nullptr);
-            rows_ = has_results_ ? PredictionsTableFromMetrics(results_) : nullptr;
+            // A kept test is shown alone: Comparison is the latest run and the one before.
+            view_ = test_report::BuildView(Shown(), !showing_kept_ && has_previous_ ? &previous_results_ : nullptr);
+            rows_ = has_results_ || showing_kept_ ? PredictionsTableFromMetrics(Shown()) : nullptr;
             by_value_.SetRows(rows_);
             view_dirty_ = false;
         }
@@ -124,7 +158,8 @@ void TestResultsPanel::Render() {
                                  : "Task View shows the failed testing task; engine_log.txt has the details.");
             ImGui::Dummy(ImVec2(0.0f, t.space_sm));
         }
-        if (!has_results_) {
+        RenderShowing();
+        if (!has_results_ && !showing_kept_) {
             if (failure_message_.empty())
                 ui::EmptyState(ICON_FA_GAUGE, "No test results yet",
                                "Train the graph, then Train > Test > Run Test (F8).");
@@ -144,14 +179,15 @@ void TestResultsPanel::Render() {
                 if (view_.classification) {
                     tab("Confusion matrix###matrix", &TestResultsPanel::RenderConfusionMatrixTab);
                     tab("Classes###classes", &TestResultsPanel::RenderClassesTab);
-                    if (!results_.metric_learning_mode) tab("Curves###curves", &TestResultsPanel::RenderCurvesTab);
+                    if (!Shown().metric_learning_mode) tab("Curves###curves", &TestResultsPanel::RenderCurvesTab);
                     tab("Predictions###predictions", &TestResultsPanel::RenderPredictionsTab);
-                } else if (results_.regression_mode) {
+                } else if (Shown().regression_mode) {
                     tab("Predictions###predictions", &TestResultsPanel::RenderRegressionRowsTab);
                 }
                 if (rows_) tab("By column value###by_value", &TestResultsPanel::RenderByValueTab);
-                tab("Comparison###comparison", &TestResultsPanel::RenderComparisonTab,
-                    select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None);
+                if (!showing_kept_)
+                    tab("Comparison###comparison", &TestResultsPanel::RenderComparisonTab,
+                        select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None);
                 select_comparison_tab_ = false;
                 ImGui::EndTabBar();
             }
@@ -159,6 +195,40 @@ void TestResultsPanel::Render() {
         }
     }
     ImGui::End();
+}
+
+// Showing: the latest run or a kept test (results/tests in the project).
+void TestResultsPanel::RenderShowing() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const std::string root = ProjectManager::Instance().GetProjectRoot();
+    if (root.empty() && !showing_kept_) return;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Showing");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth((std::min)(320.0f, ImGui::GetContentRegionAvail().x));
+    const std::string current = showing_kept_ ? "Kept: " + kept_name_ : std::string("Latest run");
+    if (ImGui::BeginCombo("##showing", current.c_str())) {
+        if (ImGui::Selectable("Latest run", !showing_kept_)) {
+            showing_kept_ = false;
+            view_dirty_ = true;
+        }
+        const auto kept = root.empty() ? std::vector<KeptTest>{} : ListKeptTests(KeptTestsFolder(root));
+        if (kept.empty()) ImGui::TextColored(t.text_faint, "No kept tests (Data Studio > Results > Keep as node)");
+        for (const auto& k : kept) {
+            const std::string label = "Kept: " + k.name + "##" + k.path.string();
+            if (ImGui::Selectable(label.c_str(), showing_kept_ && kept_path_ == k.path.string())) LoadKeptTest(k.path.string());
+        }
+        ImGui::EndCombo();
+    }
+    if (showing_kept_) {
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        std::error_code ec;
+        const std::string shown = root.empty() ? kept_path_ : std::filesystem::relative(kept_path_, root, ec).generic_string();
+        ImGui::TextColored(t.text_faint, "%s", (ec || shown.empty() ? kept_path_ : shown).c_str());
+    }
+    if (!kept_error_.empty()) Wrapped(t.error, kept_error_);
+    ImGui::Dummy(ImVec2(0.0f, t.space_xs));
 }
 
 void TestResultsPanel::RenderHeader() {
@@ -318,12 +388,12 @@ void TestResultsPanel::RenderClassesTab() {
 
 void TestResultsPanel::RenderCurvesTab() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const auto& roc = results_.roc;
-    const auto& pr = results_.pr;
+    const auto& roc = Shown().roc;
+    const auto& pr = Shown().pr;
     if (!roc || !roc->success || !pr || !pr->success) {
         ui::EmptyState(ICON_FA_CHART_AREA, "No curves for this run",
-                       results_.curves_note.empty() ? "Run the test again to compute ROC and precision-recall."
-                                                    : results_.curves_note.c_str());
+                       Shown().curves_note.empty() ? "Run the test again to compute ROC and precision-recall."
+                                                    : Shown().curves_note.c_str());
         return;
     }
     const bool multiclass = !roc->class_auc.empty();
@@ -335,7 +405,7 @@ void TestResultsPanel::RenderCurvesTab() {
     }
     Wrapped(t.text_dim, multiclass ? "One-vs-rest per class; AUC and AP are the macro means."
                                    : "Positive class: 1. F1 is one threshold; the curves show every threshold.");
-    if (!results_.curves_note.empty()) Wrapped(t.caution, results_.curves_note);
+    if (!Shown().curves_note.empty()) Wrapped(t.caution, Shown().curves_note);
     ImGui::Spacing();
 
     const float plot_height = (std::max)(ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y, 220.0f);
@@ -352,7 +422,7 @@ void TestResultsPanel::RenderCurvesTab() {
                 if (roc->class_fpr[c].empty()) continue;  // no test sample of the class
                 char label[160];
                 std::snprintf(label, sizeof(label), "%s (AUC %.3f)",
-                              test_report::ClassName(results_, static_cast<int>(c)).c_str(), roc->class_auc[c]);
+                              test_report::ClassName(Shown(), static_cast<int>(c)).c_str(), roc->class_auc[c]);
                 ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
                 ImPlot::PlotLine(label, roc->class_fpr[c].data(), roc->class_tpr[c].data(),
                                  static_cast<int>(roc->class_fpr[c].size()));
@@ -372,7 +442,7 @@ void TestResultsPanel::RenderCurvesTab() {
                 if (pr->class_recall[c].empty()) continue;
                 char label[160];
                 std::snprintf(label, sizeof(label), "%s (AP %.3f)",
-                              test_report::ClassName(results_, static_cast<int>(c)).c_str(), pr->class_ap[c]);
+                              test_report::ClassName(Shown(), static_cast<int>(c)).c_str(), pr->class_ap[c]);
                 ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
                 ImPlot::PlotLine(label, pr->class_recall[c].data(), pr->class_precision[c].data(),
                                  static_cast<int>(pr->class_recall[c].size()));
@@ -388,7 +458,7 @@ void TestResultsPanel::RenderCurvesTab() {
 
 void TestResultsPanel::RenderPredictionsTab() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const size_t samples = std::min(results_.predictions.size(), results_.ground_truth.size());
+    const size_t samples = std::min(Shown().predictions.size(), Shown().ground_truth.size());
     if (samples == 0) {
         ImGui::TextColored(t.text_dim, "No predictions were kept for this run.");
         return;
@@ -398,7 +468,7 @@ void TestResultsPanel::RenderPredictionsTab() {
                                  ", most confident first";
     const char* modes[] = {all.c_str(), mistakes.c_str()};
     ui::SegmentedControl("##predictions_mode", modes, 2, &predictions_mode_);
-    const bool by_dataset = results_.row_ids.size() == samples;
+    const bool by_dataset = Shown().row_ids.size() == samples;
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
     if (!ImGui::BeginTable("##predictions", by_dataset ? 5 : 4, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
@@ -417,26 +487,26 @@ void TestResultsPanel::RenderPredictionsTab() {
     while (clipper.Step()) {
         for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
             const int i = only_mistakes ? view_.mistakes[static_cast<size_t>(r)] : r;
-            const int predicted = results_.predictions[static_cast<size_t>(i)];
-            const int actual = results_.ground_truth[static_cast<size_t>(i)];
+            const int predicted = Shown().predictions[static_cast<size_t>(i)];
+            const int actual = Shown().ground_truth[static_cast<size_t>(i)];
             const float confidence =
-                static_cast<size_t>(i) < results_.confidences.size() ? results_.confidences[static_cast<size_t>(i)]
+                static_cast<size_t>(i) < Shown().confidences.size() ? Shown().confidences[static_cast<size_t>(i)]
                                                                       : 0.0f;
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Text("%d", i);
             if (by_dataset) {
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(DatasetRow(results_, static_cast<size_t>(i), samples).c_str());
+                ImGui::TextUnformatted(DatasetRow(Shown(), static_cast<size_t>(i), samples).c_str());
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Row %s of '%s' (1 is its first row)", DatasetRow(results_, static_cast<size_t>(i), samples).c_str(),
-                                      results_.source_dataset.c_str());
+                    ImGui::SetTooltip("Row %s of '%s' (1 is its first row)", DatasetRow(Shown(), static_cast<size_t>(i), samples).c_str(),
+                                      Shown().source_dataset.c_str());
             }
             ImGui::TableNextColumn();
             ImGui::TextColored(predicted == actual ? t.success : t.error, "%s",
-                               test_report::ClassName(results_, predicted).c_str());
+                               test_report::ClassName(Shown(), predicted).c_str());
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(test_report::ClassName(results_, actual).c_str());
+            ImGui::TextUnformatted(test_report::ClassName(Shown(), actual).c_str());
             ImGui::TableNextColumn();
             char overlay[16];
             std::snprintf(overlay, sizeof(overlay), "%.0f%%", confidence * 100.0f);
@@ -451,10 +521,10 @@ void TestResultsPanel::RenderPredictionsTab() {
 
 void TestResultsPanel::RenderRegressionRowsTab() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const size_t width = static_cast<size_t>(std::max(results_.regression_width, 0));
-    const size_t samples = width ? results_.regression_truth.size() / width : 0;
+    const size_t width = static_cast<size_t>(std::max(Shown().regression_width, 0));
+    const size_t samples = width ? Shown().regression_truth.size() / width : 0;
     if (samples == 0) {
-        Wrapped(t.text_dim, results_.regression_note.empty() ? "No rows were kept for this run." : results_.regression_note);
+        Wrapped(t.text_dim, Shown().regression_note.empty() ? "No rows were kept for this run." : Shown().regression_note);
         return;
     }
     const std::string all = "All " + FormatCompiledCount(static_cast<long long>(samples));
@@ -463,7 +533,7 @@ void TestResultsPanel::RenderRegressionRowsTab() {
     if (width > 1)
         Wrapped(t.text_dim, std::to_string(width) + " targets: the first is shown; the order uses each row's mean |error| "
                                                     "over all of them.");
-    const bool by_dataset = results_.row_ids.size() == samples;
+    const bool by_dataset = Shown().row_ids.size() == samples;
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
     if (!ImGui::BeginTable("##regression_rows", by_dataset ? 5 : 4, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
@@ -479,14 +549,14 @@ void TestResultsPanel::RenderRegressionRowsTab() {
     while (clipper.Step()) {
         for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
             const size_t i = largest ? static_cast<size_t>(view_.largest_errors[static_cast<size_t>(r)]) : static_cast<size_t>(r);
-            const float truth = results_.regression_truth[i * width];
-            const float predicted = results_.regression_predictions[i * width];
+            const float truth = Shown().regression_truth[i * width];
+            const float predicted = Shown().regression_predictions[i * width];
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Text("%zu", i);
             if (by_dataset) {
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(DatasetRow(results_, i, samples).c_str());
+                ImGui::TextUnformatted(DatasetRow(Shown(), i, samples).c_str());
             }
             ImGui::TableNextColumn();
             ImGui::Text("%.4g", truth);
@@ -547,6 +617,7 @@ void TestResultsPanel::RenderFooter() {
     }
     if (!export_note_.empty()) Wrapped(export_failed_ ? t.error : t.success, export_note_);
     if (clear) {
+        showing_kept_ = false;
         results_ = TestingMetrics();
         previous_results_ = TestingMetrics();
         has_results_ = false;
@@ -563,7 +634,7 @@ void TestResultsPanel::ExportToCSV() {
                                             folder.empty() ? nullptr : folder.c_str(), "test_results.csv");
     if (!path) return;
     std::string error;
-    export_failed_ = !WriteTestResultsCsv(results_, *path, &error);
+    export_failed_ = !WriteTestResultsCsv(Shown(), *path, &error);
     export_note_ = export_failed_ ? "Could not export: " + error : "Saved " + *path;
 }
 
@@ -573,7 +644,7 @@ void TestResultsPanel::ExportToJSON() {
                                             folder.empty() ? nullptr : folder.c_str(), "test_results.json");
     if (!path) return;
     std::string error;
-    export_failed_ = !WriteTestResultsJson(results_, *path, &error);
+    export_failed_ = !WriteTestResultsJson(Shown(), *path, &error);
     export_note_ = export_failed_ ? "Could not export: " + error : "Saved " + *path;
 }
 

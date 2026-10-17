@@ -379,6 +379,8 @@ set(ENGINE_SOURCES
     src/core/compiled_node_presentation.cpp
     src/core/compile_report_presentation.cpp
     src/core/test_results_presentation.cpp
+    src/core/test_evaluation_tables.cpp
+    src/core/kept_tests.cpp
     src/core/test_results_export.cpp
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
@@ -2944,6 +2946,14 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
     src/core/node_executors/row_count_check_operator.cpp
+    # Test Evaluation node (TOFIX157)
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_predictions_metrics.cpp
+    src/core/test_predictions_table.cpp
+    src/core/test_evaluation_tables.cpp
+    src/core/test_results_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
     tests/support/stb_image_impl.cpp
@@ -4211,6 +4221,7 @@ add_test(NAME compile_report_presentation COMMAND test_compile_report_presentati
 add_executable(test_test_results_presentation
     tests/test_test_results_presentation.cpp
     src/core/test_results_presentation.cpp
+    src/core/test_evaluation_tables.cpp
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
     src/core/test_results_export.cpp
@@ -5573,6 +5584,22 @@ set_target_properties(test_one_vs_rest_curves PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME one_vs_rest_curves COMMAND test_one_vs_rest_curves)
+
+# ===== Test: kept tests, a test's rows saved as a project file (TOFIX157) =====
+add_executable(test_kept_tests
+    tests/test_kept_tests.cpp
+    src/core/kept_tests.cpp
+    src/core/test_predictions_table.cpp
+)
+target_link_libraries(test_kept_tests PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
+if(WIN32)
+    target_compile_definitions(test_kept_tests PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_kept_tests PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME kept_tests COMMAND test_kept_tests)
 
 # ===== Test: the test run's per-sample results as a table (TOFIX140 ROC / PR) =====
 add_executable(test_test_predictions_table

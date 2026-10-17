@@ -10,6 +10,8 @@
 #include "html_document_text.h"
 #include "error_codes.h"
 #include "data_registry.h"
+#include "test_evaluation_tables.h"
+#include "test_predictions_metrics.h"
 #include "data_budget.h"
 #include "sql_step_presentation.h"
 #include "parquet_backed_dataset.h"
@@ -4172,6 +4174,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRegressionMetrics(node, ctx);
     case gui::NodeType::ClassificationMetricsNode:
         return ExecuteClassificationMetrics(node, ctx);
+    case gui::NodeType::TestEvaluationNode:
+        return ExecuteTestEvaluation(node, ctx);
     case gui::NodeType::ConfusionMatrixNode:
         return ExecuteConfusionMatrix(node, ctx);
     case gui::NodeType::ROCCurveNode:
@@ -8781,6 +8785,75 @@ bool PipelineExecutor::ExecuteClassificationMetrics(const Node& node, ExecutionC
         ReportError("ClassificationMetricsNode error: " + std::string(e.what()));
         return false;
     }
+}
+
+bool PipelineExecutor::ExecuteTestEvaluation(const Node& node, ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Test Evaluation: no input; connect a test's predictions (a Data Input of a kept test)");
+        return false;
+    }
+    auto& registry = DataRegistry::Instance();
+    // The whole table, in memory or on disk (a test's rows are one per test sample).
+    std::vector<std::shared_ptr<arrow::Table>> pieces;
+    std::shared_ptr<arrow::Schema> schema;
+    std::string error;
+    if (!registry.VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string&) {
+            pieces.push_back(piece);
+            return true;
+        }, &schema, error)) {
+        ReportError("Test Evaluation: cannot read the input: " + error);
+        return false;
+    }
+    std::shared_ptr<arrow::Table> rows;
+    if (pieces.size() == 1) {
+        rows = pieces.front();
+    } else {
+        auto joined = arrow::ConcatenateTables(pieces);
+        if (!joined.ok()) {
+            ReportError("Test Evaluation: " + joined.status().ToString());
+            return false;
+        }
+        rows = *joined;
+    }
+    TestingMetrics run;
+    if (!rows || !MetricsFromPredictionsTable(*rows, run, error)) {
+        ReportError("Test Evaluation: the input is not a test's predictions: " + error);
+        return false;
+    }
+    size_t worst_rows = 20;
+    if (const auto it = node.parameters.find("worst_rows"); it != node.parameters.end()) {
+        try {
+            worst_rows = static_cast<size_t>(std::clamp(std::stoll(TrimString(it->second)), 1LL, 10000LL));
+        } catch (const std::exception&) {
+            ReportError("Test Evaluation: worst_rows must be a whole number");
+            return false;
+        }
+    }
+    TestEvaluationTables tables;
+    if (!BuildTestEvaluationTables(run, worst_rows, tables, error)) {
+        ReportError("Test Evaluation: " + error);
+        return false;
+    }
+    const std::string base = "ds_test_evaluation_" + std::to_string(node.id);
+    if (!registry.RegisterArrowTable(tables.metrics, base)) {
+        ReportError("Test Evaluation: cannot register its metrics");
+        return false;
+    }
+    ctx.node_results[node.id] = base;
+    const std::shared_ptr<arrow::Table> extra[] = {tables.confusion, tables.per_class, tables.worst_rows};
+    for (int pin = 1; pin <= 3; ++pin) {
+        const std::string name = base + "_pin" + std::to_string(pin);
+        if (!registry.RegisterArrowTable(extra[pin - 1], name)) {
+            ReportError("Test Evaluation: cannot register output " + std::to_string(pin + 1));
+            return false;
+        }
+        ctx.node_pin_results[{node.id, pin}] = name;
+    }
+    spdlog::info("Test Evaluation node {}: {} test rows{}", node.id, run.total_samples,
+                 run.regression_mode ? ", MAE " + std::to_string(run.test_mae)
+                                     : ", accuracy " + std::to_string(run.test_accuracy));
+    return true;
 }
 
 bool PipelineExecutor::ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx) {

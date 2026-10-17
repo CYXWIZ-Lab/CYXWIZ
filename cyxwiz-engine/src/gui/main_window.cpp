@@ -826,6 +826,12 @@ MainWindow::MainWindow()
         test_results_panel_->Show();
         ::gui::BringToFront(test_results_panel_->GetName());
     });
+    // ... and a kept test (Keep as node).
+    data_studio_panel_->SetOpenKeptTestCallback([this](const std::string& path) {
+        if (!test_results_panel_) return;
+        test_results_panel_->ShowKeptTest(path);
+        ::gui::BringToFront(test_results_panel_->GetName());
+    });
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
         if (table_viewer_ && table) {

@@ -2222,6 +2222,24 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"metrics", "string", "accuracy,precision,recall,f1,weighted_f1,count", "Comma-separated: accuracy, precision, recall, f1, weighted_f1, count, class_count", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    // A kept test (TOFIX157): reads a test's per-row table (test_predictions,
+    // or a copy kept with Data Studio > Results > Keep as node) and gives the
+    // Test Results panel's figures as tables.
+    RegisterNode({NodeType::TestEvaluationNode, NodeCategory::Analytics, "Test Evaluation", ICON_FA_TABLE_CELLS,
+        {"test", "evaluation", "kept", "confusion", "metrics", "accuracy", "mae", "worst rows"}, 0, false,
+        "A test's results as tables",
+        "Reads a test's per-row predictions (the test_predictions table, or a test kept as a file) and gives its "
+        "metrics, confusion counts, per-class precision / recall / F1 and worst rows, the same figures as Test Results.", "",
+        {{"Data", PinType::Dataset, true, "A test's per-row predictions (true_class / predicted_class, or true_value / predicted_value)"}},
+        // Results to look at: none must be read further (an unread required
+        // output fails Compile and so blocks Train).
+        {{"Metrics", PinType::Dataset, false, "metric / value: accuracy, macro and weighted F1, AUC, or MAE, RMSE, bias; loss, rows"},
+         {"Confusion", PinType::Dataset, false, "true / predicted / count (a classifier)"},
+         {"Per class", PinType::Dataset, false, "class / rows / precision / recall / f1 (a classifier)"},
+         {"Worst rows", PinType::Dataset, false, "The most confident mistakes, or the largest errors, by dataset row"}},
+        {{"worst_rows", "int", "20", "How many worst rows to keep", {}, "1-10000"}},
+        NodeImplementationStatus::Implemented, 0});
+
     // Preprocessing (Phase 4)
     RegisterNode({NodeType::StandardScaler, NodeCategory::Preprocessing, "Standard Scaler", ICON_FA_SCALE_BALANCED,
         {"standardize", "zscore", "scaler"}, 0, false, "Z-score standardization",

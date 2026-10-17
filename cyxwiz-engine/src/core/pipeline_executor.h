@@ -356,6 +356,9 @@ private:
     bool ExecuteDataProfiler(const Node& node, ExecutionContext& ctx);
     bool ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx);
     bool ExecuteClassificationMetrics(const Node& node, ExecutionContext& ctx);
+    // A test's per-row table to the Test Results panel's figures (TOFIX157):
+    // Metrics (pin 0), Confusion, Per class, Worst rows (pins 1-3).
+    bool ExecuteTestEvaluation(const Node& node, ExecutionContext& ctx);
     bool ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx);
     bool ExecuteROCCurve(const Node& node, ExecutionContext& ctx);
     bool ExecutePRCurve(const Node& node, ExecutionContext& ctx);

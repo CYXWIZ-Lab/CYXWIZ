@@ -1071,6 +1071,7 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::TverskyLoss, "TverskyLoss"},
         {gui::NodeType::JaccardLoss, "JaccardLoss"},
         {gui::NodeType::ClassificationMetricsNode, "ClassificationMetricsNode"},
+        {gui::NodeType::TestEvaluationNode, "TestEvaluationNode"},
         {gui::NodeType::SGD, "SGD"},
         {gui::NodeType::Adam, "Adam"},
         {gui::NodeType::AdamW, "AdamW"},

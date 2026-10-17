@@ -542,6 +542,10 @@ public:
     // Data > Import Dataset: a new Data Input node with its dialog open (data
     // enters the Engine only through Data Input nodes).
     void AddDataInputAndConfigure();
+    // Keep as node (Data Studio > Results, TOFIX157): a Data Input named
+    // `name` reading the kept test's Parquet file and a Test Evaluation node
+    // after it, in free space; the run loads the file.
+    void AddKeptTest(const std::string& path, const std::string& name);
 
     // Delete currently selected nodes
     void DeleteSelectedNodes();
@@ -965,6 +969,9 @@ private:
         ImVec2 position;  // Grid space position where node should be created
         std::unordered_map<std::string, std::string> initial_parameters;
         bool open_configuration = false;  // open the node's dialog once it exists
+        // A node of this type reading it, added to its right and linked.
+        std::optional<NodeType> then_type;
+        std::string then_name;
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)

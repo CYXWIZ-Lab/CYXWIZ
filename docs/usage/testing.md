@@ -19,6 +19,11 @@ other figures as chips (loss, F1, samples per second).
 If a test fails, the panel says *The test failed* with the reason, above the
 last successful results (a failed run is never compared against).
 
+**Showing** (when a project is open) picks the latest run or a kept test (Data
+Studio > Results > Keep as node keeps a test in the project's `results/tests`
+folder). A kept test shows every tab but Comparison (the latest run and the
+one before); a new test run shows itself again.
+
 Tabs (the tab bar scrolls when the panel is narrow):
 
 | Tab | What it shows |

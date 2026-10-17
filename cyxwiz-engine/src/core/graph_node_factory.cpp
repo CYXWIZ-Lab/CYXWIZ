@@ -1611,7 +1611,8 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         case NodeType::RegressionMetricsNode:
-        case NodeType::ClassificationMetricsNode: {
+        case NodeType::ClassificationMetricsNode:
+        case NodeType::TestEvaluationNode: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

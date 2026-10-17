@@ -54,6 +54,11 @@ public:
     // Train > Test > Export Test Report...: the JSON report of the shown run.
     void ExportReport();
 
+    // A kept test (TOFIX157, Keep as node): shows the test saved in `path`
+    // (results/tests/*.parquet) instead of the latest run; "Showing" in the
+    // header switches back.
+    void ShowKeptTest(const std::string& path);
+
     // "Run test again" (Train > Test > Run Test).
     void SetRunTestCallback(std::function<void()> callback) { run_test_ = std::move(callback); }
 
@@ -61,6 +66,11 @@ private:
     TestingMetrics results_;
     bool has_results_ = false;
     TestingMetrics previous_results_;  // the successful run before results_
+    // A kept test shown instead of the latest run (ShowKeptTest).
+    bool showing_kept_ = false;
+    TestingMetrics kept_results_;
+    std::string kept_name_, kept_path_, kept_error_;
+    const TestingMetrics& Shown() const { return showing_kept_ ? kept_results_ : results_; }
     bool has_previous_ = false;
     std::string failure_message_;      // the latest run failed: why
     bool select_comparison_tab_ = false;
@@ -81,6 +91,8 @@ private:
     std::function<void()> run_test_;
 
     void RenderHeader();
+    void RenderShowing();
+    bool LoadKeptTest(const std::string& path);
     void RenderOverviewTab();
     void RenderConfusionMatrixTab();
     void RenderClassesTab();

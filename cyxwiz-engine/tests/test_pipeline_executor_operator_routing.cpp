@@ -362,6 +362,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSDiff",
         "TSFeatures",
         "TSLag",
+        "TestEvaluationNode",
         "TSWindow",
         "ValueCounts",
         "WordEmbeddings",
@@ -7870,6 +7871,64 @@ int main(int argc, char** argv) {
               std::string::npos,
           "ClassificationMetricsNode empty-pair error should be specific: " +
               empty_classification_metrics_executor.GetLastError());
+
+    // Test Evaluation (TOFIX157): a test's per-row table through a Data Input
+    // (a kept test) gives the Test Results panel's figures on four outputs.
+    {
+        const fs::path rows_path = fs::temp_directory_path() / "cyxwiz_tofix157_kept_test.csv";
+        {
+            std::ofstream csv(rows_path, std::ios::binary | std::ios::trunc);
+            csv << "row_id,true_class,predicted_class,confidence\n"
+                << "106,1,0,0.91\n6,3,1,0.40\n30,2,2,0.99\n37,3,3,0.98\n";
+        }
+        const std::string evaluation_json =
+            R"({"nodes":[)"
+            R"({"id":870,"type":"DataInput","name":"Kept test","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(rows_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":871,"type":"TestEvaluationNode","name":"Test Evaluation","parameters":{"worst_rows":"20"}})"
+            R"(],"links":[{"start_node":870,"end_node":871}]})";
+        cyxwiz::PipelineExecutor evaluation_executor;
+        Check(evaluation_executor.ExecutePipeline(evaluation_json),
+              "TestEvaluationNode should read a kept test: " + evaluation_executor.GetLastError());
+        const auto metrics = registry.GetArrowDataset("ds_test_evaluation_871");
+        const auto worst = registry.GetArrowDataset("ds_test_evaluation_871_pin3");
+        Check(metrics && worst && registry.GetArrowDataset("ds_test_evaluation_871_pin1") &&
+                  registry.GetArrowDataset("ds_test_evaluation_871_pin2"),
+              "TestEvaluationNode registers its four outputs");
+        if (metrics && worst) {
+            Check(ReadStringValue(metrics->GetArrowTable(), "metric", 0) == "accuracy" &&
+                      std::fabs(ReadNumericValue(metrics->GetArrowTable(), "value", 0) - 0.5) < 1e-6,
+                  "TestEvaluationNode accuracy: 2 of 4");
+            Check(worst->GetArrowTable()->num_rows() == 2 &&
+                      std::fabs(ReadNumericValue(worst->GetArrowTable(), "dataset_row", 0) - 107.0) < 1e-9 &&
+                      std::fabs(ReadNumericValue(worst->GetArrowTable(), "dataset_row", 1) - 7.0) < 1e-9,
+                  "TestEvaluationNode worst rows: most confident first, dataset rows counted from 1");
+        }
+        const std::string not_a_test_json =
+            R"({"nodes":[)"
+            R"({"id":872,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":873,"type":"TestEvaluationNode","name":"Test Evaluation","parameters":{}})"
+            R"(],"links":[{"start_node":872,"end_node":873}]})";
+        cyxwiz::PipelineExecutor not_a_test_executor;
+        Check(!not_a_test_executor.ExecutePipeline(not_a_test_json) &&
+                  not_a_test_executor.GetLastError().find("not a test's predictions") != std::string::npos,
+              "TestEvaluationNode refuses a table that is not a test's: " + not_a_test_executor.GetLastError());
+        const std::string bad_worst_rows_json =
+            R"({"nodes":[)"
+            R"({"id":874,"type":"DataInput","name":"Kept test","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(rows_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":875,"type":"TestEvaluationNode","name":"Test Evaluation","parameters":{"worst_rows":"0"}})"
+            R"(],"links":[{"start_node":874,"end_node":875}]})";
+        cyxwiz::PipelineExecutor bad_worst_rows_executor;
+        Check(!bad_worst_rows_executor.ExecutePipeline(bad_worst_rows_json) &&
+                  bad_worst_rows_executor.GetLastError().find("worst_rows") != std::string::npos,
+              "TestEvaluationNode worst_rows 0 fails validation: " + bad_worst_rows_executor.GetLastError());
+        fs::remove(rows_path);
+    }
 
     const std::string confusion_matrix_json =
         R"({"nodes":[)"

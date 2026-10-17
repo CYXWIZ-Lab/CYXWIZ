@@ -4,11 +4,13 @@
 // comparison (a failed run never compared against), and the CSV / JSON
 // exports of the shown results.
 
+#include "../src/core/test_evaluation_tables.h"
 #include "../src/core/test_results_export.h"
 #include "../src/core/test_results_presentation.h"
 #include "../src/core/model_export_presentation.h"
 #include "../src/core/model_open_presentation.h"
 
+#include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
@@ -105,6 +107,50 @@ void CheckOverview() {
     TestingMetrics swapped = SentimentRun(true);
     swapped.confidences = {0.40f, 0.95f, 0.34f, 0.9f};
     Check(BuildView(swapped, nullptr).mistakes == std::vector<int>({1, 0}), "mistakes: most confident first");
+}
+
+// The Test Evaluation node's tables (TOFIX157): the panel's figures and order.
+void CheckEvaluationTables() {
+    TestingMetrics m = SentimentRun(true);
+    m.row_ids = {106, 319, 410, 6};
+    TestEvaluationTables tables;
+    std::string error;
+    Check(BuildTestEvaluationTables(m, 20, tables, error), "tables: " + error);
+    const auto text = [](const std::shared_ptr<arrow::Table>& table, const char* column, int row) {
+        const auto scalar = table->GetColumnByName(column)->GetScalar(row);
+        return scalar.ok() && (*scalar)->is_valid ? (*scalar)->ToString() : std::string("(null)");
+    };
+    Check(tables.metrics->num_rows() == 7 && text(tables.metrics, "metric", 0) == "accuracy" &&
+              Contains(text(tables.metrics, "value", 0), "0.6104") && text(tables.metrics, "metric", 6) == "rows",
+          "metrics: accuracy first, rows last");
+    Check(text(tables.confusion, "true", 0) == "Anxiety" && text(tables.confusion, "predicted", 0) == "Anxiety" &&
+              text(tables.confusion, "count", 0) == "173",
+          "confusion pairs by name, empty cells left out");
+    Check(tables.per_class->num_rows() == 7 && text(tables.per_class, "class", 1) == "Normal" &&
+              text(tables.per_class, "rows", 1) == "1636",
+          "per class");
+    Check(tables.worst_rows->num_rows() == 2 && text(tables.worst_rows, "dataset_row", 0) == "107" &&
+              text(tables.worst_rows, "predicted", 0) == "Normal" && text(tables.worst_rows, "dataset_row", 1) == "320",
+          "worst rows: the most confident mistake first, by dataset row");
+    Check(BuildTestEvaluationTables(m, 1, tables, error) && tables.worst_rows->num_rows() == 1, "worst_rows caps the rows");
+    m.row_ids.clear();
+    Check(BuildTestEvaluationTables(m, 20, tables, error) && text(tables.worst_rows, "dataset_row", 0) == "(null)",
+          "rows not recorded: no dataset row");
+
+    TestingMetrics r;
+    r.is_complete = true;
+    r.regression_mode = true;
+    r.test_mae = 1.0f;
+    r.regression_width = 1;
+    r.regression_truth = {1.0f, 2.0f, 3.0f};
+    r.regression_predictions = {1.5f, 5.0f, 3.0f};
+    r.row_ids = {4, 9, 2};
+    Check(BuildTestEvaluationTables(r, 20, tables, error), "regression tables: " + error);
+    Check(text(tables.metrics, "metric", 0) == "mae" && text(tables.metrics, "metric", 2) == "bias",
+          "regression metrics: mae, rmse, bias");
+    Check(tables.confusion->num_rows() == 0 && tables.per_class->num_rows() == 0, "regression: no class tables");
+    Check(text(tables.worst_rows, "dataset_row", 0) == "10" && Contains(text(tables.worst_rows, "error", 0), "3"),
+          "regression worst rows: the largest error first");
 }
 
 // A regression run's kept rows: bias and the largest errors (TOFIX157).
@@ -301,9 +347,10 @@ int main() {
     CheckOverview();
     CheckSorting();
     CheckRegressionRows();
+    CheckEvaluationTables();
     CheckComparison();
     CheckExports();
-    std::cout << "test results presentation: overview, classes, sorting, regression rows, comparison, exports, export model, open "
+    std::cout << "test results presentation: overview, classes, sorting, regression rows, evaluation tables, comparison, exports, export model, open "
                  "model. OK\n";
     return 0;
 }
