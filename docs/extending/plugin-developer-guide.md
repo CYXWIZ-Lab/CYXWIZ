@@ -55,9 +55,9 @@ A plugin implements `IPlugin` and, for trainable nodes,
 `ITensorNodeProvider`, and exports itself with `CYXWIZ_PLUGIN_ENTRY`:
 
 ```cpp
-#include "../../../cyxwiz-engine/src/plugin/plugin_types.h"
-#include "../../../cyxwiz-engine/src/plugin/plugin_context.h"
-#include "../../../cyxwiz-engine/src/plugin/interfaces/i_tensor_node_provider.h"
+#include "plugin/plugin_types.h"
+#include "plugin/plugin_context.h"
+#include "plugin/interfaces/i_tensor_node_provider.h"
 
 #include <cyxwiz/sequential.h>
 
@@ -89,8 +89,30 @@ add_library(my_nodes SHARED my_nodes_plugin.cpp)
 target_link_libraries(my_nodes PRIVATE cyxwiz-plugin-sdk cyxwiz-backend)
 ```
 
+`cyxwiz-plugin-sdk` is headers only: it brings the plugin headers and
+nlohmann/json, and no library. Its include folder holds only the public
+headers (`plugin/...` and the three `core/` headers they use), not the
+Engine's sources, so include them as `"plugin/plugin_types.h"`. A plugin that logs with spdlog or draws
+ImGui panels links `spdlog::spdlog` or `imgui::imgui` itself (see the
+`image_nodes` example).
+
 Write the library into `bin/` beside `plugin.json` (see the example's
 `CMakeLists.txt`).
+
+### The context
+
+The `PluginContext&` passed to each lifecycle call is an interface the
+Engine implements. Every call on it runs in the Engine:
+
+| Call | What it does |
+|---|---|
+| `GetPluginId()`, `GetPluginDir()` | Your manifest id and your plugin folder |
+| `LogInfo`, `LogWarn`, `LogError`, `LogDebug` | Write to the Engine's log, prefixed with your id |
+| `RegisterNodeProvider`, `RegisterPanelProvider`, `RegisterDataProvider`, `RegisterTrainingHook`, `RegisterAnalyticsProvider` | Register with the Engine's own registries, after checking your permissions; returns `false` when a permission is missing |
+
+Keep the reference only for the plugin's lifetime: the Engine destroys the
+context after `OnUnload`. Tensor nodes need none of the `Register*` calls;
+the Engine finds them through `QueryInterface("ITensorNodeProvider")`.
 
 ## 3. Describing your nodes: `GetTensorNodes`
 

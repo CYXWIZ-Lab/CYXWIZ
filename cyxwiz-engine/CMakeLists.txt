@@ -80,9 +80,45 @@ if(MSVC)
     target_compile_options(cyxwiz-implot3d PRIVATE /W0)
 endif()
 
-# Plugin SDK static library (shared between engine and plugins)
-add_library(cyxwiz-plugin-sdk STATIC
-    src/plugin/plugin_context.cpp
+# Plugin SDK: headers only (TOFIX125 P5 step 5.2). PluginContext is an
+# interface the Engine implements and the fingerprint is computed inline, so a
+# plugin links no CyxWiz library and gets no spdlog or ImGui from the SDK: a
+# plugin that logs or draws links those itself.
+#
+# The public headers are copied into one folder (paths relative to src/,
+# included as "plugin/plugin_types.h"); plugins see that folder and not the
+# Engine's src/, so a plugin that reaches into the Engine fails to build.
+set(CYXWIZ_PLUGIN_SDK_HEADERS
+    plugin/plugin_types.h
+    plugin/plugin_context.h
+    plugin/plugin_fingerprint.h
+    plugin/interfaces/i_analytics_provider.h
+    plugin/interfaces/i_assistant_provider.h
+    plugin/interfaces/i_data_provider.h
+    plugin/interfaces/i_node_provider.h
+    plugin/interfaces/i_panel_provider.h
+    plugin/interfaces/i_tensor_node_provider.h
+    plugin/interfaces/i_training_hook.h
+    core/extension_node_contract.h
+    core/node_metadata.h
+    core/graph_model.h
+)
+set(CYXWIZ_PLUGIN_SDK_INCLUDE_DIR "${CMAKE_BINARY_DIR}/sdk/include")
+foreach(_sdk_header ${CYXWIZ_PLUGIN_SDK_HEADERS})
+    configure_file(src/${_sdk_header} "${CYXWIZ_PLUGIN_SDK_INCLUDE_DIR}/${_sdk_header}" COPYONLY)
+endforeach()
+add_library(cyxwiz-plugin-sdk INTERFACE)
+target_include_directories(cyxwiz-plugin-sdk INTERFACE "${CYXWIZ_PLUGIN_SDK_INCLUDE_DIR}")
+# plugin_fingerprint.h reads the SDK version (cyxwiz/version.h) and, when a
+# plugin includes the backend, the ArrayFire version.
+target_include_directories(cyxwiz-plugin-sdk INTERFACE $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(cyxwiz-plugin-sdk INTERFACE nlohmann_json::nlohmann_json)
+target_compile_features(cyxwiz-plugin-sdk INTERFACE cxx_std_20)
+
+# The Engine's side of the plugin system: registries, permissions,
+# signatures, crash isolation and the fingerprint check. Linked by the Engine
+# and its tests, never by a plugin.
+add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
@@ -93,17 +129,17 @@ add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/security/tweetnacl.c
     src/plugin/plugin_fingerprint.cpp
 )
-target_include_directories(cyxwiz-plugin-sdk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# plugin_fingerprint.h reads the SDK version (cyxwiz/version.h) and, when a
-# plugin includes the backend, the ArrayFire version.
-target_include_directories(cyxwiz-plugin-sdk PUBLIC $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
-target_link_libraries(cyxwiz-plugin-sdk PUBLIC
+# The Engine reads the same headers from src/ (never also from the SDK copy).
+target_include_directories(cyxwiz-plugin-host PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(cyxwiz-plugin-host PUBLIC
     cyxwiz-training-hooks
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     imgui::imgui
 )
-set_target_properties(cyxwiz-plugin-sdk PROPERTIES
+set_target_properties(cyxwiz-plugin-host PROPERTIES
     CXX_STANDARD 20
     POSITION_INDEPENDENT_CODE ON
 )
@@ -286,9 +322,10 @@ set(ENGINE_SOURCES
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
     src/core/node_executors/time_series_analysis_operators.cpp  # Phase 5 Band 1
-    # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
+    # Plugin system (loader/manager only; host sources in cyxwiz-plugin-host)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp
@@ -1071,7 +1108,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     OpenSSL::Crypto
     cyxwiz-backend
     cyxwiz-protocol
-    cyxwiz-plugin-sdk
+    cyxwiz-plugin-host
     nfd::nfd
     libvterm::vterm
     Arrow::arrow_shared
@@ -2890,7 +2927,6 @@ target_link_libraries(test_plugin_presentation PRIVATE nlohmann_json::nlohmann_j
 set_target_properties(test_plugin_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
 # ===== Test: plugin build fingerprint (TOFIX125 P5 step 5.1) =====
 foreach(_fingerprint_kind ok other missing)
     add_library(fingerprint_${_fingerprint_kind}_plugin SHARED tests/plugin_fingerprint_test_plugin.cpp)
@@ -2905,7 +2941,7 @@ add_executable(test_plugin_fingerprint
     tests/test_plugin_fingerprint.cpp
     src/plugin/plugin_loader.cpp
 )
-target_link_libraries(test_plugin_fingerprint PRIVATE cyxwiz-plugin-sdk cyxwiz-backend spdlog::spdlog)
+target_link_libraries(test_plugin_fingerprint PRIVATE cyxwiz-plugin-host cyxwiz-backend spdlog::spdlog)
 target_compile_definitions(test_plugin_fingerprint PRIVATE
     OK_PLUGIN="$<TARGET_FILE:fingerprint_ok_plugin>"
     OTHER_PLUGIN="$<TARGET_FILE:fingerprint_other_plugin>"
@@ -2915,13 +2951,15 @@ add_dependencies(test_plugin_fingerprint fingerprint_ok_plugin fingerprint_other
 set_target_properties(test_plugin_fingerprint PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME plugin_fingerprint COMMAND test_plugin_fingerprint)
 
+# ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
 add_executable(test_plugin_unload_registrations
     tests/test_plugin_unload_registrations.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
     src/plugin/plugin_loader.cpp
 )
 target_include_directories(test_plugin_unload_registrations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk cyxwiz-backend imgui::imgui spdlog::spdlog)
+target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-host cyxwiz-backend imgui::imgui spdlog::spdlog)
 if(WIN32)
     target_compile_definitions(test_plugin_unload_registrations PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -6925,9 +6963,10 @@ target_link_libraries(test_extension_gradient_check PRIVATE cyxwiz-training-core
 add_executable(test_plugin_tensor_nodes
     tests/test_plugin_tensor_nodes.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
     src/plugin/plugin_loader.cpp
 )
-target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui)
+target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
 target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_dependencies(test_plugin_tensor_nodes activation_nodes)
 
@@ -7012,10 +7051,11 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         tests/bench_python_node_cost.cpp
         src/extension/python/python_node_factory.cpp
         src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
         src/plugin/plugin_loader.cpp
     )
     target_link_libraries(bench_python_node_cost PRIVATE
-        cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui pybind11::embed)
+        cyxwiz-training-core cyxwiz-plugin-host imgui::imgui pybind11::embed)
     target_compile_definitions(bench_python_node_cost PRIVATE
         CYXWIZ_HAS_PYTHON
         CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"

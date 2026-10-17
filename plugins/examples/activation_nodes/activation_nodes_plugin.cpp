@@ -8,9 +8,9 @@
 // editor, compiles them into the model and trains them. Its guard checks
 // the shapes these modules return.
 
-#include "../../../cyxwiz-engine/src/plugin/plugin_types.h"
-#include "../../../cyxwiz-engine/src/plugin/plugin_context.h"
-#include "../../../cyxwiz-engine/src/plugin/interfaces/i_tensor_node_provider.h"
+#include "plugin/plugin_types.h"
+#include "plugin/plugin_context.h"
+#include "plugin/interfaces/i_tensor_node_provider.h"
 
 #include <cyxwiz/sequential.h>
 

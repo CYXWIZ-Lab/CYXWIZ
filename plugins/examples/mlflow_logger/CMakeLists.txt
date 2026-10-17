@@ -7,8 +7,8 @@ add_library(mlflow_logger SHARED
     mlflow_logger_plugin.cpp
 )
 
-# Link against the plugin SDK (provides PluginContext, registries, security)
-target_link_libraries(mlflow_logger PRIVATE cyxwiz-plugin-sdk)
+# The plugin SDK (headers); this plugin draws and logs, so ImGui and spdlog too
+target_link_libraries(mlflow_logger PRIVATE cyxwiz-plugin-sdk imgui::imgui spdlog::spdlog)
 
 # Output to bin/ subdirectory
 set_target_properties(mlflow_logger PROPERTIES

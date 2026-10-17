@@ -2,6 +2,7 @@
 
 #include "plugin_types.h"
 #include "plugin_loader.h"
+#include "engine_plugin_context.h"
 #include "security/permission_dialog.h"
 #include <memory>
 #include <unordered_map>
@@ -133,8 +134,8 @@ private:
     // Plugin storage: id -> LoadedPlugin
     std::unordered_map<std::string, std::unique_ptr<LoadedPlugin>> plugins_;
 
-    // Plugin contexts: id -> PluginContext
-    std::unordered_map<std::string, std::unique_ptr<PluginContext>> contexts_;
+    // Plugin contexts: id -> the Engine's context for that plugin
+    std::unordered_map<std::string, std::unique_ptr<EnginePluginContext>> contexts_;
 
     // Search paths for plugin directories
     std::vector<std::filesystem::path> search_paths_;

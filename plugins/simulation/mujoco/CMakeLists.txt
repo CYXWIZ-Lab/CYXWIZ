@@ -99,10 +99,13 @@ target_include_directories(mujoco_plugin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# cyxwiz-plugin-sdk provides spdlog, nlohmann_json, imgui
+# cyxwiz-plugin-sdk is headers only (with nlohmann_json); this plugin logs and
+# draws, so it links spdlog and ImGui itself
 # We additionally need glad (OpenGL loader) and glfw (context management)
 target_link_libraries(mujoco_plugin PRIVATE
     cyxwiz-plugin-sdk
+    spdlog::spdlog
+    imgui::imgui
     mujoco::mujoco
     glad::glad
     glfw
