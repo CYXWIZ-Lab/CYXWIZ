@@ -298,9 +298,15 @@ bool TrainingManager::StartTrainingExternal(
         "Training Model (Resolved Roles)", "Training from resolved dataset roles");
 }
 
-std::shared_ptr<SequentialModel> TrainingManager::GetActiveModel() const {
+std::shared_ptr<IExecutableModel> TrainingManager::GetActiveModel() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return last_trained_model_;
+}
+
+std::shared_ptr<SequentialModel> TrainingManager::GetActiveSequentialModel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!last_trained_model_ || !last_trained_model_->AsSequentialModel()) return nullptr;
+    return std::shared_ptr<SequentialModel>(last_trained_model_, last_trained_model_->AsSequentialModel());
 }
 
 ActiveModelInfo TrainingManager::GetActiveModelInfo() const {
@@ -418,7 +424,7 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         return result;
     }
 
-    auto loaded_model = std::shared_ptr<SequentialModel>(std::move(built.model));
+    std::shared_ptr<IExecutableModel> loaded_model = std::make_shared<SequentialExecutableModel>(std::move(built.model));
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (was_cancelled()) {
@@ -1280,17 +1286,23 @@ bool TrainingManager::SaveModel(const std::string& path,
         spdlog::error("TrainingManager::SaveModel: No trained model available");
         return false;
     }
+    SequentialModel* model = last_trained_model_->AsSequentialModel();
+    if (!model) {
+        spdlog::error("TrainingManager::SaveModel: a graph with branches cannot be saved in this format yet; "
+                      "its training checkpoints keep its weights");
+        return false;
+    }
 
     // Set metadata if provided
     if (!name.empty()) {
-        last_trained_model_->SetName(name);
+        model->SetName(name);
     }
     if (!description.empty()) {
-        last_trained_model_->SetDescription(description);
+        model->SetDescription(description);
     }
 
     // Save the model
-    if (last_trained_model_->Save(path)) {
+    if (model->Save(path)) {
         spdlog::info("TrainingManager::SaveModel: Model saved to {}", path);
         return true;
     }

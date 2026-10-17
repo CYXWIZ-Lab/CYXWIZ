@@ -63,6 +63,11 @@ TestExecutor::~TestExecutor() {
 
 void TestExecutor::SetModel(std::shared_ptr<SequentialModel> model,
                             std::optional<ProcessDeviceSelection> model_device) {
+    SetModel(model ? std::make_shared<SequentialExecutableModel>(std::move(model)) : nullptr, model_device);
+}
+
+void TestExecutor::SetModel(std::shared_ptr<IExecutableModel> model,
+                            std::optional<ProcessDeviceSelection> model_device) {
     model_ = std::move(model);
     model_device_ = model_device;
     if (model_ && !model_device_) {
@@ -91,7 +96,7 @@ bool TestExecutor::BuildModelFromConfig() {
         return false;
     }
 
-    model_ = std::shared_ptr<SequentialModel>(std::move(built.model));
+    model_ = std::make_shared<SequentialExecutableModel>(std::move(built.model));
     return true;
 }
 

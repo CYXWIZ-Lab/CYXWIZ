@@ -1357,6 +1357,11 @@ MainWindow::MainWindow()
             spdlog::warn("No trained model available to save");
             return;
         }
+        if (!tm.GetLastTrainedModel()) {
+            spdlog::warn("Save Model: a graph with branches cannot be saved in this format yet; its training "
+                         "checkpoints keep its weights");
+            return;
+        }
 
         // Show save file dialog
         auto result = cyxwiz::FileDialogs::SaveModel();
@@ -1390,7 +1395,9 @@ MainWindow::MainWindow()
 
             // Get trained model from TrainingManager
             auto& tm = cyxwiz::TrainingManager::Instance();
-            if (tm.HasTrainedModel()) {
+            if (tm.HasTrainedModel() && !tm.GetLastTrainedModel()) {
+                spdlog::warn("Export Model: a graph with branches cannot be exported yet");
+            } else if (tm.HasTrainedModel()) {
                 auto* model = tm.GetLastTrainedModel();
                 auto* optimizer = tm.GetLastOptimizer();
                 auto& metrics = tm.GetLastMetrics();

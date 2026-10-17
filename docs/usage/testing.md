@@ -9,6 +9,11 @@ After training, test the model on the graph's test split:
 The test runs in the background (Task View) and opens **Test Results** when it
 ends. **Train > Test > View Test Results** opens the panel again later.
 
+A graph with branches (Split, Add, Concatenate) is tested like any other: the
+model it trained in this session is the one tested. Not yet for such a graph:
+**Save Model** and **Export Model** (they say so; its training checkpoints keep
+its weights), **Load Checkpoint for Testing**, and Feature Importance.
+
 ## Test Results
 
 The header shows the headline figure (accuracy for classification; 1-NN

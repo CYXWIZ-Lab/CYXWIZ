@@ -10,6 +10,7 @@
 #include "../src/core/graph_executable_model.h"
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
+#include "../src/core/test_executor.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <nlohmann/json.hpp>
@@ -20,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -238,6 +240,68 @@ void PrintIssues(const cyxwiz::TrainingConfiguration& config) {
     }
 }
 
+// One batch: the rows a test reads (TOFIX157, Run Test on a graph model).
+class OneBatch final : public cyxwiz::IBatcher {
+public:
+    OneBatch(cyxwiz::Tensor data, cyxwiz::Tensor labels) : data_(std::move(data)), labels_(std::move(labels)) {}
+    cyxwiz::Batch GetNextBatch() override {
+        cyxwiz::Batch batch;
+        if (done_) return batch;
+        done_ = true;
+        batch.data = data_;
+        batch.labels = labels_;
+        batch.size = data_.Shape().front();
+        return batch;
+    }
+    void Reset() override { done_ = false; }
+    bool IsEpochComplete() const override { return done_; }
+    size_t GetNumBatches() const override { return 1; }
+    size_t GetNumSamples() const override { return data_.Shape().front(); }
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+private:
+    cyxwiz::Tensor data_, labels_;
+    bool done_ = false;
+};
+
+// Run Test on the trained graph (TOFIX157): TestExecutor runs the graph model
+// it is handed (it ran only a SequentialModel: "No model is active").
+void CheckTestRunsGraphModel(const std::string& name, const cyxwiz::TrainingConfiguration& config,
+                             std::shared_ptr<cyxwiz::IExecutableModel> model, const cyxwiz::Tensor& input) {
+    model->SetTraining(false);
+    const cyxwiz::Tensor expected = model->Forward(input);
+    const auto out_shape = expected.Shape();
+    const size_t rows = out_shape.front();
+    const size_t width = expected.NumElements() / rows;
+    const float* out = expected.ReadData<float>();
+    cyxwiz::ExternalTestSource source;
+    source.make_batcher = [input, out_shape](const cyxwiz::TrainingConfiguration&, int) -> std::unique_ptr<cyxwiz::IBatcher> {
+        return std::make_unique<OneBatch>(input, cyxwiz::Tensor::Zeros(out_shape));
+    };
+    cyxwiz::TestExecutor test(config, source);
+    test.SetModel(model);
+    test.Test(static_cast<int>(rows));
+    const auto m = test.GetMetrics();
+    Check(m.is_complete && m.total_samples == static_cast<int>(rows),
+          name + ": Run Test runs the graph model (" + m.status_message + ")");
+    if (m.regression_mode) {
+        Check(m.regression_predictions.size() == rows * width, name + ": a prediction per output value");
+        for (size_t i = 0; i < m.regression_predictions.size() && i < rows * width; ++i)
+            Check(std::abs(m.regression_predictions[i] - out[i]) < 1e-4f, name + ": the test's output is the model's");
+    } else {
+        Check(m.predictions.size() == rows, name + ": a prediction per row");
+        for (size_t r = 0; r < m.predictions.size() && r < rows; ++r) {
+            size_t best = 0;
+            for (size_t k = 1; k < width; ++k)
+                if (out[r * width + k] > out[r * width + best]) best = k;
+            Check(m.predictions[r] == static_cast<int>(best), name + ": the test's class is the model's argmax");
+        }
+    }
+    std::cout << "  " << name << ": Run Test runs the graph model (" << rows << " rows)\n";
+}
+
 void RunCase(const json& c) {
     const std::string name = c.at("name").get<std::string>();
     const auto graph = BuildGraph(c);
@@ -389,6 +453,8 @@ void RunCase(const json& c) {
                    name + " input gradient with the merge links made in reverse");
         std::cout << "  " << name << ": reversed merge links give the same result\n";
     }
+    CheckTestRunsGraphModel(name, config, std::shared_ptr<cyxwiz::IExecutableModel>(std::move(built.model)),
+                            ReadTensor(c.at("input")));
 }
 
 std::filesystem::path FixturePath(const char* argv0) {

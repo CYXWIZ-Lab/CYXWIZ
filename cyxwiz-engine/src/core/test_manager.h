@@ -61,7 +61,7 @@ public:
         TrainingConfiguration config,
         ExternalTestSource source,
         int batch_size,
-        std::shared_ptr<SequentialModel> model = nullptr,
+        std::shared_ptr<IExecutableModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr,
         std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
@@ -72,7 +72,7 @@ public:
         std::string label_column,
         TestDatasetScope dataset_scope,
         int batch_size,
-        std::shared_ptr<SequentialModel> model = nullptr,
+        std::shared_ptr<IExecutableModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr,
         std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
@@ -82,7 +82,7 @@ public:
         std::string label_column,
         TestDatasetScope dataset_scope,
         int batch_size,
-        std::shared_ptr<SequentialModel> model = nullptr,
+        std::shared_ptr<IExecutableModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr,
         std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );

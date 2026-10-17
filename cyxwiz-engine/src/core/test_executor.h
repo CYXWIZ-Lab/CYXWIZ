@@ -5,6 +5,7 @@
 #include "dataset_batcher.h"
 #include "data_registry.h"
 #include "test_dataset_selection.h"
+#include "executable_model.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
@@ -212,6 +213,10 @@ public:
      */
     // Pass the recorded owner when handing off from a different thread.
     // Omitting it means the calling thread owns the supplied model's tensors.
+    // Any trained model: sequential or a graph with branches (TOFIX157).
+    void SetModel(std::shared_ptr<IExecutableModel> model,
+                  std::optional<ProcessDeviceSelection> model_device = std::nullopt);
+    // A layer stack someone else holds (shared, not copied).
     void SetModel(std::shared_ptr<SequentialModel> model,
                   std::optional<ProcessDeviceSelection> model_device = std::nullopt);
 
@@ -241,7 +246,7 @@ private:
     TestingMetrics metrics_;
 
     // Model and loss (no optimizer needed for testing)
-    std::shared_ptr<SequentialModel> model_;
+    std::shared_ptr<IExecutableModel> model_;
     std::optional<ProcessDeviceSelection> model_device_;
     std::unique_ptr<Loss> loss_;
     RegressionMetricAccumulator regression_metrics_;

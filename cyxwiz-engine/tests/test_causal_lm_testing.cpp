@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
         });
         for(int run=0;run<12;++run) {
             Check(manager.StartTestingArrow(config,dataset,"target_ids",
-                cyxwiz::TestDatasetScope::ConfiguredTestSplit,1,model,
+                cyxwiz::TestDatasetScope::ConfiguredTestSplit,1,std::make_shared<cyxwiz::SequentialExecutableModel>(model),
                 [&](const cyxwiz::TestingMetrics& metrics) {
                     Check(std::this_thread::get_id()==ui,"manager completion must be on UI thread");
                     Check(std::abs(metrics.test_accuracy-1.0/3)<1e-6,"manager parity");

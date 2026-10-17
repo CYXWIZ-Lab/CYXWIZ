@@ -85,7 +85,7 @@ std::string LanguageModelGenerationPanel::RequireActiveTokenizerIdentity(
         const auto info = TrainingManager::Instance().GetActiveModelInfo();
         // Keep the captured model alive and ensure these metadata belong to it.
         // A later replacement is safe: this action continues with the pinned model.
-        if (TrainingManager::Instance().GetActiveModel() != session_model)
+        if (TrainingManager::Instance().GetActiveSequentialModel() != session_model)
             throw std::runtime_error("Active model changed during tokenizer validation. Retry with the newly loaded model.");
         if (info.evaluation_config) {
             const auto& sequence = info.evaluation_config->sequence_batch;
@@ -230,7 +230,7 @@ void LanguageModelGenerationPanel::RenderControls() {
     if (ImGui::Checkbox("Include prompt in output", &include_prompt_)) InvalidateOutput();
 
     auto& training = TrainingManager::Instance();
-    const auto session_model = training.GetActiveModel();
+    const auto session_model = training.GetActiveSequentialModel();
     const std::weak_ptr<SequentialModel> current_owner = session_model;
     if (observed_session_model_.owner_before(current_owner) ||
         current_owner.owner_before(observed_session_model_)) {
@@ -355,7 +355,7 @@ void LanguageModelGenerationPanel::RunGeneration() {
             RequireImportedModelPackageContract();
         }
 
-        const auto session_model = TrainingManager::Instance().GetActiveModel();
+        const auto session_model = TrainingManager::Instance().GetActiveSequentialModel();
         auto* model = use_imported_model_ ? imported_model_.get() : session_model.get();
         if (!model) throw std::runtime_error("No trained or imported model is available");
         std::string tokenizer_identity = "Raw token IDs: tokenizer identity not checked.";
@@ -469,7 +469,7 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
             RequireImportedModelPackageContract();
         }
 
-        const auto session_model = TrainingManager::Instance().GetActiveModel();
+        const auto session_model = TrainingManager::Instance().GetActiveSequentialModel();
         auto* model = use_imported_model_ ? imported_model_.get() : session_model.get();
         if (!model) throw std::runtime_error("No trained or imported model is available");
         std::string tokenizer_identity = "Raw token IDs: tokenizer identity not checked.";

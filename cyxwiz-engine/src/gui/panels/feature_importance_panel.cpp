@@ -41,7 +41,7 @@ void FeatureImportancePanel::Render() {
         // The active model: the last trained model or a loaded checkpoint, the
         // same one Test and Inference use. A result for another model is stale.
         auto& training = TrainingManager::Instance();
-        const std::shared_ptr<SequentialModel> model = training.GetActiveModel();
+        const std::shared_ptr<SequentialModel> model = training.GetActiveSequentialModel();
         if (model.get() != result_model_ && !is_computing_.load()) {
             has_result_ = false;
             result_model_ = nullptr;
@@ -57,6 +57,10 @@ void FeatureImportancePanel::Render() {
             RenderLoadingIndicator();
         } else if (has_result_) {
             RenderResults();
+        } else if (!model && training.GetActiveModel()) {
+            ui::EmptyState(ICON_FA_STAR, "Not for this model yet",
+                           "The active model is a graph with branches; feature importance measures a model whose "
+                           "layers run one after another. Test (Train > Test) works for it.");
         } else if (!model) {
             ui::EmptyState(ICON_FA_STAR, "Nothing to measure yet",
                            "Run training (Train menu) or load a checkpoint. The model then shows here, "
@@ -479,7 +483,7 @@ void FeatureImportancePanel::PrepareData() {
 
 void FeatureImportancePanel::RunImportanceAnalysis() {
     auto& training = TrainingManager::Instance();
-    std::shared_ptr<SequentialModel> model = training.GetActiveModel();
+    std::shared_ptr<SequentialModel> model = training.GetActiveSequentialModel();
     if (is_computing_.load() || !model || !current_table_ || target_column_ < 0) return;
     const std::optional<ProcessDeviceSelection> model_device = training.GetActiveModelInfo().model_device;
 

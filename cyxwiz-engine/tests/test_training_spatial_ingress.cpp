@@ -142,7 +142,8 @@ std::vector<float> Run(const TrainingConfiguration &config,
       Require(sync_events == trace.arrayfire_host_sync_count &&
                   sync_bytes == trace.arrayfire_host_sync_bytes,
               "host-sync groups reconcile with run totals");
-      auto model = std::shared_ptr<SequentialModel>(executor->ReleaseModel());
+      std::shared_ptr<IExecutableModel> trained(executor->ReleaseModel());
+      SequentialModel* model = trained ? trained->AsSequentialModel() : nullptr;
       Require(model && model->Size() == 4, "trained spatial head retained");
       for (const auto &[name, tensor] : model->GetParameters()) {
         const auto *data =
@@ -155,7 +156,7 @@ std::vector<float> Run(const TrainingConfiguration &config,
                           : std::make_unique<TestExecutor>(
                                 config, parquet, "label",
                                 TestDatasetScope::EntireProvidedDataset);
-      tester->SetModel(model);
+      tester->SetModel(trained);
       TestingMetrics tested;
       int test_batches = 0;
       tester->Test(

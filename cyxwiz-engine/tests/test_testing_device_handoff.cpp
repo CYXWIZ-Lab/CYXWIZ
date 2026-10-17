@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
         bool completed = false;
         const auto ui_thread = std::this_thread::get_id();
         Check(manager.StartTestingArrow(config, dataset, "",
-            cyxwiz::TestDatasetScope::EntireProvidedDataset, 2, model,
+            cyxwiz::TestDatasetScope::EntireProvidedDataset, 2, std::make_shared<cyxwiz::SequentialExecutableModel>(model),
             [&](const cyxwiz::TestingMetrics& metrics) {
                 Check(std::this_thread::get_id() == ui_thread, "manager callback belongs to UI thread");
                 Check(metrics.is_complete && std::abs(metrics.test_loss - expected.test_loss) < 1e-5f,

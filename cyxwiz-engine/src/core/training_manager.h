@@ -199,10 +199,17 @@ public:
      * Get the last trained model (preserved after training completes)
      * @return Pointer to the trained model, or nullptr if no training has completed
      */
-    SequentialModel* GetLastTrainedModel() { return last_trained_model_.get(); }
+    // The layer stack of the last trained model, for Save / Export; nullptr
+    // when none or when it is a graph with branches (TOFIX157).
+    SequentialModel* GetLastTrainedModel() {
+        return last_trained_model_ ? last_trained_model_->AsSequentialModel() : nullptr;
+    }
 
-    /** Shared ownership for asynchronous test/inference consumers. */
-    std::shared_ptr<SequentialModel> GetActiveModel() const;
+    /** Shared ownership for asynchronous test consumers: sequential or a graph. */
+    std::shared_ptr<IExecutableModel> GetActiveModel() const;
+    // The active model as a layer stack (feature importance, generation),
+    // sharing its ownership; nullptr for a graph with branches.
+    std::shared_ptr<SequentialModel> GetActiveSequentialModel() const;
 
     ActiveModelInfo GetActiveModelInfo() const;
 
@@ -317,8 +324,8 @@ private:
     TrainingEndCallback on_training_end_;
     ProgressCallback on_progress_;
 
-    // Preserved model after training (for export)
-    std::shared_ptr<SequentialModel> last_trained_model_;
+    // Preserved model after training (Test; Save / Export when sequential)
+    std::shared_ptr<IExecutableModel> last_trained_model_;
     std::unique_ptr<Optimizer> last_optimizer_;
     TrainingMetrics last_metrics_;
     ActiveModelInfo active_model_info_;

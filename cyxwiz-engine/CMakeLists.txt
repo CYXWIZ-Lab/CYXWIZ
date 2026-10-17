@@ -5960,6 +5960,13 @@ add_executable(test_branch_graph_training
     src/core/dataset_catalog_registry.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
+    # Run Test on the graph model (TOFIX157)
+    src/core/test_executor.cpp
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 target_link_libraries(test_branch_graph_training PRIVATE cyxwiz-training-core)
 
