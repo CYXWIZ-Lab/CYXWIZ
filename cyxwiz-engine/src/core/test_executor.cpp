@@ -554,9 +554,15 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
                 m.regression_note = "Per-row results skipped: the test set has too many values to keep";
                 return;
             }
+            // In the target's own units, like MAE / RMSE: a scaled target
+            // (StandardScaler) is scaled back.
+            const RegressionTargetTransform& transform = config_.regression_target_transform;
             m.regression_width = static_cast<int>(output_width);
-            m.regression_truth.insert(m.regression_truth.end(), target_data, target_data + value_count);
-            m.regression_predictions.insert(m.regression_predictions.end(), pred_data, pred_data + value_count);
+            for (size_t i = 0; i < value_count; ++i) {
+                m.regression_truth.push_back(static_cast<float>(transform.InverseValue(target_data[i], i % output_width)));
+                m.regression_predictions.push_back(
+                    static_cast<float>(transform.InverseValue(pred_data[i], i % output_width)));
+            }
         });
         return;
     }

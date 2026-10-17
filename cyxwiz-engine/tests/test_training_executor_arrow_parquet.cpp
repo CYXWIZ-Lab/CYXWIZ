@@ -4349,6 +4349,34 @@ void TestRegressionTargetTransform(
     CheckNear(metrics.Rmse(), std::sqrt(52.0), 1e-6,
               "target-scaled RMSE should be reported in original units");
 
+    // A test of a scaled target keeps each row's values in the target's own
+    // units, so the per-row table agrees with MAE / RMSE.
+    {
+        auto config = MakeRegressionConfig(work_dir / "scaled-regression-rows");
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.shuffle = false;
+        config.regression_target_transform = transform;
+        cyxwiz::TestExecutor scaled(config,
+                                    std::make_shared<cyxwiz::ArrowDataset>(MakeRegressionTable(), "scaled_regression_rows"),
+                                    "target", cyxwiz::TestDatasetScope::EntireProvidedDataset);
+        auto model = std::make_shared<cyxwiz::SequentialModel>();
+        model->Add<cyxwiz::LinearModule>(2, 2, true);
+        scaled.SetModel(model);
+        scaled.Test(3);
+        const auto r = scaled.GetMetrics();
+        Check(r.is_complete && r.regression_truth.size() == 12 && r.regression_predictions.size() == 12,
+              "a scaled regression test keeps two targets per row");
+        CheckNear(r.regression_truth[0], 115.0, 1e-4, "the first target is scaled back (1.5 * 10 + 100)");
+        CheckNear(r.regression_truth[1], 199.0, 1e-4, "the second target is scaled back (-0.5 * 2 + 200)");
+        double abs_sum = 0.0;
+        for (size_t i = 0; i < r.regression_truth.size(); ++i)
+            abs_sum += std::abs(static_cast<double>(r.regression_predictions[i]) - r.regression_truth[i]);
+        CheckNear(abs_sum / 12.0, r.test_mae, 1e-3, "the rows' mean absolute error is the run's MAE");
+    }
+
     auto wrong_order = transform;
     wrong_order.target_columns = {"target_1", "target"};
     Check(!cyxwiz::ResolveRegressionTargetTransform(wrong_order, error),
