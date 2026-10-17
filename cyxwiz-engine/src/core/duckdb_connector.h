@@ -163,8 +163,8 @@ private:
     std::shared_ptr<duckdb::DuckDB> db_;  // shared with the connections NewConnection makes
     std::unique_ptr<duckdb::Connection> conn_;
     std::string last_error_;
-    uint64_t opened_budget_ = 0;   // DataBudgetBytes() when opened (memory_limit)
-    std::string opened_spill_;     // DataSpillDirectory() when opened (temp_directory)
+    uint64_t opened_budget_ = 0;   // DataBudgetShareBytes() when opened (memory_limit)
+    std::string opened_spill_;     // DataSpillDirectory() when opened (its temp_directory is a folder in it)
 
     struct SharedTag {};
     DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db);

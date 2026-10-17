@@ -47,7 +47,6 @@
 #include <numeric>
 #include <chrono>
 #include <ctime>
-#include <thread>
 #include <condition_variable>
 #include <atomic>
 #include <queue>
@@ -1438,12 +1437,7 @@ static bool PersistArrowCacheAtomically(
     const std::string& cache_path) {
     if (!dataset || cache_path.empty()) return false;
 
-    const auto thread_hash = std::hash<std::thread::id>{}(
-        std::this_thread::get_id());
-    const auto nonce = std::chrono::steady_clock::now()
-        .time_since_epoch().count();
-    const std::string temporary_path = cache_path + ".tmp." +
-        std::to_string(thread_hash) + "." + std::to_string(nonce);
+    const std::string temporary_path = ParquetBackedDataset::UniqueTempPath(cache_path);
 
     try {
         const fs::path parent = fs::path(cache_path).parent_path();

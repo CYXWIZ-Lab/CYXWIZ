@@ -249,6 +249,7 @@ private:
     bool stop_requested_;
     std::atomic<bool> cancel_requested_;  // Phase 8: Atomic cancellation flag
     std::string current_status_;          // Phase 8: Current execution status message
+    std::mutex status_mutex_;             // current_status_: nodes report progress from their own threads
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
     std::string graph_path_;              // the graph file the run came from (lineage)
@@ -282,9 +283,17 @@ private:
                             const std::string& error,
                             const std::string& written_path = {});
 
-    // SQL step running now, so RequestCancel can interrupt DuckDB.
+    // SQL steps running now (sibling branches run at once), so RequestCancel
+    // can interrupt each DuckDB.
     std::mutex active_sql_mutex_;
-    SqlTransform* active_sql_ = nullptr;
+    std::set<SqlTransform*> active_sql_;
+    void StartSql(SqlTransform& transform);
+    void EndSql(SqlTransform& transform);
+
+    // The error of the node this thread runs: a node's task writes its own
+    // (TOFIX157 A2) and the scheduler publishes the failing one as last_error_;
+    // outside a task it is last_error_.
+    std::string& Error();
 
     // Pipeline execution steps
     bool ParsePipeline(const std::string& pipeline_json, std::vector<Node>& nodes);
@@ -462,6 +471,16 @@ private:
     // Result files this executor wrote (output dataset -> file); one name per
     // run, since Windows cannot replace a file that is still mapped.
     std::map<std::string, std::string> step_result_files_;
+    // Sibling branches run at once (TOFIX157 A2): step_input_copies_,
+    // step_result_files_ and admitted_inputs_ change under step_files_mutex_,
+    // and a table's copy is made under its own name lock, so two steps reading
+    // one table write (or read in) one copy, the second waiting for the first.
+    std::mutex step_files_mutex_;
+    std::map<std::string, std::shared_ptr<std::mutex>> name_locks_;
+    std::shared_ptr<std::mutex> NameLock(const std::string& key);
+    // Held while a node writes an export file: two branches exporting to one
+    // file write it one after the other (none for an empty path).
+    std::unique_lock<std::mutex> LockExportPath(const std::string& path);
     // Removes the copies whose table is gone and the result files no dataset
     // uses any more (at run start and when the executor goes).
     void RemoveUnusedStepFiles();

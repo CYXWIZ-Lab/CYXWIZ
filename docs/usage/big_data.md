@@ -39,7 +39,16 @@ The budget decides:
   before.
 - **DuckDB**: its memory limit is the budget, it uses one thread per 256 MB of
   budget, and sorts, joins and group-bys spill to `cache/duckdb_tmp` instead
-  of failing.
+  of failing. Each DuckDB spills to a folder of its own there, removed when it
+  closes.
+- **Branches**: steps on different branches of a graph run at the same time
+  (up to four at once): a step starts as soon as the steps it reads are done.
+  Steps running at once share the budget: with two running, each gets half
+  for DuckDB and for reading a table on disk whole. A step alone has all of
+  it. When a step fails, nothing new starts; the steps already running finish
+  and the run reports the failing step's error. Two branches reading the same
+  table share one copy, and two exports to the same file write it one after
+  the other.
 
 ## How each step reads a large table
 

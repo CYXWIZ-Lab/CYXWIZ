@@ -1505,6 +1505,69 @@ void CheckNodeRunFacts() {
     std::cout << "Node run facts passed\n";
 }
 
+void CheckSiblingBranchesRunAtOnce() {
+    // TOFIX157 A2: two branches from one Data Input run at the same time; a
+    // failing branch stops the run with its own error, and its sibling still
+    // reports how it ended.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_sibling_branches";
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    {
+        std::ofstream file(csv);
+        file << "id\n";
+        for (int i = 0; i < 20000; ++i) file << i << "\n";
+    }
+    const std::string slow = "SELECT CAST(sum(hash(id * r.range) % 1000) AS BIGINT) AS s FROM input, range(4000) r";
+    auto graph = [&](const std::string& second_query) {
+        return R"({"nodes":[{"id":95101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":95102,"type":"SQLQuery","name":"Left","parameters":{"sql_contract_version":"1","input_alias":"input","query":")" + slow +
+            R"("}},{"id":95103,"type":"SQLQuery","name":"Right","parameters":{"sql_contract_version":"1","input_alias":"input","query":")" + second_query +
+            R"("}}],"links":[{"start_node":95101,"end_node":95102},{"start_node":95101,"end_node":95103}]})";
+    };
+    struct Seen {
+        std::mutex mutex;
+        std::map<int, std::pair<std::chrono::steady_clock::time_point, std::chrono::steady_clock::time_point>> spans;
+        std::map<int, cyxwiz::PipelineNodeExecutionEvent> last;
+    };
+    auto watch = [](cyxwiz::PipelineExecutor& executor, Seen& seen) {
+        executor.SetNodeExecutionCallback([&seen](int id, cyxwiz::PipelineNodeExecutionEvent event, const std::string&) {
+            std::lock_guard<std::mutex> lock(seen.mutex);
+            const auto now = std::chrono::steady_clock::now();
+            if (event == cyxwiz::PipelineNodeExecutionEvent::Executing) seen.spans[id].first = now;
+            if (event == cyxwiz::PipelineNodeExecutionEvent::Completed || event == cyxwiz::PipelineNodeExecutionEvent::Error)
+                seen.spans[id].second = now;
+            seen.last[id] = event;
+        });
+    };
+
+    Seen both;
+    cyxwiz::PipelineExecutor executor;
+    watch(executor, both);
+    const bool ran = executor.ExecutePipeline(graph(slow));
+    Check(ran, "two sibling branches: " + executor.GetLastError());
+    const auto& left = both.spans[95102];
+    const auto& right = both.spans[95103];
+    Check(std::max(left.first, right.first) < std::min(left.second, right.second),
+          "the sibling branches overlap in time");
+    const auto facts = executor.GetNodeRunFacts();
+    Check(facts.count(95102) && facts.at(95102).rows == 1 && facts.count(95103) && facts.at(95103).rows == 1,
+          "each branch has its result");
+
+    Seen failing_seen;
+    cyxwiz::PipelineExecutor failing;
+    watch(failing, failing_seen);
+    Check(!failing.ExecutePipeline(graph("SELECT no_such_column FROM input")), "a failing branch stops the run");
+    Check(failing.GetLastError().find("no_such_column") != std::string::npos,
+          "the run's error is the failing branch's: " + failing.GetLastError());
+    Check(failing_seen.last[95102] == cyxwiz::PipelineNodeExecutionEvent::Completed &&
+              failing_seen.last[95103] == cyxwiz::PipelineNodeExecutionEvent::Error,
+          "the sibling still reports how it ended");
+    fs::remove_all(dir);
+    std::cout << "Sibling branches run at once passed\n";
+}
+
 void CheckLazyEvaluation() {
     // TOFIX154 item 10: an executor kept between runs reuses an unchanged
     // node's result; a changed parameter or source file reruns that node and
@@ -2850,6 +2913,8 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--streaming") { CheckStreamingScaler(); CheckUniqueOnDisk(); return 0; }
     if(argc==1) { CheckStreamingScaler(); CheckUniqueOnDisk(); }
     if(argc==1) CheckLazyEvaluation();
+    if(argc==2 && std::string(argv[1])=="--siblings") { CheckSiblingBranchesRunAtOnce(); return 0; }
+    if(argc==1) CheckSiblingBranchesRunAtOnce();
     if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
     if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }
     if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); CheckGuidedOperations(); }

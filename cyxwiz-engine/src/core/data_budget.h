@@ -30,6 +30,10 @@ inline std::string& SpillDirectory() {
     static std::string directory;
     return directory;
 }
+inline std::atomic<uint32_t>& Sharers() {
+    static std::atomic<uint32_t> steps{0};
+    return steps;
+}
 }  // namespace data_budget_detail
 
 inline uint64_t PhysicalMemoryBytes() {
@@ -70,6 +74,23 @@ inline uint64_t DataBudgetBytes() {
 inline void SetDataBudgetBytes(uint64_t bytes) { data_budget_detail::Override().store(bytes); }
 
 inline bool DataBudgetIsDefault() { return data_budget_detail::Override().load() == 0; }
+
+// Steps running at once share the budget (TOFIX157 A2): a pipeline node
+// holds a DataBudgetShare while it runs, and what one step may use (DuckDB's
+// memory and threads, reading a disk table whole) is the budget divided
+// between the steps running. One step alone has the whole budget.
+class DataBudgetShare {
+public:
+    DataBudgetShare() { ++data_budget_detail::Sharers(); }
+    ~DataBudgetShare() { --data_budget_detail::Sharers(); }
+    DataBudgetShare(const DataBudgetShare&) = delete;
+    DataBudgetShare& operator=(const DataBudgetShare&) = delete;
+};
+
+inline uint64_t DataBudgetShareBytes() {
+    const uint32_t steps = data_budget_detail::Sharers().load();
+    return DataBudgetBytes() / (steps > 1 ? steps : 1);
+}
 
 // A table or result larger than this is kept on disk, not in memory (D1).
 inline uint64_t DataResultThresholdBytes() { return DataBudgetBytes() / 4; }

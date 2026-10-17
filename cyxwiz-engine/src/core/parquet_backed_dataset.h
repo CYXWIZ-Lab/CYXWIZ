@@ -4,6 +4,7 @@
 #include <arrow/io/api.h>
 #include <parquet/arrow/reader.h>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include "csv_ingestion_options.h"
@@ -75,6 +76,12 @@ public:
     static void PruneCache(size_t max_total_bytes = 10ULL * 1024 * 1024 * 1024,
                             int max_age_days = 30);
 
+    // A temporary name next to `path`, unique to this thread and moment
+    // (<path>.tmp.<thread>.<ticks>): two loads writing the same cache file at
+    // once each write their own and rename it into place. PruneCache removes
+    // the ones a crash left behind.
+    static std::string UniqueTempPath(const std::string& path);
+
     /**
      * Check whether an existing cache file is still valid for a given CSV
      * source. Returns true if the cache exists and its mtime is >= the
@@ -142,7 +149,7 @@ public:
 
     // Write the selected columns of a Parquet file to another Parquet file,
     // one row group at a time (Data Input's column selection on a file that
-    // stays on disk). Writes to <output>.tmp and renames on success.
+    // stays on disk). Writes to a UniqueTempPath and renames on success.
     static bool WriteColumnProjection(const std::string& source_path,
                                       const std::string& output_path,
                                       const std::vector<std::string>& columns,
@@ -182,6 +189,9 @@ private:
     // of the dataset. Arrow's FileReader reads through this mapping.
     std::shared_ptr<arrow::io::MemoryMappedFile> mmap_file_;
     std::unique_ptr<parquet::arrow::FileReader> reader_;
+    // One FileReader is not safe for two threads; sibling branches and a
+    // prefetching batcher can read one table at once.
+    mutable std::mutex reader_mutex_;
 
     std::shared_ptr<arrow::Schema> schema_;
     int64_t num_rows_ = 0;

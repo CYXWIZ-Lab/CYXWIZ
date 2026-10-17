@@ -141,6 +141,7 @@ std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadRowGroup(int row_group_i
     }
 
     std::shared_ptr<arrow::Table> table;
+    std::lock_guard<std::mutex> lock(reader_mutex_);
     auto status = reader_->ReadRowGroup(row_group_idx, &table);
     if (!status.ok()) {
         spdlog::error("ParquetBackedDataset::ReadRowGroup({}): {}", row_group_idx, status.ToString());
@@ -154,6 +155,7 @@ std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadRowGroups(
     if (!reader_ || indices.empty()) return nullptr;
 
     std::shared_ptr<arrow::Table> table;
+    std::lock_guard<std::mutex> lock(reader_mutex_);
     auto status = reader_->ReadRowGroups(indices, &table);
     if (!status.ok()) {
         spdlog::error("ParquetBackedDataset::ReadRowGroups: {}", status.ToString());
@@ -204,7 +206,7 @@ bool ParquetBackedDataset::WriteColumnProjection(const std::string& source_path,
         indices.push_back(index);
         fields.push_back(source->schema_->field(index));
     }
-    const std::string tmp_path = output_path + ".tmp";
+    const std::string tmp_path = UniqueTempPath(output_path);
     std::error_code ignored;
     fs::create_directories(fs::path(output_path).parent_path(), ignored);
     auto out = arrow::io::FileOutputStream::Open(tmp_path);
@@ -234,6 +236,10 @@ bool ParquetBackedDataset::WriteColumnProjection(const std::string& source_path,
     source.reset();
     std::error_code moved;
     fs::rename(tmp_path, output_path, moved);
+    if (moved && IsCacheFresh(source_path, output_path)) {  // another load put the same file in place
+        fs::remove(tmp_path, ignored);
+        return true;
+    }
     if (moved) return fail("cannot move '" + tmp_path + "' into place: " + moved.message());
     return true;
 }
@@ -243,6 +249,7 @@ std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadColumn(const std:
     const int index = schema_->GetFieldIndex(name);
     if (index < 0) return nullptr;
     std::shared_ptr<arrow::ChunkedArray> column;
+    std::lock_guard<std::mutex> lock(reader_mutex_);
     auto status = reader_->ReadColumn(index, &column);
     if (!status.ok()) {
         spdlog::error("ParquetBackedDataset::ReadColumn({}): {}", name, status.ToString());
@@ -258,6 +265,7 @@ std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadRowGroupColumn(in
     const int index = schema_->GetFieldIndex(name);
     if (index < 0) return nullptr;
     std::shared_ptr<arrow::ChunkedArray> column;
+    std::lock_guard<std::mutex> lock(reader_mutex_);
     auto status = reader_->RowGroup(row_group_idx)->Column(index)->Read(&column);
     if (!status.ok()) {
         spdlog::error("ParquetBackedDataset::ReadRowGroupColumn({}, {}): {}", row_group_idx, name, status.ToString());
@@ -360,7 +368,16 @@ std::string ParquetBackedDataset::GetCacheFilePath(
     return cache_file.string();
 }
 
+std::string ParquetBackedDataset::UniqueTempPath(const std::string& path) {
+    const auto thread = std::hash<std::thread::id>{}(std::this_thread::get_id());
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    return path + ".tmp." + std::to_string(thread) + "." + std::to_string(ticks);
+}
+
 void ParquetBackedDataset::PruneCache(size_t max_total_bytes, int max_age_days) {
+    // Loads on other threads prune too; one walk at a time.
+    static std::mutex prune_mutex;
+    std::lock_guard<std::mutex> prune_lock(prune_mutex);
     fs::path cache_dir = GetCacheDir();
     if (!fs::exists(cache_dir)) return;
 
@@ -378,6 +395,14 @@ void ParquetBackedDataset::PruneCache(size_t max_total_bytes, int max_age_days) 
         for (const auto& dir_entry : fs::directory_iterator(cache_dir)) {
             if (!dir_entry.is_regular_file()) continue;
             const auto& p = dir_entry.path();
+            // A temp file (UniqueTempPath) a day old was left by a crash.
+            if (p.filename().string().find(".tmp.") != std::string::npos) {
+                std::error_code stale;
+                const auto written = fs::last_write_time(p, stale);
+                if (!stale && fs::file_time_type::clock::now() - written > std::chrono::hours(24))
+                    fs::remove(p, stale);
+                continue;
+            }
             if (p.extension() != ".parquet") continue;
             CacheEntry e;
             e.path = p;
@@ -503,24 +528,16 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
     //      behavior would leave a truncated Parquet file that IsCacheFresh
     //      would then accept as valid on next load).
     //   2. Two concurrent loads of the same CSV racing to write the same
-    //      file (the rename() is atomic on the filesystem, so one wins).
+    //      file: each writes its own temp file (UniqueTempPath) and the
+    //      rename is atomic, so one wins and the other uses its file.
     //   3. Power loss mid-write (the temp file has no effect on the
     //      final cache path; next load just rebuilds).
-    const std::string tmp_path = parquet_path + ".tmp";
+    const std::string tmp_path = UniqueTempPath(parquet_path);
     int64_t csv_source_size = 0;
     try {
         csv_source_size = static_cast<int64_t>(fs::file_size(csv_path));
     } catch (...) {
         csv_source_size = 0;
-    }
-
-    // Clean up any stale .tmp from a previous aborted run.
-    try {
-        if (fs::exists(tmp_path)) {
-            fs::remove(tmp_path);
-        }
-    } catch (...) {
-        // Non-fatal; FileOutputStream::Open will fail loudly below if so.
     }
 
     // Helper: on any failure, wipe the partial .tmp so the next load
@@ -790,10 +807,13 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
             }
             fs::rename(tmp_path, parquet_path);
         } catch (const std::exception& e) {
-            spdlog::error("ConvertCsvToParquet: final rename {} -> {} failed: {}",
-                          tmp_path, parquet_path, e.what());
             cleanup_tmp();
-            return false;
+            // Another load of the same CSV put its file in place first.
+            if (!IsCacheFresh(csv_path, parquet_path)) {
+                spdlog::error("ConvertCsvToParquet: final rename {} -> {} failed: {}",
+                              tmp_path, parquet_path, e.what());
+                return false;
+            }
         }
 
         // Log the end result including compression ratio for visibility.
