@@ -17,9 +17,9 @@ A graph with branches (Split, Add, Concatenate, multi-input layers) exports
 to a CyxWiz package or to weights only. The package always includes its
 graph (the **Graph** box stays on and says why): the graph is what rebuilds
 the model around the weights. ONNX is not offered for such a graph yet. The
-footer reads "3 layers, with branches". **File > Save Model** on such a
-model opens this dialog as a CyxWiz package, since the older single-file
-format holds a layer stack only.
+footer reads "9 layers, with branches" (the 17-node example
+`blobs_multibranch_classifier`: 1,972 parameters, 26.2 KB). A CyxWiz package
+is how any trained model is saved; there is no separate Save Model.
 
 ## File and details
 

@@ -1350,43 +1350,6 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Save Model callback (native CyxWiz format)
-    toolbar_->SetSaveModelCallback([this]() {
-        auto& tm = cyxwiz::TrainingManager::Instance();
-        if (!tm.HasTrainedModel()) {
-            spdlog::warn("No trained model available to save");
-            return;
-        }
-        if (!tm.GetLastTrainedModel()) {
-            // A graph with branches is saved as a package that holds its
-            // graph (the layer-stack file cannot rebuild it).
-            spdlog::info("Save Model: a graph with branches is saved as a CyxWiz package (.cyxmodel) with its graph");
-            OpenModelExport(static_cast<int>(cyxwiz::ModelFormat::CyxModel));
-            return;
-        }
-
-        // Show save file dialog
-        auto result = cyxwiz::FileDialogs::SaveModel();
-        if (result) {
-            std::string path = *result;
-            // Remove extension if present (our save adds .json and .bin)
-            if (path.size() > 9 && path.substr(path.size() - 9) == ".cyxmodel") {
-                path = path.substr(0, path.size() - 9);
-            }
-
-            // Get model name from filename
-            std::filesystem::path file_path(path);
-            std::string model_name = file_path.stem().string();
-            std::string model_desc = "Model trained with CyxWiz Engine";
-
-            if (tm.SaveModel(path, model_name, model_desc)) {
-                spdlog::info("Model saved successfully to: {}", path);
-            } else {
-                spdlog::error("Failed to save model to: {}", path);
-            }
-        }
-    });
-
     // Set up Export Model callback
     toolbar_->SetExportModelCallback([this](int format_index) { OpenModelExport(format_index); });
 
