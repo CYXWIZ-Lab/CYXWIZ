@@ -738,12 +738,6 @@ private:
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
 
-    // Unified Canvas Phase 3: Categorized node palette helpers
-    void ShowCategorizedNodeMenu();
-    void RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon);
-    static const char* GetCategoryIcon(NodeCategory category);
-    static const char* GetCategoryName(NodeCategory category);
-
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
     const char* GetNodeIcon(NodeType type);
