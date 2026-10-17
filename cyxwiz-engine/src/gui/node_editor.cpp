@@ -2823,7 +2823,7 @@ void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
         }
     }
 
-    NodeDocumentationManager::Instance().RenderTooltip(node.type);
+    NodeDocumentationManager::Instance().RenderTooltip(node);
 }
 
 void NodeEditor::HandleInteractions() {

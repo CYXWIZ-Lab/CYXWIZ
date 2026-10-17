@@ -1,4 +1,5 @@
 #include "node_documentation.h"
+#include "../core/extension_node_metadata.h"
 #include "../core/node_metadata_registry.h"
 #include "ui_tokens.h"
 #include <imgui.h>
@@ -25,8 +26,20 @@ const NodeDocumentation* NodeDocumentationManager::GetDocumentation(NodeType typ
 void NodeDocumentationManager::RenderTooltip(NodeType type) {
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     registry.Initialize();
-    const auto* metadata = registry.GetMetadata(type);
-    const NodeDocumentation* doc = GetDocumentation(type);
+    RenderTooltip(registry.GetMetadata(type), GetDocumentation(type));
+}
+
+void NodeDocumentationManager::RenderTooltip(const MLNode& node) {
+    if (node.type != NodeType::PluginCustom) {
+        RenderTooltip(node.type);
+        return;
+    }
+    const auto metadata = cyxwiz::ResolveNodeMetadata(node);
+    RenderTooltip(metadata ? &*metadata : nullptr, nullptr);
+}
+
+void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadata,
+                                             const NodeDocumentation* doc) {
     if (!metadata && !doc) return;
 
     const std::string title = metadata ? metadata->name : doc->title;

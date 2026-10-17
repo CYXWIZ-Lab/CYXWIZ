@@ -17,8 +17,10 @@
 #include "../../core/project_manager.h"
 #include "../../core/window_manager.h"
 #include "../../plugin/plugin_manager.h"
+#include "../../plugin/plugin_session.h"
 #include "../../plugin/registries/plugin_panel_registry.h"
 #include "../separate_windows.h"
+#include "../python_bundle_ui.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -83,6 +85,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"sim.step", ICON_FA_FORWARD_STEP}, {"sim.viewport", ICON_FA_DESKTOP}, {"sim.env_library", ICON_FA_MICROCHIP},
         {"sim.load_mjcf", ICON_FA_FILE_IMPORT},
         {"apps.plugin_manager", ICON_FA_PLUG},
+        {"apps.plugin", ICON_FA_PLUG},
         {"help.tutorials", ICON_FA_LIGHTBULB}, {"help.shortcuts", ICON_FA_KEYBOARD},
         {"help.documentation", ICON_FA_BOOK}, {"help.api_reference", ICON_FA_CODE}, {"help.report_issue", ICON_FA_BUG},
         {"help.check_updates", ICON_FA_DOWNLOAD}, {"help.about", ICON_FA_CIRCLE_INFO},
@@ -175,6 +178,13 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
             for (const auto& p : panels)
                 in.plugin_panels.push_back({p.panel_id, p.title, panel_reg.IsPanelVisible(p.panel_id), category});
     }
+    for (const auto* p : plugin::PluginManager::Instance().GetAllPlugins()) {
+        if (!p) continue;
+        const auto adds = plugin::DescribeContribution(p->manifest.id);
+        in.loaded_plugins.push_back({p->manifest.id, p->manifest.name, cyxwiz::PluginMenuDetail(adds),
+                                     adds.trainable_nodes + adds.simulation_nodes > 0});
+    }
+    for (const auto& b : python_ui::MenuEntries()) in.python_bundles.push_back({b.id, b.name, b.detail, true});
     return in;
 }
 
@@ -208,7 +218,9 @@ void ToolbarPanel::RenderMenuItems(const std::vector<menu::MenuItem>& items) {
                 std::string label = std::string(IconForAction(item.id)) + (IconForAction(item.id)[0] ? " " : "") + item.label;
                 if (item.planned) label += "  (planned)";
                 ImGui::PushID(item.argument.empty() ? item.id.c_str() : (item.id + "#" + item.argument).c_str());
-                const bool clicked = ImGui::MenuItem(label.c_str(), item.shortcut.empty() ? nullptr : item.shortcut.c_str(),
+                // The right column holds the chord, or a note such as "2 nodes".
+                const std::string& right = item.shortcut.empty() ? item.detail : item.shortcut;
+                const bool clicked = ImGui::MenuItem(label.c_str(), right.empty() ? nullptr : right.c_str(),
                                                      item.checked, item.enabled);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (item.planned) {
@@ -572,6 +584,9 @@ void ToolbarPanel::BuildActionHandlers() {
     // Apps
     h["apps.panel"] = [](const std::string& panel_id) {
         plugin::PluginPanelRegistry::Instance().TogglePanelVisible(panel_id);
+    };
+    h["apps.plugin"] = [this](const std::string& plugin_id) {
+        if (show_plugin_nodes_callback_) show_plugin_nodes_callback_(plugin_id);
     };
     h["apps.plugin_manager"] = [](const std::string&) { ShowSidebarPanel("Plugin Manager", false); };
 

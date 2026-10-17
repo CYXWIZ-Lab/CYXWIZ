@@ -2,11 +2,19 @@
 
 #include "node_config_dialog.h"
 #include "data_convert_format_controls.h"
+#include "node_editor.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "../core/async_task_manager.h"
 #include "../core/data_convert_formats.h"
 #include "../core/file_dialogs.h"
+#include "../core/arrow_dataset.h"
+#include "../core/data_input_presentation.h"
+#include "../core/data_registry.h"
+#include "../core/data_studio_publish.h"
+#include "../core/project_manager.h"
 #include "../core/graph_compiler.h"
+#include "../core/parquet_backed_dataset.h"
 #include "../core/training_parameter_contract.h"
 #include "../core/worker_defaults.h"
 
@@ -16,6 +24,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <spdlog/spdlog.h>
 #include <sstream>
 #include <string>
@@ -144,6 +153,14 @@ bool BrowseDataOutput(char* destination,
     return false;
 }
 
+constexpr float kFieldLabel = 170.0f;
+
+void Field(const char* label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", label);
+    ImGui::SameLine(kFieldLabel);
+}
+
 } // namespace
 
 // ==================== DataOutputDialog ====================
@@ -151,27 +168,22 @@ bool BrowseDataOutput(char* destination,
 DataOutputDialog::DataOutputDialog(MLNode* node)
     : NodeConfigDialog("Data Output", node)
 {
-    if (node_) {
-        auto file_path_it = node_->parameters.find("file_path");
-        if (file_path_it == node_->parameters.end() ||
-            file_path_it->second.empty()) {
-            file_path_it = node_->parameters.find("path");
-        }
-        if (file_path_it != node_->parameters.end()) {
-            CopyToBuffer(file_path_, sizeof(file_path_), file_path_it->second);
-        }
+    LoadFromNode();
+}
 
-        auto file_type_it = node_->parameters.find("file_type");
-        if (file_type_it == node_->parameters.end() ||
-            file_type_it->second.empty()) {
-            file_type_it = node_->parameters.find("format");
-        }
-        if (file_type_it != node_->parameters.end()) {
-            std::string type = LowerAscii(file_type_it->second);
-            if (type == "csv") output_type_ = 0;
-            else if (type == "parquet") output_type_ = 1;
-        }
-    }
+void DataOutputDialog::LoadFromNode() {
+    file_path_[0] = '\0';
+    output_type_ = 0;
+    path_base_ = 0;
+    if (!node_) return;
+    const auto& params = node_->parameters;
+    std::string path = ReadStringParamValue(params, "file_path");
+    if (path.empty()) path = ReadStringParamValue(params, "path");
+    CopyToBuffer(file_path_, sizeof(file_path_), path);
+    std::string type = LowerAscii(ReadStringParamValue(params, "file_type"));
+    if (type.empty()) type = LowerAscii(ReadStringParamValue(params, "format"));
+    output_type_ = type == "parquet" ? 1 : 0;
+    path_base_ = ReadStringParamValue(params, "path_base", "project") == "exports" ? 1 : 0;
 }
 
 void DataOutputDialog::Apply() {
@@ -180,6 +192,7 @@ void DataOutputDialog::Apply() {
     node_->parameters["file_path"] = file_path_;
     const char* types[] = {"csv", "parquet"};
     node_->parameters["file_type"] = types[output_type_];
+    node_->parameters["path_base"] = path_base_ == 1 ? "exports" : "project";
     node_->parameters["configured"] = "true";
 
     if (strlen(file_path_) > 0) {
@@ -193,55 +206,82 @@ void DataOutputDialog::Apply() {
 void DataOutputDialog::Reset() {
     if (!node_) return;
     node_->parameters = original_params_;
+    LoadFromNode();
     has_changes_ = false;
 }
 
 void DataOutputDialog::RenderContent() {
-    if (ImGui::BeginTabBar("DataOutputTabs")) {
-        if (ImGui::BeginTabItem("Settings")) {
-            RenderSettingsTab();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-}
-
-void DataOutputDialog::RenderSettingsTab() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Output Location");
-    ImGui::Separator();
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    namespace ui = cyxwiz::ui;
     ImGui::Spacing();
 
-    ImGui::Text("File:");
-    ImGui::SameLine(60);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-    if (ImGui::InputText("##outpath", file_path_, sizeof(file_path_))) {
+    // File, full width with Browse.
+    ImGui::TextUnformatted("File");
+    const float browse = ui::ButtonWidth("Browse...", ui::ButtonSize::Regular);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse - ImGui::GetStyle().ItemSpacing.x);
+    if (ImGui::InputTextWithHint("##outpath", "empty: the exports folder, named after the table it reads",
+                                 file_path_, sizeof(file_path_)))
         has_changes_ = true;
-    }
     ImGui::SameLine();
-    if (ImGui::Button("Browse", ImVec2(70, 0))) {
-        const std::string dialog_format = output_type_ == 1 ? "parquet" : "csv";
-        if (BrowseDataOutput(file_path_, sizeof(file_path_), dialog_format)) {
+    if (ui::SecondaryButton("Browse...", true, nullptr, ui::ButtonSize::Regular)) {
+        if (BrowseDataOutput(file_path_, sizeof(file_path_), output_type_ == 1 ? "parquet" : "csv"))
             has_changes_ = true;
-        }
     }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Format");
-    ImGui::Separator();
     ImGui::Spacing();
 
-    const char* formats[] = {"CSV", "Parquet"};
-    ImGui::Text("Format:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::Combo("##format", &output_type_, formats, 2)) {
+    // Format: switching it switches the file's extension too.
+    Field("Format");
+    static const char* const kFormats[] = {"CSV", "Parquet"};
+    const int previous = output_type_;
+    if (ui::SegmentedControl("##format", kFormats, 2, &output_type_)) {
+        std::filesystem::path path(file_path_);
+        const char* old_ext = previous == 1 ? ".parquet" : ".csv";
+        if (LowerAscii(path.extension().string()) == old_ext) {
+            path.replace_extension(output_type_ == 1 ? ".parquet" : ".csv");
+            CopyToBuffer(file_path_, sizeof(file_path_), path.string());
+        }
         has_changes_ = true;
     }
 
+    // Where a relative path goes.
+    const std::filesystem::path path(file_path_);
+    if (file_path_[0] != '\0' && path.is_relative()) {
+        Field("Relative to");
+        static const char* const kBases[] = {"Project folder", "Exports folder"};
+        if (ui::SegmentedControl("##path_base", kBases, 2, &path_base_)) has_changes_ = true;
+    }
+
+    // The file it writes, as the run resolves it.
+    ImGui::Spacing();
+    Field("Writes to");
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    const std::map<std::string, std::string> params{
+        {"file_path", file_path_},
+        {"file_type", output_type_ == 1 ? "parquet" : "csv"},
+        {"path_base", path_base_ == 1 ? "exports" : "project"}};
+    const std::string writes = cyxwiz::studio::OutputPath(NodeType::DataOutput, params, pm.GetProjectRoot(),
+                                                          pm.GetExportsPath());
+    ImGui::PushTextWrapPos(0.0f);
+    if (!writes.empty()) {
+        ImGui::TextUnformatted(writes.c_str());
+    } else {
+        ImGui::TextColored(t.text_dim, "the exports folder, as <table name>%s (named when it runs)",
+                           output_type_ == 1 ? ".parquet" : ".csv");
+    }
+    // What the last run wrote.
+    if (node_editor_ && node_) {
+        const auto& facts = node_editor_->GetNodeRunFacts();
+        const auto fact = facts.find(node_->id);
+        if (fact != facts.end()) {
+            Field("Last run");
+            if (!fact->second.error.empty())
+                ImGui::TextColored(t.error, "failed: %s", fact->second.error.c_str());
+            else if (!fact->second.written_path.empty())
+                ImGui::TextColored(t.text_dim, "wrote %s at %s", fact->second.written_path.c_str(),
+                                   fact->second.finished_at.c_str());
+        }
+    }
+    ImGui::PopTextWrapPos();
 }
 
 // ==================== DataConvertDialog ====================
@@ -330,8 +370,7 @@ void DataConvertDialog::Apply() {
         node_->parameters["converted_output_path"] = last_result_.output_path;
         node_->parameters["parquet_output_path"] = last_result_.output_path;
         node_->parameters["manifest_path"] = last_result_.manifest_path;
-        node_->description = "Converted " +
-            std::to_string(last_result_.rows_written) + " rows";
+        node_->description = "Converted " + cyxwiz::data_input_view::FormatCount(last_result_.rows_written) + " rows";
     } else if (output_path_[0] != '\0') {
         node_->description = std::filesystem::path(output_path_).filename().string();
     }
@@ -354,24 +393,20 @@ void DataConvertDialog::Reset() {
 void DataConvertDialog::RenderContent() {
     PollPreviewResult();
     PollConversionResult();
+    const auto& t = cyxwiz::ui::CurrentTokens();
 
-    ImGui::TextWrapped(
-        "Convert source data between supported table file formats and write "
-        "an optional sidecar manifest.");
-    ImGui::Spacing();
-
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim,
+                       "Converts a table file to another format once, with an optional sidecar manifest.");
     if (conversion_state_) {
-        ImGui::TextWrapped("Conversion is running in the background. Closing or cancelling "
-                           "this dialog does not cancel the file write. See Tasks for completion.");
+        ImGui::TextColored(t.text_dim, "The conversion runs in the background: closing or cancelling this dialog "
+                                       "does not cancel the file write (see Tasks).");
     }
-
     if (!status_message_.empty()) {
-        const ImVec4 color = status_is_error_
-            ? cyxwiz::ui::CurrentTokens().error
-            : ImGui::GetStyleColorVec4(ImGuiCol_Text);
-        ImGui::TextColored(color, "%s", status_message_.c_str());
-        ImGui::Separator();
+        ImGui::TextColored(status_is_error_ ? t.error : t.text, "%s", status_message_.c_str());
     }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
 
     if (ImGui::BeginTabBar("DataConvertTabs")) {
         if (ImGui::BeginTabItem("Source")) {
@@ -400,7 +435,7 @@ void DataConvertDialog::RenderContent() {
             RenderRunTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Logs")) {
+        if (ImGui::BeginTabItem("Log")) {
             RenderLogsTab();
             ImGui::EndTabItem();
         }
@@ -408,174 +443,172 @@ void DataConvertDialog::RenderContent() {
     }
 }
 
-void DataConvertDialog::RenderSourceTab() {
-    ImGui::Spacing();
-    ImGui::Text("Input data file");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-    if (ImGui::InputText("##input_path", input_path_, sizeof(input_path_))) {
-        has_changes_ = true;
-    }
+namespace {
+
+// A file row: the label, then the path across the width with its button.
+bool PathRow(const char* label, const char* id, char* path, std::size_t size, const char* button,
+             bool& browse) {
+    namespace ui = cyxwiz::ui;
+    ImGui::TextUnformatted(label);
+    const float width = ui::ButtonWidth(button, ui::ButtonSize::Regular);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - width - ImGui::GetStyle().ItemSpacing.x);
+    const bool edited = ImGui::InputText(id, path, size);
     ImGui::SameLine();
-    if (ImGui::Button("Browse", ImVec2(80.0f, 0.0f)) &&
-        BrowseDataInput(input_path_, sizeof(input_path_))) {
-        has_changes_ = true;
-    }
+    browse = ui::SecondaryButton(button, true, nullptr, ui::ButtonSize::Regular);
+    return edited;
+}
+
+void Hint(const char* text) {
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", text);
+}
+
+void Section(const char* title) {
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(title);
+    ImGui::Spacing();
+}
+
+}  // namespace
+
+void DataConvertDialog::RenderSourceTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
+    bool browse = false;
+    if (PathRow("Input", "##input_path", input_path_, sizeof(input_path_), "Browse...", browse)) has_changes_ = true;
+    if (browse && BrowseDataInput(input_path_, sizeof(input_path_))) has_changes_ = true;
 
     ImGui::Spacing();
-    ImGui::Text("Input format");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(160.0f);
-    if (RenderDataConvertFormatCombo("##input_format", input_format_, dc::Direction::Input, dc::kBuildFeatures)) {
+    Field("Format");
+    ImGui::SetNextItemWidth(200.0f);
+    if (RenderDataConvertFormatCombo("##input_format", input_format_, dc::Direction::Input, dc::kBuildFeatures))
         has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Auto detects from extension.");
+    Hint("Auto detects it from the extension.");
+
     const auto effective_format = dc::Resolve(input_format_,
         std::filesystem::path(input_path_).extension().string());
+    ImGui::PushTextWrapPos(0.0f);
     if (effective_format == dc::Format::Excel) {
-        ImGui::Spacing();
+        Section("Worksheet");
         if (!dc::Available(effective_format, dc::Direction::Input, dc::kBuildFeatures))
-            ImGui::TextWrapped("XLSX is unavailable in this build (OpenXLSX is required).");
-        ImGui::TextWrapped("%s", dc::kXlsxRestrictions);
+            ImGui::TextColored(t.warning, "XLSX is unavailable in this build (OpenXLSX is required).");
+        ImGui::TextColored(t.text_dim, "%s", dc::kXlsxRestrictions);
         ImGui::BeginDisabled(!dc::kBuildFeatures.xlsx);
-        if (ImGui::InputText("Worksheet", excel_sheet_, sizeof(excel_sheet_))) has_changes_ = true;
-        ImGui::TextDisabled("Blank selects the first worksheet.");
-        if (ImGui::InputText("Start column", excel_start_column_, sizeof(excel_start_column_))) has_changes_ = true;
-        ImGui::TextWrapped("Excel column label A to XFD (for example B or AA). Read from this column to the worksheet's last column. Set Skip rows under Options; the first remaining row is the header when enabled.");
+        Field("Worksheet");
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::InputTextWithHint("##worksheet", "the first one", excel_sheet_, sizeof(excel_sheet_)))
+            has_changes_ = true;
+        Field("Start column");
+        ImGui::SetNextItemWidth(80.0f);
+        if (ImGui::InputText("##start_column", excel_start_column_, sizeof(excel_start_column_))) has_changes_ = true;
+        Hint("A to XFD, for example B or AA");
+        ImGui::TextColored(t.text_dim, "Reads from this column to the worksheet's last column. Skip rows is under "
+                                       "Options; the first remaining row is the header when that is on.");
         ImGui::EndDisabled();
     }
-
-
     if (effective_format == dc::Format::Text) {
         ImGui::Spacing();
-        ImGui::TextColored(
-            cyxwiz::ui::CurrentTokens().warning,
-            "Plain Text produces one column named 'text'.");
-        ImGui::TextWrapped(
-            "For a semicolon-delimited .txt table, select CSV here and set the delimiter to semicolon. The file extension does not need to change.");
+        ImGui::TextColored(t.warning, "Plain Text produces one column named 'text'.");
+        ImGui::TextColored(t.text_dim, "For a semicolon-delimited .txt table, pick CSV here and set the delimiter "
+                                       "to semicolon under Options; the extension does not need to change.");
     }
+    ImGui::PopTextWrapPos();
 }
 
 void DataConvertDialog::RenderOptionsTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
     const auto input = dc::Resolve(input_format_, std::filesystem::path(input_path_).extension().string());
     const bool delimited_input = input == dc::Format::Csv || input == dc::Format::Tsv;
     const bool excel_input = input == dc::Format::Excel;
-    ImGui::Spacing();
-    ImGui::Text("Input parsing");
-    ImGui::Separator();
-    ImGui::Spacing();
 
+    Section("Reading the input");
     if (!delimited_input) {
-        ImGui::TextColored(
-            cyxwiz::ui::CurrentTokens().warning,
-            "Delimiter settings apply only to CSV/TSV. Headers also apply to XLSX.");
-        ImGui::TextWrapped(
-            "Select CSV for comma-, semicolon-, or pipe-delimited data, including delimited files whose extension is .txt.");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "Delimiter settings apply only to CSV and TSV; the header also applies to "
+                                       "XLSX. Pick CSV for comma-, semicolon- or pipe-delimited data, including a "
+                                       ".txt file.");
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
     }
 
     ImGui::BeginDisabled(!delimited_input);
-    if (ImGui::Checkbox("Auto-detect delimiter", &auto_detect_delimiter_)) {
-        has_changes_ = true;
-    }
+    Field("Delimiter");
+    if (ImGui::Checkbox("Detect it##auto_delimiter", &auto_detect_delimiter_)) has_changes_ = true;
     ImGui::SameLine();
-    ImGui::TextDisabled("Checks comma, tab, semicolon, and pipe.");
-
-    ImGui::Text("Delimiter");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(90.0f);
     ImGui::BeginDisabled(auto_detect_delimiter_);
-    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) {
-        has_changes_ = true;
-    }
+    ImGui::SetNextItemWidth(60.0f);
+    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) has_changes_ = true;
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled(auto_detect_delimiter_
-        ? "Detected when preview or conversion runs."
-        : "Use comma for CSV, tab for TSV.");
+    Hint(auto_detect_delimiter_ ? "comma, tab, semicolon or pipe, when the preview or conversion runs"
+                                : "comma for CSV, tab for TSV");
 
-    ImGui::Text("Decimal separator");
-    ImGui::SameLine(130.0f);
+    Field("Decimal separator");
     ImGui::SetNextItemWidth(120.0f);
     const char* decimal_separators[] = {"Dot (.)", "Comma (,)"};
     int decimal_index = decimal_point_ == ',' ? 1 : 0;
-    if (ImGui::Combo("##data_convert_decimal", &decimal_index,
-                     decimal_separators, 2)) {
+    if (ImGui::Combo("##data_convert_decimal", &decimal_index, decimal_separators, 2)) {
         decimal_point_ = decimal_index == 1 ? ',' : '.';
         has_changes_ = true;
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Used while parsing numeric input values.");
-
+    Hint("in numbers");
     ImGui::EndDisabled();
+
     ImGui::BeginDisabled(!delimited_input && !excel_input);
-    if (ImGui::Checkbox("First selected row contains headers", &has_header_)) {
-        has_changes_ = true;
-    }
+    Field("Header");
+    if (ImGui::Checkbox("The first row read holds the column names", &has_header_)) has_changes_ = true;
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!delimited_input);
-    if (ImGui::Checkbox("Allow quoted multiline values",
-                        &allow_newlines_in_values_)) {
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Needed for text columns that contain line breaks.");
+    Field("Line breaks");
+    if (ImGui::Checkbox("Allow them inside quoted values", &allow_newlines_in_values_)) has_changes_ = true;
+    Hint("for text columns with line breaks");
     ImGui::EndDisabled();
 
     ImGui::BeginDisabled(!delimited_input && !excel_input && input != dc::Format::Text);
-    ImGui::Text("Skip rows");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(90.0f);
+    Field("Skip rows");
+    ImGui::SetNextItemWidth(120.0f);
     if (ImGui::InputInt("##skip_rows", &skip_rows_)) {
         if (skip_rows_ < 0) skip_rows_ = 0;
         has_changes_ = true;
     }
     ImGui::EndDisabled();
 
-    ImGui::Spacing();
-    ImGui::Text("Parquet writer");
-    ImGui::Separator();
-    ImGui::Spacing();
-
+    Section("Writing Parquet");
     const auto output = dc::Resolve(output_format_, std::filesystem::path(output_path_).extension().string());
+    if (output != dc::Format::Parquet)
+        ImGui::TextColored(t.text_dim, "Applies when the output is Parquet.");
     ImGui::BeginDisabled(output != dc::Format::Parquet);
-    const char* compressions[] = {
-        "None", "Snappy", "Gzip", "Zstd", "Brotli"
-    };
-    ImGui::Text("Compression");
-    ImGui::SameLine(130.0f);
+    const char* compressions[] = {"None", "Snappy", "Gzip", "Zstd", "Brotli"};
+    Field("Compression");
     ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::Combo("##compression", &compression_, compressions, 5)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Row group size");
-    ImGui::SameLine(130.0f);
+    if (ImGui::Combo("##compression", &compression_, compressions, 5)) has_changes_ = true;
+    Field("Row group size");
     ImGui::SetNextItemWidth(140.0f);
     if (ImGui::InputInt("##row_group_size", &row_group_size_)) {
         if (row_group_size_ < 1) row_group_size_ = 1;
         has_changes_ = true;
     }
+    Hint("rows");
     ImGui::EndDisabled();
 }
 
 void DataConvertDialog::RenderOutputTab() {
     ImGui::Spacing();
-    ImGui::Text("Output data file");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-    if (ImGui::InputText("##output_path", output_path_, sizeof(output_path_))) {
+    bool browse = false;
+    if (PathRow("Output", "##output_path", output_path_, sizeof(output_path_), "Save as...", browse))
         has_changes_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Save As", ImVec2(80.0f, 0.0f)) &&
-        BrowseDataOutput(output_path_, sizeof(output_path_), output_format_)) {
+    if (browse && BrowseDataOutput(output_path_, sizeof(output_path_), output_format_)) has_changes_ = true;
+    if (cyxwiz::ui::LinkButton("Use the input's name with this format's extension", input_path_[0] != '\0')) {
+        std::filesystem::path in(input_path_);
+        in.replace_extension(DataFormatExtension(output_format_));
+        CopyToBuffer(output_path_, sizeof(output_path_), in.string());
         has_changes_ = true;
     }
 
     ImGui::Spacing();
-    ImGui::Text("Output format");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(160.0f);
+    Field("Format");
+    ImGui::SetNextItemWidth(200.0f);
     if (RenderDataConvertFormatCombo("##output_format", output_format_, dc::Direction::Output, dc::kBuildFeatures)) {
         if (!output_format_.empty() && output_format_ != "auto" && output_path_[0] != '\0') {
             std::filesystem::path out(output_path_);
@@ -584,85 +617,60 @@ void DataConvertDialog::RenderOutputTab() {
         }
         has_changes_ = true;
     }
-
-    if (ImGui::Button("Use input name + selected extension")) {
-        std::filesystem::path in(input_path_);
-        if (!in.empty()) {
-            in.replace_extension(DataFormatExtension(output_format_));
-            CopyToBuffer(output_path_, sizeof(output_path_), in.string());
-            has_changes_ = true;
-        }
-    }
-
     if (!output_format_.empty() && output_format_ != "auto" && output_path_[0] != '\0' &&
-        !DataFormatExtensionMatches(std::filesystem::path(output_path_),
-                                         output_format_)) {
-        ImGui::Spacing();
+        !DataFormatExtensionMatches(std::filesystem::path(output_path_), output_format_)) {
         ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "Output extension does not match the selected format. Expected %s.",
+                           "The file's extension does not match the format: expected %s.",
                            DataFormatExtension(output_format_));
     }
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("Overwrite existing file", &overwrite_)) {
-        has_changes_ = true;
-    }
-    if (ImGui::Checkbox("Create parent folders", &create_parent_dirs_)) {
-        has_changes_ = true;
-    }
-    if (ImGui::Checkbox("Write conversion manifest", &write_manifest_)) {
-        has_changes_ = true;
-    }
+    Field("When writing");
+    if (ImGui::Checkbox("Overwrite an existing file", &overwrite_)) has_changes_ = true;
+    ImGui::SetCursorPosX(kFieldLabel);
+    if (ImGui::Checkbox("Create missing folders", &create_parent_dirs_)) has_changes_ = true;
+    ImGui::SetCursorPosX(kFieldLabel);
+    if (ImGui::Checkbox("Write a conversion manifest beside it", &write_manifest_)) has_changes_ = true;
 }
 
 void DataConvertDialog::RenderPreviewTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::Spacing();
-    ImGui::BeginDisabled(IsBusy());
-    if (ImGui::Button("Preview schema")) {
+    if (cyxwiz::ui::SecondaryButton("Preview schema", !IsBusy(), "Wait for it to finish", cyxwiz::ui::ButtonSize::Regular))
         PreviewInput();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
     if (preview_loading_) {
-        ImGui::TextDisabled("Preview is running in the background (Task %llu)...",
-                            static_cast<unsigned long long>(preview_task_id_));
+        Hint("reading the input in the background");
+        float progress = 0.0f;
+        if (const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(preview_task_id_))
+            progress = task->GetProgress();
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), "Reading the input");
     } else {
-        ImGui::TextDisabled("Reads the input and Arrow-inferred types.");
+        Hint("reads the input with the types Arrow infers");
     }
 
     ImGui::Spacing();
-    if (preview_loading_) {
-        float progress = 0.0f;
-        if (const auto task =
-                cyxwiz::AsyncTaskManager::Instance().GetTask(preview_task_id_)) {
-            progress = task->GetProgress();
-        }
-        ImGui::ProgressBar(progress,
-                           ImVec2(-1.0f, 0.0f),
-                           "Reading source without blocking the engine");
-    }
     if (!preview_.ok) {
         if (!preview_.error.empty()) {
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error,
-                               "%s", preview_.error.c_str());
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.error, "%s", preview_.error.c_str());
+            ImGui::PopTextWrapPos();
         }
         return;
     }
 
-    ImGui::Text("Rows: %lld   Columns: %lld",
-                static_cast<long long>(preview_.rows),
-                static_cast<long long>(preview_.columns));
-    if (ImGui::BeginTable("DataConvertSchema", 3,
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable)) {
+    ImGui::TextColored(t.text_dim, "%s rows, %s columns",
+                       cyxwiz::data_input_view::FormatCount(preview_.rows).c_str(),
+                       cyxwiz::data_input_view::FormatCount(preview_.columns).c_str());
+    if (ImGui::BeginTable("DataConvertSchema", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
         ImGui::TableSetupColumn("Column");
         ImGui::TableSetupColumn("Type");
-        ImGui::TableSetupColumn("Nullable");
+        ImGui::TableSetupColumn("Can be missing");
         ImGui::TableHeadersRow();
         for (const auto& column : preview_.schema) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(column.name.c_str());
+            if (column.name.empty()) ImGui::TextColored(t.text_dim, "(unnamed)");
+            else ImGui::TextUnformatted(column.name.c_str());
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(column.type.c_str());
             ImGui::TableSetColumnIndex(2);
@@ -671,30 +679,19 @@ void DataConvertDialog::RenderPreviewTab() {
         ImGui::EndTable();
     }
 
-    if (!preview_.sample_rows.empty()) {
-        ImGui::Spacing();
-        ImGui::Text("Sample rows");
-        if (ImGui::BeginTable("DataConvertSampleRows",
-                              static_cast<int>(preview_.schema.size()),
-                              ImGuiTableFlags_Borders |
-                              ImGuiTableFlags_RowBg |
-                              ImGuiTableFlags_Resizable |
-                              ImGuiTableFlags_ScrollX)) {
-            for (const auto& column : preview_.schema) {
-                ImGui::TableSetupColumn(column.name.c_str());
-            }
+    if (!preview_.sample_rows.empty() && !preview_.schema.empty()) {
+        Section("Sample rows");
+        if (ImGui::BeginTable("DataConvertSampleRows", static_cast<int>(preview_.schema.size()),
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX)) {
+            for (const auto& column : preview_.schema)
+                ImGui::TableSetupColumn(column.name.empty() ? "(unnamed)" : column.name.c_str());
             ImGui::TableHeadersRow();
             for (const auto& row : preview_.sample_rows) {
                 ImGui::TableNextRow();
-                for (int column = 0;
-                     column < static_cast<int>(preview_.schema.size());
-                     ++column) {
+                for (int column = 0; column < static_cast<int>(preview_.schema.size()); ++column) {
                     ImGui::TableSetColumnIndex(column);
-                    const char* value =
-                        column < static_cast<int>(row.size())
-                            ? row[static_cast<size_t>(column)].c_str()
-                            : "";
-                    ImGui::TextUnformatted(value);
+                    ImGui::TextUnformatted(column < static_cast<int>(row.size()) ? row[static_cast<size_t>(column)].c_str()
+                                                                                 : "");
                 }
             }
             ImGui::EndTable();
@@ -703,64 +700,59 @@ void DataConvertDialog::RenderPreviewTab() {
 }
 
 void DataConvertDialog::RenderRunTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::Spacing();
-    ImGui::TextWrapped(
-        "Run conversion when the source and output settings are correct. "
-        "Downstream nodes can consume the generated output directly. "
-        "Once queued, the file write runs to completion even if this dialog closes.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "Runs once the source and output are set. Nodes after this one read the file "
+                                   "it writes. Once queued, the write finishes even if this dialog closes.");
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
-    ImGui::BeginDisabled(IsBusy());
-    if (ImGui::Button("Run conversion", ImVec2(160.0f, 0.0f))) {
+    const bool ready = input_path_[0] != '\0' && output_path_[0] != '\0';
+    if (cyxwiz::ui::PrimaryButton("Run conversion", !IsBusy() && ready,
+                                  IsBusy() ? "A preview or conversion is running" : "Set the input and output files"))
         RunConversion();
+    if (conversion_state_) {
+        float progress = 0.0f;
+        if (const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(conversion_task_id_))
+            progress = task->GetProgress();
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), "Converting");
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Apply settings")) {
-        Apply();
-    }
-    ImGui::EndDisabled();
 
+    if (!last_result_.ok) return;
     ImGui::Spacing();
-    if (last_result_.ok) {
-        const std::string output_path = last_result_.output_path.empty()
-            ? std::string(output_path_)
-            : last_result_.output_path;
-        ImGui::TextWrapped("Output: %s", output_path.c_str());
-        ImGui::Text("Rows written: %lld",
-                    static_cast<long long>(last_result_.rows_written));
-        ImGui::Text("Columns: %lld",
-                    static_cast<long long>(last_result_.columns));
-        ImGui::Text("Bytes written: %lld",
-                    static_cast<long long>(last_result_.bytes_written));
-        if (!last_result_.manifest_path.empty()) {
-            ImGui::TextWrapped("Sidecar manifest: %s",
-                               last_result_.manifest_path.c_str());
-        }
+    const std::string output_path = last_result_.output_path.empty() ? std::string(output_path_)
+                                                                     : last_result_.output_path;
+    ImGui::PushTextWrapPos(0.0f);
+    Field("Output");
+    ImGui::TextUnformatted(output_path.c_str());
+    Field("Rows written");
+    ImGui::TextUnformatted(cyxwiz::data_input_view::FormatCount(last_result_.rows_written).c_str());
+    Field("Columns");
+    ImGui::TextUnformatted(cyxwiz::data_input_view::FormatCount(last_result_.columns).c_str());
+    Field("Size");
+    ImGui::TextUnformatted(
+        cyxwiz::data_input_view::FormatSize(static_cast<uint64_t>(last_result_.bytes_written)).c_str());
+    if (!last_result_.manifest_path.empty()) {
+        Field("Manifest");
+        ImGui::TextUnformatted(last_result_.manifest_path.c_str());
     }
+    ImGui::PopTextWrapPos();
 }
 
 void DataConvertDialog::RenderLogsTab() {
     ImGui::Spacing();
-    if (ImGui::Button("Clear logs")) {
-        log_lines_.clear();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Shows messages from this dialog session.");
+    if (cyxwiz::ui::SecondaryButton("Clear", !log_lines_.empty(), "Nothing to clear")) log_lines_.clear();
+    Hint("messages from this dialog session");
 
     ImGui::Spacing();
-    if (ImGui::BeginChild("DataConvertLogs",
-                          ImVec2(0.0f, 0.0f),
-                          true,
+    if (ImGui::BeginChild("DataConvertLogs", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
                           ImGuiWindowFlags_HorizontalScrollbar)) {
         if (log_lines_.empty()) {
-            ImGui::TextDisabled("No conversion messages yet.");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "No conversion messages yet.");
         } else {
-            for (const auto& line : log_lines_) {
-                ImGui::TextWrapped("%s", line.c_str());
-            }
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                ImGui::SetScrollHereY(1.0f);
-            }
+            for (const auto& line : log_lines_) ImGui::TextWrapped("%s", line.c_str());
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
         }
     }
     ImGui::EndChild();
@@ -823,8 +815,8 @@ void DataConvertDialog::PollPreviewResult() {
 
     if (preview_.ok) {
         std::ostringstream msg;
-        msg << "Preview loaded: " << preview_.rows << " rows, "
-            << preview_.columns << " columns.";
+        msg << "Preview loaded: " << cyxwiz::data_input_view::FormatCount(preview_.rows) << " rows, "
+            << cyxwiz::data_input_view::FormatCount(preview_.columns) << " columns.";
         if (auto_detect_delimiter_ && IsDelimitedDataInput(input_format_, input_path_)) {
             msg << " Detected delimiter: "
                 << DelimiterLabel(preview_.detected_delimiter) << ".";
@@ -853,7 +845,7 @@ void DataConvertDialog::RunConversion() {
     auto state = std::make_shared<cyxwiz::DataConvertTaskResult>();
     auto task = cyxwiz::MakeDataConvertTask(options, state);
     try {
-        cyxwiz::AsyncTaskManager::Instance().Submit(task);
+        conversion_task_id_ = cyxwiz::AsyncTaskManager::Instance().Submit(task);
         last_result_ = {};
         conversion_state_ = state;
         SetStatus("Conversion queued in the background; file writes cannot be cancelled.", false);
@@ -873,7 +865,7 @@ void DataConvertDialog::PollConversionResult() {
             msg << "Conversion skipped: existing output is fresh at "
                 << last_result_.output_path << ".";
         } else {
-            msg << "Conversion complete: " << last_result_.rows_written
+            msg << "Conversion complete: " << cyxwiz::data_input_view::FormatCount(last_result_.rows_written)
                 << " rows written to " << last_result_.output_path << ".";
         }
         if (auto_detect_delimiter_ && IsDelimitedDataInput(input_format_, input_path_)) {
@@ -957,6 +949,64 @@ bool IsPositiveIntegerText(const char* text) {
     return true;
 }
 }
+
+namespace {
+
+std::string GroupDigits(int64_t value) {
+    std::string digits = std::to_string(value < 0 ? -value : value);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<size_t>(i), ",");
+    return value < 0 ? "-" + digits : digits;
+}
+
+// Upstream of `node_id`: the loaded row count of the Data Input and the
+// Data Split's train ratio (each -1 when not found).
+struct UpstreamData {
+    int64_t rows = -1;
+    float train_ratio = -1.0f;
+    std::string input_name;
+};
+
+UpstreamData FindUpstreamData(NodeEditor* editor, int node_id) {
+    UpstreamData found;
+    if (!editor) return found;
+    const auto& nodes = editor->GetNodes();
+    const auto& links = editor->GetLinks();
+    std::set<int> seen{node_id};
+    std::vector<int> frontier{node_id};
+    for (size_t i = 0; i < frontier.size(); ++i) {
+        for (const auto& link : links) {
+            if (link.to_node != frontier[i] || !seen.insert(link.from_node).second) continue;
+            const auto it = std::find_if(nodes.begin(), nodes.end(),
+                                         [&](const MLNode& n) { return n.id == link.from_node; });
+            if (it == nodes.end()) continue;
+            const auto param = [&](const char* key) {
+                const auto p = it->parameters.find(key);
+                return p == it->parameters.end() ? std::string() : p->second;
+            };
+            if (it->type == NodeType::DataSplit && found.train_ratio < 0.0f) {
+                try { found.train_ratio = std::stof(param("train_ratio")); } catch (...) {}
+            }
+            if (it->type == NodeType::DataInput && found.rows < 0) {
+                // The rows of the dataset it loaded, from the registry.
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                const std::string name = param("dataset_name");
+                if (const auto* text = registry.GetTextDatasetEntry(name))
+                    found.rows = static_cast<int64_t>(text->num_samples);
+                else if (auto arrow = registry.GetArrowDataset(name)) found.rows = arrow->GetNumRows();
+                else if (auto parquet = registry.GetParquetBackedDataset(name)) found.rows = parquet->GetNumRows();
+                else if (const auto* image = registry.GetImageDatasetEntry(name))
+                    found.rows = static_cast<int64_t>(image->num_images);
+                else if (const auto* audio = registry.GetAudioDatasetEntry(name))
+                    found.rows = static_cast<int64_t>(audio->num_samples);
+                found.input_name = it->name;
+            }
+            frontier.push_back(it->id);
+        }
+    }
+    return found;
+}
+
+}  // namespace
 
 DataLoaderDialog::DataLoaderDialog(MLNode* node)
     : NodeConfigDialog("Data Loader", node)
@@ -1135,299 +1185,220 @@ void DataLoaderDialog::Reset() {
 }
 
 void DataLoaderDialog::RenderContent() {
-    if (ImGui::CollapsingHeader("Generation previews")) {
-        if (ImGui::Checkbox("Generate samples during training", &generation_preview_enabled_)) has_changes_ = true;
-        ImGui::BeginDisabled(!generation_preview_enabled_);
-        if (ImGui::InputInt("Every N completed epochs", &generation_preview_every_epochs_)) has_changes_ = true;
-        if (ImGui::InputInt("Maximum new tokens (1-128)", &generation_preview_max_new_tokens_)) has_changes_ = true;
-        if (ImGui::InputTextMultiline("Prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_), ImVec2(-1,100))) has_changes_ = true;
-        ImGui::TextWrapped("One prompt per line (1-8); for multi-line chat prompts put a line of --- between prompts (an empty line before --- keeps a trailing newline). Greedy previews use the causal token-window vocabulary. Training pauses between epochs; results appear in the Console and run artifacts.");
-        ImGui::EndDisabled();
-    }
-
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Training Loop");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Epochs:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##epochs", &epochs_)) {
-        if (epochs_ < 1) epochs_ = 1;
-        if (epochs_ > 100000) epochs_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(full passes over training split)");
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Batching");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Batch size:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##batch_size", &batch_size_)) {
-        if (batch_size_ < 1) batch_size_ = 1;
-        if (batch_size_ > 100000) batch_size_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(samples per gradient step)");
-
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Shuffle each epoch", &shuffle_)) has_changes_ = true;
-    ImGui::TextDisabled("  Reshuffles training samples at the start of every epoch.");
-
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Drop last incomplete batch", &drop_last_)) has_changes_ = true;
-    ImGui::TextDisabled("  Discard the final batch if it has fewer than batch_size samples.");
-
-    ImGui::Spacing();
-    ImGui::Text("Grad accum:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##grad_accum_steps", &grad_accum_steps_)) {
-        grad_accum_steps_ =
-            cyxwiz::training_contract::ClampGradientAccumulationSteps(
-                grad_accum_steps_);
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(optimizer step every N batches)");
-
-    ImGui::Spacing();
-    ImGui::Text("Validate every:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##validation_freq", &validation_freq_)) {
-        if (validation_freq_ < 1) validation_freq_ = 1;
-        if (validation_freq_ > 100000) validation_freq_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(epochs; final epoch always validates)");
-
-    ImGui::Spacing();
-    ImGui::Text("Seed:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##dataloader_seed", &seed_)) {
-        if (seed_ < 0) seed_ = 0;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(split/shuffle order)");
-    ImGui::Spacing();
-    ImGui::Text("Model RNG seed:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##model_rng_seed", &model_seed_)) has_changes_ = true;
-    ImGui::SameLine();
-    ImGui::TextDisabled("(-1 unset; fresh-run weights/dropout)");
-    if (model_seed_ < -1)
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "Model RNG seed must be -1 or nonnegative.");
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Class Imbalance");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Balance training classes", &balance_classes_)) {
-        if (balance_classes_ && balance_mode_index_ == 0) {
-            balance_mode_index_ = 1;
-        }
-        if (!balance_classes_) {
-            balance_mode_index_ = 0;
-        }
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Applies only to training batches. Validation and test distributions stay unchanged.");
-
-    const char* balance_modes[] = {
-        "None", "Oversample minority", "Undersample majority", "Weighted sampler"
-    };
-    ImGui::BeginDisabled(!balance_classes_);
-    ImGui::Text("Mode:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(190);
-    if (ImGui::Combo("##balance_mode", &balance_mode_index_,
-                     balance_modes, IM_ARRAYSIZE(balance_modes))) {
-        if (balance_mode_index_ == 0) {
-            balance_classes_ = false;
-        }
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(train split only)");
-
-    const char* balance_targets[] = {"max", "median", "min", "custom number"};
-    int target_index = 0;
-    if (std::strcmp(balance_target_, "median") == 0) {
-        target_index = 1;
-    } else if (std::strcmp(balance_target_, "min") == 0) {
-        target_index = 2;
-    } else if (IsPositiveIntegerText(balance_target_)) {
-        target_index = 3;
-    }
-    ImGui::Text("Target:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(190);
-    if (ImGui::Combo("##balance_target_mode", &target_index,
-                     balance_targets, IM_ARRAYSIZE(balance_targets))) {
-        if (target_index == 0) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
-        } else if (target_index == 1) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "median");
-        } else if (target_index == 2) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "min");
-        } else if (!IsPositiveIntegerText(balance_target_)) {
-            CopyToBuffer(balance_target_, sizeof(balance_target_), "1");
-        }
-        has_changes_ = true;
-    }
-    if (target_index == 3) {
-        int target_count = 1;
-        try {
-            target_count = std::max(1, std::stoi(balance_target_));
-        } catch (...) {
-            target_count = 1;
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(110);
-        if (ImGui::InputInt("##balance_target_count", &target_count)) {
-            if (target_count < 1) target_count = 1;
-            CopyToBuffer(balance_target_, sizeof(balance_target_),
-                         std::to_string(target_count));
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    // Six headed sections in one scroll became five tabs (board 5); every
+    // field stays.
+    if (!ImGui::BeginTabBar("##data_loader_tabs")) return;
+    if (ImGui::BeginTabItem("Training")) {
+        ImGui::Spacing();
+        Field("Epochs");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##epochs", &epochs_)) {
+            epochs_ = std::clamp(epochs_, 1, 100000);
             has_changes_ = true;
         }
+        Field("Validate every");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##validation_freq", &validation_freq_)) {
+            validation_freq_ = std::clamp(validation_freq_, 1, 100000);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("epoch (the last one always validates)");
+        Field("Batch size");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##batch_size", &batch_size_)) {
+            batch_size_ = std::clamp(batch_size_, 1, 100000);
+            has_changes_ = true;
+        }
+        // Batches per epoch from the graph's data: the Data Input's rows times
+        // the Data Split's train share.
+        const auto upstream = node_ ? FindUpstreamData(node_editor_, node_->id) : UpstreamData{};
+        if (upstream.rows > 0) {
+            const double train = static_cast<double>(upstream.rows) *
+                                 (upstream.train_ratio > 0.0f ? upstream.train_ratio : 0.8);
+            const double batches = drop_last_ ? std::floor(train / batch_size_) : std::ceil(train / batch_size_);
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "about %s batches per epoch",
+                               GroupDigits(static_cast<int64_t>(batches)).c_str());
+        }
+        Field("Seed");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##dataloader_seed", &seed_)) {
+            if (seed_ < 0) seed_ = 0;
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("split and shuffle order");
+        Field("Model seed");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##model_rng_seed", &model_seed_)) has_changes_ = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("weights and dropout of a fresh run; -1 unset");
+        if (model_seed_ < -1) ImGui::TextColored(t.error, "The model seed must be -1 or nonnegative.");
+        if (ImGui::Checkbox("Shuffle every epoch", &shuffle_)) has_changes_ = true;
+        if (ImGui::Checkbox("Drop the last short batch", &drop_last_)) has_changes_ = true;
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_faint, "Generation previews, logging, workers and pin memory are under Advanced.");
+        ImGui::EndTabItem();
     }
-
-    ImGui::Text("Balance seed:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##balance_seed", &balance_seed_)) {
-        if (balance_seed_ < 0) balance_seed_ = 0;
-        has_changes_ = true;
+    if (ImGui::BeginTabItem("Batches")) {
+        ImGui::Spacing();
+        Field("Accumulate gradients");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##grad_accum_steps", &grad_accum_steps_)) {
+            grad_accum_steps_ = cyxwiz::training_contract::ClampGradientAccumulationSteps(grad_accum_steps_);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("batches per optimizer step");
+        Field("Prefetch");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##prefetch_factor", &prefetch_factor_)) {
+            prefetch_factor_ = std::clamp(prefetch_factor_, 0, 64);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(prefetch_factor_ > 0 ? "batches queued ahead (Arrow / Parquet batchers)"
+                                                 : "0 = no queue ahead");
+        ImGui::EndTabItem();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(deterministic sampler)");
-    ImGui::EndDisabled();
-
+    if (ImGui::BeginTabItem("Balance")) {
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Balance training classes", &balance_classes_)) {
+            if (balance_classes_ && balance_mode_index_ == 0) balance_mode_index_ = 1;
+            if (!balance_classes_) balance_mode_index_ = 0;
+            has_changes_ = true;
+        }
+        ImGui::TextDisabled("Training batches only; validation and test keep their distribution.");
+        const char* balance_modes[] = {"None", "Oversample minority", "Undersample majority", "Weighted sampler"};
+        ImGui::BeginDisabled(!balance_classes_);
+        Field("Mode");
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::Combo("##balance_mode", &balance_mode_index_, balance_modes, IM_ARRAYSIZE(balance_modes))) {
+            if (balance_mode_index_ == 0) balance_classes_ = false;
+            has_changes_ = true;
+        }
+        const char* balance_targets[] = {"max", "median", "min", "custom number"};
+        int target_index = 0;
+        if (std::strcmp(balance_target_, "median") == 0) target_index = 1;
+        else if (std::strcmp(balance_target_, "min") == 0) target_index = 2;
+        else if (IsPositiveIntegerText(balance_target_)) target_index = 3;
+        Field("Target per class");
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::Combo("##balance_target_mode", &target_index, balance_targets, IM_ARRAYSIZE(balance_targets))) {
+            if (target_index == 0) CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
+            else if (target_index == 1) CopyToBuffer(balance_target_, sizeof(balance_target_), "median");
+            else if (target_index == 2) CopyToBuffer(balance_target_, sizeof(balance_target_), "min");
+            else if (!IsPositiveIntegerText(balance_target_))
+                CopyToBuffer(balance_target_, sizeof(balance_target_), "1");
+            has_changes_ = true;
+        }
+        if (target_index == 3) {
+            int target_count = 1;
+            try { target_count = std::max(1, std::stoi(balance_target_)); } catch (...) { target_count = 1; }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::InputInt("##balance_target_count", &target_count)) {
+                if (target_count < 1) target_count = 1;
+                CopyToBuffer(balance_target_, sizeof(balance_target_), std::to_string(target_count));
+                has_changes_ = true;
+            }
+        }
+        Field("Balance seed");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##balance_seed", &balance_seed_)) {
+            if (balance_seed_ < 0) balance_seed_ = 0;
+            has_changes_ = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Checkpoints")) {
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Save the best validation checkpoint", &save_best_checkpoint_)) has_changes_ = true;
+        ImGui::TextDisabled("Saved whenever the validation loss improves.");
+        Field("Early stop patience");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##early_stopping_patience", &early_stopping_patience_)) {
+            early_stopping_patience_ = std::clamp(early_stopping_patience_, 0, 100000);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("epochs without improvement; 0 = off");
+        Field("Checkpoint folder");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) has_changes_ = true;
+        ImGui::TextDisabled("Empty uses the project's checkpoints folder (.cyxwiz/checkpoints without a project).");
+        Field("Start from");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_,
+                             sizeof(initialize_from_checkpoint_)))
+            has_changes_ = true;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Optional: a checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights "
+                            "are this model's starting point and every layer keeps training on this data (full "
+                            "fine-tuning; nothing is frozen). Optimizer, schedule, epochs and seed start fresh. Layer "
+                            "names, shapes and the tokenizer must match. Empty = random weights.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Advanced")) {
+        ImGui::Spacing();
+        Field("Worker threads");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##num_workers", &num_workers_)) {
+            num_workers_ = std::clamp(num_workers_, 0, 64);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(num_workers_ > 0 ? "per-batch workers where supported"
+                                             : "0 = batches load on the training thread");
+        Field("Pin memory");
+        ImGui::TextColored(pin_memory_requested_ ? t.warning : t.text_dim, "%s",
+                           pin_memory_requested_ ? "not supported on this device (this graph asks for it; ignored)"
+                                                 : "not supported on this device");
+        Field("Report every");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##log_interval", &log_interval_)) {
+            log_interval_ = std::clamp(log_interval_, 0, 100000);
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("batches; 0 = only the first and the last");
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Generate samples during training", &generation_preview_enabled_)) has_changes_ = true;
+        ImGui::BeginDisabled(!generation_preview_enabled_);
+        Field("Every");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##gen_every", &generation_preview_every_epochs_)) has_changes_ = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("completed epochs");
+        Field("New tokens");
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("##gen_tokens", &generation_preview_max_new_tokens_)) has_changes_ = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("1 to 128");
+        Field("Prompts");
+        if (ImGui::InputTextMultiline("##gen_prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_),
+                                      ImVec2(-1, 100)))
+            has_changes_ = true;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("One prompt per line (1 to 8); for multi-line chat prompts put a line of --- between "
+                            "prompts (an empty line before --- keeps a trailing newline). Greedy previews use the "
+                            "causal token-window vocabulary; training pauses between epochs; results go to the "
+                            "Console and the run's artifacts.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndDisabled();
+        ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Checkpointing");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Save best validation checkpoint", &save_best_checkpoint_)) {
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Runtime-supported: saves the best validation epoch when validation loss improves.");
-
-    ImGui::Text("Early stop patience:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##early_stopping_patience", &early_stopping_patience_)) {
-        if (early_stopping_patience_ < 0) early_stopping_patience_ = 0;
-        if (early_stopping_patience_ > 100000) early_stopping_patience_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Runtime-supported: 0 disables early stopping.");
-
-    ImGui::Text("Checkpoint dir:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) {
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("  Empty uses the active project's checkpoints folder; without a project, runtime uses .cyxwiz/checkpoints.");
-
-    ImGui::Text("Start from:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_))) {
-        has_changes_ = true;
-    }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("  Optional: a checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights are this "
-                        "model's starting point and every layer keeps training on this data (full fine-tuning; nothing is "
-                        "frozen). Optimizer, schedule, epochs and seed start fresh. Layer names, shapes and the tokenizer "
-                        "must match. Empty = random weights.");
+    ImGui::TextColored(t.text_faint, "This node reads the Data Split's partitions and is the one place batching is "
+                                     "set: a batch size on the optimizer is ignored (a warning says so at training "
+                                     "start).");
     ImGui::PopTextWrapPos();
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Performance");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Worker threads:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##num_workers", &num_workers_)) {
-        if (num_workers_ < 0) num_workers_ = 0;
-        if (num_workers_ > 64) num_workers_ = 64;
-        has_changes_ = true;
-    }
-    if (num_workers_ > 0) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "  Used as synchronous per-batch workers where supported; Prefetch controls async queuing.");
-    } else {
-        ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
-    }
-
-    ImGui::Spacing();
-    ImGui::Text("Prefetch:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##prefetch_factor", &prefetch_factor_)) {
-        if (prefetch_factor_ < 0) prefetch_factor_ = 0;
-        if (prefetch_factor_ > 64) prefetch_factor_ = 64;
-        has_changes_ = true;
-    }
-    if (prefetch_factor_ > 0) {
-        ImGui::TextDisabled("  Bounded async queue depth for Arrow/Parquet batchers.");
-    } else {
-        ImGui::TextDisabled("  0 = disable async prefetch.");
-    }
-
-    ImGui::Spacing();
-    ImGui::Text("Pin memory:");
-    ImGui::SameLine(130);
-    ImGui::TextDisabled(pin_memory_requested_ ? "unsupported (saved true)" : "unsupported");
-    if (pin_memory_requested_) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "  This loaded graph requests pin_memory=true, but current batchers ignore it.");
-    } else {
-        ImGui::TextDisabled("  Serialized for compatibility only; no pinned host-memory transfer backend exists yet.");
-    }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Logging");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Report every:");
-    ImGui::SameLine(130);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##log_interval", &log_interval_)) {
-        if (log_interval_ < 0) log_interval_ = 0;
-        if (log_interval_ > 100000) log_interval_ = 100000;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(batches; 0 samples first/final only)");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextDisabled(
-        "This node consumes the Partitions Dataset contract and is the single\n"
-        "source of truth for batching. If batch_size is also set on the optimizer\n"
-        "node, the DataLoader value wins and a warning is logged at training start.");
 }
 
 // ==================== DataSplitDialog ====================
@@ -1513,147 +1484,146 @@ void DataSplitDialog::RefreshResolvedManifest() {
 }
 
 void DataSplitDialog::RenderContent() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    const bool legacy_contract = node_ &&
-        node_->parameters.count("data_boundary_pin_contract") > 0 &&
-        node_->parameters.at("data_boundary_pin_contract") == "legacy.v1";
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    const bool legacy_contract = node_ && node_->parameters.count("data_boundary_pin_contract") > 0 &&
+                                 node_->parameters.at("data_boundary_pin_contract") == "legacy.v1";
     if (legacy_contract) {
-        ImGui::PushStyleColor(ImGuiCol_Text, cyxwiz::ui::CurrentTokens().warning);
-        ImGui::TextWrapped(
-            "Legacy Data Boundary v1 is preserved. Its two tensor inputs and six Train/Val/Test outputs remain connected exactly as saved.");
-        ImGui::PopStyleColor();
-        ImGui::TextWrapped(
-            "Explicit migration converts Data Input -> Data Split -> Data Loader to Dataset v2. Duplicate legacy label links are removed and direct label targets are rerouted from Data Loader.Labels. Migration is refused if Val/Test canvas branches or an ambiguous boundary would lose meaning.");
-        ImGui::BeginDisabled(node_editor_ == nullptr);
-        if (ImGui::Button("Migrate graph to Dataset v2")) {
+        // Only an old graph shows this.
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.caution, "This graph uses the old Data Boundary v1: its two tensor inputs and six "
+                                      "Train / Val / Test outputs stay connected as saved.");
+        ImGui::TextDisabled("Migrating turns Data Input -> Data Split -> Data Loader into Dataset v2: duplicate "
+                            "label links go and label targets read Data Loader.Labels. It is refused when Val / Test "
+                            "canvas branches or an ambiguous boundary would lose meaning.");
+        ImGui::PopTextWrapPos();
+        if (cyxwiz::ui::SecondaryButton("Migrate graph to Dataset v2", node_editor_ != nullptr,
+                                        "Open the dialog from the canvas", cyxwiz::ui::ButtonSize::Small)) {
             const auto result = node_editor_->MigrateLegacyDataBoundary();
             migration_status_ = result.message;
             if (result.success) resolution_attempted_ = false;
         }
-        ImGui::EndDisabled();
-        if (!migration_status_.empty()) {
-            ImGui::TextWrapped("%s", migration_status_.c_str());
-        }
-        ImGui::Separator();
+        if (!migration_status_.empty()) ImGui::TextWrapped("%s", migration_status_.c_str());
+        ImGui::Spacing();
     }
 
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Split Ratios");
-    ImGui::Separator();
+    // The three parts as one bar, with their rows from the graph's data.
+    const auto upstream = node_ ? FindUpstreamData(node_editor_, node_->id) : UpstreamData{};
+    const float sum = train_ratio_ + val_ratio_ + test_ratio_;
+    const float norm = sum > 0.001f ? sum : 1.0f;
+    const float parts[3] = {train_ratio_ / norm, val_ratio_ / norm, test_ratio_ / norm};
+    const char* names[3] = {"train", "val", "test"};
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float height = ImGui::GetFrameHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    float x = at.x;
+    auto* draw = ImGui::GetWindowDrawList();
+    std::string unfitted;  // parts too narrow for their label: listed under the bar
+    for (int k = 0; k < 3; ++k) {
+        const float w = width * parts[k];
+        if (w <= 0.5f) continue;
+        draw->AddRectFilled(ImVec2(x, at.y), ImVec2(x + w - 2.0f, at.y + height),
+                            ImGui::GetColorU32(cyxwiz::ui::WithAlpha(t.series[k], 0.55f)), 4.0f);
+        std::string label = names[k];
+        if (k == 0) label += " " + std::to_string(static_cast<int>(std::lround(parts[k] * 100.0f))) + "%";
+        if (upstream.rows > 0)
+            label += (k == 0 ? " \xC2\xB7 about " : " ") +
+                     GroupDigits(static_cast<int64_t>(std::llround(upstream.rows * parts[k])));
+        const ImVec2 size = ImGui::CalcTextSize(label.c_str());
+        if (size.x + 12.0f < w)
+            draw->AddText(ImVec2(x + 6.0f, at.y + (height - size.y) * 0.5f), ImGui::GetColorU32(t.text_bright),
+                          label.c_str());
+        else
+            unfitted += (unfitted.empty() ? "" : "   ") + label;
+        x += w;
+    }
+    ImGui::Dummy(ImVec2(width, height));
+    if (!unfitted.empty()) ImGui::TextColored(t.text_dim, "%s", unfitted.c_str());
     ImGui::Spacing();
 
     bool changed = false;
-    ImGui::Text("Train:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Train");
+    ImGui::SetNextItemWidth(220);
     if (ImGui::SliderFloat("##train", &train_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
-
-    ImGui::Text("Validation:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Validation");
+    ImGui::SetNextItemWidth(220);
     if (ImGui::SliderFloat("##val", &val_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
-
-    ImGui::Text("Test:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Test");
+    ImGui::SetNextItemWidth(220);
     if (ImGui::SliderFloat("##test", &test_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
-
     if (changed) has_changes_ = true;
+    if (std::abs(sum - 1.0f) > 0.01f)
+        ImGui::TextColored(t.warning, "Sum %.2f (Apply scales the three to 1.00)", sum);
+    else
+        ImGui::TextColored(t.text_dim, "Sum %.2f", sum);
 
-    float sum = train_ratio_ + val_ratio_ + test_ratio_;
-    ImGui::Spacing();
-    if (std::abs(sum - 1.0f) > 0.01f) {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "Sum = %.2f (will be normalized to 1.00 on Apply)", sum);
-    } else {
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "Sum = %.2f", sum);
-    }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Options");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Seed:");
-    ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(180);
+    Field("Seed");
+    ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt("##seed", &seed_)) has_changes_ = true;
-    ImGui::TextDisabled("  Controls the shuffled order used when partitioning.");
+    ImGui::SameLine();
+    ImGui::TextDisabled("the shuffled order the parts are cut from");
+    if (ImGui::Checkbox("Stratified: keep each class's share in every part", &stratified_)) has_changes_ = true;
 
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Stratified split", &stratified_)) has_changes_ = true;
-    ImGui::TextDisabled("  Preserve class distribution across splits (classification only).");
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Resolved Partition Manifest");
-    ImGui::Separator();
     ImGui::Spacing();
     if (!resolution_attempted_) RefreshResolvedManifest();
-    if (ImGui::Button("Refresh from graph")) RefreshResolvedManifest();
+    const auto& partitions = resolved_partitions_;
+    if (partitions.train.IsSupplied()) {
+        ImGui::TextColored(t.text_dim, "From the graph:");
+        ImGui::SameLine();
+        std::string from = partitions.train.dataset_name;
+        if (upstream.rows > 0) from += ", " + GroupDigits(upstream.rows) + " samples";
+        ImGui::TextUnformatted(from.c_str());
+    } else {
+        ImGui::TextColored(t.warning, "%s", resolution_status_.c_str());
+    }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", resolution_status_.c_str());
+    if (cyxwiz::ui::LinkButton("Refresh from graph")) RefreshResolvedManifest();
 
-    if (resolved_partitions_.train.IsSupplied()) {
-        const auto& partitions = resolved_partitions_;
+    if (partitions.train.IsSupplied() && ImGui::TreeNodeEx("Details (the resolved manifest)")) {
         const auto& manifest = partitions.manifest;
         const auto rows_text = [](int64_t rows) {
-            return rows >= 0 ? std::to_string(rows) : std::string("resolved at batching");
+            return rows >= 0 ? GroupDigits(rows) : std::string("resolved at batching");
         };
         const auto short_id = [](const std::string& value) {
-            return value.empty() ? std::string("unavailable")
-                                 : value.substr(0, std::min<size_t>(12, value.size()));
+            return value.empty() ? std::string("unavailable") : value.substr(0, std::min<size_t>(12, value.size()));
         };
-        ImGui::TextWrapped("Train: %s | external | %s rows",
-                           partitions.train.dataset_name.c_str(),
-                           rows_text(manifest.train_rows).c_str());
-        ImGui::TextWrapped("Dev: %s | %s | %s rows | schema %s",
-                           (partitions.dev.IsSupplied()
-                                ? partitions.dev.dataset_name
-                                : partitions.train.dataset_name).c_str(),
-                           cyxwiz::PartitionOriginName(manifest.dev_origin),
-                           rows_text(manifest.dev_rows).c_str(),
-                           cyxwiz::PartitionCompatibilityName(
-                               manifest.dev_compatibility));
-        ImGui::TextWrapped("Test: %s | %s | %s rows | schema %s",
-                           (partitions.test.IsSupplied()
-                                ? partitions.test.dataset_name
-                                : partitions.train.dataset_name).c_str(),
-                           cyxwiz::PartitionOriginName(manifest.test_origin),
-                           rows_text(manifest.test_rows).c_str(),
-                           cyxwiz::PartitionCompatibilityName(
-                               manifest.test_compatibility));
-        ImGui::TextDisabled("Dev resolution: %s",
-                            manifest.dev_resolution_reason.c_str());
-        ImGui::TextDisabled("Test resolution: %s",
-                            manifest.test_resolution_reason.c_str());
-        ImGui::TextWrapped(
-            "Policy: %s, seed %d, stratified %s | manifest %s",
-            cyxwiz::PartitionSplitMethodName(manifest.split_method),
-            manifest.seed,
-            manifest.stratified ? "yes" : "no",
-            short_id(manifest.manifest_fingerprint).c_str());
-        ImGui::TextWrapped(
-            "Source IDs: train %s | dev %s | test %s | feature schema %s",
-            short_id(manifest.training_source_fingerprint).c_str(),
-            short_id(manifest.validation_source_fingerprint).c_str(),
-            short_id(manifest.test_source_fingerprint).c_str(),
-            short_id(manifest.feature_schema_fingerprint).c_str());
-        ImGui::TextDisabled(
-            "Leakage: Dev %s, Test %s. External-role overlap checks run again at training preflight.",
-            cyxwiz::PartitionLeakageStatusName(manifest.dev_leakage),
-            cyxwiz::PartitionLeakageStatusName(manifest.test_leakage));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", resolution_status_.c_str());
+        ImGui::Text("Train: %s, external, %s rows", partitions.train.dataset_name.c_str(),
+                    rows_text(manifest.train_rows).c_str());
+        ImGui::Text("Validation: %s, %s, %s rows, schema %s",
+                    (partitions.dev.IsSupplied() ? partitions.dev.dataset_name
+                                                   : partitions.train.dataset_name).c_str(),
+                    cyxwiz::PartitionOriginName(manifest.dev_origin), rows_text(manifest.dev_rows).c_str(),
+                    cyxwiz::PartitionCompatibilityName(manifest.dev_compatibility));
+        ImGui::Text("Test: %s, %s, %s rows, schema %s",
+                    (partitions.test.IsSupplied() ? partitions.test.dataset_name
+                                                   : partitions.train.dataset_name).c_str(),
+                    cyxwiz::PartitionOriginName(manifest.test_origin), rows_text(manifest.test_rows).c_str(),
+                    cyxwiz::PartitionCompatibilityName(manifest.test_compatibility));
+        ImGui::TextDisabled("Validation: %s", manifest.dev_resolution_reason.c_str());
+        ImGui::TextDisabled("Test: %s", manifest.test_resolution_reason.c_str());
+        ImGui::Text("Policy: %s, seed %d, stratified %s, manifest %s",
+                    cyxwiz::PartitionSplitMethodName(manifest.split_method), manifest.seed,
+                    manifest.stratified ? "yes" : "no", short_id(manifest.manifest_fingerprint).c_str());
+        ImGui::Text("Source ids: train %s, validation %s, test %s, feature schema %s",
+                    short_id(manifest.training_source_fingerprint).c_str(),
+                    short_id(manifest.validation_source_fingerprint).c_str(),
+                    short_id(manifest.test_source_fingerprint).c_str(),
+                    short_id(manifest.feature_schema_fingerprint).c_str());
+        ImGui::TextDisabled("Leakage: validation %s, test %s. Overlap with external roles is checked again before "
+                            "training.",
+                            cyxwiz::PartitionLeakageStatusName(manifest.dev_leakage),
+                            cyxwiz::PartitionLeakageStatusName(manifest.test_leakage));
+        ImGui::PopTextWrapPos();
+        ImGui::TreePop();
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextDisabled(
-        "If no DataSplit node is in the graph, training uses defaults (80/10/10).\n"
-        "This node resolves partition policy for training. Older saved graphs\n"
-        "may show Train/Val/Test tensor output pins as legacy compatibility\n"
-        "pins; runtime validation/test paths are created from resolved dataset\n"
-        "partitions, not from separate canvas branches.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Without a Data Split node training uses 80/10/10. This node sets how the data "
+                                     "is partitioned; validation and test come from these partitions, not from canvas "
+                                     "branches (old graphs may still show Train / Val / Test output pins).");
+    ImGui::PopTextWrapPos();
 }
 
 } // namespace gui

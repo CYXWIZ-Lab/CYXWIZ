@@ -1,5 +1,6 @@
 #include "live_graph_compile.h"
 
+#include "extension_node_registry.h"
 #include "model_builder.h"
 
 #include <cyxwiz/device.h>
@@ -84,13 +85,18 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                               bool count_parameters,
                               Clock::time_point now) {
     Collect();
-    const uint64_t revision = HashGraph(nodes, links);
+    // An extension registered, removed or approved changes what the graph
+    // compiles to, without a graph edit.
+    const uint64_t revision =
+        HashGraph(nodes, links) ^ (ExtensionNodeRegistry::Instance().Generation() * 0x9E3779B97F4A7C15ULL) ^
+        (invalidations_ * 0xC2B2AE3D27D4EB4FULL);
     if (!seen_any_ || revision != seen_revision_) {
         seen_any_ = true;
         seen_revision_ = revision;
         last_change_ = now;
     }
-    const bool up_to_date = result_ && result_->revision == revision;
+    const bool up_to_date = result_ && result_->revision == revision &&
+                            (result_->parameters_requested || !count_parameters);
     const bool running = pending_.valid();
     if (up_to_date || running || now - last_change_ < debounce) return;
     if (nodes.empty()) {
@@ -103,6 +109,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
         [nodes, links, revision, count_parameters, root = project_root]() {
             auto result = std::make_shared<Result>();
             result->revision = revision;
+            result->parameters_requested = count_parameters;
             // allow_unloaded_data: the canvas view compiles from the saved
             // data contract; data readiness is reported as issues.
             const QuietModelBuildScope quiet;  // no Console lines per edit

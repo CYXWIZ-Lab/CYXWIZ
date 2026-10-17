@@ -3,6 +3,7 @@
 #include "loaders/data_loader.h"
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace gui::data_input {
 
@@ -25,6 +26,19 @@ cyxwiz::loaders::FileCategory FileCategoryFromParam(
     const std::string& value,
     cyxwiz::loaders::FileCategory fallback = cyxwiz::loaders::FileCategory::Tabular);
 const char* FileCategoryParam(cyxwiz::loaders::FileCategory file_category);
+// What a chosen folder holds (Data Input's Source, TOFIX129 B-10): images,
+// audio or text files, in class subfolders or flat.
+enum class FolderKind { Unknown, Images, Audio, Text };
+struct FolderScan {
+    FolderKind kind = FolderKind::Unknown;
+    int files = 0;                         // files of that kind
+    std::vector<std::string> class_names;  // subfolders holding them (sorted)
+    bool truncated = false;                // stopped at max_files
+};
+// Walks the folder (one level of class subfolders, their files recursively)
+// up to max_files files and names the kind most of them are.
+FolderScan ScanFolder(const std::string& path, int max_files = 200000);
+
 bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category);
 const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_category);
 const char* FileTypeParam(int detected_type);
@@ -38,12 +52,6 @@ bool UsesFolderPath(cyxwiz::loaders::FileCategory file_category, TextLayout text
 std::string CurrentSourceLabel(
     cyxwiz::loaders::FileCategory file_category,
     TextLayout text_layout);
-std::string CurrentApplySummary(
-    cyxwiz::loaders::FileCategory file_category,
-    TextLayout text_layout,
-    bool force_disk_backed,
-    int max_rows,
-    int skip_rows);
 const char* BackendSummary(int loaded_backend);
 std::string GenerateDatasetName(const std::string& file_path, const std::string& folder_path);
 std::string FormatBytes(std::size_t bytes);

@@ -271,6 +271,27 @@ inline BackendPlacementEntry BuildUnsupportedSequentialModelPlacement(
     return placement;
 }
 
+// An extension node (TOFIX125) runs its extension's own module code: where
+// it computes depends on the tensor operations that code uses, which the
+// compiler cannot see. Reported as unknown, without advice to classify it.
+inline BackendPlacementEntry BuildExtensionPlacement(const CompiledLayer& layer) {
+    BackendPlacementEntry placement;
+    placement.node_id = layer.node_id;
+    placement.node_name = layer.name;
+    placement.node_type = layer.extension_type_id;
+    placement.requested_backend = "auto";
+    placement.expected_backend = BackendPlacementStatus::Unknown;
+    placement.status = BackendPlacementStatus::Unknown;
+    placement.reason_code = BackendPlacementReason::ExtensionModuleCode;
+    placement.explanation =
+        "Extension node " + layer.extension_type_id +
+        " runs its extension's own code. Where it computes depends on the "
+        "tensor operations that code uses.";
+    placement.suggested_action =
+        "No action needed. Ask the extension's author if this node is slow.";
+    return placement;
+}
+
 inline BackendPlacementEntry BuildUnclassifiedPlacement(
     const CompiledLayer& layer) {
     BackendPlacementEntry placement;

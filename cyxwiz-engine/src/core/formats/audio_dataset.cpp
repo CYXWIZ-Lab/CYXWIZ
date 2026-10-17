@@ -88,6 +88,9 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
     } else {
         ScanDirectory(directory);
     }
+    if (!config_.probe_feature_shape) {
+        return;
+    }
 
     // Seed feature_rows_/feature_cols_ with the closed-form prediction in
     // case the probe below fails. The probe is the source of truth when

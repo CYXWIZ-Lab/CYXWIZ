@@ -7,6 +7,7 @@
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
 #include "extension_node_registry.h"
+#include "guarded_extension_module.h"
 #include "data_registry.h"
 #include "dense_activation_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
@@ -2118,6 +2119,11 @@ size_t EstimateSequenceLength(const CompiledLayer& layer) {
 
 void AddBackendPlacementReports(TrainingConfiguration& config) {
     for (const auto& layer : config.layers) {
+        if (layer.type == gui::NodeType::PluginCustom) {
+            config.backend_placements.push_back(
+                backend_placement::BuildExtensionPlacement(layer));
+            continue;
+        }
         const auto capability = backend_placement::ClassifyLayer(layer);
         switch (capability.kind) {
             case backend_placement::LayerCapabilityKind::ArrayFireTensor:
@@ -4155,14 +4161,55 @@ void ValidateExtensionNodes(
             continue;
         }
 
-        // Replaced by the trainable contract (TOFIX125 P2).
-        AddIssue(config, IssueLevel::Error,
-                 "'" + node.name + "' (" + node.extension_type_id +
-                     ") is a trainable extension node, which the compiler "
-                     "does not build yet. The model would train without it.",
-                 node.id, node.name,
-                 errors::Compiler::UnsupportedTrainingNode);
+        // A trainable node on the training path becomes a layer in the
+        // layer loop (CompileExtensionLayer), which reports shape problems.
     }
+}
+
+// A trainable extension node on the training path: one CompiledLayer whose
+// output shape comes from the extension's own shape function. False when
+// the node cannot be compiled; the reason is an issue on the node.
+bool CompileExtensionLayer(const gui::MLNode& node,
+                           const std::vector<size_t>& input_shape,
+                           TrainingConfiguration& config,
+                           CompiledLayer& layer) {
+    const auto descriptor =
+        ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    const auto factory =
+        ExtensionNodeRegistry::Instance().TensorFactory(node.extension_type_id);
+    // Missing and simulation nodes were reported by ValidateExtensionNodes.
+    if (!descriptor || descriptor->kind != ExtensionNodeKind::TensorLayer || !factory) {
+        return false;
+    }
+
+    ExtensionShapeResult shape;
+    try {
+        shape = factory->InferOutputShape(input_shape, node.parameters);
+    } catch (const std::exception& e) {
+        AddIssue(config, IssueLevel::Error,
+                 "Extension node '" + node.extension_type_id +
+                     "' failed to work out its output shape: " + e.what(),
+                 node.id, node.name, errors::Compiler::TensorShapeMismatch);
+        return false;
+    }
+    if (!shape.ok) {
+        AddIssue(config, IssueLevel::Error,
+                 "Extension node '" + node.extension_type_id + "' cannot take input " +
+                     FormatTensorShape(input_shape) +
+                     (shape.error.empty() ? std::string() : ": " + shape.error),
+                 node.id, node.name, errors::Compiler::TensorShapeMismatch);
+        return false;
+    }
+
+    layer.type = gui::NodeType::PluginCustom;
+    layer.node_id = node.id;
+    layer.name = gui::EffectiveNodeName(node);
+    layer.parameters = node.parameters;
+    layer.extension_type_id = node.extension_type_id;
+    layer.extension_version = descriptor->version;
+    layer.input_shape = input_shape;
+    layer.output_shape = shape.output_shape;
+    return true;
 }
 
 void CollectGraphRuntimeOpNodeIds(
@@ -5390,6 +5437,19 @@ TrainingConfiguration GraphCompiler::Compile(
             continue;
         }
 
+        // Extension nodes (TOFIX125): their own shape function and module.
+        if (node->type == gui::NodeType::PluginCustom) {
+            if (!ContainsWhenFiltered(training_path_ids, node->id)) {
+                continue;
+            }
+            CompiledLayer layer;
+            if (CompileExtensionLayer(*node, current_shape, config, layer)) {
+                current_shape = layer.output_shape;
+                config.layers.push_back(std::move(layer));
+            }
+            continue;
+        }
+
         // Handle model layers and activations
         if (IsModelLayer(node->type) || IsActivation(node->type)) {
             if (const auto reason =
@@ -5989,25 +6049,18 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (is_image) {
 
-            // Check 1: Resize node required for image datasets.
-            // Without it, images load at their native (variable) size,
-            // which can't be batched AND can cause massive tensors that
-            // OOM the GPU. This is the most critical image check.
-            bool has_resize = false;
-            for (const auto& node : nodes) {
-                if (node.type == gui::NodeType::Resize) {
-                    has_resize = true;
-                    break;
-                }
-            }
+            // Check 1: a Resize node on the training path sets the size
+            // every image is decoded at (Data Input only loads, TOFIX129
+            // B-9): images of different sizes cannot share a batch.
+            const bool has_resize = std::any_of(nodes.begin(), nodes.end(), [&](const gui::MLNode& node) {
+                return node.type == gui::NodeType::Resize && ContainsWhenFiltered(training_path_ids, node.id);
+            });
             if (!has_resize) {
                 AddIssue(config, IssueLevel::Error,
-                         "Image datasets require a Resize node to set target "
-                         "dimensions. Without it, images load at their native "
-                         "size which can exceed GPU memory. Add a Resize node "
-                         "between DataInput and the first layer (e.g. "
-                         "Resize 64x64 for fast training, 224x224 for accuracy).",
-                         dataset_node->id, dataset_node->name);
+                         "'" + dataset_node->name + "' gives images, and no Resize sets their size: images of "
+                         "different sizes cannot share a batch. Add a Resize after the Data Loader (64 x 64 "
+                         "trains fast, 224 x 224 keeps more detail)",
+                         dataset_node->id, dataset_node->name, errors::Compiler::ImageNotResized);
             }
 
             // Check 2: Flatten required before Dense layers for images.
@@ -6161,20 +6214,16 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    // Audio preprocessing mode summary — surface whether the graph's
-    // feature node overrode the dialog defaults, or whether we fell
-    // back. Useful for debugging "why isn't my MelSpectrogram n_mels=64
-    // taking effect" without having to grep through the logs for
-    // individual extractor calls.
-    if (config.preprocessing_domain == PreprocessingDomain::Audio) {
-        if (config.audio_preprocessing.has_feature_node) {
-            CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction driven by graph "
-                         "node (type={})",
-                         static_cast<int>(config.audio_preprocessing.feature_type));
-        } else {
-            CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction uses dialog defaults "
-                         "(no Spectrogram/MelSpectrogram/MFCC node in graph)");
-        }
+    // Audio features come from a Spectrogram, Mel Spectrogram or MFCC node
+    // (Data Input only loads, TOFIX129 B-9).
+    if (config.preprocessing_domain == PreprocessingDomain::Audio && config.audio_preprocessing.has_feature_node) {
+        CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction driven by graph node (type={})",
+                            static_cast<int>(config.audio_preprocessing.feature_type));
+    } else if (config.preprocessing_domain == PreprocessingDomain::Audio && dataset_node) {
+        AddIssue(config, IssueLevel::Error,
+                 "'" + dataset_node->name + "' gives audio, and no node turns it into features: add a Mel "
+                 "Spectrogram, Spectrogram or MFCC after the Data Loader",
+                 dataset_node->id, dataset_node->name, errors::Compiler::AudioFeaturesMissing);
     }
 
     // Data Input only loads text (TOFIX129 B-8); a node turns it into
@@ -6977,11 +7026,9 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
 //
 // Each extractor sets has_feature_node=true (except AudioAugmentation,
 // which sets has_augmentation=true) and copies the GUI node's parameters
-// into config.audio_preprocessing. AudioDatasetBatcher later merges this
-// into its AudioDatasetConfig, overriding the dialog-baked defaults on
-// AudioDatasetEntry. If no audio feature node is found in the graph,
-// has_feature_node stays false and the batcher uses the dialog defaults
-// — "fallback mode", the standard UX.
+// into config.audio_preprocessing. AudioDatasetBatcher builds its
+// AudioDatasetConfig features from this alone; without a feature node the
+// compiler reports CW-C-0205 and the batcher refuses.
 
 static void ExtractSpectrogram(const gui::MLNode& node, TrainingConfiguration& config) {
     config.audio_preprocessing.has_feature_node = true;

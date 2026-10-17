@@ -32,6 +32,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
     ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
+    ${_cyxwiz_engine_src}/core/guarded_extension_module.cpp
     ${_cyxwiz_engine_src}/core/stacked_metric_loss.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_mining.cpp
     ${_cyxwiz_engine_src}/core/spatial_batch_layout.cpp
@@ -112,6 +113,8 @@ find_package(HighFive CONFIG QUIET)
 add_library(cyxwiz-training-hooks STATIC
     ${_cyxwiz_engine_src}/plugin/registries/plugin_training_hook_manager.cpp
     ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
+    ${_cyxwiz_engine_src}/core/python_node_bundle.cpp
+    ${_cyxwiz_engine_src}/core/python_node_approvals.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)

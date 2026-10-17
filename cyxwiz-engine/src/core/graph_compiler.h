@@ -68,6 +68,11 @@ struct CompiledLayer {
 
     // For shape ops that need normalized dimension order at runtime.
     std::vector<int> dims;
+
+    // Extension nodes (NodeType::PluginCustom, TOFIX125): the module comes
+    // from the factory registered for this type id.
+    std::string extension_type_id;
+    std::string extension_version;
 };
 
 /**
@@ -107,8 +112,8 @@ struct GraphPreprocessingConfig {
 /**
  * Audio feature-extraction type. Driven by whichever preprocessing node
  * the user dropped on the canvas (Spectrogram / MelSpectrogram / MFCC).
- * None means no feature node was found → fall back to dialog defaults
- * from the AudioDatasetEntry.
+ * None means no feature node was found; the compiler and the audio batcher
+ * refuse that (CW-C-0205).
  */
 enum class AudioFeatureType {
     None = 0,
@@ -122,9 +127,8 @@ enum class AudioFeatureType {
  *
  * Populated by audio-domain extractors in the graph compiler when a
  * Spectrogram / MelSpectrogram / MFCC / AudioAugmentation node is
- * present in the graph. Otherwise stays at default and
- * AudioDatasetBatcher falls back to the dialog-baked defaults on
- * DataRegistry::AudioDatasetEntry.
+ * present in the graph. Audio training needs a feature node; the
+ * AudioDatasetEntry carries only the loading settings.
  *
  * Shape matches what backend MelConfig / MFCCConfig accept — the
  * batcher translates this into the AudioDatasetConfig fed into
@@ -132,7 +136,6 @@ enum class AudioFeatureType {
  */
 struct AudioPreprocessingConfig {
     // True iff a Spectrogram/MelSpectrogram/MFCC node was found.
-    // When false, batcher uses dialog defaults (fallback mode).
     bool has_feature_node = false;
     AudioFeatureType feature_type = AudioFeatureType::None;
 
@@ -292,6 +295,8 @@ inline constexpr const char* UnsupportedSequentialModelLayer =
     "unsupported_sequential_model_layer";
 inline constexpr const char* NativeProviderSelected =
     "native_provider_selected";
+inline constexpr const char* ExtensionModuleCode =
+    "extension_module_code";
 } // namespace BackendPlacementReason
 
 struct BackendPlacementEntry {
@@ -491,9 +496,7 @@ struct TrainingConfiguration {
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when
-    // preprocessing_domain == Audio. When has_feature_node is false,
-    // AudioDatasetBatcher falls back to the dialog defaults from
-    // AudioDatasetEntry.
+    // preprocessing_domain == Audio.
     AudioPreprocessingConfig audio_preprocessing;
 
     // Preprocessing - text-specific legacy override bundle. Graph text

@@ -203,6 +203,9 @@ py::class_<cyxwiz::Tensor>(m, "Tensor",
         }
         return self / other.cast<float>();
     }, py::arg("other"), "Element-wise division")
+    .def("__rtruediv__", [](const cyxwiz::Tensor& self, float scalar) {
+        return (cyxwiz::Tensor::Ones(self.Shape(), self.GetDataType()) * scalar) / self;
+    }, py::arg("scalar"), "Scalar divided by each element")
     .def("__neg__", [](const cyxwiz::Tensor& self) {
         return -self;
     },
@@ -334,6 +337,10 @@ py::class_<cyxwiz::Tensor>(m, "Tensor",
     .def_static("ones", &cyxwiz::Tensor::Ones,
                py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
                "Create a tensor filled with ones")
+    .def_static("full", [](const std::vector<size_t>& shape, float value, cyxwiz::DataType dtype) {
+        return cyxwiz::Tensor::Ones(shape, dtype) * value;
+    }, py::arg("shape"), py::arg("value"), py::arg("dtype") = cyxwiz::DataType::Float32,
+       "Create a tensor filled with one value")
     .def_static("random", &cyxwiz::Tensor::Random,
                py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
                "Create a tensor with random values [0, 1)")

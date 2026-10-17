@@ -31,6 +31,7 @@
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
 #include "../core/data_preview_service.h"
+#include "../core/filter_condition.h"
 #include "../core/dataset_partitions.h"
 #include "../core/training_parameter_contract.h"
 
@@ -91,10 +92,6 @@ protected:
     virtual float FooterHeight() const;
     virtual void RenderFooter(bool& should_close);
     virtual void OnClose() {}
-    void RenderSettingsTab();
-    void RenderAdvancedTab();
-    void RenderPreviewTab();
-    bool FileSelector(const char* label, std::string& path, const char* filter = "All Files\0*.*\0");
     void ValidationMessage(const std::string& message, bool is_error = true);
 
     std::string title_;
@@ -105,40 +102,6 @@ protected:
     int current_tab_ = 0;
     bool has_changes_ = false;
     std::map<std::string, std::string> original_params_;
-};
-
-/**
- * CSVReaderDialog - Configuration dialog for CSV/File Input nodes
- */
-class CSVReaderDialog : public NodeConfigDialog {
-public:
-    CSVReaderDialog(MLNode* node);
-    void Apply() override;
-    void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(800, 600); }
-
-protected:
-    void RenderContent() override;
-
-private:
-    void RenderFileSettingsTab();
-    void RenderTransformationTab();
-    void RenderAdvancedSettingsTab();
-    void RenderLimitRowsTab();
-    void RenderPreviewTab();
-    void LoadPreview();
-
-    char file_path_[512] = {};
-    int delimiter_idx_ = 0;
-    char custom_delimiter_[8] = {};
-    bool has_header_ = true;
-    bool skip_empty_lines_ = true;
-    int skip_first_n_ = 0;
-    int limit_rows_ = 1000;
-    std::vector<std::string> preview_headers_;
-    std::vector<std::vector<std::string>> preview_rows_;
-    bool preview_loaded_ = false;
-    std::string preview_error_;
 };
 
 /**
@@ -155,10 +118,16 @@ protected:
     void RenderContent() override;
 
 private:
-    void RenderTokenizerTab();
+    // Tabs (board 4): Words, Vocabulary, Length, Try it.
+    void RenderWordsTab();
+    void RenderBpeOptions();
+    void RenderVocabularyCard();
     void RenderVocabularyTab();
-    void RenderPaddingTab();
-    void RenderPreviewTab();
+    void RenderLengthTab();
+    void RenderTryItTab();
+    void RunTryIt();
+    void ClearTryIt();
+    bool TracksChanges() const override { return true; }
     void LoadFromNode();
     // A tokenizer with no columns set takes the text and label columns of
     // the Data Input before it (TOFIX129 B-8), once, when first drawn.
@@ -198,29 +167,53 @@ private:
     bool preview_has_roundtrip_ = false;
     std::string status_message_;
     bool status_is_error_ = false;
+    std::string try_message_;
+    bool try_is_error_ = false;
+    // The vocabulary card's facts, read once per file.
+    std::string vocab_card_path_;
+    bool vocab_card_found_ = false;
+    size_t vocab_card_entries_ = 0;
+    size_t vocab_card_broken_ = 0;
 };
 
 /**
- * FilterDialog - Configuration dialog for Filter/Query nodes
+ * FilterDialog - the Row Filter: the condition as rows (gui/filter_dialog.cpp)
  */
 class FilterDialog : public NodeConfigDialog {
 public:
     FilterDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
+    ImVec2 GetDefaultSize() const override { return ImVec2(780, 440); }
+    bool TracksChanges() const override { return true; }
+    bool CanApply() const override;
+    const char* ApplyBlockedReason() const override;
 
 protected:
     void RenderContent() override;
 
 private:
-    struct FilterCondition {
-        int column_idx = 0;
-        int operator_idx = 0;
-        char value[256] = {};
-        int join_type = 0;
+    struct Column {
+        std::string name;
+        cyxwiz::FilterValueKind kind;
     };
-    std::vector<FilterCondition> conditions_;
-    std::vector<std::string> available_columns_;
+    void LoadFromNode();
+    void RefreshColumns();
+    const Column* FindColumn(const std::string& name) const;
+    std::string Problem() const;  // why the condition cannot run, or empty
+    void RenderRows();
+    void RenderWrittenCondition();
+
+    std::vector<cyxwiz::FilterRow> rows_;
+    std::vector<Column> columns_;  // the input's comparable columns, once it has run
+    size_t other_columns_ = 0;     // columns a filter cannot compare (dates, lists)
+    std::string input_name_;
+    std::string last_run_;  // "3,888 of 53,043 rows pass (last run)."
+    double columns_time_ = -1.0;
+    // The saved condition does not fit rows (brackets): edit it as text.
+    bool written_ = false;
+    std::string written_text_;
+    mutable std::string blocked_reason_;
 };
 
 /**
@@ -268,10 +261,27 @@ private:
     void RenderFileSource();
     void RenderOptionsPanel();
     void RenderPreviewPanel();
-    void RenderDatasetSummaryPanel();
+    // The data strip above the tabs: source, load state, facts (B-2).
+    void RenderDataStrip();
+    // Rows and columns tab: the column choice, then the row limits.
+    void RenderRowsAndColumnsTab();
 
     // File source sub-renderers
-    void RenderTabularOptions();
+    // Source tab (B-10): one file-or-folder field; a folder's files say what
+    // it is; a file's rows get a use (table, text, token tagging, time series).
+    void SetSource(const std::string& path);
+    void RescanFolder();
+    void RenderFormatOptions();
+    void RenderTimeColumn();
+    void RenderLabelColumn();
+    void RenderTextColumns();
+    void RenderImageLabels();
+    void RenderAudioLoading();
+    void RenderDatasetRoleNote();
+    char source_buf_[512] = {};
+    bool format_options_open_ = false;
+    data_input::FolderScan folder_scan_;
+    std::string folder_scan_path_;
     bool IsHdf5Source() const;
     void SyncHdf5InspectorSource();
     void RestoreOriginalHdf5Source();
@@ -293,12 +303,11 @@ private:
     void RenderSequenceColumns();
     void RenderSequenceSummary();
     void ApplySequenceSettings();
-    void RenderImageOptions();
-    void RenderAudioOptions();
-    void RenderTextOptions();
-    // The nodes after this input that turn its text into numbers (Text
-    // Tokenizer, vectorizers, Word Embeddings), or Add a Text Tokenizer.
-    void RenderTextTurnedIntoNumbersBy();
+    // "Preprocessing (done by nodes)": the nodes after this input that do
+    // its preprocessing (text: tokenizer / vectorizers / Word Embeddings;
+    // images: Resize, Normalize; audio: Spectrogram / Mel / MFCC), with Open
+    // and Show on canvas, or Add the missing one (TOFIX129 B-8, B-9).
+    void RenderPreprocessingNodes();
 
     // KNIME-style tabs
     void RenderTransformationTab();
@@ -329,7 +338,6 @@ private:
     const char* PreviewUnavailableMessage() const;
     std::string CurrentSourcePath() const;
     std::string CurrentSourceLabel() const;
-    std::string CurrentApplySummary() const;
     const char* BackendSummary() const;
     const char* GetFileTypeName() const;
 
@@ -359,24 +367,20 @@ private:
 
     // STATE: Image options
     ImageLayout image_layout_ = ImageLayout::ClassSubdirs;
-    int target_width_ = 224;
-    int target_height_ = 224;
-    bool normalize_images_ = true;
-    bool rgb_mode_ = true;
     char labels_csv_[512] = {};
 
     // STATE: Audio options
     int sample_rate_ = 16000;
     float duration_sec_ = 5.0f;     // pad/truncate to this length
-    bool mono_ = true;
 
-    // STATE: Text options (Phase 3). Populated by RenderTextOptions
+    // STATE: Text options (Phase 3). Populated by RenderTextColumns
     // and consumed by the text branch of Apply(). The dialog's text
     // category targets CSV / JSON / TXT files with an explicit text
     // column and optional label column — the tokenizer then builds
     // its vocabulary from the text corpus.
     char text_column_[128] = "text";
     char text_label_column_[128] = "label";
+    char time_column_[128] = {};  // time series: rows sorted by it on load ("" = file order)
 
     AudioLayout audio_layout_ = AudioLayout::ClassSubdirs;
 
@@ -384,7 +388,7 @@ private:
     // "SingleFile" meaning CSV/JSON/TXT picked via the shared file
     // picker (the default — this is how most Kaggle text datasets
     // ship) and "CorpusSubdirs" meaning folder/<class>/*.txt with a
-    // folder picker exposed inline in RenderTextOptions. The underlying
+    // folder chosen in Source. The underlying
     // TextDataset class auto-detects file vs directory at construction
     // time, so the dispatch is purely a dialog-level choice about
     // which picker to show.
@@ -448,7 +452,6 @@ private:
     bool is_loading_async_ = false;
     uint64_t loading_task_id_ = 0;
     // Animated dot count for the "Loading..." UI placeholder.
-    float loading_anim_phase_ = 0.0f;
 
     // Drains the async load result if the worker has finished. Called from
     // RenderContent() every frame; cheap when no load is in flight. Writes
@@ -494,11 +497,11 @@ private:
     bool apply_in_progress_ = false;
     bool apply_success_ = false;
     std::string apply_status_message_;
-    float apply_status_timer_ = 0.0f;
     std::chrono::steady_clock::time_point apply_started_at_{};
     float last_load_elapsed_ms_ = -1.0f;
     int64_t loaded_rows_ = 0;
     int64_t loaded_cols_ = 0;
+    int64_t loaded_classes_ = -1;   // -1 = not known (tables)
     size_t loaded_memory_bytes_ = 0;
     // True for image/audio datasets where loaded_memory_bytes_ is the
     // *if-fully-cached* size estimate, not actual RAM use. The Memory tab
@@ -534,16 +537,18 @@ public:
     DataOutputDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(700, 500); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(720, 340); }
+    bool TracksChanges() const override { return true; }
 
 protected:
     void RenderContent() override;
 
 private:
-    void RenderSettingsTab();
+    void LoadFromNode();
 
     char file_path_[512] = {};
-    int output_type_ = 0;
+    int output_type_ = 0;  // 0 CSV, 1 Parquet
+    int path_base_ = 0;    // a relative path against: 0 the project folder, 1 the exports folder
 };
 
 /**
@@ -580,6 +585,7 @@ private:
 
     using PreviewLoadState = cyxwiz::DataConvertPreviewTaskResult;
     std::shared_ptr<cyxwiz::DataConvertTaskResult> conversion_state_;
+    uint64_t conversion_task_id_ = 0;
 
     char input_path_[512] = {};
     char output_path_[512] = {};

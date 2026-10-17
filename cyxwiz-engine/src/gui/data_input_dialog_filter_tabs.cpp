@@ -13,7 +13,7 @@ void DataInputDialog::RenderTransformationTab() {
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Column Transformations");
+    ImGui::TextColored(accent, "Columns");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -67,12 +67,20 @@ void DataInputDialog::RenderTransformationTab() {
     }
 }
 
+void DataInputDialog::RenderRowsAndColumnsTab() {
+    RenderTransformationTab();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    RenderLimitRowsTab();
+}
+
 void DataInputDialog::RenderLimitRowsTab() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Row Filtering Options");
+    ImGui::TextColored(accent, "Rows");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -123,8 +131,6 @@ void DataInputDialog::RenderLimitRowsTab() {
             "Unchecked means no row limit.");
     }
     ImGui::TextDisabled("To change how many preview rows are displayed per page, use Preview > Rows/page.");
-    ImGui::TextDisabled(
-        "To include or exclude columns by name, use the Transformation tab.");
     ImGui::TextDisabled(
         "To keep only some rows, filter them in Data Studio's Prepare step or with a Filter or SQL node.");
     ImGui::PopTextWrapPos();

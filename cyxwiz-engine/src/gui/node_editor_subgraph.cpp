@@ -772,6 +772,30 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     if (request.open_dialog) OpenNodeConfiguration(step_id);
 }
 
+void NodeEditor::AddModelInputStepAfter(int input_id, NodeType type) {
+    if (!FindNodeById(input_id)) return;
+    int after = input_id;
+    std::set<int> seen{input_id};
+    std::vector<int> frontier{input_id};
+    while (!frontier.empty() && after == input_id) {
+        const int from = frontier.front();
+        frontier.erase(frontier.begin());
+        for (const auto& link : links_) {
+            if (link.from_node != from || !seen.insert(link.to_node).second) continue;
+            const MLNode* next = FindNodeById(link.to_node);
+            if (!next) continue;
+            if (next->type == NodeType::DataLoader) {
+                after = next->id;
+                break;
+            }
+            frontier.push_back(next->id);
+        }
+    }
+    PendingStepAfter request{after, type, false, {}, {}, {}};
+    request.open_dialog = true;
+    pending_steps_after_.push_back(std::move(request));
+}
+
 void NodeEditor::AddTextTokenizerAfter(int input_id, const std::string& text_column,
                                        const std::string& label_column) {
     const MLNode* input = FindNodeById(input_id);

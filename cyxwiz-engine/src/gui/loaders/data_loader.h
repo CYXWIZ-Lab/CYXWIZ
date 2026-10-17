@@ -26,9 +26,8 @@
 #include <vector>
 
 // Forward-declared MLNode: loader RestoreFromRegistry needs read-only
-// access to node->parameters to pull per-node hints (e.g. image
-// target_width / target_height / rgb overrides) without dragging the
-// full node_editor.h into this header.
+// access to node->parameters without dragging the full node_editor.h
+// into this header.
 namespace gui { struct MLNode; }
 
 // Forward declarations for LaunchTraining. The full types come from
@@ -117,6 +116,7 @@ struct ApplyContext {
     bool json_lines = false;
     int excel_sheet_idx = 0;
     std::string label_column;
+    std::string time_column;              // time series: rows sorted by it after the load
 
     // Text-specific (commit 2) -------------------------------------
     // text_has_labels is `true` when the corpus is class-subdir layout
@@ -136,29 +136,19 @@ struct ApplyContext {
     // for the Memory tab; pixels are loaded lazily at training time.
     std::string image_labels_csv;
     int image_layout = 0;
-    int image_width = 224;
-    int image_height = 224;
-    int image_channels = 3;
 
     // Audio-specific (commit 4) ------------------------------------
     // audio_labeled_subdirs == true  → folder/<class>/*.wav layout.
     // audio_labeled_subdirs == false → flat folder + audio_labels_csv
     //   with audio_filename_col / audio_label_col (empty = auto-detect
-    //   by header name). Feature-extraction knobs (sr, max_duration,
-    //   n_fft, hop_length, n_mels, n_mfcc) are defaults pushed into
-    //   AudioDatasetEntry so training-time GetItem produces tensors
-    //   shaped the same way they were probed here.
+    //   by header name). Only loading settings: the features come from
+    //   the graph's Spectrogram / MelSpectrogram / MFCC node.
     std::string audio_labels_csv;
     std::string audio_filename_col;
     std::string audio_label_col;
     bool audio_labeled_subdirs = true;
     int audio_target_sr = 16000;
     float audio_max_duration = 5.0f;
-    int audio_n_fft = 512;
-    int audio_hop_length = 256;
-    int audio_n_mels = 128;
-    int audio_n_mfcc = 13;
-    int audio_feature_type = 1;  // 1 = MelSpectrogram (default)
 };
 
 // One entry in a loader's per-category param schema. `name` is the
@@ -205,6 +195,7 @@ struct RestoreState {
     bool found = false;              // false → dataset not in registry
     int64_t rows = 0;
     int64_t cols = 0;
+    int64_t classes = -1;            // -1 = not counted (tables)
     size_t bytes = 0;
     int backend = 0;                 // BackendTag that was used (1..5)
     bool memory_is_estimate = false; // true for image/audio/text (lazy)
@@ -267,8 +258,7 @@ public:
     // Populates `out` from the registry entry for `name`. Returns false
     // if the dataset isn't in the registry (dialog treats this as
     // "dataset was closed or cleared — show Not Loaded"). The `node`
-    // argument gives read-only access to per-node params like
-    // target_width/target_height/rgb for image memory estimates.
+    // argument gives read-only access to per-node params.
     virtual bool RestoreFromRegistry(const std::string& name,
                                      const gui::MLNode& node,
                                      RestoreState& out) const = 0;

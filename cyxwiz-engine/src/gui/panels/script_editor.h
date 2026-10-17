@@ -27,6 +27,7 @@ namespace scripting {
 }
 
 namespace cyxwiz {
+class CreateNodeDialog;
 class DataTable;
 }
 
@@ -345,6 +346,9 @@ private:
     std::shared_ptr<std::atomic<bool>> async_owner_alive_ =
         std::make_shared<std::atomic<bool>>(true);
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
+    // Run > Create node from script... (TOFIX125 P4 step 4.5).
+    std::unique_ptr<CreateNodeDialog> create_node_dialog_;
+    std::string CreateNodeDisabledReason() const;
     // Debugger (TOFIX133 P6, boards 11-12): the run being debugged and the
     // engine's last snapshot (read each frame without the GIL).
     struct DebugRun {

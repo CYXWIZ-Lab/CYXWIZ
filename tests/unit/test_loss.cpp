@@ -89,6 +89,25 @@ TEST_CASE("Mean loss globally reduces multi-output tensors", "[loss]") {
     REQUIRE(grad.Shape() == predictions.Shape());
 }
 
+TEST_CASE("Regression losses keep a single-output column's shape", "[loss]") {
+    // [batch, 1] predictions (one regression output). The gradient fed to the
+    // last layer's Backward must have this shape, not [batch]; the
+    // unreduced loss keeps it too. Found from pycyxwiz (TOFIX125 P3).
+    float pred_values[] = {1.0f, 3.0f, -2.0f, 0.5f};
+    float target_values[] = {0.0f, 1.0f, 1.0f, 0.5f};
+    cyxwiz::Tensor predictions({4, 1}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({4, 1}, target_values, cyxwiz::DataType::Float32);
+
+    for (const auto type : {cyxwiz::LossType::MSE, cyxwiz::LossType::L1, cyxwiz::LossType::SmoothL1,
+                            cyxwiz::LossType::Huber}) {
+        auto mean_loss = cyxwiz::CreateLoss(type, cyxwiz::Reduction::Mean);
+        REQUIRE(mean_loss->Backward(predictions, targets).Shape() == predictions.Shape());
+        REQUIRE(mean_loss->Forward(predictions, targets).NumElements() == 1);
+        auto per_element = cyxwiz::CreateLoss(type, cyxwiz::Reduction::None);
+        REQUIRE(per_element->Forward(predictions, targets).Shape() == predictions.Shape());
+    }
+}
+
 TEST_CASE("Core losses compute CPU backward values", "[loss]") {
     float pred_values[] = {1.0f, 3.0f, -2.0f};
     float target_values[] = {0.0f, 1.0f, 1.0f};

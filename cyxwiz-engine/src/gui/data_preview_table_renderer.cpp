@@ -1,4 +1,6 @@
 #include "data_preview_table_renderer.h"
+#include "ui_buttons.h"
+#include "ui_tokens.h"
 
 #include <algorithm>
 #include <limits>
@@ -7,9 +9,12 @@ namespace gui {
 
 int64_t RenderDataPreviewControls(DataPreviewViewState& state, int64_t total_rows) {
     total_rows = std::max<int64_t>(0, total_rows);
-    ImGui::SetNextItemWidth(75.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "Rows per page");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60.0f);
     const std::string current = std::to_string(state.rows_per_page);
-    if (ImGui::BeginCombo("Rows/page", current.c_str())) {
+    if (ImGui::BeginCombo("##rows_per_page", current.c_str())) {
         for (int count : {5, 10, 25, 50}) {
             if (ImGui::Selectable(std::to_string(count).c_str(), count == state.rows_per_page)) {
                 state.rows_per_page = count;
@@ -22,19 +27,23 @@ int64_t RenderDataPreviewControls(DataPreviewViewState& state, int64_t total_row
     const int64_t last_offset = total_rows > 0
         ? ((total_rows - 1) / state.rows_per_page) * state.rows_per_page : 0;
     state.offset = std::clamp<int64_t>(state.offset, 0, last_offset);
-    ImGui::BeginDisabled(state.offset == 0);
-    if (ImGui::Button("First")) state.offset = 0;
+    namespace ui = cyxwiz::ui;
+    const bool first_page = state.offset == 0;
+    const bool last_page = state.offset >= last_offset;
+    ImGui::SameLine(0.0f, 16.0f);
+    if (ui::SecondaryButton("First", !first_page, "This is the first page", ui::ButtonSize::Small)) state.offset = 0;
     ImGui::SameLine();
-    if (ImGui::Button("Previous")) {
+    if (ui::SecondaryButton("Previous", !first_page, "This is the first page", ui::ButtonSize::Small))
         state.offset = std::max<int64_t>(0, state.offset - state.rows_per_page);
-    }
-    ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(state.offset >= last_offset);
-    if (ImGui::Button("Next")) state.offset += state.rows_per_page;
+    ImGui::TextDisabled("Page %lld of %lld", static_cast<long long>(state.offset / state.rows_per_page + 1),
+                        static_cast<long long>(last_offset / state.rows_per_page + 1));
     ImGui::SameLine();
-    if (ImGui::Button("Last")) state.offset = last_offset;
-    ImGui::EndDisabled();
+    if (ui::SecondaryButton("Next", !last_page, "This is the last page", ui::ButtonSize::Small))
+        state.offset += state.rows_per_page;
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Last", !last_page, "This is the last page", ui::ButtonSize::Small))
+        state.offset = last_offset;
     const auto count = std::min<int64_t>(state.rows_per_page, total_rows - state.offset);
     ImGui::TextDisabled("Rows %lld-%lld of %lld",
         static_cast<long long>(count ? state.offset + 1 : 0),
@@ -51,9 +60,12 @@ void RenderDataPreviewCellDetails(DataPreviewViewState& state) {
     if (ImGui::BeginPopupModal("Preview cell", &open)) {
         ImGui::TextWrapped("Row %lld | %s", static_cast<long long>(state.selected_row + 1),
                            state.selected_column.c_str());
-        if (ImGui::Button("Copy cell")) ImGui::SetClipboardText(state.selected_cell.c_str());
+        if (cyxwiz::ui::SecondaryButton("Copy cell", true, nullptr, cyxwiz::ui::ButtonSize::Small))
+            ImGui::SetClipboardText(state.selected_cell.c_str());
         ImGui::SameLine();
-        if (ImGui::Button("Close") || ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
+        if (cyxwiz::ui::SecondaryButton("Close", true, nullptr, cyxwiz::ui::ButtonSize::Small) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape))
+            open = false;
         ImGui::InputTextMultiline("##cell_contents", state.selected_cell.data(),
             state.selected_cell.size() + 1, ImVec2(-1, -1),
             ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
@@ -88,7 +100,7 @@ DataPreviewTableRenderResult RenderDataPreviewTable(
         columns.size(), static_cast<size_t>(std::numeric_limits<int>::max() - 1)));
     const int table_column_count = data_column_count + (show_row_numbers ? 1 : 0);
     const ImGuiTableFlags flags =
-        ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX |
+        ImGuiTableFlags_ScrollX |
         ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
         ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit;
 

@@ -53,6 +53,10 @@ public:
     // First Error-level message on this node ("" when none).
     std::string NodeErrorMessage(int node_id) const;
 
+    // Compile again although the graph did not change (Python started, so
+    // Python nodes can now be built and counted).
+    void Invalidate() { ++invalidations_; }
+
     static uint64_t HashGraph(const std::vector<gui::MLNode>& nodes,
                               const std::vector<gui::NodeLink>& links);
 
@@ -67,11 +71,16 @@ private:
         TrainingConfiguration config;
         std::map<size_t, long long> layer_parameters;
         bool parameters_counted = false;
+        // Counting was asked for (it may still have failed). A compile made
+        // while training ran is redone once training ends, so its count
+        // appears without an edit.
+        bool parameters_requested = false;
     };
 
     void Collect();
 
     uint64_t seen_revision_ = 0;
+    uint64_t invalidations_ = 0;
     bool seen_any_ = false;
     Clock::time_point last_change_{};
     uint64_t requested_revision_ = 0;  // revision the running worker compiles

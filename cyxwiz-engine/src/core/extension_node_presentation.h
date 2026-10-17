@@ -19,6 +19,7 @@ namespace cyxwiz {
 // Words shared by every screen.
 inline constexpr const char* kExtensionNotInstalledLabel = "Not installed";
 inline constexpr const char* kExtensionPluginBadge = "Plugin";
+inline constexpr const char* kExtensionPythonBadge = "Python node";
 
 // One addable extension node in a palette.
 struct ExtensionPaletteEntry {
@@ -31,6 +32,7 @@ struct ExtensionPaletteEntry {
     std::string pins_summary;    // "In: qpos, qvel. Out: reward"
     std::string hint;            // "Double-click or drag to add"
     uint32_t color = 0;          // IM_COL32 layout (ABGR), as plugins declare it
+    bool python_bundle = false;  // from a Python node bundle, not a plugin
 };
 
 // Entries ordered by group, then name ignoring case. Groups keep the order of
@@ -41,7 +43,8 @@ std::vector<ExtensionPaletteEntry> BuildExtensionPalette(
 // Case-insensitive match on name, group, keywords and description.
 bool ExtensionPaletteEntryMatches(const ExtensionPaletteEntry& entry, const std::string& query);
 
-// "5 nodes from MuJoCo Simulation", "3 nodes from 2 plugins", "No nodes".
+// "5 nodes from MuJoCo Simulation", "3 nodes from 2 plugins",
+// "9 nodes from 2 plugins and 1 Python bundle", "No nodes".
 // provider_names: display name per provider id (the id when unknown).
 std::string ExtensionPaletteSummary(
     const std::vector<ExtensionPaletteEntry>& entries,
@@ -77,8 +80,16 @@ struct ExtensionInfoFacts {
     std::vector<std::pair<std::string, std::string>> provided_by;  // key/value rows
 };
 
+// A Python bundle node's approval (TOFIX125 P4 step 4.5).
+struct ExtensionPythonState {
+    bool approved = false;
+    std::string approved_on;  // "2026-10-17"
+};
+
+// python: for a node from a Python bundle (descriptor.source PythonBundle).
 ExtensionInfoFacts BuildExtensionInfoFacts(const ExtensionNodeDescriptor& descriptor,
-                                           const ExtensionProviderInfo& provider);
+                                           const ExtensionProviderInfo& provider,
+                                           const ExtensionPythonState* python = nullptr);
 
 // The Properties card for a node whose extension is not installed.
 struct ExtensionMissingCard {

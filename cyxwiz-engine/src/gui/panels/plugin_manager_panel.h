@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/plugin_presentation.h"
 #include <string>
 #include <vector>
 
@@ -38,6 +39,12 @@ private:
 
     // Deferred actions (applied after iteration to avoid use-after-free)
     std::vector<std::string> deferred_unloads_;
+
+    // Which plugins load when the Engine starts (TOFIX125 step 2.9), read
+    // once and again after each change.
+    cyxwiz::PluginStartupList startup_list_;
+    bool startup_list_read_ = false;
+    void ReloadStartupList();
 
     // Install error feedback
     std::string install_error_;

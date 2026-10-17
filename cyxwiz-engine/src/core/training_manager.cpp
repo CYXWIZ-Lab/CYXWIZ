@@ -9,6 +9,7 @@
 #include "crash_run_recorder.h"
 #include "image_dataset_batcher.h"
 #include "audio_dataset_batcher.h"
+#include <cyxwiz/error_codes.h>
 #include "training_batcher_setup.h"
 #include "training_trace_collector.h"
 #include "training_run_comparison.h"
@@ -739,13 +740,18 @@ bool TrainingManager::StartTrainingAudio(
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_training_.load()) return false;
 
+    if (!config.audio_preprocessing.has_feature_node) {
+        spdlog::error("TrainingManager: [{}] {}", errors::Compiler::AudioFeaturesMissing,
+                      kAudioFeaturesMissingMessage);
+        return false;
+    }
+
     NormalizeTrainingNumWorkers(config, "TrainingManager");
 
-    // Build the audio batcher. AudioDatasetBatcher constructs the
-    // underlying AudioDataset from the entry, applies any graph-driven
-    // preprocessing overrides from config.audio_preprocessing
-    // (Spectrogram/MelSpectrogram/MFCC/AudioAugmentation nodes), and
-    // probes a sample to discover the actual feature shape.
+    // AudioDatasetBatcher loads with the entry's settings, extracts the
+    // features config.audio_preprocessing describes (Spectrogram /
+    // MelSpectrogram / MFCC / AudioAugmentation nodes) and probes a sample
+    // for the actual feature shape.
     auto batcher = std::make_unique<AudioDatasetBatcher>(
         audio_entry,
         config.audio_preprocessing,

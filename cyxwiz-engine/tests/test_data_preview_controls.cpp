@@ -1,4 +1,7 @@
 #include "../src/gui/data_preview_table_renderer.h"
+#include "../src/gui/ui_buttons.h"
+
+#include <string>
 
 #include <cstdlib>
 #include <iostream>
@@ -32,14 +35,21 @@ int main() {
         ImGui::NewFrame();
         ImGui::SetNextWindowSize(ImVec2(window_width, 520), ImGuiCond_Always);
         ImGui::Begin("Preview controls test");
+        // The pager row as RenderDataPreviewControls lays it out: "Rows per
+        // page", its 60 px combo, 16 px, First, Previous, "Page N of M", Next.
+        namespace ui = cyxwiz::ui;
         const auto origin = ImGui::GetCursorScreenPos();
-        const auto& style = ImGui::GetStyle();
-        const float first_width = ImGui::CalcTextSize("First").x + style.FramePadding.x * 2;
-        const float previous_width = ImGui::CalcTextSize("Previous").x + style.FramePadding.x * 2;
-        const float nav_y = origin.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() / 2;
-        previous_button = ImVec2(origin.x + first_width + style.ItemSpacing.x + previous_width / 2, nav_y);
-        next_button = ImVec2(origin.x + first_width + previous_width + style.ItemSpacing.x * 2 +
-                            (ImGui::CalcTextSize("Next").x + style.FramePadding.x * 2) / 2, nav_y);
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float first_x = origin.x + ImGui::CalcTextSize("Rows per page").x + spacing + 60.0f + 16.0f;
+        const float previous_x = first_x + ui::ButtonWidth("First", ui::ButtonSize::Small) + spacing;
+        const float previous_width = ui::ButtonWidth("Previous", ui::ButtonSize::Small);
+        const int64_t per_page = state.rows_per_page > 0 ? state.rows_per_page : 1;
+        const int64_t pages = total > 0 ? (total - 1) / per_page + 1 : 1;
+        const std::string page = "Page " + std::to_string(state.offset / per_page + 1) + " of " + std::to_string(pages);
+        const float next_x = previous_x + previous_width + spacing + ImGui::CalcTextSize(page.c_str()).x + spacing;
+        const float nav_y = origin.y + ui::ButtonHeight(ui::ButtonSize::Small) / 2;
+        previous_button = ImVec2(previous_x + previous_width / 2, nav_y);
+        next_button = ImVec2(next_x + ui::ButtonWidth("Next", ui::ButtonSize::Small) / 2, nav_y);
         const auto count = gui::RenderDataPreviewControls(state, total);
         const auto start = state.offset;
         int calls = 0;

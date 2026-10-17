@@ -32,11 +32,6 @@ std::string LowerExtension(const std::string& path) {
     return ext;
 }
 
-bool IsTabularCategory(FileCategory file_category) {
-    return file_category == FileCategory::Tabular ||
-           file_category == FileCategory::TimeSeries;
-}
-
 } // namespace
 
 FileCategory FileCategoryFromParam(const std::string& value, FileCategory fallback) {
@@ -57,6 +52,62 @@ const char* FileCategoryParam(FileCategory file_category) {
         case FileCategory::TimeSeries: return "timeseries";
     }
     return "tabular";
+}
+
+FolderScan ScanFolder(const std::string& path, int max_files) {
+    FolderScan scan;
+    std::error_code ec;
+    if (path.empty() || !fs::is_directory(path, ec)) return scan;
+    const auto kind_of = [](const fs::path& file) {
+        const std::string ext = LowerExtension(file.string());
+        if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "bmp" || ext == "gif" || ext == "tga" ||
+            ext == "webp" || ext == "tif" || ext == "tiff")
+            return FolderKind::Images;
+        if (ext == "wav" || ext == "flac" || ext == "ogg" || ext == "aiff" || ext == "aif" || ext == "mp3")
+            return FolderKind::Audio;
+        if (ext == "txt" || ext == "text" || ext == "md") return FolderKind::Text;
+        return FolderKind::Unknown;
+    };
+    int counts[4] = {0, 0, 0, 0};
+    std::vector<std::pair<std::string, FolderKind>> classes;
+    int seen = 0;
+    const auto count = [&](const fs::path& file) {
+        if (seen >= max_files) {
+            scan.truncated = true;
+            return FolderKind::Unknown;
+        }
+        ++seen;
+        const FolderKind kind = kind_of(file);
+        ++counts[static_cast<int>(kind)];
+        return kind;
+    };
+    for (const auto& entry : fs::directory_iterator(path, fs::directory_options::skip_permission_denied, ec)) {
+        if (entry.is_regular_file(ec)) {
+            count(entry.path());
+        } else if (entry.is_directory(ec)) {
+            FolderKind inner = FolderKind::Unknown;
+            for (const auto& sub : fs::recursive_directory_iterator(
+                     entry.path(), fs::directory_options::skip_permission_denied, ec)) {
+                if (!sub.is_regular_file(ec)) continue;
+                const FolderKind kind = count(sub.path());
+                if (kind != FolderKind::Unknown) inner = kind;
+                if (scan.truncated) break;
+            }
+            if (inner != FolderKind::Unknown) classes.emplace_back(entry.path().filename().string(), inner);
+        }
+        if (scan.truncated) break;
+    }
+    int best = 0;
+    for (int k = 1; k < 4; ++k) {
+        if (counts[k] > counts[best] || (best == 0 && counts[k] > 0)) best = k;
+    }
+    if (best == 0) return scan;
+    scan.kind = static_cast<FolderKind>(best);
+    scan.files = counts[best];
+    for (const auto& [name, kind] : classes)
+        if (kind == scan.kind) scan.class_names.push_back(name);
+    std::sort(scan.class_names.begin(), scan.class_names.end());
+    return scan;
 }
 
 bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category) {
@@ -148,46 +199,6 @@ std::string CurrentSourceLabel(
         case FileCategory::TimeSeries: return "Time series file";
     }
     return "Unknown";
-}
-
-std::string CurrentApplySummary(
-    FileCategory file_category,
-    TextLayout text_layout,
-    bool force_disk_backed,
-    int max_rows,
-    int skip_rows) {
-    std::string summary;
-    switch (file_category) {
-        case FileCategory::Tabular:
-            summary = "load the selected file into DataRegistry as tabular data";
-            break;
-        case FileCategory::TimeSeries:
-            summary = "load the selected file through the tabular loader and mark it as time series";
-            break;
-        case FileCategory::Image:
-            summary = "scan the selected folder and register a lazy image dataset";
-            break;
-        case FileCategory::Audio:
-            summary = "scan the selected folder and register a lazy audio dataset";
-            break;
-        case FileCategory::Text:
-            summary = text_layout == TextLayout::CorpusSubdirs
-                ? "read each class folder's texts; a Text Tokenizer node tokenizes them"
-                : "read the text and label columns; a Text Tokenizer node tokenizes them";
-            break;
-    }
-
-    if (force_disk_backed && IsTabularCategory(file_category)) {
-        summary += " using the forced Parquet cache path";
-    }
-    if (max_rows > 0 && IsTabularCategory(file_category)) {
-        summary += " with a row limit of " + std::to_string(max_rows);
-    }
-    if (skip_rows > 0 && IsTabularCategory(file_category)) {
-        summary += " after skipping " + std::to_string(skip_rows) + " rows";
-    }
-    summary += ".";
-    return summary;
 }
 
 const char* BackendSummary(int loaded_backend) {

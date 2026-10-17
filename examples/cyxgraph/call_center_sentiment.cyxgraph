@@ -103,11 +103,26 @@
         }
       },
       {
+        "id": "mel_spec",
+        "type": "MelSpectrogram",
+        "name": "Mel Spectrogram",
+        "pos": [
+          750,
+          300
+        ],
+        "params": {
+          "n_fft": "512",
+          "hop_length": "256",
+          "n_mels": "128",
+          "log_scale": "true"
+        }
+      },
+      {
         "id": "normalize",
         "type": "Normalize",
         "name": "Normalize",
         "pos": [
-          750,
+          1000,
           300
         ],
         "params": {
@@ -120,7 +135,7 @@
         "type": "Flatten",
         "name": "Flatten",
         "pos": [
-          1000,
+          1250,
           300
         ]
       },
@@ -129,7 +144,7 @@
         "type": "Dense",
         "name": "Dense 1024",
         "pos": [
-          1250,
+          1500,
           300
         ],
         "params": {
@@ -141,7 +156,7 @@
         "type": "ReLU",
         "name": "ReLU",
         "pos": [
-          1500,
+          1750,
           300
         ]
       },
@@ -150,7 +165,7 @@
         "type": "Dropout",
         "name": "Dropout",
         "pos": [
-          1750,
+          2000,
           300
         ],
         "params": {
@@ -162,7 +177,7 @@
         "type": "Dense",
         "name": "Dense 512",
         "pos": [
-          2000,
+          2250,
           300
         ],
         "params": {
@@ -174,7 +189,7 @@
         "type": "ReLU",
         "name": "ReLU",
         "pos": [
-          2250,
+          2500,
           300
         ]
       },
@@ -183,7 +198,7 @@
         "type": "Dropout",
         "name": "Dropout",
         "pos": [
-          2500,
+          2750,
           300
         ],
         "params": {
@@ -195,7 +210,7 @@
         "type": "Dense",
         "name": "Dense 256",
         "pos": [
-          2750,
+          3000,
           300
         ],
         "params": {
@@ -207,7 +222,7 @@
         "type": "ReLU",
         "name": "ReLU",
         "pos": [
-          3000,
+          3250,
           300
         ]
       },
@@ -216,7 +231,7 @@
         "type": "Dropout",
         "name": "Dropout",
         "pos": [
-          3250,
+          3500,
           300
         ],
         "params": {
@@ -228,7 +243,7 @@
         "type": "Dense",
         "name": "Dense 128",
         "pos": [
-          3500,
+          3750,
           300
         ],
         "params": {
@@ -240,7 +255,7 @@
         "type": "ReLU",
         "name": "ReLU",
         "pos": [
-          3750,
+          4000,
           300
         ]
       },
@@ -249,7 +264,7 @@
         "type": "Dropout",
         "name": "Dropout",
         "pos": [
-          4000,
+          4250,
           300
         ],
         "params": {
@@ -261,7 +276,7 @@
         "type": "Dense",
         "name": "Dense N",
         "pos": [
-          4250,
+          4500,
           300
         ],
         "params": {
@@ -273,7 +288,7 @@
         "type": "CrossEntropyLoss",
         "name": "CrossEntropy",
         "pos": [
-          4500,
+          4750,
           300
         ]
       },
@@ -282,7 +297,7 @@
         "type": "Adam",
         "name": "Adam",
         "pos": [
-          4750,
+          5000,
           300
         ],
         "params": {
@@ -294,7 +309,7 @@
         "type": "Output",
         "name": "Output",
         "pos": [
-          5000,
+          5250,
           300
         ],
         "params": {
@@ -313,6 +328,10 @@
       },
       {
         "from": "data_loader",
+        "to": "mel_spec"
+      },
+      {
+        "from": "mel_spec",
         "to": "normalize"
       },
       {

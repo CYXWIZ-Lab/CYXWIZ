@@ -188,6 +188,7 @@ set(BACKEND_SOURCES
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
+    src/algorithms/gradient_check.cpp
     src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/feedforward_modules.cpp
     src/algorithms/sequential/spatial_modules.cpp
@@ -663,11 +664,35 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     pybind11_add_module(pycyxwiz
         python/bindings.cpp
         python/bindings_tensor.cpp
+        python/bindings_module.cpp
     )
 
     target_link_libraries(pycyxwiz PRIVATE
         cyxwiz-backend
     )
+
+    # pycyxwiz.nodes is Python source compiled into the module (Part C6).
+    set(_pycyxwiz_nodes_inc ${CMAKE_CURRENT_BINARY_DIR}/generated/pycyxwiz_nodes_source.inc)
+    add_custom_command(
+        OUTPUT ${_pycyxwiz_nodes_inc}
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_nodes.py
+                -DOUTPUT=${_pycyxwiz_nodes_inc} -DNAME=kPycyxwizNodesSource
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_nodes.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        COMMENT "Embedding pycyxwiz.nodes")
+    target_sources(pycyxwiz PRIVATE ${_pycyxwiz_nodes_inc})
+    target_include_directories(pycyxwiz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+    # Python subclasses of pycyxwiz.Module (TOFIX125 P3): run with the Python
+    # pycyxwiz is built for; the backend DLLs are in the runtime folder.
+    if(Python3_EXECUTABLE)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle)
+            add_test(NAME pycyxwiz_${_pycyxwiz_test}
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
+                        $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)
+        endforeach()
+    endif()
 endif()
 
 # Install rules

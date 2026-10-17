@@ -182,6 +182,7 @@ set(ENGINE_SOURCES
     src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/filter_condition.cpp  # Row Filter condition language (TOFIX129 B-5)
     src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
@@ -373,12 +374,14 @@ set(ENGINE_SOURCES
     src/gui/properties_executor.cpp
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
+    src/gui/properties_extension_node.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_rows.cpp
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/data_input_presentation.cpp
     src/core/test_results_presentation.cpp
     src/core/test_evaluation_tables.cpp
     src/core/kept_tests.cpp
@@ -388,6 +391,10 @@ set(ENGINE_SOURCES
     src/core/properties_presentation.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
+    src/core/extension_properties_presentation.cpp
+    src/core/plugin_presentation.cpp
+    src/core/python_bundle_presentation.cpp
+    src/plugin/plugin_session.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
     src/core/python_scan_cache.cpp
@@ -411,10 +418,13 @@ set(ENGINE_SOURCES
     src/core/editor/folding.cpp
     src/core/editor/outline.cpp
     src/core/live_graph_compile.cpp
+    src/extension/python/python_node_factory.cpp
+    src/extension/python/python_node_provider.cpp
     src/core/extension_node_presentation.cpp
     src/core/remote_job_presentation.cpp
     src/core/reservation_presentation.cpp
     src/gui/node_config_dialog.cpp
+    src/gui/filter_dialog.cpp
     src/gui/quality_analyzer_dialog.cpp
     src/gui/word_embeddings_dialog.cpp
     src/gui/embedding_dialog.cpp
@@ -476,6 +486,9 @@ set(ENGINE_SOURCES
     src/gui/dialogs/about_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
+    src/gui/file_browser_launch.cpp
+    src/gui/python_bundle_ui.cpp
+    src/gui/panels/create_node_dialog.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -2854,6 +2867,31 @@ endif()
 set_target_properties(test_extension_node_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: Properties of an installed extension node (TOFIX125 step 2.8) =====
+add_executable(test_extension_properties_presentation
+    tests/test_extension_properties_presentation.cpp
+    src/core/extension_properties_presentation.cpp
+)
+target_link_libraries(test_extension_properties_presentation PRIVATE cyxwiz-training-core)
+target_include_directories(test_extension_properties_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_extension_properties_presentation PRIVATE
+    imgui::imgui nlohmann_json::nlohmann_json spdlog::spdlog cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_extension_properties_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_extension_properties_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: plugins across sessions and what each adds (TOFIX125 steps 2.9-2.10) =====
+add_executable(test_plugin_presentation
+    tests/test_plugin_presentation.cpp
+    src/core/plugin_presentation.cpp
+)
+target_include_directories(test_plugin_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_presentation PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(test_plugin_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
 add_executable(test_plugin_unload_registrations
     tests/test_plugin_unload_registrations.cpp
@@ -2861,7 +2899,7 @@ add_executable(test_plugin_unload_registrations
     src/plugin/plugin_loader.cpp
 )
 target_include_directories(test_plugin_unload_registrations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk imgui::imgui spdlog::spdlog)
+target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk cyxwiz-backend imgui::imgui spdlog::spdlog)
 if(WIN32)
     target_compile_definitions(test_plugin_unload_registrations PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -2885,6 +2923,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/filter_condition.cpp
     src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
@@ -4188,7 +4227,60 @@ set_target_properties(test_compiled_node_presentation PROPERTIES
 add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# ===== Test: live compile recounts parameters after training (TOFIX123/TOFIX125) =====
+add_executable(test_live_graph_compile
+    tests/test_live_graph_compile.cpp
+    src/core/live_graph_compile.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_include_directories(test_live_graph_compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_live_graph_compile PRIVATE
+    cyxwiz-training-core
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_live_graph_compile PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_live_graph_compile PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME live_graph_compile COMMAND test_live_graph_compile)
+
 # ===== Test: compile report, blocked training, memory risk (TOFIX129 B3) =====
+add_executable(test_data_input_presentation
+    tests/test_data_input_presentation.cpp
+    src/core/data_input_presentation.cpp
+)
+target_include_directories(test_data_input_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_data_input_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_input_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME data_input_presentation COMMAND test_data_input_presentation)
+
+# ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
+add_executable(test_filter_condition
+    tests/test_filter_condition.cpp
+    src/core/filter_condition.cpp
+)
+target_include_directories(test_filter_condition PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_filter_condition PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_filter_condition PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME filter_condition COMMAND test_filter_condition)
+
 add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp
     src/core/compile_report_presentation.cpp
@@ -4449,7 +4541,11 @@ add_test(NAME separate_windows_contract COMMAND test_separate_windows)
 add_executable(test_data_preview_controls
     tests/test_data_preview_controls.cpp
     src/gui/data_preview_table_renderer.cpp
+    src/gui/ui_buttons.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
 )
+target_include_directories(test_data_preview_controls PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_data_preview_controls PRIVATE imgui::imgui)
 if(WIN32)
     target_compile_definitions(test_data_preview_controls PRIVATE NOMINMAX)
@@ -6874,6 +6970,25 @@ add_executable(test_training_core_link tests/test_training_core_link.cpp)
 target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
 
 # ===== Test: headless graph training job on the core alone (TOFIX118 P2) =====
+# ===== Test: numerical gradient check of hand-written gradients (TOFIX125 P2) =====
+add_executable(test_extension_gradient_check tests/test_extension_gradient_check.cpp)
+target_link_libraries(test_extension_gradient_check PRIVATE cyxwiz-training-core)
+
+# ===== Test: trainable nodes from the example C++ plugin (TOFIX125 P2) =====
+add_executable(test_plugin_tensor_nodes
+    tests/test_plugin_tensor_nodes.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui)
+target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_dependencies(test_plugin_tensor_nodes activation_nodes)
+
+# ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
+add_executable(test_extension_training tests/test_extension_training.cpp)
+target_link_libraries(test_extension_training PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_extension_training PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
 
@@ -6892,6 +7007,76 @@ target_link_libraries(test_extension_graph_document PRIVATE cyxwiz-training-core
 # ===== Test: the compiler reports extension nodes, never skips them (TOFIX125) =====
 add_executable(test_extension_graph_compile tests/test_extension_graph_compile.cpp)
 target_link_libraries(test_extension_graph_compile PRIVATE cyxwiz-training-core)
+
+# Python node bundles: reading node.json without Python (TOFIX125 P4 step 4.1)
+add_executable(test_python_node_bundle tests/test_python_node_bundle.cpp)
+target_link_libraries(test_python_node_bundle PRIVATE cyxwiz-training-core)
+add_test(NAME python_node_bundle COMMAND test_python_node_bundle)
+
+# Python node bundle approvals per content hash (TOFIX125 P4 step 4.2, D6)
+add_executable(test_python_node_approvals tests/test_python_node_approvals.cpp)
+target_link_libraries(test_python_node_approvals PRIVATE cyxwiz-training-core)
+add_test(NAME python_node_approvals COMMAND test_python_node_approvals)
+
+# Python node bundles in the GUI: cards, approval, create from script (TOFIX125 P4 step 4.5)
+add_executable(test_python_bundle_presentation
+    tests/test_python_bundle_presentation.cpp
+    src/core/python_bundle_presentation.cpp
+    src/core/plugin_presentation.cpp
+)
+target_link_libraries(test_python_bundle_presentation PRIVATE cyxwiz-training-core)
+add_test(NAME python_bundle_presentation COMMAND test_python_bundle_presentation)
+
+# Python node provider: scan, approval, refresh (TOFIX125 P4 step 4.4). No Python needed.
+add_executable(test_python_node_provider
+    tests/test_python_node_provider.cpp
+    src/extension/python/python_node_provider.cpp
+    src/extension/python/python_node_factory.cpp
+)
+target_link_libraries(test_python_node_provider PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_python_node_provider PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+if(CYXWIZ_HAS_PYTHON)
+    # The factory as the Engine builds it; the test never starts Python.
+    target_link_libraries(test_python_node_provider PRIVATE pybind11::embed)
+    target_compile_definitions(test_python_node_provider PRIVATE CYXWIZ_HAS_PYTHON)
+endif()
+add_test(NAME python_node_provider COMMAND test_python_node_provider)
+
+# Python nodes train through their bundle's factory (TOFIX125 P4 step 4.3).
+# Starts its own interpreter: the Python the build uses, pycyxwiz as built.
+if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
+    get_filename_component(_cyxwiz_test_python_home "${Python3_EXECUTABLE}" DIRECTORY)
+    add_executable(test_python_node_training
+        tests/test_python_node_training.cpp
+        src/extension/python/python_node_factory.cpp
+    )
+    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core pybind11::embed)
+    target_compile_definitions(test_python_node_training PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
+        CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_node_training>"
+        CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
+    add_dependencies(test_python_node_training pycyxwiz)
+    add_test(NAME python_node_training COMMAND test_python_node_training)
+
+    # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
+    add_executable(bench_python_node_cost
+        tests/bench_python_node_cost.cpp
+        src/extension/python/python_node_factory.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/plugin_loader.cpp
+    )
+    target_link_libraries(bench_python_node_cost PRIVATE
+        cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui pybind11::embed)
+    target_compile_definitions(bench_python_node_cost PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
+        CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:bench_python_node_cost>"
+        CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
+    add_dependencies(bench_python_node_cost pycyxwiz activation_nodes)
+endif()
 
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)

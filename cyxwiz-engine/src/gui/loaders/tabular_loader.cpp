@@ -201,6 +201,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const int64_t max_rows       = ctx.max_rows;
     const bool force_disk        = ctx.force_disk_backed;
     const std::string label_col  = ctx.label_column;
+    const std::string time_col   = ctx.time_column;
     const auto selected_columns  = ctx.selected_columns;
     const std::string ingestion_cache_directory =
         cyxwiz::ProjectManager::Instance().GetIngestionCachePath();
@@ -225,7 +226,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
         "Loading " + name,
         [path, name, file_type, archive_member, json_lines, has_header, delim, decimal_point, quote_char,
          use_threads,
-         missing_tokens, skip_rows, max_rows, force_disk, label_col,
+         missing_tokens, skip_rows, max_rows, force_disk, label_col, time_col,
          selected_columns, ingestion_cache_directory, state]
         (cyxwiz::LambdaTask& task) {
             try {
@@ -366,6 +367,22 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                              " - check file format";
                         }
                     }
+                }
+                // A time series keeps its rows in time order (windows and the
+                // chronological split follow the row order).
+                if (state->success && !time_col.empty()) {
+                    std::string sort_error;
+                    if (state->backend == 2) {
+                        state->success = false;
+                        state->message = "The table is kept on disk, so its rows cannot be put in time order "
+                                         "here. Clear Time column, or sort the file first.";
+                    } else if (!reg.SortArrowTableByColumn(name, time_col, sort_error)) {
+                        state->success = false;
+                        state->message = sort_error;
+                    } else {
+                        state->message += ", sorted by " + time_col;
+                    }
+                    if (!state->success) reg.UnregisterTabularDataset(name);
                 }
             } catch (const std::exception& e) {
                 state->success = false;
@@ -640,6 +657,7 @@ std::vector<ParamSchema> TabularLoader::NodeParams() const {
         {"max_rows",          "0",      "Max rows to load (0 = all)"},
         {"selected_columns",  "[]",     "JSON array of included column names"},
         {"label_column",      "",       "Column name used as training label"},
+        {"time_column",       "",       "Time series: rows sorted by this column"},
         {"force_disk_backed", "false",  "Force Parquet disk-backed cache"},
         {"sheet_idx",         "0",      "Excel sheet index"},
         {"sheet_range",       "",       "Excel cell range"},

@@ -219,6 +219,8 @@ public:
     void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
     void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
+    // Apps > a loaded plugin: show its nodes in the Node Browser (TOFIX125).
+    void SetShowPluginNodesCallback(std::function<void(const std::string&)> cb) { show_plugin_nodes_callback_ = std::move(cb); }
     void SetOpenDNNInferenceCallback(std::function<void()> cb) { open_dnn_inference_callback_ = cb; }
 
     // Clustering callbacks (Phase 6A)
@@ -675,6 +677,7 @@ private:
     std::function<void()> open_nas_callback_;
     std::function<void()> open_hyperparam_search_callback_;
     std::function<void()> open_serving_callback_;
+    std::function<void(const std::string&)> show_plugin_nodes_callback_;
     std::function<void()> open_dnn_inference_callback_;
 
     // Clustering callbacks (Phase 6A)

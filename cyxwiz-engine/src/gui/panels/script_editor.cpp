@@ -1,3 +1,5 @@
+// First: node_metadata.h names ::gui types, which a later cyxwiz::gui would hide.
+#include "create_node_dialog.h"
 #include "../appearance_settings.h"
 #include "script_editor.h"
 #include "output_renderer.h"
@@ -11,6 +13,7 @@
 #include "../../core/keyboard_shortcuts.h"
 #include "../../core/script_keys.h"
 #include "../separate_windows.h"
+#include "../../core/project_manager.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -49,7 +52,27 @@ void ScriptEditorPanel::SetFontScale(float scale) {
     font_scale_ = gui::CodeFontScale();
 }
 
+std::string ScriptEditorPanel::CreateNodeDisabledReason() const {
+#ifndef CYXWIZ_HAS_PYTHON
+    return "Python is not available in this build of CyxWiz";
+#else
+    if (script_running_) return "A script is running";
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size()) || !tabs_[active_tab_index_]) {
+        return "Open the Python script that defines the nodes";
+    }
+    const EditorTab& tab = *tabs_[active_tab_index_];
+    if (tab.is_new || tab.filepath.empty()) return "Save the script first";
+    if (std::filesystem::path(tab.filepath).extension() != ".py") return "Nodes are created from a .py file";
+    if (tab.is_modified) return "Save the script first";
+    if (!cyxwiz::ProjectManager::Instance().HasActiveProject()) {
+        return "Open a project: the nodes go into its nodes folder";
+    }
+    return {};
+#endif
+}
+
 void ScriptEditorPanel::Render() {
+    if (create_node_dialog_) create_node_dialog_->Render();
     if (!visible_) return;
 
     // Code text size is Engine-wide; follow it when Preferences changes it.
@@ -271,6 +294,15 @@ void ScriptEditorPanel::RenderMenuBar() {
             ImGui::Separator();
             if (ImGui::MenuItem("Debug", "F10", false, IsActiveTabEditable() && not_running)) {
                 Debug();
+            }
+            ImGui::Separator();
+            const std::string create_reason = CreateNodeDisabledReason();
+            if (ImGui::MenuItem("Create node from script...", nullptr, false, create_reason.empty())) {
+                if (!create_node_dialog_) create_node_dialog_ = std::make_unique<CreateNodeDialog>();
+                create_node_dialog_->Open(tabs_[active_tab_index_]->filepath, scripting_engine_);
+            }
+            if (!create_reason.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ui::Tooltip(create_reason.c_str());
             }
             ImGui::EndMenu();
         }

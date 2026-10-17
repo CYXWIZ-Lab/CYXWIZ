@@ -4,9 +4,12 @@
 #include "properties_node_editors.h"
 #include "node_editor.h"
 #include "properties_rows.h"
+#include "properties_extension_node.h"
 #include "../core/file_dialogs.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
+#include "file_browser_launch.h"
+#include "python_bundle_ui.h"
 #include "icons.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
@@ -15,6 +18,7 @@
 #include <imgui.h>
 
 #include <cstring>
+#include <filesystem>
 #include <set>
 #include <string>
 
@@ -65,8 +69,17 @@ void RenderMissingExtension(const MLNode& node, RenderNodePropertiesContext cont
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
-    if (cyxwiz::ui::PrimaryButton("Open Plugin Manager", context.node_editor != nullptr,
-                                  "The node editor is not available", cyxwiz::ui::ButtonSize::Small)) {
+    if (!node.extension_content_hash.empty()) {
+        // A Python bundle node (saved with its code hash): show where bundles go.
+        const auto roots = cyxwiz::python_ui::CurrentRoots();
+        const auto folder = roots.project_nodes.empty() ? roots.user_nodes : roots.project_nodes;
+        if (cyxwiz::ui::PrimaryButton("Open nodes folder", true, nullptr, cyxwiz::ui::ButtonSize::Small)) {
+            std::error_code ec;
+            std::filesystem::create_directories(folder, ec);
+            cyxwiz::LaunchAssetInFileBrowser(folder.string(), true);
+        }
+    } else if (cyxwiz::ui::PrimaryButton("Open Plugin Manager", context.node_editor != nullptr,
+                                         "The node editor is not available", cyxwiz::ui::ButtonSize::Small)) {
         context.node_editor->OpenPluginManager();
     }
     auto& open = OpenMissingDetails();
@@ -233,31 +246,8 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
         return;
     }
 
-    // Generic plugin node: one text row per parameter (internal keys hidden).
-    {
-        properties_rows::Rows rows("##plugin");
-        if (!rows.ok) return;
-        std::vector<std::string> keys;
-        for (const auto& [key, value] : node.parameters) {
-            if (!key.starts_with("_meta_")) keys.push_back(key);
-        }
-        for (const auto& key : keys) {
-            char buf[512];
-            std::strncpy(buf, node.parameters[key].c_str(), sizeof(buf) - 1);
-            buf[sizeof(buf) - 1] = '\0';
-            properties_rows::Label(key.c_str());
-            ImGui::PushID(key.c_str());
-            if (ImGui::InputText("##v", buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                node.parameters[key] = buf;
-                if (node.has_dynamic_pins && key == node.dynamic_pin_trigger && context.node_editor) {
-                    context.node_editor->ResolveDynamicPins(node.id);
-                }
-                context.invalidate_shapes();
-            }
-            ImGui::PopID();
-            properties_rows::Status(key.c_str());
-        }
-    }
+    if (!descriptor.has_value()) return;
+    RenderInstalledExtensionProperties(node, *descriptor, context);
     ModelInfo(node);
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "Inputs: %d \xC2\xB7 Outputs: %d",

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <map>
 #include <set>
 
@@ -75,6 +76,7 @@ std::vector<ExtensionPaletteEntry> BuildExtensionPalette(
         entry.pins_summary = PinsSummary(descriptor);
         entry.hint = "Double-click or drag to add";
         entry.color = descriptor.color;
+        entry.python_bundle = descriptor.source == ExtensionSource::PythonBundle;
         group_order.emplace(entry.group, group_order.size());
         entries.push_back(std::move(entry));
     }
@@ -98,18 +100,27 @@ std::string ExtensionPaletteSummary(
     const std::vector<ExtensionPaletteEntry>& entries,
     const std::vector<std::pair<std::string, std::string>>& provider_names) {
     if (entries.empty()) return "No nodes";
-    std::set<std::string> providers;
+    std::set<std::string> plugins;
+    std::set<std::string> bundles;
     for (const auto& entry : entries) {
         std::string provider_id;
         std::string type_name;
-        if (SplitExtensionTypeId(entry.type_id, provider_id, type_name)) providers.insert(provider_id);
+        if (SplitExtensionTypeId(entry.type_id, provider_id, type_name)) {
+            (entry.python_bundle ? bundles : plugins).insert(provider_id);
+        }
     }
     const std::string count =
         std::to_string(entries.size()) + (entries.size() == 1 ? " node" : " nodes");
-    if (providers.size() == 1) {
-        return count + " from " + ProviderName(*providers.begin(), provider_names);
+    if (plugins.size() + bundles.size() == 1) {
+        return count + " from " + ProviderName(plugins.empty() ? *bundles.begin() : *plugins.begin(), provider_names);
     }
-    return count + " from " + std::to_string(providers.size()) + " plugins";
+    std::string from;
+    if (!plugins.empty()) from = std::to_string(plugins.size()) + (plugins.size() == 1 ? " plugin" : " plugins");
+    if (!bundles.empty()) {
+        from += (from.empty() ? "" : " and ") + std::to_string(bundles.size()) +
+                (bundles.size() == 1 ? " Python bundle" : " Python bundles");
+    }
+    return count + " from " + from;
 }
 
 ExtensionCanvasStyle BuildExtensionCanvasStyle(const gui::MLNode& node,
@@ -127,8 +138,38 @@ ExtensionCanvasStyle BuildExtensionCanvasStyle(const gui::MLNode& node,
 }
 
 ExtensionInfoFacts BuildExtensionInfoFacts(const ExtensionNodeDescriptor& descriptor,
-                                           const ExtensionProviderInfo& provider) {
+                                           const ExtensionProviderInfo& provider,
+                                           const ExtensionPythonState* python) {
     ExtensionInfoFacts facts;
+    if (descriptor.source == ExtensionSource::PythonBundle) {
+        const bool approved = python && python->approved;
+        facts.category_line = descriptor.menu_category.empty()
+            ? std::string("Python nodes")
+            : "Python nodes / " + descriptor.menu_category;
+        facts.chips.push_back(kExtensionPythonBadge);
+        facts.chips.push_back(KindChip(descriptor.kind));
+        if (!approved) facts.chips.push_back("Code not approved");
+        const auto add = [&](const char* key, const std::string& value) {
+            if (!value.empty()) facts.provided_by.emplace_back(key, value);
+        };
+        std::string folder_name = std::filesystem::path(descriptor.source_path).filename().string();
+        if (folder_name.size() > 8 && folder_name.compare(folder_name.size() - 8, 8, ".cyxnode") == 0) {
+            folder_name.resize(folder_name.size() - 8);
+        }
+        add("Python bundle", folder_name.empty() ? descriptor.provider_id
+                                                 : folder_name + " (" + descriptor.provider_id + ")");
+        add("Node version", descriptor.version);
+        add("Approval", approved ? (python->approved_on.empty() ? std::string("Approved")
+                                                                : "Approved " + python->approved_on)
+                                 : std::string("Not approved yet"));
+        const auto colon = descriptor.content_hash.find(':');
+        const std::string digits =
+            colon == std::string::npos ? descriptor.content_hash : descriptor.content_hash.substr(colon + 1);
+        if (!digits.empty()) add("Code sha256", digits.substr(0, 12) + "...");  // the UI font has no ellipsis glyph
+        add("Type id", descriptor.type_id);
+        add("Folder", descriptor.source_path);
+        return facts;
+    }
     facts.category_line = descriptor.menu_category.empty()
         ? std::string("Plugins")
         : "Plugins / " + descriptor.menu_category;
@@ -158,9 +199,15 @@ ExtensionMissingCard BuildExtensionMissingCard(const gui::MLNode& node) {
     std::string provider_id;
     std::string type_name;
     const bool split = SplitExtensionTypeId(node.extension_type_id, provider_id, type_name);
-    card.lines.push_back(split
-        ? "Load the plugin " + provider_id + " in the Plugin Manager, or delete the node."
-        : std::string("Load the plugin that provides it in the Plugin Manager, or delete the node."));
+    if (!node.extension_content_hash.empty()) {
+        // Saved with a code hash: a Python bundle node (plugins save none).
+        card.lines.push_back("Put the Python bundle " + (split ? provider_id : std::string("that provides it")) +
+                             " in this project's nodes folder or in your user nodes folder, or delete the node.");
+    } else {
+        card.lines.push_back(split
+            ? "Load the plugin " + provider_id + " in the Plugin Manager, or delete the node."
+            : std::string("Load the plugin that provides it in the Plugin Manager, or delete the node."));
+    }
 
     card.details.emplace_back("Type id", node.extension_type_id.empty() ? "(none)" : node.extension_type_id);
     card.details.emplace_back("Saved version", node.extension_version.empty() ? "(none)" : node.extension_version);

@@ -1,4 +1,5 @@
 #include "node_info_panel.h"
+#include "../python_bundle_ui.h"
 #include "../icons.h"
 #include "../node_editor.h"
 #include "../ui_tokens.h"
@@ -179,7 +180,8 @@ std::optional<NodeInfoPanel::ExtensionView> NodeInfoPanel::BuildExtensionView(co
     view.metadata = descriptor->metadata;
     // The engine's plug icon, as the catalog uses for plugin nodes.
     if (view.metadata.icon.empty()) view.metadata.icon = ICON_FA_PLUG;
-    view.facts = BuildExtensionInfoFacts(*descriptor, provider);
+    const ExtensionPythonState python = python_ui::StateOf(descriptor->provider_id);
+    view.facts = BuildExtensionInfoFacts(*descriptor, provider, &python);
     return view;
 }
 

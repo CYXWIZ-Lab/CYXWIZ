@@ -77,6 +77,12 @@ public:
     void ClearSearch();
 
     /**
+     * Show the nodes one plugin adds (Apps > a loaded plugin, TOFIX125):
+     * the Plugins page narrowed to that plugin, the window shown and focused.
+     */
+    void ShowPluginNodes(const std::string& provider_id);
+
+    /**
      * Process keyboard shortcuts
      * Call from main window to handle global shortcuts
      * Returns true if shortcut was handled
@@ -157,6 +163,8 @@ private:
     // Navigation state (breadcrumb)
     bool showing_all_in_category_ = false;
     cyxwiz::NodeCategory current_category_ = cyxwiz::NodeCategory::Unknown;
+    std::string provider_filter_;  // the Plugins page shows only this plugin
+    bool focus_window_next_frame_ = false;
 
     // Category expansion state (for collapsed view)
     std::unordered_map<cyxwiz::NodeCategory, bool> category_show_all_;

@@ -51,7 +51,9 @@ Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
         squared.eval();
         af::array loss = loss_detail::ApplyReduction(squared, reduction_);
 
-        return loss_detail::AfToTensor(loss);
+        return reduction_ == Reduction::None
+                   ? loss_detail::AfToTensor(loss, predictions.Shape())
+                   : loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -74,7 +76,7 @@ Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         af::array grad = diff * scale;
         grad.eval();
 
-        return loss_detail::AfToTensor(grad);
+        return loss_detail::AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -91,7 +93,9 @@ Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
         diff.eval();
         af::array loss = loss_detail::ApplyReduction(diff, reduction_);
 
-        return loss_detail::AfToTensor(loss);
+        return reduction_ == Reduction::None
+                   ? loss_detail::AfToTensor(loss, predictions.Shape())
+                   : loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -114,7 +118,7 @@ Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
             grad.eval();
         }
 
-        return loss_detail::AfToTensor(grad);
+        return loss_detail::AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -145,7 +149,9 @@ Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
         loss.eval();
         loss = loss_detail::ApplyReduction(loss, reduction_);
 
-        return loss_detail::AfToTensor(loss);
+        return reduction_ == Reduction::None
+                   ? loss_detail::AfToTensor(loss, predictions.Shape())
+                   : loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -181,7 +187,7 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
             grad.eval();
         }
 
-        return loss_detail::AfToTensor(grad);
+        return loss_detail::AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -204,7 +210,9 @@ Tensor HuberLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         af::array loss = af::select(abs_diff < delta_, quadratic, linear);
         loss.eval();
         loss = loss_detail::ApplyReduction(loss, reduction_);
-        return loss_detail::AfToTensor(loss);
+        return reduction_ == Reduction::None
+                   ? loss_detail::AfToTensor(loss, predictions.Shape())
+                   : loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
@@ -229,7 +237,7 @@ Tensor HuberLoss::Backward(const Tensor& predictions, const Tensor& targets) {
             grad = grad / static_cast<float>(pred.elements());
             grad.eval();
         }
-        return loss_detail::AfToTensor(grad);
+        return loss_detail::AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }

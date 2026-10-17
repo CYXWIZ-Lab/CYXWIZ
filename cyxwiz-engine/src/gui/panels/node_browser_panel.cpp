@@ -1,4 +1,5 @@
 #include "node_browser_panel.h"
+#include "../python_bundle_ui.h"
 #include "../node_editor.h"
 #include "../../core/node_metadata_registry.h"
 #include "../../core/node_palette.h"
@@ -165,6 +166,10 @@ void NodeBrowserPanel::Render() {
 
     ImGui::SetNextWindowSizeConstraints(ImVec2(PANEL_MIN_WIDTH, 300), ImVec2(450, FLT_MAX));
 
+    if (focus_window_next_frame_) {
+        ImGui::SetNextWindowFocus();
+        focus_window_next_frame_ = false;
+    }
     if (ImGui::Begin("Nodes", &visible_)) {
         RenderHeader();
         RenderSearchBar();
@@ -323,6 +328,16 @@ void NodeBrowserPanel::ClearSearch() {
     search_query_.clear();
     showing_all_in_category_ = false;
     current_category_ = cyxwiz::NodeCategory::Unknown;
+    provider_filter_.clear();
+}
+
+void NodeBrowserPanel::ShowPluginNodes(const std::string& provider_id) {
+    ClearSearch();
+    support_filter_mode_ = SupportFilterMode::All;
+    NavigateToCategory(cyxwiz::NodeCategory::Plugin);
+    provider_filter_ = provider_id;
+    visible_ = true;
+    focus_window_next_frame_ = true;
 }
 
 bool NodeBrowserPanel::HandleKeyboardShortcuts() {
@@ -909,8 +924,18 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
     // built-in nodes by their support facts, which extension nodes lack.
     if (support_filter_mode_ != SupportFilterMode::All) return;
 
-    const auto entries =
-        cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All());
+    auto entries = cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All());
+    // Narrowed to one plugin (Apps > a loaded plugin).
+    if (show_all && !provider_filter_.empty()) {
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                     [&](const cyxwiz::ExtensionPaletteEntry& entry) {
+                                         std::string provider_id;
+                                         std::string type_name;
+                                         return !cyxwiz::SplitExtensionTypeId(entry.type_id, provider_id, type_name) ||
+                                                provider_id != provider_filter_;
+                                     }),
+                      entries.end());
+    }
     std::vector<std::pair<std::string, std::string>> provider_names;
     for (const auto& entry : entries) {
         std::string provider_id;
@@ -920,6 +945,7 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
             provider_names.emplace_back(provider_id, plugin->manifest.name);
         }
     }
+    for (auto& name : cyxwiz::python_ui::BundleNames()) provider_names.push_back(std::move(name));
 
     // Section header, as other categories draw it, with the summary.
     const std::string cat_name = cyxwiz::GetCategoryDisplayName(cyxwiz::NodeCategory::Plugin);
@@ -928,6 +954,9 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", cyxwiz::ExtensionPaletteSummary(entries, provider_names).c_str());
     ImGui::PopStyleColor();
+    if (show_all && !provider_filter_.empty()) {
+        if (cyxwiz::ui::LinkButton("Show all plugins##provider_filter")) provider_filter_.clear();
+    }
 
     if (entries.empty()) {
         ImGui::PushID("no_extension_nodes");
@@ -1375,12 +1404,14 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 }
 
 void NodeBrowserPanel::NavigateToCategory(cyxwiz::NodeCategory category) {
+    provider_filter_.clear();
     showing_all_in_category_ = true;
     current_category_ = category;
     category_show_all_[category] = true;
 }
 
 void NodeBrowserPanel::NavigateBack() {
+    provider_filter_.clear();
     showing_all_in_category_ = false;
     current_category_ = cyxwiz::NodeCategory::Unknown;
     // Reset all category show_all states

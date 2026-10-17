@@ -7,7 +7,9 @@
 #include "sql_workbench.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
-#include "../core/file_dialogs.h"
+#include "ui_widgets.h"
+#include "../core/project_data_path.h"
+#include "../core/project_manager.h"
 #include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -23,77 +25,8 @@
 
 namespace gui {
 
-namespace {
-
-cyxwiz::FileDialogs::FilterList ConvertWindowsFilter(const char* filter) {
-    cyxwiz::FileDialogs::FilterList filters;
-    if (!filter) {
-        return {{"All Files", "*"}};
-    }
-
-    const char* cursor = filter;
-    while (*cursor) {
-        std::string label(cursor);
-        cursor += label.size() + 1;
-        if (!*cursor) {
-            break;
-        }
-
-        std::string extensions;
-        std::string pattern(cursor);
-        cursor += pattern.size() + 1;
-        size_t start = 0;
-        while (start <= pattern.size()) {
-            const size_t end = pattern.find(';', start);
-            std::string extension = pattern.substr(start, end - start);
-            if (extension == "*" || extension == "*.*") {
-                extensions = "*";
-                break;
-            }
-            if (extension.rfind("*.", 0) == 0) {
-                extension.erase(0, 2);
-            } else if (extension.rfind('.', 0) == 0) {
-                extension.erase(0, 1);
-            }
-            if (!extension.empty()) {
-                if (!extensions.empty()) {
-                    extensions += ',';
-                }
-                extensions += extension;
-            }
-            if (end == std::string::npos) {
-                break;
-            }
-            start = end + 1;
-        }
-        if (!extensions.empty()) {
-            filters.emplace_back(std::move(label), std::move(extensions));
-        }
-    }
-
-    return filters.empty() ? cyxwiz::FileDialogs::FilterList{{"All Files", "*"}} : filters;
-}
-
-} // namespace
-
 // Alias to avoid any potential macro conflicts
 using NT = NodeType;
-
-namespace {
-
-void HelpTooltip(const char* text) {
-    ImGui::SameLine();
-    ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-        ImGui::TextUnformatted(text);
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
-    }
-}
-
-} // namespace
 
 // ==================== NodeConfigDialog Base ====================
 
@@ -200,417 +133,10 @@ void NodeConfigDialog::RenderFooter(bool& should_close) {
     }
 }
 
-bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const char* filter) {
-    bool changed = false;
-
-    char buf[512];
-    strncpy(buf, path.c_str(), sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
-
-    ImGui::TextUnformatted(label);
-    const float browse = cyxwiz::ui::ButtonWidth("Browse...", cyxwiz::ui::ButtonSize::Regular);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse - ImGui::GetStyle().ItemSpacing.x);
-    if (ImGui::InputText("##filepath", buf, sizeof(buf))) {
-        path = buf;
-        changed = true;
-    }
-    ImGui::SameLine();
-    if (cyxwiz::ui::SecondaryButton("Browse...", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
-        const char* default_path = path.empty() ? nullptr : path.c_str();
-        if (auto selected = cyxwiz::FileDialogs::OpenFile(
-                "Select File", ConvertWindowsFilter(filter), default_path)) {
-            path = *selected;
-            changed = true;
-        }
-    }
-
-    return changed;
-}
-
 void NodeConfigDialog::ValidationMessage(const std::string& message, bool is_error) {
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImVec4 color = is_error ? t.error : t.success;
     ImGui::TextColored(color, "%s", message.c_str());
-}
-
-// ==================== CSVReaderDialog ====================
-
-CSVReaderDialog::CSVReaderDialog(MLNode* node)
-    : NodeConfigDialog("CSV Reader Configuration", node)
-{
-    if (node_) {
-        // Initialize from node parameters
-        if (node_->parameters.count("file_path")) {
-            strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
-        }
-        if (node_->parameters.count("delimiter")) {
-            std::string delim = node_->parameters["delimiter"];
-            if (delim == ",") delimiter_idx_ = 0;
-            else if (delim == ";") delimiter_idx_ = 1;
-            else if (delim == "\\t" || delim == "\t") delimiter_idx_ = 2;
-            else {
-                delimiter_idx_ = 3;
-                strncpy(custom_delimiter_, delim.c_str(), sizeof(custom_delimiter_) - 1);
-            }
-        }
-        if (node_->parameters.count("has_header")) {
-            has_header_ = (node_->parameters["has_header"] == "true");
-        }
-        if (node_->parameters.count("skip_first_n")) {
-            try { skip_first_n_ = std::stoi(node_->parameters["skip_first_n"]); } catch (...) {}
-        }
-        if (node_->parameters.count("limit_rows")) {
-            try { limit_rows_ = std::stoi(node_->parameters["limit_rows"]); } catch (...) {}
-        }
-    }
-}
-
-void CSVReaderDialog::Apply() {
-    if (!node_) return;
-
-    node_->parameters["file_path"] = file_path_;
-
-    switch (delimiter_idx_) {
-        case 0: node_->parameters["delimiter"] = ","; break;
-        case 1: node_->parameters["delimiter"] = ";"; break;
-        case 2: node_->parameters["delimiter"] = "\\t"; break;
-        case 3: node_->parameters["delimiter"] = custom_delimiter_; break;
-    }
-
-    node_->parameters["has_header"] = has_header_ ? "true" : "false";
-    node_->parameters["skip_empty_lines"] = skip_empty_lines_ ? "true" : "false";
-    node_->parameters["skip_first_n"] = std::to_string(skip_first_n_);
-    node_->parameters["limit_rows"] = std::to_string(limit_rows_);
-
-    has_changes_ = false;
-    spdlog::info("CSVReaderDialog: Applied settings for file '{}'", file_path_);
-}
-
-void CSVReaderDialog::Reset() {
-    if (!node_) return;
-
-    node_->parameters = original_params_;
-
-    // Re-initialize UI state
-    if (original_params_.count("file_path")) {
-        strncpy(file_path_, original_params_["file_path"].c_str(), sizeof(file_path_) - 1);
-    }
-
-    preview_loaded_ = false;
-    has_changes_ = false;
-}
-
-void CSVReaderDialog::RenderContent() {
-    // Tab bar
-    if (ImGui::BeginTabBar("CSVTabs")) {
-        if (ImGui::BeginTabItem("Settings")) {
-            RenderFileSettingsTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Transformation")) {
-            RenderTransformationTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Advanced Settings")) {
-            RenderAdvancedSettingsTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Limit Rows")) {
-            RenderLimitRowsTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Preview")) {
-            RenderPreviewTab();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-}
-
-void CSVReaderDialog::RenderFileSettingsTab() {
-    ImGui::Spacing();
-
-    // File path selector
-    std::string path_str = file_path_;
-    if (FileSelector("Input File:", path_str, "CSV Files\0*.csv\0All Files\0*.*\0")) {
-        strncpy(file_path_, path_str.c_str(), sizeof(file_path_) - 1);
-        preview_loaded_ = false;
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Column Delimiter
-    ImGui::Text("Column Delimiter:");
-    const char* delimiters[] = { "Comma (,)", "Semicolon (;)", "Tab", "Custom" };
-    ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::Combo("##delimiter", &delimiter_idx_, delimiters, 4)) {
-        preview_loaded_ = false;
-        has_changes_ = true;
-    }
-
-    if (delimiter_idx_ == 3) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60.0f);
-        if (ImGui::InputText("##custom_delim", custom_delimiter_, sizeof(custom_delimiter_))) {
-            preview_loaded_ = false;
-            has_changes_ = true;
-        }
-    }
-
-    ImGui::Spacing();
-
-    // Has header row
-    if (ImGui::Checkbox("Has column header in first row", &has_header_)) {
-        preview_loaded_ = false;
-        has_changes_ = true;
-    }
-
-    // Skip empty lines
-    if (ImGui::Checkbox("Skip empty lines", &skip_empty_lines_)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // File info
-    if (file_path_[0] != '\0') {
-        std::ifstream test_file(file_path_);
-        if (test_file.good()) {
-            test_file.seekg(0, std::ios::end);
-            auto size = test_file.tellg();
-            test_file.close();
-
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "File found");
-            ImGui::Text("Size: %.2f KB", static_cast<float>(size) / 1024.0f);
-        } else {
-            ValidationMessage("File not found or cannot be opened");
-        }
-    }
-}
-
-void CSVReaderDialog::RenderTransformationTab() {
-    ImGui::Spacing();
-    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "Column transformation options will be available here.");
-    ImGui::Spacing();
-
-    ImGui::Text("Available transformations:");
-    ImGui::BulletText("Column type inference");
-    ImGui::BulletText("Column renaming");
-    ImGui::BulletText("Column filtering");
-    ImGui::BulletText("Missing value handling");
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("(Configure after loading file in Preview tab)");
-}
-
-void CSVReaderDialog::RenderAdvancedSettingsTab() {
-    ImGui::Spacing();
-
-    // Skip first N rows
-    ImGui::Text("Skip first N rows (after header):");
-    ImGui::SetNextItemWidth(120.0f);
-    if (ImGui::InputInt("##skip_rows", &skip_first_n_)) {
-        if (skip_first_n_ < 0) skip_first_n_ = 0;
-        preview_loaded_ = false;
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Encoding options
-    ImGui::Text("Character Encoding:");
-    const char* encodings[] = { "UTF-8", "ASCII", "ISO-8859-1", "Windows-1252" };
-    static int encoding_idx = 0;
-    ImGui::SetNextItemWidth(200.0f);
-    ImGui::Combo("##encoding", &encoding_idx, encodings, 4);
-
-    ImGui::Spacing();
-
-    // Quote character
-    ImGui::Text("Quote Character:");
-    static char quote_char[4] = "\"";
-    ImGui::SetNextItemWidth(60.0f);
-    ImGui::InputText("##quote", quote_char, sizeof(quote_char));
-
-    ImGui::Spacing();
-
-    // Comment character
-    ImGui::Text("Comment Character:");
-    static char comment_char[4] = "#";
-    ImGui::SetNextItemWidth(60.0f);
-    ImGui::InputText("##comment", comment_char, sizeof(comment_char));
-    ImGui::SameLine();
-    ImGui::TextDisabled("(Lines starting with this are skipped)");
-}
-
-void CSVReaderDialog::RenderLimitRowsTab() {
-    ImGui::Spacing();
-
-    ImGui::Text("Limit number of rows to read:");
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputInt("##limit_rows", &limit_rows_)) {
-        if (limit_rows_ < 1) limit_rows_ = 1;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(0 = no limit)");
-
-    ImGui::Spacing();
-
-    static bool limit_enabled = true;
-    ImGui::Checkbox("Enable row limit", &limit_enabled);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim,
-        "Note: Row limits are useful for:\n"
-        "- Testing pipelines with large files\n"
-        "- Memory management\n"
-        "- Quick previews");
-}
-
-void CSVReaderDialog::RenderPreviewTab() {
-    ImGui::Spacing();
-
-    // Load preview button
-    if (ImGui::Button("Load Preview") || (!preview_loaded_ && file_path_[0] != '\0')) {
-        LoadPreview();
-    }
-
-    if (!preview_error_.empty()) {
-        ImGui::Spacing();
-        ValidationMessage(preview_error_);
-        return;
-    }
-
-    if (!preview_loaded_) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("Select a file and click 'Load Preview'");
-        return;
-    }
-
-    ImGui::Spacing();
-    ImGui::Text("Showing first %d rows", static_cast<int>(preview_rows_.size()));
-    ImGui::Separator();
-
-    // Preview table
-    if (!preview_headers_.empty()) {
-        ImGuiTableFlags flags = ImGuiTableFlags_Borders |
-                                ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_Resizable |
-                                ImGuiTableFlags_ScrollX |
-                                ImGuiTableFlags_ScrollY;
-
-        int num_cols = static_cast<int>(preview_headers_.size());
-        if (num_cols > 20) num_cols = 20;  // Limit columns for display
-
-        if (ImGui::BeginTable("##preview_table", num_cols, flags, ImVec2(0, 300))) {
-            // Header row
-            for (int col = 0; col < num_cols; col++) {
-                ImGui::TableSetupColumn(preview_headers_[col].c_str());
-            }
-            ImGui::TableHeadersRow();
-
-            // Data rows
-            for (const auto& row : preview_rows_) {
-                ImGui::TableNextRow();
-                for (int col = 0; col < num_cols && col < static_cast<int>(row.size()); col++) {
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(row[col].c_str());
-                }
-            }
-
-            ImGui::EndTable();
-        }
-    }
-}
-
-void CSVReaderDialog::LoadPreview() {
-    preview_headers_.clear();
-    preview_rows_.clear();
-    preview_error_.clear();
-    preview_loaded_ = false;
-
-    if (file_path_[0] == '\0') {
-        preview_error_ = "No file selected";
-        return;
-    }
-
-    std::ifstream file(file_path_);
-    if (!file.good()) {
-        preview_error_ = "Cannot open file: " + std::string(file_path_);
-        return;
-    }
-
-    // Determine delimiter
-    char delim = ',';
-    switch (delimiter_idx_) {
-        case 0: delim = ','; break;
-        case 1: delim = ';'; break;
-        case 2: delim = '\t'; break;
-        case 3: delim = custom_delimiter_[0]; break;
-    }
-
-    std::string line;
-    int line_num = 0;
-    int preview_limit = 100;  // Preview first 100 rows
-
-    while (std::getline(file, line) && line_num < preview_limit + skip_first_n_ + (has_header_ ? 1 : 0)) {
-        // Skip empty lines if configured
-        if (skip_empty_lines_ && line.empty()) continue;
-
-        // Skip first N rows
-        if (line_num < skip_first_n_) {
-            line_num++;
-            continue;
-        }
-
-        // Parse line
-        std::vector<std::string> cells;
-        std::stringstream ss(line);
-        std::string cell;
-
-        while (std::getline(ss, cell, delim)) {
-            // Trim whitespace
-            size_t start = cell.find_first_not_of(" \t\r\n");
-            size_t end = cell.find_last_not_of(" \t\r\n");
-            if (start != std::string::npos) {
-                cell = cell.substr(start, end - start + 1);
-            } else {
-                cell.clear();
-            }
-            cells.push_back(cell);
-        }
-
-        // First row after skip is header (if has_header)
-        if (has_header_ && line_num == skip_first_n_) {
-            preview_headers_ = cells;
-        } else {
-            preview_rows_.push_back(cells);
-        }
-
-        line_num++;
-    }
-
-    // Generate default headers if no header row
-    if (!has_header_ && !preview_rows_.empty()) {
-        for (size_t i = 0; i < preview_rows_[0].size(); i++) {
-            preview_headers_.push_back("Column " + std::to_string(i + 1));
-        }
-    }
-
-    preview_loaded_ = true;
-    spdlog::info("CSVReaderDialog: Loaded preview with {} columns, {} rows",
-                 preview_headers_.size(), preview_rows_.size());
 }
 
 // ==================== TokenizerDialog ====================
@@ -1085,155 +611,281 @@ void TokenizerDialog::TakeColumnsFromInput() {
     }
 }
 
+namespace {
+
+constexpr float kTokLabel = 170.0f;
+
+// A muted label whose hover text is the help (the old "(?)" marks), then the
+// control at the label column.
+void TokLabel(const char* label, const char* help) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", label);
+    if (help && ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+        ImGui::TextUnformatted(help);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+    ImGui::SameLine(kTokLabel);
+}
+
+// Lines of a vocabulary file and how many are not valid UTF-8 (byte tokens
+// saved before the 2026-10-16 tokenizer fix, TOFIX155).
+struct VocabFacts {
+    size_t entries = 0;
+    size_t broken = 0;
+    bool found = false;
+};
+
+bool ValidUtf8(const std::string& s) {
+    size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        const size_t n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 0;
+        if (n == 0 || i + n > s.size()) return false;
+        for (size_t k = 1; k < n; ++k)
+            if ((static_cast<unsigned char>(s[i + k]) >> 6) != 0x2) return false;
+        i += n;
+    }
+    return true;
+}
+
+VocabFacts ReadVocabFacts(const std::string& path) {
+    VocabFacts facts;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return facts;
+    facts.found = true;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        ++facts.entries;
+        if (!ValidUtf8(line)) ++facts.broken;
+    }
+    return facts;
+}
+
+// The dialog's tokenizer_type index for each "Split into" choice, in the
+// order shown (SentencePiece only appears for a node that already uses it).
+constexpr int kSplitTypes[] = {0, 1, 2, 4, 3};
+const char* kSplitLabels[] = {"Spaces", "Words", "Characters", "WordPiece", "Byte BPE"};
+
+const char* SplitDescription(int type) {
+    switch (type) {
+        case 0: return "Spaces: splits on whitespace only; punctuation stays on the word.";
+        case 2: return "Characters: one token per character.";
+        case 3: return "Byte BPE: learned sub-word pieces over bytes; keeps case and spaces.";
+        case 4: return "WordPiece: words split into ## continuation pieces, longest match first.";
+        case 5:
+        case 6: return "SentencePiece is the optional provider path, not in this build: Run Pipeline refuses it.";
+        default:
+            return "Words: runs of letters and digits of any script (\"caf\xC3\xA9\" stays whole); punctuation and "
+                   "emoji end a word.";
+    }
+}
+
+}  // namespace
+
 void TokenizerDialog::RenderContent() {
     if (!columns_from_input_checked_) TakeColumnsFromInput();
+    // Tabs named by what is decided (board 4): Words, Vocabulary, Length, Try it.
     if (ImGui::BeginTabBar("TextPreprocessingTabs")) {
-        if (IsTokenizerNode() && ImGui::BeginTabItem("Tokenizer")) {
-            RenderTokenizerTab();
+        if (IsTokenizerNode() && ImGui::BeginTabItem("Words")) {
+            RenderWordsTab();
             ImGui::EndTabItem();
         }
-        if ((IsTokenizerNode() || IsVocabularyNode()) &&
-            ImGui::BeginTabItem("Vocabulary")) {
+        if ((IsTokenizerNode() || IsVocabularyNode()) && ImGui::BeginTabItem("Vocabulary")) {
             RenderVocabularyTab();
             ImGui::EndTabItem();
         }
-        if ((IsTokenizerNode() || IsPaddingNode()) &&
-            ImGui::BeginTabItem("Padding")) {
-            RenderPaddingTab();
+        if ((IsTokenizerNode() || IsPaddingNode()) && ImGui::BeginTabItem("Length")) {
+            RenderLengthTab();
             ImGui::EndTabItem();
         }
-        if (IsTokenizerNode() && ImGui::BeginTabItem("Preview")) {
-            RenderPreviewTab();
+        if (IsTokenizerNode() && ImGui::BeginTabItem("Try it")) {
+            RenderTryItTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
     }
 }
 
-void TokenizerDialog::RenderTokenizerTab() {
+void TokenizerDialog::ClearTryIt() {
+    try_message_.clear();
+    preview_tokens_.clear();
+    preview_token_ids_.clear();
+    preview_decoded_text_.clear();
+    preview_has_roundtrip_ = false;
+}
+
+void TokenizerDialog::RenderWordsTab() {
     ImGui::Spacing();
-
-    ImGui::Text("Text column:");
-    HelpTooltip("CSV/Arrow column that contains the raw sentences or documents. For the sentiment graph this is usually 'statement'.");
+    TokLabel("Text column", "The column holding the sentences or documents; for the sentiment graph 'statement'.");
     ImGui::SetNextItemWidth(240.0f);
-    if (ImGui::InputText("##text_col", text_col_, sizeof(text_col_))) {
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Label column:");
-    HelpTooltip("Optional target column used for supervised training. Leave blank for unlabeled text; for sentiment this is usually 'status'.");
+    if (ImGui::InputText("##text_col", text_col_, sizeof(text_col_))) has_changes_ = true;
+    TokLabel("Label column", "Optional target column for supervised training; empty for unlabeled text. For "
+                             "sentiment 'status'.");
     ImGui::SetNextItemWidth(240.0f);
-    if (ImGui::InputText("##label_col", label_col_, sizeof(label_col_))) {
+    if (ImGui::InputText("##label_col", label_col_, sizeof(label_col_))) has_changes_ = true;
+
+    ImGui::Spacing();
+    TokLabel("Split into", "How raw text is split before the vocabulary lookup.");
+    int choice = -1;
+    for (int i = 0; i < 5; ++i)
+        if (kSplitTypes[i] == tokenizer_type_) choice = i;
+    if (choice < 0) {
+        // A node using SentencePiece keeps it; the choice shows as none.
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, "SentencePiece (type %d)", tokenizer_type_);
+    } else if (cyxwiz::ui::SegmentedControl("##split_into", kSplitLabels, 5, &choice)) {
+        tokenizer_type_ = kSplitTypes[choice];
+        if (tokenizer_type_ == 3) lowercase_ = false;
         has_changes_ = true;
+        ClearTryIt();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("optional");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", SplitDescription(tokenizer_type_));
+    ImGui::PopTextWrapPos();
+
+    ImGui::BeginDisabled(tokenizer_type_ == 3);
+    if (ImGui::Checkbox("Lowercase first", &lowercase_)) {
+        has_changes_ = true;
+        ClearTryIt();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(tokenizer_type_ == 3 ? "Byte BPE keeps case."
+                                               : "Merges 'Happy' and 'happy'. Off when capitalization carries "
+                                                 "meaning.");
+
+    if (tokenizer_type_ == 3) RenderBpeOptions();
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Spacing();
+    RenderVocabularyCard();
+}
 
-    ImGui::Text("Tokenizer:");
-    HelpTooltip("Controls how raw text is split before vocabulary lookup: whitespace splits on spaces, word keeps words and punctuation, character emits one token per character.");
-    const char* methods[] = { "Whitespace", "Word", "Character", "BPE", "WordPiece" };
-    ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 5)) {
-        if (tokenizer_type_ == 3) lowercase_ = false;
-        has_changes_ = true;
-    }
-
+void TokenizerDialog::RenderBpeOptions() {
     ImGui::Spacing();
-    ImGui::BeginDisabled(tokenizer_type_ == 3);
-    if (ImGui::Checkbox("Convert to lowercase", &lowercase_)) {
+    TokLabel("Starting units", "Bytes starts with all 256 byte values. Unicode characters starts with each observed "
+                               "code point. Unseen characters become [UNK]; invalid UTF-8 is refused. A saved "
+                               "vocabulary owns its encoding; use a new file to refit.");
+    const char* unit_values[] = {"", "byte", "unicode_character"};
+    const char* unit_labels[] = {"Follow saved vocabulary", "Bytes (256)", "Unicode characters"};
+    const char* unit_label = "Unsupported unit - select a valid option";
+    for (int i = 0; i < 3; ++i) if (bpe_initial_unit_ == unit_values[i]) unit_label = unit_labels[i];
+    ImGui::SetNextItemWidth(280.0f);
+    if (ImGui::BeginCombo("##bpe_initial_unit", unit_label)) {
+        for (int i = 0; i < 3; ++i) {
+            if (ImGui::Selectable(unit_labels[i], bpe_initial_unit_ == unit_values[i])) {
+                bpe_initial_unit_ = unit_values[i];
+                has_changes_ = true;
+                ClearTryIt();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    TokLabel("Space handling", "Where BPE may learn merges. A saved vocabulary owns its policy; an explicit choice "
+                               "must match it. Changing token ids needs new windows and a compatible model.");
+    const char* values[] = {"", "whitespace_v1", "leading_space_v2"};
+    const char* labels[] = {"Follow saved vocabulary", "Separate spaces (v1)", "Merge leading space (v2)"};
+    const char* selected = "Unsupported policy - select a valid option";
+    for (int i = 0; i < 3; ++i) if (bpe_piece_policy_ == values[i]) selected = labels[i];
+    ImGui::SetNextItemWidth(280.0f);
+    if (ImGui::BeginCombo("##bpe_piece_policy", selected)) {
+        for (int i = 0; i < 3; ++i) {
+            if (ImGui::Selectable(labels[i], bpe_piece_policy_ == values[i])) {
+                bpe_piece_policy_ = values[i];
+                has_changes_ = true;
+                ClearTryIt();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Byte BPE preserves case and whitespace. Fit and save its vocabulary through Run Pipeline; "
+                        "reuse that file for validation, test and generation. Without a saved vocabulary it starts "
+                        "from bytes with separate spaces.");
+    ImGui::PopTextWrapPos();
+}
+
+void TokenizerDialog::RenderVocabularyCard() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Vocabulary");
+    const std::string path =
+        cyxwiz::ResolveProjectDataPath(vocab_file_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
+    if (path != vocab_card_path_) {
+        vocab_card_path_ = path;
+        const auto facts = path.empty() ? VocabFacts{} : ReadVocabFacts(path);
+        vocab_card_found_ = facts.found;
+        vocab_card_entries_ = facts.entries;
+        vocab_card_broken_ = facts.broken;
+    }
+    if (vocab_file_[0] == '\0') {
+        ImGui::TextColored(t.text_dim, "No vocabulary file: it is built from the training text when the graph runs.");
+    } else {
+        ImGui::TextColored(t.text_dim, "file");
+        ImGui::SameLine();
+        ImGui::TextUnformatted(std::filesystem::path(vocab_file_).filename().string().c_str());
+        ImGui::SameLine(0.0f, 16.0f);
+        if (vocab_card_found_) {
+            ImGui::Text("%s", std::to_string(vocab_card_entries_).c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "tokens");
+        } else {
+            ImGui::TextColored(vocab_build_if_missing_ ? t.text_dim : t.warning,
+                               vocab_build_if_missing_ ? "not built yet (built on the first run)" : "file not found");
+        }
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::TextColored(t.text_dim, "min frequency %d", min_word_freq_);
+        if (vocab_card_broken_ > 0) {
+            ImGui::TextColored(t.warning, "%zu tokens are broken bytes from before 2026-10-16: rebuild it",
+                               vocab_card_broken_);
+        }
+    }
+    if (cyxwiz::ui::SecondaryButton("Build and save vocabulary", source_csv_[0] != '\0',
+                                    "Set the source CSV in the Vocabulary tab", cyxwiz::ui::ButtonSize::Small)) {
+        BuildVocabularyFile();
         has_changes_ = true;
+        vocab_card_path_.clear();
     }
-    ImGui::EndDisabled();
-    if (tokenizer_type_ == 3) ImGui::TextWrapped("BPE preserves case and whitespace. Fit and save the vocabulary through Run Pipeline; reuse that artifact for validation, test and generation.");
-    if (IsTokenizerNode() && tokenizer_type_ == 3) {
-        ImGui::Spacing();
-        ImGui::Text("BPE starting units:");
-        HelpTooltip("Bytes starts with all 256 byte values. Unicode characters starts with each observed code point, not grapheme clusters. Unseen characters become [UNK]; invalid UTF-8 is rejected. Neither mode normalizes text. Saved artifacts own encoding; use a new file to refit.");
-        const char* unit_values[] = {"", "byte", "unicode_character"};
-        const char* unit_labels[] = {"Follow saved vocabulary", "Bytes (256)", "Unicode characters"};
-        const char* unit_label = "Unsupported unit - select a valid option";
-        for (int i = 0; i < 3; ++i) if (bpe_initial_unit_ == unit_values[i]) unit_label = unit_labels[i];
-        ImGui::SetNextItemWidth(300.0f);
-        if (ImGui::BeginCombo("##bpe_initial_unit", unit_label)) {
-            for (int i = 0; i < 3; ++i) {
-                if (ImGui::Selectable(unit_labels[i], bpe_initial_unit_ == unit_values[i])) {
-                    bpe_initial_unit_ = unit_values[i];
-                    has_changes_ = true;
-                    preview_tokens_.clear();
-                    preview_token_ids_.clear();
-                    preview_decoded_text_.clear();
-                    preview_has_roundtrip_ = false;
-                }
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::TextWrapped("Without a saved vocabulary, Follow saved vocabulary starts from bytes. Character mode preserves known characters; unknown characters decode as [UNK].");
-        ImGui::Spacing();
-        ImGui::Text("Space handling:");
-        HelpTooltip("Controls where BPE may learn merges. A saved vocabulary owns its policy; an explicit selection must match it. Use a new vocabulary file to refit. Changing token IDs requires new windows and a compatible model.");
-        const char* values[] = {"", "whitespace_v1", "leading_space_v2"};
-        const char* labels[] = {"Follow saved vocabulary", "Separate spaces (v1)", "Merge leading space (v2)"};
-        const char* selected = "Unsupported policy - select a valid option";
-        for (int i = 0; i < 3; ++i) if (bpe_piece_policy_ == values[i]) selected = labels[i];
-        ImGui::SetNextItemWidth(300.0f);
-        if (ImGui::BeginCombo("##bpe_piece_policy", selected)) {
-            for (int i = 0; i < 3; ++i) {
-                if (ImGui::Selectable(labels[i], bpe_piece_policy_ == values[i])) {
-                    bpe_piece_policy_ = values[i];
-                    has_changes_ = true;
-                    preview_tokens_.clear();
-                    preview_token_ids_.clear();
-                    preview_has_roundtrip_ = false;
-                }
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::TextWrapped("Without a saved vocabulary, Follow saved vocabulary fits with separate spaces. Merge leading space can learn pieces such as ' word'; byte mode preserves arbitrary bytes; character mode requires known Unicode characters.");
+    ImGui::SameLine();
+    if (cyxwiz::ui::SecondaryButton("Inspect file", vocab_file_[0] != '\0', "No vocabulary file",
+                                    cyxwiz::ui::ButtonSize::Small)) {
+        InspectVocabularyFile();
+        vocab_card_path_.clear();
     }
-    if (tokenizer_type_ == 4) ImGui::TextWrapped("WordPiece uses ## continuation pieces and greedy longest-match encoding. Fit and save the vocabulary before using it for training or generation.");
-    if (tokenizer_type_ == 5 || tokenizer_type_ == 6) ImGui::TextWrapped("SentencePiece is reserved for the optional provider path and is not enabled in this build yet. Run Pipeline will fail clearly instead of silently falling back.");
-    HelpTooltip("Lowercasing reduces duplicate vocabulary entries like 'Happy' and 'happy'. Disable it when capitalization carries meaning.");
+    if (source_csv_[0]) {
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_faint, "from %s in %s", text_col_,
+                           std::filesystem::path(source_csv_).filename().string().c_str());
+    }
+    if (!status_message_.empty()) ValidationMessage(status_message_, status_is_error_);
 }
 
 void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
-
     if (IsTokenizerNode() || IsVocabularyNode()) {
-        ImGui::Text("Source CSV:");
-        HelpTooltip("Optional dataset file scanned when using the Build and Save Vocabulary button. Training materialization can also build from the loaded Arrow dataset.");
+        TokLabel("Source CSV", "File scanned by Build and save vocabulary. A run can also build from the loaded data.");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##source_csv", source_csv_, sizeof(source_csv_))) {
-            has_changes_ = true;
-        }
-        ImGui::Text("Text column:");
-        HelpTooltip("Column in the source CSV used to count tokens for the vocabulary file.");
+        if (ImGui::InputText("##source_csv", source_csv_, sizeof(source_csv_))) has_changes_ = true;
+        TokLabel("Text column", "Column of the source CSV whose tokens are counted.");
         ImGui::SetNextItemWidth(220.0f);
-        if (ImGui::InputText("##vocab_text_col", text_col_, sizeof(text_col_))) {
-            has_changes_ = true;
-        }
-        ImGui::Spacing();
+        if (ImGui::InputText("##vocab_text_col", text_col_, sizeof(text_col_))) has_changes_ = true;
     }
 
-    ImGui::Text(tokenizer_type_ == 3 ? "Minimum pair frequency:" : "Minimum token frequency:");
-    HelpTooltip(tokenizer_type_ == 3
-        ? "Minimum occurrence count for a BPE merge. All starting bytes or observed characters are retained regardless of frequency."
-        : "Tokens seen fewer than this many times are excluded. Higher values shrink the vocabulary and map rare words to [UNK].");
+    TokLabel(tokenizer_type_ == 3 ? "Minimum pair frequency" : "Minimum frequency",
+             tokenizer_type_ == 3 ? "Minimum count for a BPE merge. Every starting byte or observed character is kept."
+                                  : "Tokens seen fewer times are left out (they read as [UNK]); higher shrinks the "
+                                    "vocabulary.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##min_word_freq", &min_word_freq_)) {
         if (min_word_freq_ < 1) min_word_freq_ = 1;
         has_changes_ = true;
     }
-
-    ImGui::Spacing();
-
-    ImGui::Text("Maximum vocabulary size:");
-    HelpTooltip(tokenizer_type_ == 3
-        ? "BPE requires an explicit cap covering the starting alphabet plus 4 specials: bytes needs at least 260; characters depends on the fitting text. The cap includes learned merges."
-        : "Upper bound for vocabulary entries, including special tokens like [PAD] and [UNK]. Use -1 for no cap.");
+    TokLabel("Maximum size", tokenizer_type_ == 3
+                                 ? "BPE needs an explicit cap covering the starting alphabet plus 4 specials (bytes: "
+                                   "at least 260). The cap includes learned merges."
+                                 : "Upper bound including [PAD] and [UNK]; -1 for no cap.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_vocab", &max_vocab_size_)) {
         if (max_vocab_size_ < -1) max_vocab_size_ = -1;
@@ -1243,316 +895,189 @@ void TokenizerDialog::RenderVocabularyTab() {
     ImGui::TextDisabled(tokenizer_type_ == 3 ? "explicit cap required" : "-1 = unlimited");
 
     if (IsTokenizerNode() || IsVocabularyNode()) {
-        ImGui::Spacing();
-        ImGui::Text("Vocabulary file:");
-        HelpTooltip("One-token-per-line vocabulary file. TextTokenizer can load it directly or build it from training text when the file is missing.");
+        TokLabel("Vocabulary file", "One token per line. The tokenizer loads it, or builds it from the training text "
+                                    "when it is missing.");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##vocab_file", vocab_file_, sizeof(vocab_file_))) {
+        if (ImGui::InputText("##vocab_file", vocab_file_, sizeof(vocab_file_))) has_changes_ = true;
+        if (ImGui::Checkbox("Build and save it when the file is missing", &vocab_build_if_missing_))
             has_changes_ = true;
-        }
-
-        ImGui::Spacing();
-        if (ImGui::Checkbox("Build and save if file is missing", &vocab_build_if_missing_)) {
-            has_changes_ = true;
-        }
-        HelpTooltip("When the vocab file path is set but missing, the materializer trains the vocabulary from the input text and writes it before tokenizing.");
-
-        ImGui::Spacing();
-        if (ImGui::Button("Build and Save Vocabulary")) {
-            BuildVocabularyFile();
-            has_changes_ = true;
-        }
-        HelpTooltip("Scans the source CSV text column, counts tokens, applies frequency and size limits, then writes the vocabulary file.");
-        ImGui::SameLine();
-        if (ImGui::Button("Inspect File")) {
-            InspectVocabularyFile();
-        }
-        HelpTooltip("Reads the vocabulary file and reports how many entries it contains.");
-        if (!status_message_.empty()) {
-            ValidationMessage(status_message_, status_is_error_);
-        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("A run with a missing vocabulary file trains it from the input text and writes it "
+                              "before tokenizing.");
+        RenderVocabularyCard();
     }
 }
 
-void TokenizerDialog::RenderPaddingTab() {
-    const char* outputs[] = {
-        "Padded token columns",
-        "Causal document windows",
-        "Decode token IDs",
-        "Round-trip check"
-    };
-    if (ImGui::Combo("Output", &token_output_mode_, outputs, 4)) has_changes_ = true;
-
-    if (token_output_mode_ == 1) {
-        if (ImGui::InputText("Document ID column", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
-        if (ImGui::InputText("Split column", split_col_, sizeof(split_col_))) has_changes_ = true;
-        if (ImGui::InputText("Response column (optional)", target_text_col_, sizeof(target_text_col_))) has_changes_ = true;
-        ImGui::TextWrapped("Response column (supervised fine-tuning): each row becomes one window, the text (the prompt) "
-                           "then the response (the answer) + EOS, and the loss counts only the answer's tokens, so the "
-                           "model learns to answer instead of repeating the prompt. Needs an existing vocabulary file. "
-                           "Empty = ordinary windows where every token is a target.");
-        ImGui::TextWrapped("Max length is the model context. Each unpadded window carries up to context + 1 IDs; EOS and short tails are retained. Export as Parquet or Arrow. Leave Label column empty.");
-    } else if (token_output_mode_ == 2) {
-        if (ImGui::InputText("Token IDs column", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;
-        ImGui::TextWrapped("Decodes an existing token ID column back to text using the selected vocabulary file. If the column is absent, the node reads wide tok_0..tok_n columns up to Maximum sequence length. Text and Label columns are ignored; leave Label column empty.");
-    } else if (token_output_mode_ == 3) {
-        ImGui::TextWrapped("Encodes the text column, decodes it with the same tokenizer artifact, and emits input_text, encoded_ids, decoded_text and roundtrip_ok. Exact round-trip is expected for byte-safe tokenizers when Maximum sequence length does not truncate the sample. Leave Label column empty.");
-    }
+void TokenizerDialog::RenderLengthTab() {
     ImGui::Spacing();
+    TokLabel("Output", "What the node emits.");
+    const char* outputs[] = {"Padded token columns", "Causal document windows", "Decode token IDs",
+                             "Round-trip check"};
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::Combo("##output", &token_output_mode_, outputs, 4)) has_changes_ = true;
 
-    ImGui::Text("Maximum sequence length:");
-    HelpTooltip("For padded output this is the emitted token count. For causal windows this is the context length. For decode mode it bounds tok_0..tok_n column scanning when no token ID list column is present.");
+    ImGui::PushTextWrapPos(0.0f);
+    if (token_output_mode_ == 1) {
+        TokLabel("Document id column", nullptr);
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##doc_id", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
+        TokLabel("Split column", nullptr);
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##split_col", split_col_, sizeof(split_col_))) has_changes_ = true;
+        TokLabel("Response column", "Optional (supervised fine-tuning).");
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##response_col", target_text_col_, sizeof(target_text_col_))) has_changes_ = true;
+        ImGui::TextDisabled("Response column: each row becomes one window, the prompt then the answer + EOS, and the "
+                            "loss counts only the answer's tokens. Needs an existing vocabulary file; empty = "
+                            "ordinary windows where every token is a target. Max length is the model context; each "
+                            "window carries up to context + 1 ids. Leave Label column empty.");
+    } else if (token_output_mode_ == 2) {
+        TokLabel("Token ids column", nullptr);
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##token_ids_col", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;
+        ImGui::TextDisabled("Decodes a token id column back to text with the vocabulary file (or wide tok_0..tok_n "
+                            "columns up to the maximum length). Leave Label column empty.");
+    } else if (token_output_mode_ == 3) {
+        ImGui::TextDisabled("Encodes the text column, decodes it with the same vocabulary and emits input_text, "
+                            "encoded_ids, decoded_text and roundtrip_ok. Leave Label column empty.");
+    }
+    ImGui::PopTextWrapPos();
+
+    TokLabel("Maximum length", "Padded output: the token count. Causal windows: the context length. Decode: bounds "
+                               "the tok_0..tok_n columns read.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_length", &max_length_)) {
         if (max_length_ < 1) max_length_ = 1;
         has_changes_ = true;
+        ClearTryIt();
     }
-
-    ImGui::Spacing();
+    ImGui::SameLine();
+    ImGui::TextDisabled("tokens per row");
     if (token_output_mode_ == 1 || token_output_mode_ == 2) return;
 
-    ImGui::Text("Pad value:");
-    HelpTooltip("Token id used to fill short sequences. Use 0 when the vocabulary starts with [PAD] and the Embedding padding index is 0.");
+    TokLabel("Pad value", "Token id filling short rows: 0 when the vocabulary starts with [PAD] and the Embedding's "
+                          "padding index is 0.");
     ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputInt("##pad_value", &pad_value_)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-
-    if (IsTokenizerNode()) {
-        if (ImGui::Checkbox("Pad sequences", &padding_)) {
-            has_changes_ = true;
-        }
-        HelpTooltip("Pads shorter token sequences to the maximum sequence length so batches have a stable tensor shape. Disable for round-trip checks when you want to inspect raw encoded lengths.");
-    }
-    if (ImGui::Checkbox("Truncate long sequences", &truncation_)) {
-        has_changes_ = true;
-    }
-    HelpTooltip("Cuts sequences longer than the maximum length. Disable only if downstream nodes can handle variable or longer sequences.");
+    if (ImGui::InputInt("##pad_value", &pad_value_)) has_changes_ = true;
+    if (IsTokenizerNode() && ImGui::Checkbox("Pad short rows to the maximum length", &padding_)) has_changes_ = true;
+    if (ImGui::Checkbox("Cut long rows at the maximum length", &truncation_)) has_changes_ = true;
 }
 
-void TokenizerDialog::RenderPreviewTab() {
-    ImGui::Spacing();
+void TokenizerDialog::RunTryIt() {
+    ClearTryIt();
+    preview_roundtrip_ok_ = false;
+    try_message_.clear();
+    try_is_error_ = false;
+    try {
+        cyxwiz::TokenizerType tokenizer_type = cyxwiz::TokenizerType::Word;
+        if (tokenizer_type_ == 0) tokenizer_type = cyxwiz::TokenizerType::Whitespace;
+        else if (tokenizer_type_ == 2) tokenizer_type = cyxwiz::TokenizerType::Character;
+        else if (tokenizer_type_ == 3) tokenizer_type = cyxwiz::TokenizerType::ByteBPE;
+        else if (tokenizer_type_ == 4) tokenizer_type = cyxwiz::TokenizerType::WordPiece;
+        else if (tokenizer_type_ == 5) tokenizer_type = cyxwiz::TokenizerType::SentencePieceBPE;
+        else if (tokenizer_type_ == 6) tokenizer_type = cyxwiz::TokenizerType::SentencePieceUnigram;
 
-    ImGui::Text("Sample Text:");
-    HelpTooltip("Local preview text for checking tokenizer behavior. It does not modify the dataset.");
+        cyxwiz::Tokenizer tokenizer(tokenizer_type);
+        tokenizer.SetLowercase(lowercase_);
+        tokenizer.SetMaxLength(max_length_);
+        tokenizer.SetPadding(false);
+        tokenizer.SetTruncation(truncation_);
+
+        const std::string vocab_file = cyxwiz::ResolveProjectDataPath(
+            vocab_file_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        if (!vocab_file.empty() && std::filesystem::exists(vocab_file)) {
+            if (!tokenizer.GetVocabulary().LoadFromFile(vocab_file)) {
+                throw std::runtime_error("Could not load tokenizer vocabulary: " + vocab_file);
+            }
+            tokenizer.ValidateVocabulary();
+            if (tokenizer_type_ == 3 && !bpe_initial_unit_.empty()) {
+                const auto actual = tokenizer.GetVocabulary().GetBPEInitialUnit();
+                if (!((bpe_initial_unit_ == "byte" && actual == cyxwiz::BPEInitialUnit::Byte) ||
+                      (bpe_initial_unit_ == "unicode_character" && actual == cyxwiz::BPEInitialUnit::UnicodeCharacter)))
+                    throw std::runtime_error("BPE starting units differ from the saved vocabulary. Follow the saved "
+                                             "vocabulary or select a new file and refit through Run Pipeline.");
+            }
+            if (tokenizer_type_ == 3 && !bpe_piece_policy_.empty()) {
+                const auto actual = tokenizer.GetVocabulary().GetBPEPiecePolicy();
+                const bool matches =
+                    (bpe_piece_policy_ == "whitespace_v1" && actual == cyxwiz::ByteBPEPiecePolicy::WhitespaceV1) ||
+                    (bpe_piece_policy_ == "leading_space_v2" && actual == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+                if (!matches)
+                    throw std::runtime_error("Space handling differs from the saved vocabulary. Follow the saved "
+                                             "vocabulary or select a new file and refit through Run Pipeline.");
+            }
+        } else {
+            if (tokenizer_type_ == 3) {
+                throw std::runtime_error("Build and select a BPE vocabulary first: Try it uses the exact saved "
+                                         "file.");
+            }
+            tokenizer.Train({std::string(sample_text_)}, min_word_freq_, max_vocab_size_);
+            tokenizer.ValidateVocabulary();
+            try_message_ = "No vocabulary file yet: the ids come from a vocabulary fitted to this sample.";
+            try_is_error_ = false;
+        }
+
+        const auto tokenized = tokenizer.Tokenize(sample_text_);
+        preview_tokens_ = tokenized.tokens;
+        preview_token_ids_ = tokenized.token_ids;
+        preview_decoded_text_ = tokenizer.Decode(preview_token_ids_);
+        preview_roundtrip_ok_ = preview_decoded_text_ == std::string(sample_text_);
+        preview_has_roundtrip_ = true;
+    } catch (const std::exception& e) {
+        try_message_ = e.what();
+        try_is_error_ = true;
+    }
+}
+
+void TokenizerDialog::RenderTryItTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextMultiline("##sample", sample_text_, sizeof(sample_text_), ImVec2(0, 100))) {
-        preview_tokens_.clear();
-        preview_token_ids_.clear();
-        preview_decoded_text_.clear();
-        preview_has_roundtrip_ = false;
-    }
+    // It tokenizes as you type; nothing in the dataset changes.
+    if (ImGui::InputTextMultiline("##sample", sample_text_, sizeof(sample_text_), ImVec2(0, 80)) ||
+        (!preview_has_roundtrip_ && try_message_.empty()))
+        RunTryIt();
+    if (!try_message_.empty()) ValidationMessage(try_message_, try_is_error_);
+    if (!preview_has_roundtrip_) return;
 
+    // Tokens as text chips, [UNK] in orange; hover for the id.
     ImGui::Spacing();
-
-    if (ImGui::Button("Tokenize Preview")) {
-        preview_tokens_.clear();
-        preview_token_ids_.clear();
-        preview_decoded_text_.clear();
-        preview_roundtrip_ok_ = false;
-        preview_has_roundtrip_ = false;
-        status_message_.clear();
-        status_is_error_ = false;
-
-        try {
-            cyxwiz::TokenizerType tokenizer_type = cyxwiz::TokenizerType::Word;
-            if (tokenizer_type_ == 0) tokenizer_type = cyxwiz::TokenizerType::Whitespace;
-            else if (tokenizer_type_ == 2) tokenizer_type = cyxwiz::TokenizerType::Character;
-            else if (tokenizer_type_ == 3) tokenizer_type = cyxwiz::TokenizerType::ByteBPE;
-            else if (tokenizer_type_ == 4) tokenizer_type = cyxwiz::TokenizerType::WordPiece;
-            else if (tokenizer_type_ == 5) tokenizer_type = cyxwiz::TokenizerType::SentencePieceBPE;
-            else if (tokenizer_type_ == 6) tokenizer_type = cyxwiz::TokenizerType::SentencePieceUnigram;
-
-            cyxwiz::Tokenizer tokenizer(tokenizer_type);
-            tokenizer.SetLowercase(lowercase_);
-            tokenizer.SetMaxLength(max_length_);
-            tokenizer.SetPadding(false);
-            tokenizer.SetTruncation(truncation_);
-
-            const std::string vocab_file(vocab_file_);
-            if (!vocab_file.empty() && std::filesystem::exists(vocab_file)) {
-                if (!tokenizer.GetVocabulary().LoadFromFile(vocab_file)) {
-                    throw std::runtime_error("Could not load tokenizer vocabulary: " + vocab_file);
-                }
-                tokenizer.ValidateVocabulary();
-                if (tokenizer_type_ == 3 && !bpe_initial_unit_.empty()) {
-                    const auto actual = tokenizer.GetVocabulary().GetBPEInitialUnit();
-                    if (!((bpe_initial_unit_ == "byte" && actual == cyxwiz::BPEInitialUnit::Byte) ||
-                          (bpe_initial_unit_ == "unicode_character" && actual == cyxwiz::BPEInitialUnit::UnicodeCharacter)))
-                        throw std::runtime_error("BPE starting units differ from the saved vocabulary. Follow the saved vocabulary or select a new file and refit through Run Pipeline.");
-                }
-                if (tokenizer_type_ == 3 && !bpe_piece_policy_.empty()) {
-                    const auto actual = tokenizer.GetVocabulary().GetBPEPiecePolicy();
-                    const bool matches =
-                        (bpe_piece_policy_ == "whitespace_v1" && actual == cyxwiz::ByteBPEPiecePolicy::WhitespaceV1) ||
-                        (bpe_piece_policy_ == "leading_space_v2" && actual == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
-                    if (!matches) throw std::runtime_error("Space handling differs from the saved vocabulary. Follow the saved vocabulary or select a new file and refit through Run Pipeline.");
-                }
-            } else {
-                if (tokenizer_type_ == 3) {
-                    throw std::runtime_error("Build and select a BPE vocabulary before previewing. BPE preview uses the exact saved backend artifact.");
-                }
-                tokenizer.Train({std::string(sample_text_)}, min_word_freq_, max_vocab_size_);
-                tokenizer.ValidateVocabulary();
-                status_message_ = "Preview fitted a temporary backend vocabulary from the sample. Select a vocab file to preview the saved artifact exactly.";
-                status_is_error_ = false;
-            }
-
-            const auto tokenized = tokenizer.Tokenize(sample_text_);
-            preview_tokens_ = tokenized.tokens;
-            preview_token_ids_ = tokenized.token_ids;
-            preview_decoded_text_ = tokenizer.Decode(preview_token_ids_);
-            preview_roundtrip_ok_ = preview_decoded_text_ == std::string(sample_text_);
-            preview_has_roundtrip_ = true;
-        } catch (const std::exception& e) {
-            status_message_ = e.what();
-            status_is_error_ = true;
-        }
+    cyxwiz::ui::FlowRow row;
+    for (size_t i = 0; i < preview_tokens_.size(); ++i) {
+        const std::string& token = preview_tokens_[i];
+        const ImVec2 size = ImGui::CalcTextSize(token.c_str());
+        row.Next(size.x + 12.0f);
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddRectFilled(at, ImVec2(at.x + size.x + 12.0f, at.y + size.y + 6.0f),
+                                                  ImGui::GetColorU32(t.bg_raised), 4.0f);
+        ImGui::SetCursorScreenPos(ImVec2(at.x + 6.0f, at.y + 3.0f));
+        ImGui::TextColored(token == "[UNK]" ? t.warning : t.text, "%s", token.c_str());
+        if (ImGui::IsItemHovered() && i < preview_token_ids_.size())
+            ImGui::SetTooltip("id %d", preview_token_ids_[i]);
+        ImGui::SetCursorScreenPos(ImVec2(at.x + size.x + 12.0f, at.y));
+        ImGui::Dummy(ImVec2(0.0f, size.y + 6.0f));
     }
-    HelpTooltip("Runs the selected tokenizer settings through the backend Tokenizer, then decodes the produced IDs to verify the artifact path.");
-    if (!status_message_.empty()) {
-        ValidationMessage(status_message_, status_is_error_);
-    }
-
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    const int count = static_cast<int>(preview_tokens_.size());
+    if (padding_ && count < max_length_)
+        ImGui::TextColored(t.text_dim, "%d tokens of %d, padded with %d to %d. Hover a token for its id.", count,
+                           max_length_, pad_value_, max_length_);
+    else
+        ImGui::TextColored(t.text_dim, "%d tokens (maximum %d). Hover a token for its id.", count, max_length_);
 
-    if (preview_has_roundtrip_) {
-        ImGui::Text("Encoded IDs (%d):", static_cast<int>(preview_token_ids_.size()));
+    if (ImGui::TreeNodeEx("Ids and the round trip", ImGuiTreeNodeFlags_SpanAvailWidth)) {
         std::ostringstream ids;
-        for (size_t i = 0; i < preview_token_ids_.size(); ++i) {
-            if (i > 0) ids << ' ';
-            ids << preview_token_ids_[i];
-        }
-        ImGui::TextWrapped("%s", ids.str().c_str());
-        ImGui::Spacing();
-        ImGui::Text("Decoded text:");
-        ImGui::TextWrapped("%s", preview_decoded_text_.c_str());
-        ImGui::Spacing();
-        ValidationMessage(preview_roundtrip_ok_ ? "Round-trip OK: decoded text matches the sample exactly."
-                                                : "Round-trip differs: decoded text does not exactly match the sample.",
+        for (size_t i = 0; i < preview_token_ids_.size(); ++i) ids << (i ? " " : "") << preview_token_ids_[i];
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "Ids");
+        ImGui::TextUnformatted(ids.str().c_str());
+        ImGui::TextColored(t.text_dim, "Decoded");
+        ImGui::TextUnformatted(preview_decoded_text_.c_str());
+        ImGui::PopTextWrapPos();
+        ValidationMessage(preview_roundtrip_ok_ ? "Round trip exact: the decoded text matches the sample."
+                                                : "Round trip differs: the decoded text does not match the sample.",
                           !preview_roundtrip_ok_);
-        ImGui::Spacing();
-    }
-
-    // Show tokens
-    if (!preview_tokens_.empty()) {
-        ImGui::Text("Tokens (%d):", static_cast<int>(preview_tokens_.size()));
-
-        // Display tokens as colored chips
-        float wrap_x = ImGui::GetContentRegionAvail().x;
-        float current_x = 0.0f;
-
-        for (size_t i = 0; i < preview_tokens_.size(); i++) {
-            const auto& token = preview_tokens_[i];
-
-            // Calculate token width
-            ImVec2 text_size = ImGui::CalcTextSize(token.c_str());
-            float chip_width = text_size.x + 16.0f;
-
-            // Wrap to next line if needed
-            if (current_x + chip_width > wrap_x && current_x > 0) {
-                ImGui::NewLine();
-                current_x = 0.0f;
-            }
-
-            // Draw token chip
-            ImGui::PushID(static_cast<int>(i));
-            ImVec4 bg_color = cyxwiz::ui::CurrentTokens().bg_raised;
-            ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
-            ImGui::SmallButton(token.c_str());
-            ImGui::PopStyleColor(2);
-            ImGui::PopID();
-
-            ImGui::SameLine();
-            current_x += chip_width + ImGui::GetStyle().ItemSpacing.x;
-        }
-        ImGui::NewLine();
-    }
-}
-
-// ==================== FilterDialog ====================
-
-FilterDialog::FilterDialog(MLNode* node)
-    : NodeConfigDialog("Filter Configuration", node)
-{
-    conditions_.push_back(FilterCondition{});
-}
-
-void FilterDialog::Apply() {
-    if (!node_) return;
-
-    // Build filter expression from conditions
-    std::string expression;
-    for (size_t i = 0; i < conditions_.size(); i++) {
-        const auto& cond = conditions_[i];
-        if (i > 0) {
-            expression += (cond.join_type == 0) ? " AND " : " OR ";
-        }
-        expression += "col" + std::to_string(cond.column_idx);
-        const char* ops[] = { "==", "!=", ">", "<", ">=", "<=", "CONTAINS" };
-        expression += " " + std::string(ops[cond.operator_idx]) + " ";
-        expression += "'" + std::string(cond.value) + "'";
-    }
-
-    node_->parameters["filter_expression"] = expression;
-    has_changes_ = false;
-}
-
-void FilterDialog::Reset() {
-    if (!node_) return;
-    node_->parameters = original_params_;
-    conditions_.clear();
-    conditions_.push_back(FilterCondition{});
-    has_changes_ = false;
-}
-
-void FilterDialog::RenderContent() {
-    ImGui::Spacing();
-    ImGui::Text("Filter Conditions:");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const char* operators[] = { "equals", "not equals", ">", "<", ">=", "<=", "contains" };
-    const char* joins[] = { "AND", "OR" };
-
-    for (size_t i = 0; i < conditions_.size(); i++) {
-        auto& cond = conditions_[i];
-        ImGui::PushID(static_cast<int>(i));
-
-        if (i > 0) {
-            ImGui::SetNextItemWidth(60.0f);
-            ImGui::Combo("##join", &cond.join_type, joins, 2);
-            ImGui::SameLine();
-        }
-
-        ImGui::SetNextItemWidth(120.0f);
-        ImGui::InputInt("Column", &cond.column_idx);
-        ImGui::SameLine();
-
-        ImGui::SetNextItemWidth(100.0f);
-        ImGui::Combo("##op", &cond.operator_idx, operators, 7);
-        ImGui::SameLine();
-
-        ImGui::SetNextItemWidth(150.0f);
-        ImGui::InputText("Value", cond.value, sizeof(cond.value));
-        ImGui::SameLine();
-
-        if (ImGui::Button("X") && conditions_.size() > 1) {
-            conditions_.erase(conditions_.begin() + i);
-            i--;
-        }
-
-        ImGui::PopID();
-    }
-
-    ImGui::Spacing();
-    if (ImGui::Button("+ Add Condition")) {
-        conditions_.push_back(FilterCondition{});
+        ImGui::TreePop();
     }
 }
 
@@ -1565,10 +1090,6 @@ NodeConfigDialogFactory& NodeConfigDialogFactory::Instance() {
 
 NodeConfigDialogFactory::NodeConfigDialogFactory() {
     // Register default dialogs - use correct NodeType enum values
-    RegisterDialog(NT::CSVFile, [](MLNode* node) {
-        return std::make_unique<CSVReaderDialog>(node);
-    });
-
     RegisterDialog(NT::TextTokenizer, [](MLNode* node) {
         return std::make_unique<TokenizerDialog>(node);
     });
@@ -1584,11 +1105,6 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
 
     RegisterDialog(NT::FilterRows, [](MLNode* node) {
         return std::make_unique<FilterDialog>(node);
-    });
-
-    // Register more dialogs for complex nodes
-    RegisterDialog(NT::ExcelFile, [](MLNode* node) {
-        return std::make_unique<CSVReaderDialog>(node);  // Reuse CSV dialog for now
     });
 
     // Smart I/O Nodes - Universal dialogs
@@ -1625,10 +1141,6 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     RegisterDialog(NT::WordEmbeddings, [](MLNode* node) {
         return std::make_unique<WordEmbeddingsDialog>(node);
     });
-
-    // Visualization framework — chart nodes live in their own TU
-    // under src/gui/visualization/. BarChart is the first; Histogram /
-    // LinePlot / ScatterPlot / PieChart follow the same shape.
 }
 
 void NodeConfigDialogFactory::RegisterDialog(NodeType type, DialogCreator creator) {

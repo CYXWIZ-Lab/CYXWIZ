@@ -83,6 +83,7 @@ class ITensorNodeFactory {
 public:
     virtual ~ITensorNodeFactory() = default;
 
+    // Shapes here are one sample's shape, without the batch dimension.
     // Pure: the same inputs give the same answer.
     virtual ExtensionShapeResult InferOutputShape(
         const std::vector<size_t>& input_shape,
