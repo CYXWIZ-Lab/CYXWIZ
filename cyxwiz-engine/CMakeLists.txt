@@ -6926,6 +6926,11 @@ add_executable(test_python_node_bundle tests/test_python_node_bundle.cpp)
 target_link_libraries(test_python_node_bundle PRIVATE cyxwiz-training-core)
 add_test(NAME python_node_bundle COMMAND test_python_node_bundle)
 
+# Python node bundle approvals per content hash (TOFIX125 P4 step 4.2, D6)
+add_executable(test_python_node_approvals tests/test_python_node_approvals.cpp)
+target_link_libraries(test_python_node_approvals PRIVATE cyxwiz-training-core)
+add_test(NAME python_node_approvals COMMAND test_python_node_approvals)
+
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
 # and the node path (RunGraphTrainingJob) train the same graph, data and seed.

@@ -114,6 +114,7 @@ add_library(cyxwiz-training-hooks STATIC
     ${_cyxwiz_engine_src}/plugin/registries/plugin_training_hook_manager.cpp
     ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
     ${_cyxwiz_engine_src}/core/python_node_bundle.cpp
+    ${_cyxwiz_engine_src}/core/python_node_approvals.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
