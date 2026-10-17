@@ -82,8 +82,9 @@ endif()
 
 # Plugin SDK: headers only (TOFIX125 P5 step 5.2). PluginContext is an
 # interface the Engine implements and the fingerprint is computed inline, so a
-# plugin links no CyxWiz library and gets no spdlog or ImGui from the SDK: a
-# plugin that logs or draws links those itself.
+# plugin links no CyxWiz library, and the headers need only the standard
+# library and the backend: a plugin that logs, draws or reads JSON links
+# spdlog, ImGui or nlohmann_json itself.
 #
 # The public headers are copied into one folder (paths relative to src/,
 # included as "plugin/plugin_types.h"); plugins see that folder and not the
@@ -112,7 +113,6 @@ target_include_directories(cyxwiz-plugin-sdk INTERFACE "${CYXWIZ_PLUGIN_SDK_INCL
 # plugin_fingerprint.h reads the SDK version (cyxwiz/version.h) and, when a
 # plugin includes the backend, the ArrayFire version.
 target_include_directories(cyxwiz-plugin-sdk INTERFACE $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
-target_link_libraries(cyxwiz-plugin-sdk INTERFACE nlohmann_json::nlohmann_json)
 target_compile_features(cyxwiz-plugin-sdk INTERFACE cxx_std_20)
 
 # The Engine's side of the plugin system: registries, permissions,

@@ -89,12 +89,12 @@ add_library(my_nodes SHARED my_nodes_plugin.cpp)
 target_link_libraries(my_nodes PRIVATE cyxwiz-plugin-sdk cyxwiz-backend)
 ```
 
-`cyxwiz-plugin-sdk` is headers only: it brings the plugin headers and
-nlohmann/json, and no library. Its include folder holds only the public
+`cyxwiz-plugin-sdk` is headers only: it brings the plugin headers, which
+need only the C++ standard library, and no library. Its include folder holds only the public
 headers (`plugin/...` and the three `core/` headers they use), not the
-Engine's sources, so include them as `"plugin/plugin_types.h"`. A plugin that logs with spdlog or draws
-ImGui panels links `spdlog::spdlog` or `imgui::imgui` itself (see the
-`image_nodes` example).
+Engine's sources, so include them as `"plugin/plugin_types.h"`. A plugin that logs with spdlog, draws
+ImGui panels or reads JSON links `spdlog::spdlog`, `imgui::imgui` or
+`nlohmann_json::nlohmann_json` itself (see the `image_nodes` example).
 
 Write the library into `bin/` beside `plugin.json` (see the example's
 `CMakeLists.txt`).

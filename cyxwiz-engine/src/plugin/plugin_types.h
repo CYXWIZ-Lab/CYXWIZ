@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <functional>
 #include <filesystem>
-#include <nlohmann/json.hpp>
 #include "plugin_fingerprint.h"
 
 namespace cyxwiz::plugin {
@@ -174,7 +173,7 @@ struct PluginDependency {
 };
 
 // ============================================================================
-// Plugin Manifest (loaded from plugin.json)
+// Plugin Manifest (loaded from plugin.json by the Engine's loader)
 // ============================================================================
 
 struct PluginManifest {
@@ -204,90 +203,6 @@ struct PluginManifest {
 
     // Plugin directory (set at load time, not from JSON)
     std::filesystem::path plugin_dir;
-
-    // Serialization
-    static PluginManifest FromJson(const nlohmann::json& j) {
-        PluginManifest m;
-        m.id = j.value("id", "");
-        m.name = j.value("name", m.id);
-        m.description = j.value("description", "");
-        m.version = PluginVersion::Parse(j.value("version", "0.0.0"));
-        m.api_version = PluginVersion::Parse(j.value("api_version", "1.0.0"));
-        m.author = j.value("author", "");
-        m.license = j.value("license", "");
-        m.homepage = j.value("homepage", "");
-        m.repository = j.value("repository", "");
-
-        // Permissions
-        if (j.contains("permissions") && j["permissions"].is_array()) {
-            m.permissions = ParsePermissions(j["permissions"].get<std::vector<std::string>>());
-        }
-
-        // Capabilities
-        if (j.contains("capabilities") && j["capabilities"].is_array()) {
-            for (const auto& cap : j["capabilities"]) {
-                std::string s = cap.get<std::string>();
-                if (s == "ProvidesNodes")       m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesNodes);
-                else if (s == "ProvidesPanels")  m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesPanels);
-                else if (s == "ProvidesData")    m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesData);
-                else if (s == "ProvidesTraining") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesTraining);
-                else if (s == "ProvidesAnalytics") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesAnalytics);
-                else if (s == "RequiresPython")  m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresPython);
-                else if (s == "RequiresGPU")     m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresGPU);
-                else if (s == "RequiresNetwork") m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresNetwork);
-                else if (s == "ProvidesTensorNodes") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesTensorNodes);
-            }
-        }
-
-        // Dependencies
-        if (j.contains("dependencies") && j["dependencies"].is_array()) {
-            for (const auto& dep : j["dependencies"]) {
-                m.dependencies.push_back({
-                    dep.value("id", ""),
-                    dep.value("version", ">=0.0.0")
-                });
-            }
-        }
-
-        // Platform library
-#ifdef _WIN32
-        if (j.contains("platforms") && j["platforms"].contains("windows")) {
-            m.library = j["platforms"]["windows"].value("library", "");
-        }
-#elif defined(__APPLE__)
-        if (j.contains("platforms") && j["platforms"].contains("macos")) {
-            m.library = j["platforms"]["macos"].value("library", "");
-        }
-#else
-        if (j.contains("platforms") && j["platforms"].contains("linux")) {
-            m.library = j["platforms"]["linux"].value("library", "");
-        }
-#endif
-        // Fallback: top-level library field
-        if (m.library.empty()) {
-            m.library = j.value("library", "");
-        }
-
-        // Signature
-        m.signature = j.value("signature", "");
-
-        return m;
-    }
-
-    nlohmann::json ToJson() const {
-        nlohmann::json j;
-        j["id"] = id;
-        j["name"] = name;
-        j["description"] = description;
-        j["version"] = version.ToString();
-        j["api_version"] = api_version.ToString();
-        j["author"] = author;
-        j["license"] = license;
-        if (!homepage.empty()) j["homepage"] = homepage;
-        if (!repository.empty()) j["repository"] = repository;
-        j["permissions"] = PermissionsToStrings(permissions);
-        return j;
-    }
 
     bool IsValid() const {
         return !id.empty() && !name.empty() && (version.major > 0 || version.minor > 0 || version.patch > 0);
