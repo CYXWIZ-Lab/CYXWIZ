@@ -5,6 +5,8 @@
 #include <map>
 #include "node_editor.h"
 
+namespace cyxwiz { struct NodeMetadata; }
+
 namespace gui {
 
 // Documentation structure for a node type
@@ -29,6 +31,10 @@ public:
     // Call this when hovering over a node
     void RenderTooltip(NodeType type);
 
+    // Render the tooltip for a node on the canvas. Extension nodes describe
+    // their own type (or say that it is not installed), not PluginCustom.
+    void RenderTooltip(const MLNode& node);
+
     // Render a help marker (?) icon with tooltip
     // Returns true if hovered
     bool RenderHelpMarker(NodeType type);
@@ -47,6 +53,7 @@ private:
     NodeDocumentationManager& operator=(const NodeDocumentationManager&) = delete;
 
     void InitializeDocumentation();
+    void RenderTooltip(const cyxwiz::NodeMetadata* metadata, const NodeDocumentation* doc);
 
     std::map<NodeType, NodeDocumentation> docs_;
 };
