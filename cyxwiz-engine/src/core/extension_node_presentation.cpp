@@ -165,7 +165,7 @@ ExtensionInfoFacts BuildExtensionInfoFacts(const ExtensionNodeDescriptor& descri
         const auto colon = descriptor.content_hash.find(':');
         const std::string digits =
             colon == std::string::npos ? descriptor.content_hash : descriptor.content_hash.substr(colon + 1);
-        if (!digits.empty()) add("Code sha256", digits.substr(0, 12) + "\xE2\x80\xA6");
+        if (!digits.empty()) add("Code sha256", digits.substr(0, 12) + "...");  // the UI font has no ellipsis glyph
         add("Type id", descriptor.type_id);
         add("Folder", descriptor.source_path);
         return facts;

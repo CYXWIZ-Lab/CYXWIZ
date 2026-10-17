@@ -233,7 +233,7 @@ void TestPythonBundleNodes() {
           "chips for an unapproved Python node");
     std::map<std::string, std::string> rows(facts.provided_by.begin(), facts.provided_by.end());
     Check(rows["Python bundle"] == "example-acts (com.example.acts)" && rows["Approval"] == "Not approved yet" &&
-              rows["Code sha256"] == "bcffe763ca1d\xE2\x80\xA6" && rows["Folder"] == snake.source_path &&
+              rows["Code sha256"] == "bcffe763ca1d..." && rows["Folder"] == snake.source_path &&
               rows.count("Plugin") == 0 && rows.count("Author") == 0,
           "rows: bundle, approval, code hash, folder; no plugin rows");
     cyxwiz::ExtensionPythonState approved{true, "2026-10-17"};

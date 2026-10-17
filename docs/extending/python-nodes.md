@@ -185,9 +185,20 @@ bundles within two seconds, without a restart.
 **Approval.** A bundle's code runs only after you approve that exact code
 (its `content_hash`). Until then its nodes appear in the palette, save and
 load like any node, and compiling a graph that uses one says *the code of
-Python node bundle ... is not approved yet*. Editing `node.py` (and
-bundling again) needs a new approval. Approvals are kept per user in
-`%APPDATA%\cyxwiz\node_approvals.json`.
+Python node bundle ... is not approved yet*. To approve:
+
+- **Plugin Manager** (Apps > Plugin Manager): the section *Python node
+  bundles* has a card per bundle with its folder, its nodes, the gradient
+  check from bundling, and **Approve code...**. The dialog *Run this Python
+  code?* shows what the bundle adds and its code hash; **View code** opens
+  `node.py` in the Script Editor.
+- **Properties** of one of its nodes: the Gradient check card offers
+  **Approve code...** too.
+
+Editing `node.py` (and bundling again) needs a new approval. **Actions >
+Revoke approval** on the card takes it back. Approvals are kept per user in
+`%APPDATA%\cyxwiz\node_approvals.json`. Bundles that cannot be read are
+listed with the reason.
 
 **Python** starts by itself the first time an approved Python node is built
 (a project must be open). Settings are checked against the manifest before
@@ -196,6 +207,29 @@ under its field without Python.
 
 **Errors** in your `forward` or `backward` stop training with the node's
 name, the Python message and the traceback.
+
+**In the Engine's windows** a Python node shows as one: Properties reads
+*Python node · com.example.acts 1.0.0 · Activation* and shows the check
+from bundling next to its own **Check gradient**; Info lists the bundle,
+its approval and code hash; the Node Browser counts *nodes from 2 plugins
+and 1 Python bundle*; **Apps > Python node bundles** opens a bundle's
+nodes.
+
+## 7. Create a node from a script in the Engine
+
+In the Script Editor, open (and save) a `.py` file of your project that
+defines nodes with `@nodes.activation` or `@nodes.node`, then **Run > Create
+node from script...**:
+
+1. The dialog lists the nodes it found, with their pins and settings.
+2. **Check gradients** runs the check on each with its default settings.
+3. Choose the bundle name and **Create nodes**: the bundle is written to
+   `<project>/nodes/<name>.cyxnode` and approved for you, since you wrote
+   it. Its nodes appear in the Node Browser at once.
+
+A node whose check fails is still created; fix its `backward` and create it
+again. A Python error while reading the script shows its message and
+traceback in the dialog.
 
 **Speed.** Each batch a Python node takes the interpreter lock and calls
 your Python code. Measured 2026-10-17 (GTX 1050 Ti, `bench_python_node_cost`):
@@ -211,9 +245,8 @@ parallel with each other or with a script running in the Engine (one
 interpreter lock), and converting to NumPy inside a node copies to the CPU
 and back.
 
-## 7. Not yet
+## 8. Not yet
 
 | Coming | Stage |
 |---|---|
-| Approving a bundle from the Plugin Manager; "Create node from script" in the Script Editor | P4 step 4.5 |
 | Nodes with several inputs or outputs | Later |

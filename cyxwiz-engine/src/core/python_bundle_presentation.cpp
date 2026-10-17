@@ -31,12 +31,6 @@ bool Under(const fs::path& folder, const fs::path& root) {
     return folder.parent_path().lexically_normal() == root.lexically_normal();
 }
 
-std::string ShortHash(const std::string& hash) {
-    const auto colon = hash.find(':');
-    const std::string digits = colon == std::string::npos ? hash : hash.substr(colon + 1);
-    return digits.substr(0, 12) + "\xE2\x80\xA6";
-}
-
 std::string HashDigits(const std::string& hash) {
     const auto colon = hash.find(':');
     return colon == std::string::npos ? hash : hash.substr(colon + 1);
