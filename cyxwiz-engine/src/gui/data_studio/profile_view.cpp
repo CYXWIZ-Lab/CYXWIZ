@@ -50,9 +50,11 @@ ImVec4 RoleColour(ColumnRole role) {
         case ColumnRole::Numeric: return t.series[1];
         case ColumnRole::Category: return t.series[0];
         case ColumnRole::DateTime: return t.series[2];
-        case ColumnRole::Id: return t.text_faint;
-        case ColumnRole::Group: return t.text_faint;
-        case ColumnRole::Ignore: return t.text_faint;
+        // Identity roles, readable (they were faint): ID a colour no other
+        // role has (series 3 is the Target green, 4 the error red), Group plain text.
+        case ColumnRole::Id: return t.series[5];
+        case ColumnRole::Group: return t.text;
+        case ColumnRole::Ignore: return t.text_dim;  // muted, still readable
         default: return t.text_dim;
     }
 }
