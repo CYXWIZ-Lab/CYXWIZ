@@ -3,7 +3,7 @@
 How to write a C++ plugin whose nodes train inside CyxWiz. Start with the
 [quickstart](plugin-quickstart.md) if you have not built the example yet.
 
-> Checked 2026-10-16 against plugin API 1.1.0. This guide grows as the
+> Checked 2026-10-17 against plugin API 1.2.0. This guide grows as the
 > feature is built; sections marked *Later* describe what is planned.
 
 Code in this guide is taken from
@@ -27,7 +27,7 @@ my_nodes/
     "id": "com.cyxwiz.examples.activation-nodes",
     "name": "Example Activation Nodes",
     "version": "1.0.0",
-    "api_version": "1.1.0",
+    "api_version": "1.2.0",
     "description": "Trainable example nodes written in C++: Softsign, and Snake with a learnable frequency",
     "author": "CyxWiz Lab",
     "license": "MIT",
@@ -44,7 +44,7 @@ my_nodes/
 | Field | Rule |
 |---|---|
 | `id` | Unique. `a-z`, `0-9`, `.`, `-`, `_` only. It becomes the first half of every node's type id, so do not change it once graphs use your nodes |
-| `api_version` | The plugin API you built against. The Engine loads the plugin when the major number equals its own and the minor number is not higher. Trainable nodes need 1.1 |
+| `api_version` | The plugin API you built against. The Engine loads the plugin when the major number equals its own and the minor number is not higher. Trainable nodes need 1.1; the build fingerprint (section 9) came with 1.2 |
 | `capabilities` | `ProvidesTensorNodes` for trainable nodes |
 | `permissions` | `Training` for trainable nodes. File system, network, system commands and Python are dangerous permissions: the user is asked to approve them |
 | `platforms` | The library path per platform, relative to the folder |
@@ -324,6 +324,36 @@ warning.
 - **Apps > Loaded plugins** lists your plugin with what it adds
   (*2 nodes*); choosing it opens the Node Browser on your nodes.
 
+### Build fingerprint
+
+A trainable node's module is a real `cyxwiz::Module` that the Engine calls
+directly, so your plugin must be built the way the Engine was. Since plugin
+API 1.2, `CYXWIZ_PLUGIN_ENTRY` also exports your build's fingerprint, for
+example
+
+```
+sdk=0.2;api=1.2;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=3.10
+```
+
+The Engine compares it with its own before it runs any of your code:
+
+| Item | Must match |
+|---|---|
+| `sdk` | The CyxWiz SDK major and minor version (0.2) |
+| `api` | Same major; your minor not newer than the Engine's |
+| `compiler` | Compiler family and major version (MSVC 19 covers Visual Studio 2015-2022) |
+| `stdlib` | The C++ standard library |
+| `build` | Release or Debug: build your plugin in **Release** for a Release Engine |
+| `ptr` | 64-bit |
+| `arrayfire` | The ArrayFire version, when your plugin includes the backend |
+
+A difference refuses the load with both values, for example *The plugin was
+built with build=debug; this Engine with build=release. Rebuild the plugin
+against the CyxWiz SDK 0.2 with the same settings.* A plugin built before
+API 1.2 has no fingerprint and is refused with *The plugin has no build
+fingerprint*: rebuild it. You do not write anything for this: rebuilding
+with the current SDK is enough.
+
 ## 10. Threads, crashes and limits
 
 | Topic | Rule |
@@ -339,6 +369,5 @@ warning.
 | Topic | Stage |
 |---|---|
 | A packaged SDK: headers, libraries, `find_package(CyxWizSDK)`, a template project, an installer component | P5 |
-| Build fingerprint, so the Engine refuses a plugin built for another Engine build | P5 |
 | API reference for every interface | P5 |
 | Python nodes | P3, P4 |

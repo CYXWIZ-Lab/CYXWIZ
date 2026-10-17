@@ -87,6 +87,22 @@ void* PluginLoader::GetSymbol(void* handle, const char* name) {
 #endif
 }
 
+bool PluginLoader::CheckBuildFingerprint(void* handle, std::string& error_out) {
+    const std::string engine = CurrentBuildFingerprint();
+    const auto fingerprint = reinterpret_cast<BuildFingerprintFunc>(GetSymbol(handle, "CyxwizPluginBuildFingerprint"));
+    if (!fingerprint) {
+        error_out = MissingFingerprintMessage(engine);
+        return false;
+    }
+    const char* text = fingerprint();
+    const auto differences = CompareBuildFingerprints(engine, text ? text : "");
+    if (!differences.empty()) {
+        error_out = DescribeFingerprintMismatch(differences);
+        return false;
+    }
+    return true;
+}
+
 std::string PluginLoader::GetLastDLLError() {
 #ifdef _WIN32
     DWORD err = ::GetLastError();
@@ -269,6 +285,17 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
         return nullptr;
     }
 
+    // 4b. The plugin must be built the way this Engine was (TOFIX125 P5,
+    // decision D4): checked before any other plugin code runs.
+    if (!CheckBuildFingerprint(loaded->dll_handle, error_out)) {
+        spdlog::error("Plugin {} refused: {}", loaded->manifest.id, error_out);
+        UnloadDLL(loaded->dll_handle);
+        loaded->dll_handle = nullptr;
+        loaded->state = PluginState::Failed;
+        loaded->error_message = error_out;
+        return nullptr;
+    }
+
     // 5. Resolve entry points
     loaded->create_func = reinterpret_cast<CreatePluginFunc>(
         GetSymbol(loaded->dll_handle, "CreatePlugin"));
@@ -338,6 +365,15 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDLL(
     // Load DLL
     loaded->dll_handle = LoadDLL(dll_path, error_out);
     if (!loaded->dll_handle) {
+        loaded->state = PluginState::Failed;
+        loaded->error_message = error_out;
+        return nullptr;
+    }
+
+    if (!CheckBuildFingerprint(loaded->dll_handle, error_out)) {
+        spdlog::error("Plugin {} refused: {}", dll_path.string(), error_out);
+        UnloadDLL(loaded->dll_handle);
+        loaded->dll_handle = nullptr;
         loaded->state = PluginState::Failed;
         loaded->error_message = error_out;
         return nullptr;

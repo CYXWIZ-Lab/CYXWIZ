@@ -6,7 +6,7 @@ node editor, saves in `.cyxgraph` files, compiles into the model and trains.
 
 > These pages are written while the feature is built (TOFIX125) and change
 > with it. Each page says what it was checked against. Last checked:
-> 2026-10-17, plugin API 1.1.0, branch `tofix125-extension-nodes`.
+> 2026-10-17, plugin API 1.2.0, branch `tofix125-extension-nodes`.
 
 ## Two routes
 

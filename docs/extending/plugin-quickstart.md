@@ -3,7 +3,7 @@
 Build the example plugin that ships with CyxWiz, load it, and train a model
 with its nodes. Then copy it to start your own.
 
-> Checked 2026-10-16 against plugin API 1.1.0. Today a plugin is built
+> Checked 2026-10-17 against plugin API 1.2.0. Today a plugin is built
 > inside the CyxWiz source tree; a packaged SDK for outside builds comes
 > later (stage P5).
 

@@ -61,6 +61,10 @@ private:
     static void* GetSymbol(void* handle, const char* name);
     static std::string GetLastDLLError();
 
+    // The plugin's build fingerprint against this Engine's (TOFIX125 P5).
+    // False with the reason when it is missing or differs.
+    static bool CheckBuildFingerprint(void* handle, std::string& error_out);
+
     // Validate API version compatibility
     static bool ValidateApiVersion(
         const PluginVersion& plugin_api,

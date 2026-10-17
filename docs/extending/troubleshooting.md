@@ -1,6 +1,6 @@
 # Troubleshooting extension nodes
 
-> Checked 2026-10-16 against plugin API 1.1.0.
+> Checked 2026-10-17 against plugin API 1.2.0.
 
 ## The plugin does not appear in the Plugin Manager
 
@@ -15,8 +15,20 @@
 - The library named in `platforms` must exist at that path (for example
   `bin/my_nodes.dll`).
 - `api_version` must have the Engine's major number and a minor number no
-  higher than the Engine's (1.1 today).
+  higher than the Engine's (1.2 today).
 - A plugin that could not be loaded is reported in the **Console** ("Failed to load plugin from ..." with the reason). One that loaded but failed to start shows its error on its card, with **Retry**.
+
+## "The plugin was built with ...; this Engine with ..."
+
+The plugin was built differently from this Engine (another build type,
+compiler, SDK or ArrayFire version). The message names each difference.
+Rebuild the plugin with the same settings, most often **Release** instead of
+Debug. See the developer guide, *Build fingerprint*.
+
+## "The plugin has no build fingerprint"
+
+The plugin was built with an SDK older than plugin API 1.2. Rebuild it
+against the current CyxWiz SDK; nothing in its code needs to change.
 
 ## A node shows "Not installed"
 

@@ -91,8 +91,12 @@ add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/security/plugin_signature.cpp
     src/plugin/security/safe_execute.cpp
     src/plugin/security/tweetnacl.c
+    src/plugin/plugin_fingerprint.cpp
 )
 target_include_directories(cyxwiz-plugin-sdk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# plugin_fingerprint.h reads the SDK version (cyxwiz/version.h) and, when a
+# plugin includes the backend, the ArrayFire version.
+target_include_directories(cyxwiz-plugin-sdk PUBLIC $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(cyxwiz-plugin-sdk PUBLIC
     cyxwiz-training-hooks
     spdlog::spdlog
@@ -2887,6 +2891,30 @@ set_target_properties(test_plugin_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
+# ===== Test: plugin build fingerprint (TOFIX125 P5 step 5.1) =====
+foreach(_fingerprint_kind ok other missing)
+    add_library(fingerprint_${_fingerprint_kind}_plugin SHARED tests/plugin_fingerprint_test_plugin.cpp)
+    target_link_libraries(fingerprint_${_fingerprint_kind}_plugin PRIVATE cyxwiz-plugin-sdk)
+    set_target_properties(fingerprint_${_fingerprint_kind}_plugin PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test_plugins/${_fingerprint_kind}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test_plugins/${_fingerprint_kind}")
+endforeach()
+target_compile_definitions(fingerprint_other_plugin PRIVATE FINGERPRINT_TEST_OTHER)
+target_compile_definitions(fingerprint_missing_plugin PRIVATE FINGERPRINT_TEST_NO_FINGERPRINT)
+add_executable(test_plugin_fingerprint
+    tests/test_plugin_fingerprint.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_plugin_fingerprint PRIVATE cyxwiz-plugin-sdk cyxwiz-backend spdlog::spdlog)
+target_compile_definitions(test_plugin_fingerprint PRIVATE
+    OK_PLUGIN="$<TARGET_FILE:fingerprint_ok_plugin>"
+    OTHER_PLUGIN="$<TARGET_FILE:fingerprint_other_plugin>"
+    MISSING_PLUGIN="$<TARGET_FILE:fingerprint_missing_plugin>"
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_dependencies(test_plugin_fingerprint fingerprint_ok_plugin fingerprint_other_plugin fingerprint_missing_plugin)
+set_target_properties(test_plugin_fingerprint PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME plugin_fingerprint COMMAND test_plugin_fingerprint)
+
 add_executable(test_plugin_unload_registrations
     tests/test_plugin_unload_registrations.cpp
     src/plugin/plugin_manager.cpp

@@ -6,6 +6,7 @@
 #include <functional>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include "plugin_fingerprint.h"
 
 namespace cyxwiz::plugin {
 
@@ -14,7 +15,7 @@ namespace cyxwiz::plugin {
 // ============================================================================
 
 constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
-constexpr uint16_t PLUGIN_API_VERSION_MINOR = 1;  // 1.1: ITensorNodeProvider (TOFIX125)
+constexpr uint16_t PLUGIN_API_VERSION_MINOR = 2;  // 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125)
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 
 // ============================================================================
@@ -338,9 +339,16 @@ public:
 // Factory function signatures
 using CreatePluginFunc  = IPlugin* (*)();
 using DestroyPluginFunc = void (*)(IPlugin*);
+using BuildFingerprintFunc = const char* (*)();
 
-// Convenience macro for plugin authors
+// Convenience macro for plugin authors. It also exports the plugin's build
+// fingerprint (plugin_fingerprint.h): the Engine refuses a plugin built
+// differently before creating it (API 1.2).
 #define CYXWIZ_PLUGIN_ENTRY(PluginClass) \
+    CYXWIZ_PLUGIN_EXPORT const char* CyxwizPluginBuildFingerprint() { \
+        static const std::string fingerprint = ::cyxwiz::plugin::CurrentBuildFingerprint(); \
+        return fingerprint.c_str(); \
+    } \
     CYXWIZ_PLUGIN_EXPORT cyxwiz::plugin::IPlugin* CreatePlugin() { \
         return new PluginClass(); \
     } \
