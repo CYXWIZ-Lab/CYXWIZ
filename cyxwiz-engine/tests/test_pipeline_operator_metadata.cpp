@@ -1987,6 +1987,9 @@ void CheckEvaluationTableFamilyContract(
                   meta->outputs.front().type == gui::PinType::Dataset,
               "evaluation node should use one Dataset table input/output: " +
                   TypeId(type));
+        Check(!meta->outputs.front().required,
+              "an evaluation node's table need not be read further (an unread required output blocks Train): " +
+                  TypeId(type));
         const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
         Check(support.mode ==
                   cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,

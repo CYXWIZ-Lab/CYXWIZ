@@ -2144,12 +2144,13 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
-    // Model Evaluation
+    // Model Evaluation. Their tables are results to look at: an output need not
+    // be read further (an unread required output fails Compile and blocks Train).
     RegisterNode({NodeType::ConfusionMatrixNode, NodeCategory::Analytics, "Confusion Matrix", ICON_FA_TABLE_CELLS,
         {"confusion", "matrix", "evaluation"}, 0, false, "Count actual/predicted label pairs",
         "Emits observed label pairs with raw counts and values normalized by actual label, predicted label, or all valid rows.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Matrix", PinType::Dataset, true, "Observed actual/predicted pairs with count and value"}},
+        {{"Matrix", PinType::Dataset, false, "Observed actual/predicted pairs with count and value"}},
         {{"actual_col", "string", "", "Actual label column", {}, "", "", "", true, false},
          {"predicted_col", "string", "", "Predicted label column", {}, "", "", "", true, false},
          {"normalize", "enum", "none", "none=count; true=by actual; pred=by predicted; all=by all rows", {"none", "true", "pred", "all"}, ""}},
@@ -2159,7 +2160,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"roc", "auc", "curve"}, 0, false, "ROC curve and AUC",
         "Computes ROC curve points and AUC from binary labels and prediction scores.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Curve", PinType::Dataset, true, "Threshold, FPR, TPR, and AUC table"}},
+        {{"Curve", PinType::Dataset, false, "Threshold, FPR, TPR, and AUC table"}},
         {{"actual_col", "string", "", "Binary actual label column", {}, "", "", "", true, false},
          {"score_col", "string", "", "Numeric positive-class score column", {}, "", "", "", true, false},
          {"positive_label", "string", "1", "Positive class label", {}, ""}},
@@ -2169,7 +2170,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"precision", "recall", "pr", "average precision"}, 0, false, "Precision-recall curve",
         "Computes precision-recall curve points and average precision from binary labels and prediction scores.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Curve", PinType::Dataset, true, "Threshold, precision, recall, and average-precision table"}},
+        {{"Curve", PinType::Dataset, false, "Threshold, precision, recall, and average-precision table"}},
         {{"actual_col", "string", "", "Binary actual label column", {}, "", "", "", true, false},
          {"score_col", "string", "", "Numeric positive-class score column", {}, "", "", "", true, false},
          {"positive_label", "string", "1", "Positive class label", {}, ""}},
@@ -2205,7 +2206,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"regression", "metrics", "mse", "rmse", "mae", "r2"}, 0, false, "Regression metrics",
         "Computes regression metrics from numeric actual and predicted columns.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Metrics", PinType::Dataset, true, "Metric/value table"}},
+        {{"Metrics", PinType::Dataset, false, "Metric/value table"}},
         {{"actual_col", "string", "", "Numeric actual value column", {}, "", "", "", true, false},
          {"predicted_col", "string", "", "Numeric predicted value column", {}, "", "", "", true, false},
          {"metrics", "string", "mse,rmse,mae,r2", "Comma-separated: mse, rmse, mae, r2, count", {}, ""}},
@@ -2216,7 +2217,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Classification metrics",
         "Computes accuracy, macro precision/recall/F1, weighted F1, and count from actual and predicted label columns.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Metrics", PinType::Dataset, true, "Metric/value table"}},
+        {{"Metrics", PinType::Dataset, false, "Metric/value table"}},
         {{"actual_col", "string", "", "Actual label column", {}, "", "", "", true, false},
          {"predicted_col", "string", "", "Predicted label column", {}, "", "", "", true, false},
          {"metrics", "string", "accuracy,precision,recall,f1,weighted_f1,count", "Comma-separated: accuracy, precision, recall, f1, weighted_f1, count, class_count", {}, ""}},
