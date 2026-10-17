@@ -21,7 +21,10 @@ try:
 except NameError:
     import pycyxwiz as _cyx
 
-__all__ = ["Param", "activation", "node", "create", "describe", "gradcheck", "is_node"]
+__all__ = ["Param", "activation", "node", "create", "output_shape", "describe", "gradcheck",
+           "bundle", "is_node"]
+
+BUNDLE_FORMAT = 1
 
 _ID_PATTERN = _re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _VERSION_PATTERN = _re.compile(r"^\d+\.\d+\.\d+$")
@@ -245,3 +248,96 @@ def gradcheck(cls, settings=None, **options):
     """pycyxwiz.gradcheck on fresh modules made with these settings."""
     _require_node(cls)
     return _cyx.gradcheck(lambda shape: create(cls, settings, list(shape)[1:]), **options)
+
+
+def _source_file(cls):
+    import inspect
+    module = __import__("sys").modules.get(cls.__module__)
+    path = getattr(module, "__file__", None)
+    if not path:
+        try:
+            path = inspect.getsourcefile(cls)
+        except TypeError:
+            path = None
+    if not path or not __import__("os").path.isfile(path):
+        raise ValueError("%s is not defined in a .py file; save it in a file and import it to bundle it"
+                         % cls.__name__)
+    return __import__("os").path.abspath(path)
+
+
+def bundle(*classes, folder="nodes", name=None, check_gradients=True):
+    """Write the nodes into <folder>/<name>.cyxnode/: node.json and node.py.
+
+    Every class must be a node, share one id and live in one .py file; that
+    file is copied as node.py. The gradient check runs with default settings
+    and its result is recorded; a failure is recorded, not refused (Part C5).
+    Returns the bundle folder.
+    """
+    import datetime
+    import hashlib
+    import json
+    import os
+
+    if not classes:
+        raise ValueError("bundle() needs at least one node class")
+    for cls in classes:
+        _require_node(cls)
+    ids = sorted({cls.__cyxwiz_node__["id"] for cls in classes})
+    if len(ids) != 1:
+        raise ValueError("the nodes of one bundle share one id; found %s" % ", ".join(ids))
+    names = [cls.__cyxwiz_node__["name"] for cls in classes]
+    if len(set(names)) != len(names):
+        raise ValueError("two nodes are named %s" % sorted(n for n in names if names.count(n) > 1)[0])
+    sources = sorted({_source_file(cls) for cls in classes})
+    if len(sources) != 1:
+        raise ValueError("the nodes of one bundle live in one .py file; found %s" % ", ".join(sources))
+    with open(sources[0], "rb") as handle:
+        code = handle.read()
+
+    bundle_name = name or names[0].lower()
+    if not _re.match(r"^[a-z0-9][a-z0-9_-]*$", bundle_name):
+        raise ValueError("bundle name '%s' must be lower case: a-z, 0-9, '-', '_'" % bundle_name)
+    path = os.path.join(folder, bundle_name + ".cyxnode")
+    today = datetime.date.today().isoformat()
+
+    entries = []
+    for cls in classes:
+        info = describe(cls)
+        entry = {key: info[key] for key in ("name", "version")}
+        entry["entry"] = "node.py:" + cls.__name__
+        for key in ("tier", "display_name", "category", "role", "description", "shape_rule",
+                    "inputs", "outputs", "parameters"):
+            entry[key] = info[key]
+        if check_gradients:
+            try:
+                result = gradcheck(cls)
+                if result.error:
+                    entry["verification"] = {"status": "not_checked", "checked_on": today,
+                                             "error": result.error.splitlines()[0]}
+                else:
+                    entry["verification"] = {"status": "passed" if result.passed else "failed",
+                                             "checked_on": today, "tolerance": result.tolerance,
+                                             "max_relative_error": result.max_relative_error,
+                                             "where": result.worst}
+            except Exception as error:  # the defaults may be refused; record why
+                entry["verification"] = {"status": "not_checked", "checked_on": today,
+                                         "error": str(error).splitlines()[0]}
+        else:
+            entry["verification"] = {"status": "not_checked", "checked_on": today,
+                                     "error": "the gradient check was skipped"}
+        entries.append(entry)
+
+    manifest = {
+        "bundle_format": BUNDLE_FORMAT,
+        "id": ids[0],
+        "nodes": entries,
+        "requires": {"pycyxwiz": ">=" + _cyx.get_version(), "python_packages": []},
+        "content_hash": "sha256:" + hashlib.sha256(code).hexdigest(),
+    }
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, "node.py"), "wb") as handle:
+        handle.write(code)
+    with open(os.path.join(path, "node.json"), "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(manifest, handle, indent=2)
+        handle.write("\n")
+    return path

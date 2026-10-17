@@ -687,7 +687,7 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     # Python subclasses of pycyxwiz.Module (TOFIX125 P3): run with the Python
     # pycyxwiz is built for; the backend DLLs are in the runtime folder.
     if(Python3_EXECUTABLE)
-        foreach(_pycyxwiz_test python_modules python_nodes)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle)
             add_test(NAME pycyxwiz_${_pycyxwiz_test}
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
                         $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)

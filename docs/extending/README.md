@@ -24,7 +24,7 @@ numerically. Both follow one [node contract](node-contract.md).
 | Page | Read it to |
 |---|---|
 | [python-modules.md](python-modules.md) | Write a trainable module in Python and train it with pycyxwiz |
-| [python-nodes.md](python-nodes.md) | Describe a Python module as a node: identity, settings, shape rule |
+| [python-nodes.md](python-nodes.md) | Describe a Python module as a node and bundle it |
 | [plugin-quickstart.md](plugin-quickstart.md) | Build the example plugin, load it and train with its nodes |
 | [plugin-developer-guide.md](plugin-developer-guide.md) | Write your own C++ plugin with trainable nodes |
 | [node-contract.md](node-contract.md) | Know what every extension node must guarantee |
@@ -40,4 +40,4 @@ numerically. Both follow one [node contract](node-contract.md).
 | Saving and reopening graphs; a missing plugin shows its nodes as "Not installed" | Exporting a model with extension nodes to ONNX or Python |
 | Plugins load again when the Engine starts | A packaged SDK you can use outside the CyxWiz source tree |
 | Apps menu lists every loaded plugin | Python nodes in the Engine |
-| Trainable modules written in Python, trained with pycyxwiz | |
+| Trainable modules written in Python, trained with pycyxwiz; `gradcheck`; `pycyxwiz.nodes` decorators and `bundle()` | |

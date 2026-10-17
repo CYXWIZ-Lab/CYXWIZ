@@ -6,9 +6,10 @@ Write the module as in [python-modules.md](python-modules.md), then
 decorate it.
 
 > Checked 2026-10-17 against pycyxwiz built from branch
-> `tofix125-extension-nodes`. The examples are the ones
-> `cyxwiz-backend/python/tests/test_python_nodes.py` runs. Bundling a node
-> and using it in the Engine come next (stages P3 step 3.5 and P4).
+> `tofix125-extension-nodes`. The examples are
+> `cyxwiz-backend/python/tests/example_nodes.py`, which
+> `test_python_nodes.py` and `test_python_bundle.py` run. Using a bundle in
+> the Engine comes next (stage P4).
 
 ```python
 import pycyxwiz as cyx
@@ -96,10 +97,72 @@ under the field:
 | `{"initial_a": "abc"}` | `initial_a must be a number, not 'abc'` |
 | `{"speed": "1"}` | `Snake has no setting speed` |
 
-## 5. Not yet
+## 5. Bundle the nodes
+
+Put the decorated classes in one `.py` file, import it, and bundle:
+
+```python
+from my_nodes import Softsign, Snake
+nodes.bundle(Softsign, Snake, folder="nodes", name="example-acts")
+# -> nodes/example-acts.cyxnode/
+```
+
+The bundle is a folder:
+
+```
+nodes/
+  example-acts.cyxnode/
+    node.json     the manifest, generated: never edit it by hand
+    node.py       your .py file, copied unchanged
+```
+
+| Rule | Why |
+|---|---|
+| All nodes of a bundle share one `id` and live in one `.py` file | One file is the bundle's code |
+| `name` (default: the first node's name in lower case) uses `a-z`, `0-9`, `-`, `_` | It is the folder name |
+| The gradient check runs with each node's default settings and is recorded | Pass `check_gradients=False` to skip it; it is then recorded as `not_checked` |
+| A failed check is recorded as `failed`, and the bundle is still written | Finite differences can fail at kinks; the Engine warns instead of refusing |
+| `content_hash` is the SHA-256 of `node.py` | The Engine uses it to notice a changed bundle and to approve code |
+| Bundling again replaces `node.json` and `node.py` | Edit the `.py`, bundle again |
+
+The manifest of the example above (`node.json`, Snake's entry shortened):
+
+```json
+{
+  "bundle_format": 1,
+  "id": "com.example.acts",
+  "nodes": [
+    {
+      "name": "Snake",
+      "version": "1.0.0",
+      "entry": "node.py:Snake",
+      "tier": "module",
+      "display_name": "Snake",
+      "category": "Activation",
+      "role": "activation",
+      "description": "x + sin^2(a x) / a, learnable a",
+      "shape_rule": "same_as_input",
+      "inputs": [{"name": "Input", "type": "Tensor"}],
+      "outputs": [{"name": "Output", "type": "Tensor"}],
+      "parameters": [
+        {"name": "initial_a", "type": "float", "default": "1.0", "validation": "0.01-",
+         "description": "Starting value of a", "choices": []}
+      ],
+      "verification": {"status": "passed", "checked_on": "2026-10-17", "tolerance": 0.02,
+                       "max_relative_error": 0.0013, "where": "input"}
+    }
+  ],
+  "requires": {"pycyxwiz": ">=0.2.0", "python_packages": []},
+  "content_hash": "sha256:bcffe763..."
+}
+```
+
+`verification.status` is `passed`, `failed` or `not_checked` (with `error`
+saying why, for example a default setting the node refuses).
+
+## 6. Not yet
 
 | Coming | Stage |
 |---|---|
-| `nodes.bundle()`: write the node into a folder the Engine reads | P3 step 3.5 |
 | The node in the Engine's palette, Properties and training | P4 |
 | Nodes with several inputs or outputs | Later |
