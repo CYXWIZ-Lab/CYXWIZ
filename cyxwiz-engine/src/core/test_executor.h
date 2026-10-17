@@ -132,6 +132,14 @@ struct TestingMetrics {
 /**
  * Callback types for testing progress
  */
+// The end of a classifier test: per-class precision / recall / F1 from the
+// confusion matrix (a class without a name gets "Class N"), the macro and
+// support-weighted averages, accuracy, and the ROC / precision-recall curves
+// from the kept class probabilities. A test run and a test read back from its
+// per-row table (test_predictions_metrics.h) both finish with it, so every
+// view shows the same numbers.
+void FinishClassifierMetrics(TestingMetrics& m);
+
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 
@@ -260,17 +268,6 @@ private:
     // the 1-NN / Pair / Retrieval evaluation of the test rows.
     void TestMetricLearning(IBatcher& rows, int batch_size);
 
-    /**
-     * Compute per-class metrics from confusion matrix
-     */
-    void ComputePerClassMetrics();
-
-    /**
-     * Compute macro and weighted averages
-     */
-    void ComputeAggregateMetrics();
-    // ROC / precision-recall from the kept class probabilities (TOFIX140).
-    void ComputeCurves();
     void ApplyLabelClassNames(const std::vector<std::string>& names);
 
     /**

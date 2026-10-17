@@ -232,6 +232,7 @@ set(ENGINE_SOURCES
     src/core/studio_debugger_presentation.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
@@ -307,6 +308,7 @@ set(ENGINE_SOURCES
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
     src/core/test_predictions_table.cpp
+    src/core/test_predictions_metrics.cpp
     src/core/graph_compile_task.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
@@ -547,6 +549,7 @@ set(ENGINE_SOURCES
     src/gui/panels/variable_explorer.cpp
     src/gui/variables_view.cpp
     src/gui/panels/test_results_panel.cpp
+    src/gui/panels/test_errors_by_value.cpp
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp
     src/gui/panels/deployment_dialog.cpp
@@ -4852,6 +4855,7 @@ endfunction()
 add_executable(test_testing_device_handoff
     tests/test_testing_device_handoff.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     src/core/sequence_arrow_batcher.cpp
@@ -4869,6 +4873,7 @@ add_executable(test_causal_lm_testing
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp)
 configure_training_executor_harness(test_causal_lm_testing)
@@ -4888,7 +4893,10 @@ configure_training_executor_harness(test_training_executor_arrow_parquet)
 target_sources(test_training_executor_arrow_parquet PRIVATE tests/test_training_randomness.cpp)
 target_sources(test_training_executor_arrow_parquet PRIVATE
     tests/test_training_spatial_ingress.cpp
+    src/core/test_predictions_metrics.cpp
+    src/core/test_predictions_table.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     src/core/sequence_arrow_batcher.cpp)
@@ -6252,6 +6260,7 @@ set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
 add_executable(test_metric_graph_training
     tests/test_metric_graph_training.cpp
     src/core/test_executor.cpp
+    src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
 )

@@ -59,6 +59,11 @@ public:
     // dashboard's "Open in Data Studio", the Asset Browser); it runs.
     void ShowQuery(const std::string& dataset_name, const std::string& sql);
 
+    // Results > Test run's "Open Test Results" (MainWindow shows the panel).
+    void SetOpenTestResultsCallback(std::function<void()> cb) {
+        if (results_) results_->on_open_test_results = std::move(cb);
+    }
+
     // Query results open in the Table Viewer through this (MainWindow).
     void SetOpenTableCallback(std::function<void(std::shared_ptr<class DataTable>)> cb) {
         if (query_editor_) query_editor_->on_open_table = std::move(cb);

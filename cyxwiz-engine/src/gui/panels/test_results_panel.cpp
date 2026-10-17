@@ -2,6 +2,7 @@
 #include "../../core/compiled_node_presentation.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/project_manager.h"
+#include "../../core/test_predictions_metrics.h"
 #include "../../core/test_results_export.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
@@ -17,18 +18,6 @@
 namespace cyxwiz {
 
 namespace {
-
-ImVec4 ToneColour(test_report::Tone tone) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    switch (tone) {
-        case test_report::Tone::Ok: return t.success;
-        case test_report::Tone::Warning: return t.warning;
-        case test_report::Tone::Error: return t.error;
-        case test_report::Tone::Info: return t.info;
-        case test_report::Tone::Neutral: return t.text_dim;
-    }
-    return t.text_dim;
-}
 
 ImVec4 MetricColour(float value) {
     const ui::Tokens& t = ui::CurrentTokens();
@@ -50,7 +39,25 @@ std::string ExportsFolder() {
     return root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
 }
 
+// The dataset row shown for test row i: 1-based, "" when not recorded.
+std::string DatasetRow(const TestingMetrics& m, size_t i, size_t samples) {
+    if (m.row_ids.size() != samples || i >= samples) return {};
+    return std::to_string(m.row_ids[i] + 1);
+}
+
 }  // namespace
+
+ImVec4 TestToneColour(test_report::Tone tone) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (tone) {
+        case test_report::Tone::Ok: return t.success;
+        case test_report::Tone::Warning: return t.warning;
+        case test_report::Tone::Error: return t.error;
+        case test_report::Tone::Info: return t.info;
+        case test_report::Tone::Neutral: return t.text_dim;
+    }
+    return t.text_dim;
+}
 
 TestResultsPanel::TestResultsPanel()
     : Panel("Test Results", false)  // Hidden by default
@@ -104,6 +111,8 @@ void TestResultsPanel::Render() {
         std::lock_guard<std::mutex> lock(results_mutex_);
         if (view_dirty_) {
             view_ = test_report::BuildView(results_, has_previous_ ? &previous_results_ : nullptr);
+            rows_ = has_results_ ? PredictionsTableFromMetrics(results_) : nullptr;
+            by_value_.SetRows(rows_);
             view_dirty_ = false;
         }
         const ui::Tokens& t = ui::CurrentTokens();
@@ -137,7 +146,10 @@ void TestResultsPanel::Render() {
                     tab("Classes###classes", &TestResultsPanel::RenderClassesTab);
                     if (!results_.metric_learning_mode) tab("Curves###curves", &TestResultsPanel::RenderCurvesTab);
                     tab("Predictions###predictions", &TestResultsPanel::RenderPredictionsTab);
+                } else if (results_.regression_mode) {
+                    tab("Predictions###predictions", &TestResultsPanel::RenderRegressionRowsTab);
                 }
+                if (rows_) tab("By column value###by_value", &TestResultsPanel::RenderByValueTab);
                 tab("Comparison###comparison", &TestResultsPanel::RenderComparisonTab,
                     select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None);
                 select_comparison_tab_ = false;
@@ -153,14 +165,14 @@ void TestResultsPanel::RenderHeader() {
     const ui::Tokens& t = ui::CurrentTokens();
     {
         ui::FontScope heading(ui::Font::Heading);
-        ImGui::TextColored(ToneColour(view_.headline_tone), "%s", view_.headline.c_str());
+        ImGui::TextColored(TestToneColour(view_.headline_tone), "%s", view_.headline.c_str());
     }
     Wrapped(t.text_dim, view_.subtitle);
     if (!view_.note.empty()) Wrapped(t.caution, view_.note);
     ui::FlowRow chips;
     for (const auto& chip : view_.chips) {
         chips.Next(ui::ChipWidth(chip.text.c_str()));
-        ui::Chip(chip.text.c_str(), ToneColour(chip.tone));
+        ui::Chip(chip.text.c_str(), TestToneColour(chip.tone));
     }
     ImGui::Dummy(ImVec2(0.0f, t.space_xs));
 }
@@ -382,13 +394,16 @@ void TestResultsPanel::RenderPredictionsTab() {
         return;
     }
     const std::string all = "All " + FormatCompiledCount(static_cast<long long>(samples));
-    const std::string mistakes = "Only mistakes " + FormatCompiledCount(static_cast<long long>(view_.mistakes.size()));
+    const std::string mistakes = "Only mistakes " + FormatCompiledCount(static_cast<long long>(view_.mistakes.size())) +
+                                 ", most confident first";
     const char* modes[] = {all.c_str(), mistakes.c_str()};
     ui::SegmentedControl("##predictions_mode", modes, 2, &predictions_mode_);
+    const bool by_dataset = results_.row_ids.size() == samples;
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable("##predictions", 4, flags)) return;
+    if (!ImGui::BeginTable("##predictions", by_dataset ? 5 : 4, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("#", 0, 0.5f);
+    if (by_dataset) ImGui::TableSetupColumn("Dataset row", 0, 0.8f);
     ImGui::TableSetupColumn("Predicted", 0, 1.2f);
     ImGui::TableSetupColumn("Actual", 0, 1.2f);
     ImGui::TableSetupColumn("Confidence", 0, 1.2f);
@@ -410,6 +425,13 @@ void TestResultsPanel::RenderPredictionsTab() {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Text("%d", i);
+            if (by_dataset) {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(DatasetRow(results_, static_cast<size_t>(i), samples).c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Row %s of '%s' (1 is its first row)", DatasetRow(results_, static_cast<size_t>(i), samples).c_str(),
+                                      results_.source_dataset.c_str());
+            }
             ImGui::TableNextColumn();
             ImGui::TextColored(predicted == actual ? t.success : t.error, "%s",
                                test_report::ClassName(results_, predicted).c_str());
@@ -426,6 +448,58 @@ void TestResultsPanel::RenderPredictionsTab() {
     }
     ImGui::EndTable();
 }
+
+void TestResultsPanel::RenderRegressionRowsTab() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const size_t width = static_cast<size_t>(std::max(results_.regression_width, 0));
+    const size_t samples = width ? results_.regression_truth.size() / width : 0;
+    if (samples == 0) {
+        Wrapped(t.text_dim, results_.regression_note.empty() ? "No rows were kept for this run." : results_.regression_note);
+        return;
+    }
+    const std::string all = "All " + FormatCompiledCount(static_cast<long long>(samples));
+    const char* modes[] = {all.c_str(), "Largest errors first"};
+    ui::SegmentedControl("##regression_rows_mode", modes, 2, &predictions_mode_);
+    if (width > 1)
+        Wrapped(t.text_dim, std::to_string(width) + " targets: the first is shown; the order uses each row's mean |error| "
+                                                    "over all of them.");
+    const bool by_dataset = results_.row_ids.size() == samples;
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##regression_rows", by_dataset ? 5 : 4, flags)) return;
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("#", 0, 0.5f);
+    if (by_dataset) ImGui::TableSetupColumn("Dataset row", 0, 0.8f);
+    ImGui::TableSetupColumn("True", 0, 1.0f);
+    ImGui::TableSetupColumn("Predicted", 0, 1.0f);
+    ImGui::TableSetupColumn("Error", 0, 1.0f);
+    ImGui::TableHeadersRow();
+    const bool largest = predictions_mode_ == 1 && view_.largest_errors.size() == samples;
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(samples));
+    while (clipper.Step()) {
+        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
+            const size_t i = largest ? static_cast<size_t>(view_.largest_errors[static_cast<size_t>(r)]) : static_cast<size_t>(r);
+            const float truth = results_.regression_truth[i * width];
+            const float predicted = results_.regression_predictions[i * width];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", i);
+            if (by_dataset) {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(DatasetRow(results_, i, samples).c_str());
+            }
+            ImGui::TableNextColumn();
+            ImGui::Text("%.4g", truth);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.4g", predicted);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.warning, "%+.4g", predicted - truth);
+        }
+    }
+    ImGui::EndTable();
+}
+
+void TestResultsPanel::RenderByValueTab() { by_value_.Render(); }
 
 void TestResultsPanel::RenderComparisonTab() {
     const ui::Tokens& t = ui::CurrentTokens();
@@ -450,7 +524,7 @@ void TestResultsPanel::RenderComparisonTab() {
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(row.latest.c_str());
             ImGui::TableNextColumn();
-            ImGui::TextColored(ToneColour(row.change_tone), "%s", row.change.c_str());
+            ImGui::TextColored(TestToneColour(row.change_tone), "%s", row.change.c_str());
         }
         ImGui::EndTable();
     }

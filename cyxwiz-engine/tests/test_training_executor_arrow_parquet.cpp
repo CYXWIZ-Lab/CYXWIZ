@@ -11,6 +11,7 @@
 #include "../src/core/sequence_training_step.h"
 #include "../src/core/sequence_vocabulary.h"
 #include "../src/core/test_executor.h"
+#include "../src/core/test_predictions_metrics.h"
 #include "../src/core/training_batcher_setup.h"
 #include "../src/core/training_executor.h"
 #include "../src/core/training_trace_collector.h"
@@ -935,6 +936,40 @@ void TestBatchRowIds(
         Check(parquet_metrics.source_dataset == parquet_dataset->GetName(),
               "a Parquet test run names its table");
 
+        // The run as its per-row table and back gives the same results: one
+        // calculation for the panel, Results and a kept test (TOFIX157).
+        {
+            const auto rows = cyxwiz::PredictionsTableFromMetrics(arrow_metrics);
+            Check(rows != nullptr, "a classifier run becomes its table");
+            cyxwiz::TestingMetrics back;
+            std::string why;
+            Check(rows && cyxwiz::MetricsFromPredictionsTable(*rows, back, why), "the table reads back: " + why);
+            Check(back.ground_truth == arrow_metrics.ground_truth && back.predictions == arrow_metrics.predictions &&
+                      back.row_ids == arrow_metrics.row_ids && back.source_dataset == arrow_metrics.source_dataset,
+                  "read back: the same rows, row ids and table");
+            Check(back.confusion_matrix.matrix == arrow_metrics.confusion_matrix.matrix &&
+                      back.total_samples == arrow_metrics.total_samples &&
+                      back.correct_predictions == arrow_metrics.correct_predictions,
+                  "read back: the same confusion matrix");
+            CheckNear(back.test_accuracy, arrow_metrics.test_accuracy, 1e-6, "read back: accuracy");
+            CheckNear(back.macro_f1, arrow_metrics.macro_f1, 1e-6, "read back: macro F1");
+            CheckNear(back.weighted_f1, arrow_metrics.weighted_f1, 1e-6, "read back: weighted F1");
+            CheckNear(back.test_loss, arrow_metrics.test_loss, 1e-4, "read back: the loss from the metadata");
+            Check(back.per_class_metrics.size() == arrow_metrics.per_class_metrics.size(), "read back: the classes");
+            for (size_t c = 0; c < back.per_class_metrics.size() && c < arrow_metrics.per_class_metrics.size(); ++c) {
+                Check(back.per_class_metrics[c].class_name == arrow_metrics.per_class_metrics[c].class_name,
+                      "read back: class names");
+                CheckNear(back.per_class_metrics[c].precision, arrow_metrics.per_class_metrics[c].precision, 1e-6,
+                          "read back: precision per class");
+                CheckNear(back.per_class_metrics[c].recall, arrow_metrics.per_class_metrics[c].recall, 1e-6,
+                          "read back: recall per class");
+            }
+            Check(back.roc.has_value() == arrow_metrics.roc.has_value() && back.curves_note == arrow_metrics.curves_note,
+                  "read back: the same curves");
+            if (back.roc && arrow_metrics.roc && back.roc->success && arrow_metrics.roc->success)
+                CheckNear(back.roc->auc, arrow_metrics.roc->auc, 1e-5, "read back: ROC AUC");
+        }
+
         // A stratified, shuffled split: each test row's true class is the
         // table's label at its row id.
         auto stratified = config;
@@ -991,6 +1026,16 @@ void TestBatchRowIds(
               std::abs(r.regression_truth[1] + 0.5f) < 1e-6f &&
               std::abs(r.regression_truth[11] - 1.5f) < 1e-6f,
           "the true targets are the table's");
+    const auto regression_rows = cyxwiz::PredictionsTableFromMetrics(r);
+    cyxwiz::TestingMetrics back;
+    std::string why;
+    Check(regression_rows && cyxwiz::MetricsFromPredictionsTable(*regression_rows, back, why),
+          "a regression run reads back from its table: " + why);
+    Check(back.regression_mode && back.regression_width == 2 && back.regression_truth == r.regression_truth &&
+              back.row_ids == r.row_ids,
+          "read back: the regression's rows");
+    CheckNear(back.test_mae, r.test_mae, 1e-5, "read back: MAE");
+    CheckNear(back.test_rmse, r.test_rmse, 1e-5, "read back: RMSE");
 }
 
 void TestSequenceBatchContract() {

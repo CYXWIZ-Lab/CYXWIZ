@@ -1,5 +1,7 @@
 #include "data_studio_results.h"
 
+#include "arrow_number.h"
+
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
@@ -195,31 +197,6 @@ std::vector<PreviewSlice> PreviewSlices(const PreviewEpoch& epoch) {
 
 namespace {
 
-// An int64 column's values (missing as -1); empty when the column is absent
-// or not int64.
-std::vector<int64_t> Int64Values(const std::shared_ptr<arrow::Table>& table, const std::string& name) {
-    std::vector<int64_t> out;
-    const auto col = table->GetColumnByName(name);
-    if (!col || col->type()->id() != arrow::Type::INT64) return out;
-    for (const auto& chunk : col->chunks()) {
-        const auto& a = static_cast<const arrow::Int64Array&>(*chunk);
-        for (int64_t i = 0; i < a.length(); ++i) out.push_back(a.IsValid(i) ? a.Value(i) : -1);
-    }
-    return out;
-}
-
-// A double column's values (missing as NaN); empty when absent or not double.
-std::vector<double> DoubleValues(const std::shared_ptr<arrow::Table>& table, const std::string& name) {
-    std::vector<double> out;
-    const auto col = table->GetColumnByName(name);
-    if (!col || col->type()->id() != arrow::Type::DOUBLE) return out;
-    for (const auto& chunk : col->chunks()) {
-        const auto& a = static_cast<const arrow::DoubleArray&>(*chunk);
-        for (int64_t i = 0; i < a.length(); ++i) out.push_back(a.IsValid(i) ? a.Value(i) : std::nan(""));
-    }
-    return out;
-}
-
 // The error columns of a regression table: "error", or "error_0", "error_1", ...
 std::vector<std::string> ErrorColumns(const std::shared_ptr<arrow::Table>& table) {
     if (table->GetColumnByName("error")) return {"error"};
@@ -236,135 +213,6 @@ std::string Number(double x) {
 
 }  // namespace
 
-ClassifierResults ClassifierFromPredictions(const std::shared_ptr<arrow::Table>& table, size_t worst_rows) {
-    ClassifierResults r;
-    if (!table) {
-        r.error = "no test predictions";
-        return r;
-    }
-    const auto truth_col = table->GetColumnByName("true_class");
-    const auto pred_col = table->GetColumnByName("predicted_class");
-    if (!truth_col || !pred_col) {
-        r.error = "the table has no true_class / predicted_class columns";
-        return r;
-    }
-    if (truth_col->type()->id() != arrow::Type::INT64 || pred_col->type()->id() != arrow::Type::INT64) {
-        r.error = "true_class and predicted_class must be whole numbers";
-        return r;
-    }
-    const std::vector<int64_t> truth = Int64Values(table, "true_class");
-    const std::vector<int64_t> pred = Int64Values(table, "predicted_class");
-    const std::vector<int64_t> dataset_rows = Int64Values(table, "row_id");
-    std::vector<double> conf = DoubleValues(table, "confidence");
-    for (double& c : conf)
-        if (std::isnan(c)) c = 0.0;
-    conf.resize(truth.size(), 0.0);
-    r.rows = static_cast<int64_t>(truth.size());
-
-    // Class names from score_<name> columns, in column order; else indices.
-    int64_t max_class = -1;
-    for (size_t i = 0; i < truth.size(); ++i) max_class = std::max({max_class, truth[i], pred[i]});
-    for (const auto& field : table->schema()->fields())
-        if (field->name().rfind("score_", 0) == 0) r.classes.push_back(field->name().substr(6));
-    if (static_cast<int64_t>(r.classes.size()) <= max_class) {
-        r.classes.clear();
-        for (int64_t c = 0; c <= max_class; ++c) r.classes.push_back(std::to_string(c));
-    }
-    const size_t k = r.classes.size();
-    r.confusion.assign(k, std::vector<int64_t>(k, 0));
-    int64_t right = 0;
-    std::vector<WorstRow> wrong;
-    for (size_t i = 0; i < truth.size(); ++i) {
-        if (truth[i] < 0 || pred[i] < 0) continue;
-        ++r.confusion[static_cast<size_t>(truth[i])][static_cast<size_t>(pred[i])];
-        if (truth[i] == pred[i]) ++right;
-        else wrong.push_back({static_cast<int64_t>(i) + 1, i < dataset_rows.size() ? dataset_rows[i] : -1,
-                              r.classes[static_cast<size_t>(truth[i])], r.classes[static_cast<size_t>(pred[i])], conf[i]});
-    }
-    r.accuracy = r.rows ? static_cast<double>(right) / static_cast<double>(r.rows) : 0.0;
-    for (size_t c = 0; c < k; ++c) {
-        ClassRow row;
-        row.name = r.classes[c];
-        int64_t predicted = 0;
-        for (size_t t = 0; t < k; ++t) {
-            row.support += r.confusion[c][t];
-            predicted += r.confusion[t][c];
-        }
-        row.recall = row.support ? static_cast<double>(r.confusion[c][c]) / static_cast<double>(row.support) : 0.0;
-        row.precision = predicted ? static_cast<double>(r.confusion[c][c]) / static_cast<double>(predicted) : 0.0;
-        r.per_class.push_back(row);
-    }
-    std::stable_sort(wrong.begin(), wrong.end(), [](const WorstRow& a, const WorstRow& b) { return a.confidence > b.confidence; });
-    if (wrong.size() > worst_rows) wrong.resize(worst_rows);
-    r.worst = std::move(wrong);
-    r.ok = true;
-    return r;
-}
-
-bool IsRegressionPredictions(const std::shared_ptr<arrow::Table>& table) {
-    return table && !ErrorColumns(table).empty();
-}
-
-RegressionResults RegressionFromPredictions(const std::shared_ptr<arrow::Table>& table, size_t worst_rows) {
-    RegressionResults r;
-    if (!table) {
-        r.error = "no test predictions";
-        return r;
-    }
-    const std::vector<std::string> errors = ErrorColumns(table);
-    if (errors.empty()) {
-        r.error = "the table has no error column";
-        return r;
-    }
-    const bool single = errors.size() == 1 && errors[0] == "error";
-    const std::vector<double> truth = DoubleValues(table, single ? "true_value" : "true_0");
-    const std::vector<double> predicted = DoubleValues(table, single ? "predicted_value" : "predicted_0");
-    const std::vector<int64_t> dataset_rows = Int64Values(table, "row_id");
-    r.rows = table->num_rows();
-    r.targets = static_cast<int>(errors.size());
-
-    double abs_sum = 0.0, square_sum = 0.0, sum = 0.0;
-    int64_t values = 0;
-    std::vector<double> row_abs(static_cast<size_t>(r.rows), 0.0);
-    for (const auto& name : errors) {
-        const std::vector<double> e = DoubleValues(table, name);
-        if (static_cast<int64_t>(e.size()) != r.rows) {
-            r.error = "'" + name + "' is not a number column";
-            return r;
-        }
-        for (size_t i = 0; i < e.size(); ++i) {
-            if (std::isnan(e[i])) continue;
-            abs_sum += std::abs(e[i]);
-            square_sum += e[i] * e[i];
-            sum += e[i];
-            ++values;
-            row_abs[i] += std::abs(e[i]);
-        }
-    }
-    if (values) {
-        r.mae = abs_sum / static_cast<double>(values);
-        r.rmse = std::sqrt(square_sum / static_cast<double>(values));
-        r.bias = sum / static_cast<double>(values);
-    }
-    std::vector<size_t> order(row_abs.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    const size_t keep = std::min(worst_rows, order.size());
-    std::partial_sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(keep), order.end(),
-                      [&](size_t a, size_t b) { return row_abs[a] > row_abs[b] || (row_abs[a] == row_abs[b] && a < b); });
-    for (size_t k = 0; k < keep; ++k) {
-        const size_t i = order[k];
-        RegressionRow row;
-        row.row = static_cast<int64_t>(i) + 1;
-        row.dataset_row = i < dataset_rows.size() ? dataset_rows[i] : -1;
-        row.truth = i < truth.size() ? truth[i] : 0.0;
-        row.predicted = i < predicted.size() ? predicted[i] : 0.0;
-        row.error = row.predicted - row.truth;
-        r.worst.push_back(row);
-    }
-    r.ok = true;
-    return r;
-}
-
 TestRowErrors RowErrorsFromPredictions(const std::shared_ptr<arrow::Table>& table) {
     TestRowErrors out;
     if (!table) {
@@ -375,17 +223,18 @@ TestRowErrors RowErrorsFromPredictions(const std::shared_ptr<arrow::Table>& tabl
         const int at = metadata->FindKey("source_dataset");
         if (at >= 0) out.source_dataset = metadata->value(at);
     }
-    out.row_ids = Int64Values(table, "row_id");
+    for (double id : ArrowNumbers(table->GetColumnByName("row_id")))
+        out.row_ids.push_back(std::isnan(id) ? -1 : static_cast<int64_t>(id));
     if (out.row_ids.empty() || out.source_dataset.empty()) {
         out.error = "this test run did not record which rows of the dataset it tested";
         return out;
     }
     const size_t rows = static_cast<size_t>(table->num_rows());
     out.errors.assign(rows, 0.0);
-    out.classifier = !IsRegressionPredictions(table);
+    out.classifier = table->GetColumnByName("true_class") != nullptr;
     if (out.classifier) {
-        const std::vector<int64_t> truth = Int64Values(table, "true_class");
-        const std::vector<int64_t> pred = Int64Values(table, "predicted_class");
+        const std::vector<double> truth = ArrowNumbers(table->GetColumnByName("true_class"));
+        const std::vector<double> pred = ArrowNumbers(table->GetColumnByName("predicted_class"));
         if (truth.size() != rows || pred.size() != rows) {
             out.error = "the table has no true_class / predicted_class columns";
             return out;
@@ -394,7 +243,7 @@ TestRowErrors RowErrorsFromPredictions(const std::shared_ptr<arrow::Table>& tabl
     } else {
         const std::vector<std::string> names = ErrorColumns(table);
         for (const auto& name : names) {
-            const std::vector<double> e = DoubleValues(table, name);
+            const std::vector<double> e = ArrowNumbers(table->GetColumnByName(name));
             if (e.size() != rows) {
                 out.error = "'" + name + "' is not a number column";
                 return out;
@@ -415,47 +264,6 @@ ColumnGatherer::ColumnGatherer(const std::vector<int64_t>& row_ids) : row_ids_(r
     column_.valid.assign(row_ids_.size(), 0);
 }
 
-namespace {
-
-bool IsNumber(arrow::Type::type id) {
-    switch (id) {
-        case arrow::Type::INT8: case arrow::Type::INT16: case arrow::Type::INT32: case arrow::Type::INT64:
-        case arrow::Type::UINT8: case arrow::Type::UINT16: case arrow::Type::UINT32: case arrow::Type::UINT64:
-        case arrow::Type::HALF_FLOAT: case arrow::Type::FLOAT: case arrow::Type::DOUBLE:
-            return true;
-        default:
-            return false;
-    }
-}
-
-template <typename ArrayType>
-double ValueOf(const arrow::Array& array, int64_t i) {
-    return static_cast<double>(static_cast<const ArrayType&>(array).Value(i));
-}
-
-double NumberAt(const arrow::Array& array, int64_t i) {
-    switch (array.type_id()) {
-        case arrow::Type::INT8: return ValueOf<arrow::Int8Array>(array, i);
-        case arrow::Type::INT16: return ValueOf<arrow::Int16Array>(array, i);
-        case arrow::Type::INT32: return ValueOf<arrow::Int32Array>(array, i);
-        case arrow::Type::INT64: return ValueOf<arrow::Int64Array>(array, i);
-        case arrow::Type::UINT8: return ValueOf<arrow::UInt8Array>(array, i);
-        case arrow::Type::UINT16: return ValueOf<arrow::UInt16Array>(array, i);
-        case arrow::Type::UINT32: return ValueOf<arrow::UInt32Array>(array, i);
-        case arrow::Type::UINT64: return ValueOf<arrow::UInt64Array>(array, i);
-        case arrow::Type::FLOAT: return ValueOf<arrow::FloatArray>(array, i);
-        case arrow::Type::DOUBLE: return ValueOf<arrow::DoubleArray>(array, i);
-        default: {
-            const auto scalar = array.GetScalar(i);
-            if (!scalar.ok()) return std::nan("");
-            const auto cast = (*scalar)->CastTo(arrow::float64());
-            return cast.ok() ? std::static_pointer_cast<arrow::DoubleScalar>(*cast)->value : std::nan("");
-        }
-    }
-}
-
-}  // namespace
-
 bool ColumnGatherer::Add(const std::shared_ptr<arrow::ChunkedArray>& piece, std::string& error) {
     if (!piece) {
         error = "the column could not be read";
@@ -467,7 +275,7 @@ bool ColumnGatherer::Add(const std::shared_ptr<arrow::ChunkedArray>& piece, std:
             error = "a " + type->ToString() + " column cannot be sliced by value";
             return false;
         }
-        column_.numeric = IsNumber(type->id());
+        column_.numeric = IsArrowNumber(type->id());
         if (column_.numeric) column_.numbers.assign(row_ids_.size(), 0.0);
         else column_.labels.assign(row_ids_.size(), std::string());
         typed_ = true;
@@ -485,7 +293,7 @@ bool ColumnGatherer::Add(const std::shared_ptr<arrow::ChunkedArray>& piece, std:
             const int64_t local = row - chunk_start;
             if (chunk->IsNull(local)) continue;
             if (column_.numeric) {
-                const double v = NumberAt(*chunk, local);
+                const double v = ArrowNumberAt(*chunk, local);
                 if (std::isnan(v)) continue;
                 column_.numbers[at] = v;
             } else {

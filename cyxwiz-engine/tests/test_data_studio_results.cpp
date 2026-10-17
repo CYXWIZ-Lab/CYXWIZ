@@ -1,11 +1,14 @@
 // Data Studio > Results' model (TOFIX148 job 7): the Berean SFT generation
-// previews (four prompts from sft_v2 epoch 4), a small classifier test, and
-// (TOFIX157 B2) a regression test and errors joined back to the data by row.
+// previews (four prompts from sft_v2 epoch 4), and (TOFIX157 B2) a test's
+// errors joined back to the data by row, for a classifier and a regression.
+// The run's own figures read back from its table are checked in
+// test_training_executor_arrow_parquet (one calculation, TOFIX157).
 
 #include "../src/core/data_studio_results.h"
 #include "../src/core/test_predictions_table.h"
 
 #include <arrow/api.h>
+#include <arrow/util/key_value_metadata.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -100,42 +103,31 @@ int main() {
     fs::remove_all(dir.parent_path().parent_path().parent_path());
     Check(FindPreviewRuns((fs::temp_directory_path() / "cyxwiz_no_such_folder").string()).empty(), "no folder, no runs");
 
-    // A classifier test: 3 classes, 6 rows.
+    // A test without its rows: they cannot be joined back.
+    Check(!RowErrorsFromPredictions(cyxwiz::BuildTestPredictionsTable({0, 1}, {0, 0}, {0.9f, 0.8f}, {}, 0, {})).ok,
+          "no row_id: the rows are not known");
+    Check(!RowErrorsFromPredictions(nullptr).ok, "no table");
+
+    // A kept table read back through a Data Input can have narrower integers.
     {
-        arrow::Int64Builder t, p;
-        arrow::DoubleBuilder c, s0, s1, s2;
-        const int64_t truth[] = {0, 0, 1, 1, 2, 2};
-        const int64_t pred[] = {0, 1, 1, 1, 2, 0};
-        const double conf[] = {0.9, 0.8, 0.7, 0.6, 0.95, 0.99};
-        for (int i = 0; i < 6; ++i) {
-            (void)t.Append(truth[i]);
-            (void)p.Append(pred[i]);
-            (void)c.Append(conf[i]);
-            (void)s0.Append(0.1);
-            (void)s1.Append(0.1);
-            (void)s2.Append(0.8);
-        }
-        std::shared_ptr<arrow::Array> ta, pa, ca, a0, a1, a2;
-        (void)t.Finish(&ta);
-        (void)p.Finish(&pa);
-        (void)c.Finish(&ca);
-        (void)s0.Finish(&a0);
-        (void)s1.Finish(&a1);
-        (void)s2.Finish(&a2);
-        auto schema = arrow::schema({arrow::field("true_class", arrow::int64()), arrow::field("predicted_class", arrow::int64()),
-                                     arrow::field("confidence", arrow::float64()), arrow::field("score_cat", arrow::float64()),
-                                     arrow::field("score_dog", arrow::float64()), arrow::field("score_bird", arrow::float64())});
-        auto table = arrow::Table::Make(schema, {ta, pa, ca, a0, a1, a2});
-        const auto r = ClassifierFromPredictions(table);
-        Check(r.ok, "classifier results: " + r.error);
-        Check(r.rows == 6 && std::abs(r.accuracy - 4.0 / 6.0) < 1e-9, "accuracy 4 of 6");
-        Check(r.classes == std::vector<std::string>({"cat", "dog", "bird"}), "class names from score columns");
-        Check(r.confusion[0][1] == 1 && r.confusion[2][0] == 1 && r.confusion[1][1] == 2, "confusion");
-        Check(std::abs(r.per_class[0].recall - 0.5) < 1e-9 && std::abs(r.per_class[1].precision - 2.0 / 3.0) < 1e-9, "per class");
-        Check(r.worst.size() == 2 && r.worst[0].row == 6 && r.worst[0].truth == "bird" && r.worst[0].predicted == "cat",
-              "the worst row is the most confident wrong one");
-        Check(!ClassifierFromPredictions(nullptr).ok, "no table");
-        Check(!RowErrorsFromPredictions(table).ok, "no row_id: the rows are not known");
+        arrow::UInt8Builder t8, p8;
+        arrow::Int32Builder ids;
+        (void)t8.AppendValues(std::vector<uint8_t>{0, 1, 1});
+        (void)p8.AppendValues(std::vector<uint8_t>{0, 0, 1});
+        (void)ids.AppendValues(std::vector<int32_t>{4, 9, 2});
+        std::shared_ptr<arrow::Array> ta, pa, ia;
+        (void)t8.Finish(&ta);
+        (void)p8.Finish(&pa);
+        (void)ids.Finish(&ia);
+        const auto narrow = arrow::Table::Make(
+            arrow::schema({arrow::field("row_id", arrow::int32()), arrow::field("true_class", arrow::uint8()),
+                           arrow::field("predicted_class", arrow::uint8())},
+                          arrow::key_value_metadata({cyxwiz::kTestPredictionsSourceKey}, {"blobs"})),
+            {ia, ta, pa});
+        const auto errors = RowErrorsFromPredictions(narrow);
+        Check(errors.ok && errors.row_ids == std::vector<int64_t>({4, 9, 2}) &&
+                  errors.errors == std::vector<double>({0, 1, 0}),
+              "narrow integer columns: " + errors.error);
     }
 
     // The same test with its rows recorded (TOFIX157 B2): errors joined back to
@@ -144,9 +136,6 @@ int main() {
         const cyxwiz::TestPredictionsSource source{{10, 3, 7, 0, 5, 8}, "cities"};
         const auto table = cyxwiz::BuildTestPredictionsTable({0, 0, 1, 1, 2, 2}, {0, 1, 1, 1, 2, 0},
                                                              {0.9f, 0.8f, 0.7f, 0.6f, 0.95f, 0.99f}, {}, 0, {}, source);
-        const auto r = ClassifierFromPredictions(table);
-        Check(r.ok && r.worst.size() == 2 && r.worst[0].row == 6 && r.worst[0].dataset_row == 8,
-              "the worst row names its dataset row");
         const auto errors = RowErrorsFromPredictions(table);
         Check(errors.ok && errors.classifier && errors.source_dataset == "cities", "row errors: " + errors.error);
         Check(errors.errors == std::vector<double>({0, 1, 0, 0, 0, 1}), "a classifier's error is 1 when wrong");
@@ -198,21 +187,10 @@ int main() {
     // A regression test.
     {
         const auto table = cyxwiz::BuildRegressionPredictionsTable({1, 2, 3}, {1.5f, 2, 1}, 1, {{4, 5, 6}, "houses"});
-        Check(IsRegressionPredictions(table), "a regression table");
-        const auto r = RegressionFromPredictions(table);
-        Check(r.ok && r.rows == 3 && r.targets == 1, "regression results: " + r.error);
-        Check(std::abs(r.mae - 2.5 / 3.0) < 1e-6 && std::abs(r.rmse - std::sqrt(4.25 / 3.0)) < 1e-6 &&
-                  std::abs(r.bias + 1.5 / 3.0) < 1e-6,
-              "MAE, RMSE and bias");
-        Check(r.worst.size() == 3 && r.worst[0].row == 3 && r.worst[0].dataset_row == 6 &&
-                  std::abs(r.worst[0].error + 2.0) < 1e-6,
-              "the largest error first");
         const auto errors = RowErrorsFromPredictions(table);
         Check(errors.ok && !errors.classifier && errors.source_dataset == "houses" &&
                   errors.row_ids == std::vector<int64_t>({4, 5, 6}) && std::abs(errors.errors[2] - 2.0) < 1e-6,
               "regression row errors are |error|");
-        Check(!IsRegressionPredictions(cyxwiz::BuildTestPredictionsTable({0}, {0}, {1.0f}, {}, 0, {})),
-              "a classifier table is not regression");
     }
 
     std::cout << "test_data_studio_results: all checks passed\n";

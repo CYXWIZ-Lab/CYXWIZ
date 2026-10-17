@@ -430,34 +430,17 @@ that wrote previews, newest first; **Epoch** picks one of its epochs.
 These are the run's few preview prompts; the full table of an evaluation set
 comes from batch evaluation (TOFIX149 item 4).
 
-**Test run** reads the latest test run's per-row predictions (the
-`test_predictions` table, published when a model is tested with Train > Test).
-Its `row_id` column is each test row's row in the tested table (counted from
-0), and the table's name is kept with it, so the results join back to the
-data. A classifier:
+**Test run** shows the latest test in a few lines: its headline (*Accuracy
+94.44%*, *MAE 0.1234*), how many rows it tested and its other figures, read
+back from the run's per-row predictions (the `test_predictions` table,
+published when a model is tested with Train > Test) with the same calculation
+and words as the Test Results panel. **Open Test Results** opens that panel,
+the one full view of a test: the confusion matrix, the classes, the curves,
+each prediction with its dataset row, a regression's rows by error, and the
+error by the values of a column of the tested table (see
+[testing.md](testing.md)).
 
-- **Accuracy** and the number of wrong rows;
-- **Confusion**: true classes down, predicted across (the class names come from
-  the score columns), right answers green;
-- **precision** and **recall** per class (recall under 60% in amber);
-- **Worst rows**: the wrong rows the model was most sure of, by their **dataset
-  row** (counted from 1, as the Table Viewer counts).
-
-A regression model (its `test_predictions` has `true_value`,
-`predicted_value` and `error` = predicted - true; with several targets
-`true_0`, `predicted_0`, `error_0`, ...):
-
-- **MAE**, **RMSE** and **Bias** (the mean error: positive predicts high);
-- **Largest errors**: the rows furthest off, by dataset row (the first target
-  when there are several).
-
-**Error by column value** (both kinds): pick a column of the tested table and
-see where the model goes wrong. Each value of the column gets its test rows and
-the share wrong (a classifier) or the mean |error| (regression), highest first;
-a value above the overall error by a quarter or more is amber. A number column
-with more than 20 values is cut into five ranges of about equal rows; a text
-column keeps its 20 most common values and puts the rest under *(other
-values)*. A table on disk is read one row group at a time (a task in Task
-View). It needs the tested table still loaded; when it was re-loaded with fewer
-rows, the run is refused as changed since the test. A test from a source that
-does not report rows (images, audio, older runs) says so: test again.
+`test_predictions` has a `row_id` column (each test row's row in the tested
+table, counted from 0), and its metadata keeps the tested table's name, the
+class names, the loss and the time, so the results join back to the data and
+a copy read back later gives the whole run.

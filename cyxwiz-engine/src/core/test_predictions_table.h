@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,15 +20,27 @@ inline constexpr const char* kTestPredictionsDataset = "test_predictions";
 // row_id column counts rows in it (0-based).
 inline constexpr const char* kTestPredictionsSourceKey = "source_dataset";
 
+// More schema metadata (TOFIX157), so a table read back gives the whole run:
+// the class names (one per line, a classifier's), the test loss and the
+// seconds it took (as text), and "partial" = "true" for a quick test.
+inline constexpr const char* kTestPredictionsClassNamesKey = "class_names";
+inline constexpr const char* kTestPredictionsLossKey = "test_loss";
+inline constexpr const char* kTestPredictionsSecondsKey = "seconds";
+inline constexpr const char* kTestPredictionsPartialKey = "partial";
+
 // Where the test rows come from: a row_id column is written when `row_ids`
-// has one entry per row, and `dataset` goes in the schema metadata.
+// has one entry per row, and `dataset` goes in the schema metadata; the
+// run's loss, time and quick-test flag go there too when set.
 struct TestPredictionsSource {
     std::vector<int64_t> row_ids;
     std::string dataset;
+    std::optional<double> loss;
+    double seconds = 0.0;
+    bool partial = false;
 };
 
 // One row per test sample: row_id (when known), true_class, predicted_class,
-// confidence, then the scores - binary (two classes): "score", the positive
+// confidence, then the scores (the class names also go in the metadata) - binary (two classes): "score", the positive
 // class's probability; multi-class: "score_<class name>" per class (the class
 // index when names are missing or repeat). `class_probabilities` is row-major
 // [samples][classes]; an empty one (scores not kept) leaves out the score

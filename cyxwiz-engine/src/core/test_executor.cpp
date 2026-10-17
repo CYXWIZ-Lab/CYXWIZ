@@ -5,7 +5,6 @@
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
-#include "one_vs_rest_curves.h"
 #include "model_builder.h"
 #include "training_batcher_setup.h"
 
@@ -15,46 +14,6 @@
 #include <stdexcept>
 
 namespace cyxwiz {
-
-// ============================================================================
-// ConfusionMatrix Implementation
-// ============================================================================
-
-void ConfusionMatrix::Resize(int n) {
-    num_classes = n;
-    matrix.clear();
-    matrix.resize(n, std::vector<int>(n, 0));
-}
-
-void ConfusionMatrix::Add(int actual, int predicted) {
-    if (actual >= 0 && actual < num_classes && predicted >= 0 && predicted < num_classes) {
-        matrix[actual][predicted]++;
-    }
-}
-
-float ConfusionMatrix::GetAccuracy() const {
-    if (num_classes == 0) return 0.0f;
-
-    int correct = 0;
-    int total = 0;
-    for (int i = 0; i < num_classes; ++i) {
-        for (int j = 0; j < num_classes; ++j) {
-            total += matrix[i][j];
-            if (i == j) correct += matrix[i][j];
-        }
-    }
-    return total > 0 ? static_cast<float>(correct) / total : 0.0f;
-}
-
-int ConfusionMatrix::GetTotal() const {
-    int total = 0;
-    for (int i = 0; i < num_classes; ++i) {
-        for (int j = 0; j < num_classes; ++j) {
-            total += matrix[i][j];
-        }
-    }
-    return total;
-}
 
 // ============================================================================
 // TestExecutor Implementation
@@ -479,9 +438,7 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
 
     // Compute final metrics
     if (!regression_mode) {
-        ComputePerClassMetrics();
-        ComputeAggregateMetrics();
-        ComputeCurves();
+        UpdateMetrics(FinishClassifierMetrics);
     }
 
     TestingMetrics final_metrics = GetMetrics();
@@ -675,56 +632,6 @@ void TestExecutor::TestMetricLearning(IBatcher& rows, int batch_size) {
                  evaluation.nearest_classes.size(), DescribeMetricEvaluation(evaluation));
 }
 
-void TestExecutor::ComputePerClassMetrics() {
-    std::lock_guard<std::mutex> lock(metrics_mutex_);
-
-    int num_classes = metrics_.confusion_matrix.num_classes;
-
-    for (int c = 0; c < num_classes; ++c) {
-        ClassMetrics& cm = metrics_.per_class_metrics[c];
-        cm.class_id = c;
-
-        // True positives = diagonal element
-        cm.true_positives = metrics_.confusion_matrix.matrix[c][c];
-
-        // False positives = sum of column c minus diagonal
-        cm.false_positives = 0;
-        for (int i = 0; i < num_classes; ++i) {
-            if (i != c) {
-                cm.false_positives += metrics_.confusion_matrix.matrix[i][c];
-            }
-        }
-
-        // False negatives = sum of row c minus diagonal
-        cm.false_negatives = 0;
-        for (int j = 0; j < num_classes; ++j) {
-            if (j != c) {
-                cm.false_negatives += metrics_.confusion_matrix.matrix[c][j];
-            }
-        }
-
-        // Support = sum of row (actual samples in this class)
-        cm.support = 0;
-        for (int j = 0; j < num_classes; ++j) {
-            cm.support += metrics_.confusion_matrix.matrix[c][j];
-        }
-
-        // Precision = TP / (TP + FP)
-        int pred_positives = cm.true_positives + cm.false_positives;
-        cm.precision = pred_positives > 0 ?
-            static_cast<float>(cm.true_positives) / pred_positives : 0.0f;
-
-        // Recall = TP / (TP + FN)
-        int actual_positives = cm.true_positives + cm.false_negatives;
-        cm.recall = actual_positives > 0 ?
-            static_cast<float>(cm.true_positives) / actual_positives : 0.0f;
-
-        // F1 = 2 * (precision * recall) / (precision + recall)
-        float pr_sum = cm.precision + cm.recall;
-        cm.f1_score = pr_sum > 0 ? 2.0f * cm.precision * cm.recall / pr_sum : 0.0f;
-    }
-}
-
 void TestExecutor::ApplyLabelClassNames(const std::vector<std::string>& names) {
     // A text label column's classes name the results (TOFIX145); an external
     // test source's own names win.
@@ -734,73 +641,6 @@ void TestExecutor::ApplyLabelClassNames(const std::vector<std::string>& names) {
         for (size_t i = 0; i < m.per_class_metrics.size() && i < names.size(); ++i)
             m.per_class_metrics[i].class_name = names[i];
     });
-}
-
-void TestExecutor::ComputeCurves() {
-    std::lock_guard<std::mutex> lock(metrics_mutex_);
-    TestingMetrics& m = metrics_;
-    if (m.metric_learning_mode || !m.curves_note.empty()) return;
-    const size_t classes = static_cast<size_t>(std::max(m.probability_classes, 0));
-    const size_t samples = m.ground_truth.size();
-    if (classes < 2 || samples == 0 || m.class_probabilities.size() != samples * classes) {
-        m.curves_note = "ROC / PR need class scores for every test sample";
-        return;
-    }
-    if (classes == 2) {
-        // Binary: the positive class's probability against truth == 1.
-        std::vector<double> positive(samples);
-        for (size_t i = 0; i < samples; ++i) positive[i] = m.class_probabilities[i * 2 + 1];
-        m.roc = ModelEvaluation::ComputeROC(m.ground_truth, positive);
-        m.pr = ModelEvaluation::ComputePRCurve(m.ground_truth, positive);
-    } else {
-        // One-vs-rest; a class the test set has no sample of is skipped, not fatal.
-        std::vector<std::string> names;
-        for (const auto& c : m.per_class_metrics) names.push_back(c.class_name);
-        OneVsRestCurves curves = ComputeOneVsRestCurves(m.ground_truth, m.class_probabilities, classes, names);
-        m.roc = std::move(curves.roc);
-        m.pr = std::move(curves.pr);
-        m.curves_note = std::move(curves.note);
-    }
-    // Say which curves failed unless the message already does ("ROC / PR
-    // need ...", "Precision-recall requires ..."); a successful multi-class
-    // run may carry a note on skipped classes.
-    const auto why = [](const std::string& error) {
-        return error.rfind("ROC", 0) == 0 || error.rfind("Precision", 0) == 0 ? error : "ROC / PR: " + error;
-    };
-    if (!m.roc->success) m.curves_note = why(m.roc->error_message);
-    else if (!m.pr->success) m.curves_note = why(m.pr->error_message);
-}
-
-void TestExecutor::ComputeAggregateMetrics() {
-    std::lock_guard<std::mutex> lock(metrics_mutex_);
-
-    int num_classes = static_cast<int>(metrics_.per_class_metrics.size());
-    if (num_classes == 0) return;
-
-    // Macro averages (unweighted mean of per-class metrics)
-    float sum_precision = 0.0f;
-    float sum_recall = 0.0f;
-    float sum_f1 = 0.0f;
-
-    // Weighted averages (weighted by support)
-    float weighted_f1 = 0.0f;
-    int total_support = 0;
-
-    for (const auto& cm : metrics_.per_class_metrics) {
-        sum_precision += cm.precision;
-        sum_recall += cm.recall;
-        sum_f1 += cm.f1_score;
-        weighted_f1 += cm.f1_score * cm.support;
-        total_support += cm.support;
-    }
-
-    metrics_.macro_precision = sum_precision / num_classes;
-    metrics_.macro_recall = sum_recall / num_classes;
-    metrics_.macro_f1 = sum_f1 / num_classes;
-    metrics_.weighted_f1 = total_support > 0 ? weighted_f1 / total_support : 0.0f;
-
-    // Final accuracy from confusion matrix
-    metrics_.test_accuracy = metrics_.confusion_matrix.GetAccuracy();
 }
 
 Tensor TestExecutor::Forward(const Tensor& input) {

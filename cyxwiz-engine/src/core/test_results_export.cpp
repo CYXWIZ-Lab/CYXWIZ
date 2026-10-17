@@ -4,6 +4,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -53,6 +55,7 @@ bool WriteTestResultsCsv(const TestingMetrics& m, const std::string& path, std::
     out << "Quick test," << (m.partial ? "yes" : "no") << "\n";
     out << "Loss," << m.test_loss << "\n";
     out << "Samples," << m.total_samples << "\n";
+    if (!m.source_dataset.empty()) out << "Tested table," << Field(m.source_dataset) << "\n";
     if (m.causal_lm_mode) {
         out << "Valid target tokens," << m.total_target_values << "\n";
         out << "Token accuracy," << m.test_accuracy << "\n";
@@ -91,13 +94,38 @@ bool WriteTestResultsCsv(const TestingMetrics& m, const std::string& path, std::
         }
         const size_t samples = std::min(m.predictions.size(), m.ground_truth.size());
         if (samples > 0) {
-            out << "\nPredictions\nIndex,Predicted,Actual,Correct,Confidence\n";
+            const bool by_dataset = m.row_ids.size() == samples;
+            out << "\nPredictions\nIndex," << (by_dataset ? "Dataset row," : "") << "Predicted,Actual,Correct,Confidence\n";
             for (size_t i = 0; i < samples; ++i) {
-                out << i << "," << Field(test_report::ClassName(m, m.predictions[i])) << ","
+                out << i << ",";
+                if (by_dataset) out << m.row_ids[i] + 1 << ",";
+                out << Field(test_report::ClassName(m, m.predictions[i])) << ","
                     << Field(test_report::ClassName(m, m.ground_truth[i])) << ","
                     << (m.predictions[i] == m.ground_truth[i] ? "yes" : "no") << ","
                     << (i < m.confidences.size() ? m.confidences[i] : 0.0f) << "\n";
             }
+        }
+    }
+    // A regression's kept rows: true and predicted per target.
+    const size_t width = static_cast<size_t>(std::max(m.regression_width, 0));
+    if (m.regression_mode && width > 0 && !m.regression_truth.empty() &&
+        m.regression_truth.size() == m.regression_predictions.size()) {
+        const size_t rows = m.regression_truth.size() / width;
+        const bool by_dataset = m.row_ids.size() == rows;
+        out << "\nRows\nIndex" << (by_dataset ? ",Dataset row" : "");
+        for (size_t k = 0; k < width; ++k) {
+            const std::string n = width == 1 ? "" : " " + std::to_string(k + 1);
+            out << ",True" << n << ",Predicted" << n << ",Error" << n;
+        }
+        out << "\n";
+        for (size_t i = 0; i < rows; ++i) {
+            out << i;
+            if (by_dataset) out << "," << m.row_ids[i] + 1;
+            for (size_t k = 0; k < width; ++k) {
+                const float y = m.regression_truth[i * width + k], p = m.regression_predictions[i * width + k];
+                out << "," << y << "," << p << "," << (p - y);
+            }
+            out << "\n";
         }
     }
     return WriteFile(path, out.str(), error);
@@ -115,6 +143,7 @@ bool WriteTestResultsJson(const TestingMetrics& m, const std::string& path, std:
     j["total_samples"] = m.total_samples;
     j["time_seconds"] = m.total_time_seconds;
     j["samples_per_second"] = m.samples_per_second;
+    if (!m.source_dataset.empty()) j["tested_table"] = m.source_dataset;
     if (m.causal_lm_mode) {
         j["valid_target_tokens"] = m.total_target_values;
         j["token_accuracy"] = m.test_accuracy;
@@ -122,6 +151,21 @@ bool WriteTestResultsJson(const TestingMetrics& m, const std::string& path, std:
         j["total_target_values"] = m.total_target_values;
         j["mae"] = m.test_mae;
         j["rmse"] = m.test_rmse;
+        const size_t width = static_cast<size_t>(std::max(m.regression_width, 0));
+        if (width > 0 && !m.regression_truth.empty() && m.regression_truth.size() == m.regression_predictions.size()) {
+            const size_t rows = m.regression_truth.size() / width;
+            nlohmann::json out_rows = nlohmann::json::array();
+            for (size_t i = 0; i < rows; ++i) {
+                nlohmann::json row = {
+                    {"true", std::vector<float>(m.regression_truth.begin() + static_cast<std::ptrdiff_t>(i * width),
+                                                m.regression_truth.begin() + static_cast<std::ptrdiff_t>((i + 1) * width))},
+                    {"predicted", std::vector<float>(m.regression_predictions.begin() + static_cast<std::ptrdiff_t>(i * width),
+                                                     m.regression_predictions.begin() + static_cast<std::ptrdiff_t>((i + 1) * width))}};
+                if (m.row_ids.size() == rows) row["dataset_row"] = m.row_ids[i] + 1;
+                out_rows.push_back(std::move(row));
+            }
+            j["rows"] = out_rows;
+        }
     } else {
         j["accuracy"] = m.test_accuracy;
         j["macro_precision"] = m.macro_precision;
@@ -162,9 +206,13 @@ bool WriteTestResultsJson(const TestingMetrics& m, const std::string& path, std:
         const size_t samples = std::min(m.predictions.size(), m.ground_truth.size());
         nlohmann::json predictions = nlohmann::json::array();
         for (size_t i = 0; i < samples; ++i)
-            predictions.push_back({{"predicted", m.predictions[i]},
-                                   {"actual", m.ground_truth[i]},
-                                   {"confidence", i < m.confidences.size() ? m.confidences[i] : 0.0f}});
+        {
+            nlohmann::json p = {{"predicted", m.predictions[i]},
+                                {"actual", m.ground_truth[i]},
+                                {"confidence", i < m.confidences.size() ? m.confidences[i] : 0.0f}};
+            if (m.row_ids.size() == samples) p["dataset_row"] = m.row_ids[i] + 1;
+            predictions.push_back(std::move(p));
+        }
         j["predictions"] = predictions;
         if (m.roc && m.roc->success)
             j["roc"] = {{"auc", m.roc->auc},

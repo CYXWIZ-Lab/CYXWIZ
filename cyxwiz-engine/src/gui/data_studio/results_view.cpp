@@ -1,11 +1,11 @@
 #include "results_view.h"
 
 #include "../../core/arrow_dataset.h"
-#include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
-#include "../../core/parquet_backed_dataset.h"
 #include "../../core/project_manager.h"
+#include "../../core/test_predictions_metrics.h"
 #include "../../core/test_predictions_table.h"
+#include "../panels/test_results_panel.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -21,19 +21,6 @@ namespace cyxwiz {
 namespace {
 
 std::string Of(size_t n, size_t of) { return std::to_string(n) + " of " + std::to_string(of); }
-
-std::string Percent(double x) {
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%.1f%%", x * 100.0);
-    return buf;
-}
-
-// A measured value (an error, a target) to four significant digits.
-std::string Figure(double x) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.4g", x);
-    return buf;
-}
 
 // A figure with its label under it, as the board's summary tiles.
 void Tile(const char* label, const std::string& value, const std::string& note, const ImVec4& colour) {
@@ -270,300 +257,46 @@ int64_t ResultsView::TestRowCount() const {
     return table ? table->num_rows() : 0;
 }
 
-ResultsView::~ResultsView() {
-    if (slice_task_) AsyncTaskManager::Instance().Cancel(slice_task_);
-}
-
 void ResultsView::RenderTest() {
     const ui::Tokens& t = ui::CurrentTokens();
     const auto dataset = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset);
     const auto table = dataset ? dataset->GetArrowTable() : nullptr;
+    ImGui::PushTextWrapPos(0.0f);
     if (!table) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "No test run in this session. Test a model (Train > Test); its per-row predictions are "
-                                       "published as \"test_predictions\" and show here: a classifier's accuracy, confusion per "
-                                       "class and worst rows, a regression's errors, and the error by the values of a column.");
+        ImGui::TextColored(t.text_dim, "No test run in this session. Test a model (Train > Test > Run Test): its results open in "
+                                       "the Test Results panel, and its per-row predictions are published as "
+                                       "\"test_predictions\".");
         ImGui::PopTextWrapPos();
         return;
     }
+    // The run read back from its table: the same calculation and words as
+    // the Test Results panel.
     const std::string key = std::to_string(reinterpret_cast<uintptr_t>(table.get())) + "#" + std::to_string(table->num_rows());
     if (key != predictions_key_) {
         predictions_key_ = key;
-        regression_ = studio::IsRegressionPredictions(table);
-        if (regression_) regression_results_ = studio::RegressionFromPredictions(table);
-        else classifier_ = studio::ClassifierFromPredictions(table);
-        row_errors_ = studio::RowErrorsFromPredictions(table);
-        // The tested table's columns that can be sliced (not lists or bytes).
-        slice_columns_.clear();
-        std::shared_ptr<arrow::Schema> schema;
-        if (row_errors_.ok) {
-            if (const auto memory = DataRegistry::Instance().GetArrowDataset(row_errors_.source_dataset)) {
-                if (const auto source = memory->GetArrowTable()) schema = source->schema();
-            } else if (const auto disk = DataRegistry::Instance().GetParquetBackedDataset(row_errors_.source_dataset)) {
-                schema = disk->GetSchema();
-            }
-        }
-        if (schema)
-            for (const auto& field : schema->fields())
-                if (!arrow::is_nested(field->type()->id()) && field->type()->id() != arrow::Type::BINARY &&
-                    field->type()->id() != arrow::Type::LARGE_BINARY)
-                    slice_columns_.push_back(field->name());
-        if (slice_task_) AsyncTaskManager::Instance().Cancel(slice_task_);
-        slice_task_ = 0;
-        slice_column_.clear();
-        slices_ = {};
-        slices_error_.clear();
+        TestingMetrics run;
+        test_error_.clear();
+        if (MetricsFromPredictionsTable(*table, run, test_error_)) test_view_ = test_report::BuildView(run, nullptr);
     }
-    if (regression_) RenderRegression();
-    else RenderClassifier();
-    ImGui::Spacing();
-    RenderErrorsByValue();
-}
-
-void ResultsView::RenderClassifier() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (!classifier_.ok) {
-        ImGui::TextColored(t.error, "The test predictions cannot be read: %s", classifier_.error.c_str());
-        return;
-    }
-    const auto& r = classifier_;
-    Tile("Accuracy", Percent(r.accuracy), std::to_string(r.rows) + " test rows", r.accuracy >= 0.9 ? t.success : r.accuracy >= 0.6 ? t.warning : t.error);
-    ImGui::SameLine(0.0f, 28.0f);
-    Tile("Wrong", std::to_string(r.rows - static_cast<int64_t>(r.accuracy * static_cast<double>(r.rows) + 0.5)), "rows", t.text);
-    ImGui::Spacing();
-
-    ImGui::TextColored(t.text_dim, "CONFUSION (ROWS: TRUE CLASS, COLUMNS: PREDICTED)");
-    const int k = static_cast<int>(r.classes.size());
-    // A scrolling table with height 0 fills the rest of the window: size it
-    // to its rows (the header and one per class) and the scrollbar.
-    const ImGuiStyle& style = ImGui::GetStyle();
-    const float confusion_h = static_cast<float>(k + 1) * (ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f) +
-                              style.ScrollbarSize + style.CellPadding.y * 2.0f;
-    if (k <= 20 && ImGui::BeginTable("##confusion", k + 1, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
-                                                              ImGuiTableFlags_ScrollX,
-                                     ImVec2(0.0f, confusion_h))) {
-        ImGui::TableSetupColumn("");
-        for (const auto& c : r.classes) ImGui::TableSetupColumn(c.c_str());
-        ImGui::TableHeadersRow();
-        for (int a = 0; a < k; ++a) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(t.text_dim, "%s", r.classes[static_cast<size_t>(a)].c_str());
-            for (int b = 0; b < k; ++b) {
-                ImGui::TableNextColumn();
-                const int64_t v = r.confusion[static_cast<size_t>(a)][static_cast<size_t>(b)];
-                ImGui::TextColored(a == b ? t.success : v ? t.error : t.text_faint, "%lld", static_cast<long long>(v));
-            }
-        }
-        ImGui::EndTable();
-    } else if (k > 20) {
-        ImGui::TextColored(t.text_faint, "%d classes: the per-class table below lists them.", k);
-    }
-    ImGui::Spacing();
-    if (ImGui::BeginTable("##per_class", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
-        ImGui::TableSetupColumn("class");
-        ImGui::TableSetupColumn("rows");
-        ImGui::TableSetupColumn("precision");
-        ImGui::TableSetupColumn("recall");
-        ImGui::TableHeadersRow();
-        for (const auto& c : r.per_class) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(c.name.c_str());
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(c.support));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Percent(c.precision).c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextColored(c.recall < 0.6 ? t.warning : t.text, "%s", Percent(c.recall).c_str());
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::TextColored(t.text_dim, "WORST ROWS (WRONG, MOST CONFIDENT FIRST)");
-    if (r.worst.empty()) {
-        ImGui::TextColored(t.success, "No wrong row.");
-    } else if (ImGui::BeginTable("##worst", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
-        const bool by_dataset = r.worst.front().dataset_row >= 0;
-        ImGui::TableSetupColumn(by_dataset ? "dataset row" : "test row");
-        ImGui::TableSetupColumn("true");
-        ImGui::TableSetupColumn("predicted");
-        ImGui::TableSetupColumn("confidence");
-        ImGui::TableHeadersRow();
-        for (const auto& w : r.worst) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(by_dataset ? w.dataset_row + 1 : w.row));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(w.truth.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextColored(t.error, "%s", w.predicted.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Percent(w.confidence).c_str());
-        }
-        ImGui::EndTable();
-    }
-}
-
-void ResultsView::RenderRegression() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (!regression_results_.ok) {
-        ImGui::TextColored(t.error, "The test predictions cannot be read: %s", regression_results_.error.c_str());
-        return;
-    }
-    const auto& r = regression_results_;
-    const std::string rows = std::to_string(r.rows) + " test rows" +
-                             (r.targets > 1 ? ", " + std::to_string(r.targets) + " targets" : std::string());
-    Tile("MAE", Figure(r.mae), rows, t.text);
-    ImGui::SameLine(0.0f, 28.0f);
-    Tile("RMSE", Figure(r.rmse), "", t.text);
-    ImGui::SameLine(0.0f, 28.0f);
-    Tile("Bias", Figure(r.bias), r.bias > 0 ? "predicts high" : r.bias < 0 ? "predicts low" : "", t.text);
-    ImGui::Spacing();
-    ImGui::TextColored(t.text_dim, r.targets > 1 ? "LARGEST ERRORS (THE FIRST TARGET SHOWN)" : "LARGEST ERRORS");
-    if (!r.worst.empty() &&
-        ImGui::BeginTable("##worst_regression", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
-        const bool by_dataset = r.worst.front().dataset_row >= 0;
-        ImGui::TableSetupColumn(by_dataset ? "dataset row" : "test row");
-        ImGui::TableSetupColumn("true");
-        ImGui::TableSetupColumn("predicted");
-        ImGui::TableSetupColumn("error");
-        ImGui::TableHeadersRow();
-        for (const auto& w : r.worst) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(by_dataset ? w.dataset_row + 1 : w.row));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Figure(w.truth).c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Figure(w.predicted).c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextColored(t.warning, "%s", Figure(w.error).c_str());
-        }
-        ImGui::EndTable();
-    }
-}
-
-void ResultsView::SliceBy(const std::string& column) {
-    if (slice_task_) AsyncTaskManager::Instance().Cancel(slice_task_);
-    slice_column_ = column;
-    slices_ = {};
-    slices_error_.clear();
-    const std::string source = row_errors_.source_dataset;
-    const std::vector<int64_t> row_ids = row_errors_.row_ids;
-    const std::vector<double> errors = row_errors_.errors;
-    struct Outcome {
-        studio::ErrorSlices slices;
-        std::string error;
-    };
-    auto outcome = std::make_shared<Outcome>();
-    std::weak_ptr<int> alive = alive_;
-    slice_task_ = AsyncTaskManager::Instance().RunAsync(
-        "Error by " + column,
-        [source, column, row_ids, errors, outcome](LambdaTask& task) {
-            studio::ColumnGatherer gatherer(row_ids);
-            std::string error;
-            bool ok = true;
-            if (const auto memory = DataRegistry::Instance().GetArrowDataset(source)) {
-                const auto table = memory->GetArrowTable();
-                ok = table && gatherer.Add(table->GetColumnByName(column), error);
-            } else if (const auto disk = DataRegistry::Instance().GetParquetBackedDataset(source)) {
-                const int groups = disk->GetNumRowGroups();
-                for (int g = 0; ok && g < groups; ++g) {
-                    if (task.ShouldStop()) {
-                        task.MarkFailed("Cancelled.");
-                        return;
-                    }
-                    task.ReportProgress(static_cast<float>(g) / static_cast<float>(std::max(1, groups)),
-                                        "row group " + std::to_string(g + 1) + " of " + std::to_string(groups));
-                    ok = gatherer.Add(disk->ReadRowGroupColumn(g, column), error);
-                }
-            } else {
-                ok = false;
-                error = "'" + source + "' is no longer loaded; load it again to slice by its columns";
-            }
-            studio::GatheredColumn values;
-            if (ok) ok = gatherer.Finish(values, error);
-            if (!ok) {
-                outcome->error = error.empty() ? "the column could not be read" : error;
-                task.MarkFailed(outcome->error);
-                return;
-            }
-            outcome->slices = studio::SliceErrors(values, errors);
-        },
-        nullptr,
-        [this, alive, outcome](bool /*success*/, const std::string& /*message*/) {
-            if (alive.expired()) return;
-            slice_task_ = 0;
-            slices_error_ = outcome->error == "Cancelled." ? std::string() : outcome->error;
-            slices_ = outcome->slices;
-        },
-        alive_);
-}
-
-void ResultsView::RenderErrorsByValue() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::TextColored(t.text_dim, "ERROR BY COLUMN VALUE");
-    if (!row_errors_.ok) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_faint, "Not available: %s. Test again to record them.", row_errors_.error.c_str());
+    if (!test_error_.empty()) {
+        ImGui::TextColored(t.error, "The test predictions cannot be read: %s", test_error_.c_str());
         ImGui::PopTextWrapPos();
         return;
     }
-    if (slice_columns_.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_faint, "The tested table '%s' is no longer loaded; load it again to slice the error by its columns.",
-                           row_errors_.source_dataset.c_str());
-        ImGui::PopTextWrapPos();
-        return;
-    }
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(t.text_dim, "Column");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(std::min(280.0f, ImGui::GetContentRegionAvail().x * 0.6f));
-    if (ImGui::BeginCombo("##slice_column", slice_column_.empty() ? "Choose a column" : slice_column_.c_str())) {
-        for (const auto& c : slice_columns_)
-            if (ImGui::Selectable(c.c_str(), c == slice_column_)) SliceBy(c);
-        ImGui::EndCombo();
-    }
-    ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(t.text_faint, "of '%s'", row_errors_.source_dataset.c_str());
-    if (slice_column_.empty()) return;
-    if (slice_task_) {
-        ImGui::TextColored(t.text_dim, "%s Reading '%s'...", ICON_FA_SPINNER, slice_column_.c_str());
-        return;
-    }
-    if (!slices_error_.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.error, "%s", slices_error_.c_str());
-        ImGui::PopTextWrapPos();
-        return;
-    }
-    const bool classifier = row_errors_.classifier;
-    const auto measure = [&](double x) { return classifier ? Percent(x) : Figure(x); };
-    if (ImGui::BeginTable("##by_value", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
-        ImGui::TableSetupColumn(slices_.binned ? "range" : "value");
-        ImGui::TableSetupColumn("test rows");
-        ImGui::TableSetupColumn(classifier ? "wrong" : "mean |error|");
-        ImGui::TableHeadersRow();
-        for (const auto& s : slices_.slices) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(s.value.c_str());
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(s.rows));
-            ImGui::TableNextColumn();
-            // Above the overall error by a quarter or more stands out.
-            ImGui::TextColored(s.error > slices_.overall * 1.25 && s.error > 0.0 ? t.warning : t.text, "%s", measure(s.error).c_str());
-        }
-        ImGui::EndTable();
-    }
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_faint, "Overall %s over %zu test rows.%s A value with few rows can differ by chance.",
-                       measure(slices_.overall).c_str(), row_errors_.errors.size(),
-                       slices_.binned ? " Numbers are grouped in ranges of about equal rows." : "");
+    ImGui::TextColored(t.text_dim, "LATEST TEST");
+    ImGui::TextColored(TestToneColour(test_view_.headline_tone), "%s", test_view_.headline.c_str());
+    ImGui::TextColored(t.text_dim, "%s", test_view_.subtitle.c_str());
+    std::string chips;
+    for (const auto& chip : test_view_.chips) chips += (chips.empty() ? "" : " \xC2\xB7 ") + chip.text;
+    if (!chips.empty()) ImGui::TextColored(t.text_faint, "%s", chips.c_str());
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "The Test Results panel shows the rest: %s", test_view_.classification
+        ? "the confusion matrix, the classes, the curves, every row by its dataset row, and the error by the values of a column."
+        : "every row by its dataset row, the largest errors first, and the error by the values of a column.");
     ImGui::PopTextWrapPos();
+    if (ui::SecondaryButton("Open Test Results", static_cast<bool>(on_open_test_results), "Not available here") &&
+        on_open_test_results)
+        on_open_test_results();
 }
 
 }  // namespace cyxwiz

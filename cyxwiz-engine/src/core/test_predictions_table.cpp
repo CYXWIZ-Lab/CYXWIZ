@@ -26,14 +26,28 @@ bool AddRowIds(const TestPredictionsSource& source, size_t rows, std::vector<std
     return columns.back() != nullptr;
 }
 
-std::shared_ptr<arrow::Table> MakeTable(const TestPredictionsSource& source,
+std::shared_ptr<arrow::Table> MakeTable(const TestPredictionsSource& source, const std::vector<std::string>& class_names,
                                         std::vector<std::shared_ptr<arrow::Field>> fields,
                                         const std::vector<std::shared_ptr<arrow::Array>>& columns) {
     for (const auto& column : columns) {
         if (!column) return nullptr;
     }
+    std::vector<std::string> keys, values;
+    const auto put = [&](const char* key, std::string value) {
+        keys.emplace_back(key);
+        values.push_back(std::move(value));
+    };
+    if (!source.dataset.empty()) put(kTestPredictionsSourceKey, source.dataset);
+    if (!class_names.empty()) {
+        std::string joined;
+        for (size_t i = 0; i < class_names.size(); ++i) joined += (i ? "\n" : "") + class_names[i];
+        put(kTestPredictionsClassNamesKey, joined);
+    }
+    if (source.loss) put(kTestPredictionsLossKey, std::to_string(*source.loss));
+    if (source.seconds > 0.0) put(kTestPredictionsSecondsKey, std::to_string(source.seconds));
+    if (source.partial) put(kTestPredictionsPartialKey, "true");
     std::shared_ptr<arrow::KeyValueMetadata> metadata;
-    if (!source.dataset.empty()) metadata = arrow::key_value_metadata({kTestPredictionsSourceKey}, {source.dataset});
+    if (!keys.empty()) metadata = arrow::key_value_metadata(keys, values);
     return arrow::Table::Make(arrow::schema(std::move(fields), metadata), columns);
 }
 
@@ -90,7 +104,7 @@ std::shared_ptr<arrow::Table> BuildTestPredictionsTable(const std::vector<int>& 
             columns.push_back(Finish(score));
         }
     }
-    return MakeTable(source, std::move(fields), columns);
+    return MakeTable(source, class_names, std::move(fields), columns);
 }
 
 std::shared_ptr<arrow::Table> BuildRegressionPredictionsTable(const std::vector<float>& truth,
@@ -122,7 +136,7 @@ std::shared_ptr<arrow::Table> BuildRegressionPredictionsTable(const std::vector<
         columns.push_back(Finish(predicted_values));
         columns.push_back(Finish(errors));
     }
-    return MakeTable(source, std::move(fields), columns);
+    return MakeTable(source, {}, std::move(fields), columns);
 }
 
 }  // namespace cyxwiz

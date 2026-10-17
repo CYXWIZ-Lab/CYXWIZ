@@ -8,12 +8,11 @@
 //   sample is shown as its question, the evidence reference, what the model
 //   cited, whether book / chapter / verse match, how it stopped and whether
 //   it loops; slices count them by stop reason.
-// - Test runs: the latest test's per-row predictions (kTestPredictionsDataset).
-//   Classifiers: accuracy, confusion per class, the classes' precision and
-//   recall, and the worst rows (wrong with the highest confidence).
-//   Regression: MAE, RMSE, bias and the largest errors. Both (TOFIX157 B2):
-//   the error by the values of a column of the tested table, joined by the
-//   rows' row_id.
+// - Test runs: a test's per-row table (kTestPredictionsDataset, or a kept
+//   copy) joined back to the tested table by its row_id, so the error can be
+//   sliced by the values of one of its columns (TOFIX157 B2). The run's own
+//   figures are the TestingMetrics the table reads back into
+//   (test_predictions_metrics.h), shown by the Test Results panel.
 //
 // Pure data in and out, besides reading the preview files.
 
@@ -81,55 +80,6 @@ std::vector<PreviewSlice> PreviewSlices(const PreviewEpoch& epoch);
 
 // "end", "token limit", "cancelled", or the reason as written.
 std::string StopWords(const std::string& stop);
-
-// ---- Classifier test predictions ------------------------------------------
-
-struct ClassRow {
-    std::string name;
-    int64_t support = 0;   // rows whose truth is this class
-    double precision = 0.0, recall = 0.0;
-};
-struct WorstRow {
-    int64_t row = 0;           // 1-based position in the test set
-    int64_t dataset_row = -1;  // 0-based row of the tested table (row_id); -1 unknown
-    std::string truth, predicted;
-    double confidence = 0.0;
-};
-struct ClassifierResults {
-    bool ok = false;
-    std::string error;
-    int64_t rows = 0;
-    double accuracy = 0.0;
-    std::vector<std::string> classes;
-    std::vector<std::vector<int64_t>> confusion;  // [truth][predicted]
-    std::vector<ClassRow> per_class;
-    std::vector<WorstRow> worst;                  // wrong rows, highest confidence first, at most `worst_rows`
-};
-// From the test predictions table (true_class, predicted_class, confidence,
-// score_<name> columns naming the classes, row_id when known).
-ClassifierResults ClassifierFromPredictions(const std::shared_ptr<arrow::Table>& table, size_t worst_rows = 20);
-
-// ---- Regression test predictions --------------------------------------------
-
-struct RegressionRow {
-    int64_t row = 0;           // 1-based position in the test set
-    int64_t dataset_row = -1;  // as WorstRow
-    double truth = 0.0, predicted = 0.0, error = 0.0;  // the first target; error = predicted - truth
-};
-struct RegressionResults {
-    bool ok = false;
-    std::string error;
-    int64_t rows = 0;
-    int targets = 0;
-    double mae = 0.0, rmse = 0.0, bias = 0.0;  // over every target value; bias = mean error
-    std::vector<RegressionRow> worst;          // largest |error| first, at most `worst_rows`
-};
-// From a regression test's table (true_value / predicted_value / error, or
-// true_<i> / predicted_<i> / error_<i> per target).
-RegressionResults RegressionFromPredictions(const std::shared_ptr<arrow::Table>& table, size_t worst_rows = 20);
-
-// True when the table is a regression test's (it has an error column).
-bool IsRegressionPredictions(const std::shared_ptr<arrow::Table>& table);
 
 // ---- Errors by column value --------------------------------------------------
 //

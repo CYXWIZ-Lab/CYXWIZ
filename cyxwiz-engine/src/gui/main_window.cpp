@@ -187,6 +187,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/test_predictions_metrics.h"
 #include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
@@ -819,6 +820,12 @@ MainWindow::MainWindow()
             node_editor_->QueueDashboardWidget(node_id, dataset, widget);
         };
     }
+    // Results > Test run opens the whole run in Test Results (TOFIX157).
+    data_studio_panel_->SetOpenTestResultsCallback([this]() {
+        if (!test_results_panel_) return;
+        test_results_panel_->Show();
+        ::gui::BringToFront(test_results_panel_->GetName());
+    });
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
         if (table_viewer_ && table) {
@@ -1313,18 +1320,7 @@ MainWindow::MainWindow()
             // The run's per-sample results as the "test_predictions" table, so
             // Results and the ROC / PR nodes can read them like any dataset;
             // row_id joins them back to the tested table's columns.
-            const cyxwiz::TestPredictionsSource source{metrics.row_ids, metrics.source_dataset};
-            std::shared_ptr<arrow::Table> table;
-            if (metrics.regression_mode) {
-                table = cyxwiz::BuildRegressionPredictionsTable(metrics.regression_truth, metrics.regression_predictions,
-                                                                metrics.regression_width, source);
-            } else if (!metrics.ground_truth.empty()) {
-                std::vector<std::string> class_names;
-                for (const auto& c : metrics.per_class_metrics) class_names.push_back(c.class_name);
-                table = cyxwiz::BuildTestPredictionsTable(metrics.ground_truth, metrics.predictions, metrics.confidences,
-                                                          metrics.class_probabilities, metrics.probability_classes,
-                                                          class_names, source);
-            }
+            const std::shared_ptr<arrow::Table> table = cyxwiz::PredictionsTableFromMetrics(metrics);
             if (table) {
                 cyxwiz::DataRegistry::Instance().RegisterArrowTable(table, cyxwiz::kTestPredictionsDataset);
                 spdlog::info("Published {} test predictions as '{}'{}", table->num_rows(),

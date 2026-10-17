@@ -85,6 +85,29 @@ int main() {
     const auto unsourced = BuildTestPredictionsTable({0, 1}, {0, 1}, {1.0f, 1.0f}, {}, 0, {}, {{7}, "iris"});
     Check(unsourced && unsourced->num_columns() == 3, "a row id per row or none");
 
+    // The run's figures and class names in the metadata (TOFIX157), so a
+    // kept table reads back whole.
+    {
+        cyxwiz::TestPredictionsSource run{{0, 1}, "iris"};
+        run.loss = 0.25;
+        run.seconds = 1.5;
+        run.partial = true;
+        const auto kept = BuildTestPredictionsTable({0, 1}, {0, 1}, {1.0f, 1.0f}, {}, 0, {"setosa", "virginica"}, run);
+        const auto metadata = kept ? kept->schema()->metadata() : nullptr;
+        const auto value = [&](const char* key) {
+            const int at = metadata ? metadata->FindKey(key) : -1;
+            return at >= 0 ? metadata->value(at) : std::string("(none)");
+        };
+        Check(value(cyxwiz::kTestPredictionsClassNamesKey) == "setosa\nvirginica", "class names, one per line");
+        Check(std::abs(std::stod(value(cyxwiz::kTestPredictionsLossKey)) - 0.25) < 1e-9 &&
+                  std::abs(std::stod(value(cyxwiz::kTestPredictionsSecondsKey)) - 1.5) < 1e-9,
+              "loss and seconds");
+        Check(value(cyxwiz::kTestPredictionsPartialKey) == "true", "a quick test is marked");
+        Check(value(cyxwiz::kTestPredictionsSourceKey) == "iris", "the source stays");
+        const auto bare = BuildTestPredictionsTable({0}, {0}, {1.0f}, {}, 0, {});
+        Check(bare && !bare->schema()->metadata(), "nothing set: no metadata");
+    }
+
     // Regression: one target, then two.
     const auto one = cyxwiz::BuildRegressionPredictionsTable({1.0f, 2.0f}, {1.5f, 1.0f}, 1, {{0, 1}, "houses"});
     Check(one && Names(one) == std::vector<std::string>({"row_id", "true_value", "predicted_value", "error"}),
