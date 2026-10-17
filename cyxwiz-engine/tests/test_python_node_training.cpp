@@ -79,9 +79,13 @@ nlohmann::json GraphWith(const fs::path& root, const std::string& provider, cons
     return graph;
 }
 
-cyxwiz::Module* FindModule(cyxwiz::SequentialModel& model, const std::string& name) {
-    for (size_t i = 0; i < model.Size(); ++i) {
-        if (model.GetModule(i) && model.GetModule(i)->GetName() == name) return model.GetModule(i);
+// A module of the trained model's layer stack (the job returns any
+// executable model; these graphs train as a layer stack).
+cyxwiz::Module* FindModule(cyxwiz::IExecutableModel& executable, const std::string& name) {
+    cyxwiz::SequentialModel* model = executable.AsSequentialModel();
+    if (!model) return nullptr;
+    for (size_t i = 0; i < model->Size(); ++i) {
+        if (model->GetModule(i) && model->GetModule(i)->GetName() == name) return model->GetModule(i);
     }
     return nullptr;
 }
