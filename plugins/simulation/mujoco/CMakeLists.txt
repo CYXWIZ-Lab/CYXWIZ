@@ -57,6 +57,10 @@ if(NOT mujoco_FOUND)
         # Copy MuJoCo DLL to output directory
         get_filename_component(MUJOCO_LIB_DIR "${MUJOCO_LIBRARY}" DIRECTORY)
         file(GLOB MUJOCO_DLLS "${MUJOCO_LIB_DIR}/../bin/mujoco*.dll" "${MUJOCO_LIB_DIR}/mujoco*.dll")
+        # mujoco*.dll also matches this plugin's own mujoco_plugin.dll in that
+        # bin folder: copying it would put an older plugin build (another
+        # checkout's, when MuJoCo is found there) over the one just linked.
+        list(FILTER MUJOCO_DLLS EXCLUDE REGEX "mujoco_plugin[^/]*\\.dll$")
 
         set(mujoco_FOUND TRUE)
     else()
