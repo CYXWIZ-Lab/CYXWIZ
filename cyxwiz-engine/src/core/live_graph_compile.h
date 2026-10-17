@@ -53,6 +53,10 @@ public:
     // First Error-level message on this node ("" when none).
     std::string NodeErrorMessage(int node_id) const;
 
+    // Compile again although the graph did not change (Python started, so
+    // Python nodes can now be built and counted).
+    void Invalidate() { ++invalidations_; }
+
     static uint64_t HashGraph(const std::vector<gui::MLNode>& nodes,
                               const std::vector<gui::NodeLink>& links);
 
@@ -76,6 +80,7 @@ private:
     void Collect();
 
     uint64_t seen_revision_ = 0;
+    uint64_t invalidations_ = 0;
     bool seen_any_ = false;
     Clock::time_point last_change_{};
     uint64_t requested_revision_ = 0;  // revision the running worker compiles

@@ -1,5 +1,6 @@
 #include "live_graph_compile.h"
 
+#include "extension_node_registry.h"
 #include "model_builder.h"
 
 #include <cyxwiz/device.h>
@@ -84,7 +85,11 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                               bool count_parameters,
                               Clock::time_point now) {
     Collect();
-    const uint64_t revision = HashGraph(nodes, links);
+    // An extension registered, removed or approved changes what the graph
+    // compiles to, without a graph edit.
+    const uint64_t revision =
+        HashGraph(nodes, links) ^ (ExtensionNodeRegistry::Instance().Generation() * 0x9E3779B97F4A7C15ULL) ^
+        (invalidations_ * 0xC2B2AE3D27D4EB4FULL);
     if (!seen_any_ || revision != seen_revision_) {
         seen_any_ = true;
         seen_revision_ = revision;
