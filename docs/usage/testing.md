@@ -10,9 +10,11 @@ The test runs in the background (Task View) and opens **Test Results** when it
 ends. **Train > Test > View Test Results** opens the panel again later.
 
 A graph with branches (Split, Add, Concatenate) is tested like any other: the
-model it trained in this session is the one tested. Not yet for such a graph:
-**Save Model** and **Export Model** (they say so; its training checkpoints keep
-its weights), **Load Checkpoint for Testing**, and Feature Importance.
+model it trained in this session is the one tested. It saves and exports as a
+CyxWiz package with its graph (see Exporting a model). **Load Checkpoint for
+Testing** builds the graph's own model and loads the checkpoint into it, and
+training with *save best checkpoint* keeps and restores its best epoch, as
+for a layer stack. Not yet for such a graph: Feature Importance.
 
 ## Test Results
 

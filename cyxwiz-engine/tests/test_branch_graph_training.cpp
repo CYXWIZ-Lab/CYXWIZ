@@ -12,11 +12,16 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/model_exporter.h"
 #include "../src/core/model_importer.h"
+#include "route_qualification_test_fixture.h"
+#include "../src/core/arrow_dataset.h"
+#include "../src/core/training_executor.h"
+#include "../src/core/checkpoint_manager.h"
 #include "../src/gui/node_import_guardrails.h"
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/test_executor.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -387,9 +392,9 @@ std::string EditorGraphJson(const std::vector<gui::MLNode>& nodes, const std::ve
     return document.dump(4);
 }
 
-void CheckGraphPackageRoundTrip() {
-    // Data Input -> Data Split -> Data Loader -> {Dense a, Dense b} -> Add -> Dense head -> MSE <- labels; SGD
-    // (the data path of the branching example graph).
+// Data Input -> Data Split -> Data Loader -> {Dense a, Dense b} -> Add -> Dense head (3) -> loss <- labels;
+// SGD (the data path of the branching example graph), as the editor saves it.
+std::string ResidualGraphJson(gui::NodeType loss_type, const std::string& dataset_name) {
     // The nodes get the pins the saved-graph loader gives them (the node list
     // is loaded first), then links are made between those pins.
     int next_link = 1;
@@ -403,14 +408,14 @@ void CheckGraphPackageRoundTrip() {
                                    {"parameters", parameters}});
         return id;
     };
-    const int data = make(gui::NodeType::DataInput, "Rows", {{"dataset_name", "branch_rows"}, {"shape", "[8]"}});
+    const int data = make(gui::NodeType::DataInput, "Rows", {{"dataset_name", dataset_name}, {"shape", "[8]"}});
     const int split = make(gui::NodeType::DataSplit, "Split");
     const int loader = make(gui::NodeType::DataLoader, "Loader");
     const int a = make(gui::NodeType::Dense, "Dense a", {{"units", "6"}});
     const int b = make(gui::NodeType::Dense, "Dense b", {{"units", "6"}});
     const int add = make(gui::NodeType::Add, "Add");
     const int head = make(gui::NodeType::Dense, "Head", {{"units", "3"}});
-    const int loss = make(gui::NodeType::MSELoss, "MSE");
+    const int loss = make(loss_type, "Loss");
     const int sgd = make(gui::NodeType::SGD, "SGD");
     cyxwiz::GraphDocument listed_document;
     std::string list_error;
@@ -470,7 +475,11 @@ void CheckGraphPackageRoundTrip() {
     connect(head, gui::PinType::Tensor, loss, gui::PinType::Tensor);
     connect(loader, gui::PinType::Labels, loss, gui::PinType::Labels);
     connect(loss, gui::PinType::Loss, sgd, gui::PinType::Loss);
-    const std::string graph_json = EditorGraphJson(nodes, links);
+    return EditorGraphJson(nodes, links);
+}
+
+void CheckGraphPackageRoundTrip() {
+    const std::string graph_json = ResidualGraphJson(gui::NodeType::MSELoss, "branch_rows");
 
     // What Import does with the file: the shared loader, then ModelImport.
     cyxwiz::GraphDocument document;
@@ -521,8 +530,92 @@ void CheckGraphPackageRoundTrip() {
     const auto as_stack = importer.ImportCyxModel(path.string(), stack, cyxwiz::ImportOptions{});
     Check(!as_stack.success && as_stack.error_message.find("graph with branches") != std::string::npos,
           "as a layer stack the package is refused: " + as_stack.error_message);
+
+    // A checkpoint of the graph model loads into the model its graph builds
+    // (Load Checkpoint for Testing does the same): the same outputs.
+    cyxwiz::CheckpointManager saving((dir / "checkpoints").string());
+    cyxwiz::TrainingMetrics metrics;
+    metrics.current_epoch = 1;
+    const std::string saved = saving.SaveCheckpoint(*trained, nullptr, metrics, "graph_epoch_1");
+    Check(!saved.empty(), "a graph model's checkpoint saves: " + saving.GetLastError());
+    auto rebuilt = cyxwiz::BuildExecutableFromConfig(config);
+    Check(rebuilt.ok(), "the graph builds again: " + rebuilt.error_message);
+    if (rebuilt.ok() && !saved.empty()) {
+        cyxwiz::CheckpointManager loading((dir / "checkpoints").string());
+        const auto metadata = loading.LoadCheckpoint(*rebuilt.model, nullptr, "graph_epoch_1");
+        Check(metadata.has_value(), "the checkpoint loads into the graph model: " + loading.GetLastError());
+        rebuilt.model->SetTraining(false);
+        const cyxwiz::Tensor output = rebuilt.model->Forward(input);
+        bool same = output.Shape() == expected.Shape();
+        for (size_t i = 0; same && i < expected.NumElements(); ++i)
+            same = std::abs(output.ReadData<float>()[i] - expected.ReadData<float>()[i]) < 1e-6f;
+        Check(same, "the graph model from the checkpoint gives the same outputs");
+    }
     std::filesystem::remove_all(dir);
-    std::cout << "  residual graph: exported and imported as the same graph model\n";
+    std::cout << "  residual graph: exported, imported and checkpointed as the same graph model\n";
+}
+
+// Training a graph with branches with "save best checkpoint" (TOFIX157): the
+// best epoch's checkpoint is written and restored when validation stops
+// improving, as for a layer stack (it was skipped for graph models).
+void CheckGraphTrainingKeepsBestCheckpoint() {
+    constexpr const char* kDataset = "branch_train_rows";
+    const size_t rows = 24;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    for (int f = 0; f < 8; ++f) {
+        arrow::FloatBuilder builder;
+        for (size_t r = 0; r < rows; ++r) (void)builder.Append(std::sin(0.3f * static_cast<float>(r * 8 + f)));
+        std::shared_ptr<arrow::Array> column;
+        (void)builder.Finish(&column);
+        columns.push_back(column);
+        fields.push_back(arrow::field("x" + std::to_string(f), arrow::float32()));
+    }
+    arrow::Int32Builder labels;
+    for (size_t r = 0; r < rows; ++r) (void)labels.Append(static_cast<int32_t>(r % 3));
+    std::shared_ptr<arrow::Array> label_column;
+    (void)labels.Finish(&label_column);
+    columns.push_back(label_column);
+    fields.push_back(arrow::field("label", arrow::int32()));
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(arrow::Table::Make(arrow::schema(fields), columns),
+                                                          kDataset);
+
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed = cyxwiz::ParseGraphDocument(ResidualGraphJson(gui::NodeType::CrossEntropyLoss, kDataset),
+                                                   document, error);
+    Check(parsed, "the training graph parses: " + error);
+    cyxwiz::GraphCompiler compiler;
+    auto config = compiler.Compile(document.nodes, document.links, true);
+    if (!config.is_valid) PrintIssues(config);
+    Check(config.is_valid && !config.graph_op_node_ids.empty(), "the training graph compiles with branches");
+
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_best";
+    std::filesystem::remove_all(dir);
+    config.dataset_name = kDataset;
+    config.epochs = 5;
+    config.batch_size = 4;
+    config.learning_rate = 0.0f;  // validation loss stays put: the run stops at epoch 2, restoring epoch 1
+    config.validation_freq = 1;
+    config.early_stopping_patience = 1;
+    config.save_best_checkpoint = true;
+    config.checkpoint_dir = dir.string();
+    config.shuffle = false;
+    config.num_workers = 0;
+    config.log_interval = 0;
+
+    cyxwiz::test::InstallQualifiedRouteSnapshot();  // a test run trains on this PC's devices
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(config.epochs, config.batch_size, nullptr, nullptr,
+                   [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
+    Check(final_metrics.is_complete, "the graph model trains: " + final_metrics.status_message);
+    Check(!final_metrics.checkpoint_used.empty() && final_metrics.restored_checkpoint_epoch == 1 &&
+              final_metrics.active_model_provenance == "restored_best_checkpoint",
+          "the graph model's best checkpoint is kept and restored (" + final_metrics.active_model_provenance +
+              ", epoch " + std::to_string(final_metrics.restored_checkpoint_epoch) + ")");
+    std::filesystem::remove_all(dir);
+    std::cout << "  residual graph: training keeps and restores its best checkpoint\n";
 }
 
 void RunCase(const json& c) {
@@ -709,6 +802,11 @@ int main(int, char** argv) {
         CheckGraphPackageRoundTrip();
     } catch (const std::exception& e) {
         Check(false, std::string("the graph package round trip threw: ") + e.what());
+    }
+    try {
+        CheckGraphTrainingKeepsBestCheckpoint();
+    } catch (const std::exception& e) {
+        Check(false, std::string("the graph training with a best checkpoint threw: ") + e.what());
     }
 
     // The compiler refuses the splits the runtime cannot run, on the node.

@@ -395,10 +395,12 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         return result;
     }
 
-    auto built = BuildSequentialFromConfig(prepared);
+    // The graph's own model: a layer stack, or a graph with branches
+    // (TOFIX157; its layers alone were tested as a stack before).
+    auto built = BuildExecutableFromConfig(prepared);
     if (!built.ok() || !built.model) {
         result.error_message = built.error_message.empty()
-            ? "The active graph could not build a sequential model for this checkpoint."
+            ? "The active graph could not build a model for this checkpoint."
             : built.error_message;
         return result;
     }
@@ -424,7 +426,7 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         return result;
     }
 
-    std::shared_ptr<IExecutableModel> loaded_model = std::make_shared<SequentialExecutableModel>(std::move(built.model));
+    std::shared_ptr<IExecutableModel> loaded_model(std::move(built.model));
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (was_cancelled()) {
