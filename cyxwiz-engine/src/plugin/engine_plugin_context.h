@@ -11,8 +11,12 @@ namespace cyxwiz::plugin {
 
 class EnginePluginContext final : public PluginContext {
 public:
-    EnginePluginContext(const std::string& plugin_id, IPlugin* plugin, std::filesystem::path plugin_dir = {})
-        : plugin_id_(plugin_id), plugin_(plugin), plugin_dir_(std::move(plugin_dir)) {}
+    // plugin_version: from the plugin.json the Engine read, which keys the
+    // user's permission approvals (not the plugin's own GetManifest()).
+    EnginePluginContext(const std::string& plugin_id, std::string plugin_version, IPlugin* plugin,
+                        std::filesystem::path plugin_dir = {})
+        : plugin_id_(plugin_id), plugin_version_(std::move(plugin_version)), plugin_(plugin),
+          plugin_dir_(std::move(plugin_dir)) {}
 
     const std::string& GetPluginId() const override { return plugin_id_; }
     const std::filesystem::path& GetPluginDir() const override { return plugin_dir_; }
@@ -36,6 +40,7 @@ private:
     bool CheckPermission(PluginPermission required, const char* action) const;
 
     std::string plugin_id_;
+    std::string plugin_version_;
     IPlugin* plugin_;  // Non-owning
     std::filesystem::path plugin_dir_;
     AssistantContextSnapshot assistant_context_;

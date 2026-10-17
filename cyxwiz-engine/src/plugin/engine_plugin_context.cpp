@@ -54,9 +54,8 @@ bool EnginePluginContext::CheckPermission(PluginPermission required, const char*
 
     // For dangerous permissions, also check PermissionStore approval
     if (security::PermissionStore::IsDangerousPermission(required)) {
-        auto& manifest = plugin_->GetManifest();
         auto granted = security::PermissionStore::Instance().GetGrantedPermissions(
-            plugin_id_, manifest.version.ToString(), requested);
+            plugin_id_, plugin_version_, requested);
         if (!HasPermission(granted, required)) {
             spdlog::warn("[Plugin:{}] Permission denied for {}: {} not approved by user",
                          plugin_id_, action, PermissionName(required));
