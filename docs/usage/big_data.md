@@ -91,8 +91,14 @@ A Data Input kept on disk can feed training:
   rows of the file, then Validation, then Test; with **Stratified** each
   class gets its share (in file order, or drawn by the split seed when
   shuffling). The split takes one byte of memory per row (100 MB for 100
-  million rows). Class balancing in the Data Loader is not available on disk
-  yet (a warning says so).
+  million rows). **Class balancing** in the Data Loader works on disk with
+  the same modes and targets as in memory (oversample, undersample, weighted
+  sampler; min, median, a number or the largest class): one pass over the
+  label column counts each class, and each epoch every train row is served
+  as many times as a seeded draw gives it as its row group is read, with no
+  list of rows kept. Oversample to 560 rows of a 240-row class serves each
+  row twice and a different 80 of them a third time each epoch. Not with a
+  time-series split (a warning says so).
 - **Causal-LM token windows** (a `tokens` list column) on disk are read one
   row group at a time while training: memory holds one row group's windows.
   The row-group order is shuffled every epoch, and the windows within each

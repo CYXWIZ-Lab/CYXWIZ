@@ -1,6 +1,7 @@
 #include "parquet_arrow_batcher.h"
 
 #include "label_column_resolver.h"
+#include "class_balance.h"
 #include "split_partitioning.h"
 
 #include <arrow/array.h>
@@ -383,7 +384,129 @@ void ParquetArrowBatcher::SetRowSplit(std::shared_ptr<const ParquetRowSplit> spl
             assigned_row_groups_.push_back(g);
     }
     num_samples_ = row_split_->counts[phase];
+    if (balancing_ && !CountBalanceClasses()) balancing_ = false;
     Reset();
+}
+
+void ParquetArrowBatcher::SetClassBalancing(const std::string& mode, const std::string& target, uint32_t seed) {
+    if (mode == "none" || split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_) return;
+    if (!partition_column_.empty()) {
+        spdlog::warn("ParquetArrowBatcher: class balancing is not available with a time-series partition; "
+                     "training uses the train split without resampling");
+        return;
+    }
+    if (mode != "oversample" && mode != "undersample" && mode != "weighted_sampler")
+        spdlog::warn("ParquetArrowBatcher: unsupported balance_mode='{}'; using oversample", mode);
+    balance_mode_ = mode == "undersample" || mode == "weighted_sampler" ? mode : "oversample";
+    balance_target_ = target;
+    balance_seed_ = seed;
+    balance_epoch_ = 0;
+    balancing_ = CountBalanceClasses();
+    Reset();
+}
+
+bool ParquetArrowBatcher::CountBalanceClasses() {
+    balance_ids_.clear();
+    balance_classes_.clear();
+    // The rows LoadNextRowGroup serves: this split's rows of the assigned groups.
+    std::vector<uint32_t> class_of;
+    for (const int g : assigned_row_groups_) {
+        const auto column = dataset_->ReadRowGroupColumn(g, label_column_);
+        if (!column) {
+            spdlog::warn("ParquetArrowBatcher: class balancing requested but the label column '{}' could not be "
+                         "read; using the unbalanced train split", label_column_);
+            return false;
+        }
+        class_of.clear();
+        for (const auto& chunk : column->chunks()) AppendClassIds(*chunk, balance_ids_, class_of);
+        if (balance_classes_.size() < balance_ids_.size()) balance_classes_.resize(balance_ids_.size());
+        const auto offset = row_split_ ? static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(g)]) : 0;
+        for (size_t i = 0; i < class_of.size(); ++i)
+            if (!row_split_ || row_split_->bucket[offset + i] == 0) ++balance_classes_[class_of[i]].rows;
+    }
+    std::vector<size_t> counts;
+    for (const auto& entry : balance_classes_)
+        if (entry.rows > 0) counts.push_back(static_cast<size_t>(entry.rows));
+    if (counts.size() < 2) {
+        spdlog::warn("ParquetArrowBatcher: class balancing requested but the train split has fewer than two labels");
+        return false;
+    }
+    spdlog::info("ParquetArrowBatcher: class balancing on disk ({}, target {}): {} classes, {} to {} rows each",
+                 balance_mode_, BalanceTargetCount(counts, balance_target_), counts.size(),
+                 *std::min_element(counts.begin(), counts.end()), *std::max_element(counts.begin(), counts.end()));
+    return true;
+}
+
+void ParquetArrowBatcher::StartBalancedEpoch() {
+    // A new draw each epoch, as the in-memory batcher reseeds per rebuild.
+    balance_rng_.seed(static_cast<uint64_t>(balance_seed_) + balance_epoch_++);
+    std::vector<size_t> counts;
+    uint64_t rows = 0;
+    size_t present = 0;
+    for (const auto& entry : balance_classes_) {
+        if (entry.rows == 0) continue;
+        counts.push_back(static_cast<size_t>(entry.rows));
+        rows += entry.rows;
+        ++present;
+    }
+    const uint64_t target = BalanceTargetCount(counts, balance_target_);
+    uint64_t served = 0;
+    uint64_t draws_left = rows;  // weighted_sampler: the epoch keeps its length
+    size_t classes_left = present;
+    for (auto& entry : balance_classes_) {
+        entry.rows_left = entry.rows;
+        entry.base = 0;
+        entry.extra_left = 0;
+        if (entry.rows == 0) continue;
+        if (balance_mode_ == "weighted_sampler") {
+            // Each draw picks a class uniformly: this class's share of the
+            // draws, then each of its rows a uniform share of those.
+            entry.extra_left = classes_left == 1
+                ? draws_left
+                : std::binomial_distribution<uint64_t>(draws_left, 1.0 / static_cast<double>(classes_left))(balance_rng_);
+            draws_left -= entry.extra_left;
+            --classes_left;
+        } else if (balance_mode_ == "undersample") {
+            entry.extra_left = std::min(target, entry.rows);
+        } else {
+            entry.base = target / entry.rows;
+            entry.extra_left = target % entry.rows;
+        }
+        served += entry.base * entry.rows + entry.extra_left;
+    }
+    num_samples_ = static_cast<size_t>(served);
+}
+
+void ParquetArrowBatcher::BalanceCurrentGroupRows() {
+    const auto column = current_table_ ? current_table_->GetColumnByName(label_column_) : nullptr;
+    if (!column) return;
+    std::vector<uint32_t> class_of;
+    for (const auto& chunk : column->chunks()) AppendClassIds(*chunk, balance_ids_, class_of);
+    std::vector<size_t> repeated;
+    repeated.reserve(current_row_indices_.size());
+    for (const size_t row : current_row_indices_) {
+        if (row >= class_of.size() || class_of[row] >= balance_classes_.size()) continue;
+        auto& entry = balance_classes_[class_of[row]];
+        if (entry.rows_left == 0) continue;
+        uint64_t copies = entry.base;
+        if (balance_mode_ == "weighted_sampler") {
+            // This row's share of the class's draws left (with replacement).
+            const uint64_t mine = entry.rows_left == 1 ? entry.extra_left
+                : std::binomial_distribution<uint64_t>(entry.extra_left,
+                                                       1.0 / static_cast<double>(entry.rows_left))(balance_rng_);
+            copies += mine;
+            entry.extra_left -= mine;
+        } else if (entry.extra_left > 0 &&
+                   std::uniform_int_distribution<uint64_t>(0, entry.rows_left - 1)(balance_rng_) < entry.extra_left) {
+            // One more copy for exactly extra_left of the class's rows, each
+            // row as likely as any other (selection sampling).
+            ++copies;
+            --entry.extra_left;
+        }
+        --entry.rows_left;
+        repeated.insert(repeated.end(), static_cast<size_t>(copies), row);
+    }
+    current_row_indices_ = std::move(repeated);
 }
 
 // -----------------------------------------------------------------------------
@@ -503,6 +626,7 @@ bool ParquetArrowBatcher::LoadNextRowGroup() {
         current_row_indices_.resize(static_cast<size_t>(rows_in_group));
         std::iota(current_row_indices_.begin(), current_row_indices_.end(), size_t{0});
     }
+    if (balancing_) BalanceCurrentGroupRows();
     if (shuffle_) {
         std::shuffle(current_row_indices_.begin(), current_row_indices_.end(), rng_);
     }
@@ -553,6 +677,7 @@ void ParquetArrowBatcher::Reset() {
         pending_epoch_seed_.reset();
     }
     ShuffleEpochGroupOrder();
+    if (balancing_) StartBalancedEpoch();
     current_group_position_ = 0;
     current_table_.reset();
     current_row_indices_.clear();

@@ -11,6 +11,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace cyxwiz {
@@ -117,6 +118,15 @@ public:
     void SetRowSplit(std::shared_ptr<const ParquetRowSplit> split);
     void SetRegressionTargetWidth(
         size_t width, const std::string& target_base = {});
+    // Class balancing of the train split (TOFIX157 A3), by the in-memory
+    // batcher's rules: mode oversample, undersample or weighted_sampler;
+    // target min, median, a number or (default) the largest class
+    // (BalanceTargetCount). No list of rows is kept: a pass over the label
+    // column counts each class, and each epoch, as a row group is read, every
+    // row is served as many times as a seeded draw gives it (each class gets
+    // exactly its target, the rows chosen at random). Val and test batchers,
+    // and fewer than two classes, are not balanced.
+    void SetClassBalancing(const std::string& mode, const std::string& target, uint32_t seed);
 
 private:
     // Configuration
@@ -170,6 +180,26 @@ private:
 
     std::mt19937 rng_;
     std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+
+    // Class balancing (SetClassBalancing). Per class: its rows in this
+    // split, and this epoch's draw state.
+    struct BalanceClass {
+        uint64_t rows = 0;        // rows of the class in this split
+        uint64_t rows_left = 0;   // not yet read this epoch
+        uint64_t base = 0;        // copies every row gets (oversample)
+        uint64_t extra_left = 0;  // one more copy for this many of the rows left (draws, weighted_sampler)
+    };
+    bool balancing_ = false;
+    std::string balance_mode_;
+    std::string balance_target_;
+    uint32_t balance_seed_ = 0;
+    uint32_t balance_epoch_ = 0;
+    std::unordered_map<std::string, uint32_t> balance_ids_;  // label value -> class
+    std::vector<BalanceClass> balance_classes_;
+    std::mt19937_64 balance_rng_;
+    bool CountBalanceClasses();        // false: fewer than two classes, or the labels cannot be read
+    void StartBalancedEpoch();         // this epoch's draw; sets num_samples_
+    void BalanceCurrentGroupRows();    // repeats current_row_indices_ by the draw
 
     // Helpers
     void InitializeColumns();

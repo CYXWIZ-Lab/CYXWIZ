@@ -544,11 +544,6 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     const std::string partition_col = config.is_time_series
         ? kSplitPartitionColumn : "";
     const bool continuous_target = UsesContinuousTargetMetrics(config);
-    if (config.balance_classes && !continuous_target) {
-        spdlog::warn("TrainingExecutor: DataLoader class balancing is not "
-                     "available for disk-backed Parquet datasets yet; training "
-                     "uses the row-group train split without resampling");
-    }
     const std::string effective_label =
         !config.target.primary_column.empty()
             ? config.target.primary_column
@@ -598,6 +593,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
             result.parquet_test->SetRowSplit(split);
         }
     }
+    // After the split: balancing counts the train split's classes (TOFIX157 A3).
+    if (config.balance_classes && !continuous_target)
+        result.parquet_train->SetClassBalancing(config.balance_mode, config.balance_target,
+                                                static_cast<uint32_t>(std::max(0, config.balance_seed)));
 
     if (continuous_target) {
         const size_t target_width =
