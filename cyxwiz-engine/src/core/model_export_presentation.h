@@ -20,9 +20,10 @@ struct FormatChoice {
 
 // The formats this build writes: the CyxWiz package and safetensors, and ONNX
 // when the build includes the ONNX exporter. GGUF is not offered until built.
-std::vector<FormatChoice> AvailableFormats(bool onnx_built);
+// ONNX is written from a layer stack: not offered for a graph with branches.
+std::vector<FormatChoice> AvailableFormats(bool onnx_built, bool layer_stack = true);
 
-bool IsAvailable(ModelFormat format, bool onnx_built);
+bool IsAvailable(ModelFormat format, bool onnx_built, bool layer_stack = true);
 
 // <project>/exports/<graph name><extension>; without a project, empty (the
 // user picks a file).

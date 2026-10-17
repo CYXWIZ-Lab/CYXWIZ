@@ -1288,8 +1288,8 @@ bool TrainingManager::SaveModel(const std::string& path,
     }
     SequentialModel* model = last_trained_model_->AsSequentialModel();
     if (!model) {
-        spdlog::error("TrainingManager::SaveModel: a graph with branches cannot be saved in this format yet; "
-                      "its training checkpoints keep its weights");
+        spdlog::error("TrainingManager::SaveModel: a graph with branches is saved as a CyxWiz package "
+                      "(ModelExporter::ExportCyxModel with its graph), not this layer-stack file");
         return false;
     }
 

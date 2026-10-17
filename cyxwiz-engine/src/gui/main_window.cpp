@@ -1351,15 +1351,17 @@ MainWindow::MainWindow()
     });
 
     // Set up Save Model callback (native CyxWiz format)
-    toolbar_->SetSaveModelCallback([]() {
+    toolbar_->SetSaveModelCallback([this]() {
         auto& tm = cyxwiz::TrainingManager::Instance();
         if (!tm.HasTrainedModel()) {
             spdlog::warn("No trained model available to save");
             return;
         }
         if (!tm.GetLastTrainedModel()) {
-            spdlog::warn("Save Model: a graph with branches cannot be saved in this format yet; its training "
-                         "checkpoints keep its weights");
+            // A graph with branches is saved as a package that holds its
+            // graph (the layer-stack file cannot rebuild it).
+            spdlog::info("Save Model: a graph with branches is saved as a CyxWiz package (.cyxmodel) with its graph");
+            OpenModelExport(static_cast<int>(cyxwiz::ModelFormat::CyxModel));
             return;
         }
 
@@ -1386,57 +1388,7 @@ MainWindow::MainWindow()
     });
 
     // Set up Export Model callback
-    toolbar_->SetExportModelCallback([this](int format_index) {
-        if (export_dialog_) {
-            cyxwiz::ModelFormat requested_format = cyxwiz::ModelFormat::CyxModel;
-            if (format_index >= 0 && format_index <= 3) {
-                requested_format = static_cast<cyxwiz::ModelFormat>(format_index);
-            }
-
-            // Get trained model from TrainingManager
-            auto& tm = cyxwiz::TrainingManager::Instance();
-            if (tm.HasTrainedModel() && !tm.GetLastTrainedModel()) {
-                spdlog::warn("Export Model: a graph with branches cannot be exported yet");
-            } else if (tm.HasTrainedModel()) {
-                auto* model = tm.GetLastTrainedModel();
-                auto* optimizer = tm.GetLastOptimizer();
-                auto& metrics = tm.GetLastMetrics();
-
-                // Get current graph JSON from node editor
-                std::string graph_json;
-                if (node_editor_) {
-                    graph_json = node_editor_->GetGraphJson();
-                }
-
-                const auto trained_info = tm.GetActiveModelInfo();
-                const auto nodes = node_editor_
-                    ? node_editor_->GetNodes()
-                    : std::vector<MLNode>{};
-                const auto links = node_editor_
-                    ? node_editor_->GetLinks()
-                    : std::vector<NodeLink>{};
-                export_dialog_->SetModelData(
-                    model,
-                    optimizer,
-                    &metrics,
-                    graph_json,
-                    node_editor_
-                        ? HashGraphStructure(nodes, links)
-                        : 0,
-                    trained_info.evaluation_config
-                        ? cyxwiz::TrainingExportMetadata(*trained_info.evaluation_config)
-                        : cyxwiz::ExportOptions{},
-                    trained_info.model_device);
-                spdlog::info("Loaded trained model into Export dialog");
-            } else {
-                spdlog::warn("No trained model available for export");
-            }
-
-            if (node_editor_) export_dialog_->SetSourceGraph(node_editor_->GetCurrentFilePath());
-            export_dialog_->Open(requested_format);
-            spdlog::info("Opened Export Model dialog (format index: {})", format_index);
-        }
-    });
+    toolbar_->SetExportModelCallback([this](int format_index) { OpenModelExport(format_index); });
 
     export_dialog_->SetExportCompleteCallback(
         [this](const cyxwiz::ExportResult& result,
@@ -6276,6 +6228,56 @@ void MainWindow::LoadCheckpointForTesting() {
             spdlog::info(
                 "LoadCheckpoint: active model is ready for Tools > Test");
         });
+}
+
+void MainWindow::OpenModelExport(int format_index) {
+    if (export_dialog_) {
+        cyxwiz::ModelFormat requested_format = cyxwiz::ModelFormat::CyxModel;
+        if (format_index >= 0 && format_index <= 3) {
+            requested_format = static_cast<cyxwiz::ModelFormat>(format_index);
+        }
+
+        // Get trained model from TrainingManager
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        if (tm.HasTrainedModel()) {
+            auto model = tm.GetActiveModel();
+            auto* optimizer = tm.GetLastOptimizer();
+            auto& metrics = tm.GetLastMetrics();
+
+            // Get current graph JSON from node editor
+            std::string graph_json;
+            if (node_editor_) {
+                graph_json = node_editor_->GetGraphJson();
+            }
+
+            const auto trained_info = tm.GetActiveModelInfo();
+            const auto nodes = node_editor_
+                ? node_editor_->GetNodes()
+                : std::vector<MLNode>{};
+            const auto links = node_editor_
+                ? node_editor_->GetLinks()
+                : std::vector<NodeLink>{};
+            export_dialog_->SetModelData(
+                model,
+                optimizer,
+                &metrics,
+                graph_json,
+                node_editor_
+                    ? HashGraphStructure(nodes, links)
+                    : 0,
+                trained_info.evaluation_config
+                    ? cyxwiz::TrainingExportMetadata(*trained_info.evaluation_config)
+                    : cyxwiz::ExportOptions{},
+                trained_info.model_device);
+            spdlog::info("Loaded trained model into Export dialog");
+        } else {
+            spdlog::warn("No trained model available for export");
+        }
+
+        if (node_editor_) export_dialog_->SetSourceGraph(node_editor_->GetCurrentFilePath());
+        export_dialog_->Open(requested_format);
+        spdlog::info("Opened Export Model dialog (format index: {})", format_index);
+    }
 }
 
 } // namespace gui

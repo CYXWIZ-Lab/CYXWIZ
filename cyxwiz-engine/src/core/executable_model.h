@@ -42,6 +42,8 @@ public:
     virtual void SetParameters(const std::map<std::string, Tensor>& params) = 0;
     virtual std::map<std::string, Tensor> GetGradients() = 0;
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
+    // Layers that hold parameters (graph operations such as Add are not counted).
+    virtual size_t LayerCount() const = 0;
 
     // For checkpoint / export / save paths that still need a real
     // SequentialModel; a graph model (GraphExecutableModel) returns nullptr.
@@ -68,6 +70,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     void UpdateParameters(Optimizer* optimizer) override;
+    size_t LayerCount() const override { return model_->Size(); }
 
     SequentialModel* AsSequentialModel() override { return model_.get(); }
     const SequentialModel* AsSequentialModel() const override { return model_.get(); }

@@ -5982,6 +5982,13 @@ set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
 # ===== Test: branched graphs (Split) match PyTorch (TOFIX140 A2) =====
 add_executable(test_branch_graph_training
     tests/test_branch_graph_training.cpp
+    # Save / Export of the graph model (TOFIX157)
+    src/core/model_exporter.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp

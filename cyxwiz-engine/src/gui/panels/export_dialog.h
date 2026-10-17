@@ -17,7 +17,7 @@
 namespace cyxwiz {
 
 // Forward declarations
-class SequentialModel;
+class IExecutableModel;
 class Optimizer;
 struct TrainingMetrics;
 
@@ -37,9 +37,10 @@ public:
     void Close();
     bool IsOpen() const { return is_open_; }
 
-    // Set model data for export
+    // Set model data for export (a layer stack or a graph with branches; the
+    // dialog shares its ownership while it may export it).
     void SetModelData(
-        SequentialModel* model,
+        std::shared_ptr<IExecutableModel> model,
         const Optimizer* optimizer,
         const TrainingMetrics* metrics,
         const std::string& graph_json,
@@ -77,8 +78,9 @@ private:
     // State
     bool is_open_ = false;
 
-    // Model data (non-owning pointers)
-    SequentialModel* model_ = nullptr;
+    // Model data (the optimizer and metrics are not owned)
+    std::shared_ptr<IExecutableModel> model_;
+    bool LayerStack() const;
     std::optional<ProcessDeviceSelection> model_device_;
     const Optimizer* optimizer_ = nullptr;
     const TrainingMetrics* metrics_ = nullptr;

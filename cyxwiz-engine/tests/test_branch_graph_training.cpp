@@ -10,12 +10,15 @@
 #include "../src/core/graph_executable_model.h"
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
+#include "../src/core/model_exporter.h"
+#include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/test_executor.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -302,6 +305,57 @@ void CheckTestRunsGraphModel(const std::string& name, const cyxwiz::TrainingConf
     std::cout << "  " << name << ": Run Test runs the graph model (" << rows << " rows)\n";
 }
 
+// Save / Export a graph with branches (TOFIX157): the CyxWiz package holds its
+// weights and its graph, marked GraphModel; without the graph, or as ONNX, it
+// is refused.
+void CheckGraphModelExports(const std::string& name, cyxwiz::IExecutableModel& model) {
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_export";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / (name + ".cyxmodel");
+    std::filesystem::remove(path);
+    const std::string graph_json = R"({"nodes":[],"links":[],"case":")" + name + R"("})";
+    cyxwiz::ModelExporter exporter;
+    cyxwiz::ExportOptions options;
+    options.model_name = name;
+    const auto exported = exporter.ExportCyxModel(model, nullptr, nullptr, graph_json, path.string(), options);
+    Check(exported.success, name + ": a graph model exports to .cyxmodel: " + exported.error_message);
+    Check(exported.num_layers == static_cast<int>(model.LayerCount()), name + ": the package counts its layers");
+
+    cyxwiz::formats::CyxModelFormat format;
+    cyxwiz::ModelManifest manifest;
+    std::string read_graph;
+    cyxwiz::TrainingConfig config;
+    std::map<std::string, std::vector<uint8_t>> weights;
+    std::map<std::string, std::vector<int64_t>> shapes;
+    Check(format.Extract(path.string(), manifest, read_graph, config, nullptr, weights, shapes, nullptr,
+                         cyxwiz::ImportOptions{}),
+          name + ": the package reads back: " + format.GetLastError());
+    Check(manifest.model_type == "GraphModel" && manifest.has_graph && read_graph == graph_json,
+          name + ": marked GraphModel, with its graph (" + manifest.model_type + ")");
+    const auto params = model.GetParameters();
+    bool same = weights.size() == params.size();
+    for (const auto& [key, tensor] : params) {
+        const auto found = weights.find(key);
+        same = same && found != weights.end() && found->second.size() == tensor.NumBytes() &&
+               std::memcmp(found->second.data(), tensor.ReadData(), tensor.NumBytes()) == 0;
+    }
+    Check(same, name + ": every weight is in the package, byte for byte");
+
+    auto no_graph = options;
+    no_graph.include_graph = false;
+    const auto refused = exporter.ExportCyxModel(model, nullptr, nullptr, graph_json, (dir / "no_graph.cyxmodel").string(),
+                                                 no_graph);
+    Check(!refused.success && refused.error_message.find("needs its graph") != std::string::npos,
+          name + ": without its graph the package is refused: " + refused.error_message);
+    auto onnx = options;
+    onnx.format = cyxwiz::ModelFormat::ONNX;
+    const auto onnx_refused = exporter.Export(model, nullptr, nullptr, graph_json, (dir / "model.onnx").string(), onnx);
+    Check(!onnx_refused.success && onnx_refused.error_message.find("graph with branches") != std::string::npos,
+          name + ": ONNX is refused for a graph with branches: " + onnx_refused.error_message);
+    std::filesystem::remove_all(dir);
+    std::cout << "  " << name << ": saved as a CyxWiz package with its graph\n";
+}
+
 void RunCase(const json& c) {
     const std::string name = c.at("name").get<std::string>();
     const auto graph = BuildGraph(c);
@@ -453,8 +507,9 @@ void RunCase(const json& c) {
                    name + " input gradient with the merge links made in reverse");
         std::cout << "  " << name << ": reversed merge links give the same result\n";
     }
-    CheckTestRunsGraphModel(name, config, std::shared_ptr<cyxwiz::IExecutableModel>(std::move(built.model)),
-                            ReadTensor(c.at("input")));
+    std::shared_ptr<cyxwiz::IExecutableModel> trained(std::move(built.model));
+    CheckTestRunsGraphModel(name, config, trained, ReadTensor(c.at("input")));
+    CheckGraphModelExports(name, *trained);
 }
 
 std::filesystem::path FixturePath(const char* argv0) {
