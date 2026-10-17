@@ -117,10 +117,10 @@ static bool IsLegacyDecoderCrossAttentionParameter(const std::string& name) {
     return false;
 }
 
-// Helper: Build model architecture from graph JSON
-static bool BuildModelFromGraph(
+// Helper: compile a saved model graph (the editor's graph JSON).
+static bool CompileModelGraph(
     const std::string& graph_json,
-    SequentialModel& model,
+    TrainingConfiguration& config,
     std::string& error_message
 ) {
     if (graph_json.empty()) {
@@ -176,27 +176,47 @@ static bool BuildModelFromGraph(
 
         // Compile graph to get layer configuration
         GraphCompiler compiler;
-        TrainingConfiguration config = compiler.Compile(nodes, links, true, GraphCompiler::Purpose::ModelImport);
+        config = compiler.Compile(nodes, links, true, GraphCompiler::Purpose::ModelImport);
 
         if (!config.is_valid) {
             error_message = "Graph compilation failed: " + config.error_message;
             return false;
         }
-
-        auto built = BuildSequentialFromConfig(config);
-        if (!built.ok() || !built.model) {
-            error_message = "ModelBuilder could not rebuild model from graph";
-            return false;
-        }
-
-        model = std::move(*built.model);
-        spdlog::info("Built model with {} layers from graph", model.Size());
         return true;
 
     } catch (const std::exception& e) {
         error_message = std::string("Failed to parse graph: ") + e.what();
         return false;
     }
+}
+
+// A graph with branches (merges, splits, multi-input layers) runs as a
+// GraphExecutableModel; its layers alone are not the model.
+static bool HasBranches(const TrainingConfiguration& config) {
+    return !config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty();
+}
+
+// Helper: Build model architecture from graph JSON
+static bool BuildModelFromGraph(
+    const std::string& graph_json,
+    SequentialModel& model,
+    std::string& error_message
+) {
+    TrainingConfiguration config;
+    if (!CompileModelGraph(graph_json, config, error_message)) return false;
+    if (HasBranches(config)) {
+        error_message = "the package holds a graph with branches; it loads as a graph model "
+                        "(ModelImporter::ImportExecutableModel), not as a layer stack";
+        return false;
+    }
+    auto built = BuildSequentialFromConfig(config);
+    if (!built.ok() || !built.model) {
+        error_message = "ModelBuilder could not rebuild model from graph";
+        return false;
+    }
+    model = std::move(*built.model);
+    spdlog::info("Built model with {} layers from graph", model.Size());
+    return true;
 }
 
 ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
@@ -837,6 +857,77 @@ ImportResult ModelImporter::ImportCyxModel(
     return result;
 }
 
+ImportResult ModelImporter::ImportExecutableModel(
+    const std::string& input_path,
+    std::shared_ptr<IExecutableModel>& model,
+    const ImportOptions& options,
+    ProgressCallback progress_cb
+) {
+    ImportResult result;
+    model.reset();
+    const auto fail = [&](const std::string& message) {
+        result.success = false;
+        result.error_message = message;
+        last_error_ = message;
+        spdlog::error("{}", message);
+        return result;
+    };
+    if (progress_cb) progress_cb(0, 4, "Reading .cyxmodel file...");
+    try {
+        if (!formats::CyxModelArchive::IsV3(input_path))
+            return fail("a model with its graph is read from a CyxWiz package (CYXW v3); '" + input_path +
+                        "' is not one");
+        formats::CyxModelFormat cyxmodel;
+        ModelManifest manifest;
+        std::string graph_json;
+        TrainingConfig trained;
+        std::map<std::string, std::vector<uint8_t>> weights;
+        std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
+        if (!cyxmodel.Extract(input_path, manifest, graph_json, trained, nullptr, weights, weight_shapes, nullptr,
+                              options, &weight_dtypes))
+            return fail(cyxmodel.GetLastError());
+        if (graph_json.empty()) return fail("the package has no graph to rebuild the model from");
+
+        if (progress_cb) progress_cb(1, 4, "Building model from its graph...");
+        TrainingConfiguration config;
+        std::string build_error;
+        if (!CompileModelGraph(graph_json, config, build_error))
+            return fail("Could not build model from graph: " + build_error);
+        auto built = BuildExecutableFromConfig(config);
+        if (!built.ok() || !built.model)
+            return fail("Could not build model from graph: " + built.error_message);
+
+        if (progress_cb) progress_cb(2, 4, "Loading weights...");
+        if (options.strict_mode) {
+            std::string validation_error;
+            if (!ValidateModelArchitecture(*built.model, weight_shapes, validation_error)) return fail(validation_error);
+        }
+        if (!PopulateModelWeights(*built.model, weights, weight_shapes, options, result.warnings, &weight_dtypes)) {
+            result.success = false;
+            result.error_message = last_error_;
+            return result;
+        }
+
+        result.success = true;
+        result.model_name = manifest.model_name;
+        result.model_family = manifest.model_family;
+        result.format_version = manifest.version;
+        result.num_parameters = manifest.num_parameters;
+        result.num_layers = static_cast<int>(built.model->LayerCount());
+        for (const auto& [name, _] : weights) result.layer_names.push_back(name);
+        model = std::shared_ptr<IExecutableModel>(std::move(built.model));
+        if (progress_cb) progress_cb(4, 4, "Import complete!");
+        spdlog::info("Imported {} from {} ({} parameters, {} layers)",
+                     HasBranches(config) ? "a graph model" : "a layer stack", input_path, result.num_parameters,
+                     result.num_layers);
+    } catch (const std::exception& e) {
+        model.reset();
+        return fail(std::string("Import failed: ") + e.what());
+    }
+    return result;
+}
+
 ImportResult ModelImporter::ImportONNX(
     const std::string& /*input_path*/,
     SequentialModel& /*model*/,
@@ -1164,8 +1255,9 @@ Tensor ModelImporter::BytesToTensor(
     return Tensor(tensor_shape, data.data(), data_type);
 }
 
+template <typename Model>
 bool ModelImporter::PopulateModelWeights(
-    SequentialModel& model,
+    Model& model,
     const std::map<std::string, std::vector<uint8_t>>& weights,
     const std::map<std::string, std::vector<int64_t>>& shapes,
     const ImportOptions& options,
@@ -1257,8 +1349,9 @@ bool ModelImporter::PopulateModelWeights(
     return true;
 }
 
+template <typename Model>
 bool ModelImporter::ValidateModelArchitecture(
-    SequentialModel& model,
+    Model& model,
     const std::map<std::string, std::vector<int64_t>>& weight_shapes,
     std::string& error_message
 ) {

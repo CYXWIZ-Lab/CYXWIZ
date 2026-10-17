@@ -11,6 +11,8 @@
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/model_exporter.h"
+#include "../src/core/model_importer.h"
+#include "../src/gui/node_import_guardrails.h"
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/test_executor.h"
 #include "../src/gui/loaders/data_loader.h"
@@ -356,6 +358,173 @@ void CheckGraphModelExports(const std::string& name, cyxwiz::IExecutableModel& m
     std::cout << "  " << name << ": saved as a CyxWiz package with its graph\n";
 }
 
+// A graph with branches, written as the editor saves it (factory nodes, links
+// by pin index), goes into a CyxWiz package and comes back as the same graph
+// model: the same outputs for the same rows. As a layer stack the package is
+// refused (it built the layers alone before, TOFIX157).
+std::string EditorGraphJson(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links) {
+    // The header the editor writes (the current data boundary).
+    json document = gui::detail::CreateSerializedGraphDocument("1.0");
+    document["nodes"] = json::array();
+    document["links"] = json::array();
+    const auto pin_index = [](const std::vector<gui::NodePin>& pins, int id) {
+        for (size_t i = 0; i < pins.size(); ++i)
+            if (pins[i].id == id) return static_cast<int>(i);
+        return -1;
+    };
+    const auto node_of = [&](int id) -> const gui::MLNode& {
+        return *std::find_if(nodes.begin(), nodes.end(), [id](const gui::MLNode& n) { return n.id == id; });
+    };
+    for (const auto& node : nodes)
+        document["nodes"].push_back({{"id", node.id}, {"type", static_cast<int>(node.type)}, {"name", node.name},
+                                     {"parameters", node.parameters}});
+    for (const auto& link : links)
+        document["links"].push_back({{"id", link.id}, {"from_node", link.from_node}, {"from_pin", link.from_pin},
+                                     {"to_node", link.to_node}, {"to_pin", link.to_pin},
+                                     {"link_type", static_cast<int>(link.type)},
+                                     {"from_pin_index", pin_index(node_of(link.from_node).outputs, link.from_pin)},
+                                     {"to_pin_index", pin_index(node_of(link.to_node).inputs, link.to_pin)}});
+    return document.dump(4);
+}
+
+void CheckGraphPackageRoundTrip() {
+    // Data Input -> Data Split -> Data Loader -> {Dense a, Dense b} -> Add -> Dense head -> MSE <- labels; SGD
+    // (the data path of the branching example graph).
+    // The nodes get the pins the saved-graph loader gives them (the node list
+    // is loaded first), then links are made between those pins.
+    int next_link = 1;
+    json listed = gui::detail::CreateSerializedGraphDocument("1.0");
+    listed["nodes"] = json::array();
+    listed["links"] = json::array();
+    const auto make = [&](gui::NodeType type, const std::string& name,
+                          std::map<std::string, std::string> parameters = {}) -> int {
+        const int id = static_cast<int>(listed["nodes"].size()) + 1;
+        listed["nodes"].push_back({{"id", id}, {"type", static_cast<int>(type)}, {"name", name},
+                                   {"parameters", parameters}});
+        return id;
+    };
+    const int data = make(gui::NodeType::DataInput, "Rows", {{"dataset_name", "branch_rows"}, {"shape", "[8]"}});
+    const int split = make(gui::NodeType::DataSplit, "Split");
+    const int loader = make(gui::NodeType::DataLoader, "Loader");
+    const int a = make(gui::NodeType::Dense, "Dense a", {{"units", "6"}});
+    const int b = make(gui::NodeType::Dense, "Dense b", {{"units", "6"}});
+    const int add = make(gui::NodeType::Add, "Add");
+    const int head = make(gui::NodeType::Dense, "Head", {{"units", "3"}});
+    const int loss = make(gui::NodeType::MSELoss, "MSE");
+    const int sgd = make(gui::NodeType::SGD, "SGD");
+    cyxwiz::GraphDocument listed_document;
+    std::string list_error;
+    const bool listed_ok = cyxwiz::ParseGraphDocument(listed.dump(), listed_document, list_error);
+    Check(listed_ok, "the node list loads: " + list_error);
+    std::vector<gui::MLNode> nodes = listed_document.nodes;
+    std::vector<gui::NodeLink> links;
+    const auto node_of = [&](int id) -> gui::MLNode& {
+        return *std::find_if(nodes.begin(), nodes.end(), [id](const gui::MLNode& n) { return n.id == id; });
+    };
+    const auto pin = [&](int node, bool input, gui::PinType type, int nth = 0) {
+        const auto& pins = input ? node_of(node).inputs : node_of(node).outputs;
+        for (const auto& p : pins)
+            if (p.type == type && nth-- == 0) return p.id;
+        std::string have;
+        for (const auto& p : pins) have += " " + p.name + "(" + std::to_string(static_cast<int>(p.type)) + ")";
+        Check(false, node_of(node).name + ": no " + (input ? "input" : "output") + " pin of type " +
+                         std::to_string(static_cast<int>(type)) + "; pins:" + have);
+        return -1;
+    };
+    const auto connect = [&](int from, gui::PinType from_type, int to, gui::PinType to_type, int to_nth = 0) {
+        gui::NodeLink link;
+        link.id = next_link++;
+        link.from_node = from;
+        link.from_pin = pin(from, false, from_type);
+        link.to_node = to;
+        link.to_pin = pin(to, true, to_type, to_nth);
+        links.push_back(link);
+    };
+    // Each output of a data node to the next node's input of the same type.
+    const auto pass_through = [&](int from, int to) {
+        auto& inputs = node_of(to).inputs;
+        std::map<gui::PinType, int> seen;
+        for (const auto& out : node_of(from).outputs) {
+            const int nth = seen[out.type]++;
+            int match = nth;
+            for (const auto& in : inputs) {
+                if (in.type != out.type || match-- != 0) continue;
+                gui::NodeLink link;
+                link.id = next_link++;
+                link.from_node = from;
+                link.from_pin = out.id;
+                link.to_node = to;
+                link.to_pin = in.id;
+                links.push_back(link);
+                break;
+            }
+        }
+    };
+    pass_through(data, split);
+    pass_through(split, loader);
+    connect(loader, gui::PinType::Tensor, a, gui::PinType::Tensor);
+    connect(loader, gui::PinType::Tensor, b, gui::PinType::Tensor);
+    connect(a, gui::PinType::Tensor, add, gui::PinType::Tensor, 0);
+    connect(b, gui::PinType::Tensor, add, gui::PinType::Tensor, 1);
+    connect(add, gui::PinType::Tensor, head, gui::PinType::Tensor);
+    connect(head, gui::PinType::Tensor, loss, gui::PinType::Tensor);
+    connect(loader, gui::PinType::Labels, loss, gui::PinType::Labels);
+    connect(loss, gui::PinType::Loss, sgd, gui::PinType::Loss);
+    const std::string graph_json = EditorGraphJson(nodes, links);
+
+    // What Import does with the file: the shared loader, then ModelImport.
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed = cyxwiz::ParseGraphDocument(graph_json, document, error);
+    Check(parsed, "the editor-format graph parses: " + error);
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(document.nodes, document.links, true,
+                                         cyxwiz::GraphCompiler::Purpose::ModelImport);
+    if (!config.is_valid) PrintIssues(config);
+    Check(config.is_valid && !config.graph_op_node_ids.empty(), "the residual graph compiles with branches");
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), "the residual graph builds: " + built.error_message);
+    if (!built.ok()) return;
+    std::shared_ptr<cyxwiz::IExecutableModel> trained(std::move(built.model));
+
+    const size_t rows = 5, width = 8;
+    std::vector<float> values(rows * width);
+    for (size_t i = 0; i < values.size(); ++i) values[i] = std::sin(0.37f * static_cast<float>(i));
+    const cyxwiz::Tensor input({rows, width}, values.data());
+    trained->SetTraining(false);
+    const cyxwiz::Tensor expected = trained->Forward(input);
+
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_roundtrip";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "residual.cyxmodel";
+    std::filesystem::remove(path);
+    cyxwiz::ModelExporter exporter;
+    const auto exported = exporter.ExportCyxModel(*trained, nullptr, nullptr, graph_json, path.string(),
+                                                  cyxwiz::ExportOptions{});
+    Check(exported.success, "the residual graph model exports: " + exported.error_message);
+
+    cyxwiz::ModelImporter importer;
+    std::shared_ptr<cyxwiz::IExecutableModel> loaded;
+    const auto imported = importer.ImportExecutableModel(path.string(), loaded, cyxwiz::ImportOptions{});
+    Check(imported.success && loaded, "the package imports: " + imported.error_message);
+    Check(dynamic_cast<cyxwiz::GraphExecutableModel*>(loaded.get()) != nullptr, "it comes back as a graph model");
+    if (loaded) {
+        loaded->SetTraining(false);
+        const cyxwiz::Tensor output = loaded->Forward(input);
+        bool same = output.Shape() == expected.Shape();
+        for (size_t i = 0; same && i < expected.NumElements(); ++i)
+            same = std::abs(output.ReadData<float>()[i] - expected.ReadData<float>()[i]) < 1e-6f;
+        Check(same, "the imported graph model gives the same outputs");
+    }
+
+    cyxwiz::SequentialModel stack;
+    const auto as_stack = importer.ImportCyxModel(path.string(), stack, cyxwiz::ImportOptions{});
+    Check(!as_stack.success && as_stack.error_message.find("graph with branches") != std::string::npos,
+          "as a layer stack the package is refused: " + as_stack.error_message);
+    std::filesystem::remove_all(dir);
+    std::cout << "  residual graph: exported and imported as the same graph model\n";
+}
+
 void RunCase(const json& c) {
     const std::string name = c.at("name").get<std::string>();
     const auto graph = BuildGraph(c);
@@ -535,6 +704,11 @@ int main(int, char** argv) {
         } catch (const std::exception& e) {
             Check(false, c.at("name").get<std::string>() + " threw: " + e.what());
         }
+    }
+    try {
+        CheckGraphPackageRoundTrip();
+    } catch (const std::exception& e) {
+        Check(false, std::string("the graph package round trip threw: ") + e.what());
     }
 
     // The compiler refuses the splits the runtime cannot run, on the node.
