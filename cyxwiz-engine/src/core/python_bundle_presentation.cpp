@@ -193,6 +193,39 @@ std::string TodayIsoDate() {
     return text;
 }
 
+std::string CreateNodeSettingText(const std::string& name, const std::string& type, const std::string& default_value,
+                                  const std::string& validation, const std::vector<std::string>& choices) {
+    std::string text = name + " (" + type;
+    if (!choices.empty()) {
+        text += ", one of ";
+        for (size_t i = 0; i < choices.size(); ++i) text += (i ? ", " : "") + choices[i];
+    } else if (!validation.empty()) {
+        // "<min>-<max>": the separator is the first '-' that is not a sign.
+        size_t split = std::string::npos;
+        for (size_t i = 1; i < validation.size(); ++i) {
+            if (validation[i] == '-' && validation[i - 1] != 'e' && validation[i - 1] != 'E') {
+                split = i;
+                break;
+            }
+        }
+        if (validation[0] == '-' && split == std::string::npos) {
+            text += ", at most " + validation.substr(1);
+        } else if (split != std::string::npos) {
+            const std::string lo = validation.substr(0, split);
+            const std::string hi = validation.substr(split + 1);
+            if (!lo.empty() && !hi.empty()) {
+                text += ", " + lo + " to " + hi;
+            } else if (!lo.empty()) {
+                text += ", at least " + lo;
+            } else if (!hi.empty()) {
+                text += ", at most " + hi;
+            }
+        }
+    }
+    if (!default_value.empty()) text += ", default " + default_value;
+    return text + ")";
+}
+
 std::string SuggestBundleName(const std::string& script_name) {
     std::string stem = fs::path(script_name).stem().string();
     std::string name;

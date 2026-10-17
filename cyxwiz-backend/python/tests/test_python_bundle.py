@@ -83,6 +83,29 @@ try:
         check(False, "nodes with different ids are refused")
     except ValueError as error:
         check("share one id" in str(error), "nodes with different ids are refused")
+
+    # The Engine's "Create node from script" helpers (step 4.5).
+    script = os.path.join(HERE, "example_nodes.py")
+    found = json.loads(nodes._engine_inspect(script))
+    check([n["name"] for n in found] == ["Softsign", "Snake", "SoftsignWrong"],
+          "inspect lists the nodes the script defines: %s" % [n["name"] for n in found])
+    check(found[1]["parameters"][0]["name"] == "initial_a", "inspect gives describe() of each")
+    checked = {r["name"]: r for r in json.loads(nodes._engine_check(script))}
+    check(checked["Snake"]["status"] == "passed" and checked["SoftsignWrong"]["status"] == "failed"
+          and checked["SoftsignWrong"]["where"] == "input",
+          "check: passed and failed with where")
+    made = nodes._engine_bundle(script, work, "from-script")
+    check(os.path.isfile(os.path.join(made, "node.json")) and os.path.isfile(os.path.join(made, "node.py")),
+          "bundle writes the script's nodes: %s" % made)
+    empty_script = os.path.join(work, "plain.py")
+    with open(empty_script, "w") as handle:
+        handle.write("x = 1\n")
+    check(json.loads(nodes._engine_inspect(empty_script)) == [], "a script without nodes gives none")
+    try:
+        nodes._engine_bundle(empty_script, work, "nothing")
+        check(False, "bundling a script without nodes is refused")
+    except ValueError as error:
+        check("no node in" in str(error), "bundling a script without nodes is refused")
 finally:
     shutil.rmtree(work, ignore_errors=True)
 

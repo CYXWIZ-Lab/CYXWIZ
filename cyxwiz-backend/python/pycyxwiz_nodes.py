@@ -306,6 +306,76 @@ def _engine_output_shape(folder, private_name, entry_class, settings, input_shap
     return output_shape(_engine_class(folder, private_name, entry_class), settings, input_shape)
 
 
+# --- used by the Engine's "Create node from script" (TOFIX125 P4 step 4.5) --
+
+_script_imports = [0]
+
+
+def _engine_script_nodes(path):
+    """The node classes defined in the script at `path`, imported afresh.
+
+    Each call imports the file under a new private name, so an edited script
+    is read again. Classes imported into the script from elsewhere are left
+    out: a bundle holds the classes its own file defines.
+    """
+    import importlib.util
+    import sys
+
+    _script_imports[0] += 1
+    name = "cyxwiz_script_%d" % _script_imports[0]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot read %s" % path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    finally:
+        sys.dont_write_bytecode = previous
+    return [value for value in vars(module).values()
+            if isinstance(value, type) and is_node(value) and value.__module__ == name]
+
+
+def _engine_inspect(path):
+    """JSON: describe() of every node class the script defines."""
+    import json
+    return json.dumps([describe(cls) for cls in _engine_script_nodes(path)])
+
+
+def _engine_check(path):
+    """JSON: the gradient check of every node, with its default settings."""
+    import json
+    results = []
+    for cls in _engine_script_nodes(path):
+        entry = {"name": cls.__cyxwiz_node__["name"], "status": "not_checked", "max_relative_error": 0.0,
+                 "where": "", "error": ""}
+        try:
+            result = gradcheck(cls)
+            if result.error:
+                entry["error"] = result.error.splitlines()[0]
+            else:
+                entry["status"] = "passed" if result.passed else "failed"
+                entry["max_relative_error"] = result.max_relative_error
+                entry["where"] = result.worst
+        except Exception as error:
+            entry["error"] = str(error).splitlines()[0]
+        results.append(entry)
+    return json.dumps(results)
+
+
+def _engine_bundle(path, folder, name):
+    """Bundles every node the script defines into <folder>/<name>.cyxnode."""
+    classes = _engine_script_nodes(path)
+    if not classes:
+        raise ValueError("no node in %s" % path)
+    return bundle(*classes, folder=folder, name=name)
+
+
 def _source_file(cls):
     import inspect
     module = __import__("sys").modules.get(cls.__module__)

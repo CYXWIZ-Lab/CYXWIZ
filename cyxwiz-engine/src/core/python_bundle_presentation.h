@@ -122,6 +122,11 @@ struct CreateNodeView {
 
 CreateNodeView BuildCreateNodeView(const CreateNodeInputs& in);
 
+// "initial_a (float, at least 0.01, default 1.0)", "mode (one of fast, exact, default fast)".
+// validation as pycyxwiz writes it: "0.01-", "-5", "0-1".
+std::string CreateNodeSettingText(const std::string& name, const std::string& type, const std::string& default_value,
+                                  const std::string& validation, const std::vector<std::string>& choices);
+
 // "my_acts.py" -> "my-acts": lower case, '_' and spaces to '-', others dropped.
 std::string SuggestBundleName(const std::string& script_name);
 // Empty when acceptable; else why not.

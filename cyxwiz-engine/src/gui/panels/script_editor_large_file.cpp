@@ -1,5 +1,7 @@
 // Bounded, read-only rendering for text files that are too large for TextEditor.
 
+// First: node_metadata.h names ::gui types, which a later cyxwiz::gui would hide.
+#include "create_node_dialog.h"
 #include "script_editor.h"
 #include "../ui_tokens.h"
 

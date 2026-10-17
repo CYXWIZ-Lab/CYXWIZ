@@ -120,9 +120,11 @@ enum class DialogResult { None, Primary, Secondary };
 //   if (BeginDialog(title, options)) { ...body... ; result = EndDialog("Save"); }
 // The body scrolls above a fixed footer with Primary then Secondary.
 bool BeginDialog(const char* title, const DialogOptions& options = {});
+// `close_on_primary` false keeps the dialog open after Primary (a step of a
+// multi-step dialog: Check, then Create).
 DialogResult EndDialog(const char* primary_label, const char* secondary_label = "Cancel",
                        bool primary_enabled = true, const char* primary_disabled_reason = nullptr,
-                       bool danger = false);
+                       bool danger = false, bool close_on_primary = true);
 
 // One-call confirmation: wrapped message, optional bullets, then the action
 // (Primary, or Danger when `danger`) and Cancel. Call OpenPopup(title) once.

@@ -424,7 +424,7 @@ bool BeginDialog(const char* title, const DialogOptions& options) {
 }
 
 DialogResult EndDialog(const char* primary_label, const char* secondary_label, bool primary_enabled,
-                       const char* primary_disabled_reason, bool danger) {
+                       const char* primary_disabled_reason, bool danger, bool close_on_primary) {
     const Tokens& t = CurrentTokens();
     ImGui::EndChild();
     ImGui::Separator();
@@ -443,7 +443,9 @@ DialogResult EndDialog(const char* primary_label, const char* secondary_label, b
         if (SecondaryButton(secondary_label, true, nullptr, ButtonSize::Regular)) result = DialogResult::Secondary;
     }
     if (result == DialogResult::None && ImGui::IsKeyPressed(ImGuiKey_Escape)) result = DialogResult::Secondary;
-    if (result != DialogResult::None) ImGui::CloseCurrentPopup();
+    if (result == DialogResult::Secondary || (result == DialogResult::Primary && close_on_primary)) {
+        ImGui::CloseCurrentPopup();
+    }
     ImGui::EndPopup();
     return result;
 }

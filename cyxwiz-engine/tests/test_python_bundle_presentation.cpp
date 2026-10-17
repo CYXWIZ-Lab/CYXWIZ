@@ -159,6 +159,18 @@ int main() {
               "Gradient not checked: initial_a must be at least 0.01",
           "not checked line");
     Check(cyxwiz::TodayIsoDate().size() == 10, "today's date");
+    Check(cyxwiz::CreateNodeSettingText("initial_a", "float", "1.0", "0.01-", {}) ==
+              "initial_a (float, at least 0.01, default 1.0)",
+          "setting text: minimum");
+    Check(cyxwiz::CreateNodeSettingText("p", "float", "0.5", "0-1", {}) == "p (float, 0 to 1, default 0.5)",
+          "setting text: range");
+    Check(cyxwiz::CreateNodeSettingText("n", "int", "3", "-10", {}) == "n (int, at most 10, default 3)",
+          "setting text: maximum");
+    Check(cyxwiz::CreateNodeSettingText("lo", "float", "0", "-1-1", {}) == "lo (float, -1 to 1, default 0)",
+          "setting text: negative minimum");
+    Check(cyxwiz::CreateNodeSettingText("mode", "string", "fast", "fast|exact", {"fast", "exact"}) ==
+              "mode (string, one of fast, exact, default fast)",
+          "setting text: choices");
 
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";
