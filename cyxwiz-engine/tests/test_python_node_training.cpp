@@ -227,6 +227,7 @@ int main() {
         Check(result.ok, "the job succeeded" + (result.error.empty() ? "" : " (" + result.error + ")"));
         Check(result.model && FindModule(*result.model, "Softsign") != nullptr, "the model holds Softsign");
     }
+    Check(!fs::exists(bundle_dir / "__pycache__"), "loading a bundle writes no __pycache__ into its folder");
 
     std::cout << "a Python error stops training and names the node\n";
     {

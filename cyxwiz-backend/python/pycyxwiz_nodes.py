@@ -260,7 +260,8 @@ def _engine_load(folder, private_name):
 
     The name includes the bundle's hash, so an edited bundle loads fresh and
     two bundles never collide. The folder is not added to sys.path: a
-    bundle must not shadow real packages.
+    bundle must not shadow real packages. No __pycache__ is written into
+    the bundle folder (it belongs to the user, or to the repository).
     """
     import importlib.util
     import os
@@ -274,11 +275,15 @@ def _engine_load(folder, private_name):
         raise ImportError("cannot load node.py from %s" % folder)
     module = importlib.util.module_from_spec(spec)
     sys.modules[private_name] = module
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         spec.loader.exec_module(module)
     except BaseException:
         del sys.modules[private_name]
         raise
+    finally:
+        sys.dont_write_bytecode = previous
     _engine_modules[private_name] = module
     return module
 
