@@ -1,9 +1,59 @@
 // file_dialogs.cpp - Cross-platform native file dialog implementation
 #include "file_dialogs.h"
+#include "project_manager.h"
 #include <spdlog/spdlog.h>
 #include <nfd.h>
+#if defined(_WIN32)
+#define GLFW_EXPOSE_NATIVE_WIN32
+#elif defined(__APPLE__)
+#define GLFW_EXPOSE_NATIVE_COCOA
+#endif
+#include <nfd_glfw3.h>
+
+#include <filesystem>
 
 namespace cyxwiz {
+
+namespace {
+
+// The folder a dialog opens in (TOFIX157): the caller's folder, the folder of
+// a file path, or the nearest folder above it that exists (the native dialog
+// ignores a folder that does not exist); with none given, the open project's
+// folder. In the platform's own form (backslashes on Windows). The native
+// dialog is built to open exactly here, not where Windows last was.
+std::string StartFolder(const char* requested) {
+    namespace fs = std::filesystem;
+    fs::path folder;
+    if (requested && *requested) {
+        folder = fs::path(requested);
+    } else if (ProjectManager::Instance().HasActiveProject()) {
+        folder = fs::path(ProjectManager::Instance().GetProjectRoot());
+    } else {
+        return {};
+    }
+    std::error_code error;
+    if (fs::is_regular_file(folder, error)) folder = folder.parent_path();
+    while (!folder.empty() && !fs::is_directory(folder, error)) {
+        const fs::path parent = folder.parent_path();
+        if (parent == folder) return {};
+        folder = parent;
+    }
+    folder = fs::absolute(folder, error);
+    return folder.make_preferred().string();
+}
+
+const char* OrNull(const std::string& folder) { return folder.empty() ? nullptr : folder.c_str(); }
+
+// The Engine window the dialog belongs to (the UI thread's GLFW window): the
+// dialog opens centred on it and stays in front of it, instead of where
+// Windows last put a dialog (even on a screen no longer attached).
+nfdwindowhandle_t ParentWindow() {
+    nfdwindowhandle_t window{};
+    if (GLFWwindow* current = glfwGetCurrentContext()) NFD_GetNativeWindowFromGLFWWindow(current, &window);
+    return window;
+}
+
+}  // namespace
 
 bool FileDialogs::initialized_ = false;
 
@@ -31,13 +81,14 @@ std::optional<std::string> FileDialogs::OpenFile(
         nfd_filters.push_back({name.c_str(), spec.c_str()});
     }
 
+    const std::string start = StartFolder(default_path);
+    nfdopendialogu8args_t args{};
+    args.filterList = nfd_filters.empty() ? nullptr : nfd_filters.data();
+    args.filterCount = static_cast<nfdfiltersize_t>(nfd_filters.size());
+    args.defaultPath = OrNull(start);
+    args.parentWindow = ParentWindow();
     nfdchar_t* out_path = nullptr;
-    nfdresult_t result = NFD_OpenDialog(
-        &out_path,
-        nfd_filters.empty() ? nullptr : nfd_filters.data(),
-        static_cast<nfdfiltersize_t>(nfd_filters.size()),
-        default_path
-    );
+    nfdresult_t result = NFD_OpenDialogU8_With(&out_path, &args);
 
     if (result == NFD_OKAY && out_path) {
         std::string path(out_path);
@@ -69,12 +120,13 @@ std::vector<std::string> FileDialogs::OpenMultiple(
     }
 
     const nfdpathset_t* out_paths = nullptr;
-    nfdresult_t result = NFD_OpenDialogMultiple(
-        &out_paths,
-        nfd_filters.empty() ? nullptr : nfd_filters.data(),
-        static_cast<nfdfiltersize_t>(nfd_filters.size()),
-        default_path
-    );
+    const std::string start = StartFolder(default_path);
+    nfdopendialogu8args_t args{};
+    args.filterList = nfd_filters.empty() ? nullptr : nfd_filters.data();
+    args.filterCount = static_cast<nfdfiltersize_t>(nfd_filters.size());
+    args.defaultPath = OrNull(start);
+    args.parentWindow = ParentWindow();
+    nfdresult_t result = NFD_OpenDialogMultipleU8_With(&out_paths, &args);
 
     if (result == NFD_OKAY && out_paths) {
         nfdpathsetsize_t count;
@@ -113,13 +165,14 @@ std::optional<std::string> FileDialogs::SaveFile(
     }
 
     nfdchar_t* out_path = nullptr;
-    nfdresult_t result = NFD_SaveDialog(
-        &out_path,
-        nfd_filters.empty() ? nullptr : nfd_filters.data(),
-        static_cast<nfdfiltersize_t>(nfd_filters.size()),
-        default_path,
-        default_name
-    );
+    const std::string start = StartFolder(default_path);
+    nfdsavedialogu8args_t args{};
+    args.filterList = nfd_filters.empty() ? nullptr : nfd_filters.data();
+    args.filterCount = static_cast<nfdfiltersize_t>(nfd_filters.size());
+    args.defaultPath = OrNull(start);
+    args.defaultName = default_name;
+    args.parentWindow = ParentWindow();
+    nfdresult_t result = NFD_SaveDialogU8_With(&out_path, &args);
 
     if (result == NFD_OKAY && out_path) {
         std::string path(out_path);
@@ -142,7 +195,11 @@ std::optional<std::string> FileDialogs::SelectFolder(
     EnsureInitialized();
 
     nfdchar_t* out_path = nullptr;
-    nfdresult_t result = NFD_PickFolder(&out_path, default_path);
+    const std::string start = StartFolder(default_path);
+    nfdpickfolderu8args_t args{};
+    args.defaultPath = OrNull(start);
+    args.parentWindow = ParentWindow();
+    nfdresult_t result = NFD_PickFolderU8_With(&out_path, &args);
 
     if (result == NFD_OKAY && out_path) {
         std::string path(out_path);

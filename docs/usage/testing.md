@@ -17,6 +17,15 @@ training with *save best checkpoint* keeps and restores its best epoch, as
 for a layer stack. Feature Importance measures it too (Permutation and
 Drop-Column; see feature_importance.md).
 
+**Train > Test > Load Checkpoint for Testing...** opens a folder picker in
+the project's `checkpoints` folder, in front of the Engine, listing each
+training run (`train-<id>`). Pick a run (its best checkpoint is used) or a
+checkpoint folder. The graph on the canvas must compile with its Data Inputs
+applied; otherwise the load stops and lists what to fix. Every file and
+folder picker in the Engine opens where the Engine asks (the project's folder
+for that kind of file, or the project's own folder), not in the folder
+Windows last used.
+
 ## Test Results
 
 The header shows the headline figure (accuracy for classification; 1-NN

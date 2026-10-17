@@ -1,0 +1,16 @@
+--- a/src/nfd_win.cpp
++++ b/src/nfd_win.cpp
+@@ -250,10 +250,9 @@
+ 
+     Release_Guard<IShellItem> folderGuard(folder);
+ 
+-    // SetDefaultFolder() might use another recently used folder if available, so the user doesn't
+-    // need to keep navigating back to the default folder (recommended by Windows). change to
+-    // SetFolder() if you always want to use the default folder
+-    if (!SUCCEEDED(dialog->SetDefaultFolder(folder))) {
++    // CyxWiz: the dialog opens where the Engine asks (the project's folder for
++    // this kind of file), not in the folder Windows last remembered for the exe.
++    if (!SUCCEEDED(dialog->SetFolder(folder))) {
+         NFDi_SetError("Failed to set default path.");
+         return NFD_ERROR;
+     }
