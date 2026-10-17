@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>  // sscanf in PluginVersion::Parse
 #include <string>
 #include <vector>
 #include <cstdint>
