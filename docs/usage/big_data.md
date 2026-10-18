@@ -146,6 +146,10 @@ faster than before this change.
 - **The GPU or CPU device needs memory of its own**: starting ArrayFire (any
   backend) takes about 0.5-0.9 GB on top of the data. The budget never takes
   the last 1 GB of this PC's memory, so the device always has room to start.
+- **A second machine**: on a 16 GB laptop with Intel Iris Xe, the same 1 GB set runs every step under a 512 MB
+  cap (data budget 256 MB) with about the PC's memory: filter 1.4 s / 129 MB, group by 0.2 s / 19 MB, a sort of
+  every row 34.6 s / 308 MB (the PC: 21.3 s / 354 MB). The cap, not the machine, bounds the memory; the slower
+  disk shows in the time of steps that spill.
 - **Time grows with the data**, disk space too: a sort or a join of a large
   table writes temporary files about the size of its input.
 - A tool for measuring: `cyxwiz-bench-out-of-core` (in the build's `bin`
