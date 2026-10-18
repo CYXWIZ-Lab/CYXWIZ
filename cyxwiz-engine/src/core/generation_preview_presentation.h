@@ -116,8 +116,8 @@ std::string GenerationPreviewHowLine(const GenerationPreviewReport& report);
 // The Console block at Info: a header, one line per sample, a summary.
 std::vector<std::string> GenerationPreviewLogLines(const GenerationPreviewReport& report);
 
-// The first `max_chars` characters of `text` on one line (UTF-8 safe), with an
-// ellipsis when cut.
+// The first `max_chars` characters of `text` on one line (UTF-8 safe), with
+// "..." when cut.
 std::string GenerationPreviewExcerpt(const std::string& text, size_t max_chars);
 
 }  // namespace cyxwiz

@@ -5,6 +5,8 @@
 
 #include "console_palette.h"
 #include "console.h"
+#include "../core/console_commands_presentation.h"
+#include "../core/runtime_log_export.h"
 #include "../core/runtime_log_presentation.h"
 #include "../core/runtime_log_store.h"
 #include "editor_fonts.h"
@@ -16,6 +18,7 @@
 #include <cctype>
 #include <cstring>
 #include <imgui.h>
+#include <unordered_map>
 #include <string>
 
 #ifdef _WIN32
@@ -116,6 +119,38 @@ void Flow(float width, float right, bool first) {
 
 // Wraps `text` at `width` (current font) so a read-only multiline field shows
 // the whole message without horizontal scrolling.
+// The first two lines of `text` wrapped at `width`; `more` when it goes on.
+struct TwoLines {
+  std::string first, second;
+  bool more = false;
+};
+TwoLines WrapTwoLines(const std::string &text, float width) {
+  TwoLines lines;
+  ImFont *font = ImGui::GetFont();
+  const float scale = ImGui::GetFontSize() / font->FontSize;
+  const char *begin = text.c_str();
+  const char *end = begin + text.size();
+  const auto next_line = [&](const char *&cursor) {
+    const char *newline = static_cast<const char *>(std::memchr(cursor, '\n', static_cast<size_t>(end - cursor)));
+    const char *limit = newline ? newline : end;
+    const char *wrap = font->CalcWordWrapPositionA(scale, cursor, limit, std::max(20.0f, width));
+    if (wrap == cursor) wrap = std::min(limit, cursor + 1);
+    std::string line(cursor, wrap);
+    cursor = wrap;
+    while (cursor < end && (*cursor == ' ' || *cursor == '\n')) {
+      const bool was_newline = *cursor == '\n';
+      ++cursor;
+      if (was_newline) break;
+    }
+    return line;
+  };
+  const char *cursor = begin;
+  lines.first = next_line(cursor);
+  if (cursor < end) lines.second = next_line(cursor);
+  lines.more = cursor < end;
+  return lines;
+}
+
 std::string WrapForWidth(const std::string &text, float width) {
   if (width <= 0.0f)
     return text;
@@ -274,7 +309,23 @@ void Console::RenderInspectorTab(bool request_focus) {
       std::any_of(events.begin(), events.end(), [this](const auto &event) {
         return event.sequence == inspector_selected_sequence_;
       });
+  // Details sit beside the list when there is room, so the list keeps its
+  // height (TOFIX159 B3); under it otherwise.
   const float avail = ImGui::GetContentRegionAvail().y;
+  const float avail_w = ImGui::GetContentRegionAvail().x;
+  const bool beside = has_selection && avail_w >= 1000.0f;
+  if (beside) {
+    const float details_w = std::clamp(avail_w * 0.34f, 360.0f, 520.0f);
+    ImGui::BeginChild("RuntimeLogInspectorBody",
+                      ImVec2(avail_w - details_w - ImGui::GetStyle().ItemSpacing.x, 0), false);
+    RenderInspectorTable(result.get());
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    RenderInspectorDetails(result.get());
+    ImGui::EndGroup();
+    return;
+  }
   const float drawer_h =
       has_selection ? std::clamp(avail * 0.40f, 150.0f, 380.0f) : 0.0f;
   const float table_h =
@@ -794,6 +845,10 @@ void Console::RenderLogsStatus(const cyxwiz::RuntimeLogInspectorResult *result) 
     }
     if (!view.truncation.empty())
       span(view.truncation, kAmber);
+    if (!inspector_hidden_columns_.empty() && !query.events.empty()) {
+      span(inspector_hidden_columns_ + " hidden: empty in these rows", kFaint);
+      Tooltip("A column shows again as soon as a shown row has a value for it.");
+    }
   } else {
     ImGui::TextColored(kMuted, "Loading runtime events...");
   }
@@ -827,132 +882,194 @@ void Console::RenderInspectorTable(const cyxwiz::RuntimeLogInspectorResult *resu
     return;
   }
   const float char_w = ImGui::CalcTextSize("0").x;
-  if (!ImGui::BeginTable("RuntimeLogTable", 8, flags))
+  const auto &events = result->query.events;
+  // Columns that say nothing in these rows are left out (TOFIX159 B3): a
+  // column whose rows are all empty, or (Source) all the Engine's own logger.
+  bool any_source = false, any_code = false, any_run = false, any_device = false;
+  for (const auto &event : events) {
+    any_source = any_source || (!event.source.empty() && event.source != "cyxwiz");
+    any_code = any_code || !event.primary_error_code.empty();
+    any_run = any_run || !event.run_id.empty();
+    any_device = any_device || !cyxwiz::logs::DeviceLabel(event).empty();
+  }
+  std::string hidden;
+  for (const auto &[shown, name] : {std::pair{any_source, "Source"}, std::pair{any_code, "Code"},
+                                    std::pair{any_run, "Run"}, std::pair{any_device, "Device"}})
+    if (!shown) hidden += (hidden.empty() ? "" : ", ") + std::string(name);
+  inspector_hidden_columns_ = hidden;
+
+  enum Column { kTime, kLevel, kCategory, kSource, kCode, kRun, kDevice, kMessage };
+  std::vector<Column> columns = {kTime, kLevel, kCategory};
+  if (any_source) columns.push_back(kSource);
+  if (any_code) columns.push_back(kCode);
+  if (any_run) columns.push_back(kRun);
+  if (any_device) columns.push_back(kDevice);
+  columns.push_back(kMessage);
+  const auto column_width = [&](Column column) {
+    switch (column) {
+    case kTime: return ImGui::CalcTextSize("00:00:00.000").x + 6.0f;
+    case kLevel: return char_w * 11.0f;
+    case kCategory: return char_w * 10.0f;
+    case kSource: return char_w * 10.0f;
+    case kCode: return char_w * 11.0f;
+    case kRun: return char_w * 17.0f;
+    case kDevice: return char_w * 11.0f;
+    default: return 0.0f;
+    }
+  };
+  const ImGuiStyle &style = ImGui::GetStyle();
+  float fixed = 0.0f;
+  for (Column column : columns) fixed += column_width(column) + style.CellPadding.x * 2.0f + 1.0f;
+  const float message_w =
+      std::max(80.0f, ImGui::GetContentRegionAvail().x - fixed - style.ScrollbarSize - style.CellPadding.x * 2.0f);
+
+  if (!ImGui::BeginTable("RuntimeLogTable", static_cast<int>(columns.size()), flags))
     return;
   ImGui::TableSetupScrollFreeze(0, 1);
-  ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed,
-                          ImGui::CalcTextSize("00:00:00.000").x + 6.0f);
-  ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, char_w * 11.0f);
-  ImGui::TableSetupColumn("Category", ImGuiTableColumnFlags_WidthFixed, char_w * 10.0f);
-  ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, char_w * 10.0f);
-  ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthFixed, char_w * 11.0f);
-  ImGui::TableSetupColumn("Run", ImGuiTableColumnFlags_WidthFixed, char_w * 17.0f);
-  ImGui::TableSetupColumn("Device", ImGuiTableColumnFlags_WidthFixed, char_w * 11.0f);
-  ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
+  for (Column column : columns) {
+    static const char *kNames[] = {"Time", "Level", "Category", "Source", "Code", "Run", "Device", "Message"};
+    if (column == kMessage)
+      ImGui::TableSetupColumn(kNames[column], ImGuiTableColumnFlags_WidthStretch);
+    else
+      ImGui::TableSetupColumn(kNames[column], ImGuiTableColumnFlags_WidthFixed, column_width(column));
+  }
   ImGui::TableHeadersRow();
 
+  // A message wraps to at most two lines, so rows have their own heights; the
+  // rows outside the view are one spacer row above and one below.
+  const float line_h = ImGui::GetTextLineHeight();
+  const float row_pad = style.CellPadding.y * 2.0f;
+  std::vector<float> tops(events.size() + 1, 0.0f);
+  for (size_t i = 0; i < events.size(); ++i) {
+    auto &cached = inspector_row_lines_[events[i].sequence];
+    if (cached.first != message_w) {
+      const auto lines = WrapTwoLines(events[i].message, message_w);
+      cached = {message_w, lines.second.empty() ? 1 : 2};
+    }
+    tops[i + 1] = tops[i] + line_h * static_cast<float>(cached.second) + row_pad;
+  }
+  if (inspector_row_lines_.size() > events.size() * 2 + 512) inspector_row_lines_.clear();
+
   const auto dash = [] { ImGui::TextColored(kFaint, "-"); };
-  // Keep a newly selected row visible when the details drawer opens.
-  int scroll_to_row = -1;
   if (inspector_scroll_to_selected_ != 0) {
-    for (size_t i = 0; i < result->query.events.size(); ++i) {
-      if (result->query.events[i].sequence == inspector_scroll_to_selected_) {
-        scroll_to_row = static_cast<int>(i);
+    for (size_t i = 0; i < events.size(); ++i)
+      if (events[i].sequence == inspector_scroll_to_selected_)
+        ImGui::SetScrollY(std::max(0.0f, tops[i] - ImGui::GetWindowHeight() * 0.4f));
+    inspector_scroll_to_selected_ = 0;
+  }
+  const float view_top = ImGui::GetScrollY() - line_h * 2.0f;
+  const float view_bottom = ImGui::GetScrollY() + ImGui::GetWindowHeight() + line_h * 2.0f;
+  const size_t first = static_cast<size_t>(
+      std::upper_bound(tops.begin(), tops.end(), std::max(0.0f, view_top)) - tops.begin()) - 1;
+  size_t last = first;
+  while (last < events.size() && tops[last] < view_bottom) ++last;
+  if (first > 0)
+    ImGui::TableNextRow(ImGuiTableRowFlags_None, tops[first]);
+
+  for (size_t row = first; row < last; ++row) {
+    const auto &event = events[row];
+    const size_t level = cyxwiz::logs::LevelIndex(event.level);
+    const bool problem = cyxwiz::logs::IsProblemLevel(event.level);
+    const bool selected = inspector_selected_sequence_ == event.sequence;
+    const float height = tops[row + 1] - tops[row];
+    ImGui::TableNextRow(ImGuiTableRowFlags_None, height);
+    ImGui::TableSetColumnIndex(0);
+    ImGui::PushID(static_cast<int>(event.sequence));
+    if (ImGui::Selectable("##row", selected,
+                          ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick |
+                              ImGuiSelectableFlags_AllowOverlap,
+                          ImVec2(0.0f, height - row_pad))) {
+      if (ImGui::IsMouseDoubleClicked(0)) {
+        inspector_selected_sequence_ = event.sequence;
+        ImGui::SetClipboardText(cyxwiz::logs::FormatRow(event).c_str());
+        SetLogsNotice("Copied row #" + cyxwiz::logs::FormatCount(event.sequence));
+      } else {
+        inspector_selected_sequence_ = selected ? 0 : event.sequence;
+        if (!selected)
+          pending_scroll_selection_ = event.sequence;
+      }
+    }
+    if (selected) {
+      const ImVec2 min = ImGui::GetItemRectMin();
+      const ImVec2 max = ImGui::GetItemRectMax();
+      ImGui::GetWindowDrawList()->AddRectFilled(min, ImVec2(min.x + 2.0f, max.y),
+                                                ImGui::GetColorU32(kPrompt));
+    }
+    if (ImGui::BeginPopupContextItem("RuntimeLogContext")) {
+      inspector_selected_sequence_ = event.sequence;
+      if (ImGui::MenuItem("Copy message")) {
+        ImGui::SetClipboardText(event.message.c_str());
+        SetLogsNotice("Copied message");
+      }
+      if (ImGui::MenuItem("Copy row")) {
+        ImGui::SetClipboardText(cyxwiz::logs::FormatRow(event).c_str());
+        SetLogsNotice("Copied row #" + cyxwiz::logs::FormatCount(event.sequence));
+      }
+      ImGui::EndPopup();
+    }
+    ImGui::SameLine(0.0f, 0.0f);
+    const auto time = cyxwiz::logs::FormatLocalTime(event.timestamp_utc);
+    ImGui::TextColored(selected ? kText : kMuted, "%s", time.c_str());
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+      ImGui::SetTooltip("%s UTC\n%s local",
+                        cyxwiz::logs::FormatUtcTimestamp(event.timestamp_utc).c_str(),
+                        cyxwiz::logs::FormatLocalTimestamp(event.timestamp_utc).c_str());
+    }
+    ImGui::PopID();
+
+    for (size_t c = 1; c < columns.size(); ++c) {
+      ImGui::TableSetColumnIndex(static_cast<int>(c));
+      switch (columns[c]) {
+      case kLevel:
+        ImGui::TextColored(kLevelColors[level], "%s %s", kLevelIcons[level], cyxwiz::logs::kLevelLabels[level]);
+        break;
+      case kCategory:
+        ImGui::TextUnformatted(event.category.c_str());
+        break;
+      case kSource:
+        if (event.source.empty()) dash();
+        else ImGui::TextUnformatted(event.source.c_str());
+        break;
+      case kCode:
+        if (event.primary_error_code.empty()) dash();
+        else ImGui::TextColored(problem ? kRed : kText, "%s", event.primary_error_code.c_str());
+        break;
+      case kRun:
+        if (event.run_id.empty()) dash();
+        else {
+          ImGui::TextUnformatted(event.run_id.c_str());
+          Tooltip(event.run_id.c_str());
+        }
+        break;
+      case kDevice: {
+        const auto device = cyxwiz::logs::DeviceLabel(event);
+        if (device.empty()) dash();
+        else {
+          ImGui::TextUnformatted(device.c_str());
+          if (!event.device_name.empty()) Tooltip(event.device_name.c_str());
+        }
+        break;
+      }
+      case kMessage: {
+        const auto lines = WrapTwoLines(cyxwiz::gui::DrawableText(ImGui::GetFont(), event.message), message_w);
+        const ImVec4 colour = problem || selected ? kBright : kText;
+        ImGui::TextColored(colour, "%s", lines.first.c_str());
+        if (!lines.second.empty())
+          ImGui::TextColored(colour, "%s%s", lines.second.c_str(), lines.more ? " ..." : "");
+        if (lines.more)
+          Tooltip("The message goes on. Select the row to read all of it.");
+        break;
+      }
+      default:
         break;
       }
     }
-    inspector_scroll_to_selected_ = 0;
   }
-  ImGuiListClipper clipper;
-  clipper.Begin(static_cast<int>(result->query.events.size()));
-  if (scroll_to_row >= 0)
-    clipper.IncludeItemByIndex(scroll_to_row);
-  while (clipper.Step()) {
-    for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
-      const auto &event = result->query.events[row];
-      const size_t level = cyxwiz::logs::LevelIndex(event.level);
-      const bool problem = cyxwiz::logs::IsProblemLevel(event.level);
-      const bool selected = inspector_selected_sequence_ == event.sequence;
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::PushID(static_cast<int>(event.sequence));
-      if (ImGui::Selectable("##row", selected,
-                            ImGuiSelectableFlags_SpanAllColumns |
-                                ImGuiSelectableFlags_AllowDoubleClick |
-                                ImGuiSelectableFlags_AllowOverlap)) {
-        if (ImGui::IsMouseDoubleClicked(0)) {
-          inspector_selected_sequence_ = event.sequence;
-          ImGui::SetClipboardText(cyxwiz::logs::FormatRow(event).c_str());
-          SetLogsNotice("Copied row #" + cyxwiz::logs::FormatCount(event.sequence));
-        } else {
-          inspector_selected_sequence_ = selected ? 0 : event.sequence;
-          if (!selected)
-            pending_scroll_selection_ = event.sequence;
-        }
-      }
-      if (row == scroll_to_row)
-        ImGui::SetScrollHereY(0.5f);
-      if (selected) {
-        const ImVec2 min = ImGui::GetItemRectMin();
-        const ImVec2 max = ImGui::GetItemRectMax();
-        ImGui::GetWindowDrawList()->AddRectFilled(min, ImVec2(min.x + 2.0f, max.y),
-                                                  ImGui::GetColorU32(kPrompt));
-      }
-      if (ImGui::BeginPopupContextItem("RuntimeLogContext")) {
-        inspector_selected_sequence_ = event.sequence;
-        if (ImGui::MenuItem("Copy message")) {
-          ImGui::SetClipboardText(event.message.c_str());
-          SetLogsNotice("Copied message");
-        }
-        if (ImGui::MenuItem("Copy row")) {
-          ImGui::SetClipboardText(cyxwiz::logs::FormatRow(event).c_str());
-          SetLogsNotice("Copied row #" + cyxwiz::logs::FormatCount(event.sequence));
-        }
-        ImGui::EndPopup();
-      }
-      ImGui::SameLine(0.0f, 0.0f);
-      const auto time = cyxwiz::logs::FormatLocalTime(event.timestamp_utc);
-      ImGui::TextColored(selected ? kText : kMuted, "%s", time.c_str());
-      if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-        ImGui::SetTooltip("%s UTC\n%s local",
-                          cyxwiz::logs::FormatUtcTimestamp(event.timestamp_utc).c_str(),
-                          cyxwiz::logs::FormatLocalTimestamp(event.timestamp_utc).c_str());
-      }
-      ImGui::PopID();
-
-      ImGui::TableSetColumnIndex(1);
-      ImGui::TextColored(kLevelColors[level], "%s %s", kLevelIcons[level],
-                         cyxwiz::logs::kLevelLabels[level]);
-      ImGui::TableSetColumnIndex(2);
-      ImGui::TextUnformatted(event.category.c_str());
-      ImGui::TableSetColumnIndex(3);
-      if (event.source.empty())
-        dash();
-      else
-        ImGui::TextUnformatted(event.source.c_str());
-      ImGui::TableSetColumnIndex(4);
-      if (event.primary_error_code.empty())
-        dash();
-      else
-        ImGui::TextColored(problem ? kRed : kText, "%s", event.primary_error_code.c_str());
-      ImGui::TableSetColumnIndex(5);
-      if (event.run_id.empty())
-        dash();
-      else {
-        ImGui::TextUnformatted(event.run_id.c_str());
-        Tooltip(event.run_id.c_str());
-      }
-      ImGui::TableSetColumnIndex(6);
-      const auto device = cyxwiz::logs::DeviceLabel(event);
-      if (device.empty())
-        dash();
-      else {
-        ImGui::TextUnformatted(device.c_str());
-        if (!event.device_name.empty())
-          Tooltip(event.device_name.c_str());
-      }
-      ImGui::TableSetColumnIndex(7);
-      const auto line = cyxwiz::logs::FirstLine(event.message);
-      ImGui::TextColored(problem || selected ? kBright : kText, "%s%s",
-                         cyxwiz::gui::DrawableText(ImGui::GetFont(), line.text).c_str(),
-                         line.more_lines ? "  [...]" : "");
-      if (line.more_lines)
-        Tooltip("More lines follow. Select the row to see the whole message.");
-    }
-  }
+  if (last < events.size())
+    ImGui::TableNextRow(ImGuiTableRowFlags_None, tops[events.size()] - tops[last]);
   if (logs_auto_scroll_ && !inspector_paused_ &&
       inspector_last_rendered_high_water_ != result->query.high_water_sequence) {
-    ImGui::SetScrollHereY(1.0f);
+    ImGui::SetScrollY(ImGui::GetScrollMaxY() + tops[events.size()]);
   }
   inspector_last_rendered_high_water_ = result->query.high_water_sequence;
   ImGui::EndTable();
@@ -971,53 +1088,58 @@ void Console::RenderInspectorDetails(const cyxwiz::RuntimeLogInspectorResult *re
 
   ImGui::PushStyleColor(ImGuiCol_ChildBg, kPanelBg);
   ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
-  ImGui::BeginChild("RuntimeLogDetails", ImVec2(0, 0),
-                    ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+  ImGui::BeginChild("RuntimeLogDetails", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
 
-  // Header: level, title, code, then Copy message / Copy row / Close.
-  const char *copy_message = "Copy message";
-  const char *copy_row = "Copy row";
-  const float buttons_w = ui::ButtonWidth(copy_message, ui::ButtonSize::Small) +
-                          ui::ButtonWidth(copy_row, ui::ButtonSize::Small) +
-                          ImGui::CalcTextSize("Close").x + 4.0f +
-                          ImGui::GetStyle().ItemSpacing.x * 3.0f;
+  // Header: level, title and code on one line; the actions on the next, so
+  // nothing is pushed out when the details sit in a narrow pane (TOFIX159 B3).
   ImGui::AlignTextToFramePadding();
   ImGui::TextColored(kLevelColors[level], "%s %s", kLevelIcons[level],
                      cyxwiz::logs::kLevelLabels[level]);
   ImGui::SameLine();
-  const float title_right =
-      ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - buttons_w;
   const std::string title = cyxwiz::logs::DetailsTitle(event);
-  ImGui::PushClipRect(ImGui::GetCursorScreenPos(),
-                      ImVec2(title_right, ImGui::GetCursorScreenPos().y + 40.0f), true);
+  const ImVec2 title_at = ImGui::GetCursorScreenPos();
+  ImGui::PushClipRect(title_at,
+                      ImVec2(title_at.x + ImGui::GetContentRegionAvail().x, title_at.y + 40.0f), true);
   ImGui::TextColored(kBright, "%s", title.c_str());
   if (!event.primary_error_code.empty()) {
     ImGui::SameLine();
     ImGui::TextColored(kRed, "%s", event.primary_error_code.c_str());
   }
   ImGui::PopClipRect();
-  ImGui::SameLine();
-  const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttons_w;
-  if (x > ImGui::GetCursorPosX())
-    ImGui::SetCursorPosX(x);
-  if (ui::SecondaryButton(copy_message)) {
+  if (ui::SecondaryButton("Copy message")) {
     ImGui::SetClipboardText(event.message.c_str());
     SetLogsNotice("Copied message");
   }
   ImGui::SameLine();
-  if (ui::SecondaryButton(copy_row)) {
+  if (ui::SecondaryButton("Copy row")) {
     ImGui::SetClipboardText(cyxwiz::logs::FormatRow(event).c_str());
     SetLogsNotice("Copied row #" + cyxwiz::logs::FormatCount(event.sequence));
   }
   Tooltip("The row with every field, as one line.");
   ImGui::SameLine();
+  if (ImGui::GetContentRegionAvail().x < ui::ButtonWidth("Copy as JSON", ui::ButtonSize::Small))
+    ImGui::NewLine();
+  if (ui::SecondaryButton("Copy as JSON")) {
+    cyxwiz::RuntimeLogRedactionOptions keep_all;
+    keep_all.secrets = keep_all.paths = keep_all.dataset_names = keep_all.query_text = keep_all.python_output = false;
+    ImGui::SetClipboardText(cyxwiz::RuntimeLogExportService::EventToJson(event, keep_all).dump(2).c_str());
+    SetLogsNotice("Copied row #" + cyxwiz::logs::FormatCount(event.sequence) + " as JSON");
+  }
+  Tooltip("The event with every field, as JSON.");
+  ImGui::SameLine();
+  const float close_w = ImGui::CalcTextSize("Close").x + 4.0f;
+  if (ImGui::GetContentRegionAvail().x > close_w)
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - close_w);
   if (ui::LinkButton("Close"))
     inspector_selected_sequence_ = 0;
   Tooltip("Close details (Esc).");
 
-  // Full message: wrapped, selectable.
+  // Full message: wrapped, selectable. A JSON ending (a generation sample) is
+  // shown formatted under it unless Show raw is on (TOFIX159 B3).
+  const auto json = cyxwiz::commands::FindJsonPayload(event.message);
   const float field_w = ImGui::GetContentRegionAvail().x;
-  std::string wrapped = WrapForWidth(cyxwiz::gui::DrawableText(ImGui::GetFont(), event.message), field_w - 20.0f);
+  const std::string &shown_message = json && !inspector_raw_json_ ? json->before : event.message;
+  std::string wrapped = WrapForWidth(cyxwiz::gui::DrawableText(ImGui::GetFont(), shown_message), field_w - 20.0f);
   const int lines = 1 + static_cast<int>(std::count(wrapped.begin(), wrapped.end(), '\n'));
   const float msg_h = std::min(8, std::max(1, lines)) * ImGui::GetTextLineHeight() +
                       ImGui::GetStyle().FramePadding.y * 2.0f + 2.0f;
@@ -1026,6 +1148,21 @@ void Console::RenderInspectorDetails(const cyxwiz::RuntimeLogInspectorResult *re
                             ImVec2(-1.0f, msg_h), ImGuiInputTextFlags_ReadOnly);
   ImGui::PopStyleColor();
   Tooltip("Select text to copy part of the message, or use Copy message.");
+  if (json) {
+    ImGui::TextColored(kMuted, "JSON \xC2\xB7 %zu %s", json->entries, json->entries == 1 ? "entry" : "entries");
+    ImGui::SameLine();
+    ImGui::Checkbox("Show raw", &inspector_raw_json_);
+    if (!inspector_raw_json_) {
+      std::string pretty = json->pretty;
+      const int json_lines = 1 + static_cast<int>(std::count(pretty.begin(), pretty.end(), '\n'));
+      ImGui::PushStyleColor(ImGuiCol_FrameBg, kInputBg);
+      ImGui::InputTextMultiline("##RuntimeLogJson", pretty.data(), pretty.size() + 1,
+                                ImVec2(-1.0f, std::min(14, std::max(3, json_lines)) * ImGui::GetTextLineHeight() +
+                                                  ImGui::GetStyle().FramePadding.y * 2.0f + 2.0f),
+                                ImGuiInputTextFlags_ReadOnly);
+      ImGui::PopStyleColor();
+    }
+  }
 
   // Fields, two pairs per line; click a value to copy it.
   const auto fields = cyxwiz::logs::DetailFields(event);

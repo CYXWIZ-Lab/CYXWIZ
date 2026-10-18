@@ -430,7 +430,7 @@ std::string GenerationPreviewExcerpt(const std::string& text, size_t max_chars) 
         ++chars;
         i += length;
     }
-    if (cut) out += "\xE2\x80\xA6";  // U+2026
+    if (cut) out += "...";  // ASCII: the Console font has no U+2026
     return out;
 }
 

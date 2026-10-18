@@ -156,6 +156,11 @@ private:
   // Shows the Logs session with `filter` as its structured filter.
   void OpenLogsWithFilter(const std::string &filter);
   bool commands_wrap_ = true;  // Wrap long messages, or one line each.
+  // Logs tab (TOFIX159 B3): message line counts per row (width, lines), the
+  // columns left out as empty, and the details' Show raw.
+  std::unordered_map<uint64_t, std::pair<float, int>> inspector_row_lines_;
+  std::string inspector_hidden_columns_;
+  bool inspector_raw_json_ = false;
   std::unordered_map<uint64_t, std::string> block_logs_filters_;  // block -> filter
   std::unordered_map<uint64_t, std::string> open_event_text_;     // row -> its message
   std::unordered_map<uint64_t, std::string> open_json_text_;      // row -> its JSON

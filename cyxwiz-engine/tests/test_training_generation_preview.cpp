@@ -134,7 +134,7 @@ void TestGenerationPreviewPresentation() {
     Require(EvaluateGenerationPreviewCheck({GenerationPreviewCheckKind::EndsWithStop,""},looping,"stop_text")==
             GenerationPreviewCheckResult::Passed,"ends with stop");
     Require(GenerationPreviewExcerpt("a\n\nb  c",10)=="a b c","excerpt joins lines");
-    Require(GenerationPreviewExcerpt("abcdefghijkl",5)=="abcde\xE2\x80\xA6","excerpt cuts");
+    Require(GenerationPreviewExcerpt("abcdefghijkl",5)=="abcde...","excerpt cuts");
 
     const auto directory=std::filesystem::temp_directory_path()/
         ("preview_presentation_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

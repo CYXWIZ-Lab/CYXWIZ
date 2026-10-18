@@ -20,6 +20,16 @@ stops the list from moving, **Auto-scroll** follows new messages.
   pipeline sent to the executor (one line of JSON), canvas selection.
 - **Warn** and **Error**: something needs a look.
 
+The list shows **Time**, **Level**, **Category** and **Message**. **Source**,
+**Code**, **Run** and **Device** appear only when a shown row has a value for
+them; the status line says which are hidden. A message wraps to two lines in
+its column and ends with "..." when it goes on. Click a row for its details:
+beside the list when the Console is wide (the list keeps its height), under
+it otherwise. They show the whole message in a field you can select from, a
+JSON ending formatted (tick **Show raw** for it as written), every field
+(click a value to copy it), and **Copy message**, **Copy row** and **Copy as
+JSON**. Esc or **Close** closes them.
+
 For the Berean tier1 recipe (a Data Input, an SQL step and four Row Count
 Checks) a run writes 17 Info lines and 45 Debug lines; nothing is logged
 while the Engine is idle.
