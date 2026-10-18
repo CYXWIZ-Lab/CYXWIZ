@@ -9,7 +9,9 @@
 
 namespace cyxwiz {
 
+class IExecutableModel;
 class SequentialModel;
+struct LanguageModelGenerationStep;
 
 enum class LanguageModelSamplingMode {
     Greedy,
@@ -43,6 +45,8 @@ struct LanguageModelGenerationConfig {
     // Divides positive logits (multiplies negative ones) of tokens already in
     // the prompt or output by this factor; 1 = off.
     float repetition_penalty = 1.0f;
+    // Called after each new token, before the stop checks (streaming).
+    std::function<void(const LanguageModelGenerationStep&)> on_step;
     // Reuse attention keys/values between tokens when every module supports
     // incremental decoding (same tokens as full recomputation, much faster).
     bool use_kv_cache = true;
@@ -110,6 +114,15 @@ NextTokenSelection SelectNextTokenFromLogits(
 
 LanguageModelGenerationResult GenerateTokenIdsWithReport(
     SequentialModel& model,
+    const std::vector<int64_t>& prompt_ids,
+    const LanguageModelGenerationConfig& config,
+    uint32_t seed = 5489u);
+
+// Any executable model whose Forward maps Int64 [1, seq] token IDs to Float32
+// [1, seq, vocab] logits: a layer stack (KV-cached when it supports it) or a
+// graph with branches (each token recomputes the whole sequence).
+LanguageModelGenerationResult GenerateTokenIdsWithReport(
+    IExecutableModel& model,
     const std::vector<int64_t>& prompt_ids,
     const LanguageModelGenerationConfig& config,
     uint32_t seed = 5489u);

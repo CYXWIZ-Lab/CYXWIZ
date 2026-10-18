@@ -1,5 +1,6 @@
 #include "core/language_model_generation.h"
 #include "core/execution_device_context.h"
+#include "core/executable_model.h"
 #include "gui/panels/language_model_generation_panel_metadata.h"
 
 #include <cyxwiz/sequential.h>
@@ -295,6 +296,53 @@ void TestGenerateTokenIdsWithReportStopsAtMaxTokens() {
           "context budget should stop generation before exceeding max length");
     Check(context_result.remaining_budget == 0,
           "context budget exhaustion should report zero remaining budget");
+}
+
+// A model that is not a layer stack (like a graph with branches): generation
+// recomputes the whole sequence through Forward each token.
+class ScriptedGraphModel final : public cyxwiz::IExecutableModel {
+public:
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& input) override { ++forwards; return module.Forward(input); }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad_output) override { return grad_output; }
+    void SetTraining(bool) override {}
+    std::map<std::string, cyxwiz::Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, cyxwiz::Tensor>&) override {}
+    std::map<std::string, cyxwiz::Tensor> GetGradients() override { return {}; }
+    void UpdateParameters(cyxwiz::Optimizer*) override {}
+    size_t LayerCount() const override { return 1; }
+    ScriptedLogitModule module;
+    int forwards = 0;
+};
+
+void TestGenerationOnAnyExecutableModelStreamsSteps() {
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.max_new_tokens = 3;
+    config.include_prompt = false;
+    std::vector<int64_t> streamed;
+    config.on_step = [&streamed](const cyxwiz::LanguageModelGenerationStep& step) {
+        streamed.push_back(step.token_id);
+    };
+
+    ScriptedGraphModel graph;
+    const auto from_graph = cyxwiz::GenerateTokenIdsWithReport(
+        static_cast<cyxwiz::IExecutableModel&>(graph), {1, 2}, config);
+    Check(from_graph.new_token_ids == std::vector<int64_t>({3, 4, 4}),
+          "a non-layer-stack executable model should generate through Forward");
+    Check(graph.forwards == 3 && !from_graph.used_kv_cache,
+          "a non-layer-stack model recomputes the sequence for every token");
+    Check(streamed == from_graph.new_token_ids, "on_step should report every new token in order");
+
+    streamed.clear();
+    auto stack = std::make_shared<cyxwiz::SequentialModel>();
+    stack->Add<ScriptedLogitModule>();
+    cyxwiz::SequentialExecutableModel wrapped(stack);
+    config.stop_check = [](const std::vector<int64_t>& ids) { return ids.size() == 2; };
+    const auto from_stack = cyxwiz::GenerateTokenIdsWithReport(
+        static_cast<cyxwiz::IExecutableModel&>(wrapped), {1, 2}, config);
+    Check(from_stack.new_token_ids == std::vector<int64_t>({3, 4}) &&
+              from_stack.stop_reason == cyxwiz::LanguageModelGenerationStopReason::StopText,
+          "a wrapped layer stack should take the layer-stack path and honour the stop check");
+    Check(streamed == from_stack.new_token_ids, "on_step should run before the stop check ends generation");
 }
 
 void TestGenerateTokenIdsWithConfigCompatibilityWrapper() {
@@ -596,6 +644,7 @@ int main(int argc, char** argv) {
     TestGenerateTokenIdsWithReportStopsAtMaxTokens();
     TestGenerateTokenIdsWithConfigCompatibilityWrapper();
     TestGenerateTokenIdsWithReportRejectsBadPrompt();
+    TestGenerationOnAnyExecutableModelStreamsSteps();
     std::cout << "Language model generation controls test passed\n";
     return 0;
 }

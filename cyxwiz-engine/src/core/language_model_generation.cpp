@@ -1,5 +1,6 @@
 #include "language_model_generation.h"
 
+#include "executable_model.h"
 #include <cyxwiz/sequential.h>
 #include "algorithms/arrayfire_backend_utils.h"
 
@@ -243,8 +244,15 @@ NextTokenSelection SelectNextTokenFromLogits(
     return SelectNextTokenFromDistribution(candidates, config, rng);
 }
 
-LanguageModelGenerationResult GenerateTokenIdsWithReport(
-    SequentialModel& model,
+namespace {
+
+// One forward pass: `input` holds the newest tokens, `offset` how many were
+// fed before them (non-zero only on the cached path).
+using GenerationForward = std::function<Tensor(const Tensor& input, size_t offset)>;
+
+LanguageModelGenerationResult GenerateWithForward(
+    const GenerationForward& forward,
+    bool use_cache,
     const std::vector<int64_t>& prompt_ids,
     const LanguageModelGenerationConfig& config,
     uint32_t seed) {
@@ -276,13 +284,7 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
     result.steps.reserve(config.max_new_tokens);
 
     std::mt19937 rng(seed);
-    const bool use_cache = config.use_kv_cache && model.SupportsIncrementalDecoding();
     result.used_kv_cache = use_cache;
-    struct CacheRelease {  // free cached keys/values however generation ends
-        SequentialModel& model;
-        bool active;
-        ~CacheRelease() { if (active) model.ResetIncrementalState(); }
-    } cache_release{model, use_cache};
     for (size_t step = 0; step < config.max_new_tokens; ++step) {
         if (config.should_cancel && config.should_cancel()) {
             result.stop_reason = LanguageModelGenerationStopReason::UserCancelled;
@@ -297,8 +299,7 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
         const bool incremental_step = use_cache && step > 0;
         const size_t fed = incremental_step ? 1 : generated.size();
         Tensor input({1, fed}, generated.data() + (generated.size() - fed), DataType::Int64);
-        Tensor logits = use_cache ? model.ForwardIncremental(input, generated.size() - fed)
-                                  : model.Forward(input);
+        Tensor logits = forward(input, generated.size() - fed);
         const auto& shape = logits.Shape();
         if (shape.size() != 3 || shape[0] != 1 ||
             shape[1] != fed || shape[2] == 0 ||
@@ -348,6 +349,7 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
             config.max_new_tokens - new_tokens.size(),
             generated.size(),
             config.max_context_tokens);
+        if (config.on_step) config.on_step(result.steps.back());
 
         if (config.eos_token_id >= 0 &&
             selection.token_id == config.eos_token_id) {
@@ -363,6 +365,38 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
     result.new_token_ids = new_tokens;
     result.token_ids = config.include_prompt ? generated : new_tokens;
     return result;
+}
+
+}  // namespace
+
+LanguageModelGenerationResult GenerateTokenIdsWithReport(
+    SequentialModel& model,
+    const std::vector<int64_t>& prompt_ids,
+    const LanguageModelGenerationConfig& config,
+    uint32_t seed) {
+    const bool use_cache = config.use_kv_cache && model.SupportsIncrementalDecoding();
+    struct CacheRelease {  // free cached keys/values however generation ends
+        SequentialModel& model;
+        bool active;
+        ~CacheRelease() { if (active) model.ResetIncrementalState(); }
+    } cache_release{model, use_cache};
+    return GenerateWithForward(
+        [&model, use_cache](const Tensor& input, size_t offset) {
+            return use_cache ? model.ForwardIncremental(input, offset) : model.Forward(input);
+        },
+        use_cache, prompt_ids, config, seed);
+}
+
+LanguageModelGenerationResult GenerateTokenIdsWithReport(
+    IExecutableModel& model,
+    const std::vector<int64_t>& prompt_ids,
+    const LanguageModelGenerationConfig& config,
+    uint32_t seed) {
+    if (auto* sequential = model.AsSequentialModel())
+        return GenerateTokenIdsWithReport(*sequential, prompt_ids, config, seed);
+    return GenerateWithForward(
+        [&model](const Tensor& input, size_t) { return model.Forward(input); },
+        false, prompt_ids, config, seed);
 }
 
 std::vector<int64_t> GenerateTokenIdsWithConfig(
