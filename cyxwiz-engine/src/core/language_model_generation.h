@@ -20,7 +20,8 @@ enum class LanguageModelGenerationStopReason {
     MaxTokens,
     EosToken,
     Error,
-    UserCancelled
+    UserCancelled,
+    StopText  // The caller's stop check matched, for example a stop text in the decoded output.
 };
 
 std::string LanguageModelGenerationStopReasonName(
@@ -36,6 +37,12 @@ struct LanguageModelGenerationConfig {
     bool include_prompt = true;
     size_t max_context_tokens = 0;
     std::function<bool()> should_cancel; // Called between tokens; no callback preserves legacy behavior.
+    // Called after each new token with all new tokens so far; true ends
+    // generation with StopReason::StopText (the caller decodes and matches).
+    std::function<bool(const std::vector<int64_t>&)> stop_check;
+    // Divides positive logits (multiplies negative ones) of tokens already in
+    // the prompt or output by this factor; 1 = off.
+    float repetition_penalty = 1.0f;
     // Reuse attention keys/values between tokens when every module supports
     // incremental decoding (same tokens as full recomputation, much faster).
     bool use_kv_cache = true;

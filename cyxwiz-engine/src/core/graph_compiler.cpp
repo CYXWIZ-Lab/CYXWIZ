@@ -6281,7 +6281,7 @@ TrainingConfiguration GraphCompiler::Compile(
                     throw std::invalid_argument("Generation preview context differs from training context");
             }
         } catch (const std::exception& error) {
-            AddIssue(config, IssueLevel::Error, std::string("Generation preview: ")+error.what(),
+            AddIssue(config, IssueLevel::Error, error.what(),
                      loader_node->id, loader_node->name, errors::Compiler::InvalidParameter);
         }
     }

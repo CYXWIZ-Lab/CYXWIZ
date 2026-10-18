@@ -38,6 +38,8 @@ std::string LanguageModelGenerationStopReasonName(
             return "error";
         case LanguageModelGenerationStopReason::UserCancelled:
             return "user_cancel";
+        case LanguageModelGenerationStopReason::StopText:
+            return "stop_text";
     }
     return "unknown";
 }
@@ -55,6 +57,10 @@ std::vector<std::string> ValidateLanguageModelGenerationConfig(
         config.top_p <= 0.0f ||
         config.top_p > 1.0f) {
         issues.emplace_back("top_p must be finite and in the range (0, 1]");
+    }
+    if (!std::isfinite(config.repetition_penalty) ||
+        config.repetition_penalty < 1.0f) {
+        issues.emplace_back("repetition_penalty must be finite and at least 1");
     }
     return issues;
 }
@@ -308,7 +314,18 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
             ArrayFireHostSyncCategory::OutputMaterialization,
             "GenerateTokenIdsWithReport::NextTokenLogits");
         const float* data = next_logits.ReadData<float>();
-        const std::vector<float> logits_values(data, data + next_logits.NumElements());
+        std::vector<float> logits_values(data, data + next_logits.NumElements());
+        if (config.repetition_penalty > 1.0f) {
+            std::vector<bool> penalized(logits_values.size(), false);
+            for (const int64_t id : generated) {
+                if (id < 0 || static_cast<size_t>(id) >= logits_values.size() ||
+                    penalized[static_cast<size_t>(id)]) continue;
+                penalized[static_cast<size_t>(id)] = true;
+                float& value = logits_values[static_cast<size_t>(id)];
+                value = value > 0.0f ? value / config.repetition_penalty
+                                     : value * config.repetition_penalty;
+            }
+        }
         const auto selection = SelectNextTokenFromLogits(
             logits_values,
             1,
@@ -335,6 +352,10 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
         if (config.eos_token_id >= 0 &&
             selection.token_id == config.eos_token_id) {
             result.stop_reason = LanguageModelGenerationStopReason::EosToken;
+            break;
+        }
+        if (config.stop_check && config.stop_check(new_tokens)) {
+            result.stop_reason = LanguageModelGenerationStopReason::StopText;
             break;
         }
     }

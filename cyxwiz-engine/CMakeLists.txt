@@ -2278,7 +2278,7 @@ add_executable(test_language_model_generation
 )
 target_link_libraries(test_language_model_generation PRIVATE cyxwiz-training-core)
 
-target_sources(test_language_model_generation PRIVATE tests/test_training_generation_preview.cpp src/core/training_generation_preview.cpp)
+target_sources(test_language_model_generation PRIVATE tests/test_training_generation_preview.cpp)
 target_link_libraries(test_language_model_generation PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json)
 
 target_include_directories(test_language_model_generation PRIVATE

@@ -1,0 +1,367 @@
+#include "training_generation_preview_settings.h"
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <iomanip>
+#include <regex>
+#include <sstream>
+#include <stdexcept>
+
+namespace cyxwiz {
+namespace {
+
+constexpr const char* kPrefix = "generation_preview_";
+
+std::string Key(const char* name) { return std::string(kPrefix) + name; }
+
+const std::string* Find(const std::map<std::string, std::string>& params, const char* name) {
+    const auto it = params.find(Key(name));
+    return it == params.end() ? nullptr : &it->second;
+}
+
+[[noreturn]] void Fail(const std::string& message) { throw std::invalid_argument(message); }
+
+long long ParseInteger(const std::string& text, const char* name, long long low, long long high) {
+    long long value = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || value < low || value > high)
+        Fail(std::string("Generation previews: ") + name + " must be a whole number from " +
+             std::to_string(low) + " to " + std::to_string(high) + " (got \"" + text + "\")");
+    return value;
+}
+
+float ParseFloat(const std::string& text, const char* name) {
+    float value = 0.0f;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || !std::isfinite(value))
+        Fail(std::string("Generation previews: ") + name + " must be a number (got \"" + text + "\")");
+    return value;
+}
+
+bool ParseBool(const std::string& text, const char* name) {
+    if (text == "true") return true;
+    if (text == "false") return false;
+    Fail(std::string("Generation previews: ") + name + " must be true or false");
+}
+
+template <typename Enum, size_t N>
+Enum ParseChoice(const std::string& text, const char* name, const std::pair<const char*, Enum> (&choices)[N]) {
+    for (const auto& [label, value] : choices)
+        if (text == label) return value;
+    std::string allowed;
+    for (const auto& choice : choices) allowed += (allowed.empty() ? "" : ", ") + std::string(choice.first);
+    Fail(std::string("Generation previews: ") + name + " must be one of " + allowed + " (got \"" + text + "\")");
+}
+
+const std::pair<const char*, GenerationPreviewMode> kModes[] = {
+    {"continuation", GenerationPreviewMode::Continuation}, {"chat", GenerationPreviewMode::Chat}};
+const std::pair<const char*, GenerationPreviewTemplate> kTemplates[] = {
+    {"role_lines", GenerationPreviewTemplate::RoleLines},
+    {"chatml", GenerationPreviewTemplate::ChatML},
+    {"llama3", GenerationPreviewTemplate::Llama3}};
+const std::pair<const char*, GenerationPreviewDecoding> kDecodings[] = {
+    {"greedy", GenerationPreviewDecoding::Greedy}, {"sampling", GenerationPreviewDecoding::Sampling}};
+const std::pair<const char*, GenerationPreviewCadence> kCadences[] = {
+    {"epochs", GenerationPreviewCadence::Epochs}, {"steps", GenerationPreviewCadence::Steps}};
+const std::pair<const char*, GenerationPreviewWeights> kWeights[] = {
+    {"current", GenerationPreviewWeights::Current}, {"best", GenerationPreviewWeights::Best}};
+const std::pair<const char*, GenerationPreviewCheckKind> kCheckKinds[] = {
+    {"none", GenerationPreviewCheckKind::None},
+    {"contains", GenerationPreviewCheckKind::Contains},
+    {"not_contains", GenerationPreviewCheckKind::NotContains},
+    {"regex", GenerationPreviewCheckKind::Regex},
+    {"ends_with_stop", GenerationPreviewCheckKind::EndsWithStop}};
+
+template <typename Enum, size_t N>
+const char* NameOf(Enum value, const std::pair<const char*, Enum> (&choices)[N]) {
+    for (const auto& [label, choice] : choices)
+        if (choice == value) return label;
+    return "unknown";
+}
+
+std::string FormatFloat(float value) {
+    std::ostringstream out;
+    out << std::setprecision(6) << value;
+    return out.str();
+}
+
+std::vector<GenerationPreviewPrompt> ParsePromptSet(const std::string& text) {
+    nlohmann::json document;
+    try {
+        document = nlohmann::json::parse(text);
+    } catch (const nlohmann::json::exception&) {
+        Fail("Generation previews: the prompt list is not valid JSON");
+    }
+    if (!document.is_array()) Fail("Generation previews: the prompt list must be a JSON array");
+    std::vector<GenerationPreviewPrompt> prompts;
+    for (const auto& item : document) {
+        if (!item.is_object() || !item.contains("text") || !item.at("text").is_string())
+            Fail("Generation previews: each prompt needs a \"text\" string");
+        GenerationPreviewPrompt prompt;
+        prompt.text = item.at("text").get<std::string>();
+        if (item.contains("check") && !item.at("check").is_null()) {
+            const auto& check = item.at("check");
+            if (!check.is_object() || !check.contains("kind") || !check.at("kind").is_string())
+                Fail("Generation previews: a prompt check needs a \"kind\"");
+            prompt.check.kind = ParseChoice(check.at("kind").get<std::string>(), "check kind", kCheckKinds);
+            if (check.contains("value") && check.at("value").is_string())
+                prompt.check.value = check.at("value").get<std::string>();
+        }
+        prompts.push_back(std::move(prompt));
+    }
+    return prompts;
+}
+
+std::string PromptSetJson(const std::vector<GenerationPreviewPrompt>& prompts) {
+    nlohmann::json document = nlohmann::json::array();
+    for (const auto& prompt : prompts) {
+        nlohmann::json item = {{"text", prompt.text}};
+        if (prompt.check.kind != GenerationPreviewCheckKind::None)
+            item["check"] = {{"kind", NameOf(prompt.check.kind, kCheckKinds)}, {"value", prompt.check.value}};
+        document.push_back(std::move(item));
+    }
+    return document.dump();
+}
+
+void AddSegment(RenderedPreviewPrompt& rendered, std::string text, bool from_template) {
+    if (text.empty()) return;
+    rendered.text += text;
+    rendered.segments.push_back({std::move(text), from_template});
+}
+
+}  // namespace
+
+const char* GenerationPreviewModeName(GenerationPreviewMode value) { return NameOf(value, kModes); }
+const char* GenerationPreviewTemplateName(GenerationPreviewTemplate value) { return NameOf(value, kTemplates); }
+const char* GenerationPreviewTemplateLabel(GenerationPreviewTemplate value) {
+    switch (value) {
+        case GenerationPreviewTemplate::RoleLines: return "Role lines";
+        case GenerationPreviewTemplate::ChatML: return "ChatML";
+        case GenerationPreviewTemplate::Llama3: return "Llama 3";
+    }
+    return "Unknown";
+}
+const char* GenerationPreviewDecodingName(GenerationPreviewDecoding value) { return NameOf(value, kDecodings); }
+const char* GenerationPreviewCadenceName(GenerationPreviewCadence value) { return NameOf(value, kCadences); }
+const char* GenerationPreviewWeightsName(GenerationPreviewWeights value) { return NameOf(value, kWeights); }
+const char* GenerationPreviewCheckKindName(GenerationPreviewCheckKind value) { return NameOf(value, kCheckKinds); }
+
+TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
+    const std::map<std::string, std::string>& params) {
+    TrainingGenerationPreviewSettings value;
+    const auto* enabled = Find(params, "enabled");
+    if (!enabled || !ParseBool(*enabled, "enabled")) return value;
+    value.enabled = true;
+    if (Find(params, "prompts") || Find(params, "every_epochs"))
+        Fail("Generation previews: this Data Loader was saved before the Generation tab existed. Open the "
+             "Data Loader, set the prompts on its Generation tab and apply");
+
+    if (const auto* text = Find(params, "mode")) value.mode = ParseChoice(*text, "mode", kModes);
+    if (const auto* text = Find(params, "template")) value.chat_template = ParseChoice(*text, "template", kTemplates);
+    if (const auto* text = Find(params, "system_prompt")) value.system_prompt = *text;
+    if (const auto* text = Find(params, "label_system")) value.label_system = *text;
+    if (const auto* text = Find(params, "label_user")) value.label_user = *text;
+    if (const auto* text = Find(params, "label_assistant")) value.label_assistant = *text;
+    if (const auto* text = Find(params, "stop_texts"); text && !text->empty()) {
+        nlohmann::json document;
+        try {
+            document = nlohmann::json::parse(*text);
+        } catch (const nlohmann::json::exception&) {
+            Fail("Generation previews: the stop texts are not valid JSON");
+        }
+        if (!document.is_array()) Fail("Generation previews: the stop texts must be a JSON array");
+        for (const auto& item : document) {
+            if (!item.is_string()) Fail("Generation previews: each stop text must be a string");
+            value.stop_texts.push_back(item.get<std::string>());
+        }
+    }
+    if (const auto* text = Find(params, "max_new_tokens"))
+        value.max_new_tokens = static_cast<int>(ParseInteger(*text, "max new tokens", 1, kGenerationPreviewMaxNewTokens));
+    if (const auto* text = Find(params, "decoding")) value.decoding = ParseChoice(*text, "decoding", kDecodings);
+    if (const auto* text = Find(params, "temperature")) value.temperature = ParseFloat(*text, "temperature");
+    if (const auto* text = Find(params, "top_k")) value.top_k = static_cast<int>(ParseInteger(*text, "top-k", 0, 100000));
+    if (const auto* text = Find(params, "top_p")) value.top_p = ParseFloat(*text, "top-p");
+    if (const auto* text = Find(params, "seed"))
+        value.seed = static_cast<unsigned>(ParseInteger(*text, "seed", 0, 4294967295LL));
+    if (const auto* text = Find(params, "samples_per_prompt"))
+        value.samples_per_prompt = static_cast<int>(
+            ParseInteger(*text, "samples per prompt", 1, kGenerationPreviewMaxSamplesPerPrompt));
+    if (const auto* text = Find(params, "repetition_penalty"))
+        value.repetition_penalty = ParseFloat(*text, "repetition penalty");
+    if (const auto* text = Find(params, "every"))
+        value.every = static_cast<int>(ParseInteger(*text, "every", 1, 1000000));
+    if (const auto* text = Find(params, "every_unit")) value.cadence = ParseChoice(*text, "every unit", kCadences);
+    if (const auto* text = Find(params, "baseline")) value.baseline = ParseBool(*text, "baseline");
+    if (const auto* text = Find(params, "after_last")) value.after_last = ParseBool(*text, "after last");
+    if (const auto* text = Find(params, "weights")) value.weights = ParseChoice(*text, "weights", kWeights);
+    if (const auto* text = Find(params, "prompt_set")) value.prompts = ParsePromptSet(*text);
+
+    if (const auto error = ValidateTrainingGenerationPreview(value); !error.empty()) Fail(error);
+    return value;
+}
+
+std::map<std::string, std::string> SerializeTrainingGenerationPreview(
+    const TrainingGenerationPreviewSettings& s) {
+    nlohmann::json stops = s.stop_texts;
+    return {
+        {Key("enabled"), s.enabled ? "true" : "false"},
+        {Key("mode"), GenerationPreviewModeName(s.mode)},
+        {Key("template"), GenerationPreviewTemplateName(s.chat_template)},
+        {Key("system_prompt"), s.system_prompt},
+        {Key("label_system"), s.label_system},
+        {Key("label_user"), s.label_user},
+        {Key("label_assistant"), s.label_assistant},
+        {Key("stop_texts"), stops.dump()},
+        {Key("max_new_tokens"), std::to_string(s.max_new_tokens)},
+        {Key("decoding"), GenerationPreviewDecodingName(s.decoding)},
+        {Key("temperature"), FormatFloat(s.temperature)},
+        {Key("top_k"), std::to_string(s.top_k)},
+        {Key("top_p"), FormatFloat(s.top_p)},
+        {Key("seed"), std::to_string(s.seed)},
+        {Key("samples_per_prompt"), std::to_string(s.samples_per_prompt)},
+        {Key("repetition_penalty"), FormatFloat(s.repetition_penalty)},
+        {Key("every"), std::to_string(s.every)},
+        {Key("every_unit"), GenerationPreviewCadenceName(s.cadence)},
+        {Key("baseline"), s.baseline ? "true" : "false"},
+        {Key("after_last"), s.after_last ? "true" : "false"},
+        {Key("weights"), GenerationPreviewWeightsName(s.weights)},
+        {Key("prompt_set"), PromptSetJson(s.prompts)},
+    };
+}
+
+std::string ValidateTrainingGenerationPreview(const TrainingGenerationPreviewSettings& s) {
+    if (!s.enabled) return {};
+    if (s.prompts.empty() || s.prompts.size() > static_cast<size_t>(kGenerationPreviewMaxPrompts))
+        return "Generation previews need 1 to 8 prompts";
+    for (size_t i = 0; i < s.prompts.size(); ++i) {
+        const auto& prompt = s.prompts[i];
+        const std::string which = "prompt " + std::to_string(i + 1);
+        if (prompt.text.find_first_not_of(" \t\r\n") == std::string::npos) return "Generation previews: " + which + " is empty";
+        if (prompt.text.size() > kGenerationPreviewMaxPromptBytes || prompt.text.find('\0') != std::string::npos)
+            return "Generation previews: " + which + " is longer than 4096 bytes";
+        switch (prompt.check.kind) {
+            case GenerationPreviewCheckKind::Contains:
+            case GenerationPreviewCheckKind::NotContains:
+                if (prompt.check.value.empty()) return "Generation previews: the check on " + which + " needs its text";
+                break;
+            case GenerationPreviewCheckKind::Regex:
+                if (prompt.check.value.empty()) return "Generation previews: the check on " + which + " needs a pattern";
+                try {
+                    std::regex pattern(prompt.check.value);
+                } catch (const std::regex_error& error) {
+                    return "Generation previews: the pattern on " + which + " is not valid (" + error.what() + ")";
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    if (s.system_prompt.size() > kGenerationPreviewMaxSystemBytes)
+        return "Generation previews: the system prompt is longer than 4096 bytes";
+    if (s.mode == GenerationPreviewMode::Chat && s.chat_template == GenerationPreviewTemplate::RoleLines) {
+        for (const auto* label : {&s.label_system, &s.label_user, &s.label_assistant})
+            if (label->empty() || label->size() > 64 || label->find('\n') != std::string::npos)
+                return "Generation previews: role labels must be 1 to 64 characters on one line";
+    }
+    if (s.stop_texts.size() > static_cast<size_t>(kGenerationPreviewMaxStopTexts))
+        return "Generation previews: at most 8 stop texts";
+    for (const auto& stop : s.stop_texts)
+        if (stop.empty() || stop.size() > 128) return "Generation previews: each stop text must be 1 to 128 bytes";
+    if (s.max_new_tokens < 1 || s.max_new_tokens > kGenerationPreviewMaxNewTokens)
+        return "Generation previews: max new tokens must be 1 to 1024";
+    if (s.decoding == GenerationPreviewDecoding::Sampling) {
+        if (!(s.temperature > 0.0f && s.temperature <= 5.0f)) return "Generation previews: temperature must be above 0 and at most 5";
+        if (s.top_k < 0) return "Generation previews: top-k must be 0 (off) or more";
+        if (!(s.top_p > 0.0f && s.top_p <= 1.0f)) return "Generation previews: top-p must be above 0 and at most 1";
+    }
+    if (s.samples_per_prompt < 1 || s.samples_per_prompt > kGenerationPreviewMaxSamplesPerPrompt)
+        return "Generation previews: samples per prompt must be 1 to 4";
+    if (s.decoding == GenerationPreviewDecoding::Greedy && s.samples_per_prompt != 1)
+        return "Generation previews: greedy decoding gives one sample per prompt";
+    if (!(s.repetition_penalty >= 1.0f && s.repetition_penalty <= 2.0f))
+        return "Generation previews: repetition penalty must be 1 (off) to 2";
+    if (s.every < 1) return "Generation previews: every must be 1 or more";
+    if (s.cadence == GenerationPreviewCadence::Epochs && s.every > 10000)
+        return "Generation previews: every must be at most 10000 epochs";
+    return {};
+}
+
+RenderedPreviewPrompt RenderGenerationPreviewPrompt(
+    const TrainingGenerationPreviewSettings& s, const std::string& prompt) {
+    RenderedPreviewPrompt rendered;
+    if (s.mode == GenerationPreviewMode::Continuation) {
+        AddSegment(rendered, prompt, false);
+        return rendered;
+    }
+    const bool has_system = !s.system_prompt.empty();
+    switch (s.chat_template) {
+        case GenerationPreviewTemplate::RoleLines:
+            if (has_system) {
+                AddSegment(rendered, s.label_system + " ", true);
+                AddSegment(rendered, s.system_prompt, false);
+                AddSegment(rendered, "\n", true);
+            }
+            AddSegment(rendered, s.label_user + " ", true);
+            AddSegment(rendered, prompt, false);
+            AddSegment(rendered, "\n" + s.label_assistant + "\n", true);
+            break;
+        case GenerationPreviewTemplate::ChatML:
+            if (has_system) {
+                AddSegment(rendered, "<|im_start|>system\n", true);
+                AddSegment(rendered, s.system_prompt, false);
+                AddSegment(rendered, "<|im_end|>\n", true);
+            }
+            AddSegment(rendered, "<|im_start|>user\n", true);
+            AddSegment(rendered, prompt, false);
+            AddSegment(rendered, "<|im_end|>\n<|im_start|>assistant\n", true);
+            break;
+        case GenerationPreviewTemplate::Llama3:
+            if (has_system) {
+                AddSegment(rendered, "<|start_header_id|>system<|end_header_id|>\n\n", true);
+                AddSegment(rendered, s.system_prompt, false);
+                AddSegment(rendered, "<|eot_id|>", true);
+            }
+            AddSegment(rendered, "<|start_header_id|>user<|end_header_id|>\n\n", true);
+            AddSegment(rendered, prompt, false);
+            AddSegment(rendered, "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n", true);
+            break;
+    }
+    return rendered;
+}
+
+std::vector<std::string> GenerationPreviewTemplateStopTexts(const TrainingGenerationPreviewSettings& s) {
+    if (s.mode == GenerationPreviewMode::Continuation) return {};
+    switch (s.chat_template) {
+        case GenerationPreviewTemplate::RoleLines: return {"\n" + s.label_user};
+        case GenerationPreviewTemplate::ChatML: return {"<|im_end|>"};
+        case GenerationPreviewTemplate::Llama3: return {"<|eot_id|>"};
+    }
+    return {};
+}
+
+std::vector<std::string> GenerationPreviewStopTexts(const TrainingGenerationPreviewSettings& s) {
+    auto stops = GenerationPreviewTemplateStopTexts(s);
+    for (const auto& stop : s.stop_texts)
+        if (std::find(stops.begin(), stops.end(), stop) == stops.end()) stops.push_back(stop);
+    return stops;
+}
+
+bool ShouldRunPreviewAfterEpoch(const TrainingGenerationPreviewSettings& s, int completed_epoch, int total_epochs) {
+    if (!s.enabled || completed_epoch < 1) return false;
+    if (s.after_last && completed_epoch == total_epochs) return true;
+    return s.cadence == GenerationPreviewCadence::Epochs && completed_epoch % s.every == 0;
+}
+
+bool ShouldRunPreviewAfterStep(const TrainingGenerationPreviewSettings& s, long long completed_step) {
+    return s.enabled && s.cadence == GenerationPreviewCadence::Steps && completed_step > 0 &&
+           completed_step % s.every == 0;
+}
+
+GenerationPreviewMode SuggestedGenerationPreviewMode(const std::string& supervision) {
+    return supervision == "response_only" ? GenerationPreviewMode::Chat : GenerationPreviewMode::Continuation;
+}
+
+}  // namespace cyxwiz

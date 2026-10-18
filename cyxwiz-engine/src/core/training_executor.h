@@ -25,6 +25,10 @@
 
 namespace cyxwiz {
 
+class CheckpointManager;
+class TrainingGenerationPreview;
+struct GenerationPreviewPoint;
+
 inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
     return UsesContinuousTargetMetrics(config);
 }
@@ -398,6 +402,15 @@ private:
     ResumeCheckpointCallback resume_checkpoint_callback_;
     int last_mid_epoch_checkpoint_step_ = -1;
     std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    // Generation previews (TOFIX159): bound for the duration of Train.
+    std::unique_ptr<TrainingGenerationPreview> generation_preview_;
+    std::filesystem::path generation_preview_dir_;
+    std::string generation_preview_run_id_;
+    CheckpointManager* generation_preview_checkpoints_ = nullptr;
+    long long last_generation_preview_step_ = -1;
+    // Runs one pass, with the best checkpoint's weights swapped in when asked
+    // and available; returns false when cancelled.
+    bool RunGenerationPreview(GenerationPreviewPoint point);
     // Run state a checkpoint records, kept current by Train.
     int resume_total_epochs_ = 0;
     int resume_model_seed_ = -1;
