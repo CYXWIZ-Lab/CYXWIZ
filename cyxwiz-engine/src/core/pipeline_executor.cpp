@@ -7521,7 +7521,11 @@ LineageFile LineageInput(const std::filesystem::path& path, const std::filesyste
     std::error_code ec;
     const auto time = std::filesystem::last_write_time(path, ec);
     if (!ec) {
-        const auto wall = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
+        // file_time -> system_clock without clock_cast (missing from libstdc++
+        // and libc++ on the release runners), as the Asset Browser does.
+        const auto wall = std::chrono::system_clock::to_time_t(
+            std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()));
         std::tm local{};
 #if defined(_WIN32)
         localtime_s(&local, &wall);
