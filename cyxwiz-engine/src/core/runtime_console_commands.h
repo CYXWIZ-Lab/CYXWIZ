@@ -1,11 +1,13 @@
 #pragma once
 
+#include "runtime_log_event.h"
 #include "runtime_log_filter.h"
 #include "runtime_truth_query.h"
 
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -24,6 +26,8 @@ enum class RuntimeConsoleOutputLevel : uint8_t {
 struct RuntimeConsoleOutputLine {
     RuntimeConsoleOutputLevel level = RuntimeConsoleOutputLevel::Info;
     std::string text;
+    // A runtime event row of "show logs ..." (the text is its one-line copy).
+    std::shared_ptr<const RuntimeLogEvent> event;
 };
 
 enum class RuntimeConsoleAction : uint8_t {
@@ -37,6 +41,8 @@ struct RuntimeConsoleCommandResult {
     RuntimeConsoleAction action = RuntimeConsoleAction::None;
     std::vector<std::string> action_arguments;
     std::vector<RuntimeConsoleOutputLine> lines;
+    // The filter a "show logs ..." query used, for "Open in Logs"; "" otherwise.
+    std::string logs_filter;
 };
 
 struct RuntimeConsoleCommandDescriptor {

@@ -16,8 +16,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <imgui.h>
+#include <imgui_stdlib.h>
 #include <imgui_internal.h>
 #include <sstream>
 #include <unordered_set>
@@ -71,6 +73,28 @@ constexpr const char *kQuickCommands[] = {
     "show training current", "show backend packs", "pip list"};
 
 ImFont *CommandsMonoFont() { return cyxwiz::gui::GetCodeFont(); }
+
+// `text`'s first line cut with "..." to fit `width` pixels.
+std::string FitOneLine(const std::string &text, float width) {
+  std::string line = text.substr(0, text.find('\n'));
+  if (ImGui::CalcTextSize(line.c_str()).x <= width)
+    return line;
+  while (!line.empty() && ImGui::CalcTextSize((line + "...").c_str()).x > width) {
+    line.pop_back();
+    while (!line.empty() && (static_cast<unsigned char>(line.back()) & 0xC0) == 0x80)
+      line.pop_back();
+  }
+  return line + "...";
+}
+
+std::string Kilobytes(size_t bytes) {
+  char buffer[32];
+  if (bytes < 1024)
+    std::snprintf(buffer, sizeof(buffer), "%zu B", bytes);
+  else
+    std::snprintf(buffer, sizeof(buffer), "%.1f KB", static_cast<double>(bytes) / 1024.0);
+  return buffer;
+}
 
 void Tooltip(const char *text) {
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal |
@@ -192,8 +216,7 @@ void Console::RenderCommandsSession(bool request_focus) {
   const float footer = ImGui::GetFrameHeight() + 20.0f + ImGui::GetTextLineHeight() +
                        style.ItemSpacing.y * 3.0f + 8.0f;
   ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-  ImGui::BeginChild("CommandsTranscript", ImVec2(0, -footer), ImGuiChildFlags_None,
-                    ImGuiWindowFlags_HorizontalScrollbar);
+  ImGui::BeginChild("CommandsTranscript", ImVec2(0, -footer), ImGuiChildFlags_None);
   RenderCommandTranscript();
   ImGui::EndChild();
   ImGui::PopStyleColor();
@@ -256,15 +279,22 @@ void Console::RenderCommandsHeader() {
 
   const std::string copy_label = std::string(ICON_FA_COPY) + " Copy all";
   const std::string clear_label = std::string(ICON_FA_TRASH_CAN) + " Clear";
-  const float buttons = ui::ButtonWidth(copy_label.c_str(), ui::ButtonSize::Small) +
+  const char *wraps[] = {"Wrap", "One line"};
+  const float wrap_w = ImGui::CalcTextSize("Wrap").x + ImGui::CalcTextSize("One line").x + 48.0f;
+  const float buttons = wrap_w + ui::ButtonWidth(copy_label.c_str(), ui::ButtonSize::Small) +
                         ui::ButtonWidth(clear_label.c_str(), ui::ButtonSize::Small) +
-                        ImGui::GetStyle().ItemSpacing.x;
+                        ImGui::GetStyle().ItemSpacing.x * 2.0f;
   Flow(buttons, right, false);
   if (ImGui::GetItemRectMax().y > ImGui::GetCursorScreenPos().y - 1.0f) {
     const float x = right - buttons;
     if (x > ImGui::GetCursorScreenPos().x)
       ImGui::SetCursorScreenPos(ImVec2(x, ImGui::GetCursorScreenPos().y));
   }
+  int wrap_index = commands_wrap_ ? 0 : 1;
+  if (ui::SegmentedControl("##commands_wrap", wraps, 2, &wrap_index))
+    commands_wrap_ = wrap_index == 0;
+  Tooltip("Long log messages: wrap in their own column, or one line each (cut with ...).");
+  ImGui::SameLine();
   if (ui::SecondaryButton(copy_label.c_str()))
     CopyCommandTranscript();
   Tooltip("Copy every command and its output.");
@@ -342,29 +372,8 @@ void Console::RenderCommandLine(const LogEntry &entry, bool in_block) {
     ImGui::Indent(indent);
   ImGui::PushID(static_cast<int>(entry.sequence));
 
-  if (const auto event = cmd::ParseEventLine(entry.message)) {
-    const float ch = ImGui::CalcTextSize("0").x;
-    const float x0 = ImGui::GetCursorPosX();
-    const size_t level = cmd::EventLevelIndex(event->level);
-    ImGui::TextColored(kFaint, "#%llu", static_cast<unsigned long long>(event->sequence));
-    ImGui::SameLine(x0 + ch * 8.0f);
-    const auto when = cmd::ParseUtcTimestamp(event->timestamp);
-    ImGui::TextColored(kMuted, "%s",
-                       when ? cyxwiz::logs::FormatLocalTime(*when).c_str() : event->time.c_str());
-    ImGui::SameLine(x0 + ch * 22.0f);
-    ImGui::TextColored(kLevelColors[level], "%s", kLevelNames[level]);
-    ImGui::SameLine(x0 + ch * 31.0f);
-    ImGui::TextUnformatted(event->category.c_str());
-    ImGui::SameLine(x0 + ch * 42.0f);
-    ImGui::TextUnformatted(event->source.empty() ? "-" : event->source.c_str());
-    ImGui::SameLine(x0 + ch * 52.0f);
-    if (!event->extra.empty()) {
-      ImGui::TextColored(kFaint, "%s", event->extra.c_str());
-      ImGui::SameLine();
-    }
-    ImGui::TextColored(level >= 4 ? kBright : kText, "%s", event->message.c_str());
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-      ImGui::SetTooltip("%s UTC\n%s", event->timestamp.c_str(), entry.message.c_str());
+  if (entry.event) {
+    RenderEventRow(entry);
   } else if (const auto summary = cmd::PrettySummary(entry.message)) {
     ImGui::PushFont(nullptr);
     ImGui::TextColored(kMuted, "%s", summary->c_str());
@@ -427,6 +436,105 @@ void Console::RenderCommandLine(const LogEntry &entry, bool in_block) {
     ImGui::Unindent(indent);
 }
 
+// One "show logs" event (TOFIX159 B2): number, time, level and category in
+// fixed columns; the message in its own column, wrapped (or one line); its
+// fields under it; a JSON payload folded behind Show JSON; click the message
+// to open it as selectable text.
+void Console::RenderEventRow(const LogEntry &entry) {
+  const cyxwiz::RuntimeLogEvent &event = *entry.event;
+  const float ch = ImGui::CalcTextSize("0").x;
+  const float x0 = ImGui::GetCursorPosX();
+  const size_t level = std::min<size_t>(static_cast<size_t>(event.level), kLevelNames.size() - 1);
+  ImGui::TextColored(kFaint, "#%llu", static_cast<unsigned long long>(event.sequence));
+  ImGui::SameLine(x0 + ch * 8.0f);
+  ImGui::TextColored(kMuted, "%s", cyxwiz::logs::FormatLocalTime(event.timestamp_utc).c_str());
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+    ImGui::SetTooltip("%s UTC", cyxwiz::logs::FormatLocalTimestamp(event.timestamp_utc).c_str());
+  ImGui::SameLine(x0 + ch * 22.0f);
+  ImGui::TextColored(kLevelColors[level], "%s", kLevelNames[level]);
+  ImGui::SameLine(x0 + ch * 31.0f);
+  ImGui::TextColored(kMuted, "%s", FitOneLine(event.category, ch * 9.0f).c_str());
+  const float message_x = x0 + ch * 42.0f;
+  ImGui::SameLine(message_x);
+
+  auto cached = json_cache_.find(entry.sequence);
+  if (cached == json_cache_.end())
+    cached = json_cache_.emplace(entry.sequence, cmd::FindJsonPayload(event.message)).first;
+  const auto &json = cached->second;
+  const std::string &text = json ? json->before : event.message;
+  const ImVec4 colour = level >= 4 ? kBright : kText;
+  if (commands_wrap_) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", text.c_str());
+    ImGui::PopTextWrapPos();
+  } else {
+    ImGui::TextColored(colour, "%s", FitOneLine(text, ImGui::GetContentRegionAvail().x).c_str());
+  }
+  const bool open = open_event_text_.count(entry.sequence) > 0;
+  if (ImGui::IsItemHovered())
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  if (ImGui::IsItemClicked()) {
+    if (open)
+      open_event_text_.erase(entry.sequence);
+    else
+      open_event_text_[entry.sequence] = event.message;
+  }
+  if (ImGui::BeginPopupContextItem("EventMenu")) {
+    ImGui::PushFont(nullptr);
+    if (ImGui::MenuItem("Copy message")) {
+      ImGui::SetClipboardText(event.message.c_str());
+      SetCommandsNotice("Copied message");
+    }
+    if (ImGui::MenuItem("Copy row")) {
+      ImGui::SetClipboardText(entry.message.c_str());
+      SetCommandsNotice("Copied row");
+    }
+    ImGui::PopFont();
+    ImGui::EndPopup();
+  }
+
+  const std::string fields = cmd::EventFieldsLine(event);
+  if (!fields.empty()) {
+    ImGui::SetCursorPosX(message_x);
+    if (commands_wrap_) {
+      ImGui::PushTextWrapPos(0.0f);
+      ImGui::TextColored(kFaint, "%s", fields.c_str());
+      ImGui::PopTextWrapPos();
+    } else {
+      ImGui::TextColored(kFaint, "%s", FitOneLine(fields, ImGui::GetContentRegionAvail().x).c_str());
+    }
+  }
+  if (json) {
+    ImGui::SetCursorPosX(message_x);
+    const bool json_open = open_json_text_.count(entry.sequence) > 0;
+    ImGui::PushFont(nullptr);
+    if (ui::LinkButton(json_open ? "Hide JSON" : "Show JSON")) {
+      if (json_open)
+        open_json_text_.erase(entry.sequence);
+      else
+        open_json_text_[entry.sequence] = json->pretty;
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(kFaint, "JSON \xC2\xB7 %s \xC2\xB7 %zu %s", Kilobytes(json->bytes).c_str(),
+                       json->entries, json->entries == 1 ? "entry" : "entries");
+    ImGui::PopFont();
+    if (auto found = open_json_text_.find(entry.sequence); found != open_json_text_.end()) {
+      ImGui::SetCursorPosX(message_x);
+      const int lines = static_cast<int>(std::count(found->second.begin(), found->second.end(), '\n')) + 1;
+      ImGui::InputTextMultiline("##json", &found->second,
+                                ImVec2(-1.0f, ImGui::GetTextLineHeightWithSpacing() *
+                                                  static_cast<float>(std::clamp(lines, 3, 16)) + 8.0f),
+                                ImGuiInputTextFlags_ReadOnly);
+    }
+  }
+  if (auto found = open_event_text_.find(entry.sequence); found != open_event_text_.end()) {
+    ImGui::SetCursorPosX(message_x);
+    ImGui::InputTextMultiline("##message", &found->second,
+                              ImVec2(-1.0f, ImGui::GetTextLineHeightWithSpacing() * 3.0f + 8.0f),
+                              ImGuiInputTextFlags_ReadOnly);
+  }
+}
+
 void Console::RenderCommandBlock(const LogEntry &command,
                                  const std::vector<const LogEntry *> &lines) {
   const auto found = command_blocks_.find(command.block);
@@ -434,8 +542,9 @@ void Console::RenderCommandBlock(const LogEntry &command,
   const CommandBlockState &state = found == command_blocks_.end() ? fallback : found->second;
   size_t rows = 0;
   for (const auto *line : lines)
-    if (cmd::ParseEventLine(line->message))
+    if (line->event)
       ++rows;
+  const auto logs_filter = block_logs_filters_.find(command.block);
   const double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - state.started).count();
   const auto status =
@@ -475,12 +584,22 @@ void Console::RenderCommandBlock(const LogEntry &command,
     break;
   }
   ImGui::PushFont(nullptr);
+  const bool can_open_logs = logs_filter != block_logs_filters_.end();
+  const float open_w = can_open_logs ? ImGui::CalcTextSize("Open in Logs").x + 16.0f : 0.0f;
   const float status_w = ImGui::CalcTextSize(status_text.c_str()).x +
-                         ImGui::CalcTextSize(when.c_str()).x + 16.0f;
+                         ImGui::CalcTextSize(when.c_str()).x + 16.0f + open_w;
   ImGui::SameLine();
   const float x = start.x + full_w - status_w - 8.0f;
   if (x > ImGui::GetCursorScreenPos().x)
     ImGui::SetCursorScreenPos(ImVec2(x, ImGui::GetCursorScreenPos().y));
+  if (can_open_logs) {
+    const std::string filter = logs_filter->second;
+    if (ui::LinkButton("Open in Logs"))
+      OpenLogsWithFilter(filter);
+    Tooltip(filter.empty() ? "Show these events in the Logs session."
+                           : ("Show these events in the Logs session, filtered by: " + filter).c_str());
+    ImGui::SameLine();
+  }
   ImGui::TextColored(status_color, "%s", status_text.c_str());
   ImGui::SameLine();
   ImGui::TextColored(kFaint, "%s", when.c_str());

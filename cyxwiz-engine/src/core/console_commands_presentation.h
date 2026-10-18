@@ -2,10 +2,11 @@
 
 // Presentation model for the Console's Commands session (tofix121).
 // Pure data in, data out: builds command suggestions from the command help
-// text and turns the command service's text lines into displayable pieces,
-// so the renderer holds no parsing logic.
+// text and turns the command service's output (text lines and event rows)
+// into displayable pieces, so the renderer holds no parsing logic.
 
-#include <chrono>
+#include "runtime_log_event.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -51,27 +52,20 @@ std::string CommandName(std::string_view input);
 
 // ---- Output -----------------------------------------------------------------
 
-// A runtime event line from "show logs ..." / "show errors ...":
-// "#163 2026-09-27T03:52:21.900Z level=info category=system source=cyxwiz
-//  code=CW-S-0501 run=... | message"
-struct EventLine {
-    uint64_t sequence = 0;
-    std::string timestamp;  // full UTC text
-    std::string time;       // "03:52:21.900"
-    std::string level;      // "info", "warning", ...
-    std::string category;
-    std::string source;
-    std::string extra;      // remaining key=value fields (code, run, ...)
-    std::string message;
+// An event row's fields besides time, level, category and message, on one
+// line: "source cyxwiz · code CW-S-0501 · run train-1 · backend=... · key=value".
+std::string EventFieldsLine(const RuntimeLogEvent& event);
+
+// A JSON object or array that ends the message ("Generation sample: ... {...}"):
+// the text before it, the JSON formatted with two-space indents, its size and
+// how many keys or items it has. nullopt when the message carries none.
+struct JsonPayload {
+    std::string before;
+    std::string pretty;
+    size_t bytes = 0;
+    size_t entries = 0;
 };
-std::optional<EventLine> ParseEventLine(std::string_view text);
-
-// Severity index 0..5 (trace..critical) for an event line's level text.
-size_t EventLevelIndex(std::string_view level);
-
-// "2026-09-27T03:52:21.900Z" -> time point (so rows show local time like the
-// rest of the Console); nullopt when malformed.
-std::optional<std::chrono::system_clock::time_point> ParseUtcTimestamp(std::string_view text);
+std::optional<JsonPayload> FindJsonPayload(const std::string& message);
 
 // "Logs: matched=167 showing=5 scanned=167 retained=167 evicted=0" ->
 // "Matched 167 · showing 5 · scanned 167 · retained 167 · evicted 0".

@@ -23,6 +23,8 @@ public:
     const std::filesystem::path& Folder() const { return folder_; }
     // Reads new reports every 2 s while shown.
     void Render();
+    // Reads new reports at most every 2 s without drawing (for a tab's count).
+    void Poll() { Refresh(false); }
     size_t ReportCount() const { return reports_.size(); }
 
 private:

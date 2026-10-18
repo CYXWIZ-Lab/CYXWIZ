@@ -1007,25 +1007,61 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
 
 void Console::AppendCommandResult(
     const cyxwiz::RuntimeConsoleCommandResult &result) {
+  bool events = false;
   for (const auto &line : result.lines) {
-    switch (line.level) {
-    case cyxwiz::RuntimeConsoleOutputLevel::Info:
-      AddInfo(line.text);
-      break;
-    case cyxwiz::RuntimeConsoleOutputLevel::Warning:
-      AddWarning(line.text);
-      break;
-    case cyxwiz::RuntimeConsoleOutputLevel::Error:
-      AddError(line.text);
-      break;
-    case cyxwiz::RuntimeConsoleOutputLevel::Success:
-      AddSuccess(line.text);
-      break;
-    case cyxwiz::RuntimeConsoleOutputLevel::Debug:
-      AddLog(line.text, LogLevel::Debug);
-      break;
-    }
+    AddCommandOutput(line);
+    events = events || line.event != nullptr;
   }
+  if (events) {
+    std::lock_guard<std::mutex> lock(log_mutex_);
+    block_logs_filters_[current_command_block_] = result.logs_filter;
+  }
+}
+
+void Console::AddCommandOutput(const cyxwiz::RuntimeConsoleOutputLine &line) {
+  LogLevel level = LogLevel::Info;
+  switch (line.level) {
+  case cyxwiz::RuntimeConsoleOutputLevel::Info:
+    level = LogLevel::Info;
+    break;
+  case cyxwiz::RuntimeConsoleOutputLevel::Warning:
+    level = LogLevel::Warning;
+    break;
+  case cyxwiz::RuntimeConsoleOutputLevel::Error:
+    level = LogLevel::Error;
+    break;
+  case cyxwiz::RuntimeConsoleOutputLevel::Success:
+    level = LogLevel::Success;
+    break;
+  case cyxwiz::RuntimeConsoleOutputLevel::Debug:
+    level = LogLevel::Debug;
+    break;
+  }
+  std::lock_guard<std::mutex> lock(log_mutex_);
+  LogEntry entry;
+  entry.message = line.text;
+  entry.level = level;
+  entry.timestamp = std::chrono::system_clock::now();
+  entry.sequence = ++next_command_sequence_;
+  entry.block = current_command_block_;
+  entry.event = line.event;
+  items_.push_back(std::move(entry));
+  scroll_to_bottom_.store(true, std::memory_order_relaxed);
+  if (items_.size() > 1000)
+    items_.pop_front();
+}
+
+void Console::OpenLogsWithFilter(const std::string &filter) {
+  (void)workbench_.ActivateSession(ConsoleSessionKind::Logs);
+  const size_t n = std::min(filter.size(), sizeof(inspector_filter_) - 1);
+  filter.copy(inspector_filter_, n);
+  inspector_filter_[n] = '\0';
+  inspector_criteria_.structured_filter = inspector_filter_;
+  inspector_filter_name_[0] = '\0';
+  inspector_filter_status_ = filter.empty() ? std::string("All runtime events")
+                                            : "Filter from the command: " + filter;
+  inspector_filter_status_error_ = false;
+  RequestInspectorQuery(true);
 }
 
 const char *Console::GetLevelPrefix(LogLevel level) const {

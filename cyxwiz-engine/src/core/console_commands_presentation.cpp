@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <sstream>
 
+#include <nlohmann/json.hpp>
+
 namespace cyxwiz::commands {
 
 namespace {
@@ -187,95 +189,81 @@ std::string CommandName(std::string_view input) {
     return Lower(trimmed.substr(0, end));
 }
 
-std::optional<EventLine> ParseEventLine(std::string_view text) {
-    if (text.size() < 3 || text.front() != '#') return std::nullopt;
-    EventLine event;
-    size_t pos = 1;
-    uint64_t sequence = 0;
-    bool digits = false;
-    while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
-        sequence = sequence * 10 + static_cast<uint64_t>(text[pos] - '0');
-        ++pos;
-        digits = true;
-    }
-    if (!digits || pos >= text.size() || text[pos] != ' ') return std::nullopt;
-    event.sequence = sequence;
-    ++pos;
-    const size_t ts_end = text.find(' ', pos);
-    if (ts_end == std::string_view::npos) return std::nullopt;
-    event.timestamp = std::string(text.substr(pos, ts_end - pos));
-    if (event.timestamp.size() < 20 || event.timestamp.back() != 'Z') return std::nullopt;
-    event.time = event.timestamp.substr(11, event.timestamp.size() - 12);
-    pos = ts_end + 1;
-
-    const size_t bar = text.find(" | ", pos);
-    const std::string_view fields =
-        text.substr(pos, bar == std::string_view::npos ? std::string_view::npos : bar - pos);
-    if (bar != std::string_view::npos) event.message = std::string(text.substr(bar + 3));
-
-    size_t start = 0;
-    while (start < fields.size()) {
-        size_t end = fields.find(' ', start);
-        if (end == std::string_view::npos) end = fields.size();
-        const std::string_view field = fields.substr(start, end - start);
-        const size_t eq = field.find('=');
-        if (eq != std::string_view::npos) {
-            const std::string_view key = field.substr(0, eq);
-            const std::string value(field.substr(eq + 1));
-            if (key == "level") event.level = value;
-            else if (key == "category") event.category = value;
-            else if (key == "source") event.source = value;
-            else {
-                if (!event.extra.empty()) event.extra += ' ';
-                event.extra += std::string(field);
-            }
-        }
-        start = end + 1;
-    }
-    if (event.level.empty()) return std::nullopt;
-    return event;
-}
-
-size_t EventLevelIndex(std::string_view level) {
-    const std::string value = Lower(level);
-    if (value == "trace") return 0;
-    if (value == "debug") return 1;
-    if (value == "warn" || value == "warning") return 3;
-    if (value == "error" || value == "err") return 4;
-    if (value == "critical") return 5;
-    return 2;
-}
-
-std::optional<std::chrono::system_clock::time_point> ParseUtcTimestamp(std::string_view text) {
-    // YYYY-MM-DDTHH:MM:SS[.mmm]Z
-    if (text.size() < 20 || text[4] != '-' || text[7] != '-' || text[10] != 'T' ||
-        text[13] != ':' || text[16] != ':' || text.back() != 'Z')
-        return std::nullopt;
-    const auto number = [&text](size_t pos, size_t len, int& out) {
-        out = 0;
-        for (size_t i = pos; i < pos + len; ++i) {
-            if (!std::isdigit(static_cast<unsigned char>(text[i]))) return false;
-            out = out * 10 + (text[i] - '0');
-        }
-        return true;
+std::string EventFieldsLine(const RuntimeLogEvent& event) {
+    std::vector<std::string> parts;
+    const auto add = [&parts](const std::string& key, const std::string& value) {
+        if (!value.empty()) parts.push_back(key + " " + value);
     };
-    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0, millis = 0;
-    if (!number(0, 4, year) || !number(5, 2, month) || !number(8, 2, day) ||
-        !number(11, 2, hour) || !number(14, 2, minute) || !number(17, 2, second))
-        return std::nullopt;
-    if (text.size() >= 24 && text[19] == '.' && !number(20, 3, millis)) return std::nullopt;
-    if (month < 1 || month > 12 || day < 1 || day > 31) return std::nullopt;
-    // Days from civil (Howard Hinnant), valid for the proleptic Gregorian calendar.
-    const int y = year - (month <= 2 ? 1 : 0);
-    const int era = (y >= 0 ? y : y - 399) / 400;
-    const unsigned yoe = static_cast<unsigned>(y - era * 400);
-    const unsigned doy =
-        static_cast<unsigned>((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1);
-    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    const long long days = static_cast<long long>(era) * 146097 + static_cast<long long>(doe) - 719468;
-    const long long ms =
-        ((days * 24 + hour) * 60 + minute) * 60000LL + second * 1000LL + millis;
-    return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
+    if (event.source != "cyxwiz") add("source", event.source);  // The Engine's own logger says nothing.
+    std::string codes = event.primary_error_code;
+    for (const auto& code : event.issue_codes)
+        if (code != event.primary_error_code) codes += (codes.empty() ? "" : ",") + code;
+    add("code", codes);
+    add("run", event.run_id);
+    if (event.task_id != 0) add("task", std::to_string(event.task_id));
+    if (event.node_id >= 0) add("node", std::to_string(event.node_id));
+    add("backend", event.backend);
+    if (event.device_id >= 0) add("device", std::to_string(event.device_id));
+    add("dataset", event.dataset_name);
+    for (const auto& [key, value] : event.details) add(key, value);
+    std::string line;
+    for (const auto& part : parts) line += (line.empty() ? "" : " \xC2\xB7 ") + part;
+    return line;
+}
+
+namespace {
+// Two-space indents; an array of plain values (token ids) stays on one line.
+void PrettyJson(const nlohmann::json& value, int depth, std::string& out) {
+    const std::string pad(static_cast<size_t>(depth) * 2, ' ');
+    const std::string inner(static_cast<size_t>(depth + 1) * 2, ' ');
+    const auto plain = [](const nlohmann::json& item) { return !item.is_object() && !item.is_array(); };
+    if (value.is_object() && !value.empty()) {
+        out += "{\n";
+        size_t i = 0;
+        for (auto it = value.begin(); it != value.end(); ++it, ++i) {
+            out += inner + nlohmann::json(it.key()).dump() + ": ";
+            PrettyJson(it.value(), depth + 1, out);
+            out += i + 1 < value.size() ? ",\n" : "\n";
+        }
+        out += pad + "}";
+    } else if (value.is_array() && !value.empty() && !std::all_of(value.begin(), value.end(), plain)) {
+        out += "[\n";
+        for (size_t i = 0; i < value.size(); ++i) {
+            out += inner;
+            PrettyJson(value[i], depth + 1, out);
+            out += i + 1 < value.size() ? ",\n" : "\n";
+        }
+        out += pad + "]";
+    } else if (value.is_array()) {
+        out += "[";
+        for (size_t i = 0; i < value.size(); ++i)
+            out += (i ? ", " : "") + value[i].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        out += "]";
+    } else {
+        out += value.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+}
+}  // namespace
+
+std::optional<JsonPayload> FindJsonPayload(const std::string& message) {
+    // The payload ends the message: try each '{' or '[' from the first one on.
+    for (size_t start = message.find_first_of("{["); start != std::string::npos;
+         start = message.find_first_of("{[", start + 1)) {
+        nlohmann::json document;
+        try {
+            document = nlohmann::json::parse(message.begin() + static_cast<std::ptrdiff_t>(start), message.end());
+        } catch (const nlohmann::json::exception&) {
+            continue;
+        }
+        if (!document.is_object() && !document.is_array()) continue;
+        JsonPayload payload;
+        payload.before = std::string(Trim(std::string_view(message).substr(0, start)));
+        PrettyJson(document, 0, payload.pretty);
+        payload.bytes = message.size() - start;
+        payload.entries = document.size();
+        return payload;
+    }
+    return std::nullopt;
 }
 
 std::optional<std::string> PrettySummary(std::string_view text) {

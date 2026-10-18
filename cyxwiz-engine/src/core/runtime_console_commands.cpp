@@ -360,9 +360,12 @@ RuntimeConsoleCommandResult QueryEvents(
                     " older matching event(s)");
     }
     for (size_t index = first; index < matches.size(); ++index) {
-        AddLine(result, RuntimeConsoleOutputLevel::Info,
-                FormatEvent(*matches[index]));
+        RuntimeConsoleOutputLine line;
+        line.text = FormatEvent(*matches[index]);
+        line.event = std::make_shared<RuntimeLogEvent>(*matches[index]);
+        result.lines.push_back(std::move(line));
     }
+    result.logs_filter = expression;
     return result;
 }
 

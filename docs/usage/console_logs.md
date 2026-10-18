@@ -24,6 +24,30 @@ For the Berean tier1 recipe (a Data Input, an SQL step and four Row Count
 Checks) a run writes 17 Info lines and 45 Debug lines; nothing is logged
 while the Engine is idle.
 
+## Searching from Commands
+
+Open a **Commands** session with **+** and type `show logs ...` (for
+example `show logs grep generation`, `show logs warnings`, `show logs where
+category=training and level>=warn`; `help` lists every form). Each match is a
+row:
+
+- the event number, the local time (hover it for the full UTC time), the
+  level and the category in fixed columns;
+- the message in its own column. **Wrap** (the default, top right) wraps a
+  long message inside that column; **One line** keeps each to one line, cut
+  with "...";
+- under it, the event's other fields on one faint line (a code, a run, a
+  backend, a device, its details), when it has any;
+- a message that ends in JSON (a generation sample, a provenance record)
+  shows its text and a **Show JSON** link with the size and number of
+  entries; the JSON opens formatted, arrays of numbers on one line, in a
+  field you can select and copy from;
+- click a message to open it in a field you can select from; right-click
+  for **Copy message** and **Copy row**.
+
+**Open in Logs** on the command's line shows the same events in the Logs
+session, with the command's filter in its structured filter.
+
 ## Recording Debug
 
 The Engine records Debug messages in every build, since the people using it

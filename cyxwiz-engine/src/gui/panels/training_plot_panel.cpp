@@ -411,6 +411,8 @@ void TrainingPlotPanel::Render() {
 
     // Generations (TOFIX159 A4): the run's samples, beside the metrics.
     if (!generation_folder_.empty()) {
+        generation_view_.SetFolder(generation_folder_);
+        generation_view_.Poll();
         if (ImGui::BeginTabBar("##dash_tabs")) {
             if (ImGui::BeginTabItem("Overview")) {
                 show_generations_ = false;
@@ -423,7 +425,6 @@ void TrainingPlotPanel::Render() {
             }
             ImGui::EndTabBar();
         }
-        generation_view_.SetFolder(generation_folder_);
         if (show_generations_) {
             generation_view_.Render();
             ImGui::End();

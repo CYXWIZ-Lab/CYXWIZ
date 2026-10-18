@@ -225,6 +225,7 @@ if(CYXWIZ_BUILD_TESTS)
     target_include_directories(test_console_commands_presentation PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
     )
+    target_link_libraries(test_console_commands_presentation PRIVATE nlohmann_json::nlohmann_json)
     set_target_properties(test_console_commands_presentation PROPERTIES
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
