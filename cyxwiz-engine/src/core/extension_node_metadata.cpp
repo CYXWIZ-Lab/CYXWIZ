@@ -62,4 +62,23 @@ std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node) {
     return std::nullopt;
 }
 
+std::string SimulationNodeCodeComment(const gui::MLNode& node, const char* framework, const std::string& indent) {
+    std::string out = indent + "# " + node.name + " (" + node.extension_type_id +
+                      ") is a simulation node, not part of this model";
+    const std::string text = node.extension_type_id.empty()
+        ? std::string()
+        : ExtensionNodeRegistry::Instance().GenerateCode(node.extension_type_id, node.parameters, framework);
+    if (text.empty()) return out + "\n";
+    out += "; its plugin's code:\n";
+    size_t start = 0;
+    while (start <= text.size()) {
+        const size_t end = text.find('\n', start);
+        const std::string line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!(end == std::string::npos && line.empty())) out += indent + "#   " + line + "\n";
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return out;
+}
+
 }  // namespace cyxwiz

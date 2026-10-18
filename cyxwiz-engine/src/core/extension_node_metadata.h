@@ -25,4 +25,11 @@ std::optional<NodeMetadata> ResolveNodeMetadata(const gui::MLNode& node);
 // (TOFIX125 P6). Built-in nodes and signal nodes: nothing.
 std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node);
 
+// A simulation node (a plugin's signal node) in generated code: never a
+// layer, since it is not part of a trained model (declaring one shifted every
+// later self.layerN in the forward pass). A comment line, with the plugin's
+// code text for `framework` ("pytorch", "tensorflow", "keras", "pycyxwiz")
+// as further comment lines, each starting with `indent` (TOFIX125 P6).
+std::string SimulationNodeCodeComment(const gui::MLNode& node, const char* framework, const std::string& indent);
+
 }  // namespace cyxwiz

@@ -136,7 +136,7 @@ return, inside the crash guard. Unloading removes all of it.
 | Name | Interface | What the Engine does with it today |
 |---|---|---|
 | `"ITensorNodeProvider"` | `ITensorNodeProvider` | Lists, compiles and trains your nodes (section 7) |
-| `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution and `GenerateCode` in code export |
+| `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the loaders; the Engine does not load datasets through them yet |
@@ -224,7 +224,7 @@ not trainable tensors.
 | Member | Contract |
 |---|---|
 | `std::vector<PluginNodeTypeInfo> GetNodeTypes()` | Your nodes: `type_name`, `display_name`, `category`, `description`, `color`, `icon`, `pins` (`{name, type, is_input}`), `default_parameters`, `supports_dynamic_pins`, `dynamic_pin_trigger` |
-| `std::string GenerateCode(type_name, parameters, framework)` | Code for `"pytorch"`, `"tensorflow"` or `"keras"` export |
+| `std::string GenerateCode(type_name, parameters, framework)` | Text for `"pytorch"`, `"tensorflow"`, `"keras"` or `"pycyxwiz"` code export, written into the script as a comment beside the model |
 | `DynamicPinResult ResolveDynamicPins(type_name, parameters)` | New pins when the `dynamic_pin_trigger` setting changes (default: none) |
 | `PluginNodeEvalResult EvaluateNode(const PluginNodeEvalContext&)` | One tick of live execution: `input_values` by pin name in, `output_values` out (default: not supported) |
 

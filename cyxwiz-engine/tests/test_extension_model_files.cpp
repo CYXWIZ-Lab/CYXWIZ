@@ -9,7 +9,8 @@
 // 6.3: the package manifest lists the extensions the model needs; a package
 // without its graph is refused; an installed extension that is not the one
 // the model was trained with imports with a warning.
-// 6.5: the Model Summary names an extension node and counts its parameters.
+// 6.5: the Model Summary names an extension node and counts its parameters;
+// a simulation node in generated code is a comment, never a layer.
 #include "../src/core/executable_model.h"
 #include "../src/core/extension_node_metadata.h"
 #include "../src/core/extension_node_registry.h"
@@ -18,6 +19,7 @@
 #include "../src/core/graph_training_job.h"
 #include "../src/core/model_analyzer.h"
 #include "../src/core/model_exporter.h"
+#include "../src/plugin/interfaces/i_node_provider.h"
 #include "../src/core/model_importer.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
@@ -143,6 +145,33 @@ void RegisterScale(const std::string& refuse = {}, const std::string& version = 
     d.metadata.inputs = {{"Input"}};
     d.metadata.outputs = {{"Output"}};
     registration.tensor_factory = std::make_shared<ScaleFactory>(refuse);
+    std::string error;
+    if (!cyxwiz::ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
+        std::cerr << "register failed: " << error << "\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+// A plugin's simulation (signal) node that supplies code text for export.
+class SimulationProvider : public cyxwiz::plugin::INodeProvider {
+public:
+    std::vector<cyxwiz::plugin::PluginNodeTypeInfo> GetNodeTypes() override { return {}; }
+    std::string GenerateCode(const std::string& type_name, const std::map<std::string, std::string>&,
+                             const std::string& framework) override {
+        if (type_name != "Env") return {};
+        return "env = make_env('" + framework + "')\nenv.reset()\n";
+    }
+};
+
+void RegisterSimulation(cyxwiz::plugin::INodeProvider* provider, const std::string& type_name) {
+    cyxwiz::ExtensionNodeRegistry::Registration registration;
+    auto& d = registration.descriptor;
+    d.provider_id = "test.sim";
+    d.type_name = type_name;
+    d.version = "1.0.0";
+    d.kind = cyxwiz::ExtensionNodeKind::Signal;
+    d.metadata.name = type_name;
+    registration.signal_provider = provider;
     std::string error;
     if (!cyxwiz::ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
         std::cerr << "register failed: " << error << "\n";
@@ -282,6 +311,29 @@ int main() {
                   cyxwiz::GetLayerTypeName(*gone_row) == "Not installed (test.gone:Thing)",
               "a node whose extension is not installed: " +
                   (gone_row ? cyxwiz::GetLayerTypeName(*gone_row) : "(no row)"));
+    }
+
+    std::cout << "a simulation node in generated code is a comment, never a layer\n";
+    {
+        SimulationProvider provider;
+        RegisterSimulation(&provider, "Env");
+        RegisterSimulation(&provider, "Quiet");
+        gui::MLNode env = ExtensionNode("test.sim:Env", false);
+        env.name = "Arm env";
+        Check(!cyxwiz::ExtensionCodeExportRefusal(env), "a simulation node does not block code export");
+        const std::string comment = cyxwiz::SimulationNodeCodeComment(env, "pytorch", "        ");
+        Check(comment ==
+                  "        # Arm env (test.sim:Env) is a simulation node, not part of this model; its plugin's code:\n"
+                  "        #   env = make_env('pytorch')\n"
+                  "        #   env.reset()\n",
+              "its plugin's code is kept, as comment lines:\n" + comment);
+        Check(comment.find("self.layer") == std::string::npos, "it is not declared as a layer");
+        gui::MLNode quiet = ExtensionNode("test.sim:Quiet", false);
+        quiet.name = "Quiet";
+        Check(cyxwiz::SimulationNodeCodeComment(quiet, "keras", "") ==
+                  "# Quiet (test.sim:Quiet) is a simulation node, not part of this model\n",
+              "a simulation node without code text: one comment line");
+        cyxwiz::ExtensionNodeRegistry::Instance().RemoveByProvider("test.sim");
     }
 
     std::cout << "ONNX export refuses a model that holds an extension module\n";
