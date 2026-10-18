@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 SeasonalityPanel::SeasonalityPanel() {
     GenerateData();
-    spdlog::info("SeasonalityPanel initialized");
+    spdlog::debug("SeasonalityPanel initialized");
 }
 
 SeasonalityPanel::~SeasonalityPanel() {

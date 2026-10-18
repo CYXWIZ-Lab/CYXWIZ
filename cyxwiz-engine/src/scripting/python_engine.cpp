@@ -550,9 +550,9 @@ bool PythonEngine::Initialize(std::string* error_out) {
 
         // Log initialization details
         if (selection.source == "project") {
-            spdlog::info("→ Initializing Python with project environment...");
+            spdlog::debug("Initializing Python with project environment...");
         } else {
-            spdlog::info("→ Initializing Python interpreter...");
+            spdlog::debug("Initializing Python interpreter...");
         }
 
         ApplySelection(selection);
@@ -585,9 +585,9 @@ bool PythonEngine::Initialize(std::string* error_out) {
 
         // Final success message
         if (selection.source == "project") {
-            spdlog::info("✓ Python environment ready (project venv)");
+            spdlog::info("Project Python ready (virtual environment)");
         } else {
-            spdlog::info("✓ Python interpreter ready (system Python)");
+            spdlog::info("Python ready (system interpreter)");
         }
 
         return true;
@@ -638,8 +638,8 @@ bool PythonEngine::ConfigurePythonHome(std::string* error_out) {
     if (!venv_root.empty()) {
         // This is a venv - let pyvenv.cfg drive sys.path
         // Setting PYTHONHOME can break stdlib resolution in venvs
-        spdlog::info("  Environment: Virtual environment (venv)");
-        spdlog::info("  Location: {}", venv_root.string());
+        spdlog::debug("  Environment: Virtual environment (venv)");
+        spdlog::debug("  Location: {}", venv_root.string());
         return true;
     }
 
@@ -804,13 +804,13 @@ void PythonEngine::ConfigureCustomPythonPath() {
 
         // Log configured paths in a user-friendly way
         if (!packages_dir.empty()) {
-            spdlog::info("  Site-packages: {}", packages_dir);
+            spdlog::debug("  Site-packages: {}", packages_dir);
         }
         if (!scripts_path.empty()) {
-            spdlog::info("  Project scripts: {}", scripts_path);
+            spdlog::debug("  Project scripts: {}", scripts_path);
         }
         if (!engine_module_dir.empty()) {
-            spdlog::info("  Engine modules: {}", engine_module_dir);
+            spdlog::debug("  Engine modules: {}", engine_module_dir);
         }
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to configure Python path: {}", e.what());
@@ -851,9 +851,9 @@ PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
             auto& pm = cyxwiz::ProjectManager::Instance();
             std::string project_name = pm.HasActiveProject() ? pm.GetProjectName() : "unknown";
 
-            spdlog::info("✓ Using project virtual environment");
-            spdlog::info("  Project: {}", project_name);
-            spdlog::info("  Python: {}", project_venv);
+            spdlog::debug("Using project virtual environment");
+            spdlog::debug("  Project: {}", project_name);
+            spdlog::debug("  Python: {}", project_venv);
             return selection;
         } else {
             spdlog::warn("Project interpreter '{}' does not exist, falling back to system Python", project_venv);
@@ -865,9 +865,9 @@ PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
     selection.source = "system";
 
     if (selection.interpreter_path.empty()) {
-        spdlog::warn("⚠ No Python configured - Python features will be unavailable");
+        spdlog::warn("No Python configured: Python features will be unavailable");
     } else {
-        spdlog::info("✓ Using system Python interpreter: {}", selection.interpreter_path);
+        spdlog::debug("Using system Python interpreter: {}", selection.interpreter_path);
     }
 
     return selection;

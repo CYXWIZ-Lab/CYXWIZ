@@ -586,7 +586,7 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
             const bool already_active = fs::equivalent(
                 fs::path(project_file_path_), file_path, equivalent_error);
             if (!equivalent_error && already_active) {
-                spdlog::info(
+                spdlog::debug(
                     "Project already active; skipping duplicate open: {}",
                     project_file_path_);
                 return true;
@@ -987,7 +987,7 @@ void ProjectManager::LoadRecentProjects() {
             }
         }
 
-        spdlog::info("Loaded {} recent projects", recent_projects_.size());
+        spdlog::debug("Loaded {} recent projects", recent_projects_.size());
 
     } catch (const std::exception& e) {
         spdlog::warn("Failed to load recent projects: {}", e.what());

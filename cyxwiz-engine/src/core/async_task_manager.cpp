@@ -39,7 +39,7 @@ void AsyncTask::RequestCancel() {
             progress_.load(),
             "cancel requested",
             "cancel_requested");
-        spdlog::info("Cancel requested for task '{}' (ID: {})", name_, id_);
+        spdlog::debug("Cancel requested for task '{}' (ID: {})", name_, id_);
     }
 }
 
@@ -217,7 +217,7 @@ void AsyncTaskManager::Initialize(size_t num_threads) {
         num_threads = std::max(2u, std::thread::hardware_concurrency());
     }
 
-    spdlog::info("Initializing AsyncTaskManager with {} worker threads", num_threads);
+    spdlog::debug("Initializing AsyncTaskManager with {} worker threads", num_threads);
 
     shutdown_.store(false);
     shutting_down_.store(false);

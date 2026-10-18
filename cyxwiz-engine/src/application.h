@@ -110,4 +110,5 @@ private:
     // A .cyxgraph named on the command line opens attached to its file (Save
     // writes it); a start-page starter opens detached.
     bool startup_graph_from_command_line_ = false;
+    bool startup_project_from_command_line_ = false;  // Else the start page opened it.
 };

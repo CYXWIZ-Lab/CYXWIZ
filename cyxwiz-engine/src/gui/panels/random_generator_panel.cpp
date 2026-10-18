@@ -12,7 +12,7 @@
 namespace cyxwiz {
 
 RandomGeneratorPanel::RandomGeneratorPanel() {
-    spdlog::info("RandomGeneratorPanel initialized");
+    spdlog::debug("RandomGeneratorPanel initialized");
 }
 
 RandomGeneratorPanel::~RandomGeneratorPanel() {

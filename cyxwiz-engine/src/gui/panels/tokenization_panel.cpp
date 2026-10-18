@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 TokenizationPanel::TokenizationPanel() {
     GenerateSampleText();
-    spdlog::info("TokenizationPanel initialized");
+    spdlog::debug("TokenizationPanel initialized");
 }
 
 TokenizationPanel::~TokenizationPanel() {

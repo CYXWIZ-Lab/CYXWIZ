@@ -45,7 +45,7 @@ void LogActiveDevice(const char* backend_name, DeviceType type, int device_id) {
     // device until the owner selects another one.
     Device::RecordProcessDevice(type, device_id);
     const DeviceInfo info = Device(type, device_id).GetInfo();
-    spdlog::info(
+    spdlog::debug(
         "{} backend active - Device {}: {} (metadata={})",
         backend_name,
         device_id,
@@ -169,7 +169,7 @@ bool Initialize() {
         return true;
     }
 
-    spdlog::info("Initializing CyxWiz Backend v{}.{}.{}",
+    spdlog::debug("Initializing CyxWiz Backend v{}.{}.{}",
                  CYXWIZ_VERSION_MAJOR,
                  CYXWIZ_VERSION_MINOR,
                  CYXWIZ_VERSION_PATCH);
@@ -203,7 +203,7 @@ bool Initialize() {
             current_step = name;
             step_started = std::chrono::steady_clock::now();
         }
-        spdlog::info("Backend initialization: trying {}", name);
+        spdlog::debug("Backend initialization: trying {}", name);
         const auto started = std::chrono::steady_clock::now();
         const bool activated = activate();
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -256,7 +256,7 @@ bool Initialize() {
 
     try {
         af::Backend active_backend = af::getActiveBackend();
-        spdlog::info("ArrayFire initialized successfully with {} backend", BackendToString(active_backend));
+        spdlog::debug("ArrayFire initialized successfully with {} backend", BackendToString(active_backend));
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire initialized but active backend query failed: {}", e.what());
     }

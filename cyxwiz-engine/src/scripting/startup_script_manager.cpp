@@ -15,11 +15,11 @@ StartupScriptManager::StartupScriptManager(std::shared_ptr<ScriptingEngine> engi
     , timeout_seconds_(60)
     , continue_on_error_(true)
 {
-    spdlog::info("StartupScriptManager created");
+    spdlog::debug("StartupScriptManager created");
 }
 
 bool StartupScriptManager::LoadConfig(const std::string& config_file) {
-    spdlog::info("Loading startup scripts config: {}", config_file);
+    spdlog::debug("Loading startup scripts config: {}", config_file);
 
     if (!FileExists(config_file)) {
         spdlog::info("Startup scripts config not found (this is normal for first run)");
@@ -34,7 +34,7 @@ bool StartupScriptManager::LoadConfig(const std::string& config_file) {
 
     ParseConfigContent(content);
 
-    spdlog::info("Loaded {} startup scripts from config", script_paths_.size());
+    spdlog::debug("Loaded {} startup scripts from config", script_paths_.size());
     return true;
 }
 
@@ -71,7 +71,7 @@ bool StartupScriptManager::ExecuteAll(IScriptOutputSink* output_sink) {
     }
 
     if (script_paths_.empty()) {
-        spdlog::info("No startup scripts configured");
+        spdlog::debug("No startup scripts configured");
         return true;
     }
 

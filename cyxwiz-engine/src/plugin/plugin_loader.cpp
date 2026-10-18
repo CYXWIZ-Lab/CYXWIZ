@@ -181,7 +181,7 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
         return nullptr;
     }
 
-    spdlog::info("Loading plugin: {} v{} from {}",
+    spdlog::debug("Loading plugin: {} v{} from {}",
                  loaded->manifest.name, loaded->manifest.version.ToString(), plugin_dir.string());
 
     // 2. Validate API version
@@ -313,7 +313,7 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     }
 
     loaded->state = PluginState::Loaded;
-    spdlog::info("Plugin loaded: {} v{}", loaded->manifest.id, loaded->manifest.version.ToString());
+    spdlog::debug("Plugin loaded: {} v{}", loaded->manifest.id, loaded->manifest.version.ToString());
     return loaded;
 }
 

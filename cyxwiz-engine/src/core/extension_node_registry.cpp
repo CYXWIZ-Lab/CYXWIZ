@@ -88,7 +88,7 @@ bool ExtensionNodeRegistry::Register(Registration registration, std::string& err
                     existing->second.descriptor.source_path + ")";
             return false;
         }
-        spdlog::info("ExtensionNodeRegistry: registered {} ({})",
+        spdlog::debug("ExtensionNodeRegistry: registered {} ({})",
                      descriptor.metadata.name, descriptor.type_id);
         const std::string type_id = descriptor.type_id;
         nodes_.emplace(type_id, std::move(registration));

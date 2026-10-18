@@ -432,7 +432,7 @@ void ScriptEditorPanel::ApplyTabSizeToAllTabs() {
         tab->editor.SetTabSize(tab_size_);
         tab->cell_manager.ApplyTabSize(tab_size_);
     }
-    spdlog::info("Applied tab size: {} spaces", tab_size_);
+    spdlog::debug("Applied tab size: {} spaces", tab_size_);
 }
 
 void ScriptEditorPanel::ApplySyntaxHighlightingToAllTabs() {
@@ -440,7 +440,7 @@ void ScriptEditorPanel::ApplySyntaxHighlightingToAllTabs() {
         tab->editor.SetColorize(syntax_highlighting_);
         tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
     }
-    spdlog::info("Syntax highlighting: {}", syntax_highlighting_ ? "enabled" : "disabled");
+    spdlog::debug("Syntax highlighting: {}", syntax_highlighting_ ? "enabled" : "disabled");
 }
 
 // Right-click menu on the code (approved board 2). Groups are separated by

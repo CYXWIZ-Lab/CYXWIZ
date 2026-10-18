@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 ACFPACFPanel::ACFPACFPanel() {
     GenerateData();
-    spdlog::info("ACFPACFPanel initialized");
+    spdlog::debug("ACFPACFPanel initialized");
 }
 
 ACFPACFPanel::~ACFPACFPanel() {

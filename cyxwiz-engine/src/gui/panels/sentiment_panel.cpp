@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 SentimentPanel::SentimentPanel() {
     GenerateSampleText();
-    spdlog::info("SentimentPanel initialized");
+    spdlog::debug("SentimentPanel initialized");
 }
 
 SentimentPanel::~SentimentPanel() {

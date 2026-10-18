@@ -489,7 +489,7 @@ void StartPage::OpenProject(const std::string& path) {
     if (ProjectManager::Instance().OpenProject(path)) {
         selected_project_path_ = path;
         result_ = Result::ProjectSelected;
-        spdlog::info("Opening project: {}", path);
+        spdlog::debug("Opening project: {}", path);
     } else {
         SetStatus("Could not open " + path + ". The file may be missing or damaged; details are in the log.", true);
         spdlog::error("Failed to open project: {}", path);

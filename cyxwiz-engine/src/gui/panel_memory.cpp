@@ -59,7 +59,7 @@ void ApplyRememberedPanels() {
         *panel.visible_ptr = it->second;
         ++applied;
     }
-    if (applied > 0) spdlog::info("Restored {} panels as they were in the last session", applied);
+    if (applied > 0) spdlog::debug("Restored {} panels as they were in the last session", applied);
 }
 
 void TrackPanelChanges() {

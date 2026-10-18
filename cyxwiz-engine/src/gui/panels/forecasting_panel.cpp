@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 ForecastingPanel::ForecastingPanel() {
     GenerateData();
-    spdlog::info("ForecastingPanel initialized");
+    spdlog::debug("ForecastingPanel initialized");
 }
 
 ForecastingPanel::~ForecastingPanel() {

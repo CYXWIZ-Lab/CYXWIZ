@@ -96,7 +96,7 @@ void PythonSetupDialog::StartScan(bool use_cache) {
     if (scanning_) return;
     scanning_ = true;
     browse_note_.clear();
-    spdlog::info(use_cache ? "Checking Python in the background..." : "Scanning for Python installations in the background...");
+    spdlog::debug(use_cache ? "Checking Python in the background..." : "Scanning for Python installations in the background...");
     worker_ = std::async(std::launch::async, RunScan, core::EngineConfig::Instance().GetSystemPythonPath(), CachePath(),
                          use_cache);
 }

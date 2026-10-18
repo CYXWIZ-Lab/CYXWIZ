@@ -1,8 +1,10 @@
 # Console and logs
 
 The **Console** (bottom dock) lists what the Engine logs, newest last. The
-same messages go to `engine_log.txt` beside `cyxwiz-engine.exe` (a new file
-each start).
+same messages go to `engine_log.txt` beside `cyxwiz-engine.exe`. Each start
+keeps the four before it as `engine_log.1.txt` (the previous launch) to
+`engine_log.4.txt`, so the log of a launch that crashed is still there after
+the restart.
 
 ## Levels
 
@@ -11,6 +13,19 @@ The chips above the list count and show each level: **Trace**, **Debug**,
 that level. **Search messages** filters by text; the structured filter
 takes expressions such as `level >= warn and category = "device"`. **Pause**
 stops the list from moving, **Auto-scroll** follows new messages.
+
+Each line has a **category** naming the part of the Engine it comes from:
+`engine`, `compute` (backends, ArrayFire, the saved compute choice),
+`device`, `ui` (window, fonts, panels), `plugin`, `python`, `project`,
+`account`, `network`, `training` (training runs, checkpoints, generation
+previews), `data` and `graph`. A plugin's own lines carry its logger's
+name; `system` is left for lines no rule names yet. Filter by it, for example
+`category = "training" and level >= warn`.
+
+At start the Engine writes one Info line per step (the Engine and its folder,
+the compute backend, the devices, the window, the plugins, Python, the project
+and its files, the account and the network); the detail behind each step
+(fonts, panels, each device and plugin path, Python's paths) is at Debug.
 
 - **Info**: what happened, once per action: a run started and finished,
   each node's outcome (a check passed with its count, an SQL step's rows in

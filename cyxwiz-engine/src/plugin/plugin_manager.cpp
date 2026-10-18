@@ -110,7 +110,7 @@ PluginManager::~PluginManager() {
 void PluginManager::SetSearchPaths(const std::vector<std::filesystem::path>& paths) {
     std::lock_guard lock(mutex_);
     search_paths_ = paths;
-    spdlog::info("PluginManager: {} search paths configured", search_paths_.size());
+    spdlog::debug("PluginManager: {} search paths configured", search_paths_.size());
     for (const auto& p : search_paths_) {
         spdlog::debug("  Plugin search path: {}", p.string());
     }
@@ -182,7 +182,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
         return false;
     }
 
-    spdlog::info("PluginManager: Loaded plugin {} ({})", loaded->manifest.name, id);
+    spdlog::debug("PluginManager: Loaded plugin {} ({})", loaded->manifest.name, id);
     plugins_[id] = std::move(loaded);
     return true;
 }

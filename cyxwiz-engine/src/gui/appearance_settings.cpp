@@ -61,7 +61,7 @@ void ApplyStartupAppearance() {
     }
     cyxwiz::gui::g_code_font_scale = config.code_font_scale;
     ApplySidebar(config.sidebar_left);
-    spdlog::info("Appearance: theme {}, interface {} px, code scale {:.1f}, sidebar {}",
+    spdlog::debug("Appearance: theme {}, interface {} px, code scale {:.1f}, sidebar {}",
                  Theme::GetPresetName(static_cast<ThemePreset>(config.theme_preset)),
                  config.ui_text_px, config.code_font_scale,
                  config.sidebar_left ? "left" : "right");

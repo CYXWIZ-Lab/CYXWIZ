@@ -608,7 +608,7 @@ void DockStyle::RenderCustomTabBar(ImGuiDockNode* node) {
 void DockStyle::InstallCustomHandler() {
     ImGuiContext& g = *GImGui;
     g.DockNodeWindowMenuHandler = CustomDockNodeWindowMenuHandler;
-    spdlog::info("Installed custom dock node window menu handler");
+    spdlog::debug("Installed custom dock node window menu handler");
 }
 
 void DockStyle::CustomDockNodeWindowMenuHandler(ImGuiContext* ctx, ImGuiDockNode* node, ImGuiTabBar* tab_bar) {

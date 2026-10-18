@@ -28,7 +28,7 @@ void ScriptEditorPanel::NewFile() {
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
     request_focus_ = true;
 
-    spdlog::info("Created new script file: {}", tabs_[active_tab_index_]->filename);
+    spdlog::debug("Created new script file: {}", tabs_[active_tab_index_]->filename);
 }
 
 void ScriptEditorPanel::OpenFile(const std::string& filepath) {

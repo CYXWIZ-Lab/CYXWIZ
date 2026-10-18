@@ -326,7 +326,7 @@ void NodeMetadataRegistry::Initialize() {
     if (initialized_) return;
     std::lock_guard<std::mutex> lock(mutex_);
     if (initialized_) return;
-    spdlog::info("NodeMetadataRegistry: Initializing node metadata...");
+    spdlog::debug("NodeMetadataRegistry: Initializing node metadata...");
     InitializeBuiltinNodes();
 
     // Load template nodes from JSON files
@@ -342,7 +342,7 @@ void NodeMetadataRegistry::Initialize() {
 
     LoadUserPreferences();
     initialized_ = true;
-    spdlog::info("NodeMetadataRegistry: Registered {} nodes", metadata_.size());
+    spdlog::debug("NodeMetadataRegistry: Registered {} nodes", metadata_.size());
 }
 
 void NodeMetadataRegistry::InitializeBuiltinNodes() {
@@ -1108,7 +1108,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
             }
     }
 
-    spdlog::info("NodeMetadataRegistry: Loaded {} template nodes from {}", loaded_count, directory);
+    spdlog::debug("NodeMetadataRegistry: Loaded {} template nodes from {}", loaded_count, directory);
 }
 void NodeMetadataRegistry::SaveUserPreferences() {
     spdlog::debug("NodeMetadataRegistry: SaveUserPreferences not yet implemented");

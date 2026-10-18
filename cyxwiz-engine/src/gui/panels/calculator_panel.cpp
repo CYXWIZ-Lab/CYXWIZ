@@ -12,7 +12,7 @@ namespace cyxwiz {
 CalculatorPanel::CalculatorPanel() {
     // Initialize with a sample expression
     strcpy(expression_buffer_, "2 * pi + sqrt(16)");
-    spdlog::info("CalculatorPanel initialized");
+    spdlog::debug("CalculatorPanel initialized");
 }
 
 CalculatorPanel::~CalculatorPanel() {

@@ -2574,7 +2574,7 @@ MainWindow::MainWindow()
 
     // Load and execute startup scripts
     if (startup_script_manager_->LoadConfig()) {
-        spdlog::info("Executing startup scripts...");
+        spdlog::debug("Executing startup scripts...");
         startup_script_manager_->ExecuteAll(console_.get());
     } else {
         spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
@@ -2617,7 +2617,7 @@ MainWindow::MainWindow()
     // Then the panels open in the last session (TOFIX129 0.6).
     ApplyRememberedPanels();
 
-    spdlog::info("MainWindow initialized with docking layout system");
+    spdlog::debug("MainWindow initialized with docking layout system");
 }
 
 void MainWindow::OpenScriptFile(const std::string& file_path) {
@@ -2889,20 +2889,20 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         // Connect asynchronously - won't block the main thread
         reservation_client->ConnectAsync(cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress());
         connection_dialog_->SetReservationClient(reservation_client);
-        spdlog::info("ReservationClient wired to ConnectionDialog (connecting in background)");
+        spdlog::debug("ReservationClient wired to ConnectionDialog (connecting in background)");
     }
 
     // Create a shared P2PClient for reservation-based connections
     if (connection_dialog_) {
         auto p2p_client = std::make_shared<network::P2PClient>();
         connection_dialog_->SetP2PClient(p2p_client);
-        spdlog::info("P2PClient created and wired to ConnectionDialog");
+        spdlog::debug("P2PClient created and wired to ConnectionDialog");
     }
 
     // Wire up P2PTrainingPanel to ConnectionDialog
     if (connection_dialog_ && p2p_training_panel_) {
         connection_dialog_->SetP2PTrainingPanel(p2p_training_panel_.get());
-        spdlog::info("P2PTrainingPanel wired to ConnectionDialog");
+        spdlog::debug("P2PTrainingPanel wired to ConnectionDialog");
     }
 
     // Set JobManager for JobStatusPanel
@@ -2935,7 +2935,7 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         });
     }
 
-    spdlog::info("Network components set in MainWindow");
+    spdlog::debug("Network components set in MainWindow");
 }
 
 void MainWindow::SetDataStreamClient(network::DataStreamClient* client) {
@@ -3641,7 +3641,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
                                  cyxwiz::menu::ShortcutFor("view.command_palette", cyxwiz::menu::Context::Any));
     }
 
-    spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
+    spdlog::debug("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
 
 void MainWindow::SetDefaultPanelVisibility(bool force) {
@@ -3651,7 +3651,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
         return;
     }
 
-    spdlog::info("Setting default panel visibility (first launch)");
+    spdlog::debug("Setting default panel visibility (first launch)");
 
     // === CORE PANELS ===
     // Original panels (node_editor_, console_, properties_, viewport_) don't have SetVisible
@@ -3776,7 +3776,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     // Plugin Manager (hidden by default)
     if (plugin_manager_panel_) plugin_manager_panel_->SetVisible(false);
 
-    spdlog::info("Default panel visibility set - showing only core panels");
+    spdlog::debug("Default panel visibility set - showing only core panels");
 }
 
 bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -5875,11 +5875,11 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
-    spdlog::info("Loaded project settings (font_scale={:.1f}, tab_size={})", settings.font_scale, settings.tab_size);
+    spdlog::debug("Loaded project settings (font_scale={:.1f}, tab_size={})", settings.font_scale, settings.tab_size);
 }
 
 void MainWindow::OnProjectOpened(const std::string& project_root) {
-    spdlog::info("Project opened: {}", project_root);
+    spdlog::debug("Project opened: {}", project_root);
 
     if (console_) console_->SetProjectRoot(project_root);
     // Saved query results (dashboards) live in the project.
@@ -5898,10 +5898,9 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
         }
     }
 
-    // Set project root and refresh asset browser to show project files
+    // Show the project's files (SetProjectRoot scans when the root is new).
     if (asset_browser_) {
         asset_browser_->SetProjectRoot(project_root);
-        asset_browser_->Refresh();
     }
 }
 

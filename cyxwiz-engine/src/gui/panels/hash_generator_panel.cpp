@@ -12,7 +12,7 @@ namespace cyxwiz {
 
 HashGeneratorPanel::HashGeneratorPanel() {
     strcpy(text_buffer_, "Hello, World!");
-    spdlog::info("HashGeneratorPanel initialized");
+    spdlog::debug("HashGeneratorPanel initialized");
 }
 
 HashGeneratorPanel::~HashGeneratorPanel() {

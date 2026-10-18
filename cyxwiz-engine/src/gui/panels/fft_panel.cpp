@@ -12,10 +12,7 @@
 
 namespace cyxwiz {
 
-FFTPanel::FFTPanel() {
-    // Generate default signal
-    GenerateSignal();
-}
+FFTPanel::FFTPanel() = default;
 
 FFTPanel::~FFTPanel() {
     if (compute_thread_ && compute_thread_->joinable()) {
@@ -26,6 +23,8 @@ FFTPanel::~FFTPanel() {
 
 void FFTPanel::Render() {
     if (!visible_) return;
+    // The demo signal is made when the panel is first shown, not at startup (TOFIX159 D5).
+    if (signal_.empty()) GenerateSignal();
 
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
@@ -532,7 +531,7 @@ void FFTPanel::GenerateSignal() {
         signal_ = SignalProcessing::AddNoise(signal_, noise_snr_);
     }
 
-    spdlog::info("Generated {} samples at {} Hz", num_samples_, sample_rate_);
+    spdlog::debug("Generated {} samples at {} Hz", num_samples_, sample_rate_);
 }
 
 void FFTPanel::ComputeAsync() {

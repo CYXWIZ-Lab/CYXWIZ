@@ -6,6 +6,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <atomic>
 #include <fstream>
 #include <filesystem>
 #include <cstdlib>
@@ -77,7 +78,7 @@ AuthClient& AuthClient::Instance() {
 }
 
 AuthClient::AuthClient() {
-    spdlog::info("AuthClient initialized with API URL: {}", api_base_url_);
+    spdlog::debug("AuthClient initialized with API URL: {}", api_base_url_);
     refresher_ = std::thread([this] { RefreshLoop(); });
 }
 
@@ -387,7 +388,10 @@ bool AuthClient::LoadSavedSession() {
 
         const long long now = static_cast<long long>(std::time(nullptr));
         if (!jwt_token_.empty() && cyxwiz::JwtExpiry(jwt_token_) <= now) {
-            spdlog::info("Saved sign-in for {} has expired; sign in again", user_info_.email);
+            // The application and the toolbar both load the saved session: say it once.
+            static std::atomic<bool> reported{false};
+            if (!reported.exchange(true))
+                spdlog::info("Saved sign-in for {} has expired; sign in again", user_info_.email);
             jwt_token_.clear();
             user_info_ = UserInfo{};
             return false;

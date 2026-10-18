@@ -12,7 +12,7 @@ namespace cyxwiz {
 
 TFIDFPanel::TFIDFPanel() {
     GenerateSampleDocuments();
-    spdlog::info("TFIDFPanel initialized");
+    spdlog::debug("TFIDFPanel initialized");
 }
 
 TFIDFPanel::~TFIDFPanel() {

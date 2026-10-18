@@ -314,7 +314,8 @@ void AssetBrowserPanel::Render() {
 }
 
 void AssetBrowserPanel::SetProjectRoot(const std::string& root) {
-    if (root != project_root_) {
+    const bool changed = root != project_root_;
+    if (changed) {
         // A different project starts with a fresh view and a fresh fingerprint.
         directory_root_.reset();
         ClearSelection();
@@ -322,7 +323,9 @@ void AssetBrowserPanel::SetProjectRoot(const std::string& root) {
         have_disk_signature_ = false;
     }
     project_root_ = root;
-    Refresh();
+    // The same project again (the window was built after the start page opened
+    // it, then the project-opened callback ran): one scan is enough (TOFIX159 D3).
+    if (changed || (!directory_root_ && !is_scanning_directory_.load())) Refresh();
 }
 
 namespace {
@@ -450,7 +453,7 @@ void AssetBrowserPanel::Refresh() {
         AsyncTaskManager::Instance().Cancel(scanning_task_id_);
     }
 
-    spdlog::info("Refreshing asset browser async for project: {}", project_root_);
+    spdlog::debug("Refreshing asset browser async for project: {}", project_root_);
 
     is_scanning_directory_.store(true);
     scan_completed_.store(false);

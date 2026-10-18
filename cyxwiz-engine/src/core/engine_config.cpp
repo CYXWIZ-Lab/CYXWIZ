@@ -189,7 +189,7 @@ std::filesystem::path EngineConfig::FindConfigFile() const {
 
     for (const auto& path : search_paths) {
         if (std::filesystem::exists(path)) {
-            spdlog::info("Found config file: {}", path.string());
+            spdlog::debug("Found config file: {}", path.string());
             return path;
         }
     }
@@ -440,7 +440,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         config_path_ = config_path;
         modified_ = false;
 
-        spdlog::info("Loaded config from: {}", config_path.string());
+        spdlog::debug("Loaded config from: {}", config_path.string());
         spdlog::debug("  Central Server: {}", central_server_address_);
         spdlog::debug("  Auth API: {}", auth_api_url_);
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);

@@ -22,7 +22,7 @@ namespace cyxwiz {
 
 PlotOutputPanel::PlotOutputPanel()
     : Panel("Plot Output", true) {
-    spdlog::info("PlotOutputPanel initialized");
+    spdlog::debug("PlotOutputPanel initialized");
 }
 
 PlotOutputPanel::~PlotOutputPanel() {

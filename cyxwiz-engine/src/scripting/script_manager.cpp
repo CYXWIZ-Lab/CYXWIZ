@@ -11,7 +11,7 @@ ScriptManager::ScriptManager() {
     InitializeBuiltins();
     InitializeSnippets();
     InitializeModules();
-    spdlog::info("ScriptManager initialized");
+    spdlog::debug("ScriptManager initialized");
 }
 
 ScriptManager::~ScriptManager() = default;
