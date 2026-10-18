@@ -2913,6 +2913,7 @@ set_target_properties(test_extension_node_presentation PROPERTIES
 # ===== Test: model files, code generation and export with extension nodes (TOFIX125 P6) =====
 add_executable(test_extension_model_files
     tests/test_extension_model_files.cpp
+    src/core/model_analyzer.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/decision_tree_model.cpp

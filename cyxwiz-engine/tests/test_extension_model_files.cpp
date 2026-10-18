@@ -9,12 +9,14 @@
 // 6.3: the package manifest lists the extensions the model needs; a package
 // without its graph is refused; an installed extension that is not the one
 // the model was trained with imports with a warning.
+// 6.5: the Model Summary names an extension node and counts its parameters.
 #include "../src/core/executable_model.h"
 #include "../src/core/extension_node_metadata.h"
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/guarded_extension_module.h"
 #include "../src/core/graph_training_job.h"
+#include "../src/core/model_analyzer.h"
 #include "../src/core/model_exporter.h"
 #include "../src/core/model_importer.h"
 #include "causal_lm_token_window_fixture.h"
@@ -249,6 +251,37 @@ int main() {
         dense.type = gui::NodeType::Dense;
         dense.name = "Dense";
         Check(!cyxwiz::ExtensionCodeExportRefusal(dense), "a built-in node is not refused");
+    }
+
+    std::cout << "the Model Summary names an extension node and counts its parameters\n";
+    {
+        gui::MLNode input;
+        input.id = 1;
+        input.type = gui::NodeType::DatasetInput;
+        input.name = "Data";
+        input.parameters = {{"height", "1"}, {"width", "1"}, {"channels", "3"}};
+        gui::MLNode scale = ExtensionNode(scale_id, false);
+        gui::MLNode gone = ExtensionNode("test.gone:Thing", true);
+        gone.id = 60;
+        gone.name = "Gone";
+        const std::vector<gui::MLNode> nodes = {input, scale, gone};
+        const std::vector<gui::NodeLink> links = {{1, 1, 0, 50, 0}, {2, 50, 0, 60, 0}};
+        cyxwiz::ModelAnalyzer analyzer;
+        const auto analysis = analyzer.AnalyzeGraph(nodes, links, 1);
+        const cyxwiz::LayerAnalysis* scale_row = nullptr;
+        const cyxwiz::LayerAnalysis* gone_row = nullptr;
+        for (const auto& layer : analysis.layers) {
+            if (layer.name == "My Scale") scale_row = &layer;
+            if (layer.name == "Gone") gone_row = &layer;
+        }
+        Check(scale_row && cyxwiz::GetLayerTypeName(*scale_row) == "Scale (" + scale_id + ")",
+              "the row says what it is: " + (scale_row ? cyxwiz::GetLayerTypeName(*scale_row) : "(no row)"));
+        Check(scale_row && scale_row->parameters == 1, "Scale's one learnable a is counted");
+        Check(scale_row && scale_row->output_shape == scale_row->input_shape, "its shape comes from its factory");
+        Check(gone_row && gone_row->parameters == 0 &&
+                  cyxwiz::GetLayerTypeName(*gone_row) == "Not installed (test.gone:Thing)",
+              "a node whose extension is not installed: " +
+                  (gone_row ? cyxwiz::GetLayerTypeName(*gone_row) : "(no row)"));
     }
 
     std::cout << "ONNX export refuses a model that holds an extension module\n";

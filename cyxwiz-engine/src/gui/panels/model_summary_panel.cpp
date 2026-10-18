@@ -133,8 +133,8 @@ void ModelSummaryPanel::RenderLayerTable() {
             // Layer name/type
             ImGui::TableNextColumn();
             std::string display_name = layer.name.empty() ?
-                GetNodeTypeName(layer.type) :
-                layer.name + " (" + GetNodeTypeName(layer.type) + ")";
+                GetLayerTypeName(layer) :
+                layer.name + " (" + GetLayerTypeName(layer) + ")";
 
             // Selectable row
             bool selected = (selected_layer_ == static_cast<int>(i));
@@ -319,7 +319,7 @@ void ModelSummaryPanel::RenderShapeFlow() {
         draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), ui::ToU32(t.border), 4.0f);
 
         // Layer text
-        std::string layer_name = GetNodeTypeName(layer.type);
+        std::string layer_name = GetLayerTypeName(layer);
         if (layer_name.length() > 12) layer_name = layer_name.substr(0, 10) + "..";
         std::string shape_text = FormatShape(layer.output_shape);
         if (shape_text.length() > 14) shape_text = shape_text.substr(0, 12) + "..";
@@ -367,7 +367,7 @@ void ModelSummaryPanel::RenderShapeFlow() {
             const auto& layer = analysis_.layers[i];
             ImGui::Text("  -> [%zu] %s: %s",
                        i + 1,
-                       GetNodeTypeName(layer.type).c_str(),
+                       GetLayerTypeName(layer).c_str(),
                        FormatShape(layer.output_shape).c_str());
         }
     }
@@ -387,10 +387,10 @@ void ModelSummaryPanel::RenderDetailPopup() {
             const auto& layer = analysis_.layers[detail_layer_index_];
 
             ImGui::Text("Layer #%d: %s", detail_layer_index_ + 1,
-                       layer.name.empty() ? GetNodeTypeName(layer.type).c_str() : layer.name.c_str());
+                       layer.name.empty() ? GetLayerTypeName(layer).c_str() : layer.name.c_str());
             ImGui::Separator();
 
-            ImGui::Text("Type: %s", GetNodeTypeName(layer.type).c_str());
+            ImGui::Text("Type: %s", GetLayerTypeName(layer).c_str());
             ImGui::Text("Input Shape: %s", FormatShape(layer.input_shape).c_str());
             ImGui::Text("Output Shape: %s", FormatShape(layer.output_shape).c_str());
             ImGui::Separator();
