@@ -171,8 +171,8 @@ std::string BuildCausalLmGraphJson(bool supplied_roles = false) {
         graph["nodes"].push_back({{"id",9},{"type",static_cast<int>(gui::NodeType::DataLoader)},
             {"name","Training loader with preview"},{"parameters",{
             {"create_causal_lm_targets","true"},{"max_sequence_length","32"},
-            {"generation_preview_enabled","true"},{"generation_preview_every_epochs","1"},
-            {"generation_preview_prompts","hello"},{"generation_preview_max_new_tokens","2"},
+            {"generation_preview_enabled","true"},{"generation_preview_every","1"},
+            {"generation_preview_prompt_set",R"([{"text":"hello"}])"},{"generation_preview_max_new_tokens","2"},
             {"data_boundary_pin_contract","dataset.v2"}}}});
         graph["links"] = json::array();
         auto connect = [&](int from, int output, int to, int input) {
@@ -306,7 +306,7 @@ int main(int argc, char** argv) {
             const auto report = cyxwiz::GenerateTokenIdsWithReport(model, prompt, generation, 52u);
             Check(report.new_token_ids == expected, "actual package generated-token parity");
             const auto decoded = cyxwiz::DecodeGeneratedTokenIds(*tokenizer.tokenizer, report.new_token_ids);
-            Check(decoded == sample.at("generated_text").get<std::string>(),
+            Check(decoded == sample.at("text").get<std::string>(),
                   "actual package decoded-text parity");
             std::cout << "Verified prompt " << sample.at("prompt") << ": " << decoded << '\n';
         }

@@ -68,8 +68,8 @@ Result Run(const std::filesystem::path& path,DeviceType device,int seed,int data
     if(previews){
         Vocabulary vocabulary_asset; vocabulary_asset.SetVocabulary(vocabulary);
         std::ostringstream artifact;Require(vocabulary_asset.SaveToStream(artifact),"preview vocabulary");
-        config.generation_preview.enabled=true;config.generation_preview.every_epochs=1;
-        config.generation_preview.max_new_tokens=1;config.generation_preview.prompts="one";
+        config.generation_preview.enabled=true;config.generation_preview.every=1;
+        config.generation_preview.max_new_tokens=1;config.generation_preview.prompts={{"one",{}}};
         config.generation_preview.tokenizer_type=0;config.generation_preview.context=4;
         config.generation_preview.vocabulary_artifact=artifact.str();
     }
