@@ -6930,7 +6930,7 @@ add_test(NAME GuidedSql COMMAND test_guided_sql)
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
-    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp)
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp src/core/runtime_log_category.cpp)
 target_link_libraries(test_async_task_cancellation PRIVATE cyxwiz-training-core)
 target_include_directories(test_async_task_cancellation PRIVATE src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
@@ -6945,7 +6945,7 @@ set_target_properties(test_async_task_cancellation PROPERTIES RUNTIME_OUTPUT_DIR
 # tofix94: atomic crash heartbeat under concurrent reads.
 add_executable(test_crash_heartbeat_atomic tests/test_crash_heartbeat_atomic.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
-    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp)
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp src/core/runtime_log_category.cpp)
 target_link_libraries(test_crash_heartbeat_atomic PRIVATE cyxwiz-training-core)
 target_include_directories(test_crash_heartbeat_atomic PRIVATE src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
@@ -6959,7 +6959,7 @@ set_target_properties(test_crash_heartbeat_atomic PROPERTIES RUNTIME_OUTPUT_DIRE
 
 add_executable(test_async_task_lifecycle tests/test_async_task_lifecycle.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
-    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp)
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp src/core/runtime_log_category.cpp)
 target_link_libraries(test_async_task_lifecycle PRIVATE cyxwiz-training-core)
 target_include_directories(test_async_task_lifecycle PRIVATE src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)

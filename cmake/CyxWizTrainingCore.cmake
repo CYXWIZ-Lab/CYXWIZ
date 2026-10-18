@@ -48,6 +48,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/training_trace_collector.cpp
     ${_cyxwiz_engine_src}/core/route_qualification_snapshot.cpp
     ${_cyxwiz_engine_src}/core/runtime_log_store.cpp
+    ${_cyxwiz_engine_src}/core/runtime_log_category.cpp
 )
 
 # Precompiled header (build speed): standard and third-party headers that
