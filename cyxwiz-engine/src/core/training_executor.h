@@ -296,6 +296,11 @@ public:
      * Get the training configuration
      */
     const TrainingConfiguration& GetConfig() const { return config_; }
+    // The run's generation_previews folder while Train runs with previews on;
+    // empty otherwise. Read from the training thread (the batch callback).
+    std::filesystem::path GenerationPreviewDir() const {
+        return generation_preview_ ? generation_preview_dir_ : std::filesystem::path();
+    }
 
     /**
      * Get the trained model (for export)

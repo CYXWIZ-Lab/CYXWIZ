@@ -129,12 +129,13 @@ Training graph: Data Input (windows) -> Data Loader (Start from, context)
 
 ## Seeing answers during training
 
-Data Loader **Generation previews** generate from the current weights after
-chosen epochs. Chat prompts span several lines, so put a line containing only
-`---` between prompts; each prompt then keeps its line breaks. Leave an empty
-line before `---` when the prompt must end with a newline (as after
-`Berean:` above). Without `---`, every line is its own prompt. Up to 8
-prompts, 2048 bytes each.
+On the Data Loader's **Generation** tab choose **Chat / instruction**, the
+template the data was rendered with (**Role lines** with the labels `System:`,
+`User:` and your assistant label, such as `Berean:`), the system prompt once,
+and up to 8 user messages; add `</answer>` (or your format's end) as a stop
+text and a check per prompt if you like. The samples show in the Training
+Dashboard's Generations tab after each pass. See
+[Generation previews](generation_previews.md).
 
 ## Checking it worked
 

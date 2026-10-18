@@ -443,6 +443,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
     src/gui/data_loader_generation_tab.cpp
+    src/gui/generation_preview_view.cpp
     src/core/data_convert_task.cpp
     src/core/hdf5_inspection_task.cpp
     src/core/hdf5_source_identity.cpp
@@ -3608,6 +3609,8 @@ add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -3729,6 +3732,8 @@ add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -5050,6 +5055,8 @@ add_executable(test_training_manager_session
     src/core/training_manager.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -7088,6 +7095,8 @@ add_executable(test_engine_node_parity
     src/core/training_manager.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp

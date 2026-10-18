@@ -156,6 +156,80 @@ std::vector<GenerationPreviewReport> LoadGenerationPreviewReports(const std::fil
     return reports;
 }
 
+std::vector<GenerationPreviewRun> FindGenerationPreviewRuns(const std::filesystem::path& checkpoints_root) {
+    namespace fs = std::filesystem;
+    std::vector<GenerationPreviewRun> runs;
+    std::error_code ec;
+    if (checkpoints_root.empty() || !fs::is_directory(checkpoints_root, ec)) return runs;
+    for (fs::recursive_directory_iterator it(checkpoints_root, fs::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_directory(ec) || it->path().filename() != "generation_previews") continue;
+        it.disable_recursion_pending();
+        GenerationPreviewRun run;
+        run.folder = it->path();
+        run.run_id = it->path().parent_path().filename().string();
+        run.graph = it->path().parent_path().parent_path().filename().string();
+        std::error_code inner;
+        for (fs::directory_iterator f(it->path(), inner), stop; !inner && f != stop; f.increment(inner)) {
+            if (f->path().extension() != ".json") continue;
+            ++run.files;
+            run.time = std::max(run.time, f->last_write_time(inner));
+        }
+        if (run.files > 0) runs.push_back(std::move(run));
+    }
+    std::sort(runs.begin(), runs.end(), [](const auto& a, const auto& b) { return a.time > b.time; });
+    return runs;
+}
+
+std::string GenerationPreviewFolderStamp(const std::filesystem::path& folder) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    size_t files = 0;
+    fs::file_time_type newest{};
+    uintmax_t bytes = 0;
+    for (fs::directory_iterator f(folder, ec), stop; !ec && f != stop; f.increment(ec)) {
+        if (f->path().extension() != ".json") continue;
+        std::error_code inner;
+        ++files;
+        newest = std::max(newest, f->last_write_time(inner));
+        bytes += f->file_size(inner);
+    }
+    return std::to_string(files) + ":" + std::to_string(bytes) + ":" +
+           std::to_string(newest.time_since_epoch().count());
+}
+
+bool ExportGenerationPreviewSamples(const std::vector<GenerationPreviewReport>& reports,
+                                    const std::filesystem::path& path, std::string& error) {
+    std::ofstream output(path, std::ios::binary);
+    if (!output) {
+        error = "cannot write " + path.string();
+        return false;
+    }
+    for (const auto& report : reports) {
+        for (const auto& sample : report.samples) {
+            nlohmann::json line = {{"run_id", report.run_id}, {"point", report.point}, {"epoch", report.epoch},
+                                   {"step", report.step}, {"weights", report.weights},
+                                   {"prompt_index", sample.prompt_index}, {"sample_index", sample.sample_index},
+                                   {"prompt", sample.prompt}, {"rendered_prompt", sample.rendered_prompt},
+                                   {"output", sample.text}, {"stop_reason", sample.stop_reason},
+                                   {"new_tokens", sample.new_tokens}};
+            if (!sample.stop_text.empty()) line["stop_text"] = sample.stop_text;
+            if (report.validation_loss) line["validation_loss"] = *report.validation_loss;
+            if (sample.check.kind != GenerationPreviewCheckKind::None) {
+                line["check"] = {{"kind", GenerationPreviewCheckKindName(sample.check.kind)},
+                                 {"value", sample.check.value},
+                                 {"passed", sample.check_result == GenerationPreviewCheckResult::Passed}};
+            }
+            output << line.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) << '\n';
+        }
+    }
+    if (!output) {
+        error = "writing " + path.string() + " failed";
+        return false;
+    }
+    return true;
+}
+
 std::filesystem::path GenerationPreviewReportPath(const std::filesystem::path& directory, const std::string& point,
                                                   int epoch, long long step) {
     std::string stem = point == "baseline" ? "baseline"

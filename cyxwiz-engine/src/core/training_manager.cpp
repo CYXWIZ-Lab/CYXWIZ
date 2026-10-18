@@ -1060,6 +1060,7 @@ void TrainingManager::TrainingThreadFunc(
                     exec->GetConfig().log_interval);
                 panel->SetBatchComposition(exec->GetConfig().batch_size,
                                            exec->GetConfig().grad_accum_steps);
+                panel->SetGenerationPreviewFolder({});
             }
             // Per-batch callback — keeps the Training Dashboard responsive during
             // the epoch. Without this, the dashboard stays on "Epoch 0/N" for the
@@ -1068,7 +1069,10 @@ void TrainingManager::TrainingThreadFunc(
             // epoch x-axis (epoch - 1 + batch/total) so the loss curve draws
             // smoothly during long epochs (e.g. audio at 8 min/epoch) instead
             // of staying empty until the first epoch finishes.
-            auto batch_callback = [this, plot_panel, &exec](int epoch, int batch, int total_batches,
+            // The generation previews folder exists once Train has bound the
+            // previews: the first batch tells the Dashboard (TOFIX159 A4).
+            auto preview_folder_sent = std::make_shared<bool>(false);
+            auto batch_callback = [this, plot_panel, &exec, preview_folder_sent](int epoch, int batch, int total_batches,
                                                        float batch_loss, float batch_acc) {
                 const bool regression_mode =
                     exec && UsesRegressionMetrics(exec->GetConfig());
@@ -1089,6 +1093,11 @@ void TrainingManager::TrainingThreadFunc(
                         TrainingTraceStage::UIPlotUpdate, epoch, batch,
                         total_batches, batch_loss, batch_acc);
                     panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
+                    if (!*preview_folder_sent && exec) {
+                        *preview_folder_sent = true;
+                        if (const auto folder = exec->GenerationPreviewDir(); !folder.empty())
+                            panel->SetGenerationPreviewFolder(folder);
+                    }
 
                     // Progressive curve: x = (epoch - 1) + batch / total_batches
                     // gives a smooth 0..N x-axis where each integer is an epoch

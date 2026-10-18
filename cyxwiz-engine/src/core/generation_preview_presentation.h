@@ -66,6 +66,25 @@ std::optional<GenerationPreviewReport> LoadGenerationPreviewReport(
 std::vector<GenerationPreviewReport> LoadGenerationPreviewReports(
     const std::filesystem::path& directory, std::vector<std::string>* skipped = nullptr);
 
+// A training run that wrote reports: <checkpoints>/<graph>/<run>/generation_previews.
+struct GenerationPreviewRun {
+    std::string run_id;   // "train-1791984271862"
+    std::string graph;    // the checkpoint folder it belongs to ("sft_v2_768_d256_L6")
+    std::filesystem::path folder;
+    size_t files = 0;     // report files (any schema)
+    std::filesystem::file_time_type time{};  // the newest report
+};
+// Every run under `checkpoints_root` with report files, newest first.
+std::vector<GenerationPreviewRun> FindGenerationPreviewRuns(const std::filesystem::path& checkpoints_root);
+
+// Changes when a report is added or rewritten (for a live view to reload).
+std::string GenerationPreviewFolderStamp(const std::filesystem::path& folder);
+
+// Every sample of `reports` as one JSON object per line (point, epoch, step,
+// prompt, output, stop reason, check). Returns false with `error` set.
+bool ExportGenerationPreviewSamples(const std::vector<GenerationPreviewReport>& reports,
+                                    const std::filesystem::path& path, std::string& error);
+
 // "baseline.json", "epoch_4.json", "step_1200.json"; a second pass at the same
 // point (a resumed run) gets "_2", "_3", ... before ".json".
 std::filesystem::path GenerationPreviewReportPath(const std::filesystem::path& directory,

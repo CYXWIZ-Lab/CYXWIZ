@@ -2,17 +2,16 @@
 
 // Data Studio > Results (TOFIX148 job 7, approved mockup v8): a model's
 // results next to the data. Language models: a training run's generation
-// previews per epoch (question, evidence, what the model cited, book /
-// chapter / verse, how it stopped, loops) with slices. A test run (TOFIX157):
+// previews in the Generations view the Training Dashboard also shows
+// (gui/generation_preview_view, TOFIX159 A4). A test run (TOFIX157):
 // the latest test's headline, read back from its per-row predictions with the
 // Test Results panel's own calculation and words, and a button to that panel,
 // which shows the whole run (one view of a test, not two). Keep as node
 // (approved mockup, TOFIX157) saves the test's rows once in the project
 // (results/tests) and adds a Data Input reading them and a Test Evaluation
 // node; the kept tests are listed under the run and open in Test Results.
-// The model is core/data_studio_results.
 
-#include "../../core/data_studio_results.h"
+#include "../generation_preview_view.h"
 #include "../../core/kept_tests.h"
 #include "../../core/test_results_presentation.h"
 
@@ -55,7 +54,6 @@ public:
 
 private:
     void RefreshRuns();
-    void LoadEpoch();
     void RenderPreviews();
     void RenderTest();
     void RenderKeepDialog();
@@ -64,14 +62,10 @@ private:
     int source_ = 0;  // 0 language-model previews, 1 test run
     bool source_chosen_ = false;
 
-    std::vector<studio::PreviewRun> runs_;
+    std::vector<GenerationPreviewRun> runs_;
     double runs_time_ = -1.0;
-    int run_ = 0;         // index into runs_
-    int epoch_index_ = -1;  // index into runs_[run_].epochs (-1: the last)
-    std::string loaded_key_;
-    studio::PreviewEpoch epoch_;
-    std::string epoch_error_;
-    int selected_sample_ = -1;
+    int run_ = 0;  // index into runs_
+    GenerationPreviewView preview_view_;
 
     // The latest test run (rebuilt when test_predictions is replaced).
     std::string predictions_key_;

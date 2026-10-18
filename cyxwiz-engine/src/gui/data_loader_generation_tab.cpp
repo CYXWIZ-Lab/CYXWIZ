@@ -28,19 +28,11 @@ using cyxwiz::GenerationPreviewWeights;
 
 constexpr const char* kPrefix = "generation_preview_";
 
-// A card: a tinted child that grows with its content (no outline).
+// The shared card (ui::BeginCard), closed at the end of the scope.
 struct Card {
-    explicit Card(const char* id) {
-        const auto& t = cyxwiz::ui::CurrentTokens();
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
-        ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-    }
+    explicit Card(const char* id) { cyxwiz::ui::BeginCard(id); }
     ~Card() {
-        ImGui::EndChild();
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor();
+        cyxwiz::ui::EndCard();
         ImGui::Spacing();
     }
 };

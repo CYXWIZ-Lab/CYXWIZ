@@ -409,6 +409,29 @@ void TrainingPlotPanel::Render() {
     RenderTrainingStatus();
     RenderActiveTaskSummary();
 
+    // Generations (TOFIX159 A4): the run's samples, beside the metrics.
+    if (!generation_folder_.empty()) {
+        if (ImGui::BeginTabBar("##dash_tabs")) {
+            if (ImGui::BeginTabItem("Overview")) {
+                show_generations_ = false;
+                ImGui::EndTabItem();
+            }
+            const std::string label = "Generations (" + std::to_string(generation_view_.ReportCount()) + ")###generations";
+            if (ImGui::BeginTabItem(label.c_str())) {
+                show_generations_ = true;
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+        generation_view_.SetFolder(generation_folder_);
+        if (show_generations_) {
+            generation_view_.Render();
+            ImGui::End();
+            RenderChartWindows();
+            return;
+        }
+    }
+
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
 
@@ -963,6 +986,12 @@ void TrainingPlotPanel::SetTrainingComplete(
     checkpoint_val_loss_ = metrics.val_loss;
     checkpoint_val_accuracy_ = metrics.val_accuracy;
     active_checkpoint_loaded_ = false;
+}
+
+void TrainingPlotPanel::SetGenerationPreviewFolder(const std::filesystem::path& folder) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    generation_folder_ = folder;
+    if (folder.empty()) show_generations_ = false;
 }
 
 void TrainingPlotPanel::SetActiveCheckpointLoaded(

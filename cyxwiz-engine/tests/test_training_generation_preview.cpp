@@ -173,6 +173,27 @@ void TestGenerationPreviewPresentation() {
     Require(lines[1].rfind("  1  limit 128 · repeats · check failed  \"<explanation>",0)==0,"log sample 1");
     Require(lines[2].rfind("  2  stopped 114  \"Deuteronomy 25:2",0)==0,"log sample 2");
     Require(lines[3].find("checks 0/1 · stopped by itself 1/2 · repeating 1/2 · saved ")==2,"log summary");
+
+    // Runs are found under the checkpoints folder; the stamp moves when a report is added.
+    const auto root=directory.parent_path()/(directory.filename().string()+"_root");
+    const auto run_folder=root/"sft_v2_768"/"train-7"/"generation_previews";
+    std::filesystem::create_directories(run_folder);
+    std::filesystem::copy_file(path,run_folder/"epoch_4.json");
+    const auto before=GenerationPreviewFolderStamp(run_folder);
+    std::ofstream(run_folder/"baseline.json")<<report.dump();
+    Require(GenerationPreviewFolderStamp(run_folder)!=before,"stamp changes with a new report");
+    const auto runs=FindGenerationPreviewRuns(root);
+    Require(runs.size()==1&&runs[0].run_id=="train-7"&&runs[0].graph=="sft_v2_768"&&runs[0].files==2,"run found");
+    Require(FindGenerationPreviewRuns(root/"missing").empty(),"no folder, no runs");
+    std::string export_error;
+    Require(ExportGenerationPreviewSamples(reports,run_folder/"samples.jsonl",export_error),"export");
+    std::ifstream exported(run_folder/"samples.jsonl");
+    std::string first,second,extra;
+    std::getline(exported,first); std::getline(exported,second);
+    Require(!std::getline(exported,extra)&&nlohmann::json::parse(first)["check"]["passed"]==false&&
+            nlohmann::json::parse(second)["stop_reason"]=="eos","one JSON line per sample");
+    exported.close();  // Windows keeps an open file's folder.
+    std::filesystem::remove_all(root);
     std::filesystem::remove_all(directory);
 }
 

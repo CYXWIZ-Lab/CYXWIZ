@@ -48,7 +48,7 @@ Hover the mark for the source key, the owner (Compiler, Runtime, Loader,
 Materializer, ...) and the rule's message. **▸ Details** under the rows shows
 them under every row. Settings are grouped as their node type declares
 (Training, Generation previews, Advanced settings, ...); a group's words are
-dropped from its labels ("Every epochs" under Generation previews). *Reset*
+dropped from its labels ("Max new tokens" under Generation previews). *Reset*
 appears on a row whose value differs from its default. A value is written to
 the node only when you change it: looking at a node changes nothing.
 
