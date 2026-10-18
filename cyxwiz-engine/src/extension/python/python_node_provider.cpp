@@ -41,7 +41,7 @@ void AppendFileStamp(std::ostringstream& out, const fs::path& path) {
     const auto size = fs::file_size(path, ec);
     const auto time = fs::last_write_time(path, ec);
     out << path.string() << '|' << (ec ? 0 : size) << '|'
-        << (ec ? 0 : time.time_since_epoch().count()) << '\n';
+        << (ec ? 0LL : static_cast<long long>(time.time_since_epoch().count())) << '\n';
 }
 
 }  // namespace

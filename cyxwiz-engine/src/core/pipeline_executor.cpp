@@ -7152,7 +7152,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         const std::filesystem::path path = ResolveProjectDataPath(value, project_root_);
         if (!std::filesystem::is_regular_file(path, error)) continue;
         const auto size = std::filesystem::file_size(path, error);
-        const auto time = std::filesystem::last_write_time(path, error).time_since_epoch().count();
+        const auto time = static_cast<long long>(std::filesystem::last_write_time(path, error).time_since_epoch().count());
         if (!error) mix(key + "@" + std::to_string(size) + "@" + std::to_string(time));
     }
 
