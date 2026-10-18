@@ -106,3 +106,11 @@ the extension itself. Install and approve the plugin or Python node bundle
 the model was trained with, then import again. If the extension is installed
 but cannot create its module (for example Python is not running yet), the
 import message ends with the extension's own reason.
+
+The package's `manifest.json` lists the extensions it needs under
+`extensions` (type id, version and code hash), and the export always includes
+the graph for such a model. When the installed extension is another version
+or other code than the model was trained with, the weights still load and the
+import adds a warning: "Extension node '...' is not the one this graph was
+saved with". Check the model's results, or install the version it was trained
+with.

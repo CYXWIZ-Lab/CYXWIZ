@@ -6,9 +6,13 @@
 // imports again (as a layer stack and as an executable model) with the same
 // weights; a missing extension and an extension that cannot create its module
 // are refused with the reason.
+// 6.3: the package manifest lists the extensions the model needs; a package
+// without its graph is refused; an installed extension that is not the one
+// the model was trained with imports with a warning.
 #include "../src/core/executable_model.h"
 #include "../src/core/extension_node_metadata.h"
 #include "../src/core/extension_node_registry.h"
+#include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/guarded_extension_module.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/core/model_exporter.h"
@@ -125,12 +129,12 @@ private:
 };
 
 // refuse: CreateModule fails with this reason (an extension that cannot run).
-void RegisterScale(const std::string& refuse = {}) {
+void RegisterScale(const std::string& refuse = {}, const std::string& version = "1.0.0") {
     cyxwiz::ExtensionNodeRegistry::Registration registration;
     auto& d = registration.descriptor;
     d.provider_id = kProvider;
     d.type_name = "Scale";
-    d.version = "1.0.0";
+    d.version = version;
     d.kind = cyxwiz::ExtensionNodeKind::TensorLayer;
     d.role = cyxwiz::ExtensionLayerRole::Activation;
     d.metadata.name = "Scale";
@@ -354,6 +358,51 @@ int main() {
               "it imports as an executable model with the same weights" +
                   (as_executable.success ? (difference.empty() ? std::string() : " (" + difference + ")")
                                          : ": " + as_executable.error_message));
+
+        std::cout << "the package says which extensions it needs\n";
+        {
+            cyxwiz::formats::CyxModelFormat format;
+            cyxwiz::ModelManifest manifest;
+            std::string graph_text;
+            cyxwiz::TrainingConfig config;
+            std::map<std::string, std::vector<uint8_t>> weights;
+            std::map<std::string, std::vector<int64_t>> shapes;
+            const bool read = format.Extract(package.string(), manifest, graph_text, config, nullptr, weights, shapes,
+                                             nullptr, import_options);
+            Check(read && manifest.extensions.size() == 1 &&
+                      manifest.extensions[0].type_id == std::string(kProvider) + ":Scale" &&
+                      manifest.extensions[0].version == "1.0.0",
+                  "the manifest lists " + std::string(kProvider) + ":Scale 1.0.0" +
+                      (read ? "" : " (" + format.GetLastError() + ")"));
+
+            cyxwiz::ExportOptions without_graph = options;
+            without_graph.include_graph = false;
+            const auto refused = exporter.Export(*trained.model, nullptr, nullptr, exported_graph.dump(),
+                                                 (work / "no_graph.cyxmodel").string(), without_graph);
+            Check(!refused.success && Contains(refused.error_message, "needs its graph"),
+                  "a package without its graph is refused: " + refused.error_message);
+        }
+
+        std::cout << "another version of the extension imports with a warning\n";
+        {
+            cyxwiz::ExtensionNodeRegistry::Instance().RemoveByProvider(kProvider);
+            RegisterScale({}, "2.0.0");
+            cyxwiz::SequentialModel newer;
+            const auto with_newer = importer.ImportCyxModel(package.string(), newer, import_options);
+            bool warned = false;
+            for (const auto& warning : with_newer.warnings)
+                warned = warned || Contains(warning, "is not the one this graph was saved with");
+            Check(with_newer.success && warned, "the weights load and the import warns" +
+                                                    (with_newer.success ? std::string() : ": " + with_newer.error_message));
+            std::shared_ptr<cyxwiz::IExecutableModel> newer_executable;
+            const auto newer_result = importer.ImportExecutableModel(package.string(), newer_executable, import_options);
+            warned = false;
+            for (const auto& warning : newer_result.warnings)
+                warned = warned || Contains(warning, "is not the one this graph was saved with");
+            Check(newer_result.success && warned, "the executable-model import warns too");
+            cyxwiz::ExtensionNodeRegistry::Instance().RemoveByProvider(kProvider);
+            RegisterScale();
+        }
 
         std::cout << "importing without the extension, or when it cannot create its module, says why\n";
         cyxwiz::ExtensionNodeRegistry::Instance().RemoveByProvider(kProvider);
