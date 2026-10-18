@@ -442,6 +442,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
+    src/gui/data_loader_generation_tab.cpp
     src/core/data_convert_task.cpp
     src/core/hdf5_inspection_task.cpp
     src/core/hdf5_source_identity.cpp
