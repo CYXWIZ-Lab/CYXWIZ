@@ -27,6 +27,9 @@ struct ComputeRuntimeConfig {
 struct ComputeRuntimeConfigLoadResult {
     bool loaded = false;
     bool file_exists = false;
+    // The file is valid JSON written by an older Engine (a lower schema). Its
+    // content is not read; the next saved choice replaces the file.
+    bool older_schema = false;
     ComputeRuntimeConfig config;
     std::string message;
 };

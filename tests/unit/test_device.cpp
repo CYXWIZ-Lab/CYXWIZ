@@ -680,6 +680,38 @@ TEST_CASE("Machine compute runtime configuration persists atomically",
         {cyxwiz::DeviceType::CPU, 0, {}},
         error));
     CHECK(error.find("invalid") != std::string::npos);
+
+    // A file from an older Engine (schema 1, before TOFIX140 F9) is not read,
+    // and the next saved choice replaces it.
+    {
+        std::ofstream older(path, std::ios::binary | std::ios::trunc);
+        older << R"({"schema": 1, "default_fallback_policy": "allow_native_cpu_fallback",
+                     "preferred_route": {"backend": "cuda", "last_device_id": 0}})";
+    }
+    const auto old_file = cyxwiz::LoadComputeRuntimeConfig(path);
+    INFO(old_file.message);
+    CHECK(old_file.file_exists);
+    CHECK_FALSE(old_file.loaded);
+    CHECK(old_file.older_schema);
+    CHECK(old_file.message.find("schema 1") != std::string::npos);
+    REQUIRE(cyxwiz::UpdateDefaultExecutionPolicyAtomic(
+        path, cyxwiz::ExecutionPolicy::Strict, error));
+    const auto replaced = cyxwiz::LoadComputeRuntimeConfig(path);
+    REQUIRE(replaced.loaded);
+    CHECK(replaced.config.default_execution_policy ==
+          cyxwiz::ExecutionPolicy::Strict);
+    CHECK_FALSE(replaced.config.preferred_route.has_value());
+
+    // A newer schema is refused and protected like a corrupt file.
+    {
+        std::ofstream newer(path, std::ios::binary | std::ios::trunc);
+        newer << R"({"schema": 99, "default_execution_policy": "strict"})";
+    }
+    const auto newer_file = cyxwiz::LoadComputeRuntimeConfig(path);
+    CHECK_FALSE(newer_file.loaded);
+    CHECK_FALSE(newer_file.older_schema);
+    CHECK_FALSE(cyxwiz::UpdatePreferredComputeRouteAtomic(
+        path, {cyxwiz::DeviceType::CPU, 0, {}}, error));
     std::filesystem::remove_all(root, cleanup_error);
 }
 

@@ -393,10 +393,17 @@ int main(int argc, char** argv) {
                     ? "backend_local"
                     : preferred.physical_fingerprint);
         }
+    } else if (runtime_config.older_schema) {
+        spdlog::warn(
+            "Saved compute choice not applied: {}. Automatic device selection "
+            "is in use; choose the device again in Preferences > Devices to "
+            "save it ({})",
+            runtime_config.message, runtime_config_path.string());
     } else if (runtime_config.file_exists) {
         spdlog::warn(
-            "Machine compute runtime configuration was not applied: {}",
-            runtime_config.message);
+            "Saved compute choice not applied: {}. Automatic device selection "
+            "is in use ({})",
+            runtime_config.message, runtime_config_path.string());
     } else {
         std::string config_error;
         if (!cyxwiz::SaveComputeRuntimeConfigAtomic(

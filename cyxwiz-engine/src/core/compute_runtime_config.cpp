@@ -76,11 +76,25 @@ ComputeRuntimeConfigLoadResult LoadComputeRuntimeConfig(
         if (!input) throw std::runtime_error("could not open file");
         nlohmann::json document;
         input >> document;
+        const int current_schema = ComputeRuntimeConfig{}.schema;
         if (!document.is_object() || !document.contains("schema") ||
-            !document.at("schema").is_number_integer() ||
-            document.at("schema").get<int>() != ComputeRuntimeConfig{}.schema) {
+            !document.at("schema").is_number_integer()) {
             throw std::runtime_error(
                 "unsupported compute runtime configuration schema");
+        }
+        const int schema = document.at("schema").get<int>();
+        if (schema < current_schema) {
+            result.older_schema = true;
+            result.message = "the file was written by an older Engine (schema " +
+                             std::to_string(schema) + "; this build reads schema " +
+                             std::to_string(current_schema) + ")";
+            return result;
+        }
+        if (schema != current_schema) {
+            throw std::runtime_error(
+                "unsupported compute runtime configuration schema " +
+                std::to_string(schema) + " (this build reads schema " +
+                std::to_string(current_schema) + ")");
         }
 
         ComputeRuntimeConfig config;
@@ -215,7 +229,7 @@ bool UpdatePreferredComputeRouteAtomic(
     const PreferredComputeRoute& route,
     std::string& error) {
     const auto loaded = LoadComputeRuntimeConfig(path);
-    if (loaded.file_exists && !loaded.loaded) {
+    if (loaded.file_exists && !loaded.loaded && !loaded.older_schema) {
         error = loaded.message;
         return false;
     }
@@ -231,7 +245,7 @@ bool UpdateDefaultExecutionPolicyAtomic(
     ExecutionPolicy policy,
     std::string& error) {
     const auto loaded = LoadComputeRuntimeConfig(path);
-    if (loaded.file_exists && !loaded.loaded) {
+    if (loaded.file_exists && !loaded.loaded && !loaded.older_schema) {
         error = loaded.message;
         return false;
     }
