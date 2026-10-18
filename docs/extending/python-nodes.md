@@ -245,7 +245,16 @@ parallel with each other or with a script running in the Engine (one
 interpreter lock), and converting to NumPy inside a node copies to the CPU
 and back.
 
-## 8. Not yet
+## 8. Saving and exporting a model with Python nodes
+
+| Path | What happens |
+|---|---|
+| Export a CyxWiz package (`.cyxmodel`) | Works. The node's weights are saved, the graph is always included, and the manifest lists the bundle's node types with version and code hash |
+| Import the package | The node is rebuilt from the installed, approved bundle and its weights loaded. Missing bundle: refused, "is not installed". Other code than at training: loads, with the warning "is not the one this graph was saved with" |
+| ONNX export, generated code (PyTorch, TensorFlow, Keras, pycyxwiz) | Refused with the node's name: the bundle's `node.py` is not carried into them yet |
+| Server Node deployment | Refused: the Server Node does not run extension nodes yet |
+
+## 9. Not yet
 
 | Coming | Stage |
 |---|---|

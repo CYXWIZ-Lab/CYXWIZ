@@ -335,6 +335,18 @@ compile (*Extension node '...' is not installed. Install and approve the
 extension that provides it, or remove the node.*); off the path it is a
 warning.
 
+### Trained models
+
+| Path | What happens |
+|---|---|
+| Export a CyxWiz package (`.cyxmodel`) | Your module's `GetParameters` are saved with the other weights; the graph is always included; the manifest's `extensions` lists your node types with their versions |
+| Import the package | Your plugin builds the module again (`CreateModule`) and `SetParameters` gets the saved weights. Plugin not loaded: refused, "is not installed". Another version: loads, with a warning |
+| ONNX export, generated code | Refused with the node's name: they cannot contain your module's code |
+| Server Node deployment | Refused: the Server Node does not load plugins yet |
+
+So keep your parameter keys stable across versions of a node: a weight
+saved under one key is loaded only under the same key.
+
 ## 9. Loading, unloading and startup
 
 - **Install...** in the Plugin Manager loads one plugin from its folder; **Refresh** loads every plugin in the two plugin folders (see the [quickstart](plugin-quickstart.md#3-load-it-in-the-engine)).

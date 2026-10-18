@@ -38,7 +38,7 @@ numerically. Both follow one [node contract](node-contract.md).
 | Trainable nodes from a C++ plugin: one tensor in, one tensor out | Nodes with several inputs or outputs |
 | Typed settings shown in Properties | Autograd: you write the backward step yourself |
 | Numerical gradient check in Properties | Training on a remote Server Node (refused with a message) |
-| Saving and reopening graphs; a missing plugin shows its nodes as "Not installed". A trained model saves as a CyxWiz package and imports with its extension weights | Exporting a model with extension nodes to ONNX or Python code (refused with the node's name) |
+| Saving and reopening graphs; a missing plugin shows its nodes as "Not installed". A trained model saves as a CyxWiz package and imports with its extension weights | Exporting a model with extension nodes to ONNX or Python code, or deploying it on a Server Node (refused with the node's name) |
 | Plugins load again when the Engine starts | |
 | Apps menu lists every loaded plugin and Python node bundle | |
 | C++ plugins built outside the CyxWiz sources, against the plugin SDK that every installation carries (`find_package(CyxWizSDK)`, template, plugin check; Apache-2.0) | |
