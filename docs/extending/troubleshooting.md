@@ -98,3 +98,11 @@ and the node's name instead of leaving the layer out. The same happens, with
 "is not installed", when the extension is not loaded (for example with
 `cyxwiz-engine --export-code`, which loads no extensions). Train the graph in
 CyxWiz, or export a CyxWiz package.
+
+## Importing a model says "Extension node '...' is not installed"
+
+A CyxWiz package keeps the graph and the extension node's weights, but not
+the extension itself. Install and approve the plugin or Python node bundle
+the model was trained with, then import again. If the extension is installed
+but cannot create its module (for example Python is not running yet), the
+import message ends with the extension's own reason.

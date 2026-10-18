@@ -211,7 +211,10 @@ static bool BuildModelFromGraph(
     }
     auto built = BuildSequentialFromConfig(config);
     if (!built.ok() || !built.model) {
-        error_message = "ModelBuilder could not rebuild model from graph";
+        // The builder's reason names the node (an extension that cannot
+        // create its module, for example "Python is not running yet").
+        error_message = built.error_message.empty() ? "ModelBuilder could not rebuild model from graph"
+                                                    : built.error_message;
         return false;
     }
     model = std::move(*built.model);

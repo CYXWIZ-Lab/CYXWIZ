@@ -2929,6 +2929,7 @@ add_executable(test_extension_model_files
     src/inference/text_inference_input.cpp
 )
 target_link_libraries(test_extension_model_files PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_extension_model_files PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 target_include_directories(test_extension_model_files PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_extension_model_files PRIVATE
     Arrow::arrow_shared Parquet::parquet_shared imgui::imgui nlohmann_json::nlohmann_json
