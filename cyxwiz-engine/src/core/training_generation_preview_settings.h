@@ -100,6 +100,17 @@ struct RenderedPreviewPrompt {
 RenderedPreviewPrompt RenderGenerationPreviewPrompt(
     const TrainingGenerationPreviewSettings& settings, const std::string& prompt);
 
+// A conversation as the model sees it: the system prompt once, each earlier
+// turn (user message and the reply), then `message` and the assistant's cue.
+// Continuation mode ignores the history and gives `message` as it is.
+struct GenerationConversationTurn {
+    std::string user;
+    std::string assistant;
+};
+RenderedPreviewPrompt RenderGenerationConversation(
+    const TrainingGenerationPreviewSettings& settings,
+    const std::vector<GenerationConversationTurn>& history, const std::string& message);
+
 // Stop texts the chat template implies (the next user turn or its end marker).
 std::vector<std::string> GenerationPreviewTemplateStopTexts(
     const TrainingGenerationPreviewSettings& settings);

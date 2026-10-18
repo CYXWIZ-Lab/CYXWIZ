@@ -234,6 +234,7 @@ std::filesystem::path GenerationPreviewReportPath(const std::filesystem::path& d
                                                   int epoch, long long step) {
     std::string stem = point == "baseline" ? "baseline"
                        : point == "try"    ? "try"
+                       : point == "chat"   ? "chat"
                        : point == "step"   ? "step_" + std::to_string(step)
                                            : "epoch_" + std::to_string(epoch);
     auto path = directory / (stem + ".json");
@@ -307,6 +308,9 @@ GenerationPreviewSummary SummarizeGenerationPreview(const GenerationPreviewRepor
 std::string GenerationPreviewPointLabel(const GenerationPreviewReport& report) {
     if (report.point == "baseline") return "Before training";
     if (report.point == "try") return "Try: epoch " + std::to_string(report.epoch) + " " + report.weights + " weights";
+    if (report.point == "chat")
+        return report.epoch > 0 ? "Chat: epoch " + std::to_string(report.epoch) + " " + report.weights + " weights"
+                                : "Chat";
     if (report.point == "step")
         return "Step " + WithThousands(report.step) + " (epoch " + std::to_string(report.epoch + 1) + ")";
     if (report.total_epochs > 0)
@@ -371,6 +375,7 @@ std::vector<std::string> GenerationPreviewLogLines(const GenerationPreviewReport
     std::string point = report.point == "baseline" ? "before training"
                         : report.point == "try"    ? "try with epoch " + std::to_string(report.epoch) + " " +
                                                          report.weights + " weights"
+                        : report.point == "chat"   ? std::string("chat")
                         : report.point == "step"   ? "step " + WithThousands(report.step)
                                                    : "epoch " + std::to_string(report.epoch) +
                                                          (report.total_epochs > 0 ? "/" + std::to_string(report.total_epochs) : "");

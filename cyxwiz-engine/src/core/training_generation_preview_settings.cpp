@@ -291,44 +291,72 @@ std::string ValidateTrainingGenerationPreview(const TrainingGenerationPreviewSet
 
 RenderedPreviewPrompt RenderGenerationPreviewPrompt(
     const TrainingGenerationPreviewSettings& s, const std::string& prompt) {
+    return RenderGenerationConversation(s, {}, prompt);
+}
+
+RenderedPreviewPrompt RenderGenerationConversation(
+    const TrainingGenerationPreviewSettings& s,
+    const std::vector<GenerationConversationTurn>& history, const std::string& message) {
     RenderedPreviewPrompt rendered;
     if (s.mode == GenerationPreviewMode::Continuation) {
-        AddSegment(rendered, prompt, false);
+        AddSegment(rendered, message, false);
         return rendered;
     }
     const bool has_system = !s.system_prompt.empty();
-    switch (s.chat_template) {
-        case GenerationPreviewTemplate::RoleLines:
-            if (has_system) {
+    // A user turn and the assistant's cue; `reply` (an earlier turn's answer)
+    // follows the cue and closes the turn.
+    const auto add_turn = [&](const std::string& user, const std::string* reply) {
+        switch (s.chat_template) {
+            case GenerationPreviewTemplate::RoleLines:
+                AddSegment(rendered, s.label_user + " ", true);
+                AddSegment(rendered, user, false);
+                AddSegment(rendered, "\n" + s.label_assistant + "\n", true);
+                if (reply) {
+                    AddSegment(rendered, *reply, false);
+                    AddSegment(rendered, "\n", true);
+                }
+                break;
+            case GenerationPreviewTemplate::ChatML:
+                AddSegment(rendered, "<|im_start|>user\n", true);
+                AddSegment(rendered, user, false);
+                AddSegment(rendered, "<|im_end|>\n<|im_start|>assistant\n", true);
+                if (reply) {
+                    AddSegment(rendered, *reply, false);
+                    AddSegment(rendered, "<|im_end|>\n", true);
+                }
+                break;
+            case GenerationPreviewTemplate::Llama3:
+                AddSegment(rendered, "<|start_header_id|>user<|end_header_id|>\n\n", true);
+                AddSegment(rendered, user, false);
+                AddSegment(rendered, "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n", true);
+                if (reply) {
+                    AddSegment(rendered, *reply, false);
+                    AddSegment(rendered, "<|eot_id|>", true);
+                }
+                break;
+        }
+    };
+    if (has_system) {
+        switch (s.chat_template) {
+            case GenerationPreviewTemplate::RoleLines:
                 AddSegment(rendered, s.label_system + " ", true);
                 AddSegment(rendered, s.system_prompt, false);
                 AddSegment(rendered, "\n", true);
-            }
-            AddSegment(rendered, s.label_user + " ", true);
-            AddSegment(rendered, prompt, false);
-            AddSegment(rendered, "\n" + s.label_assistant + "\n", true);
-            break;
-        case GenerationPreviewTemplate::ChatML:
-            if (has_system) {
+                break;
+            case GenerationPreviewTemplate::ChatML:
                 AddSegment(rendered, "<|im_start|>system\n", true);
                 AddSegment(rendered, s.system_prompt, false);
                 AddSegment(rendered, "<|im_end|>\n", true);
-            }
-            AddSegment(rendered, "<|im_start|>user\n", true);
-            AddSegment(rendered, prompt, false);
-            AddSegment(rendered, "<|im_end|>\n<|im_start|>assistant\n", true);
-            break;
-        case GenerationPreviewTemplate::Llama3:
-            if (has_system) {
+                break;
+            case GenerationPreviewTemplate::Llama3:
                 AddSegment(rendered, "<|start_header_id|>system<|end_header_id|>\n\n", true);
                 AddSegment(rendered, s.system_prompt, false);
                 AddSegment(rendered, "<|eot_id|>", true);
-            }
-            AddSegment(rendered, "<|start_header_id|>user<|end_header_id|>\n\n", true);
-            AddSegment(rendered, prompt, false);
-            AddSegment(rendered, "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n", true);
-            break;
+                break;
+        }
     }
+    for (const auto& turn : history) add_turn(turn.user, &turn.assistant);
+    add_turn(message, nullptr);
     return rendered;
 }
 

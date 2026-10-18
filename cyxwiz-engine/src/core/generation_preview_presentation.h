@@ -33,7 +33,7 @@ struct GenerationPreviewSample {
 // One generation pass: before training, after an epoch, or after a step.
 struct GenerationPreviewReport {
     std::string run_id;
-    std::string point;        // baseline | epoch | step | try (Generation tab's Try now)
+    std::string point;        // baseline | epoch | step | try (Generation tab's Try now) | chat (LM Generation)
     int epoch = 0;            // Completed epochs at this point.
     int total_epochs = 0;
     long long step = 0;       // Completed optimizer steps at this point.

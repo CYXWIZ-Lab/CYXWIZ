@@ -578,6 +578,7 @@ set(ENGINE_SOURCES
     src/inference/language_model_inference_contract.cpp
     src/inference/metric_learning_inference_input.cpp
     src/inference/text_inference_input.cpp
+    src/core/language_model_chat.cpp
     # DNN inference (Phase 3)
     src/inference/dnn_models.cpp
     src/inference/dnn_preprocessor.cpp
@@ -2301,6 +2302,20 @@ endif()
 set_target_properties(test_language_model_generation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Language Model Chat (LM Generation panel core, TOFIX159) =====
+add_executable(test_language_model_chat
+    tests/test_language_model_chat.cpp
+    src/core/language_model_chat.cpp
+    src/inference/text_inference_input.cpp
+)
+target_include_directories(test_language_model_chat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_language_model_chat PRIVATE
+    cyxwiz-training-core cyxwiz-backend spdlog::spdlog nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_language_model_chat PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_language_model_chat PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Language Model Inference Contract =====
 add_executable(test_language_model_inference_contract
