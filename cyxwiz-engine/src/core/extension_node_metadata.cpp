@@ -46,4 +46,20 @@ std::optional<NodeMetadata> ResolveNodeMetadata(const gui::MLNode& node) {
     return MissingExtensionMetadata(node);
 }
 
+std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node) {
+    if (node.type != gui::NodeType::PluginCustom) return std::nullopt;
+    const std::string name = node.name.empty() ? node.extension_type_id : node.name;
+    const auto descriptor = node.extension_missing ? std::nullopt
+                                                   : ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    if (!descriptor) {
+        return name + ": the extension that provides it (" + node.extension_type_id +
+               ") is not installed, so code export cannot include it";
+    }
+    if (descriptor->kind == ExtensionNodeKind::TensorLayer) {
+        return name + ": code export cannot include an extension node's own code yet (" + node.extension_type_id +
+               "); train it in Studio, or export a CyxWiz package";
+    }
+    return std::nullopt;
+}
+
 }  // namespace cyxwiz

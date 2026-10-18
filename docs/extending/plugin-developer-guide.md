@@ -385,4 +385,4 @@ with the current SDK is enough.
 | Crash isolation | Plugin lifecycle calls, `InferOutputShape` and `CreateModule` run inside the Engine's crash guard. During training, C++ exceptions from `Forward` and `Backward` are caught by the guard above; a memory fault in your code is not, and can close the Engine |
 | Tensors | Use `cyxwiz::Tensor` operations. Do not mix in raw ArrayFire arrays: they are column-major, `Tensor` is row-major |
 | Remote training | Graphs with extension nodes do not train on a Server Node yet; the Engine refuses with a message |
-| Export | Models with extension nodes cannot be exported yet |
+| Export | ONNX export and generated code refuse a model with extension nodes, naming the node (see troubleshooting) |

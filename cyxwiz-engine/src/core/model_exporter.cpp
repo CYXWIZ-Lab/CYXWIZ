@@ -3,6 +3,7 @@
 #include "training_executor.h"
 #include "node_executors/tree_model_artifact.h"
 #include "graph_model.h"
+#include "guarded_extension_module.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
@@ -1100,6 +1101,21 @@ ExportResult ModelExporter::ExportONNX(
 ) {
     ExportResult result;
     result.output_path = output_path;
+
+    // ONNX is written from the built-in layers it recognises; an extension
+    // node's computation is the extension's own code, so it would be dropped
+    // and the file would describe another model (TOFIX125 P6).
+    for (size_t i = 0; i < model.Size(); ++i) {
+        const auto* extension = dynamic_cast<const GuardedExtensionModule*>(model.GetModule(i));
+        if (!extension) continue;
+        result.success = false;
+        result.error_message = errors::FormatError(
+            errors::Serialization::ExportFormatUnavailable,
+            "The model has the extension node " + extension->NodeName() + " (" + extension->TypeId() +
+                "); ONNX cannot describe its computation. Export a CyxWiz package (.cyxmodel) or Safetensors");
+        last_error_ = result.error_message;
+        return result;
+    }
 
 #ifndef CYXWIZ_HAS_ONNX_EXPORT
     result.num_layers = static_cast<int>(model.Size());

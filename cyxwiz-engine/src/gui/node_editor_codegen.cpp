@@ -4,6 +4,7 @@
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
 #include "../core/pipeline_runtime_capabilities.h"
+#include "../core/extension_node_metadata.h"
 #include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -734,6 +735,7 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             return EffectiveNodeName(*node) +
                    ": code export does not support Conv3D (volume rows) yet; train it in Studio";
         }
+        if (auto refusal = cyxwiz::ExtensionCodeExportRefusal(*node)) return refusal;
         switch (node->type) {
             case NodeType::CenterCrop:
             case NodeType::RandomCrop:

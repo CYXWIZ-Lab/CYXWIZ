@@ -80,3 +80,21 @@ lists them.
 ## "Remote nodes do not run extension nodes yet"
 
 Graphs with extension nodes train on this computer only, for now.
+
+## "ONNX cannot describe its computation"
+
+ONNX export writes the built-in layers it knows. An extension node's
+computation is its own code, so a model with one would come out as a
+different model; the Engine refuses instead and names the node. The export
+dialog does not offer ONNX for such a model. Export a CyxWiz package
+(`.cyxmodel`), which keeps the graph and the extension node's weights, or
+Safetensors (weights only).
+
+## Generated code says "code export cannot include an extension node's own code yet"
+
+PyTorch, TensorFlow, Keras and pycyxwiz code export cannot contain an
+extension node's code yet, so the generated script stops with this message
+and the node's name instead of leaving the layer out. The same happens, with
+"is not installed", when the extension is not loaded (for example with
+`cyxwiz-engine --export-code`, which loads no extensions). Train the graph in
+CyxWiz, or export a CyxWiz package.

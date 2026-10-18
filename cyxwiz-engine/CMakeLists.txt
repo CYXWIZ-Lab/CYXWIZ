@@ -2910,6 +2910,35 @@ endif()
 set_target_properties(test_extension_node_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: model files, code generation and export with extension nodes (TOFIX125 P6) =====
+add_executable(test_extension_model_files
+    tests/test_extension_model_files.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/inference/text_inference_input.cpp
+)
+target_link_libraries(test_extension_model_files PRIVATE cyxwiz-training-core)
+target_include_directories(test_extension_model_files PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_extension_model_files PRIVATE
+    Arrow::arrow_shared Parquet::parquet_shared imgui::imgui nlohmann_json::nlohmann_json
+    spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_extension_model_files PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_extension_model_files PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Properties of an installed extension node (TOFIX125 step 2.8) =====
 add_executable(test_extension_properties_presentation
     tests/test_extension_properties_presentation.cpp
@@ -3935,6 +3964,7 @@ set_target_properties(test_cyxmodel_generation_metadata PROPERTIES
 add_executable(test_cyxmodel_exporter_generation_metadata
     tests/test_cyxmodel_exporter_generation_metadata.cpp
     src/core/model_exporter.cpp
+    src/core/guarded_extension_module.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
 )

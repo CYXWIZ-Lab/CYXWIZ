@@ -81,6 +81,8 @@ private:
     // Model data (the optimizer and metrics are not owned)
     std::shared_ptr<IExecutableModel> model_;
     bool LayerStack() const;
+    // ONNX can describe the model: built-in layers only (TOFIX125 P6).
+    bool OnnxWritable() const;
     std::optional<ProcessDeviceSelection> model_device_;
     const Optimizer* optimizer_ = nullptr;
     const TrainingMetrics* metrics_ = nullptr;

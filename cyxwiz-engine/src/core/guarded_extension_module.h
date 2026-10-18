@@ -39,6 +39,7 @@ public:
 
     const Module& Inner() const { return *inner_; }
     const std::string& TypeId() const { return type_id_; }
+    const std::string& NodeName() const { return node_name_; }  // as on the canvas
 
 private:
     [[noreturn]] void Fail(const std::string& what) const;
