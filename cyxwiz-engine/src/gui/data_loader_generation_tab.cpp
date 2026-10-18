@@ -5,7 +5,15 @@
 #include "ui_tokens.h"
 #include "ui_widgets.h"
 #include "../core/arrow_dataset.h"
+#include "../core/async_task_manager.h"
+#include "../core/file_dialogs.h"
+#include "../core/graph_compiler.h"
 #include "../core/graph_compiler_dataset_hooks.h"
+#include "../core/project_manager.h"
+#include "../core/training_generation_preview.h"
+#include "../core/training_manager.h"
+
+#include <cyxwiz/sequential.h>
 
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
@@ -194,7 +202,7 @@ std::string DataLoaderGenerationTab::Problem() const {
     return cyxwiz::ValidateTrainingGenerationPreview(settings_);
 }
 
-bool DataLoaderGenerationTab::Render(const GenerationTabDataset& dataset) {
+bool DataLoaderGenerationTab::Render(const GenerationTabDataset& dataset, NodeEditor* editor, const MLNode* loader) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     bool changed = false;
     if (ImGui::Checkbox("Generate samples while training", &settings_.enabled)) changed = true;
@@ -225,6 +233,7 @@ bool DataLoaderGenerationTab::Render(const GenerationTabDataset& dataset) {
         changed |= RenderPrompts();
         changed |= RenderPromptEditor();
         RenderModelSees(dataset);
+        RenderTryNow(dataset, editor, loader);
         if (settings_.mode == GenerationPreviewMode::Chat) changed |= RenderTemplate();
         changed |= RenderStops();
         changed |= RenderDecoding();
@@ -237,6 +246,7 @@ bool DataLoaderGenerationTab::Render(const GenerationTabDataset& dataset) {
         changed |= RenderPrompts();
         changed |= RenderPromptEditor();
         RenderModelSees(dataset);
+        RenderTryNow(dataset, editor, loader);
         ImGui::TableSetColumnIndex(1);
         if (settings_.mode == GenerationPreviewMode::Chat) changed |= RenderTemplate();
         changed |= RenderStops();
@@ -594,6 +604,176 @@ bool DataLoaderGenerationTab::RenderSchedule() {
     if (settings_.weights == GenerationPreviewWeights::Best)
         Hint("Uses the best validation checkpoint so far; until one exists, the current weights.");
     return changed;
+}
+
+namespace {
+
+// The newest training run under `root` with a best/ checkpoint.
+std::filesystem::path NewestBestCheckpoint(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path newest;
+    fs::file_time_type newest_time{};
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto metadata = it->path() / "best" / "metadata.json";
+        std::error_code inner;
+        if (!it->is_directory(inner) || !fs::exists(metadata, inner)) continue;
+        const auto time = fs::last_write_time(metadata, inner);
+        if (newest.empty() || time > newest_time) {
+            newest = it->path() / "best";
+            newest_time = time;
+        }
+    }
+    return newest;
+}
+
+std::string Param(const MLNode* node, const char* key) {
+    if (!node) return {};
+    const auto it = node->parameters.find(key);
+    return it == node->parameters.end() ? std::string() : it->second;
+}
+
+}  // namespace
+
+void DataLoaderGenerationTab::RenderTryNow(const GenerationTabDataset& dataset, NodeEditor* editor,
+                                          const MLNode* loader) {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    Card card("##gen_try");
+    Title("Try now", "the settings above on a saved checkpoint, without training");
+
+    // Which checkpoint: the one chosen, else the newest run's best under the
+    // checkpoint folder, else the Data Loader's Start from.
+    std::filesystem::path checkpoint = try_checkpoint_;
+    std::string source = "chosen";
+    if (checkpoint.empty()) {
+        const std::string folder = Param(loader, "checkpoint_dir");
+        checkpoint = NewestBestCheckpoint(folder.empty() ? cyxwiz::ProjectManager::Instance().GetCheckpointsPath()
+                                                         : folder);
+        source = "newest run";
+        if (checkpoint.empty() && !Param(loader, "initialize_from_checkpoint").empty()) {
+            checkpoint = Param(loader, "initialize_from_checkpoint");
+            source = "Start from";
+        }
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Checkpoint");
+    ImGui::SameLine();
+    ImGui::PushTextWrapPos(0.0f);
+    if (checkpoint.empty())
+        ImGui::TextColored(t.warning, "none yet: train once, or choose a checkpoint folder");
+    else
+        ImGui::TextColored(t.text, "%s  (%s)", checkpoint.string().c_str(), source.c_str());
+    ImGui::PopTextWrapPos();
+    if (cyxwiz::ui::LinkButton("Choose...")) {
+        const std::string start = checkpoint.empty() ? std::string() : checkpoint.parent_path().string();
+        if (auto chosen = cyxwiz::FileDialogs::SelectFolder("Checkpoint folder (a run, or its best)",
+                                                             start.empty() ? nullptr : start.c_str()))
+            try_checkpoint_ = *chosen;
+    }
+    if (!try_checkpoint_.empty()) {
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Use the newest")) try_checkpoint_.clear();
+    }
+
+    const bool running = try_ && !try_->done.load();
+    std::string blocker;
+    if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) blocker = "Training is running; try when it ends";
+    else if (!editor || !loader) blocker = "Open the Data Loader from the canvas";
+    else if (!dataset.found) blocker = "Load the training data first (apply its Data Input)";
+    else if (checkpoint.empty()) blocker = "No checkpoint to try";
+    else if (settings_.prompts.empty()) blocker = "Add a prompt first";
+    else if (const auto problem = Problem(); !problem.empty() && settings_.enabled) blocker = problem;
+    if (running) {
+        ImGui::TextColored(t.running, "Generating...");
+        ImGui::SameLine();
+        if (cyxwiz::ui::DangerButton("Cancel")) cyxwiz::AsyncTaskManager::Instance().Cancel(try_->task_id);
+    } else if (cyxwiz::ui::SecondaryButton("Try now", blocker.empty(), blocker.c_str())) {
+        StartTry(editor, loader, checkpoint);
+    }
+
+    if (try_ && try_->done.load()) {
+        try_failed_ = !try_->ok;
+        if (try_->ok) {
+            try_view_.SetFolder(try_->folder);
+            try_note_ = "Saved in " + try_->folder.string();
+        } else {
+            try_note_ = try_->error.empty() ? "Try now failed" : try_->error;
+        }
+        try_.reset();
+    }
+    if (!try_note_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(try_failed_ ? t.error : t.text_faint, "%s", try_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (!try_failed_ && !try_view_.Folder().empty()) try_view_.Render();
+}
+
+void DataLoaderGenerationTab::StartTry(NodeEditor* editor, const MLNode* loader,
+                                      const std::filesystem::path& checkpoint) {
+    // The graph as it is, with this tab's settings (applied or not, and on).
+    auto nodes = editor->GetNodes();
+    for (auto& node : nodes) {
+        if (node.id != loader->id) continue;
+        auto settings = settings_;
+        settings.enabled = true;
+        for (const char* key : {"generation_preview_prompts", "generation_preview_every_epochs"})
+            node.parameters.erase(key);
+        for (const auto& [key, value] : cyxwiz::SerializeTrainingGenerationPreview(settings))
+            node.parameters[key] = value;
+    }
+    cyxwiz::GraphCompiler compiler;
+    auto config = compiler.Compile(nodes, editor->GetLinks(), false);
+    try_failed_ = true;
+    try_view_.SetFolder({});
+    if (!config.is_valid) {
+        try_note_ = "The graph does not compile";
+        for (const auto& issue : config.issues)
+            if (issue.level == cyxwiz::IssueLevel::Error) {
+                try_note_ += ": " + issue.message;
+                break;
+            }
+        return;
+    }
+    if (!config.generation_preview.enabled) {
+        try_note_ = "Generation previews need a causal language model trained on token windows";
+        return;
+    }
+    try_note_.clear();
+    try_failed_ = false;
+    auto state = std::make_shared<TryState>();
+    try_ = state;
+    std::weak_ptr<const void> owner = state;
+    state->task_id = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Try generation",
+        [state, config, checkpoint](cyxwiz::LambdaTask& task) {
+            if (cyxwiz::TrainingManager::Instance().IsTrainingActive())
+                throw std::runtime_error("Training started; try when it ends");
+            const auto cancelled = [&task] { return task.IsCancelRequested(); };
+            auto built = cyxwiz::BuildModelFromCheckpoint(config, cyxwiz::GraphArrowDataset(config.dataset_name),
+                                                          checkpoint.string(), cancelled);
+            if (!built.model) throw std::runtime_error(built.error_message);
+            auto* sequential = built.model->AsSequentialModel();
+            if (!sequential) throw std::runtime_error("Try now needs a layer-stack language model");
+            cyxwiz::TrainingGenerationPreview preview(built.prepared.generation_preview, built.prepared.output_size);
+            const std::filesystem::path resolved(built.resolved_checkpoint_path);
+            cyxwiz::GenerationPreviewPoint point;
+            point.kind = "try";
+            point.epoch = built.metadata.epoch;
+            point.step = built.metadata.global_step;
+            point.weights = resolved.filename().string();
+            if (built.metadata.val_loss > 0.0f) point.validation_loss = built.metadata.val_loss;
+            state->folder = resolved.parent_path() / "generation_tries";
+            if (!preview.Run(*sequential, point, resolved.parent_path().filename().string(), state->folder, cancelled))
+                throw std::runtime_error("Try now was cancelled");
+        },
+        nullptr,
+        [state](bool success, const std::string& error) {
+            state->ok = success;
+            state->error = error;
+            state->done.store(true);
+        },
+        owner);
 }
 
 GenerationTabDataset ResolveGenerationTabDataset(NodeEditor* editor, int loader_node_id) {

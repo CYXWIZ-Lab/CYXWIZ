@@ -384,7 +384,9 @@ void GenerationPreviewView::RenderRail(const GenerationPreviewReport& report) {
                              {"Decoding", decoding},
                              {"Max new tokens", std::to_string(report.max_new_tokens)},
                              {"Stop texts", stops.empty() ? std::string("end of sequence only") : "EOS · " + stops},
-                             {"Weights", report.weights == "best" ? "best so far" : "current"},
+                             {"Weights", report.point == "try"
+                                             ? "checkpoint " + report.weights + " (epoch " + std::to_string(report.epoch) + ")"
+                                             : report.weights == "best" ? "best so far" : "current"},
                              {"Context", report.context > 0 ? std::to_string(report.context) + " tokens" : ""},
                              {"Time", OneDecimal(report.elapsed_ms / 1000.0) + " s"}});
     ui::EndCard();

@@ -12,12 +12,12 @@ class SequentialModel;
 
 // Where in the run a generation pass happens.
 struct GenerationPreviewPoint {
-    std::string kind = "epoch";  // baseline | epoch | step
+    std::string kind = "epoch";  // baseline | epoch | step | try
     int epoch = 0;               // Completed epochs.
     int total_epochs = 0;
     long long step = 0;          // Completed optimizer steps.
     std::optional<double> validation_loss;
-    std::string weights = "current";  // The weights actually used: current | best
+    std::string weights = "current";  // The weights actually used: current | best (a checkpoint's name for try)
 };
 
 // Bound once before the first update. Owns small host-side prompt/tokenizer state.

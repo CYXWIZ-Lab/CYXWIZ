@@ -49,6 +49,22 @@ struct CheckpointEvaluationLoadResult {
     CheckpointMetadata metadata;
 };
 
+// The graph's model with a checkpoint's weights, built on the selected device
+// (on the calling thread) and touching nothing else: the session's active
+// model stays as it is. A training-run folder means its best/ checkpoint.
+// Used by LoadCheckpointForEvaluation and by the Data Loader's "Try now".
+struct CheckpointModel {
+    std::unique_ptr<IExecutableModel> model;
+    TrainingConfiguration prepared;  // The config with the frozen sequence vocabulary.
+    std::string resolved_checkpoint_path;
+    CheckpointMetadata metadata;
+    std::string error_message;       // Empty when the model is ready.
+};
+CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
+                                         std::shared_ptr<ArrowDataset> dataset,
+                                         const std::string& checkpoint_path,
+                                         const std::function<bool()>& cancel_requested);
+
 /**
  * TrainingManager - Centralized manager for ML training sessions
  *

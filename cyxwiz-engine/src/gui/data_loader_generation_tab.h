@@ -6,9 +6,12 @@
 // instruction-tuned ones.
 
 #include "../core/training_generation_preview_settings.h"
+#include "generation_preview_view.h"
 
 #include <cyxwiz/tokenizer.h>
 
+#include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -25,6 +28,9 @@ struct GenerationTabDataset {
     std::shared_ptr<cyxwiz::Tokenizer> tokenizer;  // For token counts; null when not loaded.
 };
 
+class NodeEditor;
+struct MLNode;
+
 class DataLoaderGenerationTab {
 public:
     // Reads the generation_preview_* parameters. A Data Loader saved with the
@@ -32,8 +38,9 @@ public:
     void Load(const std::map<std::string, std::string>& params);
     // Writes the parameters and removes the pre-TOFIX159 keys.
     void Store(std::map<std::string, std::string>& params) const;
-    // Returns true when a setting changed.
-    bool Render(const GenerationTabDataset& dataset);
+    // Returns true when a setting changed. `editor` and `loader` let Try now
+    // build the graph's model; either may be null (no Try now then).
+    bool Render(const GenerationTabDataset& dataset, NodeEditor* editor, const MLNode* loader);
     // "" when the settings are valid (or off).
     std::string Problem() const;
 
@@ -45,6 +52,21 @@ private:
     bool RenderStops();
     bool RenderDecoding();
     bool RenderSchedule();
+    // Try now (TOFIX159): the current settings on a checkpoint, without training.
+    void RenderTryNow(const GenerationTabDataset& dataset, NodeEditor* editor, const MLNode* loader);
+    void StartTry(NodeEditor* editor, const MLNode* loader, const std::filesystem::path& checkpoint);
+    struct TryState {
+        std::atomic<bool> done{false};
+        bool ok = false;
+        std::string error;
+        std::filesystem::path folder;  // Where the report went.
+        uint64_t task_id = 0;
+    };
+    std::shared_ptr<TryState> try_;
+    std::filesystem::path try_checkpoint_;  // Chosen with Choose...; empty = the newest.
+    cyxwiz::GenerationPreviewView try_view_;
+    std::string try_note_;
+    bool try_failed_ = false;
 
     cyxwiz::TrainingGenerationPreviewSettings settings_;
     int selected_ = 0;

@@ -320,13 +320,11 @@ bool TrainingManager::HasTrainedModel() const {
     return last_trained_model_ != nullptr;
 }
 
-CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
-    const TrainingConfiguration& config,
-    std::shared_ptr<ArrowDataset> dataset,
-    const std::string& checkpoint_path,
-    const std::string& graph_fingerprint,
-    std::function<bool()> cancel_requested) {
-    CheckpointEvaluationLoadResult result;
+CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
+                                         std::shared_ptr<ArrowDataset> dataset,
+                                         const std::string& checkpoint_path,
+                                         const std::function<bool()>& cancel_requested) {
+    CheckpointModel result;
     namespace fs = std::filesystem;
 
     // Build the model on the selected device, as training does; this runs
@@ -348,15 +346,8 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     const auto was_cancelled = [&cancel_requested]() {
         return cancel_requested && cancel_requested();
     };
-
     if (was_cancelled()) {
         result.error_message = "Checkpoint loading was cancelled.";
-        return result;
-    }
-
-    if (IsTrainingActive()) {
-        result.error_message =
-            "Cannot load a checkpoint while training is active.";
         return result;
     }
     if (!config.is_valid) {
@@ -391,14 +382,14 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     // produce the frozen token vocabulary; training obtains it by building the
     // sequence batcher from its prepared dataset (token-window metadata). Do the
     // same here so Run Test can verify that test data uses the model's vocabulary.
-    TrainingConfiguration prepared = config;
-    if (!PrepareSequenceEvaluationVocabulary(prepared, dataset, result.error_message)) {
+    result.prepared = config;
+    if (!PrepareSequenceEvaluationVocabulary(result.prepared, dataset, result.error_message)) {
         return result;
     }
 
     // The graph's own model: a layer stack, or a graph with branches
     // (TOFIX157; its layers alone were tested as a stack before).
-    auto built = BuildExecutableFromConfig(prepared);
+    auto built = BuildExecutableFromConfig(result.prepared);
     if (!built.ok() || !built.model) {
         result.error_message = built.error_message.empty()
             ? "The active graph could not build a model for this checkpoint."
@@ -420,6 +411,35 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
             : manager.GetLastError();
         return result;
     }
+    result.model = std::move(built.model);
+    result.resolved_checkpoint_path = resolved.string();
+    result.metadata = *metadata;
+    return result;
+}
+
+CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
+    const TrainingConfiguration& config,
+    std::shared_ptr<ArrowDataset> dataset,
+    const std::string& checkpoint_path,
+    const std::string& graph_fingerprint,
+    std::function<bool()> cancel_requested) {
+    CheckpointEvaluationLoadResult result;
+    const auto was_cancelled = [&cancel_requested]() {
+        return cancel_requested && cancel_requested();
+    };
+    if (IsTrainingActive()) {
+        result.error_message =
+            "Cannot load a checkpoint while training is active.";
+        return result;
+    }
+    auto built = BuildModelFromCheckpoint(config, dataset, checkpoint_path, cancel_requested);
+    if (!built.model) {
+        result.error_message = built.error_message;
+        return result;
+    }
+    const auto& prepared = built.prepared;
+    const std::filesystem::path resolved(built.resolved_checkpoint_path);
+    const std::optional<CheckpointMetadata> metadata = built.metadata;
 
     if (was_cancelled()) {
         result.error_message =

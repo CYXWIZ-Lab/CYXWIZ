@@ -90,6 +90,22 @@ capped by the context the prompt leaves). A stop text is cut from the output.
 The Properties panel shows the main settings (on or off, mode, max new
 tokens, every); the prompts, template and decoding are on the tab.
 
+### Try now
+
+**Try now** (under What the model sees) runs the tab's current settings on a
+saved checkpoint without training, so a prompt, template or stop text can be
+checked before Apply or before a long run. The checkpoint is the newest run's
+`best` under the Data Loader's checkpoint folder; before any run it is the
+**Start from** checkpoint. **Choose...** picks another run or checkpoint
+folder, **Use the newest** goes back. The training data must be loaded (apply
+its Data Input): the model and its tokenizer come from the graph and that
+data. The model is built on the selected device and loaded in the background
+(**Cancel** stops it); the session's active model (Test, Inference) is not
+replaced. The result shows in the tab in the Generations view, and the report
+is saved next to the checkpoint in `generation_tries/` (`try.json`,
+`try_2.json`, ...). The button is off, with the reason on hover, while
+training runs, when the data is not loaded or when there is no checkpoint.
+
 ## Reading them (Generations)
 
 Each pass writes one file in the run's checkpoint folder,

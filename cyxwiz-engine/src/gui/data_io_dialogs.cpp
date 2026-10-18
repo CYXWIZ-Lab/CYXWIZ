@@ -1330,7 +1330,7 @@ void DataLoaderDialog::RenderContent() {
             generation_dataset_ = ResolveGenerationTabDataset(node_editor_, node_->id);
             generation_dataset_resolved_ = true;
         }
-        if (generation_tab_.Render(generation_dataset_)) has_changes_ = true;
+        if (generation_tab_.Render(generation_dataset_, node_editor_, node_)) has_changes_ = true;
         ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Advanced")) {
