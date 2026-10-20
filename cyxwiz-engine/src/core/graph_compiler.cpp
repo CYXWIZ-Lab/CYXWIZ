@@ -4464,7 +4464,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
         bool has_model_layer = false;
         for (const auto& node : nodes) {
-            if (IsModelLayer(node.type)) { has_model_layer = true; break; }
+            if (IsModelLayer(node.type) || IsTrainableExtensionLayer(node)) { has_model_layer = true; break; }
         }
         if (!has_model_layer) {
             AddIssue(config, IssueLevel::Error,
@@ -5445,6 +5445,12 @@ TrainingConfiguration GraphCompiler::Compile(
             CompiledLayer layer;
             if (CompileExtensionLayer(*node, current_shape, config, layer)) {
                 current_shape = layer.output_shape;
+                // A trainable extension layer can be the final class/logit
+                // projection, as a built-in Dense is (TOFIX125); activations
+                // keep the size of the layer before them.
+                if (IsTrainableExtensionLayer(*node) && !layer.output_shape.empty()) {
+                    config.output_size = layer.output_shape.back();
+                }
                 config.layers.push_back(std::move(layer));
             }
             continue;
@@ -6463,7 +6469,7 @@ bool GraphCompiler::ValidateGraph(
     // Check for at least one model layer
     bool has_model_layer = false;
     for (const auto& node : nodes) {
-        if (IsModelLayer(node.type)) {
+        if (IsModelLayer(node.type) || IsTrainableExtensionLayer(node)) {
             has_model_layer = true;
             break;
         }
@@ -6643,6 +6649,16 @@ const gui::MLNode* GraphCompiler::FindOutputNode(const std::vector<gui::MLNode>&
         }
     }
     return nullptr;
+}
+
+// A trainable extension node with the layer role (a Python or plugin Dense,
+// for example) is a model layer for the graph's checks, as the built-in one
+// is; extension activations, like built-in ones, are not (TOFIX125).
+bool GraphCompiler::IsTrainableExtensionLayer(const gui::MLNode& node) const {
+    if (node.type != gui::NodeType::PluginCustom) return false;
+    const auto descriptor = ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    return descriptor && descriptor->kind == ExtensionNodeKind::TensorLayer &&
+           descriptor->role == ExtensionLayerRole::Layer;
 }
 
 bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
@@ -7914,7 +7930,8 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
 
                 const gui::MLNode* upstream_node = node_it->second;
                 if (IsOutputNodeType(upstream_node->type) ||
-                    IsModelLayer(upstream_node->type)) {
+                    IsModelLayer(upstream_node->type) ||
+                    IsTrainableExtensionLayer(*upstream_node)) {
                     found_model_source = true;
                     break;
                 }
