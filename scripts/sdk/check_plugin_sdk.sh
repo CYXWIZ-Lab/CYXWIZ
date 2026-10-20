@@ -36,6 +36,17 @@ core_headers=$(ls "$work/sdk/include/core" | tr '\n' ' ')
 [ "$core_headers" = "extension_node_contract.h graph_model.h node_metadata.h " ] \
     || fail "core/ should hold only the three contract headers, has: $core_headers"
 [ -f "$work/sdk/lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake" ] || fail "no CyxWizSDKConfig.cmake"
+examples="$work/sdk/examples/python-nodes/builtin-layers"
+for file in builtin_layers.py test_builtin_layers.py blobs_python_layers.cyxgraph blobs.csv             pycyxwiz_test_env.py nodes/builtin-layers.cyxnode/node.json nodes/builtin-layers.cyxnode/node.py; do
+    [ -f "$examples/$file" ] || fail "the Python examples lack $file"
+done
+# The Python examples' own test, from the installed SDK, when a Python with
+# pycyxwiz is given: CYXWIZ_SDK_CHECK_PYTHON=<python> (pycyxwiz from the build).
+if [ -n "${CYXWIZ_SDK_CHECK_PYTHON:-}" ]; then
+    step "Python example nodes: their test, run from the installed SDK"
+    (cd "$examples" && "$CYXWIZ_SDK_CHECK_PYTHON" test_builtin_layers.py "$build/lib/Release" "$build/bin/Release"         > "$work/python_examples.log" 2>&1) || fail "test_builtin_layers.py (see $work/python_examples.log)"
+    tail -1 "$work/python_examples.log"
+fi
 
 # name source-folder [config]
 build_plugin() {

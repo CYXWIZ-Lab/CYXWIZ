@@ -24,7 +24,7 @@ numerically. Both follow one [node contract](node-contract.md).
 | Page | Read it to |
 |---|---|
 | [python-modules.md](python-modules.md) | Write a trainable module in Python and train it with pycyxwiz |
-| [python-nodes.md](python-nodes.md) | Describe a Python module as a node, bundle it, approve and use it in the Engine |
+| [python-nodes.md](python-nodes.md) | Describe a Python module as a node, bundle it, approve and use it in the Engine; ten built-in layers as Python example nodes |
 | [plugin-quickstart.md](plugin-quickstart.md) | Build the example plugin, load it and train with its nodes; build your own against the SDK |
 | [plugin-developer-guide.md](plugin-developer-guide.md) | Write your own C++ plugin with trainable nodes |
 | [plugin-api-reference.md](plugin-api-reference.md) | Look up every C++ type, `plugin.json` field, CMake name and what the Engine does with it |

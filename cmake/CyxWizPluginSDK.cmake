@@ -11,6 +11,7 @@
 # <folder>/lib              the backend's import library
 # <folder>/lib/cmake/CyxWizSDK  find_package(CyxWizSDK) -> CyxWiz::PluginSDK
 # <folder>/template         the template plugin (plugins/template)
+# <folder>/examples/python-nodes  ten built-in layers as Python nodes (examples/python_nodes)
 # <folder>/LICENSE, NOTICE  Apache-2.0 for every file in the SDK
 
 include(CMakePackageConfigHelpers)
@@ -60,6 +61,20 @@ install(FILES
             "${_cyxwiz_sdk_cmake}/CyxWizSDKConfigVersion.cmake"
             "${CMAKE_SOURCE_DIR}/cmake/sdk/CyxWizPluginHelpers.cmake"
         DESTINATION lib/cmake/CyxWizSDK COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# Python example nodes: ten built-in layers written as a Python node bundle,
+# an example graph and their test (examples/python_nodes/builtin_layers).
+set(_cyxwiz_sdk_python_example "${CMAKE_SOURCE_DIR}/examples/python_nodes/builtin_layers")
+install(FILES
+            "${_cyxwiz_sdk_python_example}/README.md"
+            "${_cyxwiz_sdk_python_example}/builtin_layers.py"
+            "${_cyxwiz_sdk_python_example}/test_builtin_layers.py"
+            "${_cyxwiz_sdk_python_example}/blobs_python_layers.cyxgraph"
+            "${_cyxwiz_sdk_python_example}/blobs.csv"
+            "${CMAKE_SOURCE_DIR}/cyxwiz-backend/python/tests/pycyxwiz_test_env.py"
+        DESTINATION examples/python-nodes/builtin-layers COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+install(DIRECTORY "${_cyxwiz_sdk_python_example}/nodes/builtin-layers.cyxnode"
+        DESTINATION examples/python-nodes/builtin-layers/nodes COMPONENT plugin_sdk EXCLUDE_FROM_ALL
+        PATTERN "__pycache__" EXCLUDE)
 # Apache-2.0 (owner 2026-10-17, the plugin-SDK part of TOFIX142).
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/sdk/LICENSE" "${CMAKE_SOURCE_DIR}/cmake/sdk/NOTICE"
         DESTINATION . COMPONENT plugin_sdk EXCLUDE_FROM_ALL)

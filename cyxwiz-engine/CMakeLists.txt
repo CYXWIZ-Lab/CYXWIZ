@@ -7173,6 +7173,21 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
     add_dependencies(test_python_node_training pycyxwiz)
     add_test(NAME python_node_training COMMAND test_python_node_training)
 
+    # The SDK's Python example layers trained from a Data Input (TOFIX125).
+    add_executable(test_python_builtin_layers
+        tests/test_python_builtin_layers.cpp
+        src/extension/python/python_node_factory.cpp
+    )
+    target_link_libraries(test_python_builtin_layers PRIVATE cyxwiz-training-core pybind11::embed)
+    target_compile_definitions(test_python_builtin_layers PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
+        CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_builtin_layers>"
+        CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
+    add_dependencies(test_python_builtin_layers pycyxwiz)
+    add_test(NAME python_builtin_layers COMMAND test_python_builtin_layers)
+
     # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
     add_executable(bench_python_node_cost
         tests/bench_python_node_cost.cpp
