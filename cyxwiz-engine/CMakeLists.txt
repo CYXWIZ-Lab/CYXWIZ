@@ -443,6 +443,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
     src/gui/data_loader_generation_tab.cpp
+    src/gui/generation_settings_widgets.cpp
     src/gui/generation_preview_view.cpp
     src/core/data_convert_task.cpp
     src/core/hdf5_inspection_task.cpp
@@ -579,6 +580,8 @@ set(ENGINE_SOURCES
     src/inference/metric_learning_inference_input.cpp
     src/inference/text_inference_input.cpp
     src/core/language_model_chat.cpp
+    src/core/language_model_checkpoints.cpp
+    src/core/language_model_loader.cpp
     # DNN inference (Phase 3)
     src/inference/dnn_models.cpp
     src/inference/dnn_preprocessor.cpp
@@ -645,6 +648,7 @@ set(ENGINE_SOURCES
     src/gui/panels/embeddings_panel.cpp
     src/gui/panels/sentiment_panel.cpp
     src/gui/panels/language_model_generation_panel.cpp
+    src/gui/panels/language_model_load_dialog.cpp
     src/gui/panels/calculator_panel.cpp
     src/gui/panels/unit_converter_panel.cpp
     src/gui/panels/random_generator_panel.cpp
@@ -949,7 +953,7 @@ set(ENGINE_HEADERS
     src/gui/panels/embeddings_panel.h
     src/gui/panels/sentiment_panel.h
     src/gui/panels/language_model_generation_panel.h
-    src/gui/panels/language_model_generation_panel_metadata.h
+    src/gui/panels/language_model_load_dialog.h
     src/gui/panels/calculator_panel.h
     src/gui/panels/unit_converter_panel.h
     src/gui/panels/random_generator_panel.h
@@ -2307,6 +2311,7 @@ set_target_properties(test_language_model_generation PROPERTIES
 add_executable(test_language_model_chat
     tests/test_language_model_chat.cpp
     src/core/language_model_chat.cpp
+    src/core/language_model_checkpoints.cpp
     src/inference/text_inference_input.cpp
 )
 target_include_directories(test_language_model_chat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

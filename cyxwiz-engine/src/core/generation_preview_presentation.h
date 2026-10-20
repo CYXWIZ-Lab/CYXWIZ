@@ -46,6 +46,12 @@ struct GenerationPreviewReport {
     float top_p = 1.0f;
     unsigned seed = 0;
     float repetition_penalty = 1.0f;
+    float min_p = 0.0f;
+    int num_beams = 1;
+    float length_penalty = 1.0f;
+    float frequency_penalty = 0.0f;
+    float presence_penalty = 0.0f;
+    int no_repeat_ngram = 0;
     int max_new_tokens = 0;
     int context = 0;
     std::vector<std::string> stop_texts;
@@ -112,6 +118,9 @@ std::string GenerationPreviewPointLabel(const GenerationPreviewReport& report); 
 std::string GenerationPreviewStopLabel(const GenerationPreviewSample& sample, int max_new_tokens);
 std::string GenerationPreviewCheckLabel(const GenerationPreviewSample& sample);
 std::string GenerationPreviewHowLine(const GenerationPreviewReport& report);
+// "sampling, temperature 0.8, top-k 40, seed 7, repetition penalty 1.1",
+// "beam search, 4 beams, length penalty 1.0", "greedy".
+std::string GenerationPreviewDecodingText(const GenerationPreviewReport& report);
 
 // The Console block at Info: a header, one line per sample, a summary.
 std::vector<std::string> GenerationPreviewLogLines(const GenerationPreviewReport& report);

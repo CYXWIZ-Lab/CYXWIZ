@@ -23,6 +23,9 @@
 
 namespace cyxwiz {
 
+class ArrowDataset;
+class ParquetBackedDataset;
+
 struct GraphTrainingJobRequest {
     std::string graph_json;
     // Optional: Data Input dataset_name -> local file, replacing the node's
@@ -72,6 +75,21 @@ struct GraphTrainingJobResult {
     // partially trained model.
     std::unique_ptr<IExecutableModel> model;
 };
+
+// The graph's Data Inputs loaded (large Parquet files stay on disk) and the
+// graph compiled and prepared against them, as RunGraphTrainingJob does
+// before it builds batchers. Also used to build a trained model outside
+// training (LM Generation's checkpoint loading).
+struct PreparedGraphJob {
+    TrainingConfiguration config;
+    std::map<std::string, std::shared_ptr<ArrowDataset>> datasets;
+    std::map<std::string, std::shared_ptr<ParquetBackedDataset>> disk_datasets;
+    std::map<std::string, std::string> source_paths;
+};
+
+// A failed result (with error and failure kind) when the graph is refused;
+// an empty error when `prepared` is ready.
+GraphTrainingJobResult PrepareGraphJob(const GraphTrainingJobRequest& request, PreparedGraphJob& prepared);
 
 // Loads the graph's inputs, compiles, trains to completion on the calling
 // thread and returns the outcome.

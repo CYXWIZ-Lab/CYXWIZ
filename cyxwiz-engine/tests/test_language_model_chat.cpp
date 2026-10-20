@@ -4,6 +4,7 @@
 #include "core/executable_model.h"
 #include "core/generation_preview_presentation.h"
 #include "core/language_model_chat.h"
+#include "core/language_model_checkpoints.h"
 
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tokenizer.h>
@@ -52,6 +53,12 @@ cyxwiz::TrainingGenerationPreviewSettings ChatSettings() {
     s.max_new_tokens = 4;
     s.context = 20;
     return s;
+}
+
+cyxwiz::LanguageModelRunOptions Seed(unsigned seed) {
+    cyxwiz::LanguageModelRunOptions options;
+    options.seed = seed;
+    return options;
 }
 
 std::vector<int64_t> Words(const std::string& text) {  // One ID per space-separated word.
@@ -150,7 +157,7 @@ void TestReplies() {
     logits->script = {4, 4, 5, 4};
     size_t streamed = 0;
     auto prompt = cyxwiz::BuildLanguageModelPrompt(s, {}, true, "one", encode, 20);
-    const auto stopped = cyxwiz::GenerateLanguageModelReply(model, *tokenizer, s, "one", prompt, 7, {},
+    const auto stopped = cyxwiz::GenerateLanguageModelReply(model, *tokenizer, s, "one", prompt, Seed(7), {},
         [&](const std::string&, size_t tokens) { streamed = tokens; });
     Require(stopped.text == "one one " || stopped.text == "one one", "stop text cut from the reply: " + stopped.text);
     Require(stopped.stop_text == "two" && streamed == 3 && stopped.new_token_ids.size() == 3, "stopped at the stop text");
@@ -160,12 +167,12 @@ void TestReplies() {
     s.stop_texts.clear();
     logits->script = {5, 3};
     logits->produced = 0;
-    const auto eos = cyxwiz::GenerateLanguageModelReply(model, *tokenizer, s, "one", prompt, 7, {}, {});
+    const auto eos = cyxwiz::GenerateLanguageModelReply(model, *tokenizer, s, "one", prompt, Seed(7), {}, {});
     Require(eos.text == "two" && cyxwiz::LanguageModelReplyStopLabel(eos) == "Stopped by itself", "end of sequence");
 
     logits->script = {4};
     logits->produced = 0;
-    const auto limit = cyxwiz::GenerateLanguageModelReply(model, *tokenizer, s, "one", prompt, 7, {}, {});
+    const auto limit = cyxwiz::GenerateLanguageModelReply(model, *tokenizer, s, "one", prompt, Seed(7), {}, {});
     Require(cyxwiz::LanguageModelReplyStopLabel(limit) == "Hit the 4-token limit" &&
                 cyxwiz::LanguageModelReplySpeedLabel(limit).rfind("4 tokens", 0) == 0,
             "token limit and speed labels");
@@ -203,6 +210,61 @@ void TestReplies() {
     std::filesystem::remove_all(dir);
 }
 
+void TestCheckpointHelpers() {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() /
+                     ("lm_ckpt_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto write = [](const fs::path& path, const std::string& text) {
+        fs::create_directories(path.parent_path());
+        std::ofstream(path, std::ios::binary) << text;
+    };
+    write(dir / "train-1" / "best" / "metadata.json",
+          R"({"epoch":4,"val_loss":3.42,"timestamp":"2026-10-14T13:26:55Z"})");
+    write(dir / "train-1" / "best" / "model" / "w.bin", "x");
+    write(dir / "train-2" / "latest" / "metadata.json", R"({"epoch":1,"val_loss":0,"timestamp":"2026-10-15T09:00:00Z"})");
+    write(dir / "notes" / "readme.txt", "not a run");
+    fs::last_write_time(dir / "train-1" / "best" / "metadata.json",
+                        fs::last_write_time(dir / "train-2" / "latest" / "metadata.json") - std::chrono::hours(1));
+    const auto rows = cyxwiz::ListCheckpointRuns(dir);
+    Require(rows.size() == 2 && rows[0].run == "train-2" && rows[0].weights == "latest" && !rows[0].validation_loss,
+            "runs newest first; a zero validation loss is not shown");
+    Require(rows[1].run == "train-1" && rows[1].epoch == 4 && rows[1].validation_loss &&
+                *rows[1].validation_loss > 3.41 && rows[1].saved == "2026-10-14 13:26" &&
+                rows[1].folder == dir / "train-1" / "best",
+            "run row facts");
+    Require(cyxwiz::GraphCheckpointFolder((dir / "missing.cyxgraph").string(), "", "fallback") == "fallback",
+            "an unreadable graph falls back to the project's checkpoints");
+    Require(cyxwiz::LanguageModelSummary(4, 3.4203, 768, 8192, "Byte BPE") ==
+                "Epoch 4 \xC2\xB7 validation loss 3.42 \xC2\xB7 context 768 \xC2\xB7 vocabulary 8,192 (Byte BPE)",
+            "summary line");
+    Require(cyxwiz::LanguageModelSummary(0, std::nullopt, 0, 50, "Word") == "Vocabulary 50 (Word)",
+            "summary without training facts");
+
+    // Saving the panel's settings keeps the graph's own prompts and switch.
+    write(dir / "g.cyxgraph", R"({"nodes":[{"id":3,"parameters":{"generation_preview_enabled":"true",)"
+                              R"("generation_preview_prompt_set":"[{\"text\":\"hi\"}]","learning_rate":"0.001"}}],"links":[]})");
+    auto settings = ChatSettings();
+    settings.enabled = false;
+    settings.stop_texts = {"</answer>"};
+    settings.max_new_tokens = 128;
+    std::string error;
+    Require(cyxwiz::SaveGenerationSettingsToGraph((dir / "g.cyxgraph").string(), 3, settings, error), error);
+    nlohmann::json saved;
+    std::ifstream(dir / "g.cyxgraph") >> saved;
+    std::map<std::string, std::string> params;
+    for (auto& [key, value] : saved["nodes"][0]["parameters"].items()) params[key] = value.get<std::string>();
+    const auto back = cyxwiz::ParseTrainingGenerationPreview(params);
+    Require(back.enabled && back.prompts.size() == 1 && back.prompts[0].text == "hi", "prompts and the switch kept");
+    Require(back.mode == cyxwiz::GenerationPreviewMode::Chat && back.label_assistant == "Bot:" &&
+                back.max_new_tokens == 128 && back.stop_texts == std::vector<std::string>({"</answer>"}) &&
+                params["learning_rate"] == "0.001",
+            "the panel's settings written, other parameters untouched");
+    Require(!cyxwiz::SaveGenerationSettingsToGraph((dir / "g.cyxgraph").string(), 9, settings, error) &&
+                error.find("Data Loader") != std::string::npos,
+            "an unknown Data Loader is refused");
+    fs::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -210,6 +272,7 @@ int main() {
     TestTokenizer();
     TestPromptTrimming();
     TestReplies();
+    TestCheckpointHelpers();
     std::cout << "Language model chat test passed\n";
     return 0;
 }

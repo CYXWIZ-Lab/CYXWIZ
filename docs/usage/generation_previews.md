@@ -71,11 +71,19 @@ capped by the context the prompt leaves). A stop text is cut from the output.
 
 - **Greedy** always takes the most likely next token. Use it to compare
   epochs: the same weights give the same output, and loops show plainly.
-- **Sampling**: temperature, top-k (0 is off), top-p, a seed and up to 4
-  samples per prompt. With a fixed seed each prompt gets the same random
-  draws every time, so passes stay comparable.
-- **Repetition penalty** (1 to 2, off by default) makes tokens already in the
-  prompt or the output less likely.
+- **Sampling**: temperature, top-k (0 is off), top-p, min-p (0 is off; keeps
+  tokens at least that fraction as likely as the most likely one), a seed and
+  up to 4 samples per prompt. With a fixed seed each prompt gets the same
+  random draws every time, so passes stay comparable.
+- **Beam search**: 2 to 8 beams and a length penalty (0 to 2; above 1 favours
+  longer outputs). Keeps the most likely sequences instead of single tokens
+  and returns the best one; the same output every time, and slower (each beam
+  recomputes its sequence).
+- **Penalties**, for every decoding: **repetition** (1 to 2, off by default)
+  makes tokens already in the prompt or the output less likely; **frequency**
+  and **presence** (0 to 2) lower a token by how often, or whether, the output
+  already used it; **no-repeat n-gram** (0 is off) never writes a run of that
+  many tokens twice.
 
 ### When
 

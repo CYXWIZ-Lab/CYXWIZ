@@ -1,4 +1,6 @@
 #pragma once
+#include <nlohmann/json_fwd.hpp>
+
 #include <map>
 #include <string>
 #include <vector>
@@ -12,7 +14,7 @@ namespace cyxwiz {
 
 enum class GenerationPreviewMode { Continuation, Chat };
 enum class GenerationPreviewTemplate { RoleLines, ChatML, Llama3 };
-enum class GenerationPreviewDecoding { Greedy, Sampling };
+enum class GenerationPreviewDecoding { Greedy, Sampling, Beam };
 enum class GenerationPreviewCadence { Epochs, Steps };
 enum class GenerationPreviewWeights { Current, Best };
 enum class GenerationPreviewCheckKind { None, Contains, NotContains, Regex, EndsWithStop };
@@ -51,6 +53,12 @@ struct TrainingGenerationPreviewSettings {
     unsigned seed = 1234;
     int samples_per_prompt = 1;
     float repetition_penalty = 1.0f;  // 1 = off.
+    float min_p = 0.0f;               // Sampling: 0 = off.
+    float frequency_penalty = 0.0f;   // 0 = off.
+    float presence_penalty = 0.0f;    // 0 = off.
+    int no_repeat_ngram = 0;          // 0 = off; else the n-gram size never repeated.
+    int num_beams = 4;                // Beam search.
+    float length_penalty = 1.0f;      // Beam search: score / length^this.
     int every = 1;
     GenerationPreviewCadence cadence = GenerationPreviewCadence::Epochs;
     bool baseline = false;    // Before the first update.
@@ -72,6 +80,11 @@ const char* GenerationPreviewDecodingName(GenerationPreviewDecoding value);
 const char* GenerationPreviewCadenceName(GenerationPreviewCadence value);
 const char* GenerationPreviewWeightsName(GenerationPreviewWeights value);
 const char* GenerationPreviewCheckKindName(GenerationPreviewCheckKind kind);
+const char* GenerationPreviewDecodingLabel(GenerationPreviewDecoding value);  // "Beam search"
+
+// The decoding fields a generation report records (decoding, temperature,
+// top-k, top-p, min-p, beams, length and repetition penalties, ...).
+void AddGenerationDecodingFields(const TrainingGenerationPreviewSettings& settings, nlohmann::json& report);
 
 // Reads the Data Loader's generation_preview_* parameters. Throws
 // std::invalid_argument with a message for the user when a value is out of

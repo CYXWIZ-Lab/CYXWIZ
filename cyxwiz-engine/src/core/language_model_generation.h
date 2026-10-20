@@ -9,6 +9,7 @@
 
 namespace cyxwiz {
 
+struct TrainingGenerationPreviewSettings;
 class IExecutableModel;
 class SequentialModel;
 struct LanguageModelGenerationStep;
@@ -47,6 +48,26 @@ struct LanguageModelGenerationConfig {
     float repetition_penalty = 1.0f;
     // Called after each new token, before the stop checks (streaming).
     std::function<void(const LanguageModelGenerationStep&)> on_step;
+    // Keeps candidates whose probability is at least min_p times the most
+    // likely one's (after temperature and top-k); 0 = off.
+    float min_p = 0.0f;
+    // Subtracted from the logit of each token already generated: frequency
+    // times its count, presence once; 0 = off.
+    float frequency_penalty = 0.0f;
+    float presence_penalty = 0.0f;
+    // A token that would repeat an n-gram of this size already in the prompt
+    // or output is never chosen; 0 = off.
+    size_t no_repeat_ngram_size = 0;
+    // Beam search with this many beams when above 1 (deterministic; scores are
+    // summed log-probabilities divided by length^length_penalty).
+    size_t num_beams = 1;
+    float length_penalty = 1.0f;
+    // Layer stacks with a KV cache: the token IDs the model's cache holds from
+    // the previous call. When the new prompt starts with them, only the rest
+    // is fed (a chat's earlier turns are not recomputed), and on return it
+    // holds what the cache now covers. Nullptr: the cache is emptied at the
+    // start and released at the end.
+    std::vector<int64_t>* reuse_cache = nullptr;
     // Reuse attention keys/values between tokens when every module supports
     // incremental decoding (same tokens as full recomputation, much faster).
     bool use_kv_cache = true;
@@ -82,7 +103,13 @@ struct LanguageModelGenerationResult {
     size_t remaining_budget = 0;
     bool include_prompt = true;
     bool used_kv_cache = false;  // true when the KV-cached path produced the tokens
+    size_t reused_cache_tokens = 0;  // prompt tokens taken from the previous call's cache
 };
+
+// The decoding settings (greedy, sampling or beam search, and the
+// penalties) of generation previews and the LM Generation panel.
+void ApplyGenerationDecoding(const TrainingGenerationPreviewSettings& settings,
+                             LanguageModelGenerationConfig& config);
 
 std::vector<std::string> ValidateLanguageModelGenerationConfig(
     const LanguageModelGenerationConfig& config);

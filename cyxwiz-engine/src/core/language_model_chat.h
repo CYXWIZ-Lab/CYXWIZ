@@ -67,13 +67,25 @@ struct LanguageModelReply {
     std::string text;     // The reply, a matched stop text cut off.
     LanguageModelPrompt prompt;
     std::vector<int64_t> new_token_ids;
-    std::vector<LanguageModelGenerationStep> steps;
+    std::vector<LanguageModelGenerationStep> steps;  // Each with its five most likely candidates.
     LanguageModelGenerationStopReason stop_reason = LanguageModelGenerationStopReason::MaxTokens;
     std::string stop_text;
     int max_new_tokens = 0;
     unsigned seed = 0;
+    bool sampled = false;  // Drawn by sampling (its seed reproduces it).
+    bool used_kv_cache = false;
+    size_t reused_cache_tokens = 0;  // Prompt tokens the previous turn's cache already held.
     double seconds = 0.0;
     std::string repeated_phrase;
+};
+
+struct LanguageModelRunOptions {
+    unsigned seed = 0;
+    bool use_kv_cache = true;
+    // The cache kept from the previous turn (see LanguageModelGenerationConfig::reuse_cache).
+    std::vector<int64_t>* reuse_cache = nullptr;
+    // Speed measurement: no end-of-sequence or stop text, always the full token count.
+    bool ignore_stops = false;
 };
 
 // Generates on the calling thread (model errors throw). `on_text` gets the
@@ -81,8 +93,21 @@ struct LanguageModelReply {
 LanguageModelReply GenerateLanguageModelReply(
     IExecutableModel& model, const GenerationTokenizer& tokenizer,
     const TrainingGenerationPreviewSettings& settings, const std::string& message, LanguageModelPrompt prompt,
-    unsigned seed, const std::function<bool()>& cancel,
+    const LanguageModelRunOptions& options, const std::function<bool()>& cancel,
     const std::function<void(const std::string& text, size_t tokens)>& on_text);
+
+// The same prompt with the KV cache on and off (greedy, the full token count).
+struct LanguageModelSpeed {
+    size_t tokens = 0;
+    double cached_tokens_per_second = 0.0;    // 0 when the model has no KV cache.
+    double uncached_tokens_per_second = 0.0;
+    bool cache_supported = false;
+};
+LanguageModelSpeed MeasureLanguageModelSpeed(IExecutableModel& model, const GenerationTokenizer& tokenizer,
+                                             const TrainingGenerationPreviewSettings& settings,
+                                             const LanguageModelPrompt& prompt, const std::function<bool()>& cancel);
+// "With the KV cache 76 tokens/s · without 9 tokens/s · 8.4x faster (64 tokens)".
+std::string LanguageModelSpeedText(const LanguageModelSpeed& speed);
 
 // "Stopped by itself", "Hit the 128-token limit", "Stopped at \"</answer>\"", "Stopped".
 std::string LanguageModelReplyStopLabel(const LanguageModelReply& reply);

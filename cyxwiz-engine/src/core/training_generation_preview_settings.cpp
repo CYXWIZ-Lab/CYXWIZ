@@ -63,7 +63,8 @@ const std::pair<const char*, GenerationPreviewTemplate> kTemplates[] = {
     {"chatml", GenerationPreviewTemplate::ChatML},
     {"llama3", GenerationPreviewTemplate::Llama3}};
 const std::pair<const char*, GenerationPreviewDecoding> kDecodings[] = {
-    {"greedy", GenerationPreviewDecoding::Greedy}, {"sampling", GenerationPreviewDecoding::Sampling}};
+    {"greedy", GenerationPreviewDecoding::Greedy}, {"sampling", GenerationPreviewDecoding::Sampling},
+    {"beam", GenerationPreviewDecoding::Beam}};
 const std::pair<const char*, GenerationPreviewCadence> kCadences[] = {
     {"epochs", GenerationPreviewCadence::Epochs}, {"steps", GenerationPreviewCadence::Steps}};
 const std::pair<const char*, GenerationPreviewWeights> kWeights[] = {
@@ -148,6 +149,30 @@ const char* GenerationPreviewDecodingName(GenerationPreviewDecoding value) { ret
 const char* GenerationPreviewCadenceName(GenerationPreviewCadence value) { return NameOf(value, kCadences); }
 const char* GenerationPreviewWeightsName(GenerationPreviewWeights value) { return NameOf(value, kWeights); }
 const char* GenerationPreviewCheckKindName(GenerationPreviewCheckKind value) { return NameOf(value, kCheckKinds); }
+const char* GenerationPreviewDecodingLabel(GenerationPreviewDecoding value) {
+    switch (value) {
+        case GenerationPreviewDecoding::Greedy: return "Greedy";
+        case GenerationPreviewDecoding::Sampling: return "Sampling";
+        case GenerationPreviewDecoding::Beam: return "Beam search";
+    }
+    return "";
+}
+
+void AddGenerationDecodingFields(const TrainingGenerationPreviewSettings& s, nlohmann::json& report) {
+    const bool sampling = s.decoding == GenerationPreviewDecoding::Sampling;
+    const bool beam = s.decoding == GenerationPreviewDecoding::Beam;
+    report["decoding"] = GenerationPreviewDecodingName(s.decoding);
+    report["temperature"] = sampling ? s.temperature : 0.0f;
+    report["top_k"] = sampling ? s.top_k : 0;
+    report["top_p"] = sampling ? s.top_p : 1.0f;
+    report["min_p"] = sampling ? s.min_p : 0.0f;
+    report["num_beams"] = beam ? s.num_beams : 1;
+    report["length_penalty"] = beam ? s.length_penalty : 1.0f;
+    report["repetition_penalty"] = s.repetition_penalty;
+    report["frequency_penalty"] = s.frequency_penalty;
+    report["presence_penalty"] = s.presence_penalty;
+    report["no_repeat_ngram"] = s.no_repeat_ngram;
+}
 
 TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
     const std::map<std::string, std::string>& params) {
@@ -191,6 +216,16 @@ TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
             ParseInteger(*text, "samples per prompt", 1, kGenerationPreviewMaxSamplesPerPrompt));
     if (const auto* text = Find(params, "repetition_penalty"))
         value.repetition_penalty = ParseFloat(*text, "repetition penalty");
+    if (const auto* text = Find(params, "min_p")) value.min_p = ParseFloat(*text, "min-p");
+    if (const auto* text = Find(params, "frequency_penalty"))
+        value.frequency_penalty = ParseFloat(*text, "frequency penalty");
+    if (const auto* text = Find(params, "presence_penalty"))
+        value.presence_penalty = ParseFloat(*text, "presence penalty");
+    if (const auto* text = Find(params, "no_repeat_ngram"))
+        value.no_repeat_ngram = static_cast<int>(ParseInteger(*text, "no-repeat n-gram size", 0, 10));
+    if (const auto* text = Find(params, "num_beams"))
+        value.num_beams = static_cast<int>(ParseInteger(*text, "beams", 2, 8));
+    if (const auto* text = Find(params, "length_penalty")) value.length_penalty = ParseFloat(*text, "length penalty");
     if (const auto* text = Find(params, "every"))
         value.every = static_cast<int>(ParseInteger(*text, "every", 1, 1000000));
     if (const auto* text = Find(params, "every_unit")) value.cadence = ParseChoice(*text, "every unit", kCadences);
@@ -223,6 +258,12 @@ std::map<std::string, std::string> SerializeTrainingGenerationPreview(
         {Key("seed"), std::to_string(s.seed)},
         {Key("samples_per_prompt"), std::to_string(s.samples_per_prompt)},
         {Key("repetition_penalty"), FormatFloat(s.repetition_penalty)},
+        {Key("min_p"), FormatFloat(s.min_p)},
+        {Key("frequency_penalty"), FormatFloat(s.frequency_penalty)},
+        {Key("presence_penalty"), FormatFloat(s.presence_penalty)},
+        {Key("no_repeat_ngram"), std::to_string(s.no_repeat_ngram)},
+        {Key("num_beams"), std::to_string(s.num_beams)},
+        {Key("length_penalty"), FormatFloat(s.length_penalty)},
         {Key("every"), std::to_string(s.every)},
         {Key("every_unit"), GenerationPreviewCadenceName(s.cadence)},
         {Key("baseline"), s.baseline ? "true" : "false"},
@@ -279,8 +320,17 @@ std::string ValidateTrainingGenerationPreview(const TrainingGenerationPreviewSet
     }
     if (s.samples_per_prompt < 1 || s.samples_per_prompt > kGenerationPreviewMaxSamplesPerPrompt)
         return "Generation previews: samples per prompt must be 1 to 4";
-    if (s.decoding == GenerationPreviewDecoding::Greedy && s.samples_per_prompt != 1)
-        return "Generation previews: greedy decoding gives one sample per prompt";
+    if (s.decoding != GenerationPreviewDecoding::Sampling && s.samples_per_prompt != 1)
+        return "Generation previews: greedy decoding and beam search give one sample per prompt";
+    if (!(s.min_p >= 0.0f && s.min_p < 1.0f)) return "Generation previews: min-p must be 0 (off) to below 1";
+    if (!(s.frequency_penalty >= 0.0f && s.frequency_penalty <= 2.0f) ||
+        !(s.presence_penalty >= 0.0f && s.presence_penalty <= 2.0f))
+        return "Generation previews: frequency and presence penalties must be 0 (off) to 2";
+    if (s.no_repeat_ngram < 0 || s.no_repeat_ngram > 10)
+        return "Generation previews: the no-repeat n-gram size must be 0 (off) to 10";
+    if (s.num_beams < 2 || s.num_beams > 8) return "Generation previews: beam search needs 2 to 8 beams";
+    if (!(s.length_penalty >= 0.0f && s.length_penalty <= 2.0f))
+        return "Generation previews: the length penalty must be 0 to 2";
     if (!(s.repetition_penalty >= 1.0f && s.repetition_penalty <= 2.0f))
         return "Generation previews: repetition penalty must be 1 (off) to 2";
     if (s.every < 1) return "Generation previews: every must be 1 or more";

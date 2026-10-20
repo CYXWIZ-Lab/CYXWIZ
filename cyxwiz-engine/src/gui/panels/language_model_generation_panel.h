@@ -1,19 +1,25 @@
 #pragma once
 
 #include "../panel.h"
-#include "../../core/language_model_generation.h"
-#include "../../inference/language_model_inference_contract.h"
+#include "language_model_load_dialog.h"
+#include "../../core/language_model_loader.h"
 
+#include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
 
-class Tokenizer;
-class SequentialModel;
-
+// Language Model Generation (TOFIX159, design approved 2026-10-18): load a
+// trained language model and use it directly. Chat with a fine-tuned model
+// or let a base model continue text, with the Data Loader's generation
+// settings (template, system prompt, stop texts, decoding). Generic for any
+// causal language model the Engine trains or imports.
 class LanguageModelGenerationPanel : public Panel {
 public:
     LanguageModelGenerationPanel();
@@ -23,70 +29,83 @@ public:
     const char* GetIcon() const override { return "LM"; }
 
 private:
-    void InvalidateOutput();
-    std::string RequireActiveTokenizerIdentity(const Tokenizer& tokenizer,
-        const std::shared_ptr<SequentialModel>& session_model) const;
-    void RenderPrompt();
-    void RenderControls();
-    void RenderResult();
-    void RunGeneration();
-    void CheckModelCompatibility();
-    void LoadTokenizerFromCyxModel();
-    void LoadModelAndTokenizerFromCyxModel();
-    void RequireImportedModelPackageContract() const;
-    std::vector<int64_t> ParsePromptIds() const;
-    std::vector<int64_t> CurrentPromptIdsForProbe() const;
-    std::unique_ptr<Tokenizer> BuildTokenizer() const;
-    static std::string JoinTokenIds(const std::vector<int64_t>& ids);
+    // One generation in the background; the panel polls it each frame.
+    struct RunState {
+        std::atomic<bool> done{false};
+        bool ok = false;
+        std::mutex mutex;
+        std::string partial;  // Guarded by mutex.
+        size_t tokens = 0;
+        LanguageModelReply reply;
+        std::string error;
+        uint64_t task_id = 0;
+        int max_new_tokens = 0;
+    };
 
-private:
-    bool use_text_prompt_ = false;
-    char prompt_ids_[2048] = "1 2 3";
-    char text_prompt_[4096] = "hello world";
-    char vocab_file_[512] = "";
-    char cyxmodel_path_[512] = "";
-    int tokenizer_type_idx_ = 1;
-    bool lowercase_ = true;
-    int max_length_ = 512;
-    bool add_bos_ = false;
-    bool add_eos_ = false;
-    bool use_packaged_tokenizer_ = false;
-    bool use_imported_model_ = false;
-    std::string packaged_tokenizer_config_json_;
-    std::string packaged_tokenizer_vocab_text_;
-    std::string packaged_tokenizer_model_data_;
-    std::string packaged_tokenizer_summary_;
-    std::unique_ptr<SequentialModel> imported_model_;
-    std::string imported_model_source_;
-    std::string imported_model_summary_;
-    LanguageModelPackageContract imported_model_contract_;
-    std::unique_ptr<Tokenizer> imported_model_tokenizer_;
-    std::string imported_model_tokenizer_data_;
-    std::weak_ptr<SequentialModel> observed_session_model_;
-    std::string session_model_status_ = "Active model: none";
+    void RenderEmpty();
+    void RenderModelBar();
+    void RenderDetails();
+    void RenderRawTokenIds();
+    void RenderModeSwitch(const char* note);
+    void ExportReplies(const char* default_name);
+    void RenderConversation(float composer_height);
+    void RenderContinuation();
+    void RenderReplyFooter(size_t index, bool latest);
+    void RenderTokens(size_t index);
+    void RenderComposer();
+    void RenderSettingsRail();
+    void RenderSpeed();
+    void StartSpeedMeasurement();
+    void PollRun();
+    void Start(const std::string& message);
+    void SaveConversation();
+    void SetModel(std::shared_ptr<LoadedLanguageModel> model);
+    bool Chat() const;
+    std::string SendBlocker() const;
 
-    int max_new_tokens_ = 16;
-    float temperature_ = 1.0f;
-    int top_k_ = 0;
-    float top_p_ = 1.0f;
-    int eos_token_id_ = -1;
-    int seed_ = 5489;
-    bool multinomial_sampling_ = false;
-    bool include_prompt_ = true;
+    LanguageModelLoadDialog load_dialog_;
+    std::shared_ptr<LoadedLanguageModel> model_;
+    TrainingGenerationPreviewSettings settings_;
+    bool send_history_ = true;
+    std::vector<LanguageModelReply> replies_;
+    std::string message_;           // The chat composer, or the text to continue.
+    std::string new_stop_;
+    std::shared_ptr<RunState> run_;
+    std::shared_ptr<RunState> raw_run_;  // Generate from IDs (Details).
+    bool scroll_to_end_ = false;
+    std::filesystem::path chat_report_;  // This conversation's report file.
+    std::string note_;                   // The outcome of the last action (saved, exported, failed).
+    bool note_is_error_ = false;
+    bool details_open_ = false;
+    std::set<size_t> saw_open_;          // Replies showing "What the model saw".
+    int tokens_reply_ = -1;              // The reply whose tokens are shown.
+    int tokens_step_ = 0;
 
-    std::vector<int64_t> generated_ids_;
-    std::string stop_reason_;
-    std::string sampling_settings_;
-    size_t last_prompt_length_ = 0;
-    size_t last_max_context_length_ = 0;
-    size_t last_remaining_budget_ = 0;
-    std::vector<NextTokenCandidate> last_candidates_;
-    std::string status_;
-    std::string action_error_;
-    std::string compatibility_status_;
-    std::string active_model_status_;
-    std::string generated_text_;
-    bool has_result_ = false;
+    // The composer's context meter, recomputed when its inputs change.
+    std::string meter_key_;
+    LanguageModelPrompt meter_prompt_;
+
+    // Seeds and the KV cache.
+    bool random_seed_ = true;   // A new seed for each sampled reply (else the settings' seed).
+    bool use_kv_cache_ = true;
+    // What the model's KV cache holds after the last chat reply, so the next
+    // turn feeds only what is new. Written by the generation task (one at a
+    // time); cleared whenever something else runs the model.
+    std::shared_ptr<std::vector<int64_t>> cache_ids_ = std::make_shared<std::vector<int64_t>>();
+    struct SpeedState {
+        std::atomic<bool> done{false};
+        std::mutex mutex;
+        std::string text;  // Guarded by mutex.
+        bool failed = false;
+        uint64_t task_id = 0;
+    };
+    std::shared_ptr<SpeedState> speed_run_;
+    std::string speed_text_;
+    bool speed_failed_ = false;
+
+    // Raw token IDs (Details): for checking a tokenizer or the model.
+    std::string raw_ids_;
+    std::string raw_result_;
 };
 
-} // namespace cyxwiz
+}  // namespace cyxwiz

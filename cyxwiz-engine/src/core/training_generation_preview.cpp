@@ -75,16 +75,14 @@ bool TrainingGenerationPreview::Run(SequentialModel& model,const GenerationPrevi
     const auto path=GenerationPreviewReportPath(directory,point.kind,point.epoch,point.step);
     const auto start=std::chrono::steady_clock::now();
     const auto& s=settings_;
-    const bool sampling=s.decoding==GenerationPreviewDecoding::Sampling;
     nlohmann::json report={{"schema",kGenerationPreviewReportSchema},{"run_id",run_id},{"point",point.kind},
         {"epoch",point.epoch},{"total_epochs",point.total_epochs},{"step",point.step},{"weights",point.weights},
         {"mode",GenerationPreviewModeName(s.mode)},
         {"template",s.mode==GenerationPreviewMode::Chat?GenerationPreviewTemplateName(s.chat_template):""},
-        {"decoding",GenerationPreviewDecodingName(s.decoding)},{"temperature",sampling?s.temperature:0.0f},
-        {"top_k",sampling?s.top_k:0},{"top_p",sampling?s.top_p:1.0f},{"seed",s.seed},
-        {"repetition_penalty",s.repetition_penalty},{"max_new_tokens",s.max_new_tokens},{"context",s.context},
+        {"seed",s.seed},{"max_new_tokens",s.max_new_tokens},{"context",s.context},
         {"stop_texts",stop_texts_},{"tokenizer_sha256",vocabulary_hash_},{"settings_sha256",settings_hash_},
         {"samples",nlohmann::json::array()}};
+    AddGenerationDecodingFields(s,report);
     if(point.validation_loss) report["validation_loss"]=*point.validation_loss;
     spdlog::debug("Generation preview started: run={} point={} epoch={} step={} weights={} prompts={}",
                   run_id,point.kind,point.epoch,point.step,point.weights,prompt_ids_.size());
@@ -112,13 +110,7 @@ bool TrainingGenerationPreview::Run(SequentialModel& model,const GenerationPrevi
                 config.max_context_tokens=static_cast<size_t>(s.context);
                 config.eos_token_id=eos;
                 config.should_cancel=should_stop;
-                config.repetition_penalty=s.repetition_penalty;
-                if(sampling) {
-                    config.sampling_mode=LanguageModelSamplingMode::Multinomial;
-                    config.temperature=s.temperature;
-                    config.top_k=static_cast<size_t>(s.top_k);
-                    config.top_p=s.top_p;
-                }
+                ApplyGenerationDecoding(s,config);
                 std::string matched;
                 if(!stop_texts_.empty()) {
                     config.stop_check=[&](const std::vector<int64_t>& ids) {

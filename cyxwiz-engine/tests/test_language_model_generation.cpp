@@ -1,7 +1,6 @@
 #include "core/language_model_generation.h"
 #include "core/execution_device_context.h"
 #include "core/executable_model.h"
-#include "gui/panels/language_model_generation_panel_metadata.h"
 
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/layers/transformer.h>
@@ -174,51 +173,6 @@ void TestShapeValidation() {
     Check(threw, "generation distribution should reject logits shape mismatch");
 }
 
-void TestGenerationPanelRunMetadataSmoke() {
-    cyxwiz::LanguageModelGenerationConfig config;
-    config.max_new_tokens = 4;
-    config.temperature = 0.75f;
-    config.top_k = 3;
-    config.top_p = 0.8f;
-    config.eos_token_id = 4;
-    config.include_prompt = false;
-    config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Multinomial;
-
-    cyxwiz::LanguageModelGenerationResult report;
-    report.prompt_length = 2;
-    report.remaining_budget = 1;
-    report.stop_reason = cyxwiz::LanguageModelGenerationStopReason::EosToken;
-    report.steps.push_back({
-        0,
-        2,
-        3,
-        0.6f,
-        {{3, 0.6f}, {1, 0.4f}}
-    });
-
-    const auto metadata = cyxwiz::BuildLanguageModelGenerationPanelRunMetadata(
-        report,
-        config,
-        12,
-        99);
-
-    Check(metadata.stop_reason == "eos",
-          "panel metadata should expose stable stop reason text");
-    Check(metadata.prompt_length == 2,
-          "panel metadata should expose prompt length");
-    Check(metadata.max_context_length == 12,
-          "panel metadata should expose max context length");
-    Check(metadata.remaining_budget == 1,
-          "panel metadata should expose remaining generation budget");
-    Check(metadata.last_candidates.size() == 2,
-          "panel metadata should expose last-token candidates");
-    Check(metadata.last_candidates[0].token_id == 3,
-          "panel metadata should preserve candidate token order");
-    Check(metadata.sampling_settings ==
-              "multinomial, max_new_tokens=4, temperature=0.75, top_k=3, "
-              "top_p=0.8, eos=4, seed=99, include_prompt=false",
-          "panel metadata should expose the sampling settings used for the run");
-}
 void TestGenerateTokenIdsWithReportStopsAtEos() {
     cyxwiz::SequentialModel model;
     model.Add<ScriptedLogitModule>();
@@ -343,6 +297,74 @@ void TestGenerationOnAnyExecutableModelStreamsSteps() {
               from_stack.stop_reason == cyxwiz::LanguageModelGenerationStopReason::StopText,
           "a wrapped layer stack should take the layer-stack path and honour the stop check");
     Check(streamed == from_stack.new_token_ids, "on_step should run before the stop check ends generation");
+}
+
+// Next-token logits from the last token alone: after 1, token 2 (p 0.6) or 3
+// (p 0.4); after 2, all five alike; after 3, almost surely 4; after 4,
+// token 4 at 2.0 and token 3 at 1.9.
+class BranchingLogits : public cyxwiz::Module {
+public:
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& input) override {
+        const size_t seq = input.Shape()[1];
+        const int64_t last = input.ReadData<int64_t>()[seq - 1];
+        std::vector<float> logits(seq * 5, 0.0f);
+        float* row = logits.data() + (seq - 1) * 5;
+        for (int v = 0; v < 5; ++v) row[v] = -20.0f;
+        if (last == 1) { row[2] = std::log(0.6f); row[3] = std::log(0.4f); }
+        else if (last == 2) { for (int v = 0; v < 5; ++v) row[v] = 0.0f; }
+        else if (last == 3) { row[4] = 10.0f; }
+        else { row[4] = 2.0f; row[3] = 1.9f; }
+        return cyxwiz::Tensor({1, seq, 5}, logits.data());
+    }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& g) override { return g; }
+    std::string GetName() const override { return "BranchingLogits"; }
+};
+
+void TestDecodingOptions() {
+    // Min-p keeps tokens at least that fraction as likely as the best one.
+    cyxwiz::LanguageModelGenerationConfig config;
+    const std::vector<float> logits = {2.0f, 1.0f, 0.0f, -1.0f};
+    config.min_p = 0.5f;
+    Check(cyxwiz::BuildNextTokenDistribution(logits, 1, 1, 4, config).size() == 1, "min-p 0.5 keeps the best token");
+    config.min_p = 0.3f;
+    Check(cyxwiz::BuildNextTokenDistribution(logits, 1, 1, 4, config).size() == 2, "min-p 0.3 keeps two tokens");
+    config.min_p = 1.0f;
+    Check(!cyxwiz::ValidateLanguageModelGenerationConfig(config).empty(), "min-p 1 is refused");
+
+    cyxwiz::SequentialModel model;
+    model.Add<BranchingLogits>();
+    cyxwiz::LanguageModelGenerationConfig greedy;
+    greedy.max_new_tokens = 3;
+    greedy.include_prompt = false;
+    Check(cyxwiz::GenerateTokenIdsWithReport(model, {4}, greedy).new_token_ids == std::vector<int64_t>({4, 4, 4}),
+          "greedy repeats the most likely token");
+    auto frequency = greedy;
+    frequency.frequency_penalty = 0.5f;
+    Check(cyxwiz::GenerateTokenIdsWithReport(model, {4}, frequency).new_token_ids[1] == 3,
+          "a frequency penalty lowers a token the output already used");
+    auto presence = greedy;
+    presence.presence_penalty = 0.2f;
+    Check(cyxwiz::GenerateTokenIdsWithReport(model, {4}, presence).new_token_ids[1] == 3,
+          "a presence penalty lowers a token the output already used");
+    auto ngram = greedy;
+    ngram.no_repeat_ngram_size = 2;
+    const auto banned = cyxwiz::GenerateTokenIdsWithReport(model, {4}, ngram).new_token_ids;
+    Check(banned == std::vector<int64_t>({4, 3, 4}), "no repeated 2-gram: the pair 4 4 is written once, never again");
+
+    // Beam search finds the sequence greedy misses: 3 then 4 (0.4) beats
+    // 2 then anything (0.6 x 0.2).
+    greedy.max_new_tokens = 2;
+    Check(cyxwiz::GenerateTokenIdsWithReport(model, {1}, greedy).new_token_ids[0] == 2, "greedy takes 2 first");
+    auto beam = greedy;
+    beam.num_beams = 2;
+    const auto best = cyxwiz::GenerateTokenIdsWithReport(model, {1}, beam);
+    Check(best.new_token_ids == std::vector<int64_t>({3, 4}) && !best.used_kv_cache,
+          "beam search returns the most likely sequence");
+    beam.eos_token_id = 4;
+    const auto stopped = cyxwiz::GenerateTokenIdsWithReport(model, {1}, beam);
+    Check(stopped.stop_reason == cyxwiz::LanguageModelGenerationStopReason::EosToken &&
+              stopped.new_token_ids == std::vector<int64_t>({3, 4}),
+          "a beam that writes end-of-sequence finishes");
 }
 
 void TestGenerateTokenIdsWithConfigCompatibilityWrapper() {
@@ -601,6 +623,32 @@ void TestKvCacheMatchesFullRecompute() {
         Check(cached_report.used_kv_cache && !full_report.used_kv_cache, variant.label + ": cache path selection");
         Check(cached_report.token_ids == full_report.token_ids,
               variant.label + ": greedy tokens must match with and without the KV cache");
+
+        // A chat's next turn: the cache kept from the first reply, only the
+        // new part fed, gives the tokens a fresh run gives.
+        std::vector<int64_t> kept;
+        config.use_kv_cache = true;
+        config.max_new_tokens = 4;
+        config.include_prompt = false;
+        config.reuse_cache = &kept;
+        const auto first = cyxwiz::GenerateTokenIdsWithReport(model, {1, 4, 7}, config, 52);
+        Check(kept.size() == 3 + first.new_token_ids.size() - 1 && first.reused_cache_tokens == 0,
+              variant.label + ": the kept cache covers the prompt and every new token but the last");
+        std::vector<int64_t> next = {1, 4, 7};
+        next.insert(next.end(), first.new_token_ids.begin(), first.new_token_ids.end());
+        next.insert(next.end(), {2, 9});
+        const size_t held = kept.size();
+        const auto reused = cyxwiz::GenerateTokenIdsWithReport(model, next, config, 52);
+        Check(reused.reused_cache_tokens == held, variant.label + ": the next turn feeds only what is new");
+        config.reuse_cache = nullptr;
+        const auto fresh = cyxwiz::GenerateTokenIdsWithReport(model, next, config, 52);
+        Check(reused.new_token_ids == fresh.new_token_ids,
+              variant.label + ": a reused cache gives the tokens of a fresh run");
+        config.reuse_cache = &kept;
+        const auto other = cyxwiz::GenerateTokenIdsWithReport(model, {2, 2, 2, 5}, config, 52);
+        Check(other.reused_cache_tokens == 0, variant.label + ": a prompt that differs from the cache starts over");
+        model.ResetIncrementalState();
+        config.reuse_cache = nullptr;
         std::cout << "KV cache parity: " << variant.label << " max |logit diff| " << worst << "\n";
     }
 
@@ -639,12 +687,12 @@ int main(int argc, char** argv) {
     TestTopPFiltering();
     TestMultinomialSelectionIsSeeded();
     TestShapeValidation();
-    TestGenerationPanelRunMetadataSmoke();
     TestGenerateTokenIdsWithReportStopsAtEos();
     TestGenerateTokenIdsWithReportStopsAtMaxTokens();
     TestGenerateTokenIdsWithConfigCompatibilityWrapper();
     TestGenerateTokenIdsWithReportRejectsBadPrompt();
     TestGenerationOnAnyExecutableModelStreamsSteps();
+    TestDecodingOptions();
     std::cout << "Language model generation controls test passed\n";
     return 0;
 }

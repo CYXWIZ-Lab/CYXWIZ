@@ -368,13 +368,7 @@ void GenerationPreviewView::RenderRail(const GenerationPreviewReport& report) {
     ImGui::TextColored(t.text_bright, "How these were made");
     std::string stops;
     for (const auto& stop : report.stop_texts) stops += (stops.empty() ? "" : " · ") + Shown(stop);
-    std::string decoding = report.decoding == "sampling"
-                               ? "sampling, temperature " + OneDecimal(report.temperature) +
-                                     (report.top_k > 0 ? ", top-k " + std::to_string(report.top_k) : "") +
-                                     (report.top_p < 1.0f ? ", top-p " + OneDecimal(report.top_p) : "") +
-                                     ", seed " + std::to_string(report.seed)
-                               : "greedy";
-    if (report.repetition_penalty > 1.0f) decoding += ", repetition penalty " + OneDecimal(report.repetition_penalty);
+    const std::string decoding = cyxwiz::GenerationPreviewDecodingText(report);
     std::string mode = report.mode == "chat" ? "chat / instruction" : "continuation";
     for (auto value : {GenerationPreviewTemplate::RoleLines, GenerationPreviewTemplate::ChatML,
                        GenerationPreviewTemplate::Llama3})

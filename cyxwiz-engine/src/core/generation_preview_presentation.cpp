@@ -8,6 +8,7 @@
 #include <fstream>
 #include <map>
 #include <regex>
+#include <iomanip>
 #include <sstream>
 #include <tuple>
 
@@ -98,6 +99,12 @@ std::optional<GenerationPreviewReport> LoadGenerationPreviewReport(const std::fi
         report.top_p = document.value("top_p", 1.0f);
         report.seed = document.value("seed", 0u);
         report.repetition_penalty = document.value("repetition_penalty", 1.0f);
+        report.min_p = document.value("min_p", 0.0f);
+        report.num_beams = document.value("num_beams", 1);
+        report.length_penalty = document.value("length_penalty", 1.0f);
+        report.frequency_penalty = document.value("frequency_penalty", 0.0f);
+        report.presence_penalty = document.value("presence_penalty", 0.0f);
+        report.no_repeat_ngram = document.value("no_repeat_ngram", 0);
         report.max_new_tokens = document.value("max_new_tokens", 0);
         report.context = document.value("context", 0);
         if (document.contains("stop_texts") && document.at("stop_texts").is_array())
@@ -355,8 +362,11 @@ std::string GenerationPreviewHowLine(const GenerationPreviewReport& report) {
         sampling << " · sampling t=" << report.temperature;
         if (report.top_k > 0) sampling << " k=" << report.top_k;
         if (report.top_p < 1.0f) sampling << " p=" << report.top_p;
+        if (report.min_p > 0.0f) sampling << " min-p=" << report.min_p;
         sampling << " seed " << report.seed;
         line += sampling.str();
+    } else if (report.decoding == "beam") {
+        line += " · beam search " + std::to_string(report.num_beams) + " beams";
     } else {
         line += " · greedy";
     }
@@ -441,6 +451,32 @@ std::string GenerationPreviewExcerpt(const std::string& text, size_t max_chars) 
     }
     if (cut) out += "...";  // ASCII: the Console font has no U+2026
     return out;
+}
+
+std::string GenerationPreviewDecodingText(const GenerationPreviewReport& report) {
+    const auto number = [](float value) {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(value == static_cast<int>(value) ? 1 : 2) << value;
+        return out.str();
+    };
+    std::string text;
+    if (report.decoding == "sampling") {
+        text = "sampling, temperature " + number(report.temperature);
+        if (report.top_k > 0) text += ", top-k " + std::to_string(report.top_k);
+        if (report.top_p < 1.0f) text += ", top-p " + number(report.top_p);
+        if (report.min_p > 0.0f) text += ", min-p " + number(report.min_p);
+        text += ", seed " + std::to_string(report.seed);
+    } else if (report.decoding == "beam") {
+        text = "beam search, " + std::to_string(report.num_beams) + " beams, length penalty " +
+               number(report.length_penalty);
+    } else {
+        text = "greedy";
+    }
+    if (report.repetition_penalty > 1.0f) text += ", repetition penalty " + number(report.repetition_penalty);
+    if (report.frequency_penalty > 0.0f) text += ", frequency penalty " + number(report.frequency_penalty);
+    if (report.presence_penalty > 0.0f) text += ", presence penalty " + number(report.presence_penalty);
+    if (report.no_repeat_ngram > 0) text += ", no repeated " + std::to_string(report.no_repeat_ngram) + "-grams";
+    return text;
 }
 
 }  // namespace cyxwiz

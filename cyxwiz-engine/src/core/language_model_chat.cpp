@@ -60,15 +60,12 @@ GenerationPreviewSample AsSample(const LanguageModelReply& reply) {
 }
 
 nlohmann::json SettingsJson(const TrainingGenerationPreviewSettings& s) {
-    const bool sampling = s.decoding == GenerationPreviewDecoding::Sampling;
-    return {{"mode", GenerationPreviewModeName(s.mode)},
-            {"template", s.mode == GenerationPreviewMode::Chat ? GenerationPreviewTemplateName(s.chat_template) : ""},
-            {"decoding", GenerationPreviewDecodingName(s.decoding)},
-            {"temperature", sampling ? s.temperature : 0.0f},
-            {"top_k", sampling ? s.top_k : 0},
-            {"top_p", sampling ? s.top_p : 1.0f},
-            {"repetition_penalty", s.repetition_penalty},
-            {"stop_texts", GenerationPreviewStopTexts(s)}};
+    nlohmann::json json = {
+        {"mode", GenerationPreviewModeName(s.mode)},
+        {"template", s.mode == GenerationPreviewMode::Chat ? GenerationPreviewTemplateName(s.chat_template) : ""},
+        {"stop_texts", GenerationPreviewStopTexts(s)}};
+    AddGenerationDecodingFields(s, json);
+    return json;
 }
 
 bool WriteText(const std::filesystem::path& path, const std::string& text, std::string& error) {
@@ -175,28 +172,25 @@ LanguageModelPrompt BuildLanguageModelPrompt(
 LanguageModelReply GenerateLanguageModelReply(
     IExecutableModel& model, const GenerationTokenizer& tokenizer,
     const TrainingGenerationPreviewSettings& s, const std::string& message, LanguageModelPrompt prompt,
-    unsigned seed, const std::function<bool()>& cancel,
+    const LanguageModelRunOptions& options, const std::function<bool()>& cancel,
     const std::function<void(const std::string& text, size_t tokens)>& on_text) {
     if (!prompt.error.empty()) throw std::invalid_argument(prompt.error);
     LanguageModelReply reply;
     reply.message = message;
     reply.max_new_tokens = static_cast<int>(prompt.new_tokens_fit);
-    reply.seed = seed;
+    reply.seed = options.seed;
+    reply.sampled = s.decoding == GenerationPreviewDecoding::Sampling;
 
     LanguageModelGenerationConfig config;
     config.max_new_tokens = prompt.new_tokens_fit;
     config.max_context_tokens = static_cast<size_t>(std::max(0, s.context));
-    config.eos_token_id = tokenizer.EosId();
+    config.eos_token_id = options.ignore_stops ? -1 : tokenizer.EosId();
     config.include_prompt = false;
     config.should_cancel = cancel;
-    config.repetition_penalty = s.repetition_penalty;
-    if (s.decoding == GenerationPreviewDecoding::Sampling) {
-        config.sampling_mode = LanguageModelSamplingMode::Multinomial;
-        config.temperature = s.temperature;
-        config.top_k = static_cast<size_t>(std::max(0, s.top_k));
-        config.top_p = s.top_p;
-    }
-    const auto stops = GenerationPreviewStopTexts(s);
+    config.use_kv_cache = options.use_kv_cache;
+    config.reuse_cache = options.reuse_cache;
+    ApplyGenerationDecoding(s, config);
+    const auto stops = options.ignore_stops ? std::vector<std::string>() : GenerationPreviewStopTexts(s);
     std::vector<int64_t> so_far;
     config.on_step = [&](const LanguageModelGenerationStep& step) {
         so_far.push_back(step.token_id);
@@ -218,11 +212,25 @@ LanguageModelReply GenerateLanguageModelReply(
     LanguageModelGenerationResult result;
     {
         EvaluationScope modes(model);
-        result = GenerateTokenIdsWithReport(model, prompt.ids, config, seed);
+        result = GenerateTokenIdsWithReport(model, prompt.ids, config, options.seed);
     }
+    reply.used_kv_cache = result.used_kv_cache;
+    reply.reused_cache_tokens = result.reused_cache_tokens;
     reply.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     reply.new_token_ids = std::move(result.new_token_ids);
     reply.steps = std::move(result.steps);
+    // Each step keeps its five most likely candidates (the token inspector);
+    // the full distribution is the whole vocabulary.
+    for (auto& step : reply.steps) {
+        auto& candidates = step.candidates;
+        const size_t keep = std::min<size_t>(5, candidates.size());
+        std::partial_sort(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(keep), candidates.end(),
+                          [](const NextTokenCandidate& a, const NextTokenCandidate& b) {
+                              return a.probability > b.probability;
+                          });
+        candidates.resize(keep);
+        candidates.shrink_to_fit();
+    }
     reply.stop_reason = result.stop_reason;
     reply.text = tokenizer.Decode(reply.new_token_ids);
     if (reply.stop_reason == LanguageModelGenerationStopReason::StopText && !reply.stop_text.empty())
@@ -232,6 +240,45 @@ LanguageModelReply GenerateLanguageModelReply(
     reply.repeated_phrase = DetectRepeatedPhrase(reply.text);
     reply.prompt = std::move(prompt);
     return reply;
+}
+
+LanguageModelSpeed MeasureLanguageModelSpeed(IExecutableModel& model, const GenerationTokenizer& tokenizer,
+                                             const TrainingGenerationPreviewSettings& settings,
+                                             const LanguageModelPrompt& prompt, const std::function<bool()>& cancel) {
+    auto greedy = settings;
+    greedy.decoding = GenerationPreviewDecoding::Greedy;
+    LanguageModelSpeed speed;
+    const auto* sequential = model.AsSequentialModel();
+    speed.cache_supported = sequential && sequential->SupportsIncrementalDecoding();
+    const auto run = [&](bool cache) {
+        LanguageModelRunOptions options;
+        options.use_kv_cache = cache;
+        options.ignore_stops = true;
+        const auto reply = GenerateLanguageModelReply(model, tokenizer, greedy, "", prompt, options, cancel, {});
+        if (reply.stop_reason == LanguageModelGenerationStopReason::UserCancelled)
+            throw std::runtime_error("The speed measurement was cancelled");
+        speed.tokens = reply.new_token_ids.size();
+        return reply.seconds > 0.0 ? reply.new_token_ids.size() / reply.seconds : 0.0;
+    };
+    if (speed.cache_supported) speed.cached_tokens_per_second = run(true);
+    speed.uncached_tokens_per_second = run(false);
+    return speed;
+}
+
+std::string LanguageModelSpeedText(const LanguageModelSpeed& speed) {
+    char buffer[160];
+    if (!speed.cache_supported) {
+        std::snprintf(buffer, sizeof(buffer), "%.0f tokens/s (%zu tokens; this model has no KV cache)",
+                      speed.uncached_tokens_per_second, speed.tokens);
+    } else {
+        const double ratio = speed.uncached_tokens_per_second > 0.0
+                                 ? speed.cached_tokens_per_second / speed.uncached_tokens_per_second
+                                 : 0.0;
+        std::snprintf(buffer, sizeof(buffer),
+                      "With the KV cache %.0f tokens/s \xC2\xB7 without %.0f tokens/s \xC2\xB7 %.1fx (%zu tokens)",
+                      speed.cached_tokens_per_second, speed.uncached_tokens_per_second, ratio, speed.tokens);
+    }
+    return buffer;
 }
 
 std::string LanguageModelReplyStopLabel(const LanguageModelReply& reply) {
