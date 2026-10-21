@@ -758,6 +758,10 @@ MainWindow::MainWindow()
     
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
+    // Its gateway connection serves the whole Engine: remote jobs whose
+    // Data Inputs live in CyxCloud mint their access tokens through it.
+    cloud_browser_panel_->SetConnectedCallback(
+        [this](network::DataStreamClient* client) { SetDataStreamClient(client); });
     node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
     node_browser_panel_->SetNodeEditor(node_editor_.get());
     node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();

@@ -895,6 +895,7 @@ void CloudBrowserPanel::TryAutoConnect() {
         owned_client_->SetAuthToken(auth.GetJwtToken());
         datastream_client_ = owned_client_.get();
         spdlog::info("CloudBrowser: Connected to CyxCloud successfully");
+        if (on_connected_) on_connected_(datastream_client_);
 
         // Auto-refresh datasets
         RefreshDatasets();
