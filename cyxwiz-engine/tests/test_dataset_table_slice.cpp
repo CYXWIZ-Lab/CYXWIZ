@@ -1,11 +1,14 @@
-// A loaded dataset's first rows as a Table Viewer table (TOFIX140): typed
-// cells from a data-service page, pages appended in order.
+// A dataset's first rows as a Table Viewer table (TOFIX140, off the UI
+// thread since TOFIX159): typed cells straight from Arrow, chunk by chunk
+// with progress and a stop; row groups read each once.
 #include "../src/core/dataset_table_slice.h"
 #include "../src/data/data_table.h"
 
-#include <algorithm>
+#include <arrow/api.h>
+
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace cyxwiz;
 
@@ -20,71 +23,82 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-DataPreviewPage Page(std::vector<std::vector<std::string>> rows) {
-    DataPreviewPage page;
-    page.ok = true;
-    page.schema = {{"year", "int64"}, {"month", "string"}, {"passengers", "double"}};
-    page.rows = std::move(rows);
-    page.rows_returned = static_cast<int64_t>(page.rows.size());
-    return page;
+// `rows` rows from `first`: id (int64), name (text, empty every 7th) and
+// pixel (uint8).
+std::shared_ptr<arrow::Table> Rows(int64_t first, int64_t rows) {
+    arrow::Int64Builder ids;
+    arrow::StringBuilder names;
+    arrow::UInt8Builder pixels;
+    for (int64_t i = first; i < first + rows; ++i) {
+        (void)ids.Append(i);
+        if (i % 7 == 0) (void)names.AppendNull();
+        else (void)names.Append("row " + std::to_string(i));
+        (void)pixels.Append(static_cast<uint8_t>(i % 256));
+    }
+    std::shared_ptr<arrow::Array> a, b, c;
+    (void)ids.Finish(&a);
+    (void)names.Finish(&b);
+    (void)pixels.Finish(&c);
+    auto schema = arrow::schema({arrow::field("id", arrow::int64()), arrow::field("name", arrow::utf8()),
+                                 arrow::field("pixel", arrow::uint8())});
+    return arrow::Table::Make(schema, {a, b, c});
 }
 
 }  // namespace
 
 int main() {
-    auto table = DataTableFromPreview(Page({{"1949", "Jan", "112"}, {"1949", "", "118.5"}}), "airline_polar");
-    Check(table != nullptr, "table built");
-    Check(table->GetName() == "airline_polar", "named after the dataset");
-    Check(table->GetHeaders() == std::vector<std::string>({"year", "month", "passengers"}), "headers");
-    Check(table->GetRowCount() == 2, "two rows");
-    Check(std::holds_alternative<int64_t>(table->GetCell(0, 0)) && std::get<int64_t>(table->GetCell(0, 0)) == 1949,
-          "integer column stays an integer");
-    Check(std::holds_alternative<std::string>(table->GetCell(0, 1)), "text column stays text");
-    Check(std::holds_alternative<std::monostate>(table->GetCell(1, 1)), "empty cell is missing");
-    Check(std::holds_alternative<double>(table->GetCell(1, 2)) && std::get<double>(table->GetCell(1, 2)) == 118.5,
-          "floating column is a double");
+    // 450 of a 500-row dataset, 200 rows per chunk: three chunks, progress after each.
+    std::vector<float> seen;
+    DatasetSlice slice = DatasetSliceFromArrow(Rows(0, 500), "ids", 450, 500, [&seen](float done, const std::string&) {
+        seen.push_back(done);
+        return true;
+    }, 200);
+    Check(slice.error.empty() && slice.table && slice.table->GetRowCount() == 450, "450 rows");
+    Check(slice.total_rows == 500 && slice.source && slice.source->num_rows() == 450, "total kept, source sliced");
+    Check(seen.size() == 3 && seen.back() == 1.0f, "progress after each chunk, ending at 1");
+    Check(slice.table->GetName() == "ids" &&
+              slice.table->GetHeaders() == std::vector<std::string>({"id", "name", "pixel"}),
+          "named, with the columns");
+    Check(std::get<int64_t>(slice.table->GetCell(449, 0)) == 449, "rows in order across chunks");
+    Check(std::holds_alternative<std::string>(slice.table->GetCell(1, 1)), "text stays text");
+    Check(std::holds_alternative<std::monostate>(slice.table->GetCell(0, 1)), "null stays empty");
+    Check(std::get<int64_t>(slice.table->GetCell(300, 2)) == 300 % 256, "uint8 is an integer");
 
-    // A second page appends to the same table.
-    table = DataTableFromPreview(Page({{"1949", "Mar", "132"}}), "airline_polar", table);
-    Check(table->GetRowCount() == 3, "second page appended");
+    // Asking for more rows than there are opens them all.
+    slice = DatasetSliceFromArrow(Rows(0, 30), "small", 1000, 30);
+    Check(slice.table && slice.table->GetRowCount() == 30, "all 30 rows");
 
-    // A malformed number in a numeric column keeps its text.
-    auto odd = DataTableFromPreview(Page({{"n/a", "Apr", "x"}}), "odd");
-    Check(std::holds_alternative<std::string>(odd->GetCell(0, 0)), "unparsable integer kept as text");
+    // A stop ends the read with no half table.
+    slice = DatasetSliceFromArrow(Rows(0, 500), "stopped", 500, 500, [](float, const std::string&) { return false; },
+                                  100);
+    Check(slice.stopped && !slice.table && !slice.source && slice.error.empty(), "stopped: no table, no error");
 
-    // Paging: 450 rows asked of a 500-row dataset served 200 at a time.
-    int calls = 0;
-    const auto reader = [&calls](const DataPreviewRequest& request) {
-        ++calls;
-        DataPreviewPage page;
-        page.ok = true;
-        page.total_rows = 500;
-        page.schema = {{"id", "int64"}};
-        const int64_t n = std::min<int64_t>({request.row_limit, 200, 500 - request.offset});
-        for (int64_t i = 0; i < n; ++i) page.rows.push_back({std::to_string(request.offset + i)});
-        page.rows_returned = n;
-        page.offset = request.offset;
-        page.next_offset = request.offset + n;
-        page.has_next = page.next_offset < 500;
-        return page;
+    // Row groups: each read once, only as many as the rows need.
+    std::vector<int> reads;
+    std::string error;
+    const auto group = [&reads](int g) {
+        reads.push_back(g);
+        return Rows(g * 100, 100);
     };
-    DatasetSlice slice = ReadDatasetSlice(reader, "ids", 450);
-    Check(slice.error.empty() && slice.table && slice.table->GetRowCount() == 450, "450 rows over pages");
-    Check(calls == 3 && slice.total_rows == 500, "three pages, total known");
-    Check(std::get<int64_t>(slice.table->GetCell(449, 0)) == 449, "rows in order");
+    auto joined = FirstRowsOfRowGroups(5, group, 250, {}, error);
+    Check(joined && joined->num_rows() == 250 && error.empty(), "250 rows from row groups");
+    Check(reads == std::vector<int>({0, 1, 2}), "three groups read, each once");
+    slice = DatasetSliceFromArrow(joined, "groups", 250, 500);
+    Check(slice.table && std::get<int64_t>(slice.table->GetCell(249, 0)) == 249, "rows in order across groups");
 
-    // A failed page is reported, not a half table.
-    slice = ReadDatasetSlice([](const DataPreviewRequest&) {
-        DataPreviewPage page;
-        page.reason = "Dataset not found";
-        return page;
-    }, "gone", 10);
-    Check(!slice.table && slice.error == "Dataset not found", "failure reported");
+    reads.clear();
+    Check(!FirstRowsOfRowGroups(5, [](int) { return std::shared_ptr<arrow::Table>(); }, 10, {}, error) &&
+              error == "Row group 1 could not be read.",
+          "a failed group is reported");
+    error.clear();
+    Check(!FirstRowsOfRowGroups(5, group, 250, [](float, const std::string&) { return false; }, error) &&
+              error.empty() && reads.empty(),
+          "a stop reads nothing more");
 
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
     }
-    std::printf("dataset table slice: typed cells and appended pages as expected. OK\n");
+    std::printf("dataset table slice: typed rows by chunk, row groups once, stops honoured. OK\n");
     return 0;
 }

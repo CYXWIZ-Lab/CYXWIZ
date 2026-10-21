@@ -23,6 +23,14 @@ Each table opens in its own tab and comes to the front. Opening the same
 in-memory table again (a step's output after a rerun) refreshes its tab.
 Each table keeps its own column widths.
 
+A dataset or a result is read in the background, so the Engine keeps
+working while a large one opens: under the toolbar the viewer shows
+*Opening <name>* with how far it is (*40,000 of 100,000 rows*) and
+**Cancel**, and the same task is in the **Task viewer** (*Open <name> in
+the Table Viewer*). The tab opens when the rows are read; a read that fails
+or is cancelled says so in the status bar. MNIST's test set (10,000 rows,
+785 columns) opens in about 3 seconds.
+
 ## The grid
 
 - **One line per cell.** Line breaks and tabs show as spaces; a value longer
@@ -35,6 +43,10 @@ Each table keeps its own column widths.
 - The header icon says the column's kind: `#` number, `A` text.
 - **Sort**: click a header (ascending, descending, then the table's own
   order). The row numbers stay frozen at the left while you scroll right.
+- **Wide tables**: the grid shows up to 500 columns at a time. A table with
+  more (MNIST has 785) shows the column pager under the grid, *Columns:
+  1 - 500 of 785* with previous and next; the frozen columns (Lock) stay in
+  every block, and the rows keep their sort and filter.
 - **Select**: click a cell; Ctrl+click adds a cell, Shift+click a range.
 - **Right-click a header**: sort, clear the filter, colour map (Viridis,
   Inferno, RdYlGn, Blues, Plasma), number formats (decimals, thousands
@@ -53,7 +65,7 @@ the query's rows (Query).
 | Control | What it does |
 |---|---|
 | Open dataset | Another loaded dataset, in a new tab. |
-| Stats | The Stats sidebar: the selected column's rows, missing, distinct, empty texts; numbers add min, max, mean, std, quartiles and a histogram (**Plot** opens it in the Plot window); text adds its most common values. Computed in the background, again after an edit. |
+| Stats | The Stats sidebar: the selected column's rows, missing, distinct, empty texts; numbers add min, max, mean, std, quartiles and a histogram (**Plot** opens it in the Plot window); text adds its most common values. Computed in the background (in the Task viewer as *Profile <name>*), again after an edit. It is the same profile as Data Studio's **Profile** tab: a tab showing a whole loaded dataset, unedited, is profiled exactly as Data Studio profiles it, and the answers either one saved serve the other (MNIST: 62 s the first time, 1.3 s for the other). A tab with part of a dataset, a result or an edited table is profiled on its own rows. |
 | Data Bars | A bar in each number cell, its length the value within the column's range. |
 | Line # | The row-number column. |
 | Rows per page | 10 to 1,000 (100). Past one page the pager is under the grid: first, previous, page, next, last, and which rows are shown. |

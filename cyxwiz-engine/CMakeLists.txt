@@ -5790,11 +5790,12 @@ add_test(NAME asset_preview COMMAND test_asset_preview)
 add_executable(test_dataset_table_slice
     tests/test_dataset_table_slice.cpp
     src/core/dataset_table_slice.cpp
+    src/data/arrow_data_table.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
 )
 target_include_directories(test_dataset_table_slice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_dataset_table_slice PRIVATE spdlog::spdlog fmt::fmt)
+target_link_libraries(test_dataset_table_slice PRIVATE Arrow::arrow_shared spdlog::spdlog fmt::fmt)
 if(WIN32)
     target_compile_definitions(test_dataset_table_slice PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()

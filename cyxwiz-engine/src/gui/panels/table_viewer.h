@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../table_grid.h"
+#include "../../core/dataset_table_slice.h"
 #include "../../data/data_table.h"
 #include "../variables_view.h"
 #include "../plot/plot_window.h"
@@ -10,6 +11,10 @@
 #include <memory>
 #include <vector>
 #include <map>
+
+namespace arrow {
+class Table;
+}
 
 namespace cyxwiz {
 
@@ -44,10 +49,16 @@ public:
     // Clear current table
     void Clear();
 
-    // A loaded dataset's first `max_rows` rows in a new tab (TOFIX140), read
-    // through the data service: the dataset stays where its Data Input put it
-    // (in memory or on disk); false + `error` when it cannot be read.
-    bool OpenDataset(const std::string& dataset_name, int64_t max_rows, std::string& error);
+    // A loaded dataset's first `max_rows` rows in a new tab (TOFIX140). Read
+    // in a task (TOFIX159: shown in the Task viewer, with progress and
+    // Cancel; the viewer shows it too), so the Engine keeps drawing; the tab
+    // opens when the rows are read. The dataset stays where its Data Input
+    // put it (in memory or on disk).
+    void OpenDataset(const std::string& dataset_name, int64_t max_rows);
+    // The first `max_rows` rows (all when < 0) of an Arrow table (a step's
+    // output, a query result) in a tab named `name`, converted in a task the
+    // same way.
+    void OpenArrow(std::shared_ptr<arrow::Table> table, const std::string& name, int64_t max_rows = -1);
 
     // Data Viewer (TOFIX133 P5, board 10): a tab fed from a Python value. A
     // second open of the same value replaces its tab; "Read again", a slice
@@ -69,6 +80,14 @@ private:
         // The table and its view: sort, filter, selection, formats, edit.
         TableGrid grid;
         bool is_dirty = false;  // Has unsaved changes
+        // The rows as read from Arrow (OpenDataset, OpenArrow): the Stats
+        // profile reads them while the table is unedited, so opening a large
+        // table converts nothing on the UI thread.
+        std::shared_ptr<arrow::Table> source;
+        // The loaded dataset this tab shows whole (OpenDataset of all its
+        // rows): while unedited it is profiled as Data Studio profiles it,
+        // so either one's saved answers serve the other.
+        std::string dataset;
         // The column profile for the Stats sidebar, computed in the
         // background; stale after an edit.
         std::shared_ptr<DatasetProfile> profile;
@@ -111,7 +130,24 @@ private:
     };
 
     // A tab on `table`; the grid's Plot items open the Plot window on it.
-    std::unique_ptr<TableTab> MakeTab(std::shared_ptr<DataTable> table, std::string filename);
+    // `kinds` and `source` come with a table read in a task.
+    std::unique_ptr<TableTab> MakeTab(std::shared_ptr<DataTable> table, std::string filename,
+                                      std::vector<TableColumnKind> kinds = {},
+                                      std::shared_ptr<arrow::Table> source = nullptr);
+    TableTab* AddTab(std::shared_ptr<DataTable> table, std::vector<TableColumnKind> kinds,
+                     std::shared_ptr<arrow::Table> source);
+    // Reads (OpenDataset, OpenArrow) running in tasks, drawn under the
+    // toolbar with their progress and Cancel.
+    struct Opening {
+        uint64_t task = 0;
+        std::string name;
+        std::shared_ptr<const void> token;
+    };
+    std::vector<Opening> opening_;
+    // `dataset`: the loaded dataset read (OpenDataset), "" for a table.
+    void StartOpen(const std::string& name, const std::string& dataset,
+                   std::function<DatasetSlice(const SliceProgress&)> read);
+    void RenderOpening();
 
     void RenderTabBar();
     void RenderLiveHeader(TableTab* tab);
@@ -126,7 +162,6 @@ private:
     bool open_dataset_popup_requested_ = false;
     std::string open_dataset_pick_;
     int open_dataset_rows_ = 10000;
-    std::string open_dataset_error_;
 
     // The column profile for the Stats sidebar
     void StartProfile(TableTab* tab);

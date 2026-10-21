@@ -75,16 +75,18 @@ void TableGrid::ComputeInitialWidths() {
     }
 }
 
-void TableGrid::SetTable(std::shared_ptr<DataTable> t) {
+void TableGrid::SetTable(std::shared_ptr<DataTable> t, std::vector<TableColumnKind> kinds) {
     table = std::move(t);
     current_page = 0;
+    column_page = 0;
+    drawn_column_page_ = -1;
     filter_text.clear();
     std::memset(filter_buffer, 0, sizeof(filter_buffer));
     filter_mode_hide = false;
     filter_case_sensitive = false;
     filter_whole_cell = false;
     filtered_indices.clear();
-    column_kinds.clear();
+    column_kinds = table && kinds.size() == table->GetColumnCount() ? std::move(kinds) : std::vector<TableColumnKind>{};
     initial_widths_.clear();
     sort_column = -1;
     sort_ascending = true;
@@ -154,23 +156,40 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                            ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate |
                            ImGuiTableFlags_SizingFixedFit;
 
-    int column_count = static_cast<int>(col_count);
-    if (options.line_numbers) {
-        column_count++;
+    // The data columns in grid order: all of them, or (wider than the grid
+    // holds) the frozen ones and one block of the others.
+    const int line = options.line_numbers ? 1 : 0;
+    const size_t capacity = static_cast<size_t>(IMGUI_TABLE_MAX_COLUMNS - line);
+    std::vector<size_t> grid_columns;
+    size_t column_pages = 1, block_first = 0, block_end = col_count;
+    if (col_count <= capacity) {
+        grid_columns.resize(col_count);
+        std::iota(grid_columns.begin(), grid_columns.end(), size_t(0));
+    } else {
+        const size_t frozen = std::min(static_cast<size_t>(std::max(0, frozen_columns)), capacity - 1);
+        const size_t block = std::min(static_cast<size_t>(kColumnBlock), capacity - frozen);
+        column_pages = (col_count - frozen + block - 1) / block;
+        column_page = std::clamp(column_page, 0, static_cast<int>(column_pages) - 1);
+        block_first = frozen + static_cast<size_t>(column_page) * block;
+        block_end = std::min(block_first + block, col_count);
+        for (size_t c = 0; c < frozen; ++c) grid_columns.push_back(c);
+        for (size_t c = block_first; c < block_end; ++c) grid_columns.push_back(c);
     }
+    const int column_count = static_cast<int>(grid_columns.size()) + line;
 
-    if (column_count > IMGUI_TABLE_MAX_COLUMNS) {
-        ImGui::TextColored(ui::CurrentTokens().text_dim, "%zu columns: too many to show here (the grid shows up to %d).",
-                           col_count, IMGUI_TABLE_MAX_COLUMNS - 1);
-        return;
-    }
-
-    // Past one page the pager (or the no-match note) goes under the grid:
-    // keep its line free when the grid fills the space left.
+    // Past one page the pager (or the no-match note) goes under the grid,
+    // and past one block of columns the column pager: keep their lines free
+    // when the grid fills the space left.
     ImVec2 outer = size;
-    const bool note_line = total_pages > 1 || (Hiding() && display_count == 0);
-    if (note_line && outer.y == 0.0f) outer.y = -(ImGui::GetFrameHeightWithSpacing() + 4.0f);
+    const int note_lines = (total_pages > 1 || (Hiding() && display_count == 0) ? 1 : 0) + (column_pages > 1 ? 1 : 0);
+    if (note_lines > 0 && outer.y == 0.0f)
+        outer.y = -(ImGui::GetFrameHeightWithSpacing() * static_cast<float>(note_lines) + 4.0f);
 
+    // A block first drawn (a new ImGui table) reports sort specs of its own;
+    // the rows keep the sort they have.
+    const bool new_block = drawn_column_page_ != column_page;
+    drawn_column_page_ = column_page;
+    ImGui::PushID(column_page);  // each block keeps its own column widths and order
     if (ImGui::BeginTable(id, column_count, flags, outer)) {
         // The header row, the line numbers and the frozen data columns stay
         // in view while scrolling.
@@ -179,11 +198,12 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
 
         // Setup columns with type indicators and sort arrows
         if (options.line_numbers) {
-            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);
+            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed |
+                                             (sort_column < 0 ? ImGuiTableColumnFlags_DefaultSort : 0), 50.0f);
         }
 
         const auto& headers = table->GetHeaders();
-        for (size_t i = 0; i < col_count; i++) {
+        for (const size_t i : grid_columns) {
             std::string header = i < headers.size() ? headers[i] : ("Col" + std::to_string(i));
 
             // Add type indicator
@@ -196,7 +216,12 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                 }
             }
 
-            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_None, initial_widths_[i]);
+            // The sorted column shows its arrow in every block it is in.
+            ImGuiTableColumnFlags column_flags = ImGuiTableColumnFlags_None;
+            if (static_cast<int>(i) == sort_column)
+                column_flags |= ImGuiTableColumnFlags_DefaultSort | (sort_ascending ? ImGuiTableColumnFlags_PreferSortAscending
+                                                                                    : ImGuiTableColumnFlags_PreferSortDescending);
+            ImGui::TableSetupColumn(header.c_str(), column_flags, initial_widths_[i]);
         }
 
         // -----------------------------------------------------------
@@ -213,9 +238,9 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         }
 
         // Data column headers with context menus
-        for (size_t i = 0; i < col_count; i++) {
-            int table_col = options.line_numbers ? static_cast<int>(i) + 1 : static_cast<int>(i);
-            ImGui::TableSetColumnIndex(table_col);
+        for (size_t k = 0; k < grid_columns.size(); k++) {
+            const size_t i = grid_columns[k];
+            ImGui::TableSetColumnIndex(static_cast<int>(k) + line);
 
             // Build header text with type indicator
             std::string header = i < headers.size() ? headers[i] : ("Col" + std::to_string(i));
@@ -246,7 +271,9 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         // Handle ImGui's built-in sorting: a header click cycles ascending,
         // descending, unsorted (the table's own order; also how it opens).
         if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
-            if (sort_specs->SpecsDirty && sort_specs->SpecsCount == 0) {
+            if (sort_specs->SpecsDirty && new_block) {
+                sort_specs->SpecsDirty = false;
+            } else if (sort_specs->SpecsDirty && sort_specs->SpecsCount == 0) {
                 sort_column = -1;
                 sorted_indices.resize(row_count);
                 std::iota(sorted_indices.begin(), sorted_indices.end(), size_t(0));
@@ -254,8 +281,8 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                 sort_specs->SpecsDirty = false;
             } else if (sort_specs->SpecsDirty) {
                 const ImGuiTableColumnSortSpecs& spec = sort_specs->Specs[0];
-                int sort_col = spec.ColumnIndex;
-                if (options.line_numbers) sort_col--;  // Adjust for line number column
+                int sort_col = spec.ColumnIndex - line;  // the line number column is -1
+                if (sort_col >= 0) sort_col = static_cast<int>(grid_columns[static_cast<size_t>(sort_col)]);
 
                 if (sort_col < 0) {
                     // Sorting by line number column - reset to original order
@@ -304,9 +331,9 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                     ImGui::TextDisabled("%zu", actual_row + 1);
                 }
 
-                // Data columns
-                for (size_t c = 0; c < col_count; c++) {
-                    ImGui::TableSetColumnIndex(col_idx++);
+                // Data columns; one scrolled out of view draws nothing.
+                for (const size_t c : grid_columns) {
+                    if (!ImGui::TableSetColumnIndex(col_idx++)) continue;
 
                     std::string cell_text = CellText(actual_row, c);
                     const bool is_null = std::holds_alternative<std::monostate>(table->GetCell(actual_row, c));
@@ -512,12 +539,34 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
 
         ImGui::EndTable();
     }
+    ImGui::PopID();
     if (Hiding() && display_count == 0)
         ImGui::TextColored(ui::CurrentTokens().text_dim, "No row contains \"%s\".", filter_text.c_str());
 
+    // The column pager: which block of a wide table is shown.
+    if (column_pages > 1) {
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Columns:");
+        ImGui::SameLine();
+        if (ui::GhostButton(ICON_FA_CHEVRON_LEFT "##PrevColumns") && column_page > 0) column_page--;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The previous columns");
+        ImGui::SameLine();
+        ImGui::Text("%zu - %zu of %zu", block_first + 1, block_end, col_count);
+        ImGui::SameLine();
+        if (ui::GhostButton(ICON_FA_CHEVRON_RIGHT "##NextColumns") &&
+            column_page < static_cast<int>(column_pages) - 1)
+            column_page++;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The next columns");
+        if (frozen_columns > 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(the frozen columns stay)");
+        }
+    }
+
     // Pagination controls
     if (total_pages > 1) {
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        if (column_pages <= 1) ImGui::Dummy(ImVec2(0.0f, 2.0f));
         ImGui::AlignTextToFramePadding();
         ImGui::Text("Page:");
         ImGui::SameLine();
@@ -557,16 +606,19 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
 }
 
 void TableGrid::ComputeColumnKinds() {
-    if (!HasData()) return;
-    const size_t cols = table->GetColumnCount();
-    const size_t rows = table->GetRowCount();
-    column_kinds.assign(cols, TableColumnKind{});
+    if (HasData()) column_kinds = ColumnKindsOf(*table);
+}
+
+std::vector<TableColumnKind> TableGrid::ColumnKindsOf(const DataTable& table) {
+    const size_t cols = table.GetColumnCount();
+    const size_t rows = table.GetRowCount();
+    std::vector<TableColumnKind> column_kinds(cols);
     for (size_t c = 0; c < cols; c++) {
         bool numeric = false;
         double min_v = std::numeric_limits<double>::max();
         double max_v = std::numeric_limits<double>::lowest();
         for (size_t r = 0; r < rows; r++) {
-            const auto cell = table->GetCell(r, c);
+            const auto cell = table.GetCell(r, c);
             double v = 0.0;
             if (const auto* d = std::get_if<double>(&cell)) v = *d;
             else if (const auto* n = std::get_if<int64_t>(&cell)) v = static_cast<double>(*n);
@@ -583,6 +635,7 @@ void TableGrid::ComputeColumnKinds() {
             kind.max_val = max_v;
         }
     }
+    return column_kinds;
 }
 
 void TableGrid::SortByColumn(int column) {

@@ -171,7 +171,6 @@
 #include "../core/data_budget.h"
 #include "../core/data_registry.h"
 #include "../core/arrow_dataset.h"
-#include "../data/arrow_data_table.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
@@ -836,9 +835,9 @@ MainWindow::MainWindow()
         ::gui::BringToFront(test_results_panel_->GetName());
     });
     // Query results open in the Table Viewer (TOFIX134 P3.3).
-    data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
+    data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<arrow::Table> table, const std::string& name) {
         if (table_viewer_ && table) {
-            table_viewer_->SetTable(table);
+            table_viewer_->OpenArrow(std::move(table), name);
             table_viewer_->Show();
             ::gui::BringToFront(table_viewer_->GetName());  // in front, as from the other routes
         }
@@ -1006,9 +1005,8 @@ MainWindow::MainWindow()
             return;
         }
         constexpr int64_t kMaxRows = 200000;
-        std::string name = title + " (" + dataset_name + ")";
-        if (arrow_table->num_rows() > kMaxRows) name += ", first 200,000 rows";
-        table_viewer_->SetTable(cyxwiz::DataTableFromArrow(*arrow_table, name, kMaxRows));
+        // Converted in a task; past kMaxRows the tab says "first N of M rows".
+        table_viewer_->OpenArrow(arrow_table, title + " (" + dataset_name + ")", kMaxRows);
         table_viewer_->SetVisible(true);
         ::gui::BringToFront(table_viewer_->GetName());
     });

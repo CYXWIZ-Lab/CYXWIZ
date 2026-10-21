@@ -1,4 +1,7 @@
 #include "table_viewer.h"
+#include "../../core/async_task_manager.h"
+#include "../../core/arrow_dataset.h"
+#include "../../core/parquet_backed_dataset.h"
 #include "../../core/variables_presentation.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_catalog.h"
@@ -75,6 +78,7 @@ void TableViewerPanel::Render() {
         RenderTabBar();
         RenderLiveHeader(GetActiveTab());
         RenderToolbar();
+        RenderOpening();
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
 
         // Table display
@@ -436,24 +440,118 @@ void TableViewerPanel::RenderStatusBar() {
     }
 }
 
-bool TableViewerPanel::OpenDataset(const std::string& dataset_name, int64_t max_rows, std::string& error) {
-    auto& registry = DataRegistry::Instance();
-    DatasetSlice slice = ReadDatasetSlice(
-        [&registry](const DataPreviewRequest& request) {
-            return DataPreviewService::PreviewRegisteredTabular(registry, request);
+void TableViewerPanel::OpenDataset(const std::string& dataset_name, int64_t max_rows) {
+    StartOpen(dataset_name, dataset_name, [dataset_name, max_rows](const SliceProgress& progress) {
+        auto& registry = DataRegistry::Instance();
+        if (auto dataset = registry.GetArrowDataset(dataset_name)) {
+            const auto table = dataset->GetArrowTable();
+            return DatasetSliceFromArrow(table, dataset_name, max_rows, table ? table->num_rows() : 0, progress);
+        }
+        if (auto parquet = registry.GetParquetBackedDataset(dataset_name)) {
+            // On disk: read the row groups the rows need (each once), then convert.
+            DatasetSlice slice;
+            const auto rows = FirstRowsOfRowGroups(
+                parquet->GetNumRowGroups(), [&parquet](int group) { return parquet->ReadRowGroup(group); }, max_rows,
+                [&progress](float done, const std::string& message) { return progress(done * 0.5f, message); },
+                slice.error);
+            if (!rows) {
+                slice.stopped = slice.error.empty();
+                return slice;
+            }
+            return DatasetSliceFromArrow(rows, dataset_name, max_rows, parquet->GetNumRows(),
+                                         [&progress](float done, const std::string& message) {
+                                             return progress(0.5f + done * 0.5f, message);
+                                         });
+        }
+        DatasetSlice missing;
+        missing.error = "'" + dataset_name + "' is not loaded any more; apply its Data Input again.";
+        return missing;
+    });
+}
+
+void TableViewerPanel::OpenArrow(std::shared_ptr<arrow::Table> table, const std::string& name, int64_t max_rows) {
+    if (!table) return;
+    StartOpen(name, "", [table, name, max_rows](const SliceProgress& progress) {
+        return DatasetSliceFromArrow(table, name, max_rows < 0 ? table->num_rows() : max_rows, table->num_rows(),
+                                     progress);
+    });
+}
+
+void TableViewerPanel::StartOpen(const std::string& name, const std::string& dataset,
+                                 std::function<DatasetSlice(const SliceProgress&)> read) {
+    struct Result {
+        DatasetSlice slice;
+        std::vector<TableColumnKind> kinds;
+    };
+    auto result = std::make_shared<Result>();
+    std::weak_ptr<int> alive = alive_;
+    const uint64_t task = AsyncTaskManager::Instance().RunAsync(
+        "Open " + name + " in the Table Viewer",
+        [read = std::move(read), result](LambdaTask& task) {
+            result->slice = read([&task](float done, const std::string& message) {
+                task.ReportProgress(done * 0.9f, message);
+                return !task.ShouldStop();
+            });
+            auto& slice = result->slice;
+            if (slice.stopped || task.ShouldStop()) {
+                task.MarkCancelled();
+                return;
+            }
+            if (!slice.table) {
+                task.MarkFailed(slice.error.empty() ? "The table could not be read." : slice.error);
+                return;
+            }
+            task.ReportProgress(0.95f, "Column types");
+            result->kinds = TableGrid::ColumnKindsOf(*slice.table);
+            task.MarkCompleted(std::to_string(slice.table->GetRowCount()) + " rows \xC2\xB7 " +
+                               std::to_string(slice.table->GetColumnCount()) + " columns");
         },
-        dataset_name, max_rows);
-    if (!slice.table) {
-        error = slice.error;
-        return false;
-    }
-    const size_t shown = slice.table->GetRowCount();
-    if (static_cast<int64_t>(shown) < slice.total_rows)
-        slice.table->SetName(dataset_name + " \xC2\xB7 first " + std::to_string(shown) + " of " +
-                             std::to_string(slice.total_rows) + " rows");
-    SetTable(slice.table);
+        nullptr,
+        [this, alive, result, name, dataset](bool success, const std::string& error) {
+            if (alive.expired()) return;
+            opening_.erase(std::remove_if(opening_.begin(), opening_.end(),
+                                          [&result](const Opening& o) { return o.token == result; }),
+                           opening_.end());
+            auto& slice = result->slice;
+            if (!success || !slice.table) {
+                status_note_ = slice.stopped || error.empty() ? "Stopped opening " + name
+                                                              : "Could not open " + name + ": " + error;
+                status_note_error_ = !slice.stopped && !error.empty();
+                return;
+            }
+            const size_t shown = slice.table->GetRowCount();
+            if (static_cast<int64_t>(shown) < slice.total_rows)
+                slice.table->SetName(name + " \xC2\xB7 first " + std::to_string(shown) + " of " +
+                                     std::to_string(slice.total_rows) + " rows");
+            status_note_.clear();
+            TableTab* tab = AddTab(slice.table, std::move(result->kinds), slice.source);
+            if (tab && static_cast<int64_t>(shown) == slice.total_rows) tab->dataset = dataset;
+            visible_ = true;
+        },
+        alive_);
+    opening_.push_back({task, name, result});
     visible_ = true;
-    return true;
+}
+
+void TableViewerPanel::RenderOpening() {
+    if (opening_.empty()) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    for (const auto& open : opening_) {
+        ImGui::PushID(static_cast<int>(open.task));
+        const auto task = AsyncTaskManager::Instance().GetTask(open.task);
+        const TaskInfo info = task ? task->GetInfo() : TaskInfo{};
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.accent, ICON_FA_SPINNER);
+        ImGui::SameLine();
+        ImGui::TextColored(t.text, "Opening %s", open.name.c_str());
+        ImGui::SameLine();
+        const std::string detail = std::to_string(static_cast<int>(info.progress * 100.0f + 0.5f)) + "%" +
+                                   (info.status_message.empty() ? "" : " \xC2\xB7 " + info.status_message);
+        ImGui::TextColored(t.text_dim, "%s", detail.c_str());
+        ImGui::SameLine();
+        if (ui::LinkButton("Cancel")) AsyncTaskManager::Instance().Cancel(open.task);
+        ImGui::PopID();
+    }
 }
 
 void TableViewerPanel::RenderEmptyState() {
@@ -484,7 +582,6 @@ void TableViewerPanel::RenderEmptyState() {
 void TableViewerPanel::RenderOpenDatasetPopup() {
     if (open_dataset_popup_requested_) {
         open_dataset_popup_requested_ = false;
-        open_dataset_error_.clear();
         ImGui::OpenPopup("##open_dataset");
     }
     ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f), ImVec2(640.0f, 560.0f));
@@ -521,14 +618,14 @@ void TableViewerPanel::RenderOpenDatasetPopup() {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 400.0f);
     ImGui::TextDisabled("Reads only these first rows; the dataset stays where its Data Input loaded it.");
     ImGui::PopTextWrapPos();
-    if (!open_dataset_error_.empty()) ImGui::TextColored(t.warning, "%s", open_dataset_error_.c_str());
 
     ImGui::Spacing();
     const bool can_open = !open_dataset_pick_.empty() &&
                           std::any_of(tables.begin(), tables.end(),
                                       [this](const DatasetEntry& e) { return e.name == open_dataset_pick_; });
     if (ui::PrimaryButton("Open", can_open, "Pick a dataset")) {
-        if (OpenDataset(open_dataset_pick_, open_dataset_rows_, open_dataset_error_)) ImGui::CloseCurrentPopup();
+        OpenDataset(open_dataset_pick_, open_dataset_rows_);
+        ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();

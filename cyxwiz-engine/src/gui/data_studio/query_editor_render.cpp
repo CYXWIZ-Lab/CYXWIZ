@@ -1,6 +1,5 @@
 #include "query_editor.h"
 
-#include "../../data/arrow_data_table.h"
 #include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_catalog.h"
@@ -175,7 +174,7 @@ void QueryEditor::RenderResult() {
                        read.empty() ? "" : (" \xC2\xB7 read " + read + " (" + Thousands(static_cast<long long>(r.rows_in_inputs)) + " rows)").c_str(),
                        r.elapsed_ms);
     ImGui::SameLine();
-    if (on_open_table && ui::LinkButton("Open in Table Viewer")) on_open_table(DataTableFromArrow(*r.table, "Query result"));
+    if (on_open_table && ui::LinkButton("Open in Table Viewer")) on_open_table(r.table, "Query result");
     ImGui::SameLine();
     if (ui::LinkButton("Plot")) OpenPlot();
     ImGui::SameLine();

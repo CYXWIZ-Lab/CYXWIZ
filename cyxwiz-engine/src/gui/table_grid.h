@@ -84,7 +84,9 @@ public:
     TableGrid& operator=(const TableGrid&) = delete;
 
     // A fresh view of `t`: no sort, filter, selection, formats or edit.
-    void SetTable(std::shared_ptr<DataTable> t);
+    // `kinds` (ColumnKindsOf, worked out off the UI thread) saves the grid
+    // working them out on its first frame.
+    void SetTable(std::shared_ptr<DataTable> t, std::vector<TableColumnKind> kinds = {});
     bool HasData() const { return table && table->GetRowCount() > 0; }
 
     // The grid and, past one page, its pager, in `size` (0: the space left).
@@ -94,6 +96,8 @@ public:
     const std::vector<size_t>& DisplayIndices() const;
 
     void ComputeColumnKinds();
+    // Each column's kind and range: a scan of every cell.
+    static std::vector<TableColumnKind> ColumnKindsOf(const DataTable& table);
     void SortByColumn(int column);
     // The filter text: highlighted, or with filter_mode_hide the only rows shown.
     void SetFilter(const std::string& text);
@@ -131,6 +135,12 @@ public:
 
     std::shared_ptr<DataTable> table;
     int current_page = 0;
+    // A table wider than the grid holds (ImGui tables take 512 columns)
+    // shows its frozen columns and one block of the others; the column
+    // pager under the grid moves between blocks.
+    static constexpr int kColumnBlock = 500;
+    int column_page = 0;
+    int drawn_column_page_ = -1;  // the block drawn last frame
 
     // Filter: the toolbar's text, highlighted or (hide) the only rows shown.
     std::string filter_text;

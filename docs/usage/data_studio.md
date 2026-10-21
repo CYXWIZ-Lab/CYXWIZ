@@ -132,6 +132,8 @@ shows its first line, and **Details** the rest.
 Profile (it replaced Analyze) describes the picked table and decides what
 each column is. It runs in the background as soon as a dataset is picked,
 and again when the dataset is re-loaded; **Profile again** runs it by hand.
+The Table Viewer's Stats use the same profile: a dataset profiled in either
+one opens in the other from the saved answers (MNIST: 62 s, then 1.3 s).
 
 The first line: rows, columns, when it was profiled and how long it took,
 *exact* (or *approximate* on very wide tables, beyond 64 columns, where

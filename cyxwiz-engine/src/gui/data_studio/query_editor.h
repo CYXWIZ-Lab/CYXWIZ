@@ -50,7 +50,9 @@ public:
     // result as a dataset (it then appears in the picker).
     bool SaveResultAsDataset(const std::string& dataset_name);
 
-    std::function<void(std::shared_ptr<DataTable>)> on_open_table;  // Table Viewer (MainWindow)
+    // Table Viewer (MainWindow): the result and its tab's name; the viewer
+    // converts it in a task.
+    std::function<void(std::shared_ptr<arrow::Table>, const std::string&)> on_open_table;
 
     // Turn into SQL step (the panel answers from the graph): why the last
     // result's query cannot become a step ("" when it can), and making it.

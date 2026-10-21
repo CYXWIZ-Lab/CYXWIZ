@@ -1,6 +1,9 @@
 #include "table_viewer.h"
 #include "../../core/async_task_manager.h"
+#include "../../core/column_role_store.h"
+#include "../../core/dataset_catalog.h"
 #include "../../core/dataset_profiler.h"
+#include "../../core/session_query_service.h"
 #include "../../data/arrow_data_table.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -20,18 +23,37 @@ namespace cyxwiz {
 void TableViewerPanel::StartProfile(TableTab* tab) {
     if (!tab || !tab->grid.table || tab->profile_task) return;
     tab->profile_stale = false;
-    // Converted here: the worker must not read the table while a cell is edited.
-    auto table = ArrowFromDataTable(*tab->grid.table);
+    // A whole loaded dataset, unedited: profiled as Data Studio profiles it
+    // (its queries through the session query service, with the project's
+    // missing texts), so the answers either one saved serve the other.
+    std::string dataset;
+    ProfileOptions options;
+    if (!tab->dataset.empty() && !tab->is_dirty) {
+        if (const auto entry = DatasetCatalog::Instance().Resolve(tab->dataset)) {
+            dataset = tab->dataset;
+            if (const auto* roles = ProjectColumnRoles().Find(RoleSourceKey(entry->source_path, entry->Shown())))
+                options.missing_text = roles->missing_text;
+        }
+    }
+    // Otherwise the rows as read while the table is unedited; after an edit,
+    // converted here: the worker must not read the table while a cell is edited.
+    std::shared_ptr<arrow::Table> table;
+    if (dataset.empty()) table = tab->source && !tab->is_dirty ? tab->source : ArrowFromDataTable(*tab->grid.table);
     auto result = std::make_shared<DatasetProfile>();
     const int uid = tab->uid;
     std::weak_ptr<int> alive = alive_;
     tab->profile_task = AsyncTaskManager::Instance().RunAsync(
         "Profile " + tab->filename,
-        [table, result](LambdaTask& task) {
-            ProfileOptions options;
-            options.should_stop = [&task] { return task.ShouldStop(); };
-            if (table) *result = ProfileArrow(table, options);
+        [dataset, table, options, result](LambdaTask& task) {
+            ProfileOptions opts = options;
+            opts.should_stop = [&task] { return task.ShouldStop(); };
+            opts.progress = [&task](float f, const std::string& what) { task.ReportProgress(f, what); };
+            if (!dataset.empty())
+                *result = ProfileTable(dataset, [](const QueryRequest& r) { return SessionQueryService::Instance().RunNow(r); },
+                                       opts);
+            else if (table) *result = ProfileArrow(table, opts);
             else result->error = "The table could not be read for profiling.";
+            if (!result->ok()) task.MarkFailed(result->error);
         },
         nullptr,
         [this, alive, uid, result](bool, const std::string&) {
