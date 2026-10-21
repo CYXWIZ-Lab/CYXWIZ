@@ -180,6 +180,15 @@ public:
     static TransformResult QuantileTransform(const std::vector<std::vector<double>>& data,
                                              const std::string& output_distribution = "uniform",  // or "normal"
                                              int n_quantiles = 1000);
+    // QuantileTransform in two parts, so a fitted transform can be saved and
+    // re-applied (the Quantile Transform node, TOFIX129 D2): the column's
+    // min(n_quantiles, n) quantile references (non-decreasing), and the
+    // mapping of other values through them. QuantileTransform = fit + apply.
+    static bool QuantileFit(const std::vector<double>& data, int n_quantiles, std::vector<double>& quantiles,
+                            std::string& error);
+    static TransformResult QuantileApply(const std::vector<std::vector<double>>& data,
+                                         const std::vector<std::vector<double>>& quantiles,
+                                         const std::string& output_distribution = "uniform");
 
     // ========== Statistics ==========
     static ColumnStats ComputeColumnStats(const std::vector<double>& data);

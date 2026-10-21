@@ -165,9 +165,19 @@ void RunCase(const json& c, const std::string& name) {
         return;
     }
     if (op == "quantile") {
-        return CheckColumns(DataTransform::QuantileTransform(inputs, c.at("distribution").get<std::string>(),
-                                                             c.at("n_quantiles").get<int>()),
-                            c.at("outputs"), name);
+        const std::string distribution = c.at("distribution").get<std::string>();
+        const int n_quantiles = c.at("n_quantiles").get<int>();
+        CheckColumns(DataTransform::QuantileTransform(inputs, distribution, n_quantiles), c.at("outputs"), name);
+        // Fitted and re-applied (the Quantile Transform node's saved state) gives the same answer.
+        std::vector<std::vector<double>> fitted;
+        for (const auto& column : inputs) {
+            std::vector<double> quantiles;
+            std::string error;
+            Check(DataTransform::QuantileFit(column, n_quantiles, quantiles, error), name + " fit: " + error);
+            fitted.push_back(std::move(quantiles));
+        }
+        return CheckColumns(DataTransform::QuantileApply(inputs, fitted, distribution), c.at("outputs"),
+                            name + " (fit, then apply)");
     }
     if (op == "normaltest") {
         const auto test = DataTransform::DAgostinoPearsonTest(x);
