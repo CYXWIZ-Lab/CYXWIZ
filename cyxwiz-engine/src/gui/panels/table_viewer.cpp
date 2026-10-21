@@ -296,23 +296,37 @@ void TableViewerPanel::RenderToolbar() {
     TableTab* active_tab = GetActiveTab();
     if (!active_tab) return;
 
+    // Each group goes beside the one before it when it fits, else on the next
+    // line (a narrow panel cut Find, Save and Export off).
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    auto beside = [&](float width, float gap) {
+        if (ImGui::GetItemRectMax().x + gap + width <= right) ImGui::SameLine(0.0f, gap);
+    };
+    auto button = [](const char* label) { return ui::ButtonWidth(label, ui::ButtonSize::Small); };
+    auto check = [&](const char* label) {
+        return ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize(label, nullptr, true).x;
+    };
+    auto icon = [](const char* text) { return ImGui::CalcTextSize(text).x; };
+    const float gap = style.ItemSpacing.x;
+
     // Another loaded dataset, beside the open tabs.
     if (ui::GhostButton(ICON_FA_DATABASE " Open dataset")) open_dataset_popup_requested_ = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the first rows of a dataset a Data Input loaded");
     RenderOpenDatasetPopup();
-    ImGui::SameLine();
 
     // Stats sidebar toggle
+    beside(button(ICON_FA_CHART_BAR " Stats"), gap);
     if (ui::GhostButton(ICON_FA_CHART_BAR " Stats", true, nullptr, show_stats_sidebar_)) {
         show_stats_sidebar_ = !show_stats_sidebar_;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Statistics Sidebar");
 
-    ImGui::SameLine();
+    beside(check("Data Bars"), gap);
     ImGui::Checkbox("Data Bars", &show_data_bars_);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show data bars in numeric columns");
 
-    ImGui::SameLine();
+    beside(check("Line #") + gap + 70.0f, gap);
     ImGui::Checkbox("Line #", &show_line_numbers_);
 
     ImGui::SameLine();
@@ -322,9 +336,12 @@ void TableViewerPanel::RenderToolbar() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rows per page");
 
-    ImGui::SameLine(0.0f, 18.0f);
-
     // Filter
+    const bool filtered = !active_tab->grid.filter_text.empty();
+    beside(icon(ICON_FA_FILTER) + gap + 150.0f + gap + check("Hide") +
+               (filtered ? gap + button(ICON_FA_XMARK "##ClearFilter") : 0.0f),
+           18.0f);
+    ImGui::AlignTextToFramePadding();
     ImGui::Text(ICON_FA_FILTER);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(150);
@@ -341,7 +358,7 @@ void TableViewerPanel::RenderToolbar() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide non-matching rows instead of highlighting");
 
     // Clear filter button
-    if (!active_tab->grid.filter_text.empty()) {
+    if (filtered) {
         ImGui::SameLine();
         if (ui::GhostButton(ICON_FA_XMARK "##ClearFilter")) {
             active_tab->grid.ClearFilter();
@@ -349,9 +366,9 @@ void TableViewerPanel::RenderToolbar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear filter");
     }
 
-    ImGui::SameLine(0.0f, 18.0f);
-
     // Column freeze control
+    beside(icon(ICON_FA_LOCK) + gap + 50.0f, 18.0f);
+    ImGui::AlignTextToFramePadding();
     ImGui::Text(ICON_FA_LOCK);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frozen columns");
     ImGui::SameLine();
@@ -362,9 +379,8 @@ void TableViewerPanel::RenderToolbar() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Number of columns to freeze");
 
-    ImGui::SameLine(0.0f, 18.0f);
-
     // Find button
+    beside(button(ICON_FA_MAGNIFYING_GLASS " Find"), 18.0f);
     if (ui::GhostButton(ICON_FA_MAGNIFYING_GLASS " Find")) {
         show_find_dialog_ = true;
     }
@@ -372,21 +388,21 @@ void TableViewerPanel::RenderToolbar() {
 
     // Save button (only enabled if dirty)
     if (active_tab->grid.table) {
-        ImGui::SameLine();
+        beside(button(ICON_FA_FLOPPY_DISK " Save"), gap);
         if (ui::GhostButton(ICON_FA_FLOPPY_DISK " Save", active_tab->is_dirty && !active_tab->live.on,
                             active_tab->live.on ? "A value from Python: export it instead" : "No unsaved changes"))
             SaveTable(active_tab);
         if (active_tab->is_dirty && ImGui::IsItemHovered()) ImGui::SetTooltip("Save changes (Ctrl+S)");
 
         // Export button
-        ImGui::SameLine();
+        beside(button(ICON_FA_FILE_EXPORT " Export " ICON_FA_CHEVRON_DOWN), gap);
         if (ui::GhostButton(ICON_FA_FILE_EXPORT " Export " ICON_FA_CHEVRON_DOWN)) ImGui::OpenPopup("##export");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the table to a file, or copy it");
         RenderExportMenu(active_tab);
     }
 
     // Close tab button
-    ImGui::SameLine();
+    beside(button(ICON_FA_XMARK "##close_tab"), gap);
     if (ui::GhostButton(ICON_FA_XMARK "##close_tab")) {
         close_tab_index_ = active_tab_index_;
     }
