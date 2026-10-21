@@ -4,6 +4,8 @@
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
 
+#include <arrow/memory_pool.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +89,54 @@ int main() try {
     Check(Held("ds_datainput_1") && Held("ds_dataconvert_2"), "the second run registers its names again");
 
     cyxwiz::DataRegistry::Instance().ClearAllTabularDatasets();
+
+    // Lifecycle (TOFIX160 P8): graph A loads and runs, graph B replaces it,
+    // the project closes - the registry and Arrow's memory pool come back to
+    // where they started.
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    arrow::MemoryPool* pool = arrow::default_memory_pool();
+    const int64_t baseline = pool->bytes_allocated();
+    const fs::path big_csv = work_dir / "big.csv";
+    {
+        std::ofstream csv(big_csv, std::ios::binary);
+        csv << "id,value,label\n";
+        for (int i = 0; i < 100000; ++i) csv << i << ',' << (i * 0.5) << ",row" << (i % 97) << '\n';
+    }
+    const std::string graph_b =
+        R"({"nodes":[{"id":1,"type":"DataInput","name":"Big","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(big_csv.string()) +
+        R"(","type":"csv","has_header":"true"}}],"links":[]})";
+    {
+        cyxwiz::PipelineExecutor graph_a_run;
+        graph_a_run.SetIngestionCacheRoot((work_dir / "ingestion").string());
+        Check(graph_a_run.ExecutePipeline(graph_json), "graph A runs: " + graph_a_run.GetLastError());
+        // Graph B replaces A on the canvas: A's run data goes (the editor's ReleaseAll).
+        graph_a_run.ReleaseAll();
+        Check(!Held("ds_datainput_1") && !Held("ds_dataconvert_2"), "graph A's run data is released");
+    }
+    {
+        cyxwiz::PipelineExecutor graph_b_run;
+        graph_b_run.SetIngestionCacheRoot((work_dir / "ingestion").string());
+        Check(graph_b_run.ExecutePipeline(graph_b), "graph B runs: " + graph_b_run.GetLastError());
+        Check(Held("ds_datainput_1"), "graph B's input is held");
+        const auto loaded = registry.LoadedData();
+        Check(loaded.memory_bytes > 1000000, "graph B's 100,000 rows are held in memory");
+        Check(pool->bytes_allocated() > baseline + 1000000, "Arrow's pool holds them");
+        // The project closes.
+        registry.ClearAllTabularDatasets();
+        graph_b_run.ReleaseAll();
+    }
+    Check(registry.LoadedData().entries.empty(), "nothing is held after the project closes");
+    Check(pool->bytes_allocated() <= baseline + 256 * 1024,
+          "Arrow's pool is back near its baseline (" + std::to_string(pool->bytes_allocated() - baseline) +
+              " bytes over)");
+
+    // Unload from memory frees a dataset from every map (TOFIX160 P6).
+    const auto table = cyxwiz::DataRegistry::Instance().LoadCSVToArrow(big_csv.string(), "unload_me");
+    Check(table != nullptr && Held("unload_me"), "a dataset is loaded to unload");
+    registry.UnloadDataset("unload_me");
+    Check(!Held("unload_me"), "UnloadDataset removes an Arrow dataset");
+
     std::cout << "test_pipeline_run_release: all checks passed\n";
     return 0;
 } catch (const std::exception& error) {
