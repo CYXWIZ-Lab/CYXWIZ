@@ -1,5 +1,8 @@
 #include "regex_tester_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -14,7 +17,7 @@ RegexTesterPanel::RegexTesterPanel() {
     strcpy(pattern_buffer_, R"(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b)");
     GenerateSampleText();
 
-    spdlog::info("RegexTesterPanel initialized");
+    spdlog::debug("RegexTesterPanel initialized");
 }
 
 RegexTesterPanel::~RegexTesterPanel() {
@@ -35,19 +38,12 @@ void RegexTesterPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            // Left panel: Pattern + Text Input
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.45f, 0), true);
+            // Left: pattern + test text, right: results
+            ui::BeginSettingsColumn("regex_tester", ImGui::GetContentRegionAvail().x * 0.45f);
             RenderPatternInput();
-            ImGui::Separator();
+            ImGui::Spacing();
             RenderTextInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            // Right panel: Results
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
 
             if (ImGui::BeginTabBar("RegexTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_LIST " Matches")) {
@@ -65,13 +61,14 @@ void RegexTesterPanel::Render() {
                 ImGui::EndTabBar();
             }
 
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
 }
 
 void RegexTesterPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Test")) {
         TestAsync();
     }
@@ -101,11 +98,11 @@ void RegexTesterPanel::RenderToolbar() {
 
     if (has_result_) {
         if (result_.is_valid_pattern) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.success);
             ImGui::Text(ICON_FA_CHECK " %d matches", result_.match_count);
             ImGui::PopStyleColor();
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.error);
             ImGui::Text(ICON_FA_XMARK " Invalid pattern");
             ImGui::PopStyleColor();
         }
@@ -113,23 +110,20 @@ void RegexTesterPanel::RenderToolbar() {
 }
 
 void RegexTesterPanel::RenderPatternInput() {
-    ImGui::Text(ICON_FA_ASTERISK " Regular Expression");
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::FieldLabel("Regular expression");
 
     // Pattern validity indicator
     if (has_result_) {
         ImGui::SameLine();
         if (result_.is_valid_pattern) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
-            ImGui::Text(ICON_FA_CHECK);
-            ImGui::PopStyleColor();
+            ImGui::TextColored(t.success, ICON_FA_CHECK);
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            ImGui::Text(ICON_FA_XMARK);
-            ImGui::PopStyleColor();
+            ImGui::TextColored(t.error, ICON_FA_XMARK);
         }
     }
 
-    ImGui::SetNextItemWidth(-1);
+    ImGui::SetNextItemWidth(-FLT_MIN);
     bool enter_pressed = ImGui::InputText("##Pattern", pattern_buffer_, sizeof(pattern_buffer_),
                                           ImGuiInputTextFlags_EnterReturnsTrue);
 
@@ -139,40 +133,25 @@ void RegexTesterPanel::RenderPatternInput() {
 
     // Show pattern error if any
     if (has_result_ && !result_.is_valid_pattern && !result_.pattern_error.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s", result_.pattern_error.c_str());
         ImGui::PopStyleColor();
     }
 
-    // Quick insert buttons
+    // Quick insert chips (wrap to the next line when the column is narrow)
     ImGui::Spacing();
-    ImGui::Text("Quick:");
-    ImGui::SameLine();
-    if (ImGui::SmallButton("\\d")) { strcat(pattern_buffer_, "\\d"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("\\w")) { strcat(pattern_buffer_, "\\w"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("\\s")) { strcat(pattern_buffer_, "\\s"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton(".")) { strcat(pattern_buffer_, "."); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("*")) { strcat(pattern_buffer_, "*"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("+")) { strcat(pattern_buffer_, "+"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("?")) { strcat(pattern_buffer_, "?"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("()")) { strcat(pattern_buffer_, "()"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("[]")) { strcat(pattern_buffer_, "[]"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("^")) { strcat(pattern_buffer_, "^"); }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("$")) { strcat(pattern_buffer_, "$"); }
+    ui::FieldLabel("Quick insert");
+    static const char* const kQuickInserts[] = {
+        "\\d", "\\w", "\\s", ".", "*", "+", "?", "()", "[]", "^", "$"};
+    ui::FlowRow row(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX());
+    for (const char* insert : kQuickInserts) {
+        row.Next(ui::ChipButtonWidth(insert));
+        if (ui::ChipButton(insert)) { strcat(pattern_buffer_, insert); }
+    }
 }
 
 void RegexTesterPanel::RenderTextInput() {
-    ImGui::Text(ICON_FA_KEYBOARD " Test Text");
+    ui::FieldLabel("Test text");
 
     float available_height = ImGui::GetContentRegionAvail().y - 30;
     ImGui::InputTextMultiline("##TestText", text_buffer_, sizeof(text_buffer_),
@@ -186,19 +165,20 @@ void RegexTesterPanel::RenderTextInput() {
 
 void RegexTesterPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Enter a pattern and click 'Test'");
+        ui::EmptyState(ICON_FA_ASTERISK, "No matches yet", "Enter a pattern and test text, then Test.");
         return;
     }
 }
 
 void RegexTesterPanel::RenderMatches() {
+    const ui::Tokens& t = ui::CurrentTokens();
     RenderResults();
 
     if (!has_result_ || !result_.is_valid_pattern) {
@@ -226,7 +206,7 @@ void RegexTesterPanel::RenderMatches() {
 
         if (node_open) {
             // Full match text
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.series[0]);
             ImGui::TextWrapped("\"%s\"", match.match_text.c_str());
             ImGui::PopStyleColor();
 
@@ -238,7 +218,7 @@ void RegexTesterPanel::RenderMatches() {
             if (!match.groups.empty()) {
                 ImGui::Text("Capture Groups:");
                 for (size_t g = 0; g < match.groups.size(); ++g) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ui::SeriesColour(t, g + 1));
                     ImGui::BulletText("$%d: \"%s\"", static_cast<int>(g + 1), match.groups[g].c_str());
                     ImGui::PopStyleColor();
                 }
@@ -254,6 +234,7 @@ void RegexTesterPanel::RenderMatches() {
 }
 
 void RegexTesterPanel::RenderReplacement() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_ || !result_.is_valid_pattern) {
         ImGui::TextDisabled("Valid pattern required for replacement");
         return;
@@ -284,15 +265,16 @@ void RegexTesterPanel::RenderReplacement() {
 
         ImGui::Spacing();
 
-        ImGui::BeginChild("ReplacedText", ImVec2(0, 0), true);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        ui::BeginInsetList("ReplacedText", ImGui::GetContentRegionAvail().y);
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
         ImGui::TextWrapped("%s", result_.replaced_text.c_str());
         ImGui::PopStyleColor();
-        ImGui::EndChild();
+        ui::EndInsetList();
     }
 }
 
 void RegexTesterPanel::RenderCommonPatterns() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_BOOKMARK " Common Patterns");
     ImGui::Separator();
 
@@ -309,7 +291,7 @@ void RegexTesterPanel::RenderCommonPatterns() {
 
         ImGui::Text("%s:", p.first.c_str());
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.8f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
         ImGui::TextWrapped("%s", p.second.c_str());
         ImGui::PopStyleColor();
 
@@ -421,11 +403,6 @@ void RegexTesterPanel::ClearAll() {
     has_result_ = false;
     error_message_.clear();
     result_ = RegexResult();
-}
-
-void RegexTesterPanel::InsertPattern(const std::string& name, const std::string& pattern) {
-    strcpy(pattern_buffer_, pattern.c_str());
-    has_result_ = false;
 }
 
 void RegexTesterPanel::GenerateSampleText() {

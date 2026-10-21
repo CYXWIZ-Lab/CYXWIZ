@@ -1,0 +1,17 @@
+{
+    "id": "com.cyxwiz.examples.activation-nodes",
+    "name": "Example Activation Nodes",
+    "version": "1.0.0",
+    "api_version": "1.2.0",
+    "description": "Trainable example nodes written in C++: Softsign, and Snake with a learnable frequency",
+    "author": "CyxWiz Lab",
+    "license": "MIT",
+    "homepage": "https://github.com/CYXWIZ-Lab/CYXWIZ",
+    "capabilities": ["ProvidesTensorNodes"],
+    "permissions": ["Training"],
+    "platforms": {
+        "windows": { "library": "bin/activation_nodes.dll" },
+        "linux": { "library": "bin/libactivation_nodes.so" },
+        "macos": { "library": "bin/libactivation_nodes.dylib" }
+    }
+}

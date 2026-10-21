@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
-#include "../layer.h"
+#include "layer_base.h"
+#include "linear_sparse_csr.h"
 #include "../tensor.h"
 #include "../api_export.h"
 #include <string>
@@ -40,6 +43,12 @@ public:
     Tensor Forward(const Tensor& input) override;
 
     /**
+     * Project a host CSR batch without materializing a dense input Tensor.
+     * Output remains a normal dense Tensor for downstream modules.
+     */
+    Tensor ForwardSparseCsr(const LinearSparseCsrBatchView& input);
+
+    /**
      * @brief Backward pass (compute gradients)
      * @param grad_output Gradient from next layer
      * @return Gradient w.r.t input
@@ -47,6 +56,24 @@ public:
      * Also computes and stores gradients for weight and bias
      */
     Tensor Backward(const Tensor& grad_output) override;
+
+    /**
+     * @brief Token-wise projection of [batch, seq, in] -> [batch, seq, out]
+     * without layout copies (TOFIX118 P8): the semantic 3D array is already a
+     * [batch*seq, in] matrix in memory, so the multiplies run in place.
+     * Same parameters and gradients as Forward/Backward on the flattened
+     * input.
+     */
+    Tensor ForwardSequence(const Tensor& input);
+    Tensor BackwardSequence(const Tensor& grad_output);
+
+    /**
+     * Compute weight/bias gradients from the CSR input used for the matching
+     * forward pass. No dense input gradient is produced because this method is
+     * valid only at the first model layer.
+     */
+    void BackwardSparseCsr(const LinearSparseCsrBatchView& input,
+                           const Tensor& grad_output);
 
     /**
      * @brief Get layer parameters

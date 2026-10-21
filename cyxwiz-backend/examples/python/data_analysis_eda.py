@@ -8,7 +8,7 @@ Real-world example showing exploratory data analysis workflows:
 - Statistical summaries
 - Data quality checks
 
-Run this in CyxWiz Command Window or as a standalone script.
+Run this in the CyxWiz Console Python REPL or as a standalone script.
 """
 
 import pycyxwiz as cx

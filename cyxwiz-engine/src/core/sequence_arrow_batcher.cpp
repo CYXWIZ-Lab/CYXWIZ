@@ -1,0 +1,746 @@
+#include "sequence_arrow_batcher.h"
+
+#include "arrow_dataset.h"
+#include "ner_sequence_builder.h"
+#include "sequence_model_input.h"
+#include "sequence_token_window_input.h"
+
+#include <arrow/api.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cctype>
+#include <sstream>
+#include <unordered_map>
+#include <array>
+#include <nlohmann/json.hpp>
+#include <cstdlib>
+
+namespace cyxwiz {
+namespace {
+
+std::string Trim(std::string value) {
+    auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    value.erase(value.begin(),
+                std::find_if(value.begin(), value.end(),
+                             [&](char ch) { return !is_space(ch); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(),
+                             [&](char ch) { return !is_space(ch); }).base(),
+                value.end());
+    return value;
+}
+
+std::vector<std::string> SplitWhitespace(const std::string& value) {
+    std::istringstream in(value);
+    std::vector<std::string> tokens;
+    std::string token;
+    while (in >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+bool IsStringType(const std::shared_ptr<arrow::DataType>& type) {
+    return type &&
+           (type->id() == arrow::Type::STRING ||
+            type->id() == arrow::Type::LARGE_STRING);
+}
+
+bool ReadStringCell(const std::shared_ptr<arrow::Table>& table,
+                    int column_index,
+                    int64_t row_index,
+                    std::string& value,
+                    std::string& error) {
+    auto column = table->column(column_index);
+    if (!column) {
+        error = "column is not readable";
+        return false;
+    }
+
+    auto scalar_result = column->GetScalar(row_index);
+    if (!scalar_result.ok()) {
+        error = scalar_result.status().ToString();
+        return false;
+    }
+
+    auto scalar = *scalar_result;
+    if (!scalar || !scalar->is_valid) {
+        value.clear();
+        return true;
+    }
+
+    value = Trim(scalar->ToString());
+    return true;
+}
+
+bool ReadAnyCell(const std::shared_ptr<arrow::Table>& table,
+                int column_index,
+                int64_t row_index,
+                std::string& value,
+                std::string& error) {
+    auto column = table->column(column_index);
+    if (!column) {
+        error = "column is not readable";
+        return false;
+    }
+
+    auto scalar_result = column->GetScalar(row_index);
+    if (!scalar_result.ok()) {
+        error = scalar_result.status().ToString();
+        return false;
+    }
+
+    auto scalar = *scalar_result;
+    if (!scalar || !scalar->is_valid) {
+        value.clear();
+        return true;
+    }
+
+    value = Trim(scalar->ToString());
+    return true;
+}
+
+bool ValidateStringColumn(const std::shared_ptr<arrow::Table>& table,
+                          const std::string& column_name,
+                          const char* role,
+                          int& column_index,
+                          std::string& error) {
+    if (column_name.empty()) {
+        error = std::string("sequence ") + role + " column is empty";
+        return false;
+    }
+    column_index = table->schema()->GetFieldIndex(column_name);
+    if (column_index < 0) {
+        error = std::string("sequence ") + role + " column '" +
+                column_name + "' not found";
+        return false;
+    }
+    auto field = table->schema()->field(column_index);
+    if (!field || !IsStringType(field->type())) {
+        error = std::string("sequence ") + role + " column '" +
+                column_name + "' must be string/large_string";
+        return false;
+    }
+    return true;
+}
+
+std::string DefaultColumn(const std::string& value,
+                          const char* fallback) {
+    return value.empty() ? std::string(fallback) : value;
+}
+
+void SplitByRatios(size_t total_units,
+                   float train_ratio,
+                   float val_ratio,
+                   std::vector<size_t>& train_units,
+                   std::vector<size_t>& val_units,
+                   std::vector<size_t>& test_units) {
+    size_t train_count = static_cast<size_t>(std::floor(total_units * train_ratio));
+    size_t val_count = static_cast<size_t>(std::floor(total_units * val_ratio));
+    if (train_count > total_units) {
+        train_count = total_units;
+    }
+    if (train_count + val_count > total_units) {
+        val_count = (train_count >= total_units) ? 0 : (total_units - train_count);
+    }
+    const size_t test_count = total_units - train_count - val_count;
+
+    train_units.clear();
+    val_units.clear();
+    test_units.clear();
+    train_units.reserve(train_count);
+    val_units.reserve(val_count);
+    test_units.reserve(test_count);
+
+    for (size_t i = 0; i < train_count; ++i) {
+        train_units.push_back(i);
+    }
+    for (size_t i = train_count; i < train_count + val_count; ++i) {
+        val_units.push_back(i);
+    }
+    for (size_t i = train_count + val_count; i < total_units; ++i) {
+        test_units.push_back(i);
+    }
+}
+
+void AppendGroupsToFlat(const std::vector<std::vector<size_t>>& groups,
+                       const std::vector<size_t>& units,
+                       std::vector<size_t>& flat) {
+    for (const auto unit : units) {
+        if (unit >= groups.size()) {
+            continue;
+        }
+        flat.insert(flat.end(), groups[unit].begin(), groups[unit].end());
+    }
+}
+
+} // namespace
+
+size_t ResolveSequenceLength(const std::vector<SequenceSample>& samples,
+                             size_t configured_length) {
+    if (configured_length > 0) {
+        return configured_length;
+    }
+    size_t max_length = 0;
+    for (const auto& sample : samples) {
+        max_length = std::max(max_length, sample.word_ids.size());
+    }
+    return max_length;
+}
+
+namespace {
+// Why a supplied role's token windows cannot join Train's (another
+// tokenizer, context or supervision), or empty.
+std::string WindowMetadataDifference(const std::shared_ptr<const arrow::KeyValueMetadata>& train,
+                                     const std::shared_ptr<const arrow::KeyValueMetadata>& other) {
+    for (const char* key : {"cyxwiz.token_windows.version", "cyxwiz.token_windows.context",
+            "cyxwiz.token_windows.vocabulary", "cyxwiz.token_windows.tokenizer_type",
+            "cyxwiz.token_windows.lowercase"}) {
+        auto expected = train ? train->Get(key) : arrow::Result<std::string>(arrow::Status::Invalid("Missing metadata"));
+        auto actual = other ? other->Get(key) : arrow::Result<std::string>(arrow::Status::Invalid("Missing metadata"));
+        if (!expected.ok() || !actual.ok() || *expected != *actual)
+            return std::string("External sequence role metadata differs from Train: ") + key;
+    }
+    // Optional key: both roles must use the same supervision (absent = every target).
+    auto supervision = [](const std::shared_ptr<const arrow::KeyValueMetadata>& m) {
+        auto value = m ? m->Get("cyxwiz.token_windows.supervision") : arrow::Result<std::string>(std::string{});
+        return value.ok() ? *value : std::string{};
+    };
+    if (supervision(train) != supervision(other))
+        return "External sequence role metadata differs from Train: cyxwiz.token_windows.supervision";
+    return {};
+}
+}  // namespace
+
+SequenceArrowBatcherBuildResult BuildSequenceBatcherFromWindowSources(
+    const SequenceWindowSource& train,
+    const TrainingConfiguration& config,
+    int batch_size,
+    const SequenceWindowSource& validation,
+    const SequenceWindowSource& test) {
+    SequenceArrowBatcherBuildResult result;
+    if (!config.sequence_batch.enabled) {
+        result.error_message = "sequence batch config is not enabled";
+        return result;
+    }
+    const std::string token_column = DefaultColumn(config.sequence_batch.token_column, "tokens");
+    const auto schema = train.Schema();
+    const int token_index = schema ? schema->GetFieldIndex(token_column) : -1;
+    if (!config.sequence_batch.create_causal_lm_targets || !config.sequence_batch.pos_column.empty() ||
+        token_index < 0 || schema->field(token_index)->type()->id() != arrow::Type::LIST) {
+        result.error_message = "A training set kept on disk streams causal-LM token windows (a list column '" +
+                               token_column + "'); other sequence data must fit in memory (raise the data budget).";
+        return result;
+    }
+    // In memory a share without an input of its own is cut from Train by
+    // document; a file on disk cannot be cut that way, so each share above 0
+    // needs its own input (else the run would quietly train on that share).
+    const bool validation_share = validation.Empty() && config.val_ratio > 0.0f;
+    const bool test_share = test.Empty() && config.test_ratio > 0.0f;
+    if (config.has_data_split && (validation_share || test_share)) {
+        const std::string role = validation_share && test_share ? "validation and test windows"
+                                 : validation_share             ? "validation windows"
+                                                                : "test windows";
+        result.error_message = "Token windows on disk need their " + role + " as a dataset of their own "
+                               "(a Data Split with named inputs), or that share set to 0; ratio splitting a file on "
+                               "disk is not supported yet.";
+        return result;
+    }
+    if (train.Units() == 0) {
+        result.error_message = "Token windows: the training set has no rows";
+        return result;
+    }
+    // The vocabulary and the context come with the first row group.
+    std::vector<SequenceSample> first_samples;
+    Vocabulary vocabulary;
+    int context = 0;
+    if (!ReadTokenWindowSamples(train.ReadUnit(0), token_index, config.sequence_batch.max_sequence_length,
+                                first_samples, vocabulary, context, result.error_message))
+        return result;
+    if (!config.sequence_batch.expected_token_vocabulary.empty() &&
+        config.sequence_batch.expected_token_vocabulary != vocabulary.GetWords()) {
+        result.error_message = "Token window vocabulary differs from the active model";
+        return result;
+    }
+    for (const auto* role : {&validation, &test}) {
+        if (role->Empty()) continue;
+        const auto role_schema = role->Schema();
+        const int column = role_schema ? role_schema->GetFieldIndex(token_column) : -1;
+        if (column < 0 || role_schema->field(column)->type()->id() != arrow::Type::LIST) {
+            result.error_message = "External sequence role requires the same token_ids list column";
+            return result;
+        }
+        if (const auto why = WindowMetadataDifference(schema->metadata(), role_schema->metadata()); !why.empty()) {
+            result.error_message = why;
+            return result;
+        }
+    }
+    const auto metadata = schema->metadata();
+    const auto stored_vocabulary = metadata->Get("cyxwiz.token_windows.vocabulary");
+    const auto strategy = metadata->Get("cyxwiz.token_windows.tokenizer_type");
+    const auto lowercase = metadata->Get("cyxwiz.token_windows.lowercase");
+    if (!stored_vocabulary.ok() || !strategy.ok() || !lowercase.ok() ||
+        (*lowercase != "true" && *lowercase != "false")) {
+        result.error_message = "Invalid token-window tokenizer metadata";
+        return result;
+    }
+    result.tokenizer_vocabulary_artifact = *stored_vocabulary;
+    result.tokenizer_config_json = nlohmann::json{{"version", "1.0"}, {"source", "training_token_windows"},
+        {"effective", {{"tokenizer_type", *strategy}, {"lowercase", *lowercase},
+            {"max_length", context}, {"vocab_file_packaged", "tokenizer/vocab.txt"}}}}.dump();
+
+    SequenceBatcherConfig batcher;
+    batcher.batch_size = static_cast<size_t>(std::max(1, batch_size));
+    batcher.max_sequence_length = static_cast<size_t>(context);
+    batcher.shuffle = config.shuffle;
+    batcher.drop_last = config.drop_last;
+    batcher.create_attention_mask = config.sequence_batch.create_attention_mask;
+    batcher.create_causal_lm_targets = true;
+    batcher.tag_ignore_index = config.sequence_batch.ignore_index;
+    batcher.target_ignore_index = config.sequence_batch.target_ignore_index;
+    batcher.seed = static_cast<uint32_t>(std::max(0, config.dataloader_seed));
+    batcher.word_pad_id = vocabulary.PadIndex();
+
+    result.id_to_label = vocabulary.GetWords();
+    result.sequence_length = static_cast<size_t>(context);
+    result.token_vocabulary_size = vocabulary.Size();
+    result.word_pad_id = vocabulary.PadIndex();
+    auto streamed = std::make_unique<ParquetSequenceBatcher>(
+        std::array<SequenceWindowSource, 3>{train, validation, test}, token_column, context, batcher);
+    result.sample_count = streamed->GetNumSamples();
+    result.batcher = std::move(streamed);
+    return result;
+}
+
+SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
+    const std::shared_ptr<ArrowDataset>& dataset,
+    const TrainingConfiguration& config,
+    int batch_size,
+    const std::shared_ptr<ArrowDataset>& validation,
+    const std::shared_ptr<ArrowDataset>& test) {
+    SequenceArrowBatcherBuildResult result;
+
+    if (!config.sequence_batch.enabled) {
+        result.error_message = "sequence batch config is not enabled";
+        return result;
+    }
+    if (!dataset) {
+        result.error_message = "sequence Arrow dataset is null";
+        return result;
+    }
+
+    auto table = dataset->GetArrowTable();
+    if (!table || !table->schema()) {
+        result.error_message = "sequence Arrow dataset has no table";
+        return result;
+    }
+
+    const bool causal_lm = config.sequence_batch.create_causal_lm_targets;
+    const std::string token_column =
+        DefaultColumn(config.sequence_batch.token_column, "tokens");
+    const std::string tag_column =
+        DefaultColumn(config.sequence_batch.tag_column, "ner_tags");
+
+    int token_index = -1;
+    int tag_index = -1;
+    int sentence_index = -1;
+    std::string error;
+    token_index = table->schema()->GetFieldIndex(token_column);
+    const bool encoded_windows = token_index>=0 && table->field(token_index)->type()->id()==arrow::Type::LIST;
+    if (encoded_windows && (!causal_lm || !config.sequence_batch.pos_column.empty())) {
+        result.error_message="Token windows support causal LM without POS/tag labels"; return result;
+    }
+    if (encoded_windows && config.has_data_split && config.sequence_batch.sentence_id_column.empty()) {
+        result.error_message="Token windows require a document/family grouping column before ratio splitting"; return result;
+    }
+    if ((!encoded_windows && !ValidateStringColumn(table, token_column, "token",
+                              token_index, error)) ||
+        (!causal_lm && !ValidateStringColumn(table, tag_column, "tag",
+                                             tag_index, error))) {
+        result.error_message = error;
+        return result;
+    }
+
+    int pos_index = -1;
+    if (!config.sequence_batch.pos_column.empty() &&
+        !ValidateStringColumn(table, config.sequence_batch.pos_column, "POS",
+                              pos_index, error)) {
+        result.error_message = error;
+        return result;
+    }
+
+    if (config.has_data_split &&
+        !config.sequence_batch.sentence_id_column.empty()) {
+        sentence_index = table->schema()->GetFieldIndex(
+            config.sequence_batch.sentence_id_column);
+        if (sentence_index < 0) {
+            result.error_message =
+                "sequence sentence id column '" +
+                config.sequence_batch.sentence_id_column + "' not found";
+            return result;
+        }
+    }
+
+    std::vector<std::vector<size_t>> sentence_groups;
+    if (sentence_index >= 0) {
+        sentence_groups.reserve(static_cast<size_t>(table->num_rows()));
+        std::unordered_map<std::string, size_t> sentence_id_to_group;
+        for (int64_t row_index = 0; row_index < table->num_rows(); ++row_index) {
+            std::string sentence_id;
+            if (!ReadAnyCell(table, sentence_index, row_index, sentence_id, error)) {
+                result.error_message =
+                    "sequence sentence id row " + std::to_string(row_index) +
+                    ": " + error;
+                return result;
+            }
+            if (sentence_id.empty()) {
+                sentence_id = "__row__" + std::to_string(row_index);
+            }
+
+            auto it = sentence_id_to_group.find(sentence_id);
+            size_t group_index = it != sentence_id_to_group.end()
+                ? it->second
+                : sentence_groups.size();
+            if (it == sentence_id_to_group.end()) {
+                sentence_id_to_group[sentence_id] = group_index;
+                sentence_groups.push_back({});
+            }
+            sentence_groups[group_index].push_back(
+                static_cast<size_t>(row_index));
+        }
+    }
+
+    std::vector<SequenceSample> encoded_samples;
+    Vocabulary encoded_vocabulary;
+    int encoded_context=0;
+    if (encoded_windows) {
+        if (!ReadTokenWindowSamples(table,token_index,config.sequence_batch.max_sequence_length,
+                encoded_samples,encoded_vocabulary,encoded_context,result.error_message)) return result;
+        if (!config.sequence_batch.expected_token_vocabulary.empty() &&
+            config.sequence_batch.expected_token_vocabulary!=encoded_vocabulary.GetWords()) {
+            result.error_message="Token window vocabulary differs from the active model"; return result;
+        }
+    }
+    std::array<std::vector<size_t>, 2> supplied_indices;
+    if (validation || test) {
+        if (!encoded_windows) {
+            result.error_message = "External sequence roles currently require causal token windows with a frozen vocabulary";
+            return result;
+        }
+        // Supplied roles keep their original sample order and exact tokenizer identity.
+        const auto train_metadata = table->schema()->metadata();
+        std::unordered_map<std::string, size_t> group_roles;
+        const std::array<std::shared_ptr<arrow::Table>, 3> tables = {
+            table, validation ? validation->GetArrowTable() : nullptr,
+            test ? test->GetArrowTable() : nullptr};
+        if ((validation && !tables[1]) || (test && !tables[2])) {
+            result.error_message = "Supplied sequence role has no Arrow table";
+            return result;
+        }
+        for (size_t role = 0; role < tables.size(); ++role) {
+            const auto& source = tables[role];
+            if (!source) continue;
+            if (role > 0) {
+                const auto metadata = source->schema()->metadata();
+                if (const auto why = WindowMetadataDifference(train_metadata, metadata); !why.empty()) {
+                    result.error_message = why;
+                    return result;
+                }
+                const int column = source->schema()->GetFieldIndex(token_column);
+                if (column < 0 || source->field(column)->type()->id() != arrow::Type::LIST) {
+                    result.error_message = "External sequence role requires the same token_ids list column";
+                    return result;
+                }
+                std::vector<SequenceSample> extra;
+                Vocabulary vocabulary;
+                int context = 0;
+                if (!ReadTokenWindowSamples(source, column, encoded_context, extra, vocabulary, context, result.error_message))
+                    return result;
+                auto& indices = supplied_indices[role - 1];
+                indices.reserve(extra.size());
+                for (auto& sample : extra) {
+                    indices.push_back(encoded_samples.size());
+                    encoded_samples.push_back(std::move(sample));
+                }
+            }
+            if (!config.sequence_batch.sentence_id_column.empty()) {
+                const int column = source->schema()->GetFieldIndex(config.sequence_batch.sentence_id_column);
+                if (column < 0) { result.error_message = "External sequence role is missing the document grouping column"; return result; }
+                for (int64_t row = 0; row < source->num_rows(); ++row) {
+                    std::string id;
+                    if (!ReadAnyCell(source, column, row, id, result.error_message) || id.empty()) {
+                        result.error_message = "External sequence roles require nonempty document identities"; return result;
+                    }
+                    const auto [it, inserted] = group_roles.emplace(id, role);
+                    if (!inserted && it->second != role) {
+                        result.error_message = "Document identity overlaps supplied sequence roles: " + id; return result;
+                    }
+                }
+            }
+        }
+    }
+    std::vector<NERSequenceRow> rows;
+    rows.reserve(static_cast<size_t>(table->num_rows()));
+    if (!encoded_windows) for (int64_t row_index = 0; row_index < table->num_rows(); ++row_index) {
+        std::string token_text;
+        std::string tag_text;
+        std::string pos_text;
+        if (!ReadStringCell(table, token_index, row_index,
+                            token_text, error) ||
+            (!causal_lm && !ReadStringCell(table, tag_index, row_index,
+                                           tag_text, error))) {
+            result.error_message =
+                "sequence row " + std::to_string(row_index) + ": " + error;
+            return result;
+        }
+        if (pos_index >= 0 &&
+            !ReadStringCell(table, pos_index, row_index,
+                            pos_text, error)) {
+            result.error_message =
+                "sequence row " + std::to_string(row_index) + ": " + error;
+            return result;
+        }
+
+        rows.push_back({
+            SplitWhitespace(token_text),
+            SplitWhitespace(pos_text),
+            SplitWhitespace(tag_text),
+        });
+    }
+
+    try {
+        NERSequenceBuilderConfig builder_config;
+        builder_config.use_pos_tags = pos_index >= 0;
+        builder_config.require_tags = !causal_lm;
+        builder_config.batcher.batch_size =
+            static_cast<size_t>(std::max(1, batch_size));
+        builder_config.batcher.max_sequence_length =
+            static_cast<size_t>(
+                std::max(0, config.sequence_batch.max_sequence_length));
+        builder_config.batcher.shuffle = config.shuffle;
+        builder_config.batcher.drop_last = config.drop_last;
+        builder_config.batcher.create_attention_mask =
+            config.sequence_batch.create_attention_mask;
+        builder_config.batcher.create_causal_lm_targets =
+            config.sequence_batch.create_causal_lm_targets;
+        builder_config.batcher.tag_ignore_index =
+            config.sequence_batch.ignore_index;
+        builder_config.batcher.target_ignore_index =
+            config.sequence_batch.target_ignore_index;
+        builder_config.batcher.seed =
+            static_cast<uint32_t>(std::max(0, config.dataloader_seed));
+        const float dev_ratio = validation ? 0.0f : config.val_ratio;
+        const float test_ratio = test ? 0.0f : config.test_ratio;
+        const float train_ratio = (validation || test) ? 1.0f - dev_ratio - test_ratio : config.train_ratio;
+        if (config.has_data_split || validation || test) {
+            std::vector<size_t> train_units;
+            std::vector<size_t> val_units;
+            std::vector<size_t> test_units;
+
+            if (sentence_index >= 0 && !sentence_groups.empty()) {
+                SplitByRatios(sentence_groups.size(),
+                              train_ratio,
+                              dev_ratio,
+                              train_units,
+                              val_units,
+                              test_units);
+
+                AppendGroupsToFlat(sentence_groups, train_units,
+                                   builder_config.batcher.train_indices);
+                AppendGroupsToFlat(sentence_groups, val_units,
+                                   builder_config.batcher.val_indices);
+                AppendGroupsToFlat(sentence_groups, test_units,
+                                   builder_config.batcher.test_indices);
+            } else {
+                SplitByRatios(static_cast<size_t>(table->num_rows()),
+                              train_ratio,
+                              dev_ratio,
+                              train_units,
+                              val_units,
+                              test_units);
+
+                builder_config.batcher.train_indices = std::move(train_units);
+                builder_config.batcher.val_indices = std::move(val_units);
+                builder_config.batcher.test_indices = std::move(test_units);
+            }
+        }
+
+        if (encoded_windows) {
+            if (validation) builder_config.batcher.val_indices = std::move(supplied_indices[0]);
+            if (test) builder_config.batcher.test_indices = std::move(supplied_indices[1]);
+            // The stored tokenizer is the exact training artifact, independent of preview settings.
+            const auto metadata = table->schema()->metadata();
+            const auto vocabulary = metadata->Get("cyxwiz.token_windows.vocabulary");
+            const auto strategy = metadata->Get("cyxwiz.token_windows.tokenizer_type");
+            const auto lowercase = metadata->Get("cyxwiz.token_windows.lowercase");
+            if (!vocabulary.ok() || !strategy.ok() || !lowercase.ok() ||
+                (*lowercase != "true" && *lowercase != "false"))
+                throw std::invalid_argument("Invalid token-window tokenizer metadata");
+            result.tokenizer_vocabulary_artifact = *vocabulary;
+            result.tokenizer_config_json = nlohmann::json{{"version", "1.0"}, {"source", "training_token_windows"},
+                {"effective", {{"tokenizer_type", *strategy}, {"lowercase", *lowercase},
+                    {"max_length", encoded_context}, {"vocab_file_packaged", "tokenizer/vocab.txt"}}}}.dump();
+            builder_config.batcher.max_sequence_length=static_cast<size_t>(encoded_context);
+            builder_config.batcher.word_pad_id=encoded_vocabulary.PadIndex();
+            result.id_to_label=encoded_vocabulary.GetWords();
+            result.sample_count=encoded_samples.size();
+            result.sequence_length=static_cast<size_t>(encoded_context);
+            result.token_vocabulary_size=encoded_vocabulary.Size();
+            result.word_pad_id=encoded_vocabulary.PadIndex();
+            result.batcher=std::make_unique<SequenceBatcher>(std::move(encoded_samples),builder_config.batcher);
+            return result;
+        }
+        auto build = BuildNERSequenceData(rows, builder_config);
+        result.id_to_label = causal_lm ? build.token_vocabulary.Values()
+                                       : build.tag_vocabulary.Values();
+        result.sample_count = build.samples.size();
+        result.sequence_length = ResolveSequenceLength(
+            build.samples, build.batcher_config.max_sequence_length);
+        result.token_vocabulary_size = build.token_vocabulary.Size();
+        result.pos_vocabulary_size = build.pos_vocabulary.Size();
+        result.tag_vocabulary_size = build.tag_vocabulary.Size();
+        result.word_pad_id = build.batcher_config.word_pad_id;
+        result.pos_pad_id = build.batcher_config.pos_pad_id;
+        result.batcher = std::make_unique<SequenceBatcher>(
+            std::move(build.samples), build.batcher_config);
+    } catch (const std::exception& ex) {
+        result.error_message = ex.what();
+    }
+
+    return result;
+}
+
+void ApplySequenceBatcherBuildResultToTrainingConfig(
+    const SequenceArrowBatcherBuildResult& build,
+    TrainingConfiguration& config) {
+    config.sequence_batch.tokenizer_config_json = build.tokenizer_config_json;
+    config.sequence_batch.tokenizer_vocabulary_artifact = build.tokenizer_vocabulary_artifact;
+    if (build.sequence_length > 0) {
+        config.input_size = build.sequence_length;
+        config.input_shape = {build.sequence_length};
+    }
+    const size_t output_vocabulary_size = config.sequence_batch.create_causal_lm_targets
+        ? build.token_vocabulary_size : build.tag_vocabulary_size;
+    if (output_vocabulary_size > 0) {
+        config.output_size = output_vocabulary_size;
+    }
+    if (config.sequence_batch.create_causal_lm_targets)
+        config.sequence_batch.expected_token_vocabulary = build.id_to_label;
+    config.sequence_batch.word_pad_id = build.word_pad_id;
+    config.sequence_batch.pos_pad_id = build.pos_pad_id;
+
+    bool embedding_vocab_applied = false;
+    int last_time_distributed = -1;
+    for (size_t i = 0; i < config.layers.size(); ++i) {
+        auto& layer = config.layers[i];
+        if (IsSequenceFeatureFusionLayer(layer)) {
+            if (build.token_vocabulary_size > 0) {
+                layer.parameters["word_num_embeddings"] =
+                    std::to_string(build.token_vocabulary_size);
+            }
+            if (build.pos_vocabulary_size > 0) {
+                layer.parameters["pos_num_embeddings"] =
+                    std::to_string(build.pos_vocabulary_size);
+            }
+        }
+        if (!embedding_vocab_applied &&
+            layer.type == gui::NodeType::Embedding &&
+            build.token_vocabulary_size > 0) {
+            layer.parameters["num_embeddings"] =
+                std::to_string(build.token_vocabulary_size);
+            embedding_vocab_applied = true;
+        }
+        if (layer.type == gui::NodeType::TimeDistributed) {
+            last_time_distributed = static_cast<int>(i);
+        }
+    }
+
+    if (last_time_distributed >= 0 && output_vocabulary_size > 0) {
+        auto& head = config.layers[static_cast<size_t>(last_time_distributed)];
+        head.units = static_cast<int>(output_vocabulary_size);
+        head.parameters["units"] = std::to_string(output_vocabulary_size);
+        if (!head.output_shape.empty()) {
+            head.output_shape.back() = output_vocabulary_size;
+        }
+    }
+}
+
+CheckpointTokenizer CheckpointTokenizerFromConfig(const TrainingConfiguration& config) {
+    CheckpointTokenizer tokenizer;
+    const auto& sequence = config.sequence_batch;
+    if (!sequence.enabled || sequence.tokenizer_vocabulary_artifact.empty()) return tokenizer;
+    tokenizer.config_json = sequence.tokenizer_config_json;
+    tokenizer.vocabulary = sequence.tokenizer_vocabulary_artifact;
+    tokenizer.sequence_length = config.input_size;
+    tokenizer.labels = sequence.expected_token_vocabulary;
+    tokenizer.word_pad_id = sequence.word_pad_id;
+    tokenizer.pos_pad_id = sequence.pos_pad_id;
+    if (sequence.create_causal_lm_targets) {
+        tokenizer.token_vocabulary_size = config.output_size;
+    } else {
+        tokenizer.tag_vocabulary_size = config.output_size;
+        for (const auto& layer : config.layers) {
+            if (layer.type != gui::NodeType::Embedding) continue;
+            if (const auto it = layer.parameters.find("num_embeddings"); it != layer.parameters.end())
+                tokenizer.token_vocabulary_size = static_cast<size_t>(std::strtoull(it->second.c_str(), nullptr, 10));
+            break;
+        }
+    }
+    return tokenizer;
+}
+
+void ApplyCheckpointTokenizer(const CheckpointTokenizer& tokenizer, TrainingConfiguration& config) {
+    SequenceArrowBatcherBuildResult build;
+    build.tokenizer_config_json = tokenizer.config_json;
+    build.tokenizer_vocabulary_artifact = tokenizer.vocabulary;
+    build.sequence_length = tokenizer.sequence_length;
+    build.token_vocabulary_size = tokenizer.token_vocabulary_size;
+    build.tag_vocabulary_size = tokenizer.tag_vocabulary_size;
+    build.id_to_label = tokenizer.labels;
+    build.word_pad_id = tokenizer.word_pad_id;
+    build.pos_pad_id = tokenizer.pos_pad_id;
+    ApplySequenceBatcherBuildResultToTrainingConfig(build, config);
+
+    // Generation previews (Try now) decode with the same tokenizer.
+    auto& preview = config.generation_preview;
+    preview.vocabulary_artifact = tokenizer.vocabulary;
+    preview.context = static_cast<int>(tokenizer.sequence_length);
+    try {
+        const auto effective = nlohmann::json::parse(tokenizer.config_json).value("effective", nlohmann::json::object());
+        const std::string type = effective.value("tokenizer_type", std::string());
+        if (type.size() == 1 && type[0] >= '0' && type[0] <= '3') preview.tokenizer_type = type[0] - '0';
+        preview.lowercase = effective.value("lowercase", std::string()) == "true";
+    } catch (const std::exception&) {
+        // Settings that do not parse leave the preview's own (from the data).
+    }
+}
+
+bool PrepareSequenceEvaluationVocabulary(
+    TrainingConfiguration& config,
+    const std::shared_ptr<ArrowDataset>& dataset,
+    std::string& error) {
+    if (!config.sequence_batch.enabled || !config.sequence_batch.create_causal_lm_targets ||
+        !config.sequence_batch.expected_token_vocabulary.empty()) {
+        return true;
+    }
+    if (!dataset) {
+        error = "The checkpoint's token vocabulary is read from the graph's prepared "
+                "training dataset '" + config.dataset_name +
+                "'. Apply its Data Input before loading the checkpoint.";
+        return false;
+    }
+    TrainingConfiguration build_config = config;
+    build_config.dataset_roles.dev = {};
+    build_config.dataset_roles.test = {};
+    auto sequence = BuildSequenceBatcherFromArrowDataset(
+        dataset, build_config, std::max(1, config.batch_size));
+    if (!sequence.success()) {
+        error = "Checkpoint evaluation could not prepare the sequence vocabulary: " +
+                sequence.error_message;
+        return false;
+    }
+    ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
+    return true;
+}
+
+} // namespace cyxwiz

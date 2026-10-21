@@ -137,6 +137,7 @@ void Theme::ApplyCyxWizDark() {
     ImVec4 success       = ImVec4(0.20f, 0.70f, 0.40f, 1.00f);   // Green success
     ImVec4 warning       = ImVec4(0.90f, 0.70f, 0.20f, 1.00f);   // Yellow warning
     ImVec4 error_col     = ImVec4(0.85f, 0.30f, 0.30f, 1.00f);   // Red error
+    semantic_ = {success, warning, error_col};
 
     // Text
     colors[ImGuiCol_Text]                   = text;

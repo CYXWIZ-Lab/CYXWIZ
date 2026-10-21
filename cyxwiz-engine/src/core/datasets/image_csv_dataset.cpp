@@ -13,8 +13,8 @@ ImageCSVDataset::ImageCSVDataset(const std::string& image_folder, const std::str
                 int target_width, int target_height, size_t cache_size,
                 const std::string& filename_col, const std::string& label_col)
     : image_folder_(image_folder), csv_path_(csv_path),
-      target_width_(target_width), target_height_(target_height),
       filename_col_(filename_col), label_col_(label_col),
+      target_width_(target_width), target_height_(target_height),
       image_cache_(cache_size) {
     LoadData();
 }

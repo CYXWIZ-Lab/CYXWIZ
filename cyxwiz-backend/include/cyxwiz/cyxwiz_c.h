@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 /**
@@ -16,14 +18,10 @@ extern "C" {
 #include <stdbool.h>
 
 // Platform-specific exports
-#ifdef _WIN32
-    #ifdef CYXWIZ_BACKEND_EXPORTS
-        #define CYXWIZ_C_API __declspec(dllexport)
-    #else
-        #define CYXWIZ_C_API __declspec(dllimport)
-    #endif
-#else
-    #define CYXWIZ_C_API __attribute__((visibility("default")))
+#include "api_export.h"
+
+#ifndef CYXWIZ_C_API
+    #define CYXWIZ_C_API CYXWIZ_API
 #endif
 
 // Opaque handles
@@ -38,7 +36,8 @@ typedef enum {
     CYXWIZ_DEVICE_CUDA = 1,
     CYXWIZ_DEVICE_OPENCL = 2,
     CYXWIZ_DEVICE_METAL = 3,
-    CYXWIZ_DEVICE_VULKAN = 4
+    CYXWIZ_DEVICE_VULKAN = 4,
+    CYXWIZ_DEVICE_ONEAPI = 5
 } CyxWizDeviceType;
 
 typedef enum {

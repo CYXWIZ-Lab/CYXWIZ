@@ -3,13 +3,14 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <map>
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <grpcpp/grpcpp.h>
 #include "execution.grpc.pb.h"
 #include "job.pb.h"
-#include "dataset_provider.h"
+#include "dataset_file_server.h"
 
 namespace network {
 
@@ -23,29 +24,53 @@ struct NodeCapabilities {
 };
 
 struct TrainingProgress {
-    uint32_t current_epoch;
-    uint32_t total_epochs;
-    uint32_t current_batch;
-    uint32_t total_batches;
-    float progress_percentage;
-    std::map<std::string, float> metrics;  // loss, accuracy, etc.
-    float gpu_usage;
-    float memory_usage;
+    uint32_t current_epoch = 0;
+    uint32_t total_epochs = 0;
+    uint32_t current_batch = 0;
+    uint32_t total_batches = 0;
+    double progress_percentage = 0.0;
+    std::map<std::string, double> metrics;  // loss, accuracy, etc.
+    double gpu_usage = 0.0;
+    double memory_usage = 0.0;
+    // From the node (TOFIX118 P4c); -1 / 0 when the node did not report them.
+    int64_t eta_seconds = -1;
+    int64_t elapsed_seconds = -1;
+    double samples_per_second = 0.0;
+    int64_t gpu_memory_used = 0;
+    int64_t gpu_memory_total = 0;
 };
 
 struct CheckpointInfo {
-    uint32_t epoch;
+    uint32_t epoch = 0;
     std::string checkpoint_hash;
     std::string storage_uri;
-    uint64_t size_bytes;
+    uint64_t size_bytes = 0;
+    // Resume point inside the epoch (metrics_at_checkpoint["next_batch"]); -1
+    // for an epoch-end checkpoint. The node keeps the files (P4e-3).
+    int64_t next_batch = -1;
+    std::map<std::string, double> metrics;
 };
 
 struct TrainingComplete {
-    bool success;
+    bool success = false;
     std::map<std::string, float> final_metrics;
-    uint64_t total_training_time;
+    uint64_t total_training_time = 0;
     std::string result_hash;
     std::string model_uri;
+    int64_t total_epochs_completed = 0;
+    int64_t final_weights_size = 0;
+    // Node timing (TOFIX118 P3); 0 when not reported.
+    double train_seconds = 0.0;
+    double wall_seconds = 0.0;
+    double samples_per_second = 0.0;
+};
+
+// A training failure as the node categorised it (TOFIX118 P4a).
+struct TrainingFailureReport {
+    std::string code;     // TrainingFailureWireCode: OUT_OF_MEMORY, DATA_ERROR, ...
+    std::string message;  // the node's own words
+    int epoch = 0;
+    bool recoverable = true;
 };
 
 // Callback types for P2P events
@@ -54,6 +79,7 @@ using CheckpointCallback = std::function<void(const CheckpointInfo&)>;
 using CompletionCallback = std::function<void(const TrainingComplete&)>;
 using ErrorCallback = std::function<void(const std::string& error_message, bool is_fatal)>;
 using LogCallback = std::function<void(const std::string& source, const std::string& message)>;
+using FailureCallback = std::function<void(const TrainingFailureReport&)>;
 
 /**
  * P2PClient - Direct communication with Server Node for job execution
@@ -113,7 +139,9 @@ public:
 
     // Reservation-based job management
     bool SendNewJobConfig(const cyxwiz::protocol::JobConfig& config);
-    bool SendReservationEnd();
+    // Hand the node ExtendReservation's token: it takes the reservation's new
+    // end from it (TOFIX118 gap 5).
+    bool SendReservationExtension(const std::string& p2p_auth_token);
     bool IsWaitingForNewJob() const { return waiting_for_new_job_; }
     void SetWaitingForNewJob(bool waiting) { waiting_for_new_job_ = waiting; }
 
@@ -132,6 +160,12 @@ public:
     void SetCheckpointCallback(CheckpointCallback callback) { checkpoint_callback_ = callback; }
     void SetCompletionCallback(CompletionCallback callback) { completion_callback_ = callback; }
     void SetErrorCallback(ErrorCallback callback) { error_callback_ = callback; }
+    // The node's failure category, separate from the error text so a screen
+    // can show "Out of memory" and what to do next (TOFIX118 P4 GUI).
+    void SetFailureCallback(FailureCallback callback) { failure_callback_ = std::move(callback); }
+    // The node's own words when it refused the last job ("Out of memory: ..."),
+    // empty when the last send was accepted or never reached the node.
+    const std::string& GetLastRejectionReason() const { return last_rejection_reason_; }
     void SetLogCallback(LogCallback callback) { log_callback_ = callback; }
 
     // Error handling
@@ -142,13 +176,12 @@ public:
     void ClearAuthToken() { auth_token_.clear(); }
     bool HasAuthToken() const { return !auth_token_.empty(); }
 
-    // Dataset provider for lazy-loading streaming
-    DatasetProvider& GetDatasetProvider() { return dataset_provider_; }
-    const DatasetProvider& GetDatasetProvider() const { return dataset_provider_; }
-
-    // Register a dataset for streaming to Server Node
-    void RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset);
-    void UnregisterDatasetForJob(const std::string& job_id);
+    // Remote jobs ship whole dataset files (TOFIX118 P2): registers the job's
+    // graph datasets, served when the node asks; false with the reason when
+    // the node could not train the graph or a dataset is not loaded. Exports
+    // go inside the open project (the system drive may be full), else temp.
+    bool RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, std::string& error);
+    void UnregisterJobDatasets(const std::string& job_id);
 
 private:
     // Add authorization header to gRPC context
@@ -159,8 +192,8 @@ private:
     // Send control command during streaming
     bool SendTrainingCommand(const cyxwiz::protocol::TrainingCommand& command);
 
-    // Handle dataset requests from Server Node
-    void HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update);
+    // Handle dataset file requests from Server Node
+    void HandleDatasetFileRequest(const cyxwiz::protocol::DatasetFileRequest& request);
 
     // Connection state
     bool connected_;
@@ -190,10 +223,12 @@ private:
     CheckpointCallback checkpoint_callback_;
     CompletionCallback completion_callback_;
     ErrorCallback error_callback_;
+    FailureCallback failure_callback_;
+    std::string last_rejection_reason_;
     LogCallback log_callback_;
 
-    // Dataset provider for lazy-loading streaming
-    DatasetProvider dataset_provider_;
+    // Whole dataset files for remote jobs
+    DatasetFileServer dataset_files_;
 };
 
 } // namespace network

@@ -35,7 +35,6 @@ private:
     void CopyResult();
     void AddToHistory();
     void InsertFunction(const std::string& func);
-    void InsertConstant(const std::string& name, double value);
 
 private:
     bool visible_ = false;

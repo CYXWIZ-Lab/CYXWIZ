@@ -1,5 +1,5 @@
 #include "arrow_dataset.h"
-#include <arrow/csv/reader.h>
+#include <arrow/csv/api.h>
 #include <arrow/io/file.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
@@ -39,8 +39,13 @@ std::shared_ptr<ArrowDataset> ArrowDataset::FromFile(const std::string& path,
 
     switch (format) {
         case arrow_utils::FileFormat::CSV:
-        case arrow_utils::FileFormat::TSV:
-            return FromCSV(path, name);
+        case arrow_utils::FileFormat::TSV: {
+            // Quoted values may span lines (free text, reviews); a TSV is tab-separated.
+            auto parse_options = arrow::csv::ParseOptions::Defaults();
+            parse_options.newlines_in_values = true;
+            if (format == arrow_utils::FileFormat::TSV) parse_options.delimiter = '\t';
+            return FromCSV(path, name, arrow::csv::ReadOptions::Defaults(), parse_options);
+        }
         case arrow_utils::FileFormat::Parquet:
             return FromParquet(path, name);
         case arrow_utils::FileFormat::Feather:
@@ -165,7 +170,9 @@ std::shared_ptr<ArrowDataset> ArrowDataset::FromFeather(const std::string& path,
         batches.push_back(maybe_batch.ValueOrDie());
     }
 
-    auto maybe_table = arrow::Table::FromRecordBatches(batches);
+    // With the file's schema a file holding no batches is a 0-row table, not
+    // an error; the caller decides what an empty dataset means.
+    auto maybe_table = arrow::Table::FromRecordBatches(reader->schema(), batches);
     if (!maybe_table.ok()) {
         spdlog::error("Failed to create table from record batches: {}", maybe_table.status().ToString());
         return nullptr;
@@ -282,53 +289,6 @@ std::shared_ptr<ArrowDataset> ArrowDataset::Slice(int64_t offset, int64_t length
     return std::make_shared<ArrowDataset>(sliced_table, name_ + "_slice");
 }
 
-bool ArrowDataset::ExportCSV(const std::string& path) const {
-    if (!table_) {
-        spdlog::error("Cannot export null table to CSV");
-        return false;
-    }
-
-    spdlog::info("Exporting Arrow table '{}' to CSV: {}", name_, path);
-
-    // Open output file
-    auto maybe_output = arrow::io::FileOutputStream::Open(path);
-    if (!maybe_output.ok()) {
-        spdlog::error("Failed to open CSV output file: {} - {}", path, maybe_output.status().ToString());
-        return false;
-    }
-    std::shared_ptr<arrow::io::FileOutputStream> output = maybe_output.ValueOrDie();
-
-    // Write CSV (simplified - for production use arrow::csv::WriteCSV with options)
-    // Note: arrow::csv::WriteCSV is available in newer Arrow versions
-    // For now, we'll use a simple implementation
-
-    // Write header
-    std::string header;
-    for (int i = 0; i < table_->num_columns(); ++i) {
-        if (i > 0) header += ",";
-        header += table_->schema()->field(i)->name();
-    }
-    header += "\n";
-    auto status = output->Write(header);
-    if (!status.ok()) {
-        spdlog::error("Failed to write CSV header: {}", status.ToString());
-        return false;
-    }
-
-    // For a full implementation, we'd convert the table to CSV format
-    // This is simplified - in production, use arrow::csv::WriteCSV
-    spdlog::warn("CSV export is simplified - consider using arrow::csv::WriteCSV for production");
-
-    status = output->Close();
-    if (!status.ok()) {
-        spdlog::error("Failed to close CSV file: {}", status.ToString());
-        return false;
-    }
-
-    spdlog::info("CSV exported successfully");
-    return true;
-}
-
 bool ArrowDataset::ExportParquet(const std::string& path, bool compress) const {
     if (!table_) {
         spdlog::error("Cannot export null table to Parquet");
@@ -354,7 +314,8 @@ bool ArrowDataset::ExportParquet(const std::string& path, bool compress) const {
 
     // Write table
     auto status = parquet::arrow::WriteTable(*table_, arrow::default_memory_pool(),
-                                             output, 1024 * 1024, props);  // 1MB row group size
+                                             output, 1024 * 1024, props,
+                                             parquet::ArrowWriterProperties::Builder().store_schema()->build());
     if (!status.ok()) {
         spdlog::error("Failed to write Parquet table: {}", status.ToString());
         return false;

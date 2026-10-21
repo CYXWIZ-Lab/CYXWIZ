@@ -1,4 +1,6 @@
 #include "cell_manager.h"
+#include "../core/cyx_format.h"
+#include "../core/notebook_format.h"
 #include "scripting_engine.h"
 #include <spdlog/spdlog.h>
 #include <sstream>
@@ -8,6 +10,8 @@
 namespace cyxwiz {
 
 CellManager::CellManager() {
+    static std::uint64_t next_namespace = 1;
+    namespace_key_ = "notebook-" + std::to_string(next_namespace++);
     // Start with one empty code cell
     AddCell(CellType::Code);
 }
@@ -253,353 +257,487 @@ void CellManager::AddCellOutput(int index, const CellOutput& output) {
 
     if (IsValidIndex(index)) {
         cells_[index].AddOutput(output);
-
-        if (on_cell_output_added_) {
-            on_cell_output_added_(index, output);
-        }
     }
 }
 
 // ========== Execution ==========
+//
+// TOFIX133 P0 items 8-10. The worker thread never touches cells_: its
+// callbacks only post events to a mailbox (shared, so a closed notebook
+// leaves nothing dangling), and Pump() applies them on the UI thread, then
+// starts the next queued cell there. Before, the completion callback started
+// the next cell on the worker itself (Run All stopped: the engine joined its
+// own thread) and changed cells_ while the UI drew them. The queue holds cell
+// ids, so adding or deleting cells during a run cannot shift it.
 
 void CellManager::SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine) {
     scripting_engine_ = engine;
 }
 
+int CellManager::IndexOfId(const std::string& id) const {
+    if (id.empty()) return -1;
+    for (int i = 0; i < static_cast<int>(cells_.size()); ++i)
+        if (cells_[i].id == id) return i;
+    return -1;
+}
+
+int CellManager::GetRunningCellIndex() const {
+    return IndexOfId(running_cell_id_);
+}
+
+double CellManager::RunningSeconds() const {
+    if (!is_running_) return 0.0;
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - run_started_).count();
+}
+
+void CellManager::Enqueue(int from, int to) {
+    if (!is_running_ && execution_queue_.empty()) {
+        // A new batch: earlier progress and stop reason no longer apply.
+        batch_position_ = 0;
+        batch_total_ = 0;
+        stopped_at_count_ = 0;
+        stopped_by_interrupt_ = false;
+        for (auto& c : cells_)
+            if (c.state == CellState::NotRun) c.state = CellState::Idle;
+    }
+    for (int i = std::max(0, from); i <= to && i < static_cast<int>(cells_.size()); ++i) {
+        Cell& cell = cells_[i];
+        if (cell.type != CellType::Code) continue;
+        cell.SyncSourceFromEditor();
+        if (cell.source.find_first_not_of(" \t\r\n") == std::string::npos) continue;  // nothing to run
+        if (std::find(execution_queue_.begin(), execution_queue_.end(), cell.id) != execution_queue_.end()) continue;
+        execution_queue_.push_back(cell.id);
+        ++batch_total_;
+        if (cell.id != running_cell_id_) cell.state = CellState::Queued;
+    }
+    StartNext();
+}
+
+void CellManager::Restart() {
+    InterruptExecution();
+    restart_pending_ = true;
+    TryRestart();
+}
+
+// The namespace can go only while nothing runs; Pump() retries.
+bool CellManager::TryRestart() {
+    if (!restart_pending_) return true;
+    if (is_running_) return false;
+    if (scripting_engine_ && !scripting_engine_->DropNotebookNamespace(namespace_key_)) return false;
+    restart_pending_ = false;
+    ++run_generation_;
+    execution_counter_ = 0;
+    batch_position_ = batch_total_ = 0;
+    stopped_at_count_ = 0;
+    stopped_by_interrupt_ = false;
+    for (auto& cell : cells_)
+        if (cell.state == CellState::Queued || cell.state == CellState::Running) cell.state = CellState::Idle;
+    spdlog::info("Notebook restarted: its variables are cleared");
+    return true;
+}
+
+void CellManager::ReleaseNamespace() {
+    if (scripting_engine_ && !is_running_) scripting_engine_->DropNotebookNamespace(namespace_key_);
+}
+
+// Consecutive writes to one stream form one output, as in Jupyter.
+void CellManager::AppendStream(Cell& cell, const std::string& name, const std::string& text) {
+    if (!cell.outputs.empty()) {
+        CellOutput& last = cell.outputs.back();
+        if (last.type == OutputType::Stream && last.name == name && last.ipynb_raw.empty()) {
+            last.data += text;
+            return;
+        }
+    }
+    cell.AddOutput(CellOutput::Stream(text, name));
+}
+
 void CellManager::RunCell(int index) {
-    if (!IsValidIndex(index)) {
-        return;
-    }
+    if (IsValidIndex(index)) Enqueue(index, index);
+}
 
-    Cell& cell = cells_[index];
-
-    // Only run code cells
-    if (cell.type != CellType::Code) {
-        spdlog::debug("Skipping non-code cell {}", index);
-        return;
-    }
-
-    // Sync source from editor
-    cell.SyncSourceFromEditor();
-
-    if (cell.source.empty()) {
-        spdlog::debug("Skipping empty cell {}", index);
-        return;
-    }
-
-    ExecuteCellInternal(index);
+void CellManager::DebugCell(int index, std::vector<scripting::DebugBreakpoint> breakpoints,
+                            bool stop_on_error) {
+    if (!IsValidIndex(index)) return;
+    debug_cell_id_ = cells_[index].id;
+    debug_breakpoints_ = std::move(breakpoints);
+    debug_stop_on_error_ = stop_on_error;
+    Enqueue(index, index);
 }
 
 void CellManager::RunAllCells() {
-    for (int i = 0; i < static_cast<int>(cells_.size()); i++) {
-        if (cells_[i].type == CellType::Code) {
-            execution_queue_.push_back(i);
-        }
-    }
-
-    if (!execution_queue_.empty()) {
-        RunCell(execution_queue_.front());
-        execution_queue_.erase(execution_queue_.begin());
-    }
+    Enqueue(0, static_cast<int>(cells_.size()) - 1);
 }
 
 void CellManager::RunCellsAbove(int index) {
-    for (int i = 0; i <= index && i < static_cast<int>(cells_.size()); i++) {
-        if (cells_[i].type == CellType::Code) {
-            execution_queue_.push_back(i);
-        }
-    }
-
-    if (!execution_queue_.empty()) {
-        RunCell(execution_queue_.front());
-        execution_queue_.erase(execution_queue_.begin());
-    }
+    Enqueue(0, index);
 }
 
 void CellManager::RunCellsBelow(int index) {
-    for (int i = index; i < static_cast<int>(cells_.size()); i++) {
-        if (cells_[i].type == CellType::Code) {
-            execution_queue_.push_back(i);
-        }
-    }
-
-    if (!execution_queue_.empty()) {
-        RunCell(execution_queue_.front());
-        execution_queue_.erase(execution_queue_.begin());
-    }
+    Enqueue(index, static_cast<int>(cells_.size()) - 1);
 }
 
 void CellManager::InterruptExecution() {
-    if (scripting_engine_) {
-        scripting_engine_->StopScript();
+    for (const auto& id : execution_queue_) {
+        const int i = IndexOfId(id);
+        if (i >= 0 && cells_[i].state == CellState::Queued) cells_[i].state = CellState::NotRun;
     }
     execution_queue_.clear();
-    is_running_ = false;
-
-    if (running_cell_index_ >= 0 && IsValidIndex(running_cell_index_)) {
-        cells_[running_cell_index_].state = CellState::Error;
-        cells_[running_cell_index_].AddOutput(CellOutput::Error("Execution interrupted"));
+    if (scripting_engine_ && is_running_) {
+        scripting_engine_->StopScript();  // the Done event marks the cell
     }
-    running_cell_index_ = -1;
+}
+
+bool CellManager::StartNext() {
+    if (is_running_ || !scripting_engine_) return false;
+    if (!TryRestart()) return false;  // cells run after Restart wait for it
+    // Another script (the editor, the console) may hold the engine: wait.
+    if (scripting_engine_->IsScriptRunning()) return false;
+    while (!execution_queue_.empty()) {
+        const std::string id = execution_queue_.front();
+        execution_queue_.erase(execution_queue_.begin());
+        const int index = IndexOfId(id);
+        if (index < 0) continue;  // deleted while queued
+        ExecuteCellInternal(index);
+        return true;
+    }
+    return false;
 }
 
 void CellManager::ExecuteCellInternal(int index) {
-    if (!scripting_engine_) {
-        spdlog::error("No scripting engine set");
-        return;
-    }
-
     Cell& cell = cells_[index];
-
-    // Clear previous outputs
     cell.ClearOutputs();
-
-    // Update state
     cell.state = CellState::Running;
-    running_cell_index_ = index;
+    cell.duration_seconds = -1.0;
+    running_cell_id_ = cell.id;
     is_running_ = true;
-    execution_counter_++;
-    cell.execution_count = execution_counter_;
-
-    if (on_cell_state_changed_) {
-        on_cell_state_changed_(index);
-    }
-
+    ++batch_position_;
+    cell.execution_count = ++execution_counter_;
+    const std::uint64_t run = ++run_counter_;
+    run_started_ = std::chrono::steady_clock::now();
     spdlog::info("Executing cell {} [{}]", index, cell.execution_count);
 
-    // Set up output callback for real-time output
-    scripting_engine_->SetOutputCallback([this, index](const std::string& output) {
-        OnExecutionOutput(index, output, false);
-    });
-
-    // Set up completion callback
-    scripting_engine_->SetCompletionCallback([this, index](const scripting::ExecutionResult& result) {
-        // Handle captured plots
+    std::weak_ptr<Mailbox> weak = mailbox_;
+    scripting::ScriptingEngine::RunCallbacks callbacks;
+    callbacks.notebook_namespace = namespace_key_;
+    callbacks.cell_filename = "Cell In[" + std::to_string(cell.execution_count) + "]";
+    callbacks.execution_count = cell.execution_count;
+    if (!debug_cell_id_.empty() && debug_cell_id_ == cell.id) {
+        callbacks.debug = true;
+        callbacks.breakpoints = std::move(debug_breakpoints_);
+        callbacks.stop_on_error = debug_stop_on_error_;
+        debug_cell_id_.clear();
+    }
+    auto post_text = [weak, run](RunEvent::Kind kind) {
+        return [weak, run, kind](const std::string& text) {
+            if (auto box = weak.lock()) {
+                std::lock_guard<std::mutex> lock(box->mutex);
+                box->events.push_back({kind, run, text, {}, false, false, {}});
+            }
+        };
+    };
+    callbacks.on_output = post_text(RunEvent::Kind::Stdout);
+    callbacks.on_stderr = post_text(RunEvent::Kind::Stderr);
+    callbacks.on_complete = [weak, run](const scripting::ExecutionResult& result) {
+        auto box = weak.lock();
+        if (!box) return;
+        std::lock_guard<std::mutex> lock(box->mutex);
+        auto add = [&](CellOutput output) {
+            RunEvent e{RunEvent::Kind::Add, run, {}, {}, false, false, {}};
+            e.output = std::move(output);
+            box->events.push_back(std::move(e));
+        };
         for (const auto& plot : result.plots) {
-            CellOutput plot_output;
-            plot_output.type = OutputType::Plot;
-            plot_output.name = plot.label;
-            plot_output.image_data = plot.png_data;
-            plot_output.width = plot.width;
-            plot_output.height = plot.height;
-            plot_output.mime_type = "image/png";
-            AddCellOutput(index, plot_output);
+            CellOutput out;
+            out.type = OutputType::Plot;
+            out.name = plot.label;
+            out.image_data = plot.png_data;
+            out.width = plot.width;
+            out.height = plot.height;
+            out.mime_type = "image/png";
+            add(std::move(out));
         }
-
-        OnExecutionComplete(index, result.success, result.error_message);
-    });
-
-    // Execute asynchronously
-    scripting_engine_->ExecuteScriptAsync(cell.source);
+        if (!result.result_repr.empty()) {
+            CellOutput out = CellOutput::Text(result.result_repr);
+            out.is_result = true;
+            out.html = result.result_html;
+            add(std::move(out));
+        }
+        if (!result.success && !result.was_cancelled) {
+            CellOutput out;
+            if (!result.exception_type.empty()) {
+                out = CellOutput::Error(result.traceback.empty() ? result.error_message : result.traceback);
+                out.ename = result.exception_type;
+                out.evalue = result.exception_value;
+                for (const auto& f : result.frames) out.frames.push_back({f.file, f.line, f.function, f.code, f.cause});
+            } else {
+                // Python could not start, or the run failed outside the cell.
+                out = CellOutput::Error(result.error_message.empty() ? "The cell could not run" : result.error_message);
+                out.ename = "Error";
+                out.evalue = out.data;
+            }
+            add(std::move(out));
+        }
+        box->events.push_back(
+            {RunEvent::Kind::Done, run, {}, {}, result.success, result.was_cancelled, result.error_message});
+    };
+    if (!scripting_engine_->ExecuteScriptAsync(cell.source, std::move(callbacks))) {
+        // The engine was taken between the check and the start: queue again.
+        cell.state = CellState::Queued;
+        execution_queue_.insert(execution_queue_.begin(), cell.id);
+        running_cell_id_.clear();
+        is_running_ = false;
+    }
 }
 
-void CellManager::OnExecutionOutput(int cell_index, const std::string& output, bool is_error) {
-    if (!IsValidIndex(cell_index)) return;
-
-    CellOutput cell_output = is_error
-        ? CellOutput::Error(output)
-        : CellOutput::Text(output);
-
-    AddCellOutput(cell_index, cell_output);
-}
-
-void CellManager::OnExecutionComplete(int cell_index, bool success, const std::string& error) {
-    if (!IsValidIndex(cell_index)) return;
-
-    Cell& cell = cells_[cell_index];
-
-    if (success) {
-        cell.state = CellState::Success;
-    } else {
-        cell.state = CellState::Error;
-        if (!error.empty()) {
-            AddCellOutput(cell_index, CellOutput::Error(error));
+void CellManager::Pump() {
+    std::vector<RunEvent> events;
+    {
+        std::lock_guard<std::mutex> lock(mailbox_->mutex);
+        events.swap(mailbox_->events);
+    }
+    for (auto& e : events) {
+        if (e.run != run_counter_) continue;  // a run this notebook no longer tracks
+        const int index = IndexOfId(running_cell_id_);
+        switch (e.kind) {
+            case RunEvent::Kind::Stdout:
+                if (index >= 0) AppendStream(cells_[index], "stdout", e.text);
+                break;
+            case RunEvent::Kind::Stderr:
+                if (index >= 0) AppendStream(cells_[index], "stderr", e.text);
+                break;
+            case RunEvent::Kind::Add:
+                if (index >= 0) cells_[index].AddOutput(e.output);
+                break;
+            case RunEvent::Kind::Done:
+                if (index >= 0) {
+                    Cell& cell = cells_[index];
+                    cell.duration_seconds =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - run_started_).count();
+                    if (e.cancelled) {
+                        cell.state = CellState::Error;
+                        CellOutput out = CellOutput::Error("KeyboardInterrupt: interrupted");
+                        out.ename = "KeyboardInterrupt";
+                        out.evalue = "interrupted";
+                        cell.AddOutput(out);
+                    } else if (e.success) {
+                        cell.state = CellState::Success;
+                    } else {
+                        cell.state = CellState::Error;  // the error output came with the run
+                    }
+                    spdlog::info("Cell {} execution complete. Success: {}", index, e.success);
+                }
+                outputs_changed_ = true;
+                ++run_generation_;
+                if ((e.cancelled || !e.success) && index >= 0) {
+                    stopped_at_count_ = cells_[index].execution_count;
+                    stopped_by_interrupt_ = e.cancelled;
+                }
+                running_cell_id_.clear();
+                is_running_ = false;
+                if (e.cancelled || !e.success) {
+                    // Stop the rest of Run All after an error, as notebooks do.
+                    for (const auto& id : execution_queue_) {
+                        const int q = IndexOfId(id);
+                        if (q >= 0 && cells_[q].state == CellState::Queued) cells_[q].state = CellState::NotRun;
+                    }
+                    execution_queue_.clear();
+                }
+                break;
         }
     }
-
-    running_cell_index_ = -1;
-    is_running_ = false;
-
-    if (on_cell_state_changed_) {
-        on_cell_state_changed_(cell_index);
-    }
-
-    if (on_execution_complete_) {
-        on_execution_complete_(cell_index);
-    }
-
-    // Run next cell in queue if any
-    if (!execution_queue_.empty()) {
-        int next_index = execution_queue_.front();
-        execution_queue_.erase(execution_queue_.begin());
-        RunCell(next_index);
-    }
-
-    spdlog::info("Cell {} execution complete. Success: {}", cell_index, success);
+    StartNext();
 }
 
 // ========== Serialization ==========
 
 bool CellManager::HasCellMarkers(const std::string& content) {
-    return content.find(CellMarkers::CODE) != std::string::npos ||
-           content.find(CellMarkers::MARKDOWN) != std::string::npos ||
-           content.find(CellMarkers::RAW) != std::string::npos;
+    return cyx::HasCellMarkers(content);
 }
 
-CellType CellManager::ParseCellMarker(const std::string& line) const {
-    std::string trimmed = line;
-    // Trim whitespace
-    trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
-    trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
-
-    if (trimmed == CellMarkers::CODE || trimmed == CellMarkers::LEGACY_SECTION) {
-        return CellType::Code;
-    } else if (trimmed == CellMarkers::MARKDOWN) {
-        return CellType::Markdown;
-    } else if (trimmed == CellMarkers::RAW) {
-        return CellType::Raw;
+namespace {
+CellType ToCellType(cyx::CellKind kind) {
+    switch (kind) {
+        case cyx::CellKind::Markdown: return CellType::Markdown;
+        case cyx::CellKind::Raw: return CellType::Raw;
+        case cyx::CellKind::Code: break;
     }
-
-    // Not a marker
-    return CellType::Code;  // Default
+    return CellType::Code;
 }
 
-std::string CellManager::GetCellMarker(CellType type) const {
+cyx::CellKind ToCellKind(CellType type) {
     switch (type) {
-        case CellType::Code: return CellMarkers::CODE;
-        case CellType::Markdown: return CellMarkers::MARKDOWN;
-        case CellType::Raw: return CellMarkers::RAW;
-        default: return CellMarkers::CODE;
+        case CellType::Markdown: return cyx::CellKind::Markdown;
+        case CellType::Raw: return cyx::CellKind::Raw;
+        case CellType::Code: break;
     }
+    return cyx::CellKind::Code;
 }
+}  // namespace
 
+// The format lives in core/cyx_format (TOFIX133 P0 item 15): bare %% markers,
+// comments before the first marker kept, empty cells kept, and a stable
+// save/load round trip.
 bool CellManager::ParseFromCyx(const std::string& content) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Clear existing cells
     for (auto& cell : cells_) {
         cell.ClearOutputs();
     }
     cells_.clear();
-
-    // Check if content has cell markers
-    if (!HasCellMarkers(content)) {
-        // Treat entire content as single code cell
-        Cell cell(CellType::Code, content);
-        cells_.push_back(std::move(cell));
-        spdlog::info("Parsed .cyx file as single code cell (no markers)");
-        return true;
+    for (const auto& parsed : cyx::Parse(content)) {
+        cells_.emplace_back(ToCellType(parsed.kind), parsed.source);
     }
-
-    // Parse cells by markers
-    std::istringstream stream(content);
-    std::string line;
-    CellType current_type = CellType::Code;
-    std::string current_content;
-    bool in_cell = false;
-    bool first_marker_found = false;
-
-    // Check for header comments
-    while (std::getline(stream, line)) {
-        std::string trimmed = line;
-        trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
-
-        // Check for cell marker
-        if (trimmed.find("%%") == 0) {
-            // Save previous cell if any
-            if (in_cell && !current_content.empty()) {
-                // Remove trailing newline
-                if (!current_content.empty() && current_content.back() == '\n') {
-                    current_content.pop_back();
-                }
-                Cell cell(current_type, current_content);
-                cells_.push_back(std::move(cell));
-            }
-
-            // Determine new cell type
-            if (trimmed == CellMarkers::CODE || trimmed == "%%") {
-                current_type = CellType::Code;
-            } else if (trimmed == CellMarkers::MARKDOWN) {
-                current_type = CellType::Markdown;
-            } else if (trimmed == CellMarkers::RAW) {
-                current_type = CellType::Raw;
-            } else {
-                // Unknown marker, treat as code section marker
-                current_type = CellType::Code;
-            }
-
-            current_content.clear();
-            in_cell = true;
-            first_marker_found = true;
-        }
-        else if (first_marker_found) {
-            // Add line to current cell
-            current_content += line + "\n";
-        }
-        else if (trimmed.find("#") == 0 || trimmed.empty()) {
-            // Skip header comments before first marker
-            continue;
-        }
-        else {
-            // Content before first marker - treat as code
-            if (!in_cell) {
-                in_cell = true;
-                current_type = CellType::Code;
-            }
-            current_content += line + "\n";
-        }
-    }
-
-    // Save last cell
-    if (in_cell && !current_content.empty()) {
-        // Remove trailing newline
-        if (!current_content.empty() && current_content.back() == '\n') {
-            current_content.pop_back();
-        }
-        Cell cell(current_type, current_content);
-        cells_.push_back(std::move(cell));
-    }
-
-    // Ensure at least one cell exists
     if (cells_.empty()) {
         cells_.emplace_back(CellType::Code);
     }
-
     spdlog::info("Parsed .cyx file with {} cells", cells_.size());
     return true;
 }
 
 std::string CellManager::SerializeToCyx() const {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    std::ostringstream output;
-
-    // Header comment
-    output << "# CyxWiz Script v0.3.0\n";
-    output << "# Cell markers: %%code, %%markdown, %%raw\n\n";
-
+    std::vector<cyx::Cell> cells;
+    cells.reserve(cells_.size());
     for (const auto& cell : cells_) {
-        // Write cell marker
-        output << GetCellMarker(cell.type) << "\n";
-
-        // Write cell content
-        output << cell.source << "\n\n";
+        cells.push_back({ToCellKind(cell.type), cell.source});
     }
+    return cyx::Serialize(cells);
+}
 
-    return output.str();
+namespace {
+CellType ToCellType(nb::CellKind kind) {
+    switch (kind) {
+        case nb::CellKind::Markdown: return CellType::Markdown;
+        case nb::CellKind::Raw: return CellType::Raw;
+        case nb::CellKind::Code: break;
+    }
+    return CellType::Code;
+}
+
+CellOutput FromNotebookOutput(const nb::Output& o) {
+    CellOutput out;
+    switch (o.kind) {
+        case nb::Output::Kind::Stream:
+            out = CellOutput::Stream(o.text, o.stream_name);
+            break;
+        case nb::Output::Kind::Error: {
+            std::string text;
+            for (const auto& line : o.traceback) text += nb::StripAnsi(line) + "\n";
+            if (text.empty()) text = o.ename + ": " + o.evalue;
+            out = CellOutput::Error(text);
+            out.ename = o.ename;
+            out.evalue = o.evalue;
+            break;
+        }
+        case nb::Output::Kind::Result:
+        case nb::Output::Kind::Display:
+            if (!o.png_base64.empty()) {
+                out.type = OutputType::Plot;
+                out.mime_type = "image/png";
+                out.image_data = nb::DecodeBase64(o.png_base64);
+            } else {
+                out = CellOutput::Text(o.text);
+                out.is_result = o.kind == nb::Output::Kind::Result;
+                out.html = o.html;
+            }
+            break;
+    }
+    out.ipynb_raw = o.raw;
+    return out;
+}
+
+nb::Output ToNotebookOutput(const CellOutput& out, int execution_count) {
+    nb::Output o;
+    o.raw = out.ipynb_raw;
+    switch (out.type) {
+        case OutputType::Error: {
+            const std::string raw = o.raw;
+            o = nb::ErrorFromText(out.data);
+            if (!out.ename.empty()) {
+                o.ename = out.ename;
+                o.evalue = out.evalue;
+            }
+            o.raw = raw;
+            break;
+        }
+        case OutputType::Image:
+        case OutputType::Plot:
+            o.kind = nb::Output::Kind::Display;
+            o.png_base64 = out.image_data.empty() ? out.data : nb::EncodeBase64(out.image_data);
+            o.text = out.name.empty() ? "<Figure>" : out.name;
+            break;
+        case OutputType::Html:
+            o.kind = nb::Output::Kind::Display;
+            o.html = out.data;
+            o.text = out.data;
+            break;
+        case OutputType::Text:
+            if (out.is_result) {
+                o.kind = nb::Output::Kind::Result;
+                o.text = out.data;
+                o.html = out.html;
+                break;
+            }
+            [[fallthrough]];
+        case OutputType::Stream:
+        case OutputType::Table:
+        case OutputType::Markdown:
+            o.kind = nb::Output::Kind::Stream;
+            o.stream_name = out.name.empty() ? "stdout" : out.name;
+            o.text = out.data;
+            break;
+    }
+    o.execution_count = execution_count;
+    return o;
+}
+}  // namespace
+
+bool CellManager::ParseFromIpynb(const std::string& content, std::string* error) {
+    nb::Notebook notebook;
+    if (!nb::ParseIpynb(content, notebook, error)) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& cell : cells_) {
+        cell.ClearOutputs();
+    }
+    cells_.clear();
+    for (const auto& parsed : notebook.cells) {
+        Cell& cell = cells_.emplace_back(ToCellType(parsed.kind), parsed.source);
+        cell.execution_count = parsed.execution_count;
+        cell.ipynb_extra = parsed.extra;
+        for (const auto& o : parsed.outputs) cell.outputs.push_back(FromNotebookOutput(o));
+    }
+    if (cells_.empty()) {
+        cells_.emplace_back(CellType::Code);
+    }
+    ipynb_metadata_ = notebook.metadata;
+    ipynb_minor_ = notebook.nbformat_minor;
+    spdlog::info("Parsed .ipynb file with {} cells", cells_.size());
+    return true;
+}
+
+std::string CellManager::SerializeToIpynb() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    nb::Notebook notebook;
+    notebook.metadata = ipynb_metadata_.empty() ? nb::DefaultMetadata("") : ipynb_metadata_;
+    notebook.nbformat_minor = ipynb_minor_;
+    for (const auto& cell : cells_) {
+        nb::Cell out;
+        out.kind = cell.type == CellType::Markdown ? nb::CellKind::Markdown
+                   : cell.type == CellType::Raw    ? nb::CellKind::Raw
+                                                   : nb::CellKind::Code;
+        out.source = cell.source;
+        if (cell.type == CellType::Code) {
+            out.execution_count = cell.execution_count;
+            for (const auto& o : cell.outputs) out.outputs.push_back(ToNotebookOutput(o, cell.execution_count));
+        }
+        // nbformat 4.5 wants an id per cell.
+        out.extra = cell.ipynb_extra.empty() ? "{\"id\":\"" + cell.id.substr(cell.id.rfind('-') + 1) + "\"}" : cell.ipynb_extra;
+        notebook.cells.push_back(std::move(out));
+    }
+    return nb::SerializeIpynb(notebook);
 }
 
 // ========== Editor Theme ==========
-
-void CellManager::ApplyEditorPalette(const TextEditor::Palette& palette) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    for (auto& cell : cells_) {
-        if (cell.type == CellType::Code) {
-            cell.editor.SetPalette(palette);
-        }
-    }
-}
 
 void CellManager::ApplyTabSize(int size) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -616,7 +754,16 @@ void CellManager::ApplyShowWhitespace(bool show) {
 
     for (auto& cell : cells_) {
         if (cell.type == CellType::Code) {
-            cell.editor.SetShowWhitespaces(show);
+            cell.editor.SetShowWhitespace(show);
+        }
+    }
+}
+void CellManager::ApplySyntaxHighlighting(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (auto& cell : cells_) {
+        if (cell.type == CellType::Code) {
+            cell.editor.SetColorize(enabled);
         }
     }
 }

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <atomic>
 
 #include "../src/api/api_key_manager.h"
 #include "../src/api/rate_limiter.h"
@@ -18,12 +19,52 @@
 using namespace cyxwiz::servernode::api;
 using namespace cyxwiz::servernode::security;
 
+namespace fs = std::filesystem;
+
+namespace {
+
+std::atomic_uint64_t g_temp_counter{0};
+
+class TempPath {
+public:
+    TempPath(const std::string& prefix, const std::string& extension) {
+        const auto id = g_temp_counter.fetch_add(1, std::memory_order_relaxed);
+        path_ = fs::temp_directory_path() /
+            (prefix + "_" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+             "_" + std::to_string(id) + extension);
+    }
+
+    ~TempPath() {
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+    }
+
+    const fs::path& Path() const {
+        return path_;
+    }
+
+    std::string String() const {
+        return path_.string();
+    }
+
+private:
+    fs::path path_;
+};
+
+void RemoveNoThrow(const fs::path& path) {
+    std::error_code ec;
+    fs::remove_all(path, ec);
+}
+
+} // namespace
+
 // ========== API Key Manager Tests ==========
 
 TEST_CASE("API Key Manager - Key Generation", "[security][api-key]") {
     // Use temp file for tests
-    std::string test_storage = "test_api_keys.json";
-    APIKeyManager manager(test_storage);
+    TempPath test_storage("cyxwiz_api_keys", ".json");
+    APIKeyManager manager(test_storage.String());
 
     SECTION("Generated key has correct format") {
         auto result = manager.CreateKey("test-key");
@@ -57,14 +98,11 @@ TEST_CASE("API Key Manager - Key Generation", "[security][api-key]") {
         REQUIRE_FALSE(manager.ValidateKey(""));
         REQUIRE_FALSE(manager.ValidateKey("some_random_string"));
     }
-
-    // Cleanup
-    std::filesystem::remove(test_storage);
 }
 
 TEST_CASE("API Key Manager - Key Revocation", "[security][api-key]") {
-    std::string test_storage = "test_api_keys_revoke.json";
-    APIKeyManager manager(test_storage);
+    TempPath test_storage("cyxwiz_api_keys_revoke", ".json");
+    APIKeyManager manager(test_storage.String());
 
     SECTION("Revoked keys are rejected") {
         auto result = manager.CreateKey("to-revoke");
@@ -83,13 +121,11 @@ TEST_CASE("API Key Manager - Key Revocation", "[security][api-key]") {
     SECTION("Revoking non-existent key returns false") {
         REQUIRE_FALSE(manager.RevokeKey("non-existent-id"));
     }
-
-    std::filesystem::remove(test_storage);
 }
 
 TEST_CASE("API Key Manager - Model Access Control", "[security][api-key]") {
-    std::string test_storage = "test_api_keys_models.json";
-    APIKeyManager manager(test_storage);
+    TempPath test_storage("cyxwiz_api_keys_models", ".json");
+    APIKeyManager manager(test_storage.String());
 
     SECTION("Key with model restrictions") {
         std::vector<std::string> allowed_models = {"model-a", "model-b"};
@@ -111,19 +147,17 @@ TEST_CASE("API Key Manager - Model Access Control", "[security][api-key]") {
         REQUIRE(manager.ValidateKeyForModel(result.full_key, "any-model"));
         REQUIRE(manager.ValidateKeyForModel(result.full_key, "another-model"));
     }
-
-    std::filesystem::remove(test_storage);
 }
 
 TEST_CASE("API Key Manager - Persistence", "[security][api-key]") {
-    std::string test_storage = "test_api_keys_persist.json";
+    TempPath test_storage("cyxwiz_api_keys_persist", ".json");
 
     std::string saved_key;
     std::string saved_key_id;
 
     // Create key with first manager
     {
-        APIKeyManager manager1(test_storage);
+        APIKeyManager manager1(test_storage.String());
         auto result = manager1.CreateKey("persist-test");
         REQUIRE(result.success);
         saved_key = result.full_key;
@@ -132,7 +166,7 @@ TEST_CASE("API Key Manager - Persistence", "[security][api-key]") {
 
     // Verify with new manager instance (loads from file)
     {
-        APIKeyManager manager2(test_storage);
+        APIKeyManager manager2(test_storage.String());
         manager2.Load();  // Must explicitly load keys from file
         REQUIRE(manager2.ValidateKey(saved_key));
 
@@ -141,7 +175,6 @@ TEST_CASE("API Key Manager - Persistence", "[security][api-key]") {
         REQUIRE(key_info->name == "persist-test");
     }
 
-    std::filesystem::remove(test_storage);
 }
 
 TEST_CASE("API Key Manager - SHA256 Hashing", "[security][api-key]") {
@@ -248,11 +281,18 @@ TEST_CASE("Audit Logger - Event Logging", "[security][audit]") {
         size_t count_before = logger.GetEntryCount();
         logger.Log(AuditEvent::API_KEY_CREATED, "system", "key-123", true, "Test key created");
 
-        auto entries = logger.GetRecentEntries(10);
+        AuditQuery query;
+        query.actor = "system";
+        query.resource = "key-123";
+        query.event_type = AuditEvent::API_KEY_CREATED;
+        query.filter_event = true;
+        query.limit = 1;
+
+        auto entries = logger.GetEntries(query);
         REQUIRE(entries.size() >= 1);
         REQUIRE(logger.GetEntryCount() > count_before);
 
-        auto& entry = entries.back();
+        const auto& entry = entries.front();
         REQUIRE(entry.event == AuditEvent::API_KEY_CREATED);
         REQUIRE(entry.actor == "system");
         REQUIRE(entry.resource == "key-123");
@@ -351,37 +391,34 @@ TEST_CASE("TLS Config - Certificate Loading", "[security][tls]") {
 }
 
 TEST_CASE("TLS Config - Self-Signed Generation", "[security][tls]") {
-    std::string cert_path = "test_cert.crt";
-    std::string key_path = "test_cert.key";
+    TempPath cert_path("cyxwiz_test_cert", ".crt");
+    TempPath key_path("cyxwiz_test_cert", ".key");
 
     // Cleanup any existing files
-    std::filesystem::remove(cert_path);
-    std::filesystem::remove(key_path);
+    RemoveNoThrow(cert_path.Path());
+    RemoveNoThrow(key_path.Path());
 
     SECTION("Generate self-signed certificate") {
-        bool generated = TLSConfig::GenerateSelfSigned(cert_path, key_path, "test-server", 30);
+        bool generated = TLSConfig::GenerateSelfSigned(
+            cert_path.String(), key_path.String(), "test-server", 30);
 
         // Generation may fail on systems without OpenSSL
         if (generated) {
-            REQUIRE(std::filesystem::exists(cert_path));
-            REQUIRE(std::filesystem::exists(key_path));
+            REQUIRE(fs::exists(cert_path.Path()));
+            REQUIRE(fs::exists(key_path.Path()));
 
             // Certificate file should contain PEM header
-            std::ifstream cert_file(cert_path);
+            std::ifstream cert_file(cert_path.Path());
             std::string first_line;
             std::getline(cert_file, first_line);
             REQUIRE(first_line.find("BEGIN CERTIFICATE") != std::string::npos);
 
             // Key file should contain PEM header
-            std::ifstream key_file(key_path);
+            std::ifstream key_file(key_path.Path());
             std::getline(key_file, first_line);
             REQUIRE(first_line.find("BEGIN") != std::string::npos);
         }
     }
-
-    // Cleanup
-    std::filesystem::remove(cert_path);
-    std::filesystem::remove(key_path);
 }
 
 TEST_CASE("TLS Manager - Singleton", "[security][tls]") {
@@ -490,24 +527,22 @@ TEST_CASE("Wallet Manager - Earnings Tracking", "[security][wallet]") {
 }
 
 TEST_CASE("Wallet Manager - State Persistence", "[security][wallet]") {
-    std::string state_path = "test_wallet_state.json";
+    TempPath state_path("cyxwiz_wallet_state", ".json");
 
     // Create and save state
     {
         WalletManager wallet1(SolanaNetwork::Devnet);
         wallet1.ConnectExternalWallet("11111111111111111111111111111111");
         wallet1.RecordEarning(100.0, "test-job");
-        wallet1.SaveState(state_path);
+        wallet1.SaveState(state_path.String());
     }
 
     // Load state in new instance
     {
         WalletManager wallet2(SolanaNetwork::Devnet);
-        REQUIRE(wallet2.LoadState(state_path));
+        REQUIRE(wallet2.LoadState(state_path.String()));
         REQUIRE(wallet2.GetTotalEarnings() == 100.0);
     }
-
-    std::filesystem::remove(state_path);
 }
 
 TEST_CASE("Wallet Manager - CYXWIZ Mint Address", "[security][wallet]") {

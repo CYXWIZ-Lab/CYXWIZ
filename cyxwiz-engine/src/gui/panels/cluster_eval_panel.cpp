@@ -1,7 +1,13 @@
 #include "cluster_eval_panel.h"
+#include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
+#include "../../core/table_class_labels.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -17,20 +23,14 @@ ClusterEvalPanel::~ClusterEvalPanel() {
 }
 
 void ClusterEvalPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_CHART_COLUMN) + " Cluster Evaluation###ClusterEvalPanel").c_str(), &is_open_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+    if (ImGui::Begin((std::string(ICON_FA_CHART_COLUMN) + " Cluster Evaluation###ClusterEvalPanel").c_str(), &visible_)) {
+        ui::BeginSettingsColumn("cluster_eval", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
 
         if (ImGui::BeginTabBar("EvalTabs")) {
             if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Metrics")) {
@@ -51,72 +51,67 @@ void ClusterEvalPanel::Render() {
             ImGui::EndTabBar();
         }
 
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void ClusterEvalPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
 
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("cluster_eval_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 100), true);
+        ui::SettingsSection("Columns");
+        ui::FieldLabel("Feature columns");
+        ui::BeginInsetList("##columns", 100.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         // Label column selector
         std::vector<const char*> label_options = {"None"};
         for (const auto& name : column_names_) label_options.push_back(name.c_str());
         int label_idx = label_column_idx_ + 1;
-        if (ImGui::Combo("Label Column", &label_idx, label_options.data(), static_cast<int>(label_options.size()))) {
+        ui::FieldLabel("Label column");
+        if (ImGui::Combo("##label_column", &label_idx, label_options.data(), static_cast<int>(label_options.size()))) {
             label_column_idx_ = label_idx - 1;
         }
     }
 
     ImGui::Spacing();
 
-    bool can_run = !is_computing_ && !input_data_.empty() && label_column_idx_ >= 0;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_CALCULATOR " Compute Metrics", ImVec2(-1, 30))) {
+    bool can_run = !is_computing_ && current_table_ != nullptr && label_column_idx_ >= 0;
+    const char* run_reason = is_computing_ ? "Computing metrics"
+                           : current_table_ == nullptr ? "Pick a dataset first"
+                           : "Pick the label column first";
+    if (ui::PrimaryButton("Compute Metrics", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ComputeMetrics();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::TextWrapped("Computing...");
     }
 
     if (!status_message_.empty()) {
         ImGui::TextWrapped("%s", status_message_.c_str());
     }
+    ImGui::PopStyleColor();
 
     // Save to history
     if (metrics_.success) {
-        ImGui::Spacing();
+        ui::SettingsSection("Comparison");
         static char name_buf[64] = "";
-        ImGui::InputText("Name", name_buf, sizeof(name_buf));
+        ui::FieldLabel("Name");
+        ImGui::InputText("##run_name", name_buf, sizeof(name_buf));
 
-        if (ImGui::Button(ICON_FA_PLUS " Add to Comparison", ImVec2(-1, 25))) {
+        if (ui::SecondaryButton("Add to Comparison", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             EvalRecord record;
             record.name = strlen(name_buf) > 0 ? name_buf : ("Run " + std::to_string(eval_history_.size() + 1));
             record.n_clusters = metrics_.n_clusters;
@@ -139,63 +134,37 @@ void ClusterEvalPanel::RenderMetrics() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Cluster Quality Metrics");
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Metrics cards
-    ImGui::BeginGroup();
-    {
-        ImGui::BeginChild("Silhouette", ImVec2(200, 100), true);
+    // Metric cards: three columns sharing the width (fixed 200 px cards ran
+    // past the right edge), text wrapped inside each.
+    if (ImGui::BeginTable("MetricCards", 3, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
         ImGui::Text(ICON_FA_CHART_AREA " Silhouette Score");
-        ImGui::Separator();
-
-        float silhouette = static_cast<float>(metrics_.silhouette_score);
-        ImVec4 color;
-        if (silhouette > 0.5) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-        else if (silhouette > 0.25) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-        else color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
-
-        ImGui::TextColored(color, "%.4f", silhouette);
+        const float silhouette = static_cast<float>(metrics_.silhouette_score);
+        const ImVec4 silhouette_colour =
+            silhouette > 0.5f ? t.success : silhouette > 0.25f ? t.warning : t.error;
+        ImGui::TextColored(silhouette_colour, "%.4f", silhouette);
         ImGui::TextWrapped("Range: -1 to 1. Higher is better.");
-        ImGui::EndChild();
-    }
-    ImGui::EndGroup();
 
-    ImGui::SameLine();
-
-    ImGui::BeginGroup();
-    {
-        ImGui::BeginChild("DaviesBouldin", ImVec2(200, 100), true);
+        ImGui::TableNextColumn();
         ImGui::Text(ICON_FA_BULLSEYE " Davies-Bouldin");
-        ImGui::Separator();
-
-        float db = static_cast<float>(metrics_.davies_bouldin_index);
-        ImVec4 color;
-        if (db < 0.5) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-        else if (db < 1.0) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-        else color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
-
-        ImGui::TextColored(color, "%.4f", db);
+        const float db = static_cast<float>(metrics_.davies_bouldin_index);
+        const ImVec4 db_colour = db < 0.5f ? t.success : db < 1.0f ? t.warning : t.error;
+        ImGui::TextColored(db_colour, "%.4f", db);
         ImGui::TextWrapped("Lower is better.");
-        ImGui::EndChild();
-    }
-    ImGui::EndGroup();
 
-    ImGui::SameLine();
-
-    ImGui::BeginGroup();
-    {
-        ImGui::BeginChild("CalinskiHarabasz", ImVec2(200, 100), true);
+        ImGui::TableNextColumn();
         ImGui::Text(ICON_FA_CHART_COLUMN " Calinski-Harabasz");
-        ImGui::Separator();
-
-        float ch = static_cast<float>(metrics_.calinski_harabasz_score);
-        ImGui::Text("%.2f", ch);
+        ImGui::Text("%.2f", static_cast<float>(metrics_.calinski_harabasz_score));
         ImGui::TextWrapped("Higher is better.");
-        ImGui::EndChild();
+
+        ImGui::EndTable();
     }
-    ImGui::EndGroup();
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -271,6 +240,8 @@ void ClusterEvalPanel::RenderComparison() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     // Comparison table
     if (ImGui::BeginTable("ComparisonTable", 5,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
@@ -293,9 +264,9 @@ void ClusterEvalPanel::RenderComparison() {
 
             ImGui::TableNextColumn();
             ImVec4 color;
-            if (record.silhouette > 0.5) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-            else if (record.silhouette > 0.25) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-            else color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+            if (record.silhouette > 0.5) color = t.success;
+            else if (record.silhouette > 0.25) color = t.warning;
+            else color = t.error;
             ImGui::TextColored(color, "%.4f", record.silhouette);
 
             ImGui::TableNextColumn();
@@ -330,17 +301,13 @@ void ClusterEvalPanel::RenderComparison() {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_TRASH " Clear History")) {
+    if (ui::DangerButton(ICON_FA_TRASH " Clear History")) {
         eval_history_.clear();
     }
 }
 
-void ClusterEvalPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void ClusterEvalPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
     label_column_idx_ = -1;
@@ -380,8 +347,11 @@ void ClusterEvalPanel::ComputeMetrics() {
     input_data_.clear();
     cluster_labels_.clear();
 
-    int n_rows = static_cast<int>(current_table_->GetRowCount());
+    // Text labels ("north", "delta") count as clusters too, not only numbers.
+    const auto labels = ReadTableClassLabels(*current_table_, {label_column_idx_}).columns[0];
+    const int n_rows = static_cast<int>(current_table_->GetRowCount());
     for (int row = 0; row < n_rows; ++row) {
+        if (!labels[row]) continue;
         std::vector<double> row_data;
         bool valid = true;
 
@@ -391,13 +361,9 @@ void ClusterEvalPanel::ComputeMetrics() {
             else { valid = false; break; }
         }
 
-        // Get label
-        auto label_val = DataAnalyzer::ToDouble(current_table_->GetCell(row, label_column_idx_));
-        if (!label_val.has_value()) valid = false;
-
         if (valid) {
-            input_data_.push_back(row_data);
-            cluster_labels_.push_back(static_cast<int>(label_val.value()));
+            input_data_.push_back(std::move(row_data));
+            cluster_labels_.push_back(*labels[row]);
         }
     }
 
@@ -411,16 +377,19 @@ void ClusterEvalPanel::ComputeMetrics() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
-        metrics_ = Clustering::EvaluateClustering(input_data_, cluster_labels_);
-        is_computing_ = false;
-
-        if (metrics_.success) {
-            status_message_ = "Metrics computed successfully.";
-            current_name_ = available_tables_[selected_table_idx_];
-        } else {
-            status_message_ = "Failed: " + metrics_.error_message;
-        }
+    compute_thread_ = std::thread([this, data = input_data_, labels = cluster_labels_]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        ClusterMetrics metrics = Clustering::EvaluateClustering(data, labels);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, metrics = std::move(metrics)]() mutable {
+            metrics_ = std::move(metrics);
+            if (metrics_.success) {
+                status_message_ = "Metrics computed successfully.";
+                current_name_ = source_.Name();
+            } else {
+                status_message_ = "Failed: " + metrics_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 

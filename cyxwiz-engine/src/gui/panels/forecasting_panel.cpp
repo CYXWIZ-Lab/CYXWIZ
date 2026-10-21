@@ -1,5 +1,7 @@
 #include "forecasting_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -9,7 +11,7 @@ namespace cyxwiz {
 
 ForecastingPanel::ForecastingPanel() {
     GenerateData();
-    spdlog::info("ForecastingPanel initialized");
+    spdlog::debug("ForecastingPanel initialized");
 }
 
 ForecastingPanel::~ForecastingPanel() {
@@ -30,23 +32,18 @@ void ForecastingPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("forecasting", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
 }
 
 void ForecastingPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Forecast")) {
         ForecastAsync();
     }
@@ -71,90 +68,106 @@ void ForecastingPanel::RenderToolbar() {
 
     if (has_result_ && result_.success) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            "| MAPE: %.2f%%", result_.mape);
     }
 }
 
 void ForecastingPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* signal_types[] = { "Trend+Seasonal", "Seasonal Only", "Trend Only", "Random" };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples", &num_samples_, 1.0f, 50, 500);
+    ui::FieldLabel("Samples");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 500);
 
     static const double kSlopeMin = -0.5, kSlopeMax = 0.5;
     static const double kAmpMin = 0.1, kAmpMax = 5.0;
     static const double kNoiseMin = 0.0, kNoiseMax = 2.0;
 
     if (signal_type_ == SignalType::TrendSeasonal || signal_type_ == SignalType::Trend) {
-        ImGui::SliderScalar("Trend Slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
+        ui::FieldLabel("Trend slope");
+        ImGui::SliderScalar("##trend_slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
     }
 
     if (signal_type_ == SignalType::TrendSeasonal || signal_type_ == SignalType::Seasonal) {
-        ImGui::SliderScalar("Season Amp", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
-        ImGui::DragInt("Period", &seasonal_period_, 1.0f, 2, 52);
+        ui::FieldLabel("Seasonal amplitude");
+        ImGui::SliderScalar("##season_amp", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
+        ui::FieldLabel("Seasonal period");
+        ImGui::DragInt("##seasonal_period", &seasonal_period_, 1.0f, 2, 52);
     }
 
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SLIDERS " Forecast Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Forecast");
 
     const char* methods[] = { "Simple ES", "Holt Linear", "Holt-Winters", "ARIMA" };
     int method_idx = static_cast<int>(method_);
-    if (ImGui::Combo("Method", &method_idx, methods, IM_ARRAYSIZE(methods))) {
+    ui::FieldLabel("Method");
+    if (ImGui::Combo("##method", &method_idx, methods, IM_ARRAYSIZE(methods))) {
         method_ = static_cast<Method>(method_idx);
     }
 
-    ImGui::DragInt("Horizon", &horizon_, 1.0f, 1, 100);
+    ui::FieldLabel("Horizon");
+    ImGui::DragInt("##horizon", &horizon_, 1.0f, 1, 100);
 
     // Method-specific parameters
     static const double kParamMin = -1.0, kParamMax = 1.0;
+    const ui::Tokens& t = ui::CurrentTokens();
 
     if (method_ == Method::SimpleES) {
-        ImGui::Text("Alpha (-1=auto):");
+        ui::FieldLabel("Alpha (-1 = auto)");
         ImGui::SliderScalar("##alpha", ImGuiDataType_Double, &alpha_, &kParamMin, &kParamMax, "%.2f");
     }
     else if (method_ == Method::HoltLinear) {
-        ImGui::Text("Parameters (-1=auto):");
-        ImGui::SliderScalar("Alpha", ImGuiDataType_Double, &alpha_, &kParamMin, &kParamMax, "%.2f");
-        ImGui::SliderScalar("Beta", ImGuiDataType_Double, &beta_, &kParamMin, &kParamMax, "%.2f");
+        ImGui::TextColored(t.text_dim, "Parameters: -1 = auto");
+        ui::FieldLabel("Alpha");
+        ImGui::SliderScalar("##alpha", ImGuiDataType_Double, &alpha_, &kParamMin, &kParamMax, "%.2f");
+        ui::FieldLabel("Beta");
+        ImGui::SliderScalar("##beta", ImGuiDataType_Double, &beta_, &kParamMin, &kParamMax, "%.2f");
         ImGui::Checkbox("Damped Trend", &damped_);
     }
     else if (method_ == Method::HoltWinters) {
-        ImGui::Text("Parameters (-1=auto):");
-        ImGui::SliderScalar("Alpha", ImGuiDataType_Double, &alpha_, &kParamMin, &kParamMax, "%.2f");
-        ImGui::SliderScalar("Beta", ImGuiDataType_Double, &beta_, &kParamMin, &kParamMax, "%.2f");
-        ImGui::SliderScalar("Gamma", ImGuiDataType_Double, &gamma_, &kParamMin, &kParamMax, "%.2f");
-        ImGui::DragInt("Period", &hw_period_, 1.0f, -1, 52);
+        ImGui::TextColored(t.text_dim, "Parameters: -1 = auto");
+        ui::FieldLabel("Alpha");
+        ImGui::SliderScalar("##alpha", ImGuiDataType_Double, &alpha_, &kParamMin, &kParamMax, "%.2f");
+        ui::FieldLabel("Beta");
+        ImGui::SliderScalar("##beta", ImGuiDataType_Double, &beta_, &kParamMin, &kParamMax, "%.2f");
+        ui::FieldLabel("Gamma");
+        ImGui::SliderScalar("##gamma", ImGuiDataType_Double, &gamma_, &kParamMin, &kParamMax, "%.2f");
+        ui::FieldLabel("Period");
+        ImGui::DragInt("##hw_period", &hw_period_, 1.0f, -1, 52);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("-1 = auto detect");
         }
         ImGui::Checkbox("Multiplicative", &multiplicative_);
     }
     else if (method_ == Method::ARIMA) {
-        ImGui::Text("ARIMA(p,d,q) (-1=auto):");
-        ImGui::DragInt("p (AR)", &arima_p_, 1.0f, -1, 10);
-        ImGui::DragInt("d (Diff)", &arima_d_, 1.0f, -1, 3);
-        ImGui::DragInt("q (MA)", &arima_q_, 1.0f, -1, 10);
+        ImGui::TextColored(t.text_dim, "ARIMA(p,d,q): -1 = auto");
+        ui::FieldLabel("p (AR)");
+        ImGui::DragInt("##arima_p", &arima_p_, 1.0f, -1, 10);
+        ui::FieldLabel("d (Diff)");
+        ImGui::DragInt("##arima_d", &arima_d_, 1.0f, -1, 3);
+        ui::FieldLabel("q (MA)");
+        ImGui::DragInt("##arima_q", &arima_q_, 1.0f, -1, 10);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SCISSORS " Train/Test Split");
-    ImGui::Separator();
+    ui::SettingsSection("Train / test split");
 
     ImGui::Checkbox("Use Test Split", &use_test_split_);
     if (use_test_split_) {
-        ImGui::SliderFloat("Train %", &train_ratio_, 0.5f, 0.95f, "%.0f%%");
+        ui::FieldLabel("Train %");
+        // Edit as a percentage: the ratio with "%.0f%%" showed "1%" for 0.5 - 0.95.
+        int train_percent = static_cast<int>(train_ratio_ * 100.0f + 0.5f);
+        if (ImGui::SliderInt("##train_ratio", &train_percent, 50, 95, "%d%%")) {
+            train_ratio_ = static_cast<float>(train_percent) / 100.0f;
+        }
     }
 }
 
@@ -166,8 +179,9 @@ void ForecastingPanel::RenderLoadingIndicator() {
 }
 
 void ForecastingPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -193,7 +207,7 @@ void ForecastingPanel::RenderResults() {
                     for (size_t i = 0; i < test_time.size(); i++) {
                         test_time[i] = static_cast<double>(i + train_data_.size());
                     }
-                    ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+                    ImPlot::SetNextLineStyle(t.series[1]);
                     ImPlot::PlotLine("Test", test_time.data(), test_data_.data(),
                                     static_cast<int>(test_data_.size()));
                 } else {
@@ -225,6 +239,7 @@ void ForecastingPanel::RenderResults() {
 }
 
 void ForecastingPanel::RenderForecastPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (result_.forecast.empty()) {
         ImGui::TextDisabled("No forecast data");
         return;
@@ -250,7 +265,7 @@ void ForecastingPanel::RenderForecastPlot() {
                 for (size_t i = 0; i < test_time.size(); i++) {
                     test_time[i] = static_cast<double>(i + train_data_.size());
                 }
-                ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.7f, 0.0f, 1.0f));
+                ImPlot::SetNextLineStyle(t.series[1]);
                 ImPlot::PlotLine("Actual", test_time.data(), test_data_.data(),
                                 static_cast<int>(test_data_.size()));
             }
@@ -267,7 +282,7 @@ void ForecastingPanel::RenderForecastPlot() {
 
         // Prediction intervals
         if (!result_.lower_bound.empty() && !result_.upper_bound.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(1.0f, 0.5f, 0.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[2], 0.2f));
             ImPlot::PlotShaded("95% PI", forecast_time.data(),
                               result_.lower_bound.data(),
                               result_.upper_bound.data(),
@@ -275,7 +290,7 @@ void ForecastingPanel::RenderForecastPlot() {
         }
 
         // Point forecast
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.3f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[2], 2.0f);
         ImPlot::PlotLine("Forecast", forecast_time.data(), result_.forecast.data(),
                         static_cast<int>(result_.forecast.size()));
 
@@ -285,7 +300,7 @@ void ForecastingPanel::RenderForecastPlot() {
             for (size_t i = 0; i < fitted_time.size(); i++) {
                 fitted_time[i] = static_cast<double>(i);
             }
-            ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.7f));
+            ImPlot::SetNextLineStyle(ui::WithAlpha(t.series[3], 0.7f));
             ImPlot::PlotLine("Fitted", fitted_time.data(), result_.fitted_values.data(),
                             static_cast<int>(result_.fitted_values.size()));
         }
@@ -295,6 +310,7 @@ void ForecastingPanel::RenderForecastPlot() {
 }
 
 void ForecastingPanel::RenderMetrics() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CHART_BAR " Forecast Accuracy Metrics");
     ImGui::Separator();
     ImGui::Spacing();
@@ -311,7 +327,7 @@ void ForecastingPanel::RenderMetrics() {
     ImGui::Text("%.6f", result_.mae);
     ImGui::NextColumn();
 
-    ImGui::Text("MAPE (Mean Abs % Error):");
+    ImGui::TextUnformatted("MAPE (Mean Abs % Error):");
     ImGui::NextColumn();
     ImGui::Text("%.2f%%", result_.mape);
     ImGui::NextColumn();
@@ -345,16 +361,16 @@ void ForecastingPanel::RenderMetrics() {
     ImGui::Indent();
 
     if (result_.mape < 10.0) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            "Highly accurate forecast (MAPE < 10%%)");
     } else if (result_.mape < 20.0) {
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.warning,
                            "Good forecast (MAPE < 20%%)");
     } else if (result_.mape < 50.0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+        ImGui::TextColored(t.caution,
                            "Reasonable forecast (MAPE < 50%%)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        ImGui::TextColored(t.error,
                            "Poor forecast (MAPE > 50%%)");
     }
 

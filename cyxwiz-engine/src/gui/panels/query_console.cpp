@@ -1,12 +1,74 @@
 #include "query_console.h"
 #include "../node_editor.h"
 #include "../IconsFontAwesome6.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
 
 namespace cyxwiz {
+
+namespace {
+
+bool FindMutationClause(const query::ASTNodePtr& node, query::ASTNodeType& mutation_type) {
+    if (!node) {
+        return false;
+    }
+
+    switch (node->type) {
+        case query::ASTNodeType::CreateClause:
+        case query::ASTNodeType::DeleteClause:
+        case query::ASTNodeType::SetClause:
+            mutation_type = node->type;
+            return true;
+        default:
+            break;
+    }
+
+    for (const auto& child : node->children) {
+        if (FindMutationClause(child, mutation_type)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::string MutationClauseName(query::ASTNodeType type) {
+    switch (type) {
+        case query::ASTNodeType::CreateClause:
+            return "CREATE";
+        case query::ASTNodeType::DeleteClause:
+            return "DELETE";
+        case query::ASTNodeType::SetClause:
+            return "SET";
+        default:
+            return "mutation";
+    }
+}
+
+query::QueryResult ValidateReadOnlyQuery(const std::string& query_text) {
+    query::Parser parser(query_text);
+    query::ASTNodePtr ast = parser.parse();
+    if (parser.hasError()) {
+        return query::QueryResult::makeError(
+            parser.getError(),
+            parser.getErrorLine(),
+            parser.getErrorColumn());
+    }
+
+    query::ASTNodeType mutation_type = query::ASTNodeType::Query;
+    if (FindMutationClause(ast, mutation_type)) {
+        return query::QueryResult::makeError(
+            "Query Console is read-only. " + MutationClauseName(mutation_type) +
+            " is disabled until graph mutation commands have undo integration.");
+    }
+
+    return query::QueryResult::makeSuccess();
+}
+
+} // namespace
 
 // Example queries for the dropdown
 const std::vector<QueryConsolePanel::ExampleQuery> QueryConsolePanel::example_queries_ = {
@@ -153,15 +215,19 @@ void QueryConsolePanel::RenderToolbar() {
 
         ImGui::Separator();
 
+        ImGui::TextDisabled("Read-only");
+
+        ImGui::Separator();
+
         // Status
         if (has_result_) {
             if (current_result_.success) {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                ImGui::TextColored(ui::CurrentTokens().success,
                                    "%zu rows in %.2f ms",
                                    current_result_.rows.size(),
                                    current_result_.executionTimeMs);
             } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Error");
+                ImGui::TextColored(ui::CurrentTokens().error, "Error");
             }
         }
 
@@ -212,7 +278,7 @@ void QueryConsolePanel::RenderResults() {
 
     if (!current_result_.success) {
         // Show error
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, current_result_.error.c_str());
         ImGui::PopStyleColor();
 
@@ -231,7 +297,7 @@ void QueryConsolePanel::RenderResults() {
         current_result_.linksDeleted > 0 ||
         current_result_.propertiesSet > 0) {
 
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Query executed successfully");
+        ImGui::TextColored(ui::CurrentTokens().success, ICON_FA_CHECK " Query executed successfully");
 
         if (current_result_.nodesCreated > 0) {
             ImGui::Text("  Nodes created: %d", current_result_.nodesCreated);
@@ -374,7 +440,7 @@ void QueryConsolePanel::RenderExamples() {
                 ImGui::Spacing();
 
                 // Query text
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.9f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
                 ImGui::TextWrapped("%s", example.query);
                 ImGui::PopStyleColor();
 
@@ -420,10 +486,17 @@ void QueryConsolePanel::ExecuteQuery(const std::string& query) {
         return;
     }
 
-    // Add to history
-    AddToHistory(query);
+    query::QueryResult validation = ValidateReadOnlyQuery(query);
+    if (!validation.success) {
+        current_result_ = validation;
+        has_result_ = true;
+        selected_row_ = -1;
+        spdlog::warn("Query rejected: {}", validation.error);
+        return;
+    }
 
     // Execute
+    AddToHistory(query);
     spdlog::info("Executing CyxQL query: {}", query);
     current_result_ = query::runQuery(*node_editor_, query);
     has_result_ = true;

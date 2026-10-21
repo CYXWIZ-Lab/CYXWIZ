@@ -223,7 +223,7 @@ void JobMonitorPanel::RefreshJobs() {
                         job.id, job.status, job.model_name, job.progress);
         }
 
-        // Store loss values for history (simulate - in real implementation, daemon would track history)
+        // Loss history sampled from the polled job status (the daemon keeps no history yet)
         for (const auto& job : jobs_) {
             if (job.status == 2) {  // running
                 auto& history = loss_history_[job.id];

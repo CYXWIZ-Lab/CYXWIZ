@@ -1,144 +1,41 @@
 #pragma once
 
 #include "../panel.h"
+#include "../table_grid.h"
+#include "../../core/dataset_table_slice.h"
 #include "../../data/data_table.h"
-#include "../../data/lazy_data_table.h"
-#include "../../core/async_task_manager.h"
+#include "../variables_view.h"
+#include "../plot/plot_window.h"
 #include <imgui.h>
 #include <string>
 #include <memory>
 #include <vector>
-#include <atomic>
-#include <mutex>
 #include <map>
+
+namespace arrow {
+class Table;
+}
 
 namespace cyxwiz {
 
 // Forward declaration
-class VisualizationPanel;
 
-// ============================================================================
-// Colormap Types for conditional formatting
-// ============================================================================
-enum class ColorMapType {
-    None,       // No colormap
-    Viridis,    // Purple → Blue → Green → Yellow
-    Inferno,    // Black → Magenta → Orange → Yellow
-    RdYlGn,     // Red → Yellow → Green (diverging)
-    Blues,      // Light blue → Dark blue
-    Plasma,     // Purple → Pink → Orange → Yellow
-    Magma,      // Black → Purple → Pink → White
-    Custom      // User-defined range
-};
-
-// ============================================================================
-// Quick Plot Types
-// ============================================================================
-enum class QuickPlotType {
-    // Basic charts
-    Histogram,      // Distribution of single column
-    Bar,            // Categorical/value bars
-    Scatter,        // Two columns X vs Y
-    Line,           // Trend/sequence
-    Box,            // Quartiles, outliers
-
-    // Extended charts
-    Pie,            // Category proportions
-    Stairs,         // Step function
-    Stem,           // Discrete values
-    Area,           // Filled line chart
-
-    // Advanced charts
-    Heatmap,        // Matrix/grid data
-    Histogram2D     // 2D density
-};
-
-// ============================================================================
-// Column colormap configuration
-// ============================================================================
-struct ColumnColorMap {
-    ColorMapType type = ColorMapType::None;
-    bool apply_to_background = true;  // vs text color
-    float min_val = 0, max_val = 1;   // Custom range (auto-computed if not set)
-    bool auto_range = true;           // Use column min/max
-};
-
-// ============================================================================
-// Number formatting for display
-// ============================================================================
-struct ColumnFormat {
-    int decimal_places = -1;          // -1 = auto
-    bool thousands_separator = false;
-    bool as_percentage = false;
-    std::string prefix;               // e.g., "$"
-    std::string suffix;               // e.g., "%"
-};
-
-// ============================================================================
-// Selection range for multi-selection
-// ============================================================================
-struct SelectionRange {
-    int row_start = -1, row_end = -1;  // Inclusive
-    int col_start = -1, col_end = -1;  // Inclusive
-
-    bool Contains(int row, int col) const {
-        return row >= row_start && row <= row_end &&
-               col >= col_start && col <= col_end;
-    }
-};
-
-// ============================================================================
-// Quick plot popup state
-// ============================================================================
-struct PlotPopup {
-    bool open = false;
-    QuickPlotType type = QuickPlotType::Histogram;
-    int x_column = -1;
-    int y_column = -1;
-    std::string title;
-    std::vector<double> x_data;
-    std::vector<double> y_data;
-    std::vector<std::string> labels;  // For categorical data
-};
+struct DatasetProfile;
 
 /**
- * Column statistics for Table Viewer data analysis
- */
-struct TableColumnStats {
-    std::string type = "Unknown";  // "Numeric", "Text", "Date", "Mixed"
-    size_t count = 0;
-    size_t null_count = 0;
-    double min_val = 0, max_val = 0;
-    double sum = 0, avg = 0;
-    double std_dev = 0;                 // Standard deviation
-    double median = 0;                  // Median value
-    double q1 = 0, q3 = 0;              // Quartiles
-    std::vector<std::pair<std::string, int>> top_values;  // For text columns
-    std::vector<int> histogram_bins;    // For mini histogram (16 bins)
-    bool computed = false;
-};
-
-/**
- * TableViewer Panel - Display tabular data from CSV, Excel, HDF5
- * Uses ImGui tables for efficient rendering of large datasets
- * Supports multiple tabs and async loading
+ * TableViewer Panel - Display already-materialized tabular data.
+ * Source-file and registered-dataset previews flow through Data Preview.
+ * Supports multiple tabs for in-memory DataTable instances.
  */
 class TableViewerPanel : public Panel {
 public:
     TableViewerPanel();
-    ~TableViewerPanel() override = default;
+    ~TableViewerPanel() override;
 
     void Render() override;
 
-    // Load data from files (async by default for large files)
-    bool LoadCSV(const std::string& filepath);
-    bool LoadTXT(const std::string& filepath, char delimiter = '\t');
-    bool LoadHDF5(const std::string& filepath, const std::string& dataset_name = "data");
-    bool LoadExcel(const std::string& filepath, const std::string& sheet_name = "");
-
     // Set table to display (opens in new tab)
     void SetTable(std::shared_ptr<DataTable> table);
-    void SetTableByName(const std::string& name);
 
     // Close current tab
     void CloseCurrentTab();
@@ -152,183 +49,140 @@ public:
     // Clear current table
     void Clear();
 
+    // A loaded dataset's first `max_rows` rows in a new tab (TOFIX140). Read
+    // in a task (TOFIX159: shown in the Task viewer, with progress and
+    // Cancel; the viewer shows it too), so the Engine keeps drawing; the tab
+    // opens when the rows are read. The dataset stays where its Data Input
+    // put it (in memory or on disk).
+    void OpenDataset(const std::string& dataset_name, int64_t max_rows);
+    // The first `max_rows` rows (all when < 0) of an Arrow table (a step's
+    // output, a query result) in a tab named `name`, converted in a task the
+    // same way.
+    void OpenArrow(std::shared_ptr<arrow::Table> table, const std::string& name, int64_t max_rows = -1);
+
+    // Data Viewer (TOFIX133 P5, board 10): a tab fed from a Python value. A
+    // second open of the same value replaces its tab; "Read again", a slice
+    // change or "Read all rows" read it again through the variables worker.
+    void SetScriptingEngine(scripting::ScriptingEngine* engine) { engine_ = engine; }
+    void OpenVariable(const VariablesView::OpenRequest& request, const scripting::VariablesService::Result& result);
+
     // Visualization integration
-    void SetVisualizationPanel(VisualizationPanel* viz) { visualization_panel_ = viz; }
-    void SendToVisualizer(int column = -1);  // -1 = all columns, otherwise specific column
 
 private:
     // Tab structure
     struct TableTab {
+        // Stable tab identity: two tabs may show the same name (the same
+        // table opened twice), and ImGui keys tabs by this, not the label.
+        static int NewUid() { static int next = 0; return ++next; }
+        const int uid = NewUid();
         std::string filename;           // Display name
         std::string filepath;           // Full path
-        std::shared_ptr<DataTable> table;
-        std::shared_ptr<LazyDataTable> lazy_table;  // For large files
-        bool use_lazy_loading = false;  // Which table type is active
-        int current_page = 0;
-        std::string filter_text;
-        char filter_buffer[256] = {0};
-        bool is_loading = false;        // Async loading in progress
-        float load_progress = 0.0f;
-        std::string load_status;
+        // The table and its view: sort, filter, selection, formats, edit.
+        TableGrid grid;
+        bool is_dirty = false;  // Has unsaved changes
+        // The rows as read from Arrow (OpenDataset, OpenArrow): the Stats
+        // profile reads them while the table is unedited, so opening a large
+        // table converts nothing on the UI thread.
+        std::shared_ptr<arrow::Table> source;
+        // The loaded dataset this tab shows whole (OpenDataset of all its
+        // rows): while unedited it is profiled as Data Studio profiles it,
+        // so either one's saved answers serve the other.
+        std::string dataset;
+        // The column profile for the Stats sidebar, computed in the
+        // background; stale after an edit.
+        std::shared_ptr<DatasetProfile> profile;
+        bool profile_stale = true;
+        uint64_t profile_task = 0;
 
-        // Column statistics and sorting
-        std::vector<TableColumnStats> column_stats;
-        int selected_column = -1;
-        int sort_column = -1;
-        bool sort_ascending = true;
-        std::vector<size_t> sorted_indices;  // For virtual sorting
-
-        // Cell selection (per-tab)
-        int selected_row = -1;
-        int selected_col = -1;
-
-        // ═══════════════════════════════════════════════════════════
-        // NEW: Multi-selection support
-        // ═══════════════════════════════════════════════════════════
-        std::vector<SelectionRange> selections;
-
-        // ═══════════════════════════════════════════════════════════
-        // NEW: True filtering (hide rows vs highlight)
-        // ═══════════════════════════════════════════════════════════
-        std::vector<size_t> filtered_indices;  // Subset of sorted_indices
-        bool filter_mode_hide = false;         // true = hide non-matching rows
-
-        // ═══════════════════════════════════════════════════════════
-        // NEW: Per-column colormaps
-        // ═══════════════════════════════════════════════════════════
-        std::vector<ColumnColorMap> column_colormaps;
-
-        // ═══════════════════════════════════════════════════════════
-        // NEW: Per-column formatting
-        // ═══════════════════════════════════════════════════════════
-        std::vector<ColumnFormat> column_formats;
-
-        // ═══════════════════════════════════════════════════════════
-        // NEW: Column freeze for horizontal scrolling
-        // ═══════════════════════════════════════════════════════════
-        int frozen_columns = 0;
-
-        // ═══════════════════════════════════════════════════════════
-        // NEW: Cell editing support
-        // ═══════════════════════════════════════════════════════════
-        bool is_dirty = false;              // Has unsaved changes
-        int editing_row = -1;               // Row being edited (-1 = none)
-        int editing_col = -1;               // Column being edited (-1 = none)
-        char edit_buffer[1024] = {0};       // Text buffer for editing
-        bool edit_just_started = false;     // Flag to focus input on first frame
+        // A tab fed from a Python value (Data Viewer, board 10).
+        struct Live {
+            bool on = false;
+            VariablesView::OpenRequest request;
+            std::string kind;                  // frame, array, list
+            std::vector<long long> shape;
+            long long rows = 0;                // in the value
+            long long shown = 0;               // read into this tab
+            std::vector<std::string> dtypes;   // per table column ("index" for a frame's index)
+            std::vector<int> slice;
+            std::string read_at;
+            std::string problem;               // why the last read again failed (the data shown stays)
+            bool reading = false;
+        } live;
 
         TableTab() {
-            std::memset(filter_buffer, 0, sizeof(filter_buffer));
-            std::memset(edit_buffer, 0, sizeof(edit_buffer));
+            grid.options.editable = true;
+            grid.options.column_stats = true;
+            grid.on_edited = [this] {
+                is_dirty = true;
+                profile_stale = true;
+            };
         }
+        TableTab(const TableTab&) = delete;
+        TableTab& operator=(const TableTab&) = delete;
 
-        // Unified accessors for both table types
-        size_t GetRowCount() const {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetRowCount();
-            if (table) return table->GetRowCount();
-            return 0;
-        }
-
-        size_t GetColumnCount() const {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetColumnCount();
-            if (table) return table->GetColumnCount();
-            return 0;
-        }
-
+        size_t GetRowCount() const { return grid.table ? grid.table->GetRowCount() : 0; }
+        size_t GetColumnCount() const { return grid.table ? grid.table->GetColumnCount() : 0; }
         const std::vector<std::string>& GetHeaders() const {
             static std::vector<std::string> empty;
-            if (use_lazy_loading && lazy_table) return lazy_table->GetHeaders();
-            if (table) return table->GetHeaders();
-            return empty;
+            return grid.table ? grid.table->GetHeaders() : empty;
         }
-
-        std::string GetCellAsString(size_t row, size_t col) {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetCellAsString(row, col);
-            if (table) return table->GetCellAsString(row, col);
-            return "";
-        }
-
-        DataTable::CellValue GetCell(size_t row, size_t col) {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetCell(row, col);
-            if (table) return table->GetCell(row, col);
-            return std::monostate{};
-        }
-
-        bool HasData() const {
-            return (use_lazy_loading && lazy_table && lazy_table->GetRowCount() > 0) ||
-                   (!use_lazy_loading && table && table->GetRowCount() > 0);
-        }
+        bool HasData() const { return grid.HasData(); }
     };
 
+    // A tab on `table`; the grid's Plot items open the Plot window on it.
+    // `kinds` and `source` come with a table read in a task.
+    std::unique_ptr<TableTab> MakeTab(std::shared_ptr<DataTable> table, std::string filename,
+                                      std::vector<TableColumnKind> kinds = {},
+                                      std::shared_ptr<arrow::Table> source = nullptr);
+    TableTab* AddTab(std::shared_ptr<DataTable> table, std::vector<TableColumnKind> kinds,
+                     std::shared_ptr<arrow::Table> source);
+    // Reads (OpenDataset, OpenArrow) running in tasks, drawn under the
+    // toolbar with their progress and Cancel.
+    struct Opening {
+        uint64_t task = 0;
+        std::string name;
+        std::shared_ptr<const void> token;
+    };
+    std::vector<Opening> opening_;
+    // `dataset`: the loaded dataset read (OpenDataset), "" for a table.
+    void StartOpen(const std::string& name, const std::string& dataset,
+                   std::function<DatasetSlice(const SliceProgress&)> read);
+    void RenderOpening();
+
     void RenderTabBar();
+    void RenderLiveHeader(TableTab* tab);
+    void ReadLive(TableTab* tab, std::vector<int> index, long long max_rows);
     void RenderToolbar();
     void RenderTable();
     void RenderStatusBar();
-    void RenderLoadingIndicator();
     void RenderStatsSidebar(TableTab* tab);
+    // No tab: how tables get here, and the loaded-dataset picker.
+    void RenderEmptyState();
+    void RenderOpenDatasetPopup();
+    bool open_dataset_popup_requested_ = false;
+    std::string open_dataset_pick_;
+    int open_dataset_rows_ = 10000;
 
-    // Column statistics and sorting
-    void ComputeColumnStats(TableTab* tab);
-    void SortByColumn(TableTab* tab, int column);
-
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Context menus
-    // ═══════════════════════════════════════════════════════════════
-    void RenderColumnContextMenu(TableTab* tab, int column);
-    void RenderCellContextMenu(TableTab* tab, int row, int col);
-
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Colormaps
-    // ═══════════════════════════════════════════════════════════════
-    void ApplyColorMap(TableTab* tab, int column, ColorMapType type);
-    void ClearColorMap(TableTab* tab, int column);
-    ImVec4 GetColorMapColor(double normalized, ColorMapType type) const;
+    // The column profile for the Stats sidebar
+    void StartProfile(TableTab* tab);
 
     // ═══════════════════════════════════════════════════════════════
-    // NEW: Filtering
+    // Plot window (TOFIX134 P1: replaces Quick Plot)
     // ═══════════════════════════════════════════════════════════════
-    void ApplyFilter(TableTab* tab);
-    void ClearFilter(TableTab* tab);
-
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Quick Plot
-    // ═══════════════════════════════════════════════════════════════
-    void ShowQuickPlotPopup(TableTab* tab);
-    void RenderQuickPlot();
+    // Opens the Plot window on `tab` with `kind`; x/y are column indices
+    // (-1: none).
+    void OpenPlot(TableTab* tab, plot::Kind kind, int x_column, int y_column = -1);
     void RenderMiniHistogram(TableTab* tab, int column);
-    std::vector<double> GetColumnAsDoubles(TableTab* tab, int column) const;
 
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Clipboard operations
-    // ═══════════════════════════════════════════════════════════════
-    void CopyToClipboard(const std::string& text);
-    void CopyCellToClipboard(TableTab* tab, int row, int col);
-    void CopyRowToClipboard(TableTab* tab, int row);
-    void CopyColumnToClipboard(TableTab* tab, int col);
-    void CopySelectionToClipboard(TableTab* tab);
-
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Number formatting
-    // ═══════════════════════════════════════════════════════════════
-    std::string FormatNumber(double value, const ColumnFormat& fmt);
-
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Export and Find dialogs
-    // ═══════════════════════════════════════════════════════════════
-    void RenderExportDialog();
+    // Export: a menu on the toolbar's Export (CSV, TSV, JSON, Parquet to a
+    // file, or CSV to the clipboard); Find: a window over the grid's filter.
+    void RenderExportMenu(TableTab* tab);
+    void ExportTable(TableTab* tab, int format);  // 0 CSV, 1 TSV, 2 JSON, 3 Parquet, 4 clipboard (CSV)
     void RenderFindDialog();
 
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Cell editing
-    // ═══════════════════════════════════════════════════════════════
-    void BeginCellEdit(TableTab* tab, int row, int col);
-    void EndCellEdit(TableTab* tab, bool save);
+    // Saving an edited table to its file
     void SaveTable(TableTab* tab);
     bool HasUnsavedChanges() const;
-
-    // Async loading helpers
-    void LoadFileAsync(const std::string& filepath, const std::string& type, char delimiter = ',');
-    void OnLoadComplete(int tab_index, std::shared_ptr<DataTable> table, bool success, const std::string& error);
 
     // Tab management
     int FindTabByPath(const std::string& filepath) const;
@@ -345,44 +199,29 @@ private:
     int rows_per_page_ = 100;
 
     // Stats sidebar
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // scopes the open, profile and export tasks
     bool show_stats_sidebar_ = true;
     float stats_sidebar_width_ = 180.0f;
 
-    // Data bars
+    // Data bars (the grids' option)
     bool show_data_bars_ = true;
-    float data_bar_alpha_ = 0.3f;
 
     // ═══════════════════════════════════════════════════════════════
-    // NEW: Context menu state
+    // Plot window
     // ═══════════════════════════════════════════════════════════════
-    int context_menu_column_ = -1;
-    int context_menu_row_ = -1;
-    int context_menu_col_ = -1;
+    std::unique_ptr<plot::PlotWindow> plot_window_;
 
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Quick plot popup
-    // ═══════════════════════════════════════════════════════════════
-    PlotPopup plot_popup_;
-    bool show_plot_popup_ = false;
-
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Dialog states
-    // ═══════════════════════════════════════════════════════════════
-    bool show_export_dialog_ = false;
-    bool show_find_dialog_ = false;
-    char find_buffer_[256] = {0};
-    char replace_buffer_[256] = {0};
-
-    // Async loading
-    std::mutex tabs_mutex_;
-    std::atomic<bool> has_pending_load_{false};
-
-    // Lazy loading settings
-    static constexpr size_t LAZY_LOAD_THRESHOLD_MB = 10;  // Files > 10MB use lazy loading
-    bool prefer_lazy_loading_ = true;  // User preference
+    // Export and Find
+    bool export_shown_rows_only_ = false;  // the grid's rows (sorted, filtered) instead of the table
+    bool export_headers_ = true;           // CSV / TSV: the column names first
+    std::string status_note_;              // what the last export did, in the status bar
+    bool status_note_error_ = false;
+    bool show_find_dialog_ = false;        // the grid counts the matches while it is open
 
     // Visualization integration
-    VisualizationPanel* visualization_panel_ = nullptr;
+
+    scripting::ScriptingEngine* engine_ = nullptr;
+    int select_tab_ = -1;  // a replaced tab to bring to the front next frame
 };
 
 } // namespace cyxwiz

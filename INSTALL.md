@@ -1,175 +1,231 @@
-# CyxWiz Installation Guide
+# Building CyxWiz from source
 
-## Binary Releases
+CyxWiz is pre-release software. Signed alpha installers are published on the [Releases page](https://github.com/CYXWIZ-Lab/CYXWIZ/releases); see [Install a pre-release](README.md#install-a-pre-release). This guide is the detailed reference for building from source. The [README](README.md#build-from-source) has the short version.
 
-Pre-built binaries are available for:
-- **Windows x64** (Windows 10/11)
-- **Linux x64** (Ubuntu 20.04+, Debian 11+, Fedora 36+)
-- **macOS ARM64** (Apple Silicon M1/M2/M3)
+## Requirements
 
-Download the latest release from: https://github.com/CYXWIZ-Lab/CYXWIZ/releases
+- Git
+- CMake 3.20 or newer
+- a C++20 compiler: Visual Studio 2026 with **Desktop development with C++** on Windows, GCC or Clang on Linux, Xcode Command Line Tools on macOS
+- Ninja on Linux and macOS (the presets use it)
+- platform OpenGL/GLFW development libraries
+- ArrayFire 3.10 for the desktop Engine runtime
+- enough disk space and time for the first vcpkg dependency build
 
----
+Python scripting is optional; CMake accepts Python 3.12 or 3.13 (3.12 is preferred).
 
-## Required Dependencies
+ArrayFire is required for every build that includes the backend (Engine, Server Node, backend-only): install it separately and expose its CMake package to the build. Configure fails if it is missing. Only the standalone installer (`CYXWIZ_BUILD_INSTALLER_ONLY`) builds without it.
 
-### ArrayFire (Required - All Platforms)
+ONNX Runtime, llama.cpp/GGUF, LibTorch, the assistant plugin, and MuJoCo are optional integrations. Disable the ones you do not have.
 
-ArrayFire is the GPU acceleration library used by CyxWiz.
+### Linux packages
 
-#### Windows
-1. Download ArrayFire 3.9.0 from https://arrayfire.com/download
-2. Run the installer (default: `C:\Program Files\ArrayFire\v3`)
-3. Add to PATH: `C:\Program Files\ArrayFire\v3\lib`
+Ubuntu 22.04 package names, as used by CI:
 
-#### Linux
 ```bash
-wget https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0-Linux-x86_64.sh
-chmod +x ArrayFire-v3.9.0-Linux-x86_64.sh
-sudo ./ArrayFire-v3.9.0-Linux-x86_64.sh --prefix=/opt/arrayfire --skip-license
-
-# Add to ~/.bashrc
-export LD_LIBRARY_PATH=/opt/arrayfire/lib:$LD_LIBRARY_PATH
+sudo apt-get install -y autoconf autoconf-archive automake build-essential cmake curl \
+  libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev libxext-dev libxi-dev \
+  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev ninja-build patchelf pkg-config
+curl -LO https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
+chmod +x ArrayFire.sh && sudo ./ArrayFire.sh --include-subdir --prefix=/opt
 ```
 
-#### macOS
+### macOS packages
+
 ```bash
-brew install arrayfire
+xcode-select --install
+brew install arrayfire autoconf autoconf-archive automake bison cmake libtool ninja pkg-config
 ```
-
----
-
-## Optional Dependencies
-
-### CUDA Toolkit (NVIDIA GPU Support)
-
-For NVIDIA GPU acceleration, install CUDA Toolkit 12.x:
-- Download: https://developer.nvidia.com/cuda-downloads
-- Windows: Run installer, select "CUDA" components
-- Linux: Follow distribution-specific instructions
-
-### OpenCL (AMD/Intel GPU Support)
-
-- **AMD**: Install AMD ROCm or AMDGPU-PRO drivers
-- **Intel**: Install Intel oneAPI or OpenCL runtime
-
-### Python (Scripting Support)
-
-Python 3.8+ is required for the scripting engine:
-- Windows: https://www.python.org/downloads/
-- Linux: `sudo apt install python3-dev python3-pip`
-- macOS: `brew install python@3.11`
-
----
-
-## Running CyxWiz
 
 ### Windows
 
+Install Visual Studio 2026 with the C++ desktop workload and the ArrayFire 3.10 Windows installer. Run the build from a *Developer Command Prompt for VS 18 2026* so the presets find the toolchain.
+
+## Clone and set up
+
 ```powershell
-# Extract the release
-Expand-Archive cyxwiz-v0.4.0-windows-x64.zip -DestinationPath .
-
-# Run the Engine (Desktop Client)
-.\cyxwiz-v0.4.0-windows-x64\cyxwiz-engine.exe
-
-# Run the Server Node (Compute Worker)
-.\cyxwiz-v0.4.0-windows-x64\cyxwiz-server-node.exe
+git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
+cd CYXWIZ
+.\setup.bat          # Linux/macOS: chmod +x setup.sh build.sh && ./setup.sh
 ```
 
-### Linux
+The setup script checks the toolchain and clones and bootstraps vcpkg in the repository root when necessary; it does not install the dependency manifest into a second global tree. The first CMake configure for a build directory validates the manifest and restores packages into that build tree. A populated vcpkg binary cache avoids rebuilding dependency sources, although restoring large cached packages can still take several minutes.
+
+## Wrapper scripts
+
+The root wrappers are the simplest build interface:
+
+```powershell
+# Windows: Debug Engine build with eight parallel jobs
+.\build.bat --debug --engine -j 8
+
+# Engine and Server Node in Release
+.\build.bat -j 8
+
+# Server Node GUI and daemon only
+.\build.bat --server-node -j 8
+```
 
 ```bash
-# Extract the release
-tar -xzf cyxwiz-v0.4.0-linux-x64.tar.gz
-cd cyxwiz-v0.4.0-linux-x64
-
-# Run the Engine
-./run-engine.sh
-# Or directly (ensure LD_LIBRARY_PATH is set):
-./cyxwiz-engine
-
-# Run the Server Node
-./cyxwiz-server-node
+# Linux or macOS
+./build.sh --debug --engine -j 8
+./build.sh --server-node -j 8
 ```
 
-### macOS
+| Option | Effect |
+| --- | --- |
+| `--debug` | Debug instead of the default Release configuration |
+| `--engine` | Configure the Engine and build only `cyxwiz-engine` |
+| `--server-node` | Configure the Server Node and build `cyxwiz-server-gui` plus `cyxwiz-server-daemon` |
+| `--build-dir PATH` | Reuse a compatible CMake tree or choose a custom build directory |
+| `--clean` | Delete the wrapper build tree before configuring; only when a clean rebuild is necessary |
+| `-j N` | Up to `N` parallel jobs; Windows defaults to 8, Linux/macOS auto-detect |
 
-```bash
-# Extract the release
-unzip cyxwiz-v0.4.0-macos-arm64.zip
-cd cyxwiz-v0.4.0-macos-arm64
+Run `build.bat --help` or `./build.sh --help` for the summary. Wrapper builds use `build/<platform>-<configuration>`, such as `build/windows-debug`, `build/linux-release`, or `build/macos-debug`.
 
-# First run may be blocked by Gatekeeper
-# Go to System Preferences > Security & Privacy > Allow
+A cached verification can reuse the direct-preset `build` tree:
 
-# Run the Engine
-./cyxwiz-engine
-
-# Run the Server Node
-./cyxwiz-server-node
+```powershell
+.\build.bat --debug --engine --build-dir build -j 8
 ```
 
----
+Only reuse a build tree configured with the same source directory, generator, architecture, and a compatible toolchain. Do not add `--clean` when the goal is to keep compiled objects.
+
+## CMake build structure
+
+The supported entry point is the root [CMakeLists.txt](CMakeLists.txt). Configure from the repository root (`-S .`); the root build resolves shared dependencies and options, then delegates through `add_subdirectory`:
+
+```text
+CMakeLists.txt                         root options, dependencies, output paths
+├── cyxwiz-protocol/CMakeLists.txt     protobuf and gRPC contracts
+├── cyxwiz-backend/CMakeLists.txt      computation backend library
+├── cyxwiz-engine/CMakeLists.txt       Engine executable and Engine tests
+├── cyxwiz-server-node/CMakeLists.txt  Server Node GUI, daemon, and tests
+├── tests/CMakeLists.txt               shared backend tests and benchmarks
+└── plugins/**/CMakeLists.txt          explicitly enabled or example plugins
+```
+
+Supporting files:
+
+- [CMakePresets.json](CMakePresets.json): platform/configuration presets (`windows-debug`, `windows-release`, `linux-debug`, `linux-release`, `macos-debug`, `macos-release`) and the direct-preset build directory `build`;
+- `cmake/Find*.cmake`: dependency discovery not covered by standard package configuration;
+- [vcpkg.json](vcpkg.json): the normal dependency manifest;
+- [vcpkg-ci.json](vcpkg-ci.json): the broader dependency-validation manifest used by CI;
+- `vcpkg-ports/`: project-specific vcpkg overlays.
+
+Do not configure a component directory such as `cyxwiz-engine/` by itself; component files consume targets and decisions made by the root build.
+
+## Direct CMake and fast iteration
+
+CMake has two phases: **configure** writes a build tree and stores `-DNAME=VALUE` options; **build** compiles targets from that tree.
+
+Configure a focused Engine development tree once:
+
+```powershell
+cmake --preset windows-debug `
+  -DCYXWIZ_BUILD_ENGINE=ON `
+  -DCYXWIZ_BUILD_SERVER_NODE=OFF `
+  -DCYXWIZ_BUILD_TESTS=OFF `
+  -DCYXWIZ_ENABLE_ONNX=OFF `
+  -DCYXWIZ_ENABLE_GGUF=OFF `
+  -DCYXWIZ_ENABLE_PYTORCH=OFF `
+  -DCYXWIZ_ENABLE_NCCL=OFF `
+  -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
+  -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF
+```
+
+Then rebuild incrementally after edits:
+
+```powershell
+cmake --build --preset windows-debug --config Debug --target cyxwiz-engine --parallel 8
+```
+
+Do not pass `--clean`, and do not build every target when only the Engine changed. Reconfigure when changing `-D` options, the toolchain, or dependencies; CMake detects ordinary `CMakeLists.txt` changes itself.
+
+The vcpkg binary cache and the CMake object tree solve different problems: the cache keeps third-party dependencies from being compiled again, and the configured `build/` tree keeps CyxWiz object files for incremental builds. Preserve both when you only want to re-verify.
+
+`--parallel N` (or `-j N`) sets the number of build jobs. `--parallel 1` or MSBuild `/m:1` builds serially, which helps diagnose errors or limit memory, but is slow. Pick a count that suits your CPU cores and memory.
+
+For a Release Engine, use `windows-release`, `--config Release`, and the `cyxwiz-engine` target. The Linux and macOS presets work the same way with Ninja (no `--config`).
+
+Other useful builds:
+
+```powershell
+# Minimal capability build
+cmake --preset windows-debug -DCYXWIZ_ENABLE_ONNX=OFF -DCYXWIZ_ENABLE_GGUF=OFF -DCYXWIZ_ENABLE_PYTORCH=OFF -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF
+cmake --build --preset windows-debug
+
+# Backend-only development without the Engine GUI (still needs ArrayFire)
+cmake --preset windows-debug -DCYXWIZ_BUILD_ENGINE=OFF -DCYXWIZ_BUILD_SERVER_NODE=OFF -DCYXWIZ_BUILD_TESTS=ON
+cmake --build --preset windows-debug
+```
+
+## Build options
+
+Pass options at configure time as `-DOPTION=ON` or `-DOPTION=OFF`.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `CYXWIZ_BUILD_ENGINE` | `ON` | Include the desktop Engine |
+| `CYXWIZ_BUILD_SERVER_NODE` | `ON` | Include the Server Node |
+| `CYXWIZ_BUILD_TESTS` | `ON` | Include test targets; disable only for a focused edit loop |
+| `CYXWIZ_ENABLE_PYTHON` | `ON` | Embedded Python scripting when Python 3.12/3.13 is found |
+| `CYXWIZ_ENABLE_CUDA` | `ON` | ArrayFire CUDA capability paths when dependencies are available |
+| `CYXWIZ_ENABLE_OPENCL` | `ON` | ArrayFire OpenCL capability paths |
+| `CYXWIZ_ENABLE_NCCL` | `ON` | Optional NCCL distributed GPU backend when its prerequisites are found |
+| `CYXWIZ_ENABLE_ONNX` | `ON` | ONNX Runtime discovery and integration |
+| `CYXWIZ_ENABLE_GGUF` | `ON` | llama.cpp/GGUF discovery and integration |
+| `CYXWIZ_ENABLE_PYTORCH` | `ON` | LibTorch discovery and integration |
+| `CYXWIZ_ENABLE_ASAN` | `OFF` | AddressSanitizer on supported toolchains |
+| `CYXWIZ_ENABLE_TRACY` | `OFF` | Optional Engine profiling when Tracy is installed |
+| `CYXWIZ_BUILD_ASSISTANT_PLUGIN` | `OFF` | Experimental assistant plugin |
+| `CYXWIZ_BUILD_MUJOCO_PLUGIN` | `OFF` | Optional MuJoCo plugin (needs a separate MuJoCo installation) |
+
+An `ON` capability request does not prove that a dependency, backend, or device is used at run time; check CMake's configure summary and the Engine's verified device routes. List every cached CyxWiz option with:
+
+```powershell
+cmake -LAH -N build | Select-String CYXWIZ_      # Linux/macOS: cmake -LAH -N build | grep CYXWIZ_
+```
+
+## ArrayFire discovery
+
+If CMake cannot find ArrayFire, pass the directory that contains `ArrayFireConfig.cmake`:
+
+```powershell
+cmake --preset windows-debug -DArrayFire_DIR="C:\Program Files\ArrayFire\v3\cmake"
+```
+
+At run time, ArrayFire's libraries and the backend libraries you use must be on the platform library search path; on Windows this means `af.dll` and the selected backend DLLs. CPU compute in the Engine means ArrayFire CPU (`AF_BACKEND_CPU`); native C++ CPU fallback is a recorded compatibility/debug path, not the normal runtime. Check the resolved backend and physical device in **Preferences > Devices** and in runtime evidence; a GPU preference alone is not sufficient.
+
+## Executables
+
+A native build can produce:
+
+- `cyxwiz-engine`: the desktop application;
+- `cyxwiz-server-gui`: the Server Node graphical application;
+- `cyxwiz-server-daemon`: the Server Node daemon;
+- `cyxwiz-tests`: the Catch2 test executable (with `CYXWIZ_BUILD_TESTS=ON`).
+
+Windows multi-configuration builds place them under `bin/Debug` or `bin/Release` inside the build tree (for example `build/bin/Debug` for direct presets or `build/windows-debug/bin/Debug` for the wrapper). Linux and macOS builds place them under the build tree's `bin/`.
+
+## Tests
+
+```powershell
+cmake --preset windows-debug -DCYXWIZ_BUILD_TESTS=ON
+cmake --build --preset windows-debug
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+Use the matching preset on Linux and macOS (no `-C`). Tests prove only the paths and device placements they exercise.
 
 ## Troubleshooting
 
-### "DLL not found" / "Library not found"
+When configuration fails:
 
-Ensure ArrayFire is installed and its library path is in your system PATH:
-- Windows: Add `C:\Program Files\ArrayFire\v3\lib` to PATH
-- Linux: Export `LD_LIBRARY_PATH=/opt/arrayfire/lib:$LD_LIBRARY_PATH`
-- macOS: ArrayFire from Homebrew should work automatically
+1. read the first CMake error rather than the final summary;
+2. confirm the vcpkg toolchain path exists (run the setup script again if not);
+3. disable unavailable optional integrations;
+4. confirm the compiler matches the configured generator (Visual Studio 2026 for the Windows presets);
+5. set `ArrayFire_DIR` only when ArrayFire is installed.
 
-### "CUDA driver not found"
-
-- Install NVIDIA GPU drivers from https://www.nvidia.com/drivers
-- CyxWiz will fall back to CPU if no GPU is available
-
-### "OpenGL error"
-
-Ensure your GPU drivers are up to date:
-- Windows: Update via Windows Update or NVIDIA/AMD website
-- Linux: `sudo apt install mesa-utils` and update drivers
-- macOS: Update macOS to latest version
-
-### macOS "App is damaged"
-
-This happens when Gatekeeper blocks unsigned apps:
-```bash
-xattr -cr cyxwiz-engine
-xattr -cr cyxwiz-server-node
-```
-
----
-
-## Building from Source
-
-If you prefer to build from source, see [docs/mainbuild.md](docs/mainbuild.md).
-
-Requirements:
-- CMake 3.20+
-- C++20 compiler (MSVC 2022, GCC 11+, Clang 14+)
-- vcpkg (for dependencies)
-- ArrayFire 3.9.0
-
-```bash
-# Clone with submodules
-git clone --recursive https://github.com/CYXWIZ-Lab/CYXWIZ.git
-cd CYXWIZ
-
-# Install vcpkg dependencies
-./vcpkg/bootstrap-vcpkg.sh
-./vcpkg/vcpkg install
-
-# Configure and build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-```
-
----
-
-## Support
-
-- Issues: https://github.com/CYXWIZ-Lab/CYXWIZ/issues
-- Documentation: https://github.com/CYXWIZ-Lab/CYXWIZ/tree/master/docs
+For reproducible problems, follow [SUPPORT.md](SUPPORT.md).

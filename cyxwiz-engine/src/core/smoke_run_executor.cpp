@@ -1,0 +1,558 @@
+#include "smoke_run_executor.h"
+
+#include <cstdint>
+
+#include "classification_decision.h"
+#include "data_registry.h"
+#include "debug_batch_inspector.h"
+#include "debug_numerics.h"
+#include "error_codes.h"
+#include "label_column_resolver.h"
+#include "metric_learning_sampling.h"
+#include "model_builder.h"
+#include "pipeline_materializer.h"
+#include "sparse_feature_dataset_batcher.h"
+#include "training_batcher_setup.h"
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <memory>
+#include <sstream>
+
+namespace cyxwiz {
+
+namespace {
+
+float ExtractLossScalar(const Tensor& t) {
+    if (t.NumElements() == 0 || t.GetDataType() != DataType::Float32) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return t.Data<float>()[0];
+}
+
+float Accuracy(const Tensor& predictions,
+               const Tensor& targets,
+               ClassificationDecisionMode mode,
+               float pair_threshold) {
+    const auto& shape = predictions.Shape();
+    if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
+        return 0.0f;
+    }
+
+    const bool pairs = mode == ClassificationDecisionMode::PairDistance ||
+                       mode == ClassificationDecisionMode::PairCosine;
+    const bool mined = IsMinedMetricDecision(mode);
+    if (mode == ClassificationDecisionMode::TripletOrder || pairs || mined) {
+        // Stacked [anchors; positives; negatives] or [firsts; seconds], or
+        // the unstacked batch the loss mines from.
+        const size_t units = mined ? shape[0] : shape[0] / (pairs ? 2 : 3);
+        const auto count = CountClassificationDecisionScalars(
+            predictions, targets, units, shape[1], mode, std::nullopt, pair_threshold);
+        return count.total > 0
+            ? static_cast<float>(count.correct) / static_cast<float>(count.total)
+            : 0.0f;
+    }
+
+    const size_t batch_size = shape[0];
+    const size_t num_classes = shape[1];
+    return ClassificationAccuracy(
+        predictions.Data<float>(), targets.Data<float>(),
+        batch_size, num_classes, mode);
+}
+
+std::vector<size_t> ShapeOf(const Tensor& t) {
+    return t.Shape();
+}
+
+int FindFirstModelNode(const std::vector<gui::MLNode>& nodes) {
+    for (const auto& node : nodes) {
+        switch (node.type) {
+            case gui::NodeType::Dense:
+            case gui::NodeType::Embedding:
+            case gui::NodeType::GRU:
+            case gui::NodeType::LSTM:
+            case gui::NodeType::RNN:
+            case gui::NodeType::Flatten:
+            case gui::NodeType::Reshape:
+            case gui::NodeType::View:
+            case gui::NodeType::Permute:
+            case gui::NodeType::Squeeze:
+            case gui::NodeType::Unsqueeze:
+            case gui::NodeType::TensorAbs:
+            case gui::NodeType::TensorExp:
+            case gui::NodeType::TensorLog:
+            case gui::NodeType::TensorSqrt:
+            case gui::NodeType::TensorSign:
+            case gui::NodeType::TensorPow:
+            case gui::NodeType::TensorClip:
+            case gui::NodeType::TensorSum:
+            case gui::NodeType::TensorMean:
+            case gui::NodeType::TensorMax:
+            case gui::NodeType::TensorMin:
+            case gui::NodeType::TensorProd:
+            case gui::NodeType::TensorVar:
+            case gui::NodeType::TensorStd:
+            case gui::NodeType::TensorBroadcastTo:
+            case gui::NodeType::TensorExpand:
+            case gui::NodeType::TensorIndexSelect:
+            case gui::NodeType::TensorCompare:
+            case gui::NodeType::TensorLogicalMask:
+            case gui::NodeType::Dropout:
+                return node.id;
+            default:
+                break;
+        }
+    }
+    return -1;
+}
+
+DebugTraceRecord MakeSmokeRecord(const std::string& run_id,
+                                 const std::string& phase,
+                                 DebugTraceRole role,
+                                 int node_id,
+                                 const std::string& status,
+                                 const std::vector<size_t>& input_shape = {},
+                                 const std::vector<size_t>& output_shape = {}) {
+    DebugTraceRecord record = DebugNodeTraceContract::Make(
+        run_id,
+        node_id,
+        "SmokeRun",
+        "SmokeRun",
+        phase,
+        role,
+        input_shape,
+        output_shape,
+        "float32",
+        "Runtime",
+        status);
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        record,
+        "smoke_run",
+        "SmokeRunExecutor",
+        "cyxwiz-engine/src/core/smoke_run_executor.cpp",
+        "cyxwiz::SmokeRunExecutor::RunTextSmoke");
+    record.payload["success"] = status == "ok";
+    return record;
+}
+
+} // namespace
+
+SmokeRunResult SmokeRunExecutor::RunTextSmoke(
+    TrainingConfiguration config,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::string& run_id,
+    int max_samples,
+    const SmokeRunOptions& options) const {
+    SmokeRunResult result;
+    const auto stop_requested = [&options]() {
+        return options.should_stop && options.should_stop();
+    };
+    result.requested_samples = max_samples;
+
+    if (config.preprocessing_domain != PreprocessingDomain::Text) {
+        result.summary = "Smoke Run currently supports text graphs in this slice.";
+        result.issues.push_back({
+            IssueLevel::Error, -1, "SmokeRun", result.summary,
+            errors::Runtime::UnsupportedNode
+        });
+        auto trace = MakeSmokeRecord(
+            run_id, "SmokeRun", DebugTraceRole::Error,
+            -1, "unsupported");
+        DebugNodeTraceContract::AddError(
+            trace, result.summary, errors::Runtime::UnsupportedNode);
+        result.traces.push_back(std::move(trace));
+        return result;
+    }
+    result.supported = true;
+
+    if (config.sequence_batch.enabled) {
+        result.summary = SequenceBatchRuntimeUnsupportedMessage();
+        result.issues.push_back({
+            IssueLevel::Error, -1, "SequenceBatch", result.summary,
+            errors::Runtime::UnsupportedNode
+        });
+        return result;
+    }
+
+    auto& registry = DataRegistry::Instance();
+    const int batch_size = std::max(1, std::min(config.batch_size, 32));
+    // metric_source outlives the MetricBatchSampler that wraps it (declared first, destroyed last).
+    std::unique_ptr<IBatcher> metric_source;
+    std::unique_ptr<IBatcher> batcher;
+    std::string batcher_source;
+
+    if (registry.IsArrowDataset(config.dataset_name) && !links.empty()) {
+        PipelineOperatorExecutionContext materialization_context;
+        materialization_context.cancellation_requested = stop_requested;
+        auto materialized = PipelineMaterializer::Materialize(
+            nodes, links, registry, config.dataset_name, options.cache_config,
+            {}, std::move(materialization_context));
+        if (!materialized.success &&
+            materialized.failure_kind == MaterializationFailureKind::Cancelled) {
+            result.stopped = true;
+            result.summary = "Smoke Run stopped while preparing data.";
+            return result;
+        }
+        if (!materialized.success) {
+            result.summary = materialized.error_message;
+            result.issues.push_back({
+                IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                errors::Data::MaterializationFailed
+            });
+            return result;
+        }
+
+        if (materialized.operators_applied > 0 &&
+            materialized.effective_kind ==
+                PipelineMaterializerSourceKind::SparseFeatureDataset) {
+            auto sparse_dataset =
+                registry.GetSparseFeatureDataset(materialized.effective_dataset_name);
+            if (!sparse_dataset) {
+                result.summary = "Materialized sparse dataset is unavailable: " +
+                                 materialized.effective_dataset_name;
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
+            // Same training batcher Train builds from the Data Loader and Data
+            // Split settings (seeded shuffle, stratified split, class
+            // balancing), so the bounded sample is representative instead of
+            // the first rows of a label-ordered file.
+            try {
+                auto batchers = BuildSparseTrainingBatchers(
+                    config, sparse_dataset, batch_size);
+                batcher = std::move(batchers.sparse_train);
+                // Train feeds CSR batches to a sparse-aware first layer; the
+                // Smoke model is dense, so densify each (bounded) batch.
+                batcher->SetSparseFeatureOutput(false);
+            } catch (const std::exception& e) {
+                result.summary = std::string("Smoke Run could not batch the sparse features: ") +
+                                 e.what();
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "SparseFeatureDataset", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
+            batcher_source = "materialized sparse features";
+            config.input_size = static_cast<size_t>(sparse_dataset->GetNumFeatures());
+            config.input_shape = {config.input_size};
+        } else if (materialized.operators_applied > 0) {
+            auto arrow_dataset =
+                registry.GetArrowDataset(materialized.effective_dataset_name);
+            if (!arrow_dataset || !arrow_dataset->GetSchema()) {
+                result.summary = "Materialized Arrow text table is unavailable: " +
+                                 materialized.effective_dataset_name;
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
+
+            const int label_idx =
+                FindCommonLabelColumnIndex(arrow_dataset->GetSchema());
+            if (label_idx < 0) {
+                result.summary = "Materialized Arrow text table has no label column.";
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "ArrowDataset", result.summary,
+                    errors::Data::RequiredLabelColumnMissing
+                });
+                return result;
+            }
+
+            const std::string label_column =
+                arrow_dataset->GetSchema()->field(label_idx)->name();
+            if (auto text = TextLabelColumn(arrow_dataset->GetArrowTable(), label_column)) {
+                arrow_dataset = WithEncodedLabels(arrow_dataset, label_column, BuildLabelVocabulary({text}));
+            }
+            batcher = std::make_unique<ArrowDatasetBatcher>(
+                arrow_dataset,
+                label_column,
+                static_cast<size_t>(batch_size),
+                config.shuffle,
+                config.train_ratio,
+                /*is_training=*/true,
+                "",
+                0,
+                config.num_workers,
+                BatcherPhase::Train,
+                0.0f,
+                static_cast<uint32_t>(config.dataloader_seed));
+            batcher_source = "materialized Arrow text";
+
+            if (arrow_dataset->GetNumColumns() > 1) {
+                config.input_size =
+                    static_cast<size_t>(arrow_dataset->GetNumColumns() - 1);
+                config.input_shape = {config.input_size};
+            }
+        }
+    }
+
+    if (!batcher) {
+        result.summary = "Text reaches the model untokenized: add a Text Tokenizer (or TF-IDF / Count "
+                         "Vectorizer) node after the Data Input of " + config.dataset_name + ".";
+        result.issues.push_back({IssueLevel::Error, -1, "TextDataset",
+                                 result.summary,
+                                 errors::Compiler::TextNotTokenized});
+        return result;
+    }
+
+    if (batcher->GetNumSamples() == 0) {
+        result.summary = "Text dataset has no training samples.";
+        result.issues.push_back({IssueLevel::Error, -1, "TextDataset",
+                                 result.summary,
+                                 errors::Data::RowCountMismatch});
+        return result;
+    }
+
+    if (config.metric_sampling != MetricSampling::None) {
+        batcher->SetClassIndexLabelMode(true);
+    } else if (UsesScalarBinaryTargets(config.loss_type)) {
+        batcher->SetScalarLabelMode(true);
+    } else if (config.preprocessing.has_onehot &&
+               config.preprocessing.num_classes > 0) {
+        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+    } else if (config.output_size > 0) {
+        batcher->SetOneHotEncoding(config.output_size);
+    }
+
+    if (config.metric_sampling != MetricSampling::None) {
+        // Same stacked pair / triplet batches as Train (TOFIX140 A5).
+        auto source = std::move(batcher);
+        batcher = std::make_unique<MetricBatchSampler>(
+            *source, config.metric_sampling, config.metric_mining,
+            static_cast<std::uint64_t>(std::max(config.dataloader_seed, 0)));
+        metric_source = std::move(source);
+    }
+    batcher->SetBatchInspectionEnabled(true);
+
+    BuiltModel built = BuildSequentialFromConfig(config);
+    if (!built.ok() || !built.loss || !built.optimizer) {
+        result.summary = built.error_message.empty()
+            ? "Smoke Run failed to build model/loss/optimizer."
+            : built.error_message;
+        result.issues.push_back({IssueLevel::Error, -1, "ModelBuilder",
+                                 result.summary,
+                                 errors::Training::ModelBuildFailed});
+        return result;
+    }
+
+    const int max_batches = std::max(
+        1,
+        static_cast<int>((std::min<size_t>(batcher->GetNumSamples(), static_cast<size_t>(max_samples)) +
+                          static_cast<size_t>(batch_size) - 1) /
+                         static_cast<size_t>(batch_size)));
+    const int model_node_id = FindFirstModelNode(nodes);
+    const gui::NodeType output_node_type = config.layers.empty()
+        ? gui::NodeType::Dense
+        : config.layers.back().type;
+    float loss_sum = 0.0f;
+
+    for (int batch_index = 1; batch_index <= max_batches && !batcher->IsEpochComplete(); ++batch_index) {
+        if (stop_requested()) {
+            result.stopped = true;
+            break;
+        }
+        const auto fetch_start = std::chrono::steady_clock::now();
+        Batch batch = batcher->GetNextBatch();
+        const float fetch_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
+        if (!batch.IsValid()) {
+            break;
+        }
+
+        result.samples_seen += static_cast<int>(batch.size);
+        result.batches_seen++;
+
+        auto input_record = MakeSmokeRecord(
+            run_id, "SmokeRun.BatchInput", DebugTraceRole::ModelInput,
+            model_node_id, "ok", ShapeOf(batch.data), ShapeOf(batch.labels));
+        input_record.payload["batch"] = batch_index;
+        input_record.payload["samples"] = batch.size;
+        input_record.duration_ms = fetch_ms;
+        input_record.payload["timing_scope"] =
+            "combined_batch_creation_and_data_wait";
+        if (batch_index == 1) {
+            AttachDebugBatchInspection(
+                input_record,
+                batch,
+                config,
+                config.dataset_name,
+                batcher_source,
+                static_cast<size_t>(batch_size));
+            batcher->SetBatchInspectionEnabled(false);
+        }
+        result.traces.push_back(std::move(input_record));
+
+        const auto forward_start = std::chrono::steady_clock::now();
+        Tensor predictions = built.model->Forward(batch.data);
+        const float forward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - forward_start).count();
+        const auto prediction_numerics = ScanDebugTensorNumerics(
+            predictions, output_node_type);
+        const bool pred_bad = prediction_numerics.nan_count > 0 ||
+            prediction_numerics.inf_count > 0;
+        if (pred_bad) {
+            result.issues.push_back({
+                IssueLevel::Error, model_node_id, "SmokeRun",
+                "Smoke Run predictions contain NaN or Inf.",
+                errors::Training::TrainingExecutionFailed
+            });
+        }
+
+        const auto loss_start = std::chrono::steady_clock::now();
+        Tensor loss_tensor = built.loss->Forward(predictions, batch.labels);
+        const float loss_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - loss_start).count();
+        const float loss = ExtractLossScalar(loss_tensor);
+        const bool loss_ok = std::isfinite(loss);
+        if (!loss_ok) {
+            result.issues.push_back({
+                IssueLevel::Error, model_node_id, "SmokeRun",
+                "Smoke Run loss is not finite.",
+                errors::Training::TrainingExecutionFailed
+            });
+        } else {
+            loss_sum += loss;
+        }
+
+        result.last_accuracy = Accuracy(
+            predictions, batch.labels,
+            ClassificationDecisionModeForLoss(config.loss_type, config.metric_mining),
+            config.pair_decision_threshold);
+
+        const auto shape_compatibility = CheckDebugPredictionTargetShapes(
+            predictions.Shape(), batch.labels.Shape(), config.loss_type);
+        const bool target_shape_mismatch =
+            shape_compatibility.available && !shape_compatibility.compatible;
+        auto loss_record = MakeSmokeRecord(
+            run_id, "SmokeRun.Loss", DebugTraceRole::Loss,
+            model_node_id,
+            !loss_ok || pred_bad ? "failed" :
+                (target_shape_mismatch ? "warning" : "ok"),
+            ShapeOf(predictions), ShapeOf(loss_tensor));
+        loss_record.payload["batch"] = batch_index;
+        loss_record.payload["loss"] = loss;
+        loss_record.payload["accuracy"] = result.last_accuracy;
+        loss_record.payload["predictions_have_non_finite"] = pred_bad;
+        loss_record.payload["prediction_shape"] = predictions.Shape();
+        loss_record.payload["target_shape"] = batch.labels.Shape();
+        loss_record.payload["prediction_target_shape_check_available"] =
+            shape_compatibility.available;
+        loss_record.payload["prediction_target_shapes_compatible"] =
+            shape_compatibility.compatible;
+        loss_record.payload["prediction_target_shape_reason"] =
+            shape_compatibility.reason;
+        AttachDebugNumericsPayload(
+            loss_record, prediction_numerics, "predictions");
+        if (target_shape_mismatch) {
+            DebugNodeTraceContract::AddWarning(
+                loss_record,
+                "Smoke Run prediction and target shapes are incompatible for the configured loss.",
+                errors::Compiler::TensorShapeMismatch);
+            result.issues.push_back({
+                IssueLevel::Warning, model_node_id, "SmokeRun",
+                "Smoke Run prediction and target shapes are incompatible for the configured loss.",
+                errors::Compiler::TensorShapeMismatch
+            });
+        }
+        loss_record.duration_ms = loss_ms;
+        loss_record.payload["forward_duration_ms"] = forward_ms;
+        result.traces.push_back(std::move(loss_record));
+
+        if (!loss_ok || pred_bad) {
+            break;
+        }
+
+        const auto backward_start = std::chrono::steady_clock::now();
+        Tensor grad = built.loss->Backward(predictions, batch.labels);
+        built.model->Backward(grad);
+        const float backward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - backward_start).count();
+        const auto optimizer_start = std::chrono::steady_clock::now();
+        built.model->UpdateParameters(built.optimizer.get());
+        const float optimizer_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - optimizer_start).count();
+
+        size_t grad_count = 0;
+        size_t zero_grad_count = 0;
+        float max_grad_norm = 0.0f;
+        DebugTensorNumericSummary gradient_numerics;
+        for (const auto& [name, tensor] : built.model->GetGradients()) {
+            (void)name;
+            const auto tensor_numerics = ScanDebugTensorNumerics(
+                tensor, gui::NodeType::Dense);
+            const float norm = static_cast<float>(tensor_numerics.l2_norm);
+            MergeDebugTensorNumerics(gradient_numerics, tensor_numerics);
+            max_grad_norm = std::max(max_grad_norm, norm);
+            grad_count++;
+            if (norm == 0.0f) {
+                zero_grad_count++;
+            }
+        }
+
+        const bool all_gradients_zero = grad_count > 0 && zero_grad_count >= grad_count;
+        auto grad_record = MakeSmokeRecord(
+            run_id, "SmokeRun.Backward", DebugTraceRole::Gradient,
+            model_node_id, grad_count == 0 || all_gradients_zero ? "warning" : "ok");
+        grad_record.payload["batch"] = batch_index;
+        grad_record.payload["gradient_tensor_count"] = grad_count;
+        grad_record.payload["zero_gradient_tensor_count"] = zero_grad_count;
+        grad_record.payload["max_gradient_l2_norm"] = max_grad_norm;
+        AttachDebugNumericsPayload(
+            grad_record, gradient_numerics, "gradients");
+        grad_record.duration_ms = backward_ms;
+        grad_record.payload["optimizer_step_duration_ms"] = optimizer_ms;
+
+        if (grad_count == 0) {
+            DebugNodeTraceContract::AddWarning(
+                grad_record,
+                "Smoke Run did not observe parameter gradients.",
+                errors::Training::TrainingExecutionFailed);
+            result.issues.push_back({
+                IssueLevel::Warning, model_node_id, "SmokeRun",
+                "Smoke Run did not observe parameter gradients.",
+                errors::Training::TrainingExecutionFailed
+            });
+        } else if (all_gradients_zero) {
+            DebugNodeTraceContract::AddWarning(
+                grad_record,
+                "Smoke Run observed only zero gradients.",
+                errors::Training::TrainingExecutionFailed);
+            result.issues.push_back({
+                IssueLevel::Warning, model_node_id, "SmokeRun",
+                "Smoke Run observed only zero gradients.",
+                errors::Training::TrainingExecutionFailed
+            });
+        }
+
+        result.traces.push_back(std::move(grad_record));
+    }
+
+    result.average_loss = result.batches_seen > 0
+        ? loss_sum / static_cast<float>(result.batches_seen)
+        : 0.0f;
+
+    const bool has_error = std::any_of(
+        result.issues.begin(), result.issues.end(),
+        [](const ValidationIssue& issue) { return issue.level == IssueLevel::Error; });
+    result.success = !result.stopped && result.batches_seen > 0 && !has_error;
+
+    std::ostringstream out;
+    out << "Smoke Run: "
+        << (result.stopped ? "stopped" : (result.success ? "passed" : "failed"))
+        << ", source=" << batcher_source
+        << ", samples=" << result.samples_seen
+        << ", batches=" << result.batches_seen
+        << ", avg_loss=" << result.average_loss
+        << ", last_acc=" << (result.last_accuracy * 100.0f) << "%";
+    result.summary = out.str();
+
+    return result;
+}
+
+} // namespace cyxwiz

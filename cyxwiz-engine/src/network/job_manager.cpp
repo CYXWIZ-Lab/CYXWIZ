@@ -474,6 +474,16 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
         return false;
     }
 
+    // remote://: the node fetches the graph's dataset files from this Engine
+    // (TOFIX118 P2); registered before the job is sent.
+    if (job->original_config.dataset_uri().rfind("remote://", 0) == 0) {
+        std::string dataset_error;
+        if (!p2p_client->RegisterJobDatasets(job_id, job->original_config.model_definition(), dataset_error)) {
+            spdlog::error("[P2P WORKFLOW] Cannot train this graph remotely: {}", dataset_error);
+            return false;
+        }
+    }
+
     spdlog::info("[P2P WORKFLOW] STEP 3b: Connected! Sending job config to Server Node...");
     if (!job->initial_dataset_bytes.empty()) {
         // Send with inline dataset bytes
@@ -498,13 +508,6 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
         spdlog::info("Job config sent to node (no dataset)");
     }
 
-    // Register dataset for remote streaming if available
-    if (job->remote_dataset && job->remote_dataset->IsValid()) {
-        p2p_client->RegisterDatasetForJob(job_id, *job->remote_dataset);
-        spdlog::info("[P2P WORKFLOW] STEP 3c: Registered dataset for lazy streaming");
-        spdlog::info("  Dataset samples: {}", job->remote_dataset->Size());
-    }
-
     // Register callbacks for training updates
     p2p_client->SetProgressCallback([this, job_id](const TrainingProgress& progress) {
         // Update job progress in active_jobs_
@@ -519,7 +522,9 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
                 (*job->status.mutable_metrics())[key] = static_cast<double>(value);
             }
 
-            float loss = progress.metrics.count("loss") ? progress.metrics.at("loss") : 0.0f;
+            const double loss = progress.metrics.count("loss")
+                ? progress.metrics.at("loss")
+                : 0.0;
             spdlog::debug("Job {} progress: epoch {}/{}, batch {}/{}, loss={:.4f}",
                          job_id, progress.current_epoch, progress.total_epochs,
                          progress.current_batch, progress.total_batches, loss);
@@ -576,21 +581,10 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
 
     spdlog::info("========================================");
     spdlog::info("[P2P WORKFLOW] STEP 3 COMPLETE: P2P connection established!");
-    spdlog::info("  Server Node will now request data batches as needed");
+    spdlog::info("  Server Node will fetch the job's dataset files, then train");
     spdlog::info("  Training updates will stream back to Engine");
     spdlog::info("========================================");
     return true;
-}
-
-void JobManager::SetRemoteDataset(const std::string& job_id, std::shared_ptr<cyxwiz::DatasetHandle> dataset) {
-    ActiveJob* job = FindJob(job_id);
-    if (!job) {
-        spdlog::warn("SetRemoteDataset: Job {} not found", job_id);
-        return;
-    }
-
-    job->remote_dataset = dataset;
-    spdlog::info("Remote dataset set for job {}", job_id);
 }
 
 // Get P2P client for a specific job (for UI integration)

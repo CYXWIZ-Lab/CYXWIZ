@@ -1,3 +1,5 @@
+#include "../ui_buttons.h"
+#include "../appearance_settings.h"
 #include "theme_editor.h"
 #include "../icons.h"
 #include "../../core/file_dialogs.h"
@@ -144,7 +146,6 @@ ThemeEditorPanel::ThemeEditorPanel()
     : Panel("Theme Editor", false)  // Hidden by default
 {
     memset(theme_name_buffer_, 0, sizeof(theme_name_buffer_));
-    memset(theme_path_buffer_, 0, sizeof(theme_path_buffer_));
     memset(color_filter_, 0, sizeof(color_filter_));
 
     // Initialize collapsed state for all groups
@@ -156,22 +157,21 @@ ThemeEditorPanel::ThemeEditorPanel()
 void ThemeEditorPanel::Render() {
     if (!visible_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(560, 640), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Theme Editor", &visible_, ImGuiWindowFlags_MenuBar)) {
-        // Menu bar
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save Theme")) {
+                if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save as custom theme...")) {
                     show_save_dialog_ = true;
                 }
-                if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Load Theme")) {
-                    show_load_dialog_ = true;
+                if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Load theme file...")) {
+                    LoadThemeFromFileDialog();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem(ICON_FA_ROTATE_LEFT " Reset to Preset")) {
-                    auto& theme = GetTheme();
-                    theme.ApplyPreset(theme.GetCurrentPreset());
+                if (ImGui::MenuItem(ICON_FA_ROTATE_LEFT " Discard changes", nullptr, false,
+                                    has_unsaved_changes_)) {
+                    ReapplySavedTheme();
                     has_unsaved_changes_ = false;
                 }
                 ImGui::EndMenu();
@@ -179,14 +179,11 @@ void ThemeEditorPanel::Render() {
             ImGui::EndMenuBar();
         }
 
-        // Preset selector at the top
         RenderPresetSelector();
-
         ImGui::Separator();
 
-        // Tab bar for different sections
         if (ImGui::BeginTabBar("ThemeEditorTabs")) {
-            if (ImGui::BeginTabItem("ImGui Colors")) {
+            if (ImGui::BeginTabItem("Colors")) {
                 current_tab_ = 0;
                 RenderImGuiColorsTab();
                 ImGui::EndTabItem();
@@ -196,52 +193,46 @@ void ThemeEditorPanel::Render() {
                 RenderImNodesColorsTab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Style")) {
+            if (ImGui::BeginTabItem("Shape")) {
                 current_tab_ = 2;
                 RenderStyleTab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Save/Load")) {
+            if (ImGui::BeginTabItem("Saved themes")) {
                 current_tab_ = 3;
                 RenderSaveLoadTab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(ICON_FA_PALETTE " Gallery")) {
-                current_tab_ = 4;
-                RenderGalleryTab();
-                ImGui::EndTabItem();
-            }
             ImGui::EndTabBar();
-        }
-
-        // Status indicator
-        if (has_unsaved_changes_) {
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), ICON_FA_CIRCLE_EXCLAMATION " Unsaved changes");
         }
     }
     ImGui::End();
 
-    // Save dialog
     if (show_save_dialog_) {
         ImGui::OpenPopup("Save Theme");
+        show_save_dialog_ = false;
     }
-
-    if (ImGui::BeginPopupModal("Save Theme", &show_save_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Save current theme:");
-        ImGui::InputText("Theme Name", theme_name_buffer_, sizeof(theme_name_buffer_));
-
-        ImGui::Separator();
-
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
-            if (strlen(theme_name_buffer_) > 0) {
-                SaveTheme(theme_name_buffer_);
-                show_save_dialog_ = false;
-            }
+    if (ImGui::BeginPopupModal("Save Theme", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Save the current colours and shape as a custom theme.");
+        ImGui::TextDisabled("Stored in %s", CustomThemesDirectory().string().c_str());
+        ImGui::SetNextItemWidth(320.0f);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        const bool enter = ImGui::InputTextWithHint("##theme_name", "Theme name",
+                                                    theme_name_buffer_, sizeof(theme_name_buffer_),
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+        if (!status_message_.empty() && status_error_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.48f, 0.45f, 1.0f), "%s", status_message_.c_str());
+        }
+        ImGui::Spacing();
+        const bool has_name = theme_name_buffer_[0] != '\0';
+        if (cyxwiz::ui::PrimaryButton("Save", has_name, "Type a name first.",
+                                      cyxwiz::ui::ButtonSize::Regular) ||
+            (enter && has_name)) {
+            if (SaveTheme(theme_name_buffer_)) ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            show_save_dialog_ = false;
+        if (cyxwiz::ui::SecondaryButton("Cancel", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -251,32 +242,63 @@ void ThemeEditorPanel::RenderPresetSelector() {
     auto& theme = GetTheme();
     auto presets = Theme::GetAvailablePresets();
 
-    ImGui::Text(ICON_FA_PALETTE " Theme Preset:");
+    // Base theme: the preset the edits start from. Picking one applies it
+    // Engine-wide (the Appearance page shows every theme as cards).
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Base theme");
     ImGui::SameLine();
-
+    ImGui::SetNextItemWidth(220.0f);
     if (ImGui::BeginCombo("##PresetCombo", Theme::GetPresetName(theme.GetCurrentPreset()))) {
         for (const auto& preset : presets) {
-            bool is_selected = (preset == theme.GetCurrentPreset());
+            const bool is_selected = (preset == theme.GetCurrentPreset());
             if (ImGui::Selectable(Theme::GetPresetName(preset), is_selected)) {
-                theme.ApplyPreset(preset);
+                SetThemePreset(preset);  // applies and saves Engine-wide
                 has_unsaved_changes_ = false;
+                status_message_.clear();
             }
-            if (is_selected) {
-                ImGui::SetItemDefaultFocus();
-            }
+            if (is_selected) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
-
-    // Accent color
     ImGui::SameLine();
     ImVec4 accent = theme.GetAccentColor();
-    if (ImGui::ColorEdit4("Accent##AccentColor", &accent.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+    if (ImGui::ColorEdit4("##AccentColor", &accent.x,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
         theme.SetAccentColor(accent);
         has_unsaved_changes_ = true;
     }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Accent Color");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Accent colour");
+
+    const std::string custom = ActiveCustomThemeName();
+    if (!custom.empty()) {
+        ImGui::TextDisabled("Custom theme in use: %s", custom.c_str());
+    } else {
+        ImGui::TextDisabled("Browse all themes in Edit > Preferences > Appearance.");
+    }
+
+    // Edits apply live but are only kept once saved.
+    if (has_unsaved_changes_) {
+        ImGui::TextColored(ImVec4(0.89f, 0.70f, 0.25f, 1.0f),
+                           ICON_FA_CIRCLE_EXCLAMATION " Unsaved changes: save them to keep them "
+                                                      "after a restart.");
+        if (cyxwiz::ui::PrimaryButton(ICON_FA_FLOPPY_DISK " Save as custom theme...", true,
+                                      nullptr, cyxwiz::ui::ButtonSize::Small)) {
+            if (!custom.empty() && theme_name_buffer_[0] == '\0') {
+                std::strncpy(theme_name_buffer_, custom.c_str(), sizeof(theme_name_buffer_) - 1);
+                theme_name_buffer_[sizeof(theme_name_buffer_) - 1] = '\0';
+            }
+            status_message_.clear();
+            show_save_dialog_ = true;
+        }
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Discard changes")) {
+            ReapplySavedTheme();
+            has_unsaved_changes_ = false;
+        }
+    } else if (!status_message_.empty()) {
+        ImGui::TextColored(status_error_ ? ImVec4(1.0f, 0.48f, 0.45f, 1.0f)
+                                         : ImVec4(0.24f, 0.84f, 0.55f, 1.0f),
+                           "%s", status_message_.c_str());
     }
 }
 
@@ -486,209 +508,98 @@ void ThemeEditorPanel::RenderSizeSection() {
 }
 
 void ThemeEditorPanel::RenderSaveLoadTab() {
-    ImGui::BeginChild("SaveLoadContent", ImVec2(0, 0), true);
+    ImGui::BeginChild("SaveLoadContent", ImVec2(0, 0), false);
 
-    ImGui::Text(ICON_FA_FLOPPY_DISK " Save Current Theme");
-    ImGui::Separator();
+    ImGui::TextUnformatted("Your custom themes");
+    ImGui::TextDisabled("%s", CustomThemesDirectory().string().c_str());
+    ImGui::Spacing();
 
-    ImGui::InputText("Theme Name", theme_name_buffer_, sizeof(theme_name_buffer_));
-
-    if (ImGui::Button("Save Theme", ImVec2(-1, 0))) {
-        if (strlen(theme_name_buffer_) > 0) {
-            SaveTheme(theme_name_buffer_);
+    const auto themes = ListCustomThemes();
+    const std::string active = ActiveCustomThemeName();
+    if (themes.empty()) {
+        ImGui::TextDisabled("No custom themes yet. Change colours or shape, then save.");
+    } else if (ImGui::BeginTable("##custom_themes", 2, ImGuiTableFlags_SizingStretchProp |
+                                                           ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("action", ImGuiTableColumnFlags_WidthFixed,
+                                cyxwiz::ui::ButtonWidth("Apply", cyxwiz::ui::ButtonSize::Small));
+        for (const auto& path : themes) {
+            const std::string name = path.stem().string();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            if (name == active) {
+                ImGui::Text(ICON_FA_CIRCLE_CHECK " %s", name.c_str());
+            } else {
+                ImGui::TextUnformatted(name.c_str());
+            }
+            ImGui::TableNextColumn();
+            ImGui::PushID(name.c_str());
+            if (name == active) {
+                ImGui::TextDisabled("In use");
+            } else if (cyxwiz::ui::SecondaryButton("Apply")) {
+                std::string error;
+                if (LoadCustomTheme(path, &error)) {
+                    has_unsaved_changes_ = false;
+                    status_message_ = "Applied " + name;
+                    status_error_ = false;
+                } else {
+                    status_message_ = "Could not apply " + name + ": " + error;
+                    status_error_ = true;
+                }
+            }
+            ImGui::PopID();
         }
+        ImGui::EndTable();
     }
 
     ImGui::Spacing();
-    ImGui::Spacing();
-
-    ImGui::Text(ICON_FA_FOLDER_OPEN " Load Custom Theme");
-    ImGui::Separator();
-
-    ImGui::InputText("Theme File", theme_path_buffer_, sizeof(theme_path_buffer_));
+    if (cyxwiz::ui::SecondaryButton(ICON_FA_FLOPPY_DISK " Save current as...")) {
+        status_message_.clear();
+        show_save_dialog_ = true;
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Browse...")) {
-        auto result = cyxwiz::FileDialogs::OpenTheme();
-        if (result) {
-            strncpy(theme_path_buffer_, result->c_str(), sizeof(theme_path_buffer_) - 1);
-            theme_path_buffer_[sizeof(theme_path_buffer_) - 1] = '\0';
-        }
-    }
-
-    if (ImGui::Button("Load Theme", ImVec2(-1, 0))) {
-        if (strlen(theme_path_buffer_) > 0) {
-            LoadTheme(theme_path_buffer_);
-        }
+    if (cyxwiz::ui::SecondaryButton(ICON_FA_FOLDER_OPEN " Load theme file...")) {
+        LoadThemeFromFileDialog();
     }
 
     ImGui::Spacing();
-    ImGui::Spacing();
-
-    ImGui::Text(ICON_FA_CIRCLE_INFO " Tips");
     ImGui::Separator();
-    ImGui::BulletText("Changes are applied live");
-    ImGui::BulletText("Use 'Reset to Preset' to undo all changes");
-    ImGui::BulletText("Themes are saved as JSON files");
-    ImGui::BulletText("Custom themes are stored in 'themes/' folder");
-
+    ImGui::TextDisabled("Edits apply live. A saved or loaded theme is re-applied at startup;");
+    ImGui::TextDisabled("choosing a base theme replaces it.");
     ImGui::EndChild();
 }
 
 bool ThemeEditorPanel::SaveTheme(const std::string& name) {
-    // Create themes directory if needed
-    std::string themes_dir = "themes";
-    if (!fs::exists(themes_dir)) {
-        fs::create_directories(themes_dir);
-    }
-
-    std::string path = themes_dir + "/" + name + ".json";
-
-    json j;
-    j["name"] = name;
-    j["version"] = "1.0";
-
-    // Save ImGui colors
-    ImGuiStyle& style = ImGui::GetStyle();
-    j["imgui_colors"] = json::array();
-    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
-        json color;
-        color["id"] = i;
-        color["r"] = style.Colors[i].x;
-        color["g"] = style.Colors[i].y;
-        color["b"] = style.Colors[i].z;
-        color["a"] = style.Colors[i].w;
-        j["imgui_colors"].push_back(color);
-    }
-
-    // Save style settings
-    j["style"] = {
-        {"window_rounding", style.WindowRounding},
-        {"frame_rounding", style.FrameRounding},
-        {"popup_rounding", style.PopupRounding},
-        {"scrollbar_rounding", style.ScrollbarRounding},
-        {"grab_rounding", style.GrabRounding},
-        {"tab_rounding", style.TabRounding},
-        {"window_border", style.WindowBorderSize},
-        {"frame_border", style.FrameBorderSize},
-        {"popup_border", style.PopupBorderSize},
-        {"window_padding", {style.WindowPadding.x, style.WindowPadding.y}},
-        {"frame_padding", {style.FramePadding.x, style.FramePadding.y}},
-        {"item_spacing", {style.ItemSpacing.x, style.ItemSpacing.y}},
-        {"scrollbar_size", style.ScrollbarSize},
-        {"grab_min_size", style.GrabMinSize},
-        {"indent_spacing", style.IndentSpacing}
-    };
-
-    // Save ImNodes colors
-    j["imnodes_colors"] = json::array();
-    auto& imnodes_style = ImNodes::GetStyle();
-    for (int i = 0; i < ImNodesCol_COUNT; ++i) {
-        json color;
-        color["id"] = i;
-        ImVec4 c = ImGui::ColorConvertU32ToFloat4(imnodes_style.Colors[i]);
-        color["r"] = c.x;
-        color["g"] = c.y;
-        color["b"] = c.z;
-        color["a"] = c.w;
-        j["imnodes_colors"].push_back(color);
-    }
-
-    // Write to file
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        spdlog::error("Failed to save theme: {}", path);
+    std::filesystem::path saved;
+    std::string error;
+    if (!SaveCustomTheme(name, &saved, &error)) {
+        status_message_ = error;
+        status_error_ = true;
         return false;
     }
-
-    file << j.dump(2);
-    file.close();
-
     has_unsaved_changes_ = false;
-    spdlog::info("Saved theme: {}", path);
+    status_message_ = "Saved " + saved.stem().string();
+    status_error_ = false;
     return true;
 }
 
 bool ThemeEditorPanel::LoadTheme(const std::string& path) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        spdlog::error("Failed to open theme file: {}", path);
+    std::string error;
+    if (!LoadCustomTheme(path, &error)) {
+        status_message_ = "Could not load the theme: " + error;
+        status_error_ = true;
         return false;
     }
+    has_unsaved_changes_ = false;
+    status_message_ = "Loaded " + std::filesystem::path(path).stem().string();
+    status_error_ = false;
+    return true;
+}
 
-    try {
-        json j;
-        file >> j;
-
-        // Load ImGui colors
-        ImGuiStyle& style = ImGui::GetStyle();
-        if (j.contains("imgui_colors")) {
-            for (const auto& color : j["imgui_colors"]) {
-                int id = color["id"].get<int>();
-                if (id >= 0 && id < ImGuiCol_COUNT) {
-                    style.Colors[id] = ImVec4(
-                        color["r"].get<float>(),
-                        color["g"].get<float>(),
-                        color["b"].get<float>(),
-                        color["a"].get<float>()
-                    );
-                }
-            }
-        }
-
-        // Load style settings
-        if (j.contains("style")) {
-            auto& s = j["style"];
-            if (s.contains("window_rounding")) style.WindowRounding = s["window_rounding"].get<float>();
-            if (s.contains("frame_rounding")) style.FrameRounding = s["frame_rounding"].get<float>();
-            if (s.contains("popup_rounding")) style.PopupRounding = s["popup_rounding"].get<float>();
-            if (s.contains("scrollbar_rounding")) style.ScrollbarRounding = s["scrollbar_rounding"].get<float>();
-            if (s.contains("grab_rounding")) style.GrabRounding = s["grab_rounding"].get<float>();
-            if (s.contains("tab_rounding")) style.TabRounding = s["tab_rounding"].get<float>();
-            if (s.contains("window_border")) style.WindowBorderSize = s["window_border"].get<float>();
-            if (s.contains("frame_border")) style.FrameBorderSize = s["frame_border"].get<float>();
-            if (s.contains("popup_border")) style.PopupBorderSize = s["popup_border"].get<float>();
-            if (s.contains("window_padding")) {
-                style.WindowPadding.x = s["window_padding"][0].get<float>();
-                style.WindowPadding.y = s["window_padding"][1].get<float>();
-            }
-            if (s.contains("frame_padding")) {
-                style.FramePadding.x = s["frame_padding"][0].get<float>();
-                style.FramePadding.y = s["frame_padding"][1].get<float>();
-            }
-            if (s.contains("item_spacing")) {
-                style.ItemSpacing.x = s["item_spacing"][0].get<float>();
-                style.ItemSpacing.y = s["item_spacing"][1].get<float>();
-            }
-            if (s.contains("scrollbar_size")) style.ScrollbarSize = s["scrollbar_size"].get<float>();
-            if (s.contains("grab_min_size")) style.GrabMinSize = s["grab_min_size"].get<float>();
-            if (s.contains("indent_spacing")) style.IndentSpacing = s["indent_spacing"].get<float>();
-        }
-
-        // Load ImNodes colors
-        if (j.contains("imnodes_colors")) {
-            auto& imnodes_style = ImNodes::GetStyle();
-            for (const auto& color : j["imnodes_colors"]) {
-                int id = color["id"].get<int>();
-                if (id >= 0 && id < ImNodesCol_COUNT) {
-                    ImVec4 c(
-                        color["r"].get<float>(),
-                        color["g"].get<float>(),
-                        color["b"].get<float>(),
-                        color["a"].get<float>()
-                    );
-                    imnodes_style.Colors[id] = ImGui::ColorConvertFloat4ToU32(c);
-                }
-            }
-        }
-
-        has_unsaved_changes_ = false;
-        spdlog::info("Loaded theme: {}", path);
-        return true;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Error loading theme: {}", e.what());
-        return false;
-    }
+void ThemeEditorPanel::LoadThemeFromFileDialog() {
+    const auto dir = CustomThemesDirectory().string();
+    if (const auto result = cyxwiz::FileDialogs::OpenTheme(dir.c_str())) LoadTheme(*result);
 }
 
 bool ThemeEditorPanel::ExportTheme(const std::string& path) {
@@ -729,223 +640,5 @@ void ThemeEditorPanel::RenderImNodesColorGroup(const char* group_name, const std
     // Implemented in RenderImNodesColorsTab
 }
 
-void ThemeEditorPanel::RenderGalleryTab() {
-    auto& theme = GetTheme();
-    auto current_preset = theme.GetCurrentPreset();
-    auto presets = Theme::GetAvailablePresets();
-
-    ImGui::TextWrapped("Browse and apply themes with a single click. Hover over theme cards to see a preview.");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Calculate card layout
-    const float card_width = 280.0f;
-    const float card_height = 200.0f;
-    const float spacing = 15.0f;
-    const float avail_width = ImGui::GetContentRegionAvail().x;
-    const int cols = std::max(1, static_cast<int>((avail_width + spacing) / (card_width + spacing)));
-
-    // Render theme cards in a grid
-    int col = 0;
-    for (auto preset : presets) {
-        const char* preset_name = Theme::GetPresetName(preset);
-        bool is_current = (preset == current_preset);
-
-        // Card positioning
-        if (col > 0) {
-            ImGui::SameLine();
-        }
-
-        ImGui::BeginGroup();
-        {
-            // Card background
-            ImVec2 card_min = ImGui::GetCursorScreenPos();
-            ImVec2 card_max = ImVec2(card_min.x + card_width, card_min.y + card_height);
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-            // Card background color
-            ImVec4 card_bg = is_current
-                ? ImVec4(0.25f, 0.35f, 0.45f, 0.9f)  // Highlighted if current
-                : ImVec4(0.15f, 0.15f, 0.17f, 0.9f);
-
-            draw_list->AddRectFilled(card_min, card_max, ImGui::ColorConvertFloat4ToU32(card_bg), 8.0f);
-
-            // Card border
-            ImVec4 border_color = is_current
-                ? ImVec4(0.4f, 0.6f, 0.8f, 1.0f)  // Blue border if current
-                : ImVec4(0.3f, 0.3f, 0.3f, 0.8f);
-            draw_list->AddRect(card_min, card_max, ImGui::ColorConvertFloat4ToU32(border_color), 8.0f, 0, is_current ? 2.5f : 1.5f);
-
-            // Move cursor inside card
-            ImGui::SetCursorScreenPos(ImVec2(card_min.x + 10, card_min.y + 10));
-
-            // Theme name with icon
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use default font
-            if (is_current) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
-                ImGui::Text(ICON_FA_CHECK " %s", preset_name);
-                ImGui::PopStyleColor();
-            } else {
-                ImGui::Text(ICON_FA_PALETTE " %s", preset_name);
-            }
-            ImGui::PopFont();
-
-            ImGui::Spacing();
-
-            // Get sample colors for this theme (we'll temporarily apply it to get colors)
-            ImGuiStyle backup_style = ImGui::GetStyle();
-            theme.ApplyPreset(preset);
-            ImGuiStyle& style = ImGui::GetStyle();
-
-            // Color swatches display
-            ImVec2 swatch_start = ImGui::GetCursorScreenPos();
-            const float swatch_width = (card_width - 20.0f) / 5.0f;
-            const float swatch_height = 60.0f;
-
-            // Define which colors to show
-            ImVec4 colors_to_show[5] = {
-                style.Colors[ImGuiCol_WindowBg],       // Background
-                style.Colors[ImGuiCol_Button],         // Primary button
-                style.Colors[ImGuiCol_ButtonHovered],  // Hover accent
-                style.Colors[ImGuiCol_Text],           // Text
-                style.Colors[ImGuiCol_CheckMark]       // Success/accent
-            };
-
-            const char* color_labels[5] = {
-                "Background", "Button", "Hover", "Text", "Accent"
-            };
-
-            // Draw color swatches
-            for (int i = 0; i < 5; i++) {
-                ImVec2 swatch_min = ImVec2(swatch_start.x + i * swatch_width, swatch_start.y);
-                ImVec2 swatch_max = ImVec2(swatch_min.x + swatch_width - 2, swatch_min.y + swatch_height);
-
-                // Draw swatch
-                draw_list->AddRectFilled(swatch_min, swatch_max,
-                    ImGui::ColorConvertFloat4ToU32(colors_to_show[i]), 4.0f);
-
-                // Draw border
-                draw_list->AddRect(swatch_min, swatch_max,
-                    ImGui::ColorConvertFloat4ToU32(ImVec4(0.2f, 0.2f, 0.2f, 0.6f)), 4.0f, 0, 1.0f);
-
-                // Add tooltip on hover
-                if (ImGui::IsMouseHoveringRect(swatch_min, swatch_max)) {
-                    ImGui::BeginTooltip();
-                    ImGui::Text("%s", color_labels[i]);
-                    ImGui::ColorButton("##preview", colors_to_show[i],
-                        ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoPicker, ImVec2(40, 40));
-                    ImGui::EndTooltip();
-                }
-            }
-
-            // Restore original style
-            ImGui::GetStyle() = backup_style;
-
-            // Move cursor below swatches
-            ImGui::SetCursorScreenPos(ImVec2(card_min.x + 10, swatch_start.y + swatch_height + 10));
-
-            // Theme description (brief)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-            ImGui::PushTextWrapPos(card_min.x + card_width - 10);
-
-            // Add brief descriptions for each theme
-            const char* description = "";
-            switch (preset) {
-                case ThemePreset::CyxWizDark:
-                    description = "Official CyxWiz dark theme with branded colors";
-                    break;
-                case ThemePreset::CyxWizLight:
-                    description = "Official CyxWiz light theme for daytime use";
-                    break;
-                case ThemePreset::VSCodeDark:
-                    description = "Inspired by Visual Studio Code's default dark theme";
-                    break;
-                case ThemePreset::UnrealEngine:
-                    description = "Game editor style with warm orange accents";
-                    break;
-                case ThemePreset::ModernDark:
-                    description = "Minimal dark theme with clean aesthetics";
-                    break;
-                case ThemePreset::HighContrast:
-                    description = "High contrast theme for accessibility";
-                    break;
-                case ThemePreset::Dracula:
-                    description = "Vibrant purple and pink theme for night owls";
-                    break;
-                case ThemePreset::OneDarkPro:
-                    description = "Popular VSCode theme with blue accents";
-                    break;
-                case ThemePreset::Nord:
-                    description = "Cool frost blue theme with arctic pastels";
-                    break;
-                case ThemePreset::CatppuccinMocha:
-                    description = "Cozy pastel rainbow theme with soft colors";
-                    break;
-                // CyxOS Platform themes
-                case ThemePreset::CyxOSAqua:
-                    description = "macOS Big Sur inspired - clean and minimal";
-                    break;
-                case ThemePreset::CyxOSFluent:
-                    description = "Windows 11 Fluent Design with Mica effects";
-                    break;
-                case ThemePreset::CyxOSCoder:
-                    description = "Developer IDE with syntax highlighting colors";
-                    break;
-                case ThemePreset::CyxOSOffice:
-                    description = "Clean professional theme for enterprise";
-                    break;
-                // CyxOS Retro TUI themes
-                case ThemePreset::CyxOSTuiClassic:
-                    description = "Classic green phosphor IBM 3278 terminal";
-                    break;
-                case ThemePreset::CyxOSTuiMatrix:
-                    description = "The Matrix digital rain aesthetic";
-                    break;
-                case ThemePreset::CyxOSTuiAmber:
-                    description = "Warm amber CRT P3 phosphor terminal";
-                    break;
-                default:
-                    description = "Custom theme";
-                    break;
-            }
-
-            ImGui::TextWrapped("%s", description);
-            ImGui::PopTextWrapPos();
-            ImGui::PopStyleColor();
-
-            ImGui::Spacing();
-
-            // Apply button at bottom
-            ImGui::SetCursorScreenPos(ImVec2(card_min.x + 10, card_max.y - 35));
-            ImGui::PushStyleColor(ImGuiCol_Button, is_current
-                ? ImVec4(0.2f, 0.6f, 0.3f, 0.8f)  // Green if current
-                : ImVec4(0.3f, 0.5f, 0.7f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_current
-                ? ImVec4(0.3f, 0.7f, 0.4f, 1.0f)
-                : ImVec4(0.4f, 0.6f, 0.8f, 1.0f));
-
-            ImGui::SetNextItemWidth(card_width - 20);
-            if (ImGui::Button(is_current ? ICON_FA_CHECK " Applied" : ICON_FA_WAND_MAGIC_SPARKLES " Apply",
-                ImVec2(card_width - 20, 0))) {
-                if (!is_current) {
-                    theme.ApplyPreset(preset);
-                    has_unsaved_changes_ = false;
-                    spdlog::info("Applied theme: {}", preset_name);
-                }
-            }
-
-            ImGui::PopStyleColor(2);
-
-            // Move cursor to end of card for next item
-            ImGui::SetCursorScreenPos(ImVec2(card_min.x, card_max.y + spacing));
-        }
-        ImGui::EndGroup();
-
-        col++;
-        if (col >= cols) {
-            col = 0;
-        }
-    }
-}
 
 } // namespace gui

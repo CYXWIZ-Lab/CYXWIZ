@@ -25,215 +25,7 @@ enum class ColumnDataType {
     Mixed           // Mixed types in column
 };
 
-/**
- * Histogram bin for numeric data visualization
- */
-struct HistogramBin {
-    double low = 0.0;
-    double high = 0.0;
-    size_t count = 0;
-    float percentage = 0.0f;
-};
-
-/**
- * Top value entry for categorical data
- */
-struct TopValue {
-    std::string value;
-    size_t count = 0;
-    float percentage = 0.0f;
-};
-
-/**
- * Column profile containing comprehensive statistics
- */
-struct ColumnProfile {
-    std::string name;
-    ColumnDataType dtype = ColumnDataType::Unknown;
-
-    // Basic counts
-    size_t total_count = 0;
-    size_t non_null_count = 0;
-    size_t null_count = 0;
-    size_t unique_count = 0;
-    float null_percentage = 0.0f;
-
-    // Numeric statistics (only valid for Numeric/Integer types)
-    double min = 0.0;
-    double max = 0.0;
-    double mean = 0.0;
-    double median = 0.0;
-    double std_dev = 0.0;
-    double variance = 0.0;
-    double q1 = 0.0;          // 25th percentile
-    double q3 = 0.0;          // 75th percentile
-    double iqr = 0.0;         // Interquartile range
-    double skewness = 0.0;
-    double kurtosis = 0.0;
-    double sum = 0.0;
-
-    // Distribution
-    std::vector<HistogramBin> histogram;
-
-    // For categorical data
-    std::vector<TopValue> top_values;
-
-    // Memory estimate (bytes)
-    size_t memory_estimate = 0;
-
-    // Helper methods
-    bool IsNumeric() const {
-        return dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer;
-    }
-
-    std::string GetDTypeString() const;
-};
-
-/**
- * Full dataset profile
- */
-struct DataProfile {
-    std::string source_name;
-    size_t row_count = 0;
-    size_t column_count = 0;
-    size_t total_nulls = 0;
-    float null_percentage = 0.0f;
-    size_t memory_estimate = 0;
-
-    std::vector<ColumnProfile> columns;
-
-    // Get column by name
-    const ColumnProfile* GetColumn(const std::string& name) const;
-    ColumnProfile* GetColumn(const std::string& name);
-};
-
-/**
- * Correlation result between two columns
- */
-struct CorrelationResult {
-    std::string col1;
-    std::string col2;
-    double pearson = 0.0;
-    double spearman = 0.0;     // Not implemented initially
-    size_t sample_count = 0;   // Number of valid pairs used
-};
-
-/**
- * Full correlation matrix
- */
-struct CorrelationMatrix {
-    std::vector<std::string> column_names;
-    std::vector<std::vector<double>> matrix;  // N x N matrix of Pearson correlations
-    size_t row_count = 0;                     // Original data rows used
-
-    // Get correlation between two columns
-    double Get(size_t i, size_t j) const {
-        if (i < matrix.size() && j < matrix[i].size()) {
-            return matrix[i][j];
-        }
-        return 0.0;
-    }
-
-    double Get(const std::string& col1, const std::string& col2) const;
-};
-
-/**
- * Missing value analysis result
- */
-struct MissingValueAnalysis {
-    std::string source_name;
-    size_t total_cells = 0;
-    size_t total_missing = 0;
-    float missing_percentage = 0.0f;
-
-    // Per-column missing info
-    struct ColumnMissing {
-        std::string name;
-        size_t missing_count = 0;
-        float missing_percentage = 0.0f;
-        std::vector<size_t> missing_indices;  // Row indices with missing values (limited to first 1000)
-    };
-    std::vector<ColumnMissing> columns;
-
-    // Rows with any missing values
-    size_t rows_with_missing = 0;
-    float rows_with_missing_percentage = 0.0f;
-
-    // Complete rows (no missing values)
-    size_t complete_rows = 0;
-};
-
-/**
- * Outlier detection methods
- */
-enum class OutlierMethod {
-    IQR,            // Interquartile range (default factor: 1.5)
-    ZScore,         // Z-score (default threshold: 3.0)
-    ModifiedZScore  // Modified Z-score using MAD (default threshold: 3.5)
-};
-
-/**
- * Single outlier entry
- */
-struct OutlierEntry {
-    size_t row_index = 0;
-    double value = 0.0;
-    double score = 0.0;  // Z-score or IQR distance
-    bool is_low = false; // Below lower bound (vs above upper bound)
-};
-
-/**
- * Outlier detection result for a column
- */
-struct OutlierResult {
-    std::string column_name;
-    OutlierMethod method = OutlierMethod::IQR;
-    double parameter = 1.5;  // IQR factor or Z-score threshold
-
-    // Bounds used for detection
-    double lower_bound = 0.0;
-    double upper_bound = 0.0;
-
-    // Statistics used
-    double mean = 0.0;
-    double std_dev = 0.0;
-    double median = 0.0;
-    double mad = 0.0;  // Median Absolute Deviation
-    double q1 = 0.0;
-    double q3 = 0.0;
-
-    // Outliers found
-    std::vector<OutlierEntry> outliers;
-    size_t outlier_count = 0;
-    float outlier_percentage = 0.0f;
-    size_t total_valid = 0;  // Non-null values analyzed
-};
-
 // ========== Phase 4: Statistical Tools ==========
-
-/**
- * Extended descriptive statistics result
- */
-struct DescriptiveStats {
-    double count = 0;
-    double mean = 0.0;
-    double median = 0.0;
-    double mode = 0.0;
-    double std_dev = 0.0;
-    double variance = 0.0;
-    double min = 0.0;
-    double max = 0.0;
-    double range = 0.0;
-    double q1 = 0.0;
-    double q3 = 0.0;
-    double iqr = 0.0;
-    double skewness = 0.0;
-    double kurtosis = 0.0;
-    double sum = 0.0;
-    double sem = 0.0;  // Standard Error of Mean
-    double cv = 0.0;   // Coefficient of Variation
-    std::vector<double> percentiles;  // 5, 10, 25, 50, 75, 90, 95
-};
 
 /**
  * Hypothesis test types
@@ -315,9 +107,11 @@ struct RegressionResult {
     double adjusted_r_squared = 0.0;
     double f_statistic = 0.0;
     double f_p_value = 1.0;
-    double mse = 0.0;  // Mean Squared Error
-    double rmse = 0.0; // Root Mean Squared Error
+    double mse = 0.0;  // Mean prediction squared error: SSE / n
+    double rmse = 0.0; // Root mean prediction squared error
     double mae = 0.0;  // Mean Absolute Error
+    double residual_variance = 0.0; // Unbiased error variance: SSE / df_resid
+    double residual_standard_error = 0.0; // sqrt(residual_variance)
     std::vector<double> residuals;
     std::vector<double> predicted;
     size_t n = 0;      // Sample size
@@ -355,72 +149,15 @@ inline const char* DistributionTypeToString(DistributionType type) {
 }
 
 /**
- * DataAnalyzer - Core statistics engine for data analysis
- *
- * Provides comprehensive data profiling, correlation analysis,
- * missing value detection, and outlier identification.
+ * DataAnalyzer - statistics for the Tools panels (hypothesis tests,
+ * regression, distribution fits). Exploring a dataset (missing values,
+ * outliers, correlation, distribution) is Data Studio's Explore job, in SQL
+ * (core/data_explore); it uses the distribution fits here.
  */
 class DataAnalyzer {
 public:
     DataAnalyzer() = default;
     ~DataAnalyzer() = default;
-
-    // ========== Data Profiling ==========
-
-    /**
-     * Generate comprehensive profile for a DataTable
-     * @param table The data table to analyze
-     * @param histogram_bins Number of bins for histograms (default: 20)
-     * @param top_n Number of top values to include for categorical (default: 10)
-     * @return Complete data profile
-     */
-    DataProfile ProfileTable(const DataTable& table, int histogram_bins = 20, int top_n = 10);
-
-    /**
-     * Profile a single column
-     */
-    ColumnProfile ProfileColumn(const DataTable& table, const std::string& column_name,
-                                 int histogram_bins = 20, int top_n = 10);
-    ColumnProfile ProfileColumn(const DataTable& table, size_t column_index,
-                                 int histogram_bins = 20, int top_n = 10);
-
-    // ========== Correlation Analysis ==========
-
-    /**
-     * Compute correlation matrix for all numeric columns
-     */
-    CorrelationMatrix ComputeCorrelationMatrix(const DataTable& table);
-
-    /**
-     * Compute correlation between two specific columns
-     */
-    CorrelationResult ComputeCorrelation(const DataTable& table,
-                                          const std::string& col1,
-                                          const std::string& col2);
-
-    // ========== Missing Value Analysis ==========
-
-    /**
-     * Analyze missing values in the table
-     * @param max_indices_per_column Maximum missing indices to store per column
-     */
-    MissingValueAnalysis AnalyzeMissingValues(const DataTable& table,
-                                               size_t max_indices_per_column = 1000);
-
-    // ========== Outlier Detection ==========
-
-    /**
-     * Detect outliers in a column using specified method
-     */
-    OutlierResult DetectOutliers(const DataTable& table,
-                                  const std::string& column_name,
-                                  OutlierMethod method = OutlierMethod::IQR,
-                                  double parameter = 0.0);  // 0 = use default
-
-    OutlierResult DetectOutliers(const DataTable& table,
-                                  size_t column_index,
-                                  OutlierMethod method = OutlierMethod::IQR,
-                                  double parameter = 0.0);
 
     // ========== Utility Functions ==========
 
@@ -447,35 +184,9 @@ public:
     // ========== Statistical Functions ==========
 
     static double Mean(const std::vector<double>& values);
-    static double Median(std::vector<double> values);  // Note: modifies input
     static double StdDev(const std::vector<double>& values, double mean);
     static double Variance(const std::vector<double>& values, double mean);
     static double Percentile(std::vector<double> values, double p);  // p in [0, 100]
-    static double Skewness(const std::vector<double>& values, double mean, double std_dev);
-    static double Kurtosis(const std::vector<double>& values, double mean, double std_dev);
-    static double MAD(std::vector<double> values, double median);  // Median Absolute Deviation
-
-    /**
-     * Compute Pearson correlation coefficient
-     */
-    static double PearsonCorrelation(const std::vector<double>& x, const std::vector<double>& y);
-
-    // ========== Phase 4: Statistical Methods ==========
-
-    /**
-     * Compute extended descriptive statistics
-     */
-    static DescriptiveStats ComputeDescriptiveStats(const std::vector<double>& data);
-
-    /**
-     * Calculate mode (most frequent value)
-     */
-    static double Mode(const std::vector<double>& data);
-
-    /**
-     * Calculate Standard Error of Mean
-     */
-    static double SEM(const std::vector<double>& data);
 
     // ========== Hypothesis Testing ==========
 
@@ -570,12 +281,6 @@ public:
      */
     static double NormalCDF(double x, double mu = 0.0, double sigma = 1.0);
 
-    /**
-     * Generate theoretical quantiles for QQ-plot
-     */
-    static std::vector<double> TheoreticalQuantiles(size_t n, DistributionType type,
-                                                     const std::map<std::string, double>& params);
-
     // ========== Regression Analysis ==========
 
     /**
@@ -598,41 +303,6 @@ public:
                                                       const std::vector<double>& y,
                                                       const std::vector<std::string>& predictor_names = {});
 
-private:
-    // Helper to build histogram
-    std::vector<HistogramBin> BuildHistogram(const std::vector<double>& values,
-                                              double min_val, double max_val,
-                                              int num_bins);
-
-    // Helper to get top N values for categorical data
-    std::vector<TopValue> GetTopValues(const std::vector<std::string>& values, int top_n);
 };
-
-/**
- * Get string representation of column data type
- */
-inline std::string ColumnProfile::GetDTypeString() const {
-    switch (dtype) {
-        case ColumnDataType::Numeric: return "Numeric";
-        case ColumnDataType::Integer: return "Integer";
-        case ColumnDataType::Categorical: return "Categorical";
-        case ColumnDataType::Boolean: return "Boolean";
-        case ColumnDataType::DateTime: return "DateTime";
-        case ColumnDataType::Mixed: return "Mixed";
-        default: return "Unknown";
-    }
-}
-
-/**
- * Get string representation of outlier detection method
- */
-inline const char* OutlierMethodToString(OutlierMethod method) {
-    switch (method) {
-        case OutlierMethod::IQR: return "IQR";
-        case OutlierMethod::ZScore: return "Z-Score";
-        case OutlierMethod::ModifiedZScore: return "Modified Z-Score";
-        default: return "Unknown";
-    }
-}
 
 } // namespace cyxwiz

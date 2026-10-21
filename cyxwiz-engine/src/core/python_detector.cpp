@@ -17,6 +17,32 @@ namespace fs = std::filesystem;
 namespace cyxwiz {
 namespace core {
 
+namespace {
+
+std::string QuoteCommandArg(const std::string& value) {
+    std::string quoted = "\"";
+    for (char c : value) {
+        if (c == '"') {
+            quoted += "\\\"";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "\"";
+    return quoted;
+}
+
+#ifdef _WIN32
+std::string WrapForCmdExeIfNeeded(const std::string& command) {
+    if (!command.empty() && command.front() == '"') {
+        return "\"" + command + "\"";
+    }
+    return command;
+}
+#endif
+
+} // namespace
+
 std::vector<std::string> PythonDetector::GetCandidatePaths() {
     std::vector<std::string> candidates;
 
@@ -153,8 +179,11 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
         // Python launcher
         cmd = path + " -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
     } else {
-        cmd = "\"" + path + "\" -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
+        cmd = QuoteCommandArg(path) + " -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
     }
+#ifdef _WIN32
+    cmd = WrapForCmdExeIfNeeded(cmd) + " 2>nul";
+#endif
 
     std::string output;
     int exit_code = ExecuteCommand(cmd, output);
@@ -189,8 +218,9 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
     }
 
     // Check for venv module
-    std::string venv_cmd = "\"" + result.executable_path + "\" -m venv --help";
+    std::string venv_cmd = QuoteCommandArg(result.executable_path) + " -m venv --help";
 #ifdef _WIN32
+    venv_cmd = WrapForCmdExeIfNeeded(venv_cmd);
     venv_cmd += " >nul 2>&1";
 #else
     venv_cmd += " >/dev/null 2>&1";
@@ -199,8 +229,9 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
     result.has_venv_module = (system(venv_cmd.c_str()) == 0);
 
     // Check for pip
-    std::string pip_cmd = "\"" + result.executable_path + "\" -m pip --version";
+    std::string pip_cmd = QuoteCommandArg(result.executable_path) + " -m pip --version";
 #ifdef _WIN32
+    pip_cmd = WrapForCmdExeIfNeeded(pip_cmd);
     pip_cmd += " >nul 2>&1";
 #else
     pip_cmd += " >/dev/null 2>&1";
@@ -212,10 +243,17 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
 }
 
 bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
-    // Require Python 3.12 or newer
-    if (python.major < 3 || (python.major == 3 && python.minor < 12)) {
+    // Python bindings and supported packages are validated for 3.12 and 3.13.
+    if (python.major != 3 || python.minor < 12 || python.minor > 13) {
         return false;
     }
+#ifdef CYXWIZ_PYTHON_LINKED_MINOR
+    // The Engine embeds one libpython; a different minor version is not
+    // ABI-compatible with it.
+    if (python.minor != CYXWIZ_PYTHON_LINKED_MINOR) {
+        return false;
+    }
+#endif
 
     // Require venv module
     if (!python.has_venv_module) {
@@ -227,8 +265,19 @@ bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
 
 std::string PythonDetector::GetRequirementError(const PythonInstallation& python) {
     if (python.major < 3 || (python.major == 3 && python.minor < 12)) {
-        return "Python version too old (need 3.12+, found " + python.version + ")";
+        return "Python version too old (supported versions: 3.12-3.13; found " + python.version + ")";
     }
+
+    if (python.major > 3 || (python.major == 3 && python.minor > 13)) {
+        return "Python version unsupported (supported versions: 3.12-3.13; found " + python.version + ")";
+    }
+
+#ifdef CYXWIZ_PYTHON_LINKED_MINOR
+    if (python.major == 3 && python.minor != CYXWIZ_PYTHON_LINKED_MINOR) {
+        return "This Engine embeds Python 3." + std::to_string(CYXWIZ_PYTHON_LINKED_MINOR) +
+               "; found " + python.version;
+    }
+#endif
 
     if (!python.has_venv_module) {
         return "Python missing venv module (required for creating virtual environments)";
@@ -282,20 +331,12 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::FindBestPython
     }
 
     if (valid.empty()) {
-        spdlog::warn("No valid Python 3.12+ installations found");
+        spdlog::warn("No supported Python 3.12-3.13 installations found");
         return std::nullopt;
     }
 
-    // Sort by version (prefer newer, but prefer 3.12/3.13 over 3.14+)
+    // All valid interpreters are supported; prefer the newest patch version.
     std::sort(valid.begin(), valid.end(), [](const PythonInstallation& a, const PythonInstallation& b) {
-        // Prefer stable versions (3.12, 3.13)
-        bool a_stable = (a.minor == 12 || a.minor == 13);
-        bool b_stable = (b.minor == 12 || b.minor == 13);
-
-        if (a_stable && !b_stable) return true;
-        if (!a_stable && b_stable) return false;
-
-        // If both stable or both unstable, prefer newer
         if (a.major != b.major) return a.major > b.major;
         if (a.minor != b.minor) return a.minor > b.minor;
         return a.micro > b.micro;

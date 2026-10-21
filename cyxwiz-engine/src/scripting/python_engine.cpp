@@ -104,10 +104,17 @@ std::filesystem::path ResolvePythonHomeFromInterpreter(const std::filesystem::pa
     if (!venv_root.empty()) {
         return venv_root;
     }
-    return interpreter_path.parent_path();
+    auto parent = interpreter_path.parent_path();
+#ifndef _WIN32
+    // POSIX layouts keep the interpreter in <prefix>/bin.
+    if (parent.filename() == "bin") {
+        return parent.parent_path();
+    }
+#endif
+    return parent;
 }
 
-std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
+std::filesystem::path FindPosixSitePackages([[maybe_unused]] const std::filesystem::path& base_root) {
 #ifndef _WIN32
     std::filesystem::path lib_dir = base_root / "lib";
     if (!std::filesystem::exists(lib_dir)) {
@@ -400,6 +407,14 @@ bool HasStdLibInHome(const std::filesystem::path& python_home, std::string* deta
         return true;
     }
 
+    // POSIX layout: <prefix>/lib/pythonX.Y for the linked interpreter
+    const std::string posix_version =
+        "python" + std::to_string(PY_MAJOR_VERSION) + "." + std::to_string(PY_MINOR_VERSION);
+    const auto posix_stdlib = python_home / "lib" / posix_version / "threading.py";
+    if (std::filesystem::exists(posix_stdlib)) {
+        return true;
+    }
+
     // Check stdlib zip (embeddable dist)
     if (std::filesystem::exists(python_home) && std::filesystem::is_directory(python_home)) {
         for (const auto& entry : std::filesystem::directory_iterator(python_home)) {
@@ -418,6 +433,7 @@ bool HasStdLibInHome(const std::filesystem::path& python_home, std::string* deta
 
     if (detail_out) {
         *detail_out = "missing stdlib (expected '" + (python_home / "Lib" / "threading.py").string() +
+                      "', '" + posix_stdlib.string() +
                       "' or threading.py inside python*.zip under " + python_home.string() + ")";
     }
     return false;
@@ -534,9 +550,9 @@ bool PythonEngine::Initialize(std::string* error_out) {
 
         // Log initialization details
         if (selection.source == "project") {
-            spdlog::info("→ Initializing Python with project environment...");
+            spdlog::debug("Initializing Python with project environment...");
         } else {
-            spdlog::info("→ Initializing Python interpreter...");
+            spdlog::debug("Initializing Python interpreter...");
         }
 
         ApplySelection(selection);
@@ -569,9 +585,9 @@ bool PythonEngine::Initialize(std::string* error_out) {
 
         // Final success message
         if (selection.source == "project") {
-            spdlog::info("✓ Python environment ready (project venv)");
+            spdlog::info("Project Python ready (virtual environment)");
         } else {
-            spdlog::info("✓ Python interpreter ready (system Python)");
+            spdlog::info("Python ready (system interpreter)");
         }
 
         return true;
@@ -622,8 +638,8 @@ bool PythonEngine::ConfigurePythonHome(std::string* error_out) {
     if (!venv_root.empty()) {
         // This is a venv - let pyvenv.cfg drive sys.path
         // Setting PYTHONHOME can break stdlib resolution in venvs
-        spdlog::info("  Environment: Virtual environment (venv)");
-        spdlog::info("  Location: {}", venv_root.string());
+        spdlog::debug("  Environment: Virtual environment (venv)");
+        spdlog::debug("  Location: {}", venv_root.string());
         return true;
     }
 
@@ -690,8 +706,8 @@ void PythonEngine::ConfigureCustomPythonPath() {
         py::object sys = py::module_::import("sys");
         py::list sys_path = sys.attr("path").cast<py::list>();
         py::object version_info = sys.attr("version_info");
-        int major = py::int_(version_info.attr("major"));
-        int minor = py::int_(version_info.attr("minor"));
+        [[maybe_unused]] int major = py::int_(version_info.attr("major"));  // POSIX stdlib path only
+        [[maybe_unused]] int minor = py::int_(version_info.attr("minor"));
 
         // Get base_prefix - for venvs, read from pyvenv.cfg instead of sys.base_prefix
         // (pybind11 embedded interpreter sets sys.base_prefix incorrectly)
@@ -788,13 +804,13 @@ void PythonEngine::ConfigureCustomPythonPath() {
 
         // Log configured paths in a user-friendly way
         if (!packages_dir.empty()) {
-            spdlog::info("  Site-packages: {}", packages_dir);
+            spdlog::debug("  Site-packages: {}", packages_dir);
         }
         if (!scripts_path.empty()) {
-            spdlog::info("  Project scripts: {}", scripts_path);
+            spdlog::debug("  Project scripts: {}", scripts_path);
         }
         if (!engine_module_dir.empty()) {
-            spdlog::info("  Engine modules: {}", engine_module_dir);
+            spdlog::debug("  Engine modules: {}", engine_module_dir);
         }
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to configure Python path: {}", e.what());
@@ -803,12 +819,29 @@ void PythonEngine::ConfigureCustomPythonPath() {
     }
 }
 
+std::string PythonEngine::PreviewInterpreterPath() const {
+    // Same priority as ResolvePythonConfig, without its logging (the REPL
+    // header asks for this on refresh).
+    const std::string project_venv = ReadProjectInterpreterOverride();
+    if (!project_venv.empty() && std::filesystem::exists(project_venv)) {
+        return project_venv;
+    }
+    return cyxwiz::core::EngineConfig::Instance().GetSystemPythonPath();
+}
+
 PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
     auto& config = cyxwiz::core::EngineConfig::Instance();
     PythonSelection selection;
 
     // Priority 1: Check for project venv
     std::string project_venv = ReadProjectInterpreterOverride();
+    if (!project_venv.empty() && std::filesystem::exists(project_venv)) {
+        std::string repair_message;
+        if (!cyxwiz::RepairProjectVenvBase(project_venv, &repair_message)) {
+            spdlog::warn("{}; using the Engine's Python for this session", repair_message);
+            project_venv.clear();
+        }
+    }
     if (!project_venv.empty()) {
         if (std::filesystem::exists(project_venv)) {
             selection.interpreter_path = project_venv;
@@ -818,9 +851,9 @@ PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
             auto& pm = cyxwiz::ProjectManager::Instance();
             std::string project_name = pm.HasActiveProject() ? pm.GetProjectName() : "unknown";
 
-            spdlog::info("✓ Using project virtual environment");
-            spdlog::info("  Project: {}", project_name);
-            spdlog::info("  Python: {}", project_venv);
+            spdlog::debug("Using project virtual environment");
+            spdlog::debug("  Project: {}", project_name);
+            spdlog::debug("  Python: {}", project_venv);
             return selection;
         } else {
             spdlog::warn("Project interpreter '{}' does not exist, falling back to system Python", project_venv);
@@ -832,9 +865,9 @@ PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
     selection.source = "system";
 
     if (selection.interpreter_path.empty()) {
-        spdlog::warn("⚠ No Python configured - Python features will be unavailable");
+        spdlog::warn("No Python configured: Python features will be unavailable");
     } else {
-        spdlog::info("✓ Using system Python interpreter: {}", selection.interpreter_path);
+        spdlog::debug("Using system Python interpreter: {}", selection.interpreter_path);
     }
 
     return selection;
@@ -908,7 +941,11 @@ bool PythonEngine::HasInterpreterMismatch(std::string* reason_out) const {
         return false;
     }
 
-    PythonSelection desired = ResolvePythonConfig();
+    // Asked every two seconds by the status bars: the quiet lookup (same
+    // priority as ResolvePythonConfig, without its logging and venv repair,
+    // which wrote three log lines each time).
+    PythonSelection desired;
+    desired.interpreter_path = PreviewInterpreterPath();
 
     auto normalize = [](const std::string& path) {
         std::filesystem::path p(path);

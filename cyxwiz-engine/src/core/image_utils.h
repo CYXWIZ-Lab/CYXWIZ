@@ -22,11 +22,12 @@ public:
      * @param data Output float data [0, 1] range
      * @param width Output image width
      * @param height Output image height
-     * @param channels Output number of channels (1=Grayscale, 3=RGB)
+     * @param channels Output number of channels: always 3 (a grayscale file is
+     *                 repeated into R, G, B; alpha is dropped)
      * @return true if successful, false otherwise
      *
      * Supported formats: JPG, PNG, BMP, TIFF, WebP, and more via OpenCV
-     * Output is always RGB (OpenCV loads as BGR, we convert to RGB)
+     * Output is always RGB in [0, 1] (8- and 16-bit files)
      */
     static bool LoadImage(const std::string& path,
                           std::vector<float>& data,

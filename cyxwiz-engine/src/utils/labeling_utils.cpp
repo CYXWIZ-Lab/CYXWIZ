@@ -152,9 +152,7 @@ std::vector<Contour> LabelingUtils::ExtractContours(
 
 std::vector<RegionProposal> LabelingUtils::SelectiveSearch(
     const std::vector<float>& image_data,
-    int width, int height, int channels,
-    const std::string& mode,
-    int base_k, int inc_k, float sigma
+    int width, int height, int channels
 ) {
     std::vector<RegionProposal> proposals;
 
@@ -215,11 +213,15 @@ std::vector<RegionProposal> LabelingUtils::SelectiveSearch(
 std::vector<RegionProposal> LabelingUtils::EdgeBoxes(
     const std::vector<float>& image_data,
     int width, int height, int channels,
-    int max_boxes, float alpha, float beta
+    int max_boxes
 ) {
     std::vector<RegionProposal> proposals;
 
     if (!ValidateInput(image_data, width, height, channels)) {
+        return proposals;
+    }
+    if (max_boxes <= 0) {
+        spdlog::error("LabelingUtils: EdgeBoxes max_boxes must be positive");
         return proposals;
     }
 

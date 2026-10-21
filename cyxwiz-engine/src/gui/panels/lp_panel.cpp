@@ -1,5 +1,6 @@
 #include "lp_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
@@ -98,13 +99,13 @@ void LPPanel::RenderToolbar() {
 
     if (has_result_) {
         if (result_.status == "Optimal") {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().success,
                 ICON_FA_CHECK " Optimal: %.2f", result_.objective_value);
         } else if (result_.status == "Unbounded") {
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().warning,
                 ICON_FA_INFINITY " Unbounded");
         } else if (result_.status == "Infeasible") {
-            ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().error,
                 ICON_FA_XMARK " Infeasible");
         }
     }
@@ -209,7 +210,8 @@ void LPPanel::RenderConstraints() {
 
 void LPPanel::RenderLoadingIndicator() {
     ImGui::Text("Solving LP problem...");
-    float progress = 0.5f + 0.5f * std::sin(ImGui::GetTime() * 5.0f);
+    float progress = 0.5f + 0.5f * static_cast<float>(
+        std::sin(ImGui::GetTime() * 5.0));
     ImGui::ProgressBar(progress, ImVec2(-1, 0));
 }
 
@@ -281,12 +283,12 @@ void LPPanel::RenderFeasibleRegion() {
         if (use_bounds_) {
             double ax_x[2] = { 0, 0 };
             double ax_y[2] = { y_min_, y_max_ };
-            ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 1.0f);
+            ImPlot::SetNextLineStyle(ui::CurrentTokens().text_faint, 1.0f);
             ImPlot::PlotLine("x1=0", ax_x, ax_y, 2);
 
             double ay_x[2] = { x_min_, x_max_ };
             double ay_y[2] = { 0, 0 };
-            ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 1.0f);
+            ImPlot::SetNextLineStyle(ui::CurrentTokens().text_faint, 1.0f);
             ImPlot::PlotLine("x2=0", ay_x, ay_y, 2);
         }
 
@@ -294,7 +296,7 @@ void LPPanel::RenderFeasibleRegion() {
         if (has_result_ && result_.success && result_.solution.size() >= 2) {
             double opt_x = result_.solution[0];
             double opt_y = result_.solution[1];
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 12, ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 12, ui::CurrentTokens().accent, 2.0f);
             ImPlot::PlotScatter("Optimal", &opt_x, &opt_y, 1);
         }
 
@@ -304,7 +306,7 @@ void LPPanel::RenderFeasibleRegion() {
 
 void LPPanel::RenderSolutionDetails() {
     if (!has_result_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Click 'Solve' to find optimal solution");
         return;
     }
@@ -313,7 +315,7 @@ void LPPanel::RenderSolutionDetails() {
     ImGui::Separator();
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().error,
             "Error: %s", result_.error_message.c_str());
         return;
     }
@@ -349,7 +351,7 @@ void LPPanel::RenderSolutionDetails() {
 
 void LPPanel::RenderSensitivity() {
     if (!has_result_ || result_.status != "Optimal") {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Solve an optimal LP to see sensitivity analysis");
         return;
     }
@@ -367,7 +369,7 @@ void LPPanel::RenderSensitivity() {
         ImGui::Text("y%zu = %.4f", i + 1, dv);
 
         // Interpretation
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         if (std::abs(dv) > 1e-6) {
             ImGui::SameLine();
             ImGui::Text("(+1 RHS -> %+.4f obj)", dv);

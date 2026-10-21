@@ -1,0 +1,785 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "package_release.py"
+SPEC = importlib.util.spec_from_file_location("package_release", SCRIPT)
+assert SPEC and SPEC.loader
+package_release = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = package_release
+SPEC.loader.exec_module(package_release)
+# setUp stands in a fake for it; the tests of the real one call this.
+REAL_INSTALL_PLUGIN_SDK = package_release.install_plugin_sdk
+
+SIGN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sign_pack_manifest.py"
+SIGN_SPEC = importlib.util.spec_from_file_location("sign_pack_manifest", SIGN_SCRIPT)
+assert SIGN_SPEC and SIGN_SPEC.loader
+sign_pack_manifest = importlib.util.module_from_spec(SIGN_SPEC)
+sys.modules[SIGN_SPEC.name] = sign_pack_manifest
+SIGN_SPEC.loader.exec_module(sign_pack_manifest)
+
+PROMOTION_SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "prepare_pack_support_promotion.py"
+)
+PROMOTION_SPEC = importlib.util.spec_from_file_location(
+    "prepare_pack_support_promotion", PROMOTION_SCRIPT
+)
+assert PROMOTION_SPEC and PROMOTION_SPEC.loader
+prepare_pack_support_promotion = importlib.util.module_from_spec(PROMOTION_SPEC)
+sys.modules[PROMOTION_SPEC.name] = prepare_pack_support_promotion
+PROMOTION_SPEC.loader.exec_module(prepare_pack_support_promotion)
+
+
+class PackageReleaseTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="cyxwiz-package-test-")
+        self.root = Path(self.temporary.name)
+        self.script = self.root / "redist" / "scripts" / "package_release.py"
+        self.script.parent.mkdir(parents=True)
+        templates = self.root / "redist" / "templates"
+        templates.mkdir()
+        template = "version={{VERSION}} platform={{PLATFORM}} backends={{BACKENDS}} af={{ARRAYFIRE_VERSION}}\n"
+        (templates / "README_MINIMAL.md").write_text(template, encoding="utf-8")
+        (templates / "README_FULL.md").write_text(template, encoding="utf-8")
+        (templates / "README_BASE.md").write_text(template, encoding="utf-8")
+
+        build = self.root / "build" / "bin" / "Release"
+        build.mkdir(parents=True)
+        for name in (
+            "cyxwiz-engine.exe",
+            "cyxwiz-route-probe.exe",
+            "cyxwiz-installer.exe",
+            "cyxwiz-runtime-bootstrapper.exe",
+            "cyxwiz-product-removal-finalizer.exe",
+            "cyxwiz-backend-pack-installer.exe",
+            "cyxwiz-plugin-check.exe",
+            "cyxwiz-backend.dll",
+            "fmt.dll",
+            "python312.dll",
+        ):
+            (build / name).write_bytes(name.encode("ascii"))
+        tools = build / "python_tools"
+        (tools / "jedi" / "__pycache__").mkdir(parents=True)
+        (tools / "cyxwiz_intel.py").write_text("# service", encoding="ascii")
+        (tools / "jedi" / "__init__.py").write_text("# jedi", encoding="ascii")
+        (tools / "jedi" / "__pycache__" / "__init__.cpython-312.pyc").write_bytes(b"cache")
+        (tools / ".unpacked").write_text("", encoding="ascii")
+        resources = self.root / "cyxwiz-engine" / "resources"
+        resources.mkdir(parents=True)
+        (resources / "resource.txt").write_text("resource", encoding="ascii")
+        (self.root / "LICENSE").write_text("license", encoding="ascii")
+        (self.root / "KNOWN_ISSUES.md").write_text("# Known issues", encoding="ascii")
+        notices = self.root / "build" / "vcpkg_installed" / "x64-windows" / "share" / "fmt"
+        notices.mkdir(parents=True)
+        (notices / "copyright").write_text("fmt license", encoding="ascii")
+
+        include = self.root / "cyxwiz-backend" / "include" / "cyxwiz"
+        include.mkdir(parents=True)
+        (include / "version.h").write_text(
+            "#define CYXWIZ_VERSION_MAJOR 1\n"
+            "#define CYXWIZ_VERSION_MINOR 2\n"
+            "#define CYXWIZ_VERSION_PATCH 3\n",
+            encoding="ascii",
+        )
+
+        # The plugin SDK comes from `cmake --install --component plugin_sdk`
+        # of a real build; here a minimal SDK stands in for it.
+        def fake_sdk(_paths, destination: Path) -> None:
+            for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
+                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
+                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                (destination / relative).write_text(relative, encoding="ascii")
+        patcher = mock.patch.object(package_release, "install_plugin_sdk", fake_sdk)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def args(self, *values: str):
+        return package_release.parse_args([*values, "--stage-only"])
+
+    def test_isolated_vcpkg_notices(self) -> None:
+        installed = self.root / "isolated-deps"
+        for name in ("openxlsx", "nowide", "pugixml", "libarchive", "zlib"):
+            notice = installed / "x64-windows" / "share" / name / "copyright"
+            notice.parent.mkdir(parents=True)
+            notice.write_text(name + " notice", encoding="utf-8")
+        stage = self.root / "notice-stage"
+        stage.mkdir()
+        (stage / "OpenXLSX.dll").write_bytes(b"fixture")
+        args = self.args("minimal", "--vcpkg-installed-dir", str(installed))
+        paths = package_release.default_paths(self.script, args)
+        package_release.copy_vcpkg_notices(paths, stage, "windows")
+        self.assertTrue((stage / "THIRD_PARTY_LICENSES/vcpkg/x64-windows-openxlsx.txt").is_file())
+        self.assertFalse((stage / "THIRD_PARTY_LICENSES/vcpkg/x64-windows-fmt.txt").exists())
+        (installed / "x64-windows/share/pugixml/copyright").unlink()
+        with self.assertRaisesRegex(package_release.PackageError, "pugixml"):
+            package_release.copy_vcpkg_notices(paths, stage, "windows")
+        (installed / "x64-windows/share/pugixml/copyright").write_bytes(b"")
+        with self.assertRaisesRegex(package_release.PackageError, "pugixml"):
+            package_release.copy_vcpkg_notices(paths, stage, "windows")
+
+    def test_conflicting_vcpkg_notices_fail_closed(self) -> None:
+        roots = (self.root / "deps-a", self.root / "deps-b")
+        for index, root in enumerate(roots):
+            notice = root / "x64-windows/share/fmt/copyright"
+            notice.parent.mkdir(parents=True)
+            notice.write_text(str(index), encoding="utf-8")
+        args = self.args("minimal", "--vcpkg-installed-dir", str(roots[0]),
+                         "--vcpkg-installed-dir", str(roots[1]))
+        paths = package_release.default_paths(self.script, args)
+        with self.assertRaisesRegex(package_release.PackageError, "Conflicting vcpkg notices"):
+            package_release.copy_vcpkg_notices(paths, self.root / "stage", "windows")
+
+    def artifact_args(self, *values: str):
+        return package_release.parse_args([*values])
+
+    def create_arrayfire(self, oneapi: bool = False, opencl: bool = False) -> Path:
+        root = self.root / "arrayfire"
+        library = root / "lib"
+        licenses = root / "LICENSES"
+        include = root / "include" / "af"
+        library.mkdir(parents=True)
+        licenses.mkdir()
+        include.mkdir(parents=True)
+        (licenses / "BSD.txt").write_text("license", encoding="ascii")
+        (include / "version.h").write_text('#define AF_VERSION "3.10.0"\n', encoding="ascii")
+        for name in ("af.dll", "afcpu.dll", "mkl_rt.2.dll"):
+            (library / name).write_bytes(name.encode("ascii"))
+        if opencl:
+            (library / "afopencl.dll").write_bytes(b"opencl")
+        if oneapi:
+            for name in (
+                "afoneapi.dll",
+                "sycl8.dll",
+                "mkl_sycl_blas.5.dll",
+                "mkl_sycl_lapack.5.dll",
+                "mkl_sycl_dft.5.dll",
+                "mkl_sycl_sparse.5.dll",
+                "ur_loader.dll",
+                "ur_adapter_opencl.dll",
+                "libmmd.dll",
+            ):
+                (library / name).write_bytes(name.encode("ascii"))
+        return root
+
+    def create_python(self) -> Path:
+        root = self.root / "python"
+        root.mkdir()
+        for name in ("python.exe", "python312.dll", "python312.zip", "python312._pth"):
+            (root / name).write_bytes(name.encode("ascii"))
+        (root / "LICENSE.txt").write_text("python license", encoding="ascii")
+        package = root / "Lib" / "site-packages" / "demo"
+        package.mkdir(parents=True)
+        (package / "runtime.py").write_text("value = 1\n", encoding="ascii")
+        tests = package / "tests"
+        tests.mkdir()
+        (tests / "test_runtime.py").write_text("test", encoding="ascii")
+        cache = package / "__pycache__"
+        cache.mkdir()
+        (cache / "runtime.cpython-312.pyc").write_bytes(b"cache")
+        return root
+
+    def create_standalone_python(self) -> Path:
+        """Windows python-build-standalone layout (the base's bundled runtime)."""
+        root = self.root / "python-standalone"
+        for relative in (
+            "python.exe",
+            "python312.dll",
+            "python312.pdb",
+            "Lib/threading.py",
+            "Lib/venv/__init__.py",
+            "Lib/ensurepip/__init__.py",
+            "Lib/test/test_os.py",
+            "Lib/site-packages/demo/runtime.py",
+            "Lib/site-packages/demo/tests/test_runtime.py",
+            "Lib/site-packages/demo/__pycache__/runtime.cpython-312.pyc",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(relative.encode("ascii"))
+        (root / "LICENSE.txt").write_text("python license", encoding="ascii")
+        return root
+
+    def test_macos_arrayfire_staging_preserves_loader_version_aliases(self) -> None:
+        root = self.root / "arrayfire-macos"
+        library = root / "lib"
+        licenses = root / "LICENSES"
+        include = root / "include" / "af"
+        library.mkdir(parents=True)
+        licenses.mkdir()
+        include.mkdir(parents=True)
+        (licenses / "LICENSE").write_text("license", encoding="ascii")
+        (include / "version.h").write_text(
+            '#define AF_VERSION "3.10.0"\n', encoding="ascii"
+        )
+        for component in ("af", "afcpu", "afopencl"):
+            for name in (
+                f"lib{component}.dylib",
+                f"lib{component}.3.dylib",
+                f"lib{component}.3.10.0.dylib",
+            ):
+                (library / name).write_bytes(name.encode("ascii"))
+
+        stage = self.root / "macos-stage"
+        package_release.package_arrayfire_base(root, stage, ".dylib")
+        package_release.package_arrayfire_backend(
+            root, stage, "opencl", ".dylib"
+        )
+
+        runtime = stage / "arrayfire" / "lib"
+        for name in (
+            "libaf.3.dylib",
+            "libafcpu.3.dylib",
+        ):
+            self.assertTrue((runtime / name).is_file(), name)
+        self.assertTrue(
+            (stage / "runtime" / "libafopencl.3.dylib").is_file()
+        )
+
+    def test_linux_arrayfire_staging_preserves_loader_version_aliases(self) -> None:
+        root = self.root / "arrayfire-linux"
+        library = root / "lib64"
+        licenses = root / "LICENSES"
+        include = root / "include" / "af"
+        library.mkdir(parents=True)
+        licenses.mkdir()
+        include.mkdir(parents=True)
+        (licenses / "LICENSE").write_text("license", encoding="ascii")
+        (include / "version.h").write_text(
+            '#define AF_VERSION "3.10.0"\n', encoding="ascii"
+        )
+        for component in ("af", "afcpu"):
+            for name in (
+                f"lib{component}.so",
+                f"lib{component}.so.3",
+                f"lib{component}.so.3.10.0",
+            ):
+                (library / name).write_bytes(name.encode("ascii"))
+
+        stage = self.root / "linux-stage"
+        dynamic_libraries = ("libmkl_rt.so.2", "libmkl_core.so.2",
+                             "libmkl_avx2.so.2", "libmkl_intel_thread.so.2",
+                             "libiomp5.so", "libtbb.so.12")
+        for name in dynamic_libraries:
+            (library / name).write_bytes(name.encode("ascii"))
+        (library / "libafcuda.so.3").write_bytes(b"excluded CUDA backend")
+        (library / "libmkl_sycl_blas.so.5").write_bytes(b"excluded SYCL runtime")
+        package_release.package_arrayfire_base(root, stage, ".so")
+
+        runtime = stage / "arrayfire" / "lib"
+        for name in ("libaf.so.3", "libafcpu.so.3"):
+            self.assertTrue((runtime / name).is_file(), name)
+        for name in dynamic_libraries:
+            self.assertEqual((runtime / name).read_bytes(), name.encode("ascii"))
+        self.assertFalse((runtime / "libafcuda.so.3").exists())
+        self.assertFalse((runtime / "libmkl_sycl_blas.so.5").exists())
+
+    def create_runtime_licenses(self) -> Path:
+        root = self.root / "intel-licenses"
+        mkl = root / "onemkl-2025.2" / "licensing"
+        mkl.mkdir(parents=True)
+        (mkl / "license.txt").write_text("Intel runtime license", encoding="ascii")
+        (mkl / "third-party-programs.txt").write_text("MKL notices", encoding="ascii")
+        compiler = root / "dpcpp-compiler-runtime-2025.2" / "compiler"
+        compiler.mkdir(parents=True)
+        (compiler / "LICENSE.rtf").write_text("Intel compiler license", encoding="ascii")
+        (compiler / "credist.txt").write_text("Redistributable files", encoding="ascii")
+        (compiler / "third-party-programs.txt").write_text("Compiler notices", encoding="ascii")
+        return root
+
+    def test_minimal_excludes_python_runtime_and_writes_manifest(self) -> None:
+        stage, archive = package_release.build_package(self.args("minimal"), self.script)
+
+        self.assertIsNone(archive)
+        self.assertFalse((stage / "python312.dll").exists())
+        self.assertTrue((stage / "start_cyxwiz.bat").is_file())
+        manifest = json.loads((stage / "PACKAGE_MANIFEST.json").read_text(encoding="utf-8"))
+        self.assertEqual("minimal", manifest["package"]["profile"])
+        self.assertEqual("1.2.3", manifest["package"]["version"])
+        self.assertEqual([], manifest["package"]["arrayfire_backends"])
+        self.assertTrue(all(item["sha256"] for item in manifest["components"]))
+        # The Script Editor's language tools ship, without caches or build stamps.
+        self.assertTrue((stage / "python_tools" / "cyxwiz_intel.py").is_file())
+        self.assertTrue((stage / "python_tools" / "jedi" / "__init__.py").is_file())
+        self.assertFalse((stage / "python_tools" / "jedi" / "__pycache__").exists())
+        self.assertFalse((stage / "python_tools" / ".unpacked").exists())
+        self.assertIn("python-tools", {item.get("source") for item in manifest["components"]})
+        # The known-issues list ships beside the LICENSE.
+        self.assertTrue((stage / "KNOWN_ISSUES.md").is_file())
+        sources = {item["path"]: item.get("source") for item in manifest["components"]}
+        self.assertEqual("cyxwiz-package", sources.get("KNOWN_ISSUES.md"))
+
+    def test_missing_known_issues_fail_closed(self) -> None:
+        (self.root / "KNOWN_ISSUES.md").unlink()
+        with self.assertRaisesRegex(package_release.PackageError, "KNOWN_ISSUES"):
+            package_release.build_package(self.args("minimal"), self.script)
+
+    def test_missing_python_tools_fail_closed(self) -> None:
+        shutil.rmtree(self.root / "build" / "bin" / "Release" / "python_tools")
+        with self.assertRaises(Exception):
+            package_release.build_package(self.args("minimal"), self.script)
+
+    def test_full_oneapi_copies_validated_runtime_closure(self) -> None:
+        arrayfire = self.create_arrayfire(oneapi=True)
+        python = self.create_python()
+        args = self.args(
+            "full",
+            "--arrayfire-dir",
+            str(arrayfire),
+            "--python-dir",
+            str(python),
+            "--python-version",
+            "3.12.8",
+            "--intel-runtime-license-dir",
+            str(self.create_runtime_licenses()),
+            "--backends",
+            "oneapi",
+        )
+
+        stage, _ = package_release.build_package(args, self.script)
+
+        runtime = stage / "arrayfire" / "bin"
+        self.assertFalse((stage / "python312.dll").exists())
+        self.assertTrue((stage / "python" / "python312.dll").is_file())
+        self.assertTrue((runtime / "afcpu.dll").is_file())
+        self.assertTrue((runtime / "afoneapi.dll").is_file())
+        self.assertTrue((runtime / "ur_loader.dll").is_file())
+        manifest = json.loads((stage / "PACKAGE_MANIFEST.json").read_text(encoding="utf-8"))
+        self.assertEqual(["cpu", "oneapi"], manifest["package"]["arrayfire_backends"])
+        self.assertEqual("3.10.0", manifest["dependency_versions"]["arrayfire"])
+        intel_components = [
+            item for item in manifest["components"] if item["path"].startswith("THIRD_PARTY_LICENSES/Intel/")
+        ]
+        self.assertTrue(intel_components)
+        self.assertTrue(all(item["source"] == "intel-runtime-license" for item in intel_components))
+
+    def test_full_oneapi_rejects_incomplete_runtime(self) -> None:
+        arrayfire = self.create_arrayfire(oneapi=True)
+        (arrayfire / "lib" / "ur_loader.dll").unlink()
+        args = self.args(
+            "full",
+            "--arrayfire-dir",
+            str(arrayfire),
+            "--python-dir",
+            str(self.create_python()),
+            "--python-version",
+            "3.12.8",
+            "--intel-runtime-license-dir",
+            str(self.create_runtime_licenses()),
+            "--backends",
+            "oneapi",
+        )
+
+        with self.assertRaisesRegex(package_release.PackageError, "Unified Runtime loader"):
+            package_release.build_package(args, self.script)
+
+    def test_unknown_backend_is_rejected(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "Unsupported backend"):
+            package_release.parse_backends("cpu,vulkan")
+
+    def test_full_rejects_wrong_python_abi(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "Python 3.12"):
+            package_release.validate_python_version("3.14.0")
+
+    def test_full_rejects_missing_runtime_notices(self) -> None:
+        args = self.args(
+            "full",
+            "--arrayfire-dir",
+            str(self.create_arrayfire()),
+            "--python-dir",
+            str(self.create_python()),
+            "--python-version",
+            "3.12.8",
+        )
+        with self.assertRaisesRegex(package_release.PackageError, "intel-runtime-license-dir"):
+            package_release.build_package(args, self.script)
+
+    def test_full_rejects_incomplete_intel_runtime_notices(self) -> None:
+        notices = self.root / "incomplete-intel-notices"
+        notices.mkdir()
+        (notices / "LICENSE.txt").write_text("generic license", encoding="ascii")
+        args = self.args(
+            "full",
+            "--arrayfire-dir",
+            str(self.create_arrayfire()),
+            "--python-dir",
+            str(self.create_python()),
+            "--python-version",
+            "3.12.8",
+            "--intel-runtime-license-dir",
+            str(notices),
+            "--backends",
+            "cpu",
+        )
+
+        with self.assertRaisesRegex(package_release.PackageError, "oneMKL license"):
+            package_release.build_package(args, self.script)
+
+    def test_full_rejects_developer_python_tree(self) -> None:
+        root = self.root / "developer-python"
+        root.mkdir()
+        (root / "python.exe").write_bytes(b"python")
+        (root / "python312.dll").write_bytes(b"runtime")
+        with self.assertRaisesRegex(package_release.PackageError, "standard-library archive"):
+            package_release.validate_windows_embedded_python(root)
+
+    def test_base_rejects_embeddable_python(self) -> None:
+        # The embeddable distribution has no venv/ensurepip; projects need both.
+        with self.assertRaisesRegex(package_release.PackageError, "standard library"):
+            package_release.validate_standalone_python(self.create_python(), "windows")
+
+    def test_base_validates_posix_standalone_layout(self) -> None:
+        root = self.root / "posix-python"
+        for relative in (
+            "bin/python3.12",
+            "lib/libpython3.12.so.1.0",
+            "lib/python3.12/threading.py",
+            "lib/python3.12/venv/__init__.py",
+            "lib/python3.12/ensurepip/__init__.py",
+            "lib/python3.12/LICENSE.txt",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x")
+        self.assertEqual(
+            root / "lib/python3.12/LICENSE.txt",
+            package_release.validate_standalone_python(root, "linux"),
+        )
+        with self.assertRaisesRegex(package_release.PackageError, "shared runtime"):
+            package_release.validate_standalone_python(root, "darwin")
+
+    def test_unified_loader_system_fallbacks_are_disabled(self) -> None:
+        library_dir = self.root / "af-lib"
+        library_dir.mkdir()
+        body = (
+            b"\x00code\x00/opt/arrayfire-3/lib/\x00/opt/arrayfire/lib/\x00"
+            b"/usr/local/lib/\x00/usr/local/arrayfire/lib/\x00libafcpu.3.dylib\x00"
+        )
+        for name in ("libaf.3.10.0.dylib", "libaf.3.dylib"):
+            (library_dir / name).write_bytes(body)
+        (library_dir / "libafcpu.3.dylib").write_bytes(body)
+        # Homebrew bottles are read-only; the staged copy keeps that mode.
+        (library_dir / "libaf.3.dylib").chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+
+        patched = package_release.isolate_packaged_arrayfire(library_dir)
+        self.assertFalse((library_dir / "libaf.3.dylib").stat().st_mode & stat.S_IWUSR)
+        (library_dir / "libaf.3.dylib").chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+        self.assertEqual(["libaf.3.10.0.dylib", "libaf.3.dylib"], [p.name for p in patched])
+        data = (library_dir / "libaf.3.dylib").read_bytes()
+        self.assertEqual(len(body), len(data))
+        self.assertNotIn(b"/usr/local/lib/", data)
+        self.assertNotIn(b"/opt/arrayfire", data)
+        self.assertEqual(4, data.count(b"/dev/null/"))
+        self.assertIn(b"libafcpu.3.dylib", data)
+        # Backend libraries are not the unified loader and stay untouched.
+        self.assertEqual(body, (library_dir / "libafcpu.3.dylib").read_bytes())
+
+    def test_unknown_unified_loader_layout_is_rejected(self) -> None:
+        library = self.root / "libaf.so.3"
+        library.write_bytes(b"no search paths here")
+        with self.assertRaisesRegex(package_release.PackageError, "known system search paths"):
+            package_release.isolate_arrayfire_unified_loader(library)
+
+    def test_archive_version_cannot_escape_output_root(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "Invalid CyxWiz"):
+            package_release.validate_release_version("../release", "CyxWiz")
+
+    def test_deterministic_zip_preserves_extensionless_executable_mode(self) -> None:
+        stage = self.root / "executable-stage"
+        stage.mkdir()
+        executable = stage / "cyxwiz-runtime-bootstrapper"
+        executable.write_bytes(b"native")
+        executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+        archive = package_release.create_deterministic_zip(
+            stage, self.root / "native.zip"
+        )
+
+        with package_release.zipfile.ZipFile(archive) as package:
+            mode = package.getinfo(executable.name).external_attr >> 16
+        self.assertTrue(mode & stat.S_IXUSR)
+
+    def test_base_profile_emits_cpu_only_deterministic_artifact(self) -> None:
+        arrayfire = self.create_arrayfire(opencl=True)
+        args = self.artifact_args(
+            "base",
+            "--arrayfire-dir",
+            str(arrayfire),
+            "--python-dir",
+            str(self.create_standalone_python()),
+            "--python-version",
+            "3.12.8",
+            "--intel-runtime-license-dir",
+            str(self.create_runtime_licenses()),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+        first_hash = package_release.sha256_file(archive)
+        _, rebuilt = package_release.build_package(args, self.script)
+
+        self.assertEqual(first_hash, package_release.sha256_file(rebuilt))
+        self.assertTrue((stage / "arrayfire" / "bin" / "af.dll").is_file())
+        self.assertTrue((stage / "arrayfire" / "bin" / "afcpu.dll").is_file())
+        self.assertTrue((stage / "cyxwiz-product-removal-finalizer.exe").is_file())
+        self.assertTrue(
+            (stage / "python" / "Lib" / "site-packages" / "demo" / "runtime.py").is_file()
+        )
+        self.assertFalse(
+            (stage / "python" / "Lib" / "site-packages" / "demo" / "tests").exists()
+        )
+        self.assertFalse(
+            (stage / "python" / "Lib" / "site-packages" / "demo" / "__pycache__").exists()
+        )
+        self.assertTrue((stage / "python" / "Lib" / "venv" / "__init__.py").is_file())
+        self.assertFalse((stage / "python" / "Lib" / "test").exists())
+        self.assertFalse((stage / "python" / "python312.pdb").exists())
+        self.assertEqual(
+            {"arrayfire": "3.10.0", "cyxwiz": "1.2.3", "python": "3.12.8"},
+            json.loads((stage / "RUNTIME_VERSIONS.json").read_text(encoding="utf-8")),
+        )
+        self.assertFalse((stage / "arrayfire" / "bin" / "afopencl.dll").exists())
+        self.assertFalse((stage / "start_cyxwiz.bat").exists())
+        manifest = json.loads(
+            archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("base", manifest["signed"]["pack_kind"])
+        self.assertEqual("cpu", manifest["signed"]["backend"])
+        self.assertEqual("win64", manifest["signed"]["platform"])
+        self.assertEqual("x86_64", manifest["signed"]["architecture"])
+        self.assertTrue(
+            manifest["signed"]["pack_id"].endswith("-win64-x86_64")
+        )
+        self.assertEqual([], manifest["signatures"])
+        self.assertTrue(archive.with_suffix(".zip.signed.json").is_file())
+        # The C++ plugin SDK and its check tool ship in the base (TOFIX125 P5).
+        components = {item["path"]: item for item in manifest["signed"]["components"]}
+        self.assertIn("cyxwiz-plugin-check.exe", components)
+        self.assertTrue(components["cyxwiz-plugin-check.exe"]["executable"])
+        self.assertEqual("cyxwiz-plugin-sdk", components["sdk/include/plugin/plugin_types.h"]["source"])
+        licence_paths = {item["path"] for item in manifest["signed"]["licenses"]}
+        self.assertTrue({"LICENSE", "sdk/LICENSE", "sdk/NOTICE"} <= licence_paths)
+
+    def test_plugin_sdk_installs_from_the_cmake_build_folder(self) -> None:
+        build_root = self.root / "build"
+        (build_root / "CMakeCache.txt").write_text("", encoding="ascii")
+        paths = package_release.default_paths(self.script, self.args("minimal"))
+        self.assertEqual(build_root.resolve(), package_release.cmake_build_root(paths.build))
+        destination = self.root / "sdk-stage" / "sdk"
+        calls = []
+
+        def fake_run(command, **_kwargs):
+            calls.append(command)
+            for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
+                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
+                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                (destination / relative).write_text(relative, encoding="ascii")
+            return subprocess.CompletedProcess(command, 0, "")
+
+        with mock.patch.object(package_release.subprocess, "run", fake_run):
+            REAL_INSTALL_PLUGIN_SDK(paths, destination)
+        self.assertEqual(
+            ["cmake", "--install", str(build_root.resolve()), "--config", "Release",
+             "--component", "plugin_sdk", "--prefix", str(destination)],
+            calls[0],
+        )
+
+        def failing_run(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 1, "no plugin_sdk component")
+
+        with mock.patch.object(package_release.subprocess, "run", failing_run):
+            with self.assertRaisesRegex(package_release.PackageError, "plugin SDK failed"):
+                REAL_INSTALL_PLUGIN_SDK(paths, destination)
+
+    def test_plugin_sdk_needs_a_cmake_build_folder(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "CMakeCache.txt"):
+            package_release.cmake_build_root(self.root / "nowhere" / "bin" / "Release")
+
+    def test_opencl_pack_excludes_cpu_base_and_validates_signature(self) -> None:
+        arrayfire = self.create_arrayfire(opencl=True)
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(arrayfire),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+            "--signing-key-id",
+            "release-2026",
+            "--signature",
+            "A" * 86,
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+
+        self.assertTrue((stage / "runtime" / "afopencl.dll").is_file())
+        self.assertFalse((stage / "runtime" / "af.dll").exists())
+        self.assertFalse((stage / "runtime" / "afcpu.dll").exists())
+        manifest = json.loads(
+            archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("backend_pack", manifest["signed"]["pack_kind"])
+        self.assertEqual("opencl", manifest["signed"]["backend"])
+        package_release.validate_pack_manifest(manifest)
+
+    def test_pack_profile_requires_one_optional_backend(self) -> None:
+        args = self.args("pack", "--arrayfire-dir", str(self.create_arrayfire()))
+        with self.assertRaisesRegex(package_release.PackageError, "requires exactly one"):
+            package_release.build_package(args, self.script)
+
+    def test_pack_stage_only_does_not_emit_archive(self) -> None:
+        args = self.args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+
+        self.assertTrue((stage / "runtime" / "afopencl.dll").is_file())
+        self.assertIsNone(archive)
+
+    def test_signing_rejects_tampered_canonical_input(self) -> None:
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        archive.with_suffix(".zip.signed.json").write_bytes(b"tampered")
+
+        with self.assertRaisesRegex(sign_pack_manifest.SigningError, "does not match"):
+            sign_pack_manifest.load_signature_input(
+                archive.with_suffix(".zip.manifest.json")
+            )
+
+    def test_support_promotion_changes_only_status_and_requires_resigning(self) -> None:
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+            "--signing-key-id",
+            "diagnostic-2026",
+            "--signature",
+            "A" * 86,
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        source = archive.with_suffix(".zip.manifest.json")
+        source_document = json.loads(source.read_text(encoding="utf-8"))
+        output = self.root / "supported" / source.name
+
+        manifest, signature_input = prepare_pack_support_promotion.prepare(
+            source, output
+        )
+
+        promoted = json.loads(manifest.read_text(encoding="utf-8"))
+        expected = json.loads(json.dumps(source_document["signed"]))
+        expected["compatibility"]["support_status"] = "supported"
+        self.assertEqual(expected, promoted["signed"])
+        self.assertEqual([], promoted["signatures"])
+        self.assertEqual(
+            package_release.canonical_json_bytes(promoted["signed"]),
+            signature_input.read_bytes(),
+        )
+        self.assertEqual(
+            "diagnostic",
+            source_document["signed"]["compatibility"]["support_status"],
+        )
+
+    def test_support_promotion_rejects_changed_signature_input(self) -> None:
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+            "--signing-key-id",
+            "diagnostic-2026",
+            "--signature",
+            "A" * 86,
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        source = archive.with_suffix(".zip.manifest.json")
+        archive.with_suffix(".zip.signed.json").write_bytes(b"changed")
+
+        with self.assertRaisesRegex(
+            prepare_pack_support_promotion.PromotionError,
+            "does not match",
+        ):
+            prepare_pack_support_promotion.prepare_document(source)
+
+    def test_openssl_release_step_signs_and_self_verifies_manifest(self) -> None:
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            self.skipTest("OpenSSL is not available")
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        manifest_path = archive.with_suffix(".zip.manifest.json")
+        private_key = self.root / "release-ed25519.pem"
+        subprocess.run(
+            [openssl, "genpkey", "-algorithm", "ED25519", "-out", str(private_key)],
+            check=True,
+            capture_output=True,
+        )
+
+        result = sign_pack_manifest.main(
+            [
+                str(manifest_path),
+                "--private-key",
+                str(private_key),
+                "--key-id",
+                "release-2026",
+                "--openssl",
+                openssl,
+            ]
+        )
+
+        self.assertEqual(0, result)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        package_release.validate_pack_manifest(manifest)
+        self.assertEqual("release-2026", manifest["signatures"][0]["key_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()

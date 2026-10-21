@@ -1,0 +1,3055 @@
+#include <cyxwiz/sequential.h>
+#include <cyxwiz/layers/attention.h>
+#include <cyxwiz/layers/transformer.h>
+#include <cyxwiz/loss.h>
+#include <cyxwiz/optimizers/sgd.h>
+#include <cyxwiz/tensor.h>
+#include "core/language_model_training.h"
+#include "core/language_model_generation.h"
+#include "core/transformer_primitive_contracts.h"
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+#include <torch/torch.h>
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <map>
+#include <random>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+void Check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAIL: " << message << "\n";
+        std::exit(1);
+    }
+}
+
+void CheckNear(float actual, float expected, float tolerance,
+               const std::string& message) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) ||
+        !std::isfinite(tolerance) || tolerance < 0.0f ||
+        std::fabs(actual - expected) > tolerance) {
+        std::ostringstream ss;
+        ss << message << " expected=" << expected << " actual=" << actual
+           << " tolerance=" << tolerance;
+        throw std::runtime_error(ss.str());
+    }
+}
+
+void CheckShape(const cyxwiz::Tensor& tensor,
+                const std::vector<size_t>& expected,
+                const std::string& label) {
+    Check(tensor.Shape() == expected, label + " shape mismatch");
+}
+
+template <size_t N>
+void CheckTensorNear(const cyxwiz::Tensor& tensor,
+                     const float (&expected)[N],
+                     float tolerance,
+                     const std::string& label) {
+    Check(tensor.NumElements() == N, label + " element count mismatch");
+    const float* data = tensor.Data<float>();
+    for (size_t i = 0; i < N; ++i) {
+        CheckNear(data[i], expected[i], tolerance, label);
+    }
+}
+
+template <size_t N>
+void CheckGradientNear(const std::map<std::string, cyxwiz::Tensor>& gradients,
+                       const std::string& key,
+                       const float (&expected)[N],
+                       float tolerance,
+                       const std::string& label) {
+    const auto it = gradients.find(key);
+    Check(it != gradients.end(), label + " missing gradient: " + key);
+    CheckTensorNear(it->second, expected, tolerance, label);
+}
+
+void CheckCandidatesNear(
+    const std::vector<cyxwiz::NextTokenCandidate>& actual,
+    const std::vector<int64_t>& expected_ids,
+    const std::vector<float>& expected_probabilities,
+    float tolerance,
+    const std::string& label) {
+    Check(actual.size() == expected_ids.size(), label + " candidate count");
+    Check(expected_ids.size() == expected_probabilities.size(),
+          label + " expected fixture size");
+    for (size_t i = 0; i < actual.size(); ++i) {
+        Check(actual[i].token_id == expected_ids[i], label + " token order");
+        CheckNear(actual[i].probability,
+                  expected_probabilities[i],
+                  tolerance,
+                  label + " probability");
+    }
+}
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+std::vector<float> TensorToVector(const torch::Tensor& tensor) {
+    torch::Tensor contiguous =
+        tensor.detach().to(torch::kCPU).contiguous().to(torch::kFloat32);
+    const float* data = contiguous.data_ptr<float>();
+    return std::vector<float>(data, data + contiguous.numel());
+}
+
+std::vector<int64_t> TensorToInt64Vector(const torch::Tensor& tensor) {
+    torch::Tensor contiguous =
+        tensor.detach().to(torch::kCPU).contiguous().to(torch::kInt64);
+    const int64_t* data = contiguous.data_ptr<int64_t>();
+    return std::vector<int64_t>(data, data + contiguous.numel());
+}
+#endif
+
+void TestEmbeddingForwardAndGradientParity() {
+    cyxwiz::EmbeddingModule embedding(5, 3, -1);
+
+    const float weight_values[] = {
+        0.1f, 0.2f, 0.3f,
+        1.0f, 1.1f, 1.2f,
+        -0.5f, -0.4f, -0.3f,
+        2.0f, 2.1f, 2.2f,
+        4.0f, 4.1f, 4.2f,
+    };
+    cyxwiz::Tensor weights({5, 3}, weight_values, cyxwiz::DataType::Float32);
+    embedding.SetParameters({{"weight", weights}});
+
+    const int64_t token_values[] = {1, 2, 1, 4};
+    cyxwiz::Tensor tokens({2, 2}, token_values, cyxwiz::DataType::Int64);
+    cyxwiz::Tensor output = embedding.Forward(tokens);
+    CheckShape(output, {2, 2, 3}, "Embedding output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_weight = torch::from_blob(
+        const_cast<float*>(weight_values), {5, 3}, torch::kFloat32).clone();
+    auto torch_embedding = torch::nn::Embedding(
+        torch::nn::EmbeddingOptions(5, 3));
+    {
+        torch::NoGradGuard no_grad;
+        torch_embedding->weight.copy_(torch_weight);
+    }
+    auto torch_tokens = torch::tensor({{1, 2}, {1, 4}}, torch::kInt64);
+    auto torch_output = torch_embedding->forward(torch_tokens);
+    const std::vector<float> expected_output =
+        TensorToVector(torch_output);
+#else
+    const float expected_output[] = {
+        1.0f, 1.1f, 1.2f,
+        -0.5f, -0.4f, -0.3f,
+        1.0f, 1.1f, 1.2f,
+        4.0f, 4.1f, 4.2f,
+    };
+#endif
+    const float* out = output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        CheckNear(out[i], expected_output[i], 1e-6f,
+                  "Embedding forward matches PyTorch nn.Embedding lookup");
+    }
+
+    const float grad_values[] = {
+        0.1f, 0.2f, 0.3f,
+        0.4f, 0.5f, 0.6f,
+        0.7f, 0.8f, 0.9f,
+        1.0f, 1.1f, 1.2f,
+    };
+    cyxwiz::Tensor grad_output({2, 2, 3}, grad_values,
+                               cyxwiz::DataType::Float32);
+    (void)embedding.Backward(grad_output);
+
+    const auto grads = embedding.GetGradients();
+    auto it = grads.find("weight");
+    Check(it != grads.end(), "Embedding weight gradient exists");
+    CheckShape(it->second, {5, 3}, "Embedding weight gradient");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_grad_output = torch::from_blob(
+        const_cast<float*>(grad_values), {2, 2, 3}, torch::kFloat32).clone();
+    torch_output.backward(torch_grad_output);
+    const std::vector<float> expected_grad_weight =
+        TensorToVector(torch_embedding->weight.grad());
+#else
+    const float expected_grad_weight[] = {
+        0.0f, 0.0f, 0.0f,
+        0.8f, 1.0f, 1.2f,
+        0.4f, 0.5f, 0.6f,
+        0.0f, 0.0f, 0.0f,
+        1.0f, 1.1f, 1.2f,
+    };
+#endif
+    const float* grad = it->second.Data<float>();
+    for (size_t i = 0; i < it->second.NumElements(); ++i) {
+        CheckNear(grad[i], expected_grad_weight[i], 1e-6f,
+                  "Embedding backward matches PyTorch sparse accumulation semantics");
+    }
+
+    const float exact_float_tokens[] = {1.0f, 2.0f};
+    cyxwiz::Tensor exact_float_input(
+        {1, 2}, exact_float_tokens, cyxwiz::DataType::Float32);
+    CheckShape(embedding.Forward(exact_float_input), {1, 2, 3},
+               "Embedding exact Float32 token compatibility input");
+
+    const auto rejects_tokens = [&](const float* values,
+                                    const std::string& label) {
+        bool rejected = false;
+        try {
+            cyxwiz::Tensor invalid({1, 2}, values,
+                                   cyxwiz::DataType::Float32);
+            (void)embedding.Forward(invalid);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        Check(rejected, label);
+    };
+    const float fractional_tokens[] = {1.5f, 2.0f};
+    rejects_tokens(
+        fractional_tokens,
+        "Embedding should reject fractional Float32 token IDs instead of clamping");
+    const float out_of_vocabulary_tokens[] = {1.0f, 5.0f};
+    rejects_tokens(
+        out_of_vocabulary_tokens,
+        "Embedding should reject out-of-vocabulary token IDs instead of clamping");
+
+    cyxwiz::EmbeddingModule bounded_embedding(5, 3, 0, 1.0f);
+    bounded_embedding.SetParameters({{"weight", weights}});
+    const int64_t padded_tokens[] = {0, 4};
+    cyxwiz::Tensor padded_input(
+        {1, 2}, padded_tokens, cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor bounded_output = bounded_embedding.Forward(padded_input);
+    const float* bounded = bounded_output.Data<float>();
+    CheckNear(bounded[0], 0.0f, 1e-6f,
+              "Embedding padding output component 0");
+    CheckNear(bounded[1], 0.0f, 1e-6f,
+              "Embedding padding output component 1");
+    CheckNear(bounded[2], 0.0f, 1e-6f,
+              "Embedding padding output component 2");
+    const float bounded_norm = std::sqrt(
+        bounded[3] * bounded[3] + bounded[4] * bounded[4] +
+        bounded[5] * bounded[5]);
+    Check(bounded_norm <= 1.0f + 1e-5f,
+          "Embedding max_norm should cap a selected row before lookup");
+
+    const float bounded_grad_values[] = {
+        3.0f, 4.0f, 5.0f,
+        1.0f, 1.0f, 1.0f,
+    };
+    cyxwiz::Tensor bounded_grad_output(
+        {1, 2, 3}, bounded_grad_values, cyxwiz::DataType::Float32);
+    (void)bounded_embedding.Backward(bounded_grad_output);
+    const auto bounded_grads = bounded_embedding.GetGradients();
+    const auto bounded_it = bounded_grads.find("weight");
+    Check(bounded_it != bounded_grads.end(),
+          "Embedding padding/max_norm weight gradient exists");
+    const float* bounded_weight_grad = bounded_it->second.Data<float>();
+    CheckNear(bounded_weight_grad[0], 0.0f, 1e-6f,
+              "Embedding padding row gradient component 0");
+    CheckNear(bounded_weight_grad[1], 0.0f, 1e-6f,
+              "Embedding padding row gradient component 1");
+    CheckNear(bounded_weight_grad[2], 0.0f, 1e-6f,
+              "Embedding padding row gradient component 2");
+}
+
+void TestPositionalEncodingParity() {
+    cyxwiz::PositionalEncodingModule positional(4, 3);
+    cyxwiz::Tensor input = cyxwiz::Tensor::Zeros({1, 2, 4});
+    cyxwiz::Tensor output = positional.Forward(input);
+    CheckShape(output, {1, 2, 4}, "PositionalEncoding output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto position = torch::arange(0, 2, torch::kFloat32).unsqueeze(1);
+    auto div_term = torch::exp(
+        torch::tensor({0.0f, 2.0f}) *
+        static_cast<float>(-std::log(10000.0) / 4.0));
+    auto torch_pe = torch::zeros({1, 2, 4}, torch::kFloat32);
+    torch_pe.index_put_({0, torch::indexing::Slice(), 0},
+                        torch::sin(position.index({torch::indexing::Slice(), 0}) *
+                                   div_term.index({0})));
+    torch_pe.index_put_({0, torch::indexing::Slice(), 1},
+                        torch::cos(position.index({torch::indexing::Slice(), 0}) *
+                                   div_term.index({0})));
+    torch_pe.index_put_({0, torch::indexing::Slice(), 2},
+                        torch::sin(position.index({torch::indexing::Slice(), 0}) *
+                                   div_term.index({1})));
+    torch_pe.index_put_({0, torch::indexing::Slice(), 3},
+                        torch::cos(position.index({torch::indexing::Slice(), 0}) *
+                                   div_term.index({1})));
+    const std::vector<float> expected = TensorToVector(torch_pe);
+#else
+    const float expected[] = {
+        0.0f,
+        1.0f,
+        0.0f,
+        1.0f,
+        0.8414709848f,
+        0.5403023059f,
+        0.0099998333f,
+        0.9999500004f,
+    };
+#endif
+    const float* out = output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        CheckNear(out[i], expected[i], 1e-6f,
+                  "PositionalEncoding matches PyTorch sinusoidal fixture");
+    }
+
+    cyxwiz::Tensor grad = positional.Backward(output);
+    CheckShape(grad, {1, 2, 4}, "PositionalEncoding backward");
+    const float* grad_data = grad.Data<float>();
+    for (size_t i = 0; i < grad.NumElements(); ++i) {
+        CheckNear(grad_data[i], out[i], 1e-6f,
+                  "PositionalEncoding backward is identity");
+    }
+}
+
+void TestScaledDotProductAttentionParity() {
+    const size_t batch_size = 1;
+    const size_t num_heads = 1;
+    const size_t sequence_length = 2;
+    const size_t head_dim = 2;
+
+    const std::vector<float> query = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+    };
+    const std::vector<float> key = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+    };
+    const std::vector<float> value = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+
+    const auto output = cyxwiz::ScaledDotProductAttentionMultiHeadCpu(
+        query,
+        key,
+        value,
+        {},
+        batch_size,
+        num_heads,
+        sequence_length,
+        head_dim);
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_query = torch::from_blob(
+        const_cast<float*>(query.data()), {1, 1, 2, 2}, torch::kFloat32).clone();
+    auto torch_key = torch::from_blob(
+        const_cast<float*>(key.data()), {1, 1, 2, 2}, torch::kFloat32).clone();
+    auto torch_value = torch::from_blob(
+        const_cast<float*>(value.data()), {1, 1, 2, 2}, torch::kFloat32).clone();
+    auto scores = torch::matmul(torch_query, torch_key.transpose(-2, -1)) /
+                  std::sqrt(static_cast<float>(head_dim));
+    auto weights = torch::softmax(scores, -1);
+    const std::vector<float> expected = TensorToVector(
+        torch::matmul(weights, torch_value));
+#else
+    const float expected[] = {
+        1.6604769f, 2.6604769f,
+        2.3395231f, 3.3395231f,
+    };
+#endif
+    Check(output.size() == 4, "Scaled dot-product attention output size");
+    for (size_t i = 0; i < output.size(); ++i) {
+        CheckNear(output[i], expected[i], 1e-5f,
+                  "Scaled dot-product attention matches PyTorch");
+    }
+
+    const std::vector<float> causal_mask =
+        cyxwiz::BuildCausalAttentionMask(sequence_length);
+    const auto masked_output = cyxwiz::ScaledDotProductAttentionMultiHeadCpu(
+        query,
+        key,
+        value,
+        causal_mask,
+        batch_size,
+        num_heads,
+        sequence_length,
+        head_dim);
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_mask = torch::from_blob(
+        const_cast<float*>(causal_mask.data()),
+        {1, 1, 2, 2},
+        torch::kFloat32).clone();
+    auto masked_scores = scores + torch_mask;
+    auto masked_weights = torch::softmax(masked_scores, -1);
+    const std::vector<float> expected_masked = TensorToVector(
+        torch::matmul(masked_weights, torch_value));
+#else
+    const float expected_masked[] = {
+        1.0f, 2.0f,
+        2.3395231f, 3.3395231f,
+    };
+#endif
+    Check(masked_output.size() == 4,
+          "Masked scaled dot-product attention output size");
+    for (size_t i = 0; i < masked_output.size(); ++i) {
+        CheckNear(masked_output[i], expected_masked[i], 1e-5f,
+                  "Causal masked scaled dot-product attention matches PyTorch");
+    }
+}
+
+void TestMultiHeadAttentionForwardParity() {
+    const int embed_dim = 4;
+    const int num_heads = 2;
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+
+    cyxwiz::MultiHeadAttentionLayer attention(embed_dim, num_heads, 0.0f, true);
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = attention.Forward(input);
+    CheckShape(output, {1, 2, 4}, "MultiHeadAttention output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_input = torch::from_blob(
+        const_cast<float*>(input_values.data()), {1, 2, 4}, torch::kFloat32).clone();
+    auto torch_wq = torch::from_blob(
+        const_cast<float*>(W_q.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wk = torch::from_blob(
+        const_cast<float*>(W_k.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wv = torch::from_blob(
+        const_cast<float*>(W_v.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wo = torch::from_blob(
+        const_cast<float*>(W_o.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_bq = torch::from_blob(
+        const_cast<float*>(b_q.data()), {4}, torch::kFloat32).clone();
+    auto torch_bk = torch::from_blob(
+        const_cast<float*>(b_k.data()), {4}, torch::kFloat32).clone();
+    auto torch_bv = torch::from_blob(
+        const_cast<float*>(b_v.data()), {4}, torch::kFloat32).clone();
+    auto torch_bo = torch::from_blob(
+        const_cast<float*>(b_o.data()), {4}, torch::kFloat32).clone();
+
+    auto q = torch::linear(torch_input, torch_wq, torch_bq)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto k = torch::linear(torch_input, torch_wk, torch_bk)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto v = torch::linear(torch_input, torch_wv, torch_bv)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto scores = torch::matmul(q, k.transpose(-2, -1)) /
+                  std::sqrt(2.0f);
+    auto torch_weights = torch::softmax(scores, -1);
+    auto context = torch::matmul(torch_weights, v)
+                       .transpose(1, 2)
+                       .contiguous()
+                       .view({1, 2, 4});
+    const std::vector<float> expected_output =
+        TensorToVector(torch::linear(context, torch_wo, torch_bo));
+    const std::vector<float> expected_weights =
+        TensorToVector(torch_weights.permute({2, 3, 0, 1}).contiguous());
+#else
+    const float expected_output[] = {
+        0.0394057f, 0.0472653f, -0.0243494f, 0.0558073f,
+        0.0401521f, 0.0470527f, -0.0239654f, 0.0566013f,
+    };
+    const float expected_weights[] = {
+        0.4988863f, 0.5046093f, 0.5011137f, 0.4953907f,
+        0.5058510f, 0.4919088f, 0.4941490f, 0.5080912f,
+    };
+#endif
+    const float* out = output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        CheckNear(out[i], expected_output[i], 1e-5f,
+                  "MultiHeadAttention projected output matches PyTorch");
+    }
+
+    const cyxwiz::Tensor weights = attention.GetAttentionWeights();
+    CheckShape(weights, {2, 2, 1, 2}, "MultiHeadAttention weights");
+    const float* weight_data = weights.Data<float>();
+    for (size_t i = 0; i < weights.NumElements(); ++i) {
+        CheckNear(weight_data[i], expected_weights[i], 1e-5f,
+                  "MultiHeadAttention per-head weights match PyTorch");
+    }
+
+    const std::vector<float> grad_output_values = {
+        0.3f, -0.2f, 0.1f, 0.4f,
+        -0.5f, 0.2f, 0.6f, -0.1f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = attention.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "MultiHeadAttention grad_input");
+    const auto attention_grads = attention.GetParameters();
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto bwd_input = torch::from_blob(
+        const_cast<float*>(input_values.data()), {1, 2, 4}, torch::kFloat32).clone();
+    bwd_input.set_requires_grad(true);
+    auto bwd_wq = torch::from_blob(
+        const_cast<float*>(W_q.data()), {4, 4}, torch::kFloat32).clone();
+    bwd_wq.set_requires_grad(true);
+    auto bwd_wk = torch::from_blob(
+        const_cast<float*>(W_k.data()), {4, 4}, torch::kFloat32).clone();
+    bwd_wk.set_requires_grad(true);
+    auto bwd_wv = torch::from_blob(
+        const_cast<float*>(W_v.data()), {4, 4}, torch::kFloat32).clone();
+    bwd_wv.set_requires_grad(true);
+    auto bwd_wo = torch::from_blob(
+        const_cast<float*>(W_o.data()), {4, 4}, torch::kFloat32).clone();
+    bwd_wo.set_requires_grad(true);
+    auto bwd_bq = torch::from_blob(
+        const_cast<float*>(b_q.data()), {4}, torch::kFloat32).clone();
+    bwd_bq.set_requires_grad(true);
+    auto bwd_bk = torch::from_blob(
+        const_cast<float*>(b_k.data()), {4}, torch::kFloat32).clone();
+    bwd_bk.set_requires_grad(true);
+    auto bwd_bv = torch::from_blob(
+        const_cast<float*>(b_v.data()), {4}, torch::kFloat32).clone();
+    bwd_bv.set_requires_grad(true);
+    auto bwd_bo = torch::from_blob(
+        const_cast<float*>(b_o.data()), {4}, torch::kFloat32).clone();
+    bwd_bo.set_requires_grad(true);
+    auto bwd_q = torch::linear(bwd_input, bwd_wq, bwd_bq)
+                     .view({1, 2, 2, 2})
+                     .transpose(1, 2);
+    auto bwd_k = torch::linear(bwd_input, bwd_wk, bwd_bk)
+                     .view({1, 2, 2, 2})
+                     .transpose(1, 2);
+    auto bwd_v = torch::linear(bwd_input, bwd_wv, bwd_bv)
+                     .view({1, 2, 2, 2})
+                     .transpose(1, 2);
+    auto bwd_scores = torch::matmul(bwd_q, bwd_k.transpose(-2, -1)) /
+                      std::sqrt(2.0f);
+    auto bwd_weights = torch::softmax(bwd_scores, -1);
+    auto bwd_context = torch::matmul(bwd_weights, bwd_v)
+                           .transpose(1, 2)
+                           .contiguous()
+                           .view({1, 2, 4});
+    auto bwd_output = torch::linear(bwd_context, bwd_wo, bwd_bo);
+    auto torch_grad_output = torch::from_blob(
+        const_cast<float*>(grad_output_values.data()), {1, 2, 4},
+        torch::kFloat32).clone();
+    (bwd_output * torch_grad_output).sum().backward();
+    const std::vector<float> expected_grad_input =
+        TensorToVector(bwd_input.grad());
+    const std::vector<float> expected_grad_W_q =
+        TensorToVector(bwd_wq.grad());
+    const std::vector<float> expected_grad_W_k =
+        TensorToVector(bwd_wk.grad());
+    const std::vector<float> expected_grad_W_v =
+        TensorToVector(bwd_wv.grad());
+    const std::vector<float> expected_grad_W_o =
+        TensorToVector(bwd_wo.grad());
+    const std::vector<float> expected_grad_b_q =
+        TensorToVector(bwd_bq.grad());
+    const std::vector<float> expected_grad_b_k =
+        TensorToVector(bwd_bk.grad());
+    const std::vector<float> expected_grad_b_v =
+        TensorToVector(bwd_bv.grad());
+    const std::vector<float> expected_grad_b_o =
+        TensorToVector(bwd_bo.grad());
+#else
+    const float expected_grad_input[] = {
+        0.0377994f, -0.0126506f, 0.0103623f, -0.0218529f,
+        0.0380220f, -0.0143080f, 0.0124266f, -0.0212364f,
+    };
+    const float expected_grad_W_q[] = {
+        0.000858584f, -0.000767066f, 0.001041620f, 0.002184736f,
+        0.000303807f, -0.000271423f, 0.000368573f, 0.000773061f,
+        0.000368031f, -0.000374570f, 0.000354954f, 0.000825334f,
+        -0.000319423f, 0.000325098f, -0.000308073f, -0.000716328f,
+    };
+    const float expected_grad_W_k[] = {
+        -0.000235253f, 0.000282303f, -0.000141152f, -0.000423455f,
+        -0.000002303f, 0.000002763f, -0.000001382f, -0.000004145f,
+        -0.000209541f, 0.000251449f, -0.000125724f, -0.000377173f,
+        -0.000664802f, 0.000797762f, -0.000398881f, -0.001196643f,
+    };
+    const float expected_grad_W_v[] = {
+        -0.004715217f, 0.017558262f, 0.020970875f, 0.020412616f,
+        0.007671213f, -0.031605452f, -0.040197276f, -0.040591821f,
+        -0.012477780f, 0.046473339f, 0.055513337f, 0.054040000f,
+        -0.002703646f, 0.013044374f, 0.017977811f, 0.018933438f,
+    };
+    const float expected_grad_W_o[] = {
+        -0.006233417f, -0.016222928f, -0.008527144f, -0.012705697f,
+        0.000313413f, -0.000118403f, 0.000012702f, 0.000330216f,
+        0.020014834f, 0.057461064f, 0.029771972f, 0.042571198f,
+        0.008018119f, 0.024837602f, 0.012736734f, 0.017655127f,
+    };
+    const float expected_grad_b_q[] = {
+        0.001880249f, 0.000665319f, 0.000479054f, -0.000415783f,
+    };
+    const float expected_grad_b_k[] = {
+        0.0f, 0.0f, 0.0f, 0.0f,
+    };
+    const float expected_grad_b_v[] = {
+        0.085000023f, -0.159999996f, 0.225000024f, 0.069999993f,
+    };
+    const float expected_grad_b_o[] = {
+        -0.199999988f, 0.0f, 0.700000048f, 0.300000012f,
+    };
+#endif
+
+    const auto check_tensor_values =
+        [](const cyxwiz::Tensor& tensor,
+           const auto& expected,
+           float tolerance,
+           const std::string& message) {
+            const float* data = tensor.Data<float>();
+            for (size_t i = 0; i < tensor.NumElements(); ++i) {
+                CheckNear(data[i], expected[i], tolerance, message);
+            }
+        };
+
+    check_tensor_values(grad_input, expected_grad_input, 1e-5f,
+                        "MultiHeadAttention grad_input matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_W_q"), expected_grad_W_q,
+                        1e-5f, "MultiHeadAttention grad_W_q matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_W_k"), expected_grad_W_k,
+                        1e-5f, "MultiHeadAttention grad_W_k matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_W_v"), expected_grad_W_v,
+                        1e-5f, "MultiHeadAttention grad_W_v matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_W_o"), expected_grad_W_o,
+                        1e-5f, "MultiHeadAttention grad_W_o matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_b_q"), expected_grad_b_q,
+                        1e-5f, "MultiHeadAttention grad_b_q matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_b_k"), expected_grad_b_k,
+                        1e-5f, "MultiHeadAttention grad_b_k matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_b_v"), expected_grad_b_v,
+                        1e-5f, "MultiHeadAttention grad_b_v matches PyTorch");
+    check_tensor_values(attention_grads.at("grad_b_o"), expected_grad_b_o,
+                        1e-5f, "MultiHeadAttention grad_b_o matches PyTorch");
+
+    const std::vector<float> mask_values = {
+        0.0f, -1.0e9f,
+        0.0f, 0.0f,
+    };
+    const cyxwiz::Tensor mask({2, 2}, mask_values.data(),
+                              cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor masked_output =
+        attention.Forward(input, input, input, &mask);
+    CheckShape(masked_output, {1, 2, 4}, "Masked MultiHeadAttention output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_mask = torch::from_blob(
+        const_cast<float*>(mask_values.data()), {1, 1, 2, 2},
+        torch::kFloat32).clone();
+    auto masked_weights = torch::softmax(scores + torch_mask, -1);
+    auto masked_context = torch::matmul(masked_weights, v)
+                              .transpose(1, 2)
+                              .contiguous()
+                              .view({1, 2, 4});
+    const std::vector<float> expected_masked_output =
+        TensorToVector(torch::linear(masked_context, torch_wo, torch_bo));
+    const std::vector<float> expected_masked_weights =
+        TensorToVector(masked_weights.permute({2, 3, 0, 1}).contiguous());
+#else
+    const float expected_masked_output[] = {
+        0.0385000f, 0.0217500f, -0.0175000f, 0.0770000f,
+        0.0401521f, 0.0470527f, -0.0239654f, 0.0566013f,
+    };
+    const float expected_masked_weights[] = {
+        1.0f, 1.0f, 0.0f, 0.0f,
+        0.5058510f, 0.4919088f, 0.4941490f, 0.5080912f,
+    };
+#endif
+    const float* masked_out = masked_output.Data<float>();
+    for (size_t i = 0; i < masked_output.NumElements(); ++i) {
+        CheckNear(masked_out[i], expected_masked_output[i], 1e-5f,
+                  "Masked MultiHeadAttention output matches PyTorch");
+    }
+
+    const cyxwiz::Tensor masked_weights_tensor =
+        attention.GetAttentionWeights();
+    CheckShape(masked_weights_tensor, {2, 2, 1, 2},
+               "Masked MultiHeadAttention weights");
+    const float* masked_weight_data = masked_weights_tensor.Data<float>();
+    for (size_t i = 0; i < masked_weights_tensor.NumElements(); ++i) {
+        CheckNear(masked_weight_data[i], expected_masked_weights[i], 1e-5f,
+                  "Masked MultiHeadAttention weights match PyTorch");
+    }
+
+    const cyxwiz::Tensor masked_grad_input = attention.Backward(grad_output);
+    CheckShape(masked_grad_input, {1, 2, 4},
+               "Masked MultiHeadAttention grad_input");
+    const auto masked_attention_grads = attention.GetParameters();
+
+    const float expected_masked_grad_input[] = {
+        0.0797419f, -0.0032785f, -0.0039199f, -0.0177325f,
+        -0.0039559f, -0.0245402f, 0.0266122f, -0.0251867f,
+    };
+    const float expected_masked_grad_W_q[] = {
+        0.0002895f, -0.0004825f, -0.0000965f, 0.0001930f,
+        0.0001024f, -0.0001707f, -0.0000341f, 0.0000683f,
+        0.0001633f, -0.0002722f, -0.0000544f, 0.0001089f,
+        -0.0001418f, 0.0002363f, 0.0000473f, -0.0000945f,
+    };
+    const float expected_masked_grad_W_k[] = {
+        -0.0001039f, 0.0001247f, -0.0000624f, -0.0001871f,
+        -0.0001336f, 0.0001603f, -0.0000802f, -0.0002405f,
+        0.0001284f, -0.0001541f, 0.0000770f, 0.0002311f,
+        -0.0000565f, 0.0000678f, -0.0000339f, -0.0001017f,
+    };
+    const float expected_masked_grad_W_v[] = {
+        0.0466489f, -0.0440787f, 0.0517894f, 0.1128681f,
+        -0.0023511f, -0.0195787f, -0.0462106f, -0.0586319f,
+        -0.0248626f, 0.0613351f, 0.0480825f, 0.0317474f,
+        0.0394046f, -0.0374855f, 0.0432427f, 0.0947282f,
+    };
+    const float expected_masked_grad_W_o[] = {
+        0.0275918f, -0.0290013f, -0.0092702f, -0.0320259f,
+        -0.0222367f, 0.0084005f, 0.0005081f, 0.0132104f,
+        0.0312899f, 0.0532016f, 0.0295243f, 0.0361311f,
+        0.0531184f, 0.0077997f, 0.0117460f, -0.0081052f,
+    };
+    const float expected_masked_grad_b_q[] = {
+        -0.0009651f, -0.0003415f, -0.0005444f, 0.0004725f,
+    };
+    const float expected_masked_grad_b_k[] = {
+        0.0f, 0.0f, 0.0f, 0.0f,
+    };
+    const float expected_masked_grad_b_v[] = {
+        0.0850000f, -0.1600000f, 0.2250000f, 0.0700000f,
+    };
+    const float expected_masked_grad_b_o[] = {
+        -0.2000000f, 0.0000000f, 0.7000000f, 0.3000000f,
+    };
+
+    check_tensor_values(masked_grad_input, expected_masked_grad_input, 1e-5f,
+                        "Masked MultiHeadAttention grad_input matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_q"),
+                        expected_masked_grad_W_q, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_q matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_k"),
+                        expected_masked_grad_W_k, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_k matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_v"),
+                        expected_masked_grad_W_v, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_v matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_o"),
+                        expected_masked_grad_W_o, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_o matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_q"),
+                        expected_masked_grad_b_q, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_q matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_k"),
+                        expected_masked_grad_b_k, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_k matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_v"),
+                        expected_masked_grad_b_v, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_v matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_o"),
+                        expected_masked_grad_b_o, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_o matches PyTorch");
+}
+
+void TestMultiHeadAttentionCrossAttentionParity() {
+    const int embed_dim = 4;
+    const int num_heads = 2;
+    const std::vector<float> query_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> key_value_values = {
+        0.1f, 0.0f, -0.2f, 0.3f,
+        0.5f, -0.4f, 0.2f, 0.1f,
+        -0.1f, 0.3f, 0.6f, -0.5f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+
+    cyxwiz::MultiHeadAttentionLayer attention(embed_dim, num_heads, 0.0f, true);
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor query({1, 2, 4}, query_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor key({1, 3, 4}, key_value_values.data(),
+                             cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor value({1, 3, 4}, key_value_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = attention.Forward(query, key, value, nullptr);
+    CheckShape(output, {1, 2, 4}, "Cross-attention output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_query = torch::from_blob(
+        const_cast<float*>(query_values.data()), {1, 2, 4}, torch::kFloat32).clone();
+    auto torch_key = torch::from_blob(
+        const_cast<float*>(key_value_values.data()), {1, 3, 4}, torch::kFloat32).clone();
+    auto torch_value = torch::from_blob(
+        const_cast<float*>(key_value_values.data()), {1, 3, 4}, torch::kFloat32).clone();
+    auto torch_wq = torch::from_blob(
+        const_cast<float*>(W_q.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wk = torch::from_blob(
+        const_cast<float*>(W_k.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wv = torch::from_blob(
+        const_cast<float*>(W_v.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wo = torch::from_blob(
+        const_cast<float*>(W_o.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_bq = torch::from_blob(
+        const_cast<float*>(b_q.data()), {4}, torch::kFloat32).clone();
+    auto torch_bk = torch::from_blob(
+        const_cast<float*>(b_k.data()), {4}, torch::kFloat32).clone();
+    auto torch_bv = torch::from_blob(
+        const_cast<float*>(b_v.data()), {4}, torch::kFloat32).clone();
+    auto torch_bo = torch::from_blob(
+        const_cast<float*>(b_o.data()), {4}, torch::kFloat32).clone();
+    auto q = torch::linear(torch_query, torch_wq, torch_bq)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto k = torch::linear(torch_key, torch_wk, torch_bk)
+                 .view({1, 3, 2, 2})
+                 .transpose(1, 2);
+    auto v = torch::linear(torch_value, torch_wv, torch_bv)
+                 .view({1, 3, 2, 2})
+                 .transpose(1, 2);
+    auto scores = torch::matmul(q, k.transpose(-2, -1)) / std::sqrt(2.0f);
+    auto weights = torch::softmax(scores, -1);
+    auto context = torch::matmul(weights, v)
+                       .transpose(1, 2)
+                       .contiguous()
+                       .view({1, 2, 4});
+    const std::vector<float> expected_output =
+        TensorToVector(torch::linear(context, torch_wo, torch_bo));
+    const std::vector<float> expected_weights =
+        TensorToVector(weights.permute({2, 3, 0, 1}).contiguous());
+#else
+    const float expected_output[] = {
+        0.0239670f, 0.0031000f, 0.0147798f, 0.0678257f,
+        0.0238973f, 0.0028428f, 0.0151240f, 0.0679453f,
+    };
+    const float expected_weights[] = {
+        0.3335101f, 0.3332717f,
+        0.3331566f, 0.3288474f,
+        0.3333333f, 0.3378809f,
+        0.3345418f, 0.3302163f,
+        0.3365110f, 0.3309877f,
+        0.3289472f, 0.3387960f,
+    };
+#endif
+    const float* out = output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        CheckNear(out[i], expected_output[i], 1e-5f,
+                  "Cross-attention output matches PyTorch");
+    }
+    const cyxwiz::Tensor weights_tensor = attention.GetAttentionWeights();
+    CheckShape(weights_tensor, {2, 3, 1, 2}, "Cross-attention weights");
+    const float* weight_data = weights_tensor.Data<float>();
+    for (size_t i = 0; i < weights_tensor.NumElements(); ++i) {
+        CheckNear(weight_data[i], expected_weights[i], 1e-5f,
+                  "Cross-attention weights match PyTorch");
+    }
+
+    const std::vector<float> padding_mask_values = {
+        0.0f, 0.0f, -1.0e9f,
+        0.0f, 0.0f, -1.0e9f,
+    };
+    const cyxwiz::Tensor padding_mask({2, 3}, padding_mask_values.data(),
+                                      cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor masked_output =
+        attention.Forward(query, key, value, &padding_mask);
+    CheckShape(masked_output, {1, 2, 4},
+               "Cross-attention padding-mask output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_padding_mask = torch::from_blob(
+        const_cast<float*>(padding_mask_values.data()), {1, 1, 2, 3},
+        torch::kFloat32).clone();
+    auto masked_weights = torch::softmax(scores + torch_padding_mask, -1);
+    auto masked_context = torch::matmul(masked_weights, v)
+                              .transpose(1, 2)
+                              .contiguous()
+                              .view({1, 2, 4});
+    const std::vector<float> expected_masked_output =
+        TensorToVector(torch::linear(masked_context, torch_wo, torch_bo));
+    const std::vector<float> expected_masked_weights =
+        TensorToVector(masked_weights.permute({2, 3, 0, 1}).contiguous());
+#else
+    const float expected_masked_output[] = {
+        0.0324154f, -0.0232690f, 0.0081484f, 0.0886260f,
+        0.0322481f, -0.0233326f, 0.0083288f, 0.0885547f,
+    };
+    const float expected_masked_weights[] = {
+        0.5002651f, 0.5033410f,
+        0.4997348f, 0.4966590f,
+        0.0f, 0.0f,
+        0.4985327f, 0.4994166f,
+        0.5014672f, 0.5005834f,
+        0.0f, 0.0f,
+    };
+#endif
+    const float* masked_out = masked_output.Data<float>();
+    for (size_t i = 0; i < masked_output.NumElements(); ++i) {
+        CheckNear(masked_out[i], expected_masked_output[i], 1e-5f,
+                  "Cross-attention padding-mask output matches PyTorch");
+    }
+    const cyxwiz::Tensor masked_weights_tensor =
+        attention.GetAttentionWeights();
+    CheckShape(masked_weights_tensor, {2, 3, 1, 2},
+               "Cross-attention padding-mask weights");
+    const float* masked_weight_data = masked_weights_tensor.Data<float>();
+    for (size_t i = 0; i < masked_weights_tensor.NumElements(); ++i) {
+        CheckNear(masked_weight_data[i], expected_masked_weights[i], 1e-5f,
+                  "Cross-attention padding-mask weights match PyTorch");
+    }
+
+    (void)attention.Forward(query, key, value, nullptr);
+
+    const std::vector<float> grad_output_values = {
+        0.25f, -0.15f, 0.05f, 0.35f,
+        -0.45f, 0.30f, 0.55f, -0.05f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_query = attention.Backward(grad_output);
+    const cyxwiz::Tensor grad_key = attention.GetLastKeyGradient();
+    const cyxwiz::Tensor grad_value = attention.GetLastValueGradient();
+    CheckShape(grad_query, {1, 2, 4}, "Cross-attention grad_query");
+    CheckShape(grad_key, {1, 3, 4}, "Cross-attention grad_key");
+    CheckShape(grad_value, {1, 3, 4}, "Cross-attention grad_value");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto bwd_query = torch::from_blob(
+        const_cast<float*>(query_values.data()), {1, 2, 4}, torch::kFloat32).clone();
+    bwd_query.set_requires_grad(true);
+    auto bwd_key = torch::from_blob(
+        const_cast<float*>(key_value_values.data()), {1, 3, 4}, torch::kFloat32).clone();
+    bwd_key.set_requires_grad(true);
+    auto bwd_value = torch::from_blob(
+        const_cast<float*>(key_value_values.data()), {1, 3, 4}, torch::kFloat32).clone();
+    bwd_value.set_requires_grad(true);
+    auto bwd_wq = torch_wq.clone();
+    bwd_wq.set_requires_grad(true);
+    auto bwd_wk = torch_wk.clone();
+    bwd_wk.set_requires_grad(true);
+    auto bwd_wv = torch_wv.clone();
+    bwd_wv.set_requires_grad(true);
+    auto bwd_wo = torch_wo.clone();
+    bwd_wo.set_requires_grad(true);
+    auto bwd_bq = torch_bq.clone();
+    bwd_bq.set_requires_grad(true);
+    auto bwd_bk = torch_bk.clone();
+    bwd_bk.set_requires_grad(true);
+    auto bwd_bv = torch_bv.clone();
+    bwd_bv.set_requires_grad(true);
+    auto bwd_bo = torch_bo.clone();
+    bwd_bo.set_requires_grad(true);
+    auto bwd_q = torch::linear(bwd_query, bwd_wq, bwd_bq)
+                     .view({1, 2, 2, 2})
+                     .transpose(1, 2);
+    auto bwd_k = torch::linear(bwd_key, bwd_wk, bwd_bk)
+                     .view({1, 3, 2, 2})
+                     .transpose(1, 2);
+    auto bwd_v = torch::linear(bwd_value, bwd_wv, bwd_bv)
+                     .view({1, 3, 2, 2})
+                     .transpose(1, 2);
+    auto bwd_weights = torch::softmax(
+        torch::matmul(bwd_q, bwd_k.transpose(-2, -1)) / std::sqrt(2.0f),
+        -1);
+    auto bwd_context = torch::matmul(bwd_weights, bwd_v)
+                           .transpose(1, 2)
+                           .contiguous()
+                           .view({1, 2, 4});
+    auto bwd_output = torch::linear(bwd_context, bwd_wo, bwd_bo);
+    auto torch_grad_output = torch::from_blob(
+        const_cast<float*>(grad_output_values.data()), {1, 2, 4},
+        torch::kFloat32).clone();
+    (bwd_output * torch_grad_output).sum().backward();
+    const std::vector<float> expected_grad_query =
+        TensorToVector(bwd_query.grad());
+    const std::vector<float> expected_grad_key =
+        TensorToVector(bwd_key.grad());
+    const std::vector<float> expected_grad_value =
+        TensorToVector(bwd_value.grad());
+#else
+    const float expected_grad_query[] = {
+        0.000213297f, 0.000300431f, 0.000033963f, -0.000018570f,
+        -0.000417809f, 0.000124337f, 0.000416885f, 0.000023726f,
+    };
+    const float expected_grad_key[] = {
+        -0.000122985f, 0.000073003f, 0.000259061f, 0.000623961f,
+        0.000026629f, -0.000105136f, -0.000171070f, -0.000241730f,
+        0.000096356f, 0.000032132f, -0.000087990f, -0.000382232f,
+    };
+    const float expected_grad_value[] = {
+        0.019096673f, -0.003906057f, 0.008244991f, -0.011004903f,
+        0.018997787f, -0.004122680f, 0.008406989f, -0.011105428f,
+        0.019280553f, -0.003846259f, 0.008723017f, -0.011139668f,
+    };
+#endif
+    const auto check_tensor_values =
+        [](const cyxwiz::Tensor& tensor,
+           const auto& expected,
+           float tolerance,
+           const std::string& message) {
+            const float* data = tensor.Data<float>();
+            for (size_t i = 0; i < tensor.NumElements(); ++i) {
+                CheckNear(data[i], expected[i], tolerance, message);
+            }
+        };
+    check_tensor_values(grad_query, expected_grad_query, 1e-5f,
+                        "Cross-attention grad_query matches PyTorch");
+    check_tensor_values(grad_key, expected_grad_key, 1e-5f,
+                        "Cross-attention grad_key matches PyTorch");
+    check_tensor_values(grad_value, expected_grad_value, 1e-5f,
+                        "Cross-attention grad_value matches PyTorch");
+}
+
+void TestLayerNormParity() {
+    const size_t outer_size = 2;
+    const size_t normalized_size = 4;
+    const float epsilon = 1.0e-5f;
+    const std::vector<float> input = {
+        1.0f, 2.0f, 3.0f, 4.0f,
+        -1.0f, 0.0f, 1.0f, 2.0f,
+    };
+    const std::vector<float> gamma = {
+        1.0f, 1.5f, -0.5f, 2.0f,
+    };
+    const std::vector<float> beta = {
+        0.1f, -0.2f, 0.3f, 0.4f,
+    };
+
+    const auto output = cyxwiz::LayerNormForwardCpu(
+        input,
+        outer_size,
+        normalized_size,
+        gamma,
+        beta,
+        epsilon);
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_input = torch::from_blob(
+        const_cast<float*>(input.data()), {2, 4}, torch::kFloat32).clone();
+    auto torch_gamma = torch::from_blob(
+        const_cast<float*>(gamma.data()), {4}, torch::kFloat32).clone();
+    auto torch_beta = torch::from_blob(
+        const_cast<float*>(beta.data()), {4}, torch::kFloat32).clone();
+    const std::vector<float> expected = TensorToVector(
+        torch::layer_norm(
+            torch_input,
+            {static_cast<int64_t>(normalized_size)},
+            torch_gamma,
+            torch_beta,
+            epsilon));
+#else
+    const float expected[] = {
+        -1.2416356f, -0.8708178f, 0.0763941f, 3.0832713f,
+        -1.2416356f, -0.8708178f, 0.0763941f, 3.0832713f,
+    };
+#endif
+    Check(output.size() == input.size(), "LayerNorm output size");
+    for (size_t i = 0; i < output.size(); ++i) {
+        CheckNear(output[i], expected[i], 1e-5f,
+                  "LayerNorm forward matches PyTorch");
+    }
+
+    const std::vector<float> grad_output = {
+        0.2f, -0.1f, 0.3f, 0.4f,
+        -0.5f, 0.6f, -0.2f, 0.1f,
+    };
+    const auto backward = cyxwiz::LayerNormBackwardCpu(
+        input,
+        grad_output,
+        outer_size,
+        normalized_size,
+        gamma,
+        epsilon);
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_input_for_backward = torch::from_blob(
+        const_cast<float*>(input.data()), {2, 4}, torch::kFloat32).clone();
+    torch_input_for_backward.set_requires_grad(true);
+    auto torch_gamma_for_backward = torch::from_blob(
+        const_cast<float*>(gamma.data()), {4}, torch::kFloat32).clone();
+    torch_gamma_for_backward.set_requires_grad(true);
+    auto torch_beta_for_backward = torch::from_blob(
+        const_cast<float*>(beta.data()), {4}, torch::kFloat32).clone();
+    torch_beta_for_backward.set_requires_grad(true);
+    auto torch_grad_output = torch::from_blob(
+        const_cast<float*>(grad_output.data()), {2, 4}, torch::kFloat32).clone();
+    auto torch_backward_output = torch::layer_norm(
+        torch_input_for_backward,
+        {static_cast<int64_t>(normalized_size)},
+        torch_gamma_for_backward,
+        torch_beta_for_backward,
+        epsilon);
+    (torch_backward_output * torch_grad_output).sum().backward();
+    const std::vector<float> expected_grad_input =
+        TensorToVector(torch_input_for_backward.grad());
+    const std::vector<float> expected_grad_gamma =
+        TensorToVector(torch_gamma_for_backward.grad());
+    const std::vector<float> expected_grad_beta =
+        TensorToVector(torch_beta_for_backward.grad());
+#else
+    const float expected_grad_input[] = {
+        0.2638530f, -0.2101902f, -0.3711852f, 0.3175223f,
+        -0.4293247f, 0.7065942f, -0.1252188f, -0.1520506f,
+    };
+    const float expected_grad_gamma[] = {
+        0.4024906f, -0.2236059f, 0.0447212f, 0.6708177f,
+    };
+    const float expected_grad_beta[] = {
+        -0.3f, 0.5f, 0.1f, 0.5f,
+    };
+#endif
+    Check(backward.grad_input.size() == input.size(),
+          "LayerNorm grad_input size");
+    for (size_t i = 0; i < backward.grad_input.size(); ++i) {
+        CheckNear(backward.grad_input[i], expected_grad_input[i], 1e-5f,
+                  "LayerNorm grad_input matches PyTorch");
+    }
+    Check(backward.grad_gamma.size() == normalized_size,
+          "LayerNorm grad_gamma size");
+    Check(backward.grad_beta.size() == normalized_size,
+          "LayerNorm grad_beta size");
+    for (size_t i = 0; i < normalized_size; ++i) {
+        CheckNear(backward.grad_gamma[i], expected_grad_gamma[i], 1e-5f,
+                  "LayerNorm grad_gamma matches PyTorch");
+        CheckNear(backward.grad_beta[i], expected_grad_beta[i], 1e-5f,
+                  "LayerNorm grad_beta matches PyTorch");
+    }
+}
+
+void TestTransformerEncoderForwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::TransformerEncoderModule encoder(4, 2, 3, 0.0f, false);
+    encoder.SetTraining(false);
+    encoder.SetParameters({
+        {"self_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"norm1.gamma", cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm1.beta", cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32)},
+        {"norm2.gamma", cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm2.beta", cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32)},
+        {"linear1.weights", cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear1.bias", cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32)},
+        {"linear2.weights", cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear2.bias", cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = encoder.Forward(input);
+    CheckShape(output, {1, 2, 4}, "TransformerEncoder output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_input = torch::from_blob(
+        const_cast<float*>(input_values.data()), {1, 2, 4}, torch::kFloat32).clone();
+    auto torch_wq = torch::from_blob(
+        const_cast<float*>(W_q.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wk = torch::from_blob(
+        const_cast<float*>(W_k.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wv = torch::from_blob(
+        const_cast<float*>(W_v.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wo = torch::from_blob(
+        const_cast<float*>(W_o.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_bq = torch::from_blob(
+        const_cast<float*>(b_q.data()), {4}, torch::kFloat32).clone();
+    auto torch_bk = torch::from_blob(
+        const_cast<float*>(b_k.data()), {4}, torch::kFloat32).clone();
+    auto torch_bv = torch::from_blob(
+        const_cast<float*>(b_v.data()), {4}, torch::kFloat32).clone();
+    auto torch_bo = torch::from_blob(
+        const_cast<float*>(b_o.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm1_gamma = torch::from_blob(
+        const_cast<float*>(norm1_gamma.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm1_beta = torch::from_blob(
+        const_cast<float*>(norm1_beta.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm2_gamma = torch::from_blob(
+        const_cast<float*>(norm2_gamma.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm2_beta = torch::from_blob(
+        const_cast<float*>(norm2_beta.data()), {4}, torch::kFloat32).clone();
+    auto torch_linear1_weights = torch::from_blob(
+        const_cast<float*>(linear1_weights.data()), {3, 4}, torch::kFloat32).clone();
+    auto torch_linear1_bias = torch::from_blob(
+        const_cast<float*>(linear1_bias.data()), {3}, torch::kFloat32).clone();
+    auto torch_linear2_weights = torch::from_blob(
+        const_cast<float*>(linear2_weights.data()), {4, 3}, torch::kFloat32).clone();
+    auto torch_linear2_bias = torch::from_blob(
+        const_cast<float*>(linear2_bias.data()), {4}, torch::kFloat32).clone();
+
+    auto q = torch::linear(torch_input, torch_wq, torch_bq)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto k = torch::linear(torch_input, torch_wk, torch_bk)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto v = torch::linear(torch_input, torch_wv, torch_bv)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto scores = torch::matmul(q, k.transpose(-2, -1)) / std::sqrt(2.0f);
+    auto weights = torch::softmax(scores, -1);
+    auto context = torch::matmul(weights, v)
+                       .transpose(1, 2)
+                       .contiguous()
+                       .view({1, 2, 4});
+    auto attn_output = torch::linear(context, torch_wo, torch_bo);
+    auto norm1_output = torch::layer_norm(
+        torch_input + attn_output,
+        {4},
+        torch_norm1_gamma,
+        torch_norm1_beta,
+        1.0e-5);
+    auto ffn_hidden = torch::relu(torch::linear(
+        norm1_output.view({2, 4}),
+        torch_linear1_weights,
+        torch_linear1_bias));
+    auto ffn_output = torch::linear(
+        ffn_hidden,
+        torch_linear2_weights,
+        torch_linear2_bias).view({1, 2, 4});
+    const std::vector<float> expected_output = TensorToVector(
+        torch::layer_norm(
+            norm1_output + ffn_output,
+            {4},
+            torch_norm2_gamma,
+            torch_norm2_beta,
+            1.0e-5));
+#else
+    const float expected_output[] = {
+        -0.1815133f, -1.3401134f, 0.1597225f, 1.0196487f,
+        -0.8367455f, 1.6354986f, 0.0746440f, -0.4403224f,
+    };
+#endif
+    const float* out = output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        CheckNear(out[i], expected_output[i], 1e-5f,
+                  "TransformerEncoder forward matches PyTorch primitive composition");
+    }
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = encoder.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "TransformerEncoder grad_input");
+
+    // PyTorch-derived oracle constants for the primitive composition above.
+    const float expected_grad_input[] = {
+        0.2585771f, -0.2199569f, 0.1394564f, -0.1617069f,
+        0.0600003f, 0.1246955f, -0.3394983f, 0.1705608f,
+    };
+    const float expected_grad_wq[] = {
+        0.0001625f, -0.0001091f, 0.0002692f, 0.0005010f,
+        0.0000575f, -0.0000386f, 0.0000953f, 0.0001773f,
+        0.0000253f, 0.0000229f, 0.0001217f, 0.0001749f,
+        -0.0000220f, -0.0000199f, -0.0001056f, -0.0001518f,
+    };
+    const float expected_grad_wv[] = {
+        -0.0029881f, 0.0121630f, 0.0153615f, 0.0154516f,
+        -0.0015037f, 0.0069265f, 0.0093419f, 0.0097326f,
+        0.0052436f, -0.0195085f, -0.0232862f, -0.0226579f,
+        -0.0032878f, 0.0132015f, 0.0165394f, 0.0165609f,
+    };
+    const float expected_grad_wo[] = {
+        0.0084128f, 0.0252138f, 0.0129867f, 0.0182445f,
+        -0.0030466f, -0.0098400f, -0.0050188f, -0.0068413f,
+        -0.0053650f, -0.0145081f, -0.0075821f, -0.0111158f,
+        -0.0000012f, -0.0008657f, -0.0003858f, -0.0002874f,
+    };
+    const float expected_grad_norm1_gamma[] = {
+        -0.0425924f, 0.1467121f, -0.0000671f, -0.0981389f,
+    };
+    const float expected_grad_norm2_gamma[] = {
+        -0.0006644f, 0.3040228f, 0.0007235f, -0.0691462f,
+    };
+    const float expected_grad_linear1_weights[] = {
+        -0.0071501f, -0.0349480f, 0.0041177f, 0.0409809f,
+        -0.0159304f, 0.0273475f, 0.0014425f, -0.0127954f,
+        -0.0022624f, -0.0110579f, 0.0013029f, 0.0129668f,
+    };
+    const float expected_grad_linear2_weights[] = {
+        0.0276620f, 0.0138232f, 0.0092411f,
+        -0.0231685f, 0.0233416f, -0.0077399f,
+        0.0157923f, -0.0655653f, 0.0052758f,
+        -0.0202858f, 0.0284005f, -0.0067769f,
+    };
+    const float expected_grad_linear2_bias[] = {
+        0.0897864f, -0.0183862f, -0.0682576f, -0.0031425f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "TransformerEncoder grad_input matches PyTorch");
+    const auto encoder_gradients = encoder.GetGradients();
+    CheckGradientNear(encoder_gradients, "self_attn.W_q", expected_grad_wq,
+                      2e-4f, "TransformerEncoder grad_W_q matches PyTorch");
+    CheckGradientNear(encoder_gradients, "self_attn.W_v", expected_grad_wv,
+                      2e-4f, "TransformerEncoder grad_W_v matches PyTorch");
+    CheckGradientNear(encoder_gradients, "self_attn.W_o", expected_grad_wo,
+                      2e-4f, "TransformerEncoder grad_W_o matches PyTorch");
+    CheckGradientNear(encoder_gradients, "norm1.gamma",
+                      expected_grad_norm1_gamma, 2e-4f,
+                      "TransformerEncoder grad_norm1_gamma matches PyTorch");
+    CheckGradientNear(encoder_gradients, "norm2.gamma",
+                      expected_grad_norm2_gamma, 2e-4f,
+                      "TransformerEncoder grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(encoder_gradients, "linear1.weights",
+                      expected_grad_linear1_weights, 2e-4f,
+                      "TransformerEncoder grad_linear1_weights matches PyTorch");
+    CheckGradientNear(encoder_gradients, "linear2.weights",
+                      expected_grad_linear2_weights, 2e-4f,
+                      "TransformerEncoder grad_linear2_weights matches PyTorch");
+    CheckGradientNear(encoder_gradients, "linear2.bias",
+                      expected_grad_linear2_bias, 2e-4f,
+                      "TransformerEncoder grad_linear2_bias matches PyTorch");
+}
+
+void TestTransformerEncoderTwoBlockStackBackwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::SequentialModel stack;
+    stack.Add<cyxwiz::TransformerEncoderModule>(4, 2, 3, 0.0f, false);
+    stack.Add<cyxwiz::TransformerEncoderModule>(4, 2, 3, 0.0f, false);
+    stack.SetTraining(false);
+
+    std::map<std::string, cyxwiz::Tensor> params;
+    const auto add_block_params = [&](const std::string& prefix) {
+        params[prefix + ".self_attn.W_q"] = cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_k"] = cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_v"] = cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_o"] = cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_q"] = cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_k"] = cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_v"] = cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_o"] = cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.gamma"] = cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.beta"] = cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.gamma"] = cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.beta"] = cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.weights"] = cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.bias"] = cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.weights"] = cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.bias"] = cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32);
+    };
+    add_block_params("layer0");
+    add_block_params("layer1");
+    stack.SetParameters(params);
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = stack.Forward(input);
+    CheckShape(output, {1, 2, 4}, "Two-block TransformerEncoder stack output");
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = stack.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "Two-block TransformerEncoder stack grad_input");
+
+    const float expected_grad_input[] = {
+        0.2277846f, -0.2145388f, 0.1669143f, -0.1662447f,
+        0.0645579f, 0.1177802f, -0.3197498f, 0.1507031f,
+    };
+    const float expected_layer0_grad_wq[] = {
+        0.0001576f, -0.0001128f, 0.0002470f, 0.0004688f,
+        0.0000558f, -0.0000399f, 0.0000874f, 0.0001659f,
+        0.0000182f, 0.0000258f, 0.0001062f, 0.0001485f,
+        -0.0000158f, -0.0000224f, -0.0000922f, -0.0001289f,
+    };
+    const float expected_layer1_grad_wq[] = {
+        0.0010023f, -0.0052515f, 0.0001894f, 0.0026937f,
+        0.0002514f, -0.0013171f, 0.0000475f, 0.0006756f,
+        -0.0007612f, -0.0018248f, 0.0003484f, 0.0017790f,
+        0.0000949f, 0.0002275f, -0.0000434f, -0.0002218f,
+    };
+    const float expected_layer0_grad_wv[] = {
+        -0.0025250f, 0.0102954f, 0.0130159f, 0.0130997f,
+        -0.0009765f, 0.0047917f, 0.0066540f, 0.0070336f,
+        0.0042894f, -0.0156955f, -0.0185229f, -0.0178963f,
+        -0.0029343f, 0.0117505f, 0.0146980f, 0.0147037f,
+    };
+    const float expected_layer1_grad_wv[] = {
+        -0.0089323f, 0.0017683f, 0.0021256f, 0.0056234f,
+        -0.0037885f, -0.0046698f, 0.0013605f, 0.0059510f,
+        0.0147207f, -0.0089271f, -0.0029938f, -0.0053112f,
+        -0.0116347f, 0.0051339f, 0.0025289f, 0.0054622f,
+    };
+    const float expected_layer0_norm2_gamma[] = {
+        -0.0414589f, 0.1290882f, -0.0004327f, -0.1346681f,
+    };
+    const float expected_layer1_norm2_gamma[] = {
+        0.0200774f, 0.3182996f, 0.0162506f, -0.0626373f,
+    };
+    const float expected_layer0_linear2_bias[] = {
+        0.0820758f, -0.0187426f, -0.0545918f, -0.0087413f,
+    };
+    const float expected_layer1_linear2_bias[] = {
+        0.0907866f, -0.0171270f, -0.0635368f, -0.0101228f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "Two-block TransformerEncoder stack grad_input matches PyTorch");
+    const auto gradients = stack.GetGradients();
+    CheckGradientNear(gradients, "layer0.self_attn.W_q", expected_layer0_grad_wq,
+                      2e-4f, "Two-block encoder layer0 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_q", expected_layer1_grad_wq,
+                      2e-4f, "Two-block encoder layer1 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer0.self_attn.W_v", expected_layer0_grad_wv,
+                      2e-4f, "Two-block encoder layer0 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_v", expected_layer1_grad_wv,
+                      2e-4f, "Two-block encoder layer1 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer0.norm2.gamma", expected_layer0_norm2_gamma,
+                      2e-4f, "Two-block encoder layer0 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer1.norm2.gamma", expected_layer1_norm2_gamma,
+                      2e-4f, "Two-block encoder layer1 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer0.linear2.bias", expected_layer0_linear2_bias,
+                      2e-4f, "Two-block encoder layer0 grad_linear2_bias matches PyTorch");
+    CheckGradientNear(gradients, "layer1.linear2.bias", expected_layer1_linear2_bias,
+                      2e-4f, "Two-block encoder layer1 grad_linear2_bias matches PyTorch");
+}
+void TestBertEncoderHeadLogitParity() {
+    const std::vector<float> bert_hidden_values = {
+        -0.1815133f, -1.3401134f, 0.1597225f, 1.0196487f,
+        -0.8367455f, 1.6354986f, 0.0746440f, -0.4403224f,
+    };
+    const std::vector<float> cls_head_weights = {
+        0.25f, -0.10f, 0.05f, 0.20f,
+        -0.15f, 0.30f, 0.10f, -0.05f,
+        0.05f, 0.15f, -0.20f, 0.25f,
+    };
+    const std::vector<float> cls_head_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> token_head_weights = {
+        0.20f, -0.05f, 0.10f, 0.15f,
+        -0.10f, 0.25f, 0.05f, -0.20f,
+        0.05f, 0.10f, -0.15f, 0.30f,
+        0.30f, -0.20f, 0.25f, 0.05f,
+    };
+    const std::vector<float> token_head_bias = {0.02f, -0.01f, 0.03f, -0.04f};
+
+    const cyxwiz::Tensor hidden({1, 2, 4}, bert_hidden_values.data(),
+                                cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor cls_hidden({1, 4}, bert_hidden_values.data(),
+                                    cyxwiz::DataType::Float32);
+
+    cyxwiz::LinearModule cls_head(4, 3, true);
+    cls_head.SetParameters({
+        {"weight", cyxwiz::Tensor({3, 4}, cls_head_weights.data(),
+                                   cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({3}, cls_head_bias.data(),
+                                 cyxwiz::DataType::Float32)},
+    });
+    const cyxwiz::Tensor cls_logits = cls_head.Forward(cls_hidden);
+    CheckShape(cls_logits, {1, 3}, "BERT CLS classifier logits");
+
+    cyxwiz::TimeDistributedDenseModule token_head(4, 4, true);
+    token_head.SetParameters({
+        {"weight", cyxwiz::Tensor({4, 4}, token_head_weights.data(),
+                                   cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({4}, token_head_bias.data(),
+                                 cyxwiz::DataType::Float32)},
+    });
+    const cyxwiz::Tensor token_logits = token_head.Forward(hidden);
+    CheckShape(token_logits, {1, 2, 4}, "BERT token classifier logits");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_hidden = torch::from_blob(
+        const_cast<float*>(bert_hidden_values.data()), {1, 2, 4},
+        torch::kFloat32).clone();
+    auto torch_cls_weights = torch::from_blob(
+        const_cast<float*>(cls_head_weights.data()), {3, 4},
+        torch::kFloat32).clone();
+    auto torch_cls_bias = torch::from_blob(
+        const_cast<float*>(cls_head_bias.data()), {3},
+        torch::kFloat32).clone();
+    auto torch_token_weights = torch::from_blob(
+        const_cast<float*>(token_head_weights.data()), {4, 4},
+        torch::kFloat32).clone();
+    auto torch_token_bias = torch::from_blob(
+        const_cast<float*>(token_head_bias.data()), {4},
+        torch::kFloat32).clone();
+
+    auto torch_cls_hidden = torch_hidden.index(
+        {0, 0, torch::indexing::Slice()}).view({1, 4});
+    const std::vector<float> expected_cls_hidden =
+        TensorToVector(torch_cls_hidden);
+    const std::vector<float> expected_cls_logits = TensorToVector(
+        torch::linear(torch_cls_hidden, torch_cls_weights, torch_cls_bias));
+    const std::vector<float> expected_token_logits = TensorToVector(
+        torch::linear(torch_hidden.view({2, 4}),
+                      torch_token_weights,
+                      torch_token_bias).view({1, 2, 4}));
+#else
+    const float expected_cls_hidden[] = {
+        -0.1815133f, -1.3401134f, 0.1597225f, 1.0196487f,
+    };
+    const float expected_cls_logits[] = {
+        0.3105489f, -0.4298172f, 0.0428750f,
+    };
+    const float expected_token_logits[] = {
+        0.2196226f, -0.5228206f, 0.1688492f, 0.2644818f,
+        -0.2877080f, 0.5743459f, 0.0084193f, -0.6214785f,
+    };
+#endif
+
+    const float* cls_hidden_data = cls_hidden.Data<float>();
+    for (size_t i = 0; i < cls_hidden.NumElements(); ++i) {
+        CheckNear(cls_hidden_data[i], expected_cls_hidden[i], 1e-6f,
+                  "BERT CLS extraction matches PyTorch hidden[:, 0, :]");
+    }
+
+    const float* cls_logit_data = cls_logits.Data<float>();
+    for (size_t i = 0; i < cls_logits.NumElements(); ++i) {
+        CheckNear(cls_logit_data[i], expected_cls_logits[i], 1e-5f,
+                  "BERT CLS classifier logits match PyTorch linear head");
+    }
+
+    const float* token_logit_data = token_logits.Data<float>();
+    for (size_t i = 0; i < token_logits.NumElements(); ++i) {
+        CheckNear(token_logit_data[i], expected_token_logits[i], 1e-5f,
+                  "BERT token classifier logits match PyTorch per-token linear head");
+    }
+}
+void TestTransformerDecoderCausalForwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::TransformerDecoderModule decoder(4, 2, 3, 0.0f, false);
+    decoder.SetTraining(false);
+    decoder.SetParameters({
+        {"self_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"norm1.gamma", cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm1.beta", cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32)},
+        {"norm2.gamma", cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm2.beta", cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32)},
+        {"linear1.weights", cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear1.bias", cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32)},
+        {"linear2.weights", cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear2.bias", cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = decoder.Forward(input);
+    CheckShape(output, {1, 2, 4}, "TransformerDecoder causal output");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_input = torch::from_blob(
+        const_cast<float*>(input_values.data()), {1, 2, 4}, torch::kFloat32).clone();
+    auto torch_wq = torch::from_blob(
+        const_cast<float*>(W_q.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wk = torch::from_blob(
+        const_cast<float*>(W_k.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wv = torch::from_blob(
+        const_cast<float*>(W_v.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_wo = torch::from_blob(
+        const_cast<float*>(W_o.data()), {4, 4}, torch::kFloat32).clone();
+    auto torch_bq = torch::from_blob(
+        const_cast<float*>(b_q.data()), {4}, torch::kFloat32).clone();
+    auto torch_bk = torch::from_blob(
+        const_cast<float*>(b_k.data()), {4}, torch::kFloat32).clone();
+    auto torch_bv = torch::from_blob(
+        const_cast<float*>(b_v.data()), {4}, torch::kFloat32).clone();
+    auto torch_bo = torch::from_blob(
+        const_cast<float*>(b_o.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm1_gamma = torch::from_blob(
+        const_cast<float*>(norm1_gamma.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm1_beta = torch::from_blob(
+        const_cast<float*>(norm1_beta.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm2_gamma = torch::from_blob(
+        const_cast<float*>(norm2_gamma.data()), {4}, torch::kFloat32).clone();
+    auto torch_norm2_beta = torch::from_blob(
+        const_cast<float*>(norm2_beta.data()), {4}, torch::kFloat32).clone();
+    auto torch_linear1_weights = torch::from_blob(
+        const_cast<float*>(linear1_weights.data()), {3, 4}, torch::kFloat32).clone();
+    auto torch_linear1_bias = torch::from_blob(
+        const_cast<float*>(linear1_bias.data()), {3}, torch::kFloat32).clone();
+    auto torch_linear2_weights = torch::from_blob(
+        const_cast<float*>(linear2_weights.data()), {4, 3}, torch::kFloat32).clone();
+    auto torch_linear2_bias = torch::from_blob(
+        const_cast<float*>(linear2_bias.data()), {4}, torch::kFloat32).clone();
+
+    auto q = torch::linear(torch_input, torch_wq, torch_bq)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto k = torch::linear(torch_input, torch_wk, torch_bk)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto v = torch::linear(torch_input, torch_wv, torch_bv)
+                 .view({1, 2, 2, 2})
+                 .transpose(1, 2);
+    auto causal_mask = torch::tensor(
+        {{{{0.0f, -1.0e9f}, {0.0f, 0.0f}}}},
+        torch::kFloat32);
+    auto scores =
+        torch::matmul(q, k.transpose(-2, -1)) / std::sqrt(2.0f) +
+        causal_mask;
+    auto weights = torch::softmax(scores, -1);
+    auto context = torch::matmul(weights, v)
+                       .transpose(1, 2)
+                       .contiguous()
+                       .view({1, 2, 4});
+    auto attn_output = torch::linear(context, torch_wo, torch_bo);
+    auto norm1_output = torch::layer_norm(
+        torch_input + attn_output,
+        {4},
+        torch_norm1_gamma,
+        torch_norm1_beta,
+        1.0e-5);
+    auto ffn_hidden = torch::relu(torch::linear(
+        norm1_output.view({2, 4}),
+        torch_linear1_weights,
+        torch_linear1_bias));
+    auto ffn_output = torch::linear(
+        ffn_hidden,
+        torch_linear2_weights,
+        torch_linear2_bias).view({1, 2, 4});
+    const std::vector<float> expected_output = TensorToVector(
+        torch::layer_norm(
+            norm1_output + ffn_output,
+            {4},
+            torch_norm2_gamma,
+            torch_norm2_beta,
+            1.0e-5));
+#else
+    const float expected_output[] = {
+        -0.1711998f, -1.3525668f, 0.1731623f, 1.0115018f,
+        -0.8367455f, 1.6354986f, 0.0746440f, -0.4403224f,
+    };
+#endif
+    const float* out = output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        CheckNear(out[i], expected_output[i], 1e-5f,
+                  "TransformerDecoder causal forward matches PyTorch primitive composition");
+    }
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = decoder.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "TransformerDecoder causal grad_input");
+
+    // PyTorch-derived oracle constants for the causal primitive composition above.
+    const float expected_grad_input[] = {
+        0.2563263f, -0.2058288f, 0.1275619f, -0.1593824f,
+        0.0464455f, 0.1273076f, -0.3360445f, 0.1751978f,
+    };
+    const float expected_grad_wq[] = {
+        0.0000239f, -0.0000398f, -0.0000080f, 0.0000159f,
+        0.0000084f, -0.0000141f, -0.0000028f, 0.0000056f,
+        -0.0000305f, 0.0000508f, 0.0000102f, -0.0000203f,
+        0.0000265f, -0.0000441f, -0.0000088f, 0.0000176f,
+    };
+    const float expected_grad_wv[] = {
+        0.0039149f, 0.0034684f, 0.0186815f, 0.0268792f,
+        -0.0163208f, 0.0253423f, 0.0017222f, -0.0153953f,
+        0.0106388f, -0.0260733f, -0.0202303f, -0.0131667f,
+        0.0072580f, 0.0001367f, 0.0220474f, 0.0345483f,
+    };
+    const float expected_grad_wo[] = {
+        0.0349240f, 0.0139267f, 0.0118145f, 0.0020755f,
+        -0.0268721f, 0.0006845f, -0.0037888f, 0.0079970f,
+        0.0103128f, -0.0212696f, -0.0083154f, -0.0207475f,
+        -0.0183647f, 0.0066585f, 0.0002897f, 0.0106750f,
+    };
+    const float expected_grad_norm1_gamma[] = {
+        -0.0416903f, 0.1460242f, 0.0004305f, -0.0986316f,
+    };
+    const float expected_grad_norm2_gamma[] = {
+        0.0007537f, 0.3048945f, 0.0012835f, -0.0687971f,
+    };
+    const float expected_grad_linear1_weights[] = {
+        -0.0067981f, -0.0350157f, 0.0043485f, 0.0403265f,
+        -0.0159304f, 0.0273475f, 0.0014425f, -0.0127954f,
+        -0.0022414f, -0.0115453f, 0.0014338f, 0.0132963f,
+    };
+    const float expected_grad_linear2_weights[] = {
+        0.0280886f, 0.0138232f, 0.0091336f,
+        -0.0231034f, 0.0233416f, -0.0075125f,
+        0.0159472f, -0.0655653f, 0.0051856f,
+        -0.0209324f, 0.0284005f, -0.0068066f,
+    };
+    const float expected_grad_linear2_bias[] = {
+        0.0896902f, -0.0172952f, -0.0685245f, -0.0038704f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "TransformerDecoder causal grad_input matches PyTorch");
+    const auto decoder_gradients = decoder.GetGradients();
+    CheckGradientNear(decoder_gradients, "self_attn.W_q", expected_grad_wq,
+                      2e-4f, "TransformerDecoder causal grad_W_q matches PyTorch");
+    CheckGradientNear(decoder_gradients, "self_attn.W_v", expected_grad_wv,
+                      2e-4f, "TransformerDecoder causal grad_W_v matches PyTorch");
+    CheckGradientNear(decoder_gradients, "self_attn.W_o", expected_grad_wo,
+                      2e-4f, "TransformerDecoder causal grad_W_o matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm1.gamma",
+                      expected_grad_norm1_gamma, 2e-4f,
+                      "TransformerDecoder causal grad_norm1_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm2.gamma",
+                      expected_grad_norm2_gamma, 2e-4f,
+                      "TransformerDecoder causal grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear1.weights",
+                      expected_grad_linear1_weights, 2e-4f,
+                      "TransformerDecoder causal grad_linear1_weights matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear2.weights",
+                      expected_grad_linear2_weights, 2e-4f,
+                      "TransformerDecoder causal grad_linear2_weights matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear2.bias",
+                      expected_grad_linear2_bias, 2e-4f,
+                      "TransformerDecoder causal grad_linear2_bias matches PyTorch");
+}
+
+void TestTransformerDecoderCrossAttentionBackwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> memory_values = {
+        0.1f, 0.0f, -0.2f, 0.3f,
+        0.5f, -0.4f, 0.2f, 0.1f,
+        -0.1f, 0.3f, 0.6f, -0.5f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> norm3_gamma = {1.05f, 0.95f, 1.15f, 0.85f};
+    const std::vector<float> norm3_beta = {0.0f, 0.02f, -0.02f, 0.01f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::TransformerDecoderLayer decoder(4, 2, 3, 0.0f, false);
+    decoder.SetTraining(false);
+    decoder.SetParameters({
+        {"self_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"norm1.gamma", cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm1.beta", cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32)},
+        {"norm2.gamma", cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm2.beta", cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32)},
+        {"norm3.gamma", cyxwiz::Tensor({4}, norm3_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm3.beta", cyxwiz::Tensor({4}, norm3_beta.data(), cyxwiz::DataType::Float32)},
+        {"linear1.weights", cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear1.bias", cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32)},
+        {"linear2.weights", cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear2.bias", cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor memory({1, 3, 4}, memory_values.data(),
+                                cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = decoder.Forward(input, memory);
+    CheckShape(output, {1, 2, 4}, "TransformerDecoder cross-attention output");
+
+    const float expected_output[] = {
+        -0.1108354f, -1.3908184f, 0.3091779f, 1.1187297f,
+        -1.0845308f, 1.5602998f, -0.0639310f, -0.4577387f,
+    };
+    CheckTensorNear(output, expected_output, 2e-5f,
+                    "TransformerDecoder cross-attention output matches PyTorch");
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = decoder.Backward(grad_output);
+    const cyxwiz::Tensor grad_memory = decoder.GetLastMemoryGradient();
+    CheckShape(grad_input, {1, 2, 4}, "TransformerDecoder cross-attention grad_input");
+    CheckShape(grad_memory, {1, 3, 4}, "TransformerDecoder cross-attention grad_memory");
+
+    const float expected_grad_input[] = {
+        0.2997231f, -0.2459072f, 0.1425121f, -0.1774454f,
+        0.0776569f, 0.1385615f, -0.3691436f, 0.1711676f,
+    };
+    const float expected_grad_memory[] = {
+        0.0009836f, 0.0031291f, -0.0024391f, 0.0022289f,
+        0.0006546f, 0.0032182f, -0.0024161f, 0.0023227f,
+        0.0011581f, 0.0028049f, -0.0026626f, 0.0026197f,
+    };
+    const float expected_grad_cross_wq[] = {
+        0.0001165f, -0.0005348f, 0.0000141f, 0.0004248f,
+        0.0000974f, -0.0004456f, 0.0000116f, 0.0003537f,
+        0.0002753f, -0.0005305f, -0.0000207f, 0.0002784f,
+        -0.0000987f, 0.0001600f, 0.0000096f, -0.0000699f,
+    };
+    const float expected_grad_cross_wv[] = {
+        0.0031881f, -0.0006214f, 0.0038614f, -0.0006620f,
+        0.0033354f, -0.0010944f, 0.0030533f, -0.0000174f,
+        -0.0055675f, 0.0009362f, -0.0072312f, 0.0015334f,
+        0.0036406f, -0.0006405f, 0.0045610f, -0.0008591f,
+    };
+    const float expected_grad_cross_wo[] = {
+        0.0119523f, -0.0069417f, 0.0077599f, 0.0005672f,
+        -0.0030776f, 0.0016376f, -0.0020684f, -0.0002189f,
+        -0.0085484f, 0.0052571f, -0.0054129f, -0.0002634f,
+        -0.0003263f, 0.0000470f, -0.0002787f, -0.0000848f,
+    };
+    const float expected_grad_norm2_gamma[] = {
+        -0.0567869f, 0.1607771f, -0.0030102f, -0.1536209f,
+    };
+    const float expected_grad_norm3_gamma[] = {
+        0.0090464f, 0.3147329f, 0.0177502f, -0.0611429f,
+    };
+    const float expected_grad_linear2_bias[] = {
+        0.1406779f, -0.0405878f, -0.0738999f, -0.0261903f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "TransformerDecoder cross-attention grad_input matches PyTorch");
+    CheckTensorNear(grad_memory, expected_grad_memory, 2e-4f,
+                    "TransformerDecoder cross-attention grad_memory matches PyTorch");
+    const auto decoder_gradients = decoder.GetParameters();
+    CheckGradientNear(decoder_gradients, "cross_attn.grad_W_q",
+                      expected_grad_cross_wq, 2e-4f,
+                      "TransformerDecoder cross-attention grad_W_q matches PyTorch");
+    CheckGradientNear(decoder_gradients, "cross_attn.grad_W_v",
+                      expected_grad_cross_wv, 2e-4f,
+                      "TransformerDecoder cross-attention grad_W_v matches PyTorch");
+    CheckGradientNear(decoder_gradients, "cross_attn.grad_W_o",
+                      expected_grad_cross_wo, 2e-4f,
+                      "TransformerDecoder cross-attention grad_W_o matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm2.grad_gamma",
+                      expected_grad_norm2_gamma, 2e-4f,
+                      "TransformerDecoder cross-attention grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm3.grad_gamma",
+                      expected_grad_norm3_gamma, 2e-4f,
+                      "TransformerDecoder cross-attention grad_norm3_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear2.grad_bias",
+                      expected_grad_linear2_bias, 2e-4f,
+                      "TransformerDecoder cross-attention grad_linear2_bias matches PyTorch");
+}
+void TestTransformerDecoderTwoBlockCausalStackBackwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::SequentialModel stack;
+    stack.Add<cyxwiz::TransformerDecoderModule>(4, 2, 3, 0.0f, false);
+    stack.Add<cyxwiz::TransformerDecoderModule>(4, 2, 3, 0.0f, false);
+    stack.SetTraining(false);
+
+    std::map<std::string, cyxwiz::Tensor> params;
+    const auto add_block_params = [&](const std::string& prefix) {
+        params[prefix + ".self_attn.W_q"] = cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_k"] = cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_v"] = cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_o"] = cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_q"] = cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_k"] = cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_v"] = cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_o"] = cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.gamma"] = cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.beta"] = cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.gamma"] = cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.beta"] = cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.weights"] = cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.bias"] = cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.weights"] = cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.bias"] = cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32);
+    };
+    add_block_params("layer0");
+    add_block_params("layer1");
+    stack.SetParameters(params);
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = stack.Forward(input);
+    CheckShape(output, {1, 2, 4}, "Two-block TransformerDecoder causal stack output");
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = stack.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "Two-block TransformerDecoder causal stack grad_input");
+
+    const float expected_grad_input[] = {
+        0.2191821f, -0.1872560f, 0.1331417f, -0.1496372f,
+        0.0454749f, 0.1198603f, -0.3153136f, 0.1621244f,
+    };
+    const float expected_layer0_grad_wq[] = {
+        0.0000241f, -0.0000401f, -0.0000080f, 0.0000161f,
+        0.0000085f, -0.0000142f, -0.0000028f, 0.0000057f,
+        -0.0000289f, 0.0000481f, 0.0000096f, -0.0000193f,
+        0.0000251f, -0.0000418f, -0.0000084f, 0.0000167f,
+    };
+    const float expected_layer1_grad_wq[] = {
+        0.0013710f, -0.0026798f, -0.0001223f, 0.0007215f,
+        0.0003435f, -0.0006714f, -0.0000306f, 0.0001808f,
+        -0.0004331f, 0.0008466f, 0.0000386f, -0.0002279f,
+        0.0000530f, -0.0001036f, -0.0000047f, 0.0000279f,
+    };
+    const float expected_layer0_grad_wv[] = {
+        0.0029093f, 0.0035801f, 0.0158879f, 0.0224095f,
+        -0.0158485f, 0.0240950f, 0.0006446f, -0.0161978f,
+        0.0112161f, -0.0250504f, -0.0164524f, -0.0079606f,
+        0.0059315f, 0.0005938f, 0.0189821f, 0.0294048f,
+    };
+    const float expected_layer1_grad_wv[] = {
+        -0.0067778f, -0.0057098f, 0.0023787f, 0.0088110f,
+        -0.0106763f, 0.0215394f, 0.0008896f, -0.0060567f,
+        0.0183713f, -0.0235499f, -0.0027954f, 0.0015985f,
+        -0.0066632f, -0.0145377f, 0.0031737f, 0.0144889f,
+    };
+    const float expected_layer0_norm2_gamma[] = {
+        -0.0359151f, 0.1222169f, -0.0008445f, -0.1301739f,
+    };
+    const float expected_layer1_norm2_gamma[] = {
+        0.0171181f, 0.3195416f, 0.0202203f, -0.0615627f,
+    };
+    const float expected_layer0_linear2_bias[] = {
+        0.0786480f, -0.0144922f, -0.0603344f, -0.0038213f,
+    };
+    const float expected_layer1_linear2_bias[] = {
+        0.0913237f, -0.0151982f, -0.0654266f, -0.0106989f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "Two-block TransformerDecoder causal stack grad_input matches PyTorch");
+    const auto gradients = stack.GetGradients();
+    CheckGradientNear(gradients, "layer0.self_attn.W_q", expected_layer0_grad_wq,
+                      2e-4f, "Two-block decoder layer0 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_q", expected_layer1_grad_wq,
+                      2e-4f, "Two-block decoder layer1 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer0.self_attn.W_v", expected_layer0_grad_wv,
+                      2e-4f, "Two-block decoder layer0 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_v", expected_layer1_grad_wv,
+                      2e-4f, "Two-block decoder layer1 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer0.norm2.gamma", expected_layer0_norm2_gamma,
+                      2e-4f, "Two-block decoder layer0 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer1.norm2.gamma", expected_layer1_norm2_gamma,
+                      2e-4f, "Two-block decoder layer1 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer0.linear2.bias", expected_layer0_linear2_bias,
+                      2e-4f, "Two-block decoder layer0 grad_linear2_bias matches PyTorch");
+    CheckGradientNear(gradients, "layer1.linear2.bias", expected_layer1_linear2_bias,
+                      2e-4f, "Two-block decoder layer1 grad_linear2_bias matches PyTorch");
+}
+void TestGenerationSamplingDistributionParity() {
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.temperature = 0.75f;
+    config.top_k = 4;
+    config.top_p = 0.85f;
+
+    const std::vector<float> logits = {
+        9.0f, 8.0f, 7.0f, 6.0f, 5.0f,
+        0.25f, 1.25f, -0.75f, 2.0f, 0.5f,
+    };
+
+    const auto candidates = cyxwiz::BuildNextTokenDistribution(
+        logits,
+        1,
+        2,
+        5,
+        config);
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_logits = torch::tensor(
+        {0.25f, 1.25f, -0.75f, 2.0f, 0.5f}, torch::kFloat32) /
+        config.temperature;
+    auto torch_probabilities = torch::softmax(torch_logits, -1);
+    auto topk = torch::topk(torch_probabilities,
+                            static_cast<int64_t>(config.top_k));
+    std::vector<float> topk_probabilities = TensorToVector(std::get<0>(topk));
+    std::vector<int64_t> topk_ids = TensorToInt64Vector(std::get<1>(topk));
+
+    std::vector<int64_t> expected_ids;
+    std::vector<float> expected_probabilities;
+    float cumulative = 0.0f;
+    for (size_t i = 0; i < topk_ids.size(); ++i) {
+        expected_ids.push_back(topk_ids[i]);
+        expected_probabilities.push_back(topk_probabilities[i]);
+        cumulative += topk_probabilities[i];
+        if (cumulative >= config.top_p) {
+            break;
+        }
+    }
+    float filtered_sum = 0.0f;
+    for (const float probability : expected_probabilities) {
+        filtered_sum += probability;
+    }
+    for (float& probability : expected_probabilities) {
+        probability /= filtered_sum;
+    }
+#else
+    const std::vector<int64_t> expected_ids = {3, 1, 4};
+    const std::vector<float> expected_probabilities = {
+        0.6652409f,
+        0.2447285f,
+        0.0900306f,
+    };
+#endif
+
+    CheckCandidatesNear(candidates,
+                        expected_ids,
+                        expected_probabilities,
+                        1e-5f,
+                        "Generation top-k/top-p distribution matches PyTorch");
+
+    config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Greedy;
+    std::mt19937 rng(11);
+    const auto selection = cyxwiz::SelectNextTokenFromDistribution(
+        candidates,
+        config,
+        rng);
+    Check(selection.token_id == expected_ids.front(),
+          "Generation greedy selection should match PyTorch argmax candidate");
+    CheckNear(selection.probability,
+              expected_probabilities.front(),
+              1e-5f,
+              "Generation greedy selection probability matches PyTorch fixture");
+
+    // PyTorch is the oracle for candidate probabilities. CyxWiz owns the
+    // C++ RNG stream, so deterministic multinomial parity means seeded replay
+    // over that PyTorch-verified distribution, not RNG identity with torch.multinomial.
+    config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Multinomial;
+    std::mt19937 replay_rng_a(2026);
+    std::mt19937 replay_rng_b(2026);
+    for (size_t i = 0; i < 8; ++i) {
+        const auto selected_a = cyxwiz::SelectNextTokenFromDistribution(
+            candidates,
+            config,
+            replay_rng_a);
+        const auto selected_b = cyxwiz::SelectNextTokenFromDistribution(
+            candidates,
+            config,
+            replay_rng_b);
+        Check(selected_a.token_id == selected_b.token_id,
+              "Generation multinomial seeded replay token ID should be stable");
+        CheckNear(selected_a.probability,
+                  selected_b.probability,
+                  0.0f,
+                  "Generation multinomial seeded replay probability should be stable");
+        bool in_candidate_set = false;
+        for (const int64_t token_id : expected_ids) {
+            if (selected_a.token_id == token_id) {
+                in_candidate_set = true;
+                break;
+            }
+        }
+        Check(in_candidate_set,
+              "Generation multinomial selection should stay within PyTorch candidate set");
+    }
+}
+
+void TestTinyCausalLanguageModelLogitsAndLossParity() {
+    const std::vector<float> decoder_hidden_values = {
+        -0.1711998f, -1.3525668f, 0.1731623f, 1.0115018f,
+        -0.8367455f, 1.6354986f, 0.0746440f, -0.4403224f,
+    };
+    const std::vector<float> lm_head_weights = {
+        0.20f, -0.10f, 0.05f, 0.30f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.05f, 0.15f, -0.20f, 0.10f,
+        0.30f, -0.05f, 0.25f, -0.10f,
+        -0.10f, 0.20f, 0.15f, 0.05f,
+    };
+    const std::vector<float> lm_head_bias = {
+        0.01f, -0.02f, 0.03f, 0.04f, -0.01f,
+    };
+
+    cyxwiz::LinearModule lm_head(4, 5, true);
+    lm_head.SetParameters({
+        {"weight", cyxwiz::Tensor({5, 4}, lm_head_weights.data(),
+                                   cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({5}, lm_head_bias.data(),
+                                 cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor hidden({2, 4}, decoder_hidden_values.data(),
+                                cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor logits = lm_head.Forward(hidden);
+    CheckShape(logits, {2, 5}, "Tiny causal LM logits");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_hidden = torch::from_blob(
+        const_cast<float*>(decoder_hidden_values.data()), {2, 4},
+        torch::kFloat32).clone();
+    auto torch_weights = torch::from_blob(
+        const_cast<float*>(lm_head_weights.data()), {5, 4},
+        torch::kFloat32).clone();
+    auto torch_bias = torch::from_blob(
+        const_cast<float*>(lm_head_bias.data()), {5},
+        torch::kFloat32).clone();
+    auto torch_logits = torch::linear(torch_hidden, torch_weights, torch_bias);
+    const std::vector<float> expected_logits = TensorToVector(torch_logits);
+#else
+    const float expected_logits[] = {
+        0.4231254f, -0.3657206f, -0.1149273f, -0.0015912f,
+        -0.1868439f, -0.4492635f, 0.5438670f, 0.1745265f,
+        -0.2301053f, 0.3899548f,
+    };
+#endif
+    const float* logit_data = logits.Data<float>();
+    for (size_t i = 0; i < logits.NumElements(); ++i) {
+        CheckNear(logit_data[i], expected_logits[i], 1e-5f,
+                  "Tiny causal LM vocabulary logits match PyTorch linear head");
+    }
+
+    const int64_t target_values[] = {1, 3};
+    const cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int64);
+    cyxwiz::CrossEntropyLoss loss(cyxwiz::Reduction::Mean);
+    const cyxwiz::Tensor loss_value = loss.Forward(logits, targets);
+    CheckShape(loss_value, {1}, "Tiny causal LM loss");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_targets = torch::tensor({1, 3}, torch::kInt64);
+    const std::vector<float> expected_loss =
+        TensorToVector(torch::nn::functional::cross_entropy(
+            torch_logits,
+            torch_targets,
+            torch::nn::functional::CrossEntropyFuncOptions()
+                .reduction(torch::kMean)));
+#else
+    const float expected_loss[] = {1.9774697f};
+#endif
+    CheckNear(loss_value.Data<float>()[0], expected_loss[0], 1e-5f,
+              "Tiny causal LM cross entropy matches PyTorch");
+}
+
+void TestTinyTransformerCrossEntropyTrainingStepSanity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+    const std::vector<float> token_head_weights = {
+        0.20f, -0.05f, 0.10f, 0.15f,
+        -0.10f, 0.25f, 0.05f, -0.20f,
+        0.05f, 0.10f, -0.15f, 0.30f,
+        0.30f, -0.20f, 0.25f, 0.05f,
+    };
+    const std::vector<float> token_head_bias = {
+        0.02f, -0.01f, 0.03f, -0.04f,
+    };
+
+    cyxwiz::SequentialModel model;
+    model.Add<cyxwiz::TransformerEncoderModule>(4, 2, 3, 0.0f, false);
+    model.Add<cyxwiz::TimeDistributedDenseModule>(4, 4, true);
+    model.SetTraining(false);
+    model.SetParameters({
+        {"layer0.self_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm1.gamma", cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm1.beta", cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm2.gamma", cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm2.beta", cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear1.weights", cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear1.bias", cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear2.weights", cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear2.bias", cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32)},
+        {"layer1.weight", cyxwiz::Tensor({4, 4}, token_head_weights.data(), cyxwiz::DataType::Float32)},
+        {"layer1.bias", cyxwiz::Tensor({4}, token_head_bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const int64_t target_values[] = {1, -100};
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets({1, 2}, target_values,
+                                 cyxwiz::DataType::Int64);
+    cyxwiz::CrossEntropyLoss loss(
+        cyxwiz::Reduction::Mean, -100, std::vector<float>{}, 0.1f);
+
+    const cyxwiz::Tensor logits_before = model.Forward(input);
+    CheckShape(logits_before, {1, 2, 4}, "Tiny transformer train-step logits");
+    const cyxwiz::Tensor loss_before = loss.Forward(logits_before, targets);
+    CheckShape(loss_before, {1}, "Tiny transformer train-step loss");
+    CheckNear(loss_before.Data<float>()[0], 1.9317321f, 2e-5f,
+              "Tiny transformer smoothed token CE matches PyTorch");
+
+    const cyxwiz::Tensor loss_grad = loss.Backward(logits_before, targets);
+    const cyxwiz::Tensor input_grad = model.Backward(loss_grad);
+    CheckShape(input_grad, {1, 2, 4}, "Tiny transformer train-step grad_input");
+
+    const auto gradients = model.GetGradients();
+    Check(gradients.find("layer0.self_attn.W_v") != gradients.end(),
+          "Tiny transformer train-step should produce encoder attention gradients");
+    Check(gradients.find("layer1.weight") != gradients.end(),
+          "Tiny transformer train-step should produce token-head gradients");
+
+    cyxwiz::SGDOptimizer optimizer(0.05, 0.0);
+    model.UpdateParameters(&optimizer);
+    const cyxwiz::Tensor logits_after = model.Forward(input);
+    const cyxwiz::Tensor loss_after = loss.Forward(logits_after, targets);
+    Check(std::isfinite(loss_after.Data<float>()[0]),
+          "Tiny transformer train-step updated loss should be finite");
+    Check(loss_after.Data<float>()[0] < loss_before.Data<float>()[0],
+          "Tiny transformer train-step should lower smoothed token CE");
+}
+} // namespace
+
+
+void TestNearRejectsNonfinite() {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const auto rejects = [](float actual, float expected, float tolerance) {
+        bool rejected = false;
+        try { CheckNear(actual, expected, tolerance, "nonfinite rejection probe"); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Check(rejected, "CheckNear must reject nonfinite values or invalid tolerance");
+    };
+    rejects(nan, 0, 1e-4f); rejects(0, nan, 1e-4f);
+    rejects(inf, inf, 1e-4f); rejects(-inf, 0, 1e-4f);
+    rejects(0, 0, nan); rejects(0, 0, inf); rejects(0, 0, -1);
+    CheckNear(1, 1, 0, "exact finite comparison");
+}
+
+void TestFullyBlockedAttentionRows() {
+    using cyxwiz::Tensor;
+    for (bool self : {false, true}) {
+        for (bool all_rows : {false, true}) {
+            cyxwiz::MultiHeadAttentionLayer layer(4, 2, 0.0f, true);
+            auto params = layer.GetParameters();
+            for (auto& [name, tensor] : params) {
+                if (name.rfind("grad_", 0) == 0) continue;
+                auto* p = tensor.MutableData<float>();
+                for (size_t i = 0; i < tensor.NumElements(); ++i)
+                    p[i] = name == "b_o" ? 0.25f :
+                        (tensor.Shape().size() == 2 && i / 4 == i % 4 ? 1.0f : 0.0f);
+            }
+            layer.SetParameters(params);
+            Tensor q({2, 3, 4}), k({2, 4, 4}), v({2, 4, 4});
+            for (Tensor* tensor : {&q, &k, &v}) {
+                auto* p = tensor->MutableData<float>();
+                for (size_t i = 0; i < tensor->NumElements(); ++i)
+                    p[i] = 0.2f * std::sin(static_cast<float>(i));
+            }
+            const size_t keys = self ? 3 : 4;
+            Tensor mask = Tensor::Zeros({3, keys});
+            auto* m = mask.MutableData<float>();
+            for (size_t row = 0; row < (all_rows ? 3u : 1u); ++row)
+                for (size_t col = 0; col < keys; ++col)
+                    m[row * keys + col] = -std::numeric_limits<float>::infinity();
+            const Tensor y = self ? layer.Forward(q, q, q, &mask) : layer.Forward(q, k, v, &mask);
+            const float* values = y.ReadData<float>();
+            Tensor upstream = Tensor::Zeros({2, 3, 4});
+            auto* g = upstream.MutableData<float>();
+            for (size_t i = 0; i < y.NumElements(); ++i) {
+                Check(std::isfinite(values[i]), "masked attention output must be finite");
+                if (all_rows || (i / 4) % 3 == 0) {
+                    CheckNear(values[i], 0.25f, 1e-6f, "blocked row retains output bias");
+                    g[i] = 1.0f;
+                }
+            }
+            const Tensor dq = layer.Backward(upstream);
+            for (const Tensor& grad : {dq, layer.GetLastKeyGradient(), layer.GetLastValueGradient()}) {
+                const auto* p = grad.ReadData<float>();
+                for (size_t i = 0; i < grad.NumElements(); ++i)
+                    CheckNear(p[i], 0, 1e-6f, "blocked-only upstream gives zero Q/K/V derivative");
+            }
+            for (const auto& [name, grad] : layer.GetParameters()) {
+                if (name.rfind("grad_", 0) != 0) continue;
+                const float expected = name == "grad_b_o" ? (all_rows ? 6.0f : 2.0f) : 0.0f;
+                const auto* p = grad.ReadData<float>();
+                for (size_t i = 0; i < grad.NumElements(); ++i)
+                    CheckNear(p[i], expected, 1e-6f, "blocked-only parameter derivative " + name);
+            }
+        }
+    }
+}
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+// LibTorch oracle for the configurable decoder block (tofix112): every block
+// option as two-block causal stacks, post- and pre-norm. The reference is
+// written from the published definitions with LibTorch autograd, independent
+// of the Python export; compares output, input gradient and every parameter
+// gradient.
+namespace block_oracle {
+
+using Params = std::map<std::string, torch::Tensor>;
+
+torch::Tensor Activation(const torch::Tensor& x, cyxwiz::ActivationType type) {
+    using cyxwiz::ActivationType;
+    switch (type) {
+        case ActivationType::ReLU: return torch::relu(x);
+        case ActivationType::GELU: return torch::gelu(x, "tanh");
+        case ActivationType::GELUExact: return torch::gelu(x);
+        case ActivationType::SiLU: case ActivationType::Swish: return torch::silu(x);
+        case ActivationType::Mish: return x * torch::tanh(torch::softplus(x));
+        case ActivationType::ELU: return torch::elu(x, 1.0);
+        case ActivationType::SELU: return torch::selu(x);
+        case ActivationType::LeakyReLU: return torch::leaky_relu(x, 0.01);
+        case ActivationType::Sigmoid: return torch::sigmoid(x);
+        case ActivationType::Tanh: return torch::tanh(x);
+        case ActivationType::Hardswish: return x * torch::clamp(x + 3.0, 0.0, 6.0) / 6.0;
+        case ActivationType::SquaredReLU: return torch::relu(x).square();
+        default: throw std::runtime_error("block oracle: activation not covered");
+    }
+}
+
+torch::Tensor Rms(const torch::Tensor& x, const torch::Tensor& gamma, double eps) {
+    return x * torch::rsqrt(x.square().mean(-1, true) + eps) * gamma;
+}
+
+// Half-split rotary embedding of the first `dim` features of [B, H, S, Dh],
+// positions from 0; the remaining features pass through (partial RoPE).
+torch::Tensor Rotary(const torch::Tensor& x, double base, int64_t dim) {
+    const int64_t seq = x.size(2);
+    auto inv_freq = torch::pow(base, -torch::arange(0, dim, 2, torch::kFloat64) / static_cast<double>(dim));
+    auto angle = (torch::arange(seq, torch::kFloat64).unsqueeze(1) * inv_freq.unsqueeze(0)).to(torch::kFloat32);
+    auto cos = torch::cat({angle.cos(), angle.cos()}, -1);
+    auto sin = torch::cat({angle.sin(), angle.sin()}, -1);
+    auto rot = x.slice(-1, 0, dim), rest = x.slice(-1, dim, x.size(3));
+    auto x1 = rot.slice(-1, 0, dim / 2), x2 = rot.slice(-1, dim / 2, dim);
+    return torch::cat({rot * cos + torch::cat({-x2, x1}, -1) * sin, rest}, -1);
+}
+
+// ALiBi slopes (Press et al. 2022), written independently of the backend.
+std::vector<double> AlibiSlopes(int heads) {
+    auto power_of_two = [](int n) {
+        std::vector<double> out;
+        for (int i = 1; i <= n; ++i) out.push_back(std::pow(std::pow(2.0, -8.0 / n), i));
+        return out;
+    };
+    const int closest = 1 << static_cast<int>(std::floor(std::log2(heads)));
+    std::vector<double> slopes = power_of_two(closest);
+    const std::vector<double> extra = power_of_two(2 * closest);
+    for (int i = 0; static_cast<int>(slopes.size()) < heads; i += 2) slopes.push_back(extra[i]);
+    return slopes;
+}
+
+torch::Tensor Linear(const torch::Tensor& x, const Params& p, const std::string& weight, const std::string& bias) {
+    auto it = p.find(bias);
+    return torch::nn::functional::linear(x, p.at(weight), it == p.end() ? torch::Tensor() : it->second);
+}
+
+torch::Tensor Norm(const torch::Tensor& x, const Params& p, const std::string& name,
+                   const cyxwiz::TransformerBlockOptions& o) {
+    if (o.norm_type == cyxwiz::TransformerNormType::RMSNorm) return Rms(x, p.at(name + ".gamma"), o.norm_eps);
+    return torch::layer_norm(x, {x.size(-1)}, p.at(name + ".gamma"), p.at(name + ".beta"), o.norm_eps);
+}
+
+torch::Tensor Attention(const torch::Tensor& x, const Params& p, int heads,
+                        const cyxwiz::TransformerBlockOptions& o) {
+    const int64_t b = x.size(0), s = x.size(1), d = x.size(2), dh = d / heads;
+    const int64_t kv = o.num_kv_heads > 0 ? o.num_kv_heads : heads;
+    auto split = [&](const torch::Tensor& t, int64_t n) { return t.view({b, s, n, dh}).transpose(1, 2); };
+    auto q = split(Linear(x, p, "self_attn.W_q", "self_attn.b_q"), heads);
+    auto k = split(Linear(x, p, "self_attn.W_k", "self_attn.b_k"), kv);
+    auto v = split(Linear(x, p, "self_attn.W_v", "self_attn.b_v"), kv);
+    if (o.qk_norm) {
+        q = Rms(q, p.at("self_attn.q_norm_gamma"), o.norm_eps);
+        k = Rms(k, p.at("self_attn.k_norm_gamma"), o.norm_eps);
+    }
+    if (o.position_encoding == cyxwiz::TransformerPositionEncoding::Rope) {
+        const int64_t rot = static_cast<int64_t>(o.rope_fraction * dh / 2.0 + 1e-6) * 2;
+        q = Rotary(q, o.rope_base, rot);
+        k = Rotary(k, o.rope_base, rot);
+    }
+    k = k.repeat_interleave(heads / kv, 1);  // grouped-query attention
+    v = v.repeat_interleave(heads / kv, 1);
+    auto scores = torch::matmul(q, k.transpose(-2, -1)) / std::sqrt(static_cast<double>(dh));
+    if (o.attn_logit_softcap > 0.0f) {
+        scores = o.attn_logit_softcap * torch::tanh(scores / o.attn_logit_softcap);
+    }
+    auto pos = torch::arange(s, torch::kFloat32);
+    auto distance = pos.unsqueeze(0) - pos.unsqueeze(1);  // key position - query position
+    if (o.position_encoding == cyxwiz::TransformerPositionEncoding::Alibi) {
+        const auto slopes = AlibiSlopes(heads);
+        std::vector<float> values(slopes.begin(), slopes.end());
+        auto slope = torch::tensor(values).view({heads, 1, 1});
+        scores = scores + slope * distance;
+    }
+    // Additive -1e9 above the diagonal, and for keys `sliding_window` or more back.
+    auto hidden = distance > 0;
+    if (o.sliding_window > 0) hidden = hidden.logical_or(-distance >= o.sliding_window);
+    scores = scores + hidden.to(torch::kFloat32) * -1e9;
+    auto context = torch::matmul(torch::softmax(scores, -1), v).transpose(1, 2).reshape({b, s, d});
+    return Linear(context, p, "self_attn.W_o", "self_attn.b_o");
+}
+
+torch::Tensor FeedForward(const torch::Tensor& x, const Params& p, const cyxwiz::TransformerBlockOptions& o) {
+    auto up = Linear(x, p, "linear1.weights", "linear1.bias");
+    auto hidden = o.ffn_type == cyxwiz::TransformerFeedForwardType::Gated
+        ? Activation(Linear(x, p, "ffn_gate.weights", "ffn_gate.bias"), o.ffn_activation) * up
+        : Activation(up, o.ffn_activation);
+    return Linear(hidden, p, "linear2.weights", "linear2.bias");
+}
+
+torch::Tensor Block(const torch::Tensor& x, const Params& p, int heads, bool pre,
+                    const cyxwiz::TransformerBlockOptions& o) {
+    if (o.block_layout == cyxwiz::TransformerBlockLayout::Parallel) {
+        auto n = Norm(x, p, "norm1", o);
+        return x + Attention(n, p, heads, o) + FeedForward(n, p, o);
+    }
+    if (o.sandwich_norm) {
+        auto h = x + Norm(Attention(Norm(x, p, "norm1", o), p, heads, o), p, "post_attn_norm", o);
+        return h + Norm(FeedForward(Norm(h, p, "norm2", o), p, o), p, "post_ffn_norm", o);
+    }
+    if (pre) {
+        auto h = x + Attention(Norm(x, p, "norm1", o), p, heads, o);
+        return h + FeedForward(Norm(h, p, "norm2", o), p, o);
+    }
+    auto h = Norm(x + Attention(x, p, heads, o), p, "norm1", o);
+    return Norm(h + FeedForward(h, p, o), p, "norm2", o);
+}
+
+// Random parameters with the backend's names and [out, in] weight layout.
+Params MakeParams(int d, int heads, int ff, const cyxwiz::TransformerBlockOptions& o) {
+    Params p;
+    auto w = [&](const std::string& name, std::vector<int64_t> shape) {
+        p[name] = (torch::rand(shape) * 0.6 - 0.3).requires_grad_(true);
+    };
+    auto scale = [&](const std::string& name, int64_t n) {
+        p[name] = (torch::rand({n}) + 0.5).requires_grad_(true);
+    };
+    const int dh = d / heads;
+    const int kv_width = (o.num_kv_heads > 0 ? o.num_kv_heads : heads) * dh;
+    w("self_attn.W_q", {d, d});
+    w("self_attn.W_k", {kv_width, d});
+    w("self_attn.W_v", {kv_width, d});
+    w("self_attn.W_o", {d, d});
+    if (o.attention_bias) {
+        w("self_attn.b_q", {d});
+        w("self_attn.b_k", {kv_width});
+        w("self_attn.b_v", {kv_width});
+        w("self_attn.b_o", {d});
+    }
+    if (o.qk_norm) {
+        scale("self_attn.q_norm_gamma", dh);
+        scale("self_attn.k_norm_gamma", dh);
+    }
+    std::vector<std::string> norms{"norm1"};
+    if (o.block_layout != cyxwiz::TransformerBlockLayout::Parallel) norms.push_back("norm2");
+    if (o.sandwich_norm) {
+        norms.push_back("post_attn_norm");
+        norms.push_back("post_ffn_norm");
+    }
+    for (const auto& n : norms) {
+        scale(n + ".gamma", d);
+        if (o.norm_type == cyxwiz::TransformerNormType::LayerNorm) w(n + ".beta", {d});
+    }
+    w("linear1.weights", {ff, d});
+    w("linear2.weights", {d, ff});
+    if (o.ffn_type == cyxwiz::TransformerFeedForwardType::Gated) w("ffn_gate.weights", {ff, d});
+    if (o.ffn_bias) {
+        w("linear1.bias", {ff});
+        w("linear2.bias", {d});
+        if (o.ffn_type == cyxwiz::TransformerFeedForwardType::Gated) w("ffn_gate.bias", {ff});
+    }
+    return p;
+}
+
+cyxwiz::Tensor ToBackend(const torch::Tensor& t) {
+    const torch::Tensor c = t.detach().contiguous().to(torch::kFloat32);
+    std::vector<size_t> shape(c.sizes().begin(), c.sizes().end());
+    return cyxwiz::Tensor(shape, c.data_ptr<float>(), cyxwiz::DataType::Float32);
+}
+
+float MaxError(const cyxwiz::Tensor& actual, const torch::Tensor& expected, const std::string& label) {
+    const std::vector<float> want = TensorToVector(expected);
+    Check(actual.NumElements() == want.size(), label + " element count");
+    const float* got = actual.Data<float>();
+    float worst = 0.0f;
+    for (size_t i = 0; i < want.size(); ++i) {
+        const float tolerance = 3e-5f + 3e-4f * std::fabs(want[i]);
+        CheckNear(got[i], want[i], tolerance, label);
+        worst = std::max(worst, std::fabs(got[i] - want[i]));
+    }
+    return worst;
+}
+
+float RunCase(const std::string& label, const cyxwiz::TransformerBlockOptions& o, bool pre) {
+    constexpr int kD = 16, kHeads = 4, kFF = 12;
+    torch::manual_seed(52);
+    std::vector<Params> params;
+    std::vector<std::unique_ptr<cyxwiz::TransformerDecoderLayer>> layers;
+    for (int i = 0; i < 2; ++i) {
+        params.push_back(MakeParams(kD, kHeads, kFF, o));
+        auto layer = std::make_unique<cyxwiz::TransformerDecoderLayer>(kD, kHeads, kFF, 0.0f, pre, 0.0f, o);
+        layer->SetTraining(true);
+        std::map<std::string, cyxwiz::Tensor> backend;
+        for (const auto& [name, value] : params.back()) backend[name] = ToBackend(value);
+        layer->SetParameters(backend);
+        // Every trainable backend tensor of the used path has a reference twin.
+        for (const auto& [name, value] : layer->GetParameters()) {
+            if (name.find(".grad_") != std::string::npos || name.rfind("cross_attn.", 0) == 0 ||
+                name.rfind("norm3.", 0) == 0) continue;
+            Check(params.back().count(name) == 1, label + " backend parameter without reference: " + name);
+        }
+        layers.push_back(std::move(layer));
+    }
+    auto x = (torch::rand({2, 5, kD}) * 2.0 - 1.0).requires_grad_(true);
+    auto upstream = torch::rand({2, 5, kD}) * 2.0 - 1.0;
+    torch::Tensor expected = x;
+    cyxwiz::Tensor actual = ToBackend(x);
+    for (int i = 0; i < 2; ++i) {
+        expected = Block(expected, params[i], kHeads, pre, o);
+        actual = layers[i]->Forward(actual);
+    }
+    float worst = MaxError(actual, expected, label + " output");
+    expected.backward(upstream);
+    cyxwiz::Tensor derivative = ToBackend(upstream);
+    for (int i = 1; i >= 0; --i) derivative = layers[i]->Backward(derivative);
+    worst = std::max(worst, MaxError(derivative, x.grad(), label + " input gradient"));
+    for (int i = 0; i < 2; ++i) {
+        const auto grads = layers[i]->GetParameters();
+        for (const auto& [name, value] : params[i]) {
+            const auto dot = name.rfind('.');
+            const std::string key = name.substr(0, dot) + ".grad_" + name.substr(dot + 1);
+            Check(grads.count(key) == 1, label + " missing gradient " + key);
+            worst = std::max(worst, MaxError(grads.at(key), value.grad(),
+                                             label + " layer" + std::to_string(i) + " " + key));
+        }
+    }
+    return worst;
+}
+
+}  // namespace block_oracle
+
+void TestConfigurableDecoderBlockLibTorchParity() {
+    using cyxwiz::ActivationType;
+    using cyxwiz::TransformerBlockOptions;
+    struct Case { std::string label; TransformerBlockOptions options; };
+    std::vector<Case> cases;
+    auto add = [&](const std::string& label, auto&& edit) {
+        TransformerBlockOptions o;
+        edit(o);
+        cases.push_back({label, o});
+    };
+    const auto rms = cyxwiz::TransformerNormType::RMSNorm;
+    const auto gated = cyxwiz::TransformerFeedForwardType::Gated;
+    const auto rope = cyxwiz::TransformerPositionEncoding::Rope;
+    add("classic", [](TransformerBlockOptions&) {});
+    add("rms_norm", [&](TransformerBlockOptions& o) { o.norm_type = rms; });
+    add("rms_norm eps 1e-6", [&](TransformerBlockOptions& o) { o.norm_type = rms; o.norm_eps = 1e-6f; });
+    add("ffn_bias off", [](TransformerBlockOptions& o) { o.ffn_bias = false; });
+    add("attention_bias off", [](TransformerBlockOptions& o) { o.attention_bias = false; });
+    add("rope", [&](TransformerBlockOptions& o) { o.position_encoding = rope; });
+    add("rope base 500", [&](TransformerBlockOptions& o) { o.position_encoding = rope; o.rope_base = 500.0f; });
+    add("qk_norm", [](TransformerBlockOptions& o) { o.qk_norm = true; });
+    add("qk_norm + rope", [&](TransformerBlockOptions& o) { o.qk_norm = true; o.position_encoding = rope; });
+    for (const auto& [name, type] : std::vector<std::pair<std::string, ActivationType>>{
+             {"relu", ActivationType::ReLU}, {"gelu", ActivationType::GELU},
+             {"gelu_exact", ActivationType::GELUExact}, {"silu", ActivationType::SiLU},
+             {"mish", ActivationType::Mish}, {"elu", ActivationType::ELU}, {"selu", ActivationType::SELU},
+             {"leaky_relu", ActivationType::LeakyReLU}, {"sigmoid", ActivationType::Sigmoid},
+             {"tanh", ActivationType::Tanh}, {"hardswish", ActivationType::Hardswish},
+             {"squared_relu", ActivationType::SquaredReLU}}) {
+        const ActivationType t = type;
+        add("mlp " + name, [t](TransformerBlockOptions& o) { o.ffn_activation = t; });
+        add("gated " + name, [&, t](TransformerBlockOptions& o) { o.ffn_type = gated; o.ffn_activation = t; });
+    }
+    add("llama_style", [&](TransformerBlockOptions& o) {
+        o.norm_type = rms; o.ffn_type = gated; o.ffn_activation = ActivationType::SiLU;
+        o.ffn_bias = false; o.position_encoding = rope; o.attention_bias = false;
+    });
+    add("llama_style + qk_norm", [&](TransformerBlockOptions& o) {
+        o.norm_type = rms; o.ffn_type = gated; o.ffn_activation = ActivationType::SiLU;
+        o.ffn_bias = false; o.position_encoding = rope; o.attention_bias = false; o.qk_norm = true;
+    });
+    // Groups 2-4 (2026-09-25).
+    const auto alibi = cyxwiz::TransformerPositionEncoding::Alibi;
+    const auto parallel = cyxwiz::TransformerBlockLayout::Parallel;
+    add("alibi", [&](TransformerBlockOptions& o) { o.position_encoding = alibi; });
+    add("rope fraction 0.5", [&](TransformerBlockOptions& o) { o.position_encoding = rope; o.rope_fraction = 0.5f; });
+    add("rope fraction 0.75 + qk_norm", [&](TransformerBlockOptions& o) {
+        o.position_encoding = rope; o.rope_fraction = 0.75f; o.qk_norm = true; });
+    add("gqa 2 kv heads", [](TransformerBlockOptions& o) { o.num_kv_heads = 2; });
+    add("mqa + rope", [&](TransformerBlockOptions& o) { o.num_kv_heads = 1; o.position_encoding = rope; });
+    add("gqa + qk_norm, no attention bias", [](TransformerBlockOptions& o) {
+        o.num_kv_heads = 2; o.qk_norm = true; o.attention_bias = false; });
+    add("sliding window 2", [](TransformerBlockOptions& o) { o.sliding_window = 2; });
+    add("sliding window 3 + alibi", [&](TransformerBlockOptions& o) { o.sliding_window = 3; o.position_encoding = alibi; });
+    add("softcap 1", [](TransformerBlockOptions& o) { o.attn_logit_softcap = 1.0f; });
+    add("softcap 0.5 + rope + qk_norm", [&](TransformerBlockOptions& o) {
+        o.attn_logit_softcap = 0.5f; o.position_encoding = rope; o.qk_norm = true; });
+    std::vector<Case> pre_only;
+    auto add_pre = [&](const std::string& label, auto&& edit) {
+        TransformerBlockOptions o;
+        edit(o);
+        pre_only.push_back({label, o});
+    };
+    add_pre("parallel", [&](TransformerBlockOptions& o) { o.block_layout = parallel; });
+    add_pre("parallel gpt-j-like", [&](TransformerBlockOptions& o) {
+        o.block_layout = parallel; o.norm_type = rms; o.ffn_type = gated;
+        o.ffn_activation = ActivationType::GELU; o.position_encoding = rope; });
+    add_pre("sandwich", [](TransformerBlockOptions& o) { o.sandwich_norm = true; });
+    add_pre("gemma-like", [&](TransformerBlockOptions& o) {
+        o.sandwich_norm = true; o.norm_type = rms; o.ffn_type = gated; o.ffn_activation = ActivationType::GELU;
+        o.position_encoding = rope; o.qk_norm = true; o.attn_logit_softcap = 2.0f; o.num_kv_heads = 2;
+        o.sliding_window = 4; o.attention_bias = false; o.ffn_bias = false; });
+    float worst = 0.0f;
+    size_t runs = 0;
+    for (const auto& c : pre_only) {
+        const std::string label = "LibTorch block oracle [" + c.label + ", pre-norm]";
+        worst = std::max(worst, block_oracle::RunCase(label, c.options, true));
+        ++runs;
+    }
+    for (const auto& c : cases) {
+        for (const bool pre : {false, true}) {
+            const std::string label = "LibTorch block oracle [" + c.label + (pre ? ", pre-norm]" : ", post-norm]");
+            worst = std::max(worst, block_oracle::RunCase(label, c.options, pre));
+            ++runs;
+        }
+    }
+    std::cout << "LibTorch configurable decoder block oracle: " << runs
+              << " two-block cases passed, max abs error " << worst << "\n";
+}
+#endif
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+// Tied input/output embeddings (tofix112): logits = E[tokens]-path output
+// projected with the same table, and the table gradient is the sum of the
+// lookup gradient and the projection gradient. Repeated token ids exercise the
+// vectorized scatter-add.
+void TestTiedEmbeddingLibTorchParity() {
+    constexpr int64_t kVocab = 7, kWidth = 5;
+    torch::manual_seed(52);
+    auto table = (torch::rand({kVocab, kWidth}) - 0.5).requires_grad_(true);
+    auto tokens = torch::tensor({{1, 3, 1, 6}, {0, 3, 3, 2}}, torch::kInt64);
+    auto hidden = torch::embedding(table, tokens);
+    auto logits = torch::nn::functional::linear(torch::tanh(hidden), table);
+    auto upstream = torch::rand(logits.sizes()) - 0.5;
+    logits.backward(upstream);
+
+    cyxwiz::SequentialModel model;
+    model.Add<cyxwiz::EmbeddingModule>(kVocab, kWidth);
+    auto* embedding = dynamic_cast<cyxwiz::EmbeddingModule*>(model.GetModule(0));
+    Check(embedding != nullptr, "embedding module");
+    model.Add<cyxwiz::TanhModule>();
+    model.Add<cyxwiz::TiedOutputProjectionModule>(*embedding, false);
+    model.SetTraining(true);
+    const torch::Tensor table_values = table.detach().contiguous();
+    embedding->SetParameters({{"weight", cyxwiz::Tensor({kVocab, kWidth}, table_values.data_ptr<float>(),
+                                                        cyxwiz::DataType::Float32)}});
+    const std::vector<int64_t> ids = TensorToInt64Vector(tokens);
+    const cyxwiz::Tensor input({2, 4}, ids.data(), cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor out = model.Forward(input);
+    const std::vector<float> expected_logits = TensorToVector(logits);
+    Check(out.NumElements() == expected_logits.size(), "tied logits size");
+    for (size_t i = 0; i < expected_logits.size(); ++i) {
+        CheckNear(out.Data<float>()[i], expected_logits[i], 2e-5f, "tied logits match LibTorch");
+    }
+    const std::vector<float> up = TensorToVector(upstream);
+    model.Backward(cyxwiz::Tensor(out.Shape(), up.data(), cyxwiz::DataType::Float32));
+    const auto grads = model.GetGradients();
+    Check(grads.count("layer0.weight") == 1 && grads.size() == 1,
+          "the shared table is the only trainable tensor");
+    const std::vector<float> expected_grad = TensorToVector(table.grad());
+    for (size_t i = 0; i < expected_grad.size(); ++i) {
+        CheckNear(grads.at("layer0.weight").Data<float>()[i], expected_grad[i], 2e-5f,
+                  "tied table gradient = lookup + projection (LibTorch)");
+    }
+    std::cout << "LibTorch tied embedding oracle passed\n";
+}
+#endif
+
+int main() {
+    try {
+        TestNearRejectsNonfinite();
+        TestFullyBlockedAttentionRows();
+        TestEmbeddingForwardAndGradientParity();
+        TestPositionalEncodingParity();
+        TestScaledDotProductAttentionParity();
+        TestMultiHeadAttentionForwardParity();
+        TestMultiHeadAttentionCrossAttentionParity();
+        TestLayerNormParity();
+        TestTransformerEncoderForwardParity();
+        TestTransformerEncoderTwoBlockStackBackwardParity();
+        TestBertEncoderHeadLogitParity();
+        TestTransformerDecoderCausalForwardParity();
+        TestTransformerDecoderCrossAttentionBackwardParity();
+        TestTransformerDecoderTwoBlockCausalStackBackwardParity();
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+        TestConfigurableDecoderBlockLibTorchParity();
+        TestTiedEmbeddingLibTorchParity();
+#endif
+        TestGenerationSamplingDistributionParity();
+        TestTinyCausalLanguageModelLogitsAndLossParity();
+        TestTinyTransformerCrossEntropyTrainingStepSanity();
+        std::cout << "Computation truth transformer primitive checks passed\n";
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL: unhandled exception: " << e.what() << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << "FAIL: unknown unhandled exception\n";
+        return 1;
+    }
+}

@@ -1,0 +1,264 @@
+#include "language_results.h"
+
+#include <nlohmann/json.hpp>
+
+#include <cctype>
+
+namespace cyxwiz::lang {
+
+namespace {
+using nlohmann::json;
+
+json ParseOr(const std::string& text, json fallback) {
+    try {
+        return json::parse(text);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string Str(const json& o, const char* key) {
+    auto it = o.find(key);
+    return it != o.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+int Int(const json& o, const char* key) {
+    auto it = o.find(key);
+    return it != o.end() && it->is_number_integer() ? it->get<int>() : 0;
+}
+}  // namespace
+
+std::vector<Completion> ParseCompletions(const std::string& text) {
+    std::vector<Completion> out;
+    const json doc = ParseOr(text, json::array());
+    if (!doc.is_array()) return out;
+    for (const auto& item : doc) {
+        if (!item.is_object()) continue;
+        out.push_back({Str(item, "name"), Str(item, "complete"), Str(item, "kind"), Str(item, "detail"), Str(item, "module")});
+    }
+    return out;
+}
+
+Description ParseDescription(const std::string& text) {
+    const json o = ParseOr(text, json::object());
+    if (!o.is_object()) return {};
+    return {Str(o, "name"), Str(o, "kind"), Str(o, "signature"), Str(o, "doc"), Str(o, "module")};
+}
+
+Hover ParseHover(const std::string& text) {
+    const json o = ParseOr(text, json::object());
+    if (!o.is_object()) return {};
+    Hover h;
+    h.name = Str(o, "name");
+    h.kind = Str(o, "kind");
+    h.signature = Str(o, "signature");
+    h.type = Str(o, "type");
+    h.doc = Str(o, "doc");
+    h.module = Str(o, "module");
+    h.path = Str(o, "path");
+    h.line = Int(o, "line");
+    return h;
+}
+
+std::vector<Signature> ParseSignatures(const std::string& text) {
+    std::vector<Signature> out;
+    const json doc = ParseOr(text, json::array());
+    if (!doc.is_array()) return out;
+    for (const auto& item : doc) {
+        if (!item.is_object()) continue;
+        Signature s;
+        s.name = Str(item, "name");
+        s.doc = Str(item, "doc");
+        s.module = Str(item, "module");
+        s.returns = Str(item, "returns");
+        s.path = Str(item, "path");
+        s.line = Int(item, "line");
+        auto it = item.find("index");
+        s.index = it != item.end() && it->is_number_integer() ? it->get<int>() : -1;
+        auto params = item.find("params");
+        if (params != item.end() && params->is_array())
+            for (const auto& p : *params)
+                if (p.is_string()) s.params.push_back(p.get<std::string>());
+        out.push_back(std::move(s));
+    }
+    return out;
+}
+
+std::vector<Location> ParseLocations(const std::string& text) {
+    std::vector<Location> out;
+    const json doc = ParseOr(text, json::array());
+    if (!doc.is_array()) return out;
+    for (const auto& item : doc) {
+        if (!item.is_object()) continue;
+        Location l;
+        l.name = Str(item, "name");
+        l.path = Str(item, "path");
+        l.line = Int(item, "line");
+        l.column = Int(item, "column");
+        l.module = Str(item, "module");
+        auto it = item.find("in_source");
+        l.in_source = it != item.end() && it->is_boolean() && it->get<bool>();
+        out.push_back(std::move(l));
+    }
+    return out;
+}
+
+std::vector<Problem> ParseProblems(const std::string& text) {
+    std::vector<Problem> out;
+    const json doc = ParseOr(text, json::array());
+    if (!doc.is_array()) return out;
+    for (const auto& item : doc) {
+        if (!item.is_object()) continue;
+        Problem p;
+        p.line = Int(item, "line");
+        p.column = Int(item, "column");
+        p.error = Str(item, "severity") == "error";
+        p.message = Str(item, "message");
+        p.code = Str(item, "code");
+        if (p.line > 0) out.push_back(std::move(p));
+    }
+    return out;
+}
+
+std::string ReflowDoc(const std::string& doc, int paragraphs) {
+    std::string out;
+    std::string para;
+    int kept = 0;
+    bool indented_block = false;
+    auto flush = [&]() {
+        if (para.empty()) return;
+        if (kept < paragraphs) {
+            if (!out.empty()) out += "\n\n";
+            out += para;
+            ++kept;
+        }
+        para.clear();
+    };
+    size_t start = 0;
+    while (start <= doc.size() && kept < paragraphs) {
+        size_t end = doc.find('\n', start);
+        if (end == std::string::npos) end = doc.size();
+        std::string line = doc.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            flush();
+            indented_block = false;
+        } else {
+            const bool indented = first >= 4;
+            if (indented || indented_block) {
+                para += (para.empty() ? "" : "\n") + line;
+                indented_block = indented;
+            } else {
+                para += (para.empty() ? "" : " ") + line.substr(first);
+            }
+        }
+        if (end == doc.size()) break;
+        start = end + 1;
+    }
+    flush();
+    // ``code`` -> code
+    std::string clean;
+    for (size_t i = 0; i < out.size(); ++i) {
+        if (out[i] == '`' && i + 1 < out.size() && out[i + 1] == '`') {
+            ++i;
+            continue;
+        }
+        clean += out[i];
+    }
+    return clean;
+}
+
+KindChip ChipFor(const std::string& kind) {
+    if (kind == "function") return {"f", 0};
+    if (kind == "class") return {"C", 1};
+    if (kind == "module") return {"M", 2};
+    if (kind == "variable" || kind == "property") return {"v", 3};
+    if (kind == "keyword") return {"k", 4};
+    if (kind == "path") return {"/", 5};
+    return {"\xC2\xB7", 5};
+}
+
+std::string ProblemSummary(const std::vector<Problem>& problems) {
+    int errors = 0, warnings = 0;
+    for (const auto& p : problems) (p.error ? errors : warnings)++;
+    if (errors == 0 && warnings == 0) return "No problems";
+    std::string out;
+    if (errors) out += std::to_string(errors) + (errors == 1 ? " error" : " errors");
+    if (warnings) out += std::string(out.empty() ? "" : ", ") + std::to_string(warnings) + (warnings == 1 ? " warning" : " warnings");
+    return out;
+}
+
+std::pair<int, int> ProblemRange(const std::string& line_text, const Problem& problem) {
+    const int n = static_cast<int>(line_text.size());
+    auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    int column = problem.column;
+    if (problem.code == "UnusedImport" || problem.code == "RedefinedWhileUnused") {
+        // "'pkg.mod.name' imported but unused": the last part of the quoted name.
+        const size_t q1 = problem.message.find('\'');
+        const size_t q2 = q1 == std::string::npos ? q1 : problem.message.find('\'', q1 + 1);
+        if (q2 != std::string::npos) {
+            std::string name = problem.message.substr(q1 + 1, q2 - q1 - 1);
+            const size_t as = name.find(" as ");
+            if (as != std::string::npos) name = name.substr(as + 4);
+            const size_t dot = name.rfind('.');
+            if (dot != std::string::npos) name = name.substr(dot + 1);
+            for (size_t at = line_text.find(name); at != std::string::npos; at = line_text.find(name, at + 1)) {
+                const bool left = at == 0 || !word(line_text[at - 1]);
+                const size_t right_at = at + name.size();
+                const bool right = right_at >= line_text.size() || !word(line_text[right_at]);
+                if (left && right) return {static_cast<int>(at), static_cast<int>(right_at)};
+            }
+        }
+    }
+    if (column >= n) return {column, column + 1};
+    int end = column;
+    while (end < n && (word(line_text[static_cast<size_t>(end)]) || line_text[static_cast<size_t>(end)] == '.')) ++end;
+    return {column, end > column ? end : column + 1};
+}
+
+std::vector<SignaturePiece> SignaturePieces(const Signature& signature) {
+    std::vector<SignaturePiece> out;
+    out.push_back({signature.name + "(", false});
+    for (size_t i = 0; i < signature.params.size(); ++i) {
+        out.push_back({signature.params[i], static_cast<int>(i) == signature.index});
+        if (i + 1 < signature.params.size()) out.push_back({", ", false});
+    }
+    out.push_back({signature.returns.empty() ? std::string(")") : ") " + signature.returns, false});
+    return out;
+}
+
+std::string LocationLabel(const std::string& path, int line, const std::string& module) {
+    if (!path.empty()) {
+        const size_t slash = path.find_last_of("/\\");
+        std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+        return line > 0 ? file + ":" + std::to_string(line) : file;
+    }
+    if (line > 0) return "line " + std::to_string(line);
+    return module;
+}
+
+std::string SignatureFooter(const Signature& signature) {
+    const int n = static_cast<int>(signature.params.size());
+    std::string text;
+    if (n == 0) text = "No parameters";
+    else if (signature.index >= 0 && signature.index < n)
+        text = "Parameter " + std::to_string(signature.index + 1) + " of " + std::to_string(n);
+    else text = std::to_string(n) + (n == 1 ? " parameter" : " parameters");
+    const std::string where = LocationLabel(signature.path, signature.line, signature.module);
+    if (!where.empty()) text += " \xC2\xB7 " + where;
+    return text;
+}
+
+std::string HoverHeadline(const Hover& hover) {
+    if (!hover.signature.empty()) {
+        if (hover.kind == "function") return "def " + hover.signature;
+        if (hover.kind == "class") return "class " + hover.signature;
+        return hover.signature;
+    }
+    if (!hover.type.empty()) return hover.name + ": " + hover.type;
+    if (hover.kind.empty()) return hover.name;
+    return hover.name + "  (" + hover.kind + ")";
+}
+
+}  // namespace cyxwiz::lang

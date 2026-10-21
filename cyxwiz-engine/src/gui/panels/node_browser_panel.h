@@ -1,11 +1,12 @@
 #pragma once
 
+#include "../../core/extension_node_presentation.h"
 #include <string>
 #include <vector>
 #include <functional>
 #include <unordered_map>
-#include <unordered_set>
 #include "../../core/node_metadata.h"
+#include <imgui.h>
 
 namespace gui {
 
@@ -42,6 +43,24 @@ public:
     }
 
     /**
+     * Set callback for a node card click (pins it in the Info Panel)
+     */
+    void SetNodeSelectCallback(std::function<void(cyxwiz::NodeType)> callback) {
+        on_node_select_ = callback;
+    }
+
+    /**
+     * Extension nodes (TOFIX125) share one NodeType; these callbacks carry
+     * their type id "<provider_id>:<TypeName>".
+     */
+    void SetExtensionHoverCallback(std::function<void(const std::string&)> callback) {
+        on_extension_hover_ = std::move(callback);
+    }
+    void SetExtensionSelectCallback(std::function<void(const std::string&)> callback) {
+        on_extension_select_ = std::move(callback);
+    }
+
+    /**
      * Render the panel
      */
     void Render();
@@ -56,6 +75,12 @@ public:
      * Clear search and navigate back to root
      */
     void ClearSearch();
+
+    /**
+     * Show the nodes one plugin adds (Apps > a loaded plugin, TOFIX125):
+     * the Plugins page narrowed to that plugin, the window shown and focused.
+     */
+    void ShowPluginNodes(const std::string& provider_id);
 
     /**
      * Process keyboard shortcuts
@@ -83,14 +108,44 @@ private:
     void RenderSearchBar();
     void RenderFilterTags();
     void RenderCategorySection(cyxwiz::NodeCategory category);
+    // Palette curation (TOFIX157, core/node_palette): with the All filter a
+    // category keeps the nodes that run and are not table steps; the table
+    // steps show under Advanced operations and the rest under Can't run yet,
+    // both closed until opened.
+    std::vector<const cyxwiz::NodeMetadata*> Curated(std::vector<const cyxwiz::NodeMetadata*> nodes) const;
+    void RenderAdvancedSection();
+    void RenderCantRunSection();
     void RenderNodeGrid(const std::vector<const cyxwiz::NodeMetadata*>& nodes, int max_visible = -1);
-    void RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width);
-    void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size);
+    // extension: set for an extension node, whose identity is its type id.
+    void RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width,
+                        const cyxwiz::ExtensionPaletteEntry* extension = nullptr);
+    void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size,
+                        const cyxwiz::ExtensionPaletteEntry* extension = nullptr);
+    // Extension nodes (the Plugins section), through the same cards.
+    void RenderExtensionSection(bool show_all);
+    void RenderExtensionGrid(const std::vector<cyxwiz::ExtensionPaletteEntry>& entries);
     void RenderPortIndicators(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 icon_size);
     void RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata);
+    std::vector<const cyxwiz::NodeMetadata*> ApplySupportFilter(
+        const std::vector<const cyxwiz::NodeMetadata*>& nodes) const;
+    bool NodeMatchesSupportFilter(const cyxwiz::NodeMetadata* metadata) const;
+    bool IsSupportBlocked(const cyxwiz::NodeMetadata* metadata) const;
+    bool HasPipelineSupport(const cyxwiz::NodeMetadata* metadata) const;
+    bool HasTrainingSupport(const cyxwiz::NodeMetadata* metadata) const;
+    bool IsUiOnly(const cyxwiz::NodeMetadata* metadata) const;
 
-    // Node creation
-    void CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata);
+    enum class SupportFilterMode {
+        All,
+        Pipeline,
+        Training,
+        UiOnly,
+        Blocked,
+    };
+    const char* GetSupportFilterLabel(SupportFilterMode mode) const;
+
+    // Node creation (adds at the centre of the canvas view)
+    void CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata,
+                           const cyxwiz::ExtensionPaletteEntry* extension = nullptr);
 
     // Navigation
     void NavigateToCategory(cyxwiz::NodeCategory category);
@@ -104,17 +159,17 @@ private:
     bool visible_ = true;
     std::string search_query_;
     bool focus_search_next_frame_ = false;  // Focus search bar on next frame
-    bool studio_section_expanded_ = true;   // CyxWiz Studio section state
 
     // Navigation state (breadcrumb)
     bool showing_all_in_category_ = false;
     cyxwiz::NodeCategory current_category_ = cyxwiz::NodeCategory::Unknown;
+    std::string provider_filter_;  // the Plugins page shows only this plugin
+    bool focus_window_next_frame_ = false;
 
     // Category expansion state (for collapsed view)
     std::unordered_map<cyxwiz::NodeCategory, bool> category_show_all_;
 
-    // Filter tags state
-    std::unordered_set<std::string> active_filters_;
+    SupportFilterMode support_filter_mode_ = SupportFilterMode::All;
 
     // Drag-drop state
     const cyxwiz::NodeMetadata* dragging_node_ = nullptr;
@@ -124,6 +179,11 @@ private:
 
     // Callback for node hover
     std::function<void(cyxwiz::NodeType)> on_node_hover_;
+    std::function<void(cyxwiz::NodeType)> on_node_select_;
+    cyxwiz::NodeType pinned_node_type_ = cyxwiz::NodeType::Unknown;
+    std::function<void(const std::string&)> on_extension_hover_;
+    std::function<void(const std::string&)> on_extension_select_;
+    std::string pinned_extension_id_;
 
     // Layout constants
     static constexpr float PANEL_MIN_WIDTH = 280.0f;

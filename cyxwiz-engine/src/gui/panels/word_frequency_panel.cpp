@@ -1,5 +1,8 @@
 #include "word_frequency_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -8,7 +11,7 @@ namespace cyxwiz {
 
 WordFrequencyPanel::WordFrequencyPanel() {
     GenerateSampleText();
-    spdlog::info("WordFrequencyPanel initialized");
+    spdlog::debug("WordFrequencyPanel initialized");
 }
 
 WordFrequencyPanel::~WordFrequencyPanel() {
@@ -29,17 +32,11 @@ void WordFrequencyPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.3f, 0), true);
+            ui::BeginSettingsColumn("word_frequency", ImGui::GetContentRegionAvail().x * 0.3f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -76,50 +73,56 @@ void WordFrequencyPanel::RenderToolbar() {
 }
 
 void WordFrequencyPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_SLIDERS " Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Parameters");
 
-    ImGui::DragInt("Top N", &top_n_, 1.0f, 5, 100);
-    ImGui::DragInt("Min Length", &min_word_length_, 1.0f, 1, 10);
+    if (ImGui::BeginTable("##limits", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Top N");
+        ImGui::DragInt("##top_n", &top_n_, 1.0f, 5, 100);
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min length");
+        ImGui::DragInt("##min_length", &min_word_length_, 1.0f, 1, 10);
+        ImGui::EndTable();
+    }
     ImGui::Checkbox("Remove Stopwords", &remove_stopwords_);
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_DATABASE " Sample Text");
-    ImGui::Separator();
+    ui::SettingsSection("Sample text");
 
     const char* sample_types[] = { "Lorem Ipsum", "News Article", "Positive Review",
                                    "Negative Review", "Technical" };
-    if (ImGui::Combo("Type", &sample_type_idx_, sample_types, IM_ARRAYSIZE(sample_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##sample_type", &sample_type_idx_, sample_types, IM_ARRAYSIZE(sample_types))) {
         GenerateSampleText();
         has_result_ = false;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_KEYBOARD " Input Text");
-    ImGui::Separator();
+    ui::SettingsSection("Input");
+    ui::FieldLabel("Input text");
 
-    float available_height = ImGui::GetContentRegionAvail().y - 40;
+    // Room for the Regular run button below (taller than a frame).
+    float available_height = ImGui::GetContentRegionAvail().y - ui::ButtonHeight(ui::ButtonSize::Regular) -
+                             ImGui::GetStyle().ItemSpacing.y * 2.0f;
     ImGui::InputTextMultiline("##InputText", text_buffer_, sizeof(text_buffer_),
                               ImVec2(-1, available_height),
                               ImGuiInputTextFlags_AllowTabInput);
 
-    if (ImGui::Button(ICON_FA_PLAY " Analyze", ImVec2(-1, 0))) {
+    if (ui::PrimaryButton("Analyze", text_buffer_[0] != '\0', "Enter some text first",
+                          ui::ButtonSize::Regular, -FLT_MIN)) {
         AnalyzeAsync();
     }
 }
 
 void WordFrequencyPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Enter text and click 'Analyze' to see results");
+        ui::EmptyState(ICON_FA_CHART_BAR, "No word frequencies yet",
+                       "Enter or generate some text, then Analyze.");
         return;
     }
 

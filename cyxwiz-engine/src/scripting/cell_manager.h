@@ -1,11 +1,16 @@
 #pragma once
 
 #include "cell.h"
+#include "debug_types.h"
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <chrono>
+#include <stdexcept>
 
 namespace scripting {
     class ScriptingEngine;
@@ -33,7 +38,12 @@ public:
     /**
      * Get cell count
      */
-    size_t GetCellCount() const { return cells_.size(); }
+    int GetCellCount() const {
+        if (cells_.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+            throw std::length_error("Cell count exceeds the editor index range");
+        }
+        return static_cast<int>(cells_.size());
+    }
 
     /**
      * Get cell at index
@@ -145,6 +155,12 @@ public:
     void RunCell(int index);
 
     /**
+     * Run one cell under the debugger (TOFIX133 P6) with these breakpoints
+     * (its lines, 1-based).
+     */
+    void DebugCell(int index, std::vector<scripting::DebugBreakpoint> breakpoints, bool stop_on_error);
+
+    /**
      * Run all cells in order
      */
     void RunAllCells();
@@ -165,6 +181,40 @@ public:
     void InterruptExecution();
 
     /**
+     * Restart (TOFIX133 P4, D4): interrupts, then forgets this notebook's
+     * namespace and restarts the [n] count. Outputs stay. Cells run after
+     * it wait until the restart is done.
+     */
+    void Restart();
+    bool IsRestarting() const { return restart_pending_; }
+
+    /**
+     * The namespace this notebook's cells run in. A closed notebook calls
+     * ReleaseNamespace so its variables do not stay in memory.
+     */
+    const std::string& NamespaceKey() const { return namespace_key_; }
+
+    // What the notebook is doing, for the status bar and gutters (TOFIX133
+    // P4 step 4.3): the cell being run in this batch (1-based) of how many,
+    // the [n] of the cell that stopped the last batch (0 = none), and how
+    // long the running cell has run.
+    int BatchPosition() const { return batch_position_; }
+    int BatchTotal() const { return batch_total_; }
+    int StoppedAtCount() const { return stopped_at_count_; }
+    bool StoppedByInterrupt() const { return stopped_by_interrupt_; }
+    double RunningSeconds() const;
+    // True once after a run changed outputs (an .ipynb stores them, so its
+    // tab becomes modified).
+    // Changes when a run ends or the notebook restarts (its variables changed).
+    std::uint64_t RunGeneration() const { return run_generation_; }
+    bool TakeOutputsChanged() {
+        const bool changed = outputs_changed_;
+        outputs_changed_ = false;
+        return changed;
+    }
+    void ReleaseNamespace();
+
+    /**
      * Check if any cell is currently running
      */
     bool IsRunning() const { return is_running_; }
@@ -177,7 +227,13 @@ public:
     /**
      * Get index of currently running cell (-1 if none)
      */
-    int GetRunningCellIndex() const { return running_cell_index_; }
+    int GetRunningCellIndex() const;
+
+    /**
+     * Every frame, on the UI thread: applies output from the worker thread
+     * and starts the next queued cell (TOFIX133 P0 items 8-10).
+     */
+    void Pump();
 
     // ========== Serialization ==========
 
@@ -195,25 +251,19 @@ public:
     std::string SerializeToCyx() const;
 
     /**
+     * Jupyter .ipynb (TOFIX133 P4, D3). Outputs, ids and metadata are kept;
+     * what the Engine does not draw is written back unchanged.
+     */
+    bool ParseFromIpynb(const std::string& content, std::string* error = nullptr);
+    std::string SerializeToIpynb() const;
+
+    /**
      * Check if content has cell markers
      */
     static bool HasCellMarkers(const std::string& content);
 
-    // ========== Callbacks ==========
-
-    using CellCallback = std::function<void(int index)>;
-    using OutputCallback = std::function<void(int index, const CellOutput& output)>;
-
-    void SetOnCellStateChanged(CellCallback callback) { on_cell_state_changed_ = callback; }
-    void SetOnCellOutputAdded(OutputCallback callback) { on_cell_output_added_ = callback; }
-    void SetOnExecutionComplete(CellCallback callback) { on_execution_complete_ = callback; }
-
     // ========== Editor Theme ==========
 
-    /**
-     * Apply theme palette to all code cell editors
-     */
-    void ApplyEditorPalette(const TextEditor::Palette& palette);
 
     /**
      * Apply tab size to all code cell editors
@@ -225,15 +275,32 @@ public:
      */
     void ApplyShowWhitespace(bool show);
 
+    /**
+     * Apply syntax highlighting to all code cell editors
+     */
+    void ApplySyntaxHighlighting(bool enabled);
+
 private:
     // Execution helpers
     void ExecuteCellInternal(int index);
-    void OnExecutionOutput(int cell_index, const std::string& output, bool is_error);
-    void OnExecutionComplete(int cell_index, bool success, const std::string& error);
+    void Enqueue(int from, int to);  // code cells with text, by id
+    bool StartNext();
+    int IndexOfId(const std::string& id) const;
 
-    // Parsing helpers
-    CellType ParseCellMarker(const std::string& line) const;
-    std::string GetCellMarker(CellType type) const;
+    // What the worker thread posts; only Pump() reads it.
+    struct RunEvent {
+        enum class Kind { Stdout, Stderr, Add, Done } kind;
+        std::uint64_t run = 0;
+        std::string text;
+        CellOutput output;
+        bool success = false;
+        bool cancelled = false;
+        std::string error;
+    };
+    struct Mailbox {
+        std::mutex mutex;
+        std::vector<RunEvent> events;
+    };
 
     // Data
     std::vector<Cell> cells_;
@@ -242,16 +309,30 @@ private:
     // Execution state
     bool is_running_ = false;
     int execution_counter_ = 0;
-    int running_cell_index_ = -1;
-    std::vector<int> execution_queue_;
+    std::string ipynb_metadata_;         // notebook metadata of an opened .ipynb
+    int ipynb_minor_ = 5;
+    std::string running_cell_id_;
+    std::vector<std::string> execution_queue_;  // cell ids
+    // The cell to run under the debugger, and its breakpoints (P6).
+    std::string debug_cell_id_;
+    std::vector<scripting::DebugBreakpoint> debug_breakpoints_;
+    bool debug_stop_on_error_ = true;
+    std::uint64_t run_counter_ = 0;
+    std::string namespace_key_;
+    bool restart_pending_ = false;
+    int batch_position_ = 0;
+    int batch_total_ = 0;
+    int stopped_at_count_ = 0;
+    bool stopped_by_interrupt_ = false;
+    bool outputs_changed_ = false;
+    std::uint64_t run_generation_ = 1;
+    std::chrono::steady_clock::time_point run_started_{};
+    bool TryRestart();
+    void AppendStream(Cell& cell, const std::string& name, const std::string& text);
+    std::shared_ptr<Mailbox> mailbox_ = std::make_shared<Mailbox>();
 
     // Thread safety
     mutable std::mutex mutex_;
-
-    // Callbacks
-    CellCallback on_cell_state_changed_;
-    OutputCallback on_cell_output_added_;
-    CellCallback on_execution_complete_;
 };
 
 } // namespace cyxwiz

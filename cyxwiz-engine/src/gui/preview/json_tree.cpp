@@ -1,4 +1,5 @@
 #include "json_tree.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
@@ -24,21 +25,22 @@ void JSONTreeRenderer::SetJSON(const nlohmann::json& json) {
 }
 
 void JSONTreeRenderer::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (!is_valid_) {
         if (!error_.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "JSON Parse Error:");
+            ImGui::TextColored(t.error, "JSON Parse Error:");
             ImGui::TextWrapped("%s", error_.c_str());
         } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No JSON content loaded.");
+            ImGui::TextColored(t.text_dim, "No JSON content loaded.");
         }
         return;
     }
 
     // Info bar
     if (json_.is_object()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Object (%zu keys)", json_.size());
+        ImGui::TextColored(t.text_dim, "Object (%zu keys)", json_.size());
     } else if (json_.is_array()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Array (%zu items)", json_.size());
+        ImGui::TextColored(t.text_dim, "Array (%zu items)", json_.size());
     }
     ImGui::Separator();
 
@@ -49,6 +51,7 @@ void JSONTreeRenderer::Render() {
 }
 
 void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& value, bool is_root) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     node_id_++;
     ImGui::PushID(node_id_);
 
@@ -66,7 +69,7 @@ void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& 
             flags |= ImGuiTreeNodeFlags_DefaultOpen;
         }
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.4f, 1.0f)); // Orange for keys
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[0]); // objects
         bool open = ImGui::TreeNodeEx(label.c_str(), flags);
         ImGui::PopStyleColor();
 
@@ -91,7 +94,7 @@ void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& 
             flags |= ImGuiTreeNodeFlags_DefaultOpen;
         }
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.8f, 1.0f, 1.0f)); // Blue for arrays
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[1]); // arrays
         bool open = ImGui::TreeNodeEx(label.c_str(), flags);
         ImGui::PopStyleColor();
 
@@ -104,14 +107,14 @@ void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& 
                 RenderNode("[" + std::to_string(i) + "]", value[i]);
             }
             if (value.size() > 100) {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                ImGui::TextColored(t.text_dim,
                     "... and %zu more items", value.size() - 100);
             }
             ImGui::TreePop();
         }
     } else {
         // Leaf node (value)
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::Text("%s: ", key.c_str());
         ImGui::PopStyleColor();
         ImGui::SameLine();
@@ -123,29 +126,30 @@ void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& 
 }
 
 void JSONTreeRenderer::RenderValue(const nlohmann::json& value) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (value.is_string()) {
         std::string s = value.get<std::string>();
         // Truncate long strings
         if (s.size() > 200) {
             s = s.substr(0, 200) + "...";
         }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.9f, 0.4f, 1.0f)); // Green
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[2]); // strings
         ImGui::Text("\"%s\"", s.c_str());
         ImGui::PopStyleColor();
     } else if (value.is_number_integer()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 1.0f)); // Cyan
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]); // numbers
         ImGui::Text("%lld", value.get<int64_t>());
         ImGui::PopStyleColor();
     } else if (value.is_number_float()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 1.0f)); // Cyan
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]); // numbers
         ImGui::Text("%.6g", value.get<double>());
         ImGui::PopStyleColor();
     } else if (value.is_boolean()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.3f, 1.0f)); // Yellow
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[4]); // booleans
         ImGui::Text("%s", value.get<bool>() ? "true" : "false");
         ImGui::PopStyleColor();
     } else if (value.is_null()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f)); // Gray
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim); // null
         ImGui::Text("null");
         ImGui::PopStyleColor();
     }

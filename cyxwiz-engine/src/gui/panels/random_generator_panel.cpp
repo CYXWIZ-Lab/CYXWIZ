@@ -1,5 +1,8 @@
 #include "random_generator_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -9,7 +12,7 @@
 namespace cyxwiz {
 
 RandomGeneratorPanel::RandomGeneratorPanel() {
-    spdlog::info("RandomGeneratorPanel initialized");
+    spdlog::debug("RandomGeneratorPanel initialized");
 }
 
 RandomGeneratorPanel::~RandomGeneratorPanel() {
@@ -30,15 +33,9 @@ void RandomGeneratorPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("SettingsPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("random_generator", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderSettings();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
 
             if (ImGui::BeginTabBar("RandomTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Histogram")) {
@@ -60,7 +57,7 @@ void RandomGeneratorPanel::Render() {
                 ImGui::EndTabBar();
             }
 
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -94,89 +91,97 @@ void RandomGeneratorPanel::RenderToolbar() {
 }
 
 void RandomGeneratorPanel::RenderSettings() {
-    ImGui::Text(ICON_FA_SLIDERS " Distribution Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Distribution");
 
     // Distribution selection
     const char* distributions[] = {
         "Uniform", "Normal", "Exponential", "Poisson", "Integer"
     };
-    ImGui::Combo("Distribution", &distribution_idx_, distributions, IM_ARRAYSIZE(distributions));
-
-    ImGui::Spacing();
+    ui::FieldLabel("Distribution");
+    ImGui::Combo("##distribution", &distribution_idx_, distributions, IM_ARRAYSIZE(distributions));
 
     // Count
-    ImGui::DragInt("Count", &count_, 1.0f, 1, 100000);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ui::FieldLabel("Count");
+    ImGui::DragInt("##count", &count_, 1.0f, 1, 100000);
 
     // Distribution-specific parameters
+    ui::SettingsSection("Parameters");
     switch (distribution_idx_) {
         case 0: // Uniform
-            ImGui::Text("Uniform Distribution:");
-            ImGui::DragScalar("Min", ImGuiDataType_Double, &uniform_min_, 0.1f);
-            ImGui::DragScalar("Max", ImGuiDataType_Double, &uniform_max_, 0.1f);
+            if (ImGui::BeginTable("##uniform_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+                ImGui::TableNextColumn();
+                ui::FieldLabel("Min");
+                ImGui::DragScalar("##uniform_min", ImGuiDataType_Double, &uniform_min_, 0.1f);
+                ImGui::TableNextColumn();
+                ui::FieldLabel("Max");
+                ImGui::DragScalar("##uniform_max", ImGuiDataType_Double, &uniform_max_, 0.1f);
+                ImGui::EndTable();
+            }
             break;
 
         case 1: // Normal
-            ImGui::Text("Normal Distribution:");
-            ImGui::DragScalar("Mean", ImGuiDataType_Double, &normal_mean_, 0.1f);
-            ImGui::DragScalar("Std Dev", ImGuiDataType_Double, &normal_stddev_, 0.1f);
+            if (ImGui::BeginTable("##normal_params", 2, ImGuiTableFlags_SizingStretchSame)) {
+                ImGui::TableNextColumn();
+                ui::FieldLabel("Mean");
+                ImGui::DragScalar("##normal_mean", ImGuiDataType_Double, &normal_mean_, 0.1f);
+                ImGui::TableNextColumn();
+                ui::FieldLabel("Std dev");
+                ImGui::DragScalar("##normal_stddev", ImGuiDataType_Double, &normal_stddev_, 0.1f);
+                ImGui::EndTable();
+            }
             if (normal_stddev_ < 0.001) normal_stddev_ = 0.001;
             break;
 
         case 2: // Exponential
-            ImGui::Text("Exponential Distribution:");
-            ImGui::DragScalar("Lambda", ImGuiDataType_Double, &exponential_lambda_, 0.1f);
+            ui::FieldLabel("Lambda");
+            ImGui::DragScalar("##exponential_lambda", ImGuiDataType_Double, &exponential_lambda_, 0.1f);
             if (exponential_lambda_ < 0.001) exponential_lambda_ = 0.001;
             break;
 
         case 3: // Poisson
-            ImGui::Text("Poisson Distribution:");
-            ImGui::DragScalar("Lambda", ImGuiDataType_Double, &poisson_lambda_, 0.1f);
+            ui::FieldLabel("Lambda");
+            ImGui::DragScalar("##poisson_lambda", ImGuiDataType_Double, &poisson_lambda_, 0.1f);
             if (poisson_lambda_ < 0.001) poisson_lambda_ = 0.001;
             break;
 
         case 4: // Integer
-            ImGui::Text("Integer Distribution:");
-            ImGui::DragInt("Min", &integer_min_, 1.0f);
-            ImGui::DragInt("Max", &integer_max_, 1.0f);
+            if (ImGui::BeginTable("##integer_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+                ImGui::TableNextColumn();
+                ui::FieldLabel("Min");
+                ImGui::DragInt("##integer_min", &integer_min_, 1.0f);
+                ImGui::TableNextColumn();
+                ui::FieldLabel("Max");
+                ImGui::DragInt("##integer_max", &integer_max_, 1.0f);
+                ImGui::EndTable();
+            }
             if (integer_max_ < integer_min_) integer_max_ = integer_min_;
             break;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
     // Seed control
+    ui::SettingsSection("Seed");
     ImGui::Checkbox("Use Custom Seed", &use_custom_seed_);
     if (use_custom_seed_) {
-        ImGui::DragScalar("Seed", ImGuiDataType_S64, &custom_seed_, 1.0f);
+        ui::FieldLabel("Seed");
+        ImGui::DragScalar("##seed", ImGuiDataType_S64, &custom_seed_, 1.0f);
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Generate button at bottom of settings
-    if (ImGui::Button(ICON_FA_DICE " Generate", ImVec2(-1, 0))) {
+    if (ui::PrimaryButton("Generate", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         GenerateAsync();
     }
 }
 
 void RandomGeneratorPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_ || result_.values.empty()) {
-        ImGui::TextDisabled("No values generated. Click 'Generate' to create random numbers.");
+        ui::EmptyState(ICON_FA_DICE, "No values yet", "Pick a distribution, then Generate.");
         return;
     }
 
@@ -204,8 +209,9 @@ void RandomGeneratorPanel::RenderResults() {
 }
 
 void RandomGeneratorPanel::RenderHistogram() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_ || result_.histogram.empty()) {
-        ImGui::TextDisabled("No histogram data. Generate random numbers first.");
+        ui::EmptyState(ICON_FA_CHART_BAR, "No histogram yet", "Pick a distribution, then Generate.");
         return;
     }
 
@@ -245,7 +251,7 @@ void RandomGeneratorPanel::RenderHistogram() {
         ImGui::GetWindowDrawList()->AddRectFilled(
             cursor,
             ImVec2(cursor.x + width, cursor.y + bar_height - 2),
-            IM_COL32(100, 150, 200, 255)
+            ui::ToU32(t.series[0])
         );
 
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + width + 5);
@@ -259,7 +265,7 @@ void RandomGeneratorPanel::RenderHistogram() {
 
 void RandomGeneratorPanel::RenderStatistics() {
     if (!has_result_) {
-        ImGui::TextDisabled("No statistics available. Generate random numbers first.");
+        ui::EmptyState(ICON_FA_CHART_PIE, "No statistics yet", "Pick a distribution, then Generate.");
         return;
     }
 
@@ -332,6 +338,7 @@ void RandomGeneratorPanel::RenderStatistics() {
 }
 
 void RandomGeneratorPanel::RenderUUIDs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_FINGERPRINT " UUID Generator");
     ImGui::Separator();
 
@@ -368,7 +375,7 @@ void RandomGeneratorPanel::RenderUUIDs() {
         }
         ImGui::SameLine();
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.8f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
         ImGui::TextUnformatted(generated_uuids_[i].c_str());
         ImGui::PopStyleColor();
 

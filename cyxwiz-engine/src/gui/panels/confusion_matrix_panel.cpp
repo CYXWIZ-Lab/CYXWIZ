@@ -1,22 +1,20 @@
 #include "confusion_matrix_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
-#include "../../core/data_analyzer.h"
+#include "../../core/table_class_labels.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <functional>
+#include <set>
+#include <utility>
 
 namespace cyxwiz {
-
-const ImU32 ConfusionMatrixPanel::HEATMAP_COLORS[5] = {
-    IM_COL32(255, 255, 255, 255),   // 0% - White
-    IM_COL32(198, 219, 239, 255),   // 25% - Light blue
-    IM_COL32(107, 174, 214, 255),   // 50% - Medium blue
-    IM_COL32(33, 113, 181, 255),    // 75% - Dark blue
-    IM_COL32(8, 48, 107, 255),      // 100% - Very dark blue
-};
 
 ConfusionMatrixPanel::ConfusionMatrixPanel() : Panel("Confusion Matrix", true) {}
 
@@ -26,15 +24,9 @@ void ConfusionMatrixPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_TABLE_CELLS) + " Confusion Matrix###ConfusionMatrixPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("confusion_matrix", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (result_.success) {
             if (ImGui::BeginTabBar("MatrixTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_TABLE " Matrix")) {
@@ -52,121 +44,56 @@ void ConfusionMatrixPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select true and predicted label columns, then click Compute.");
+            ui::EmptyState(ICON_FA_TABLE_CELLS, "No confusion matrix yet",
+                           "Pick the true and the predicted label columns, then Compute Matrix.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void ConfusionMatrixPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("confusion_matrix_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_TAGS " Label Columns");
-        ImGui::Spacing();
-
+        ui::SettingsSection("Label columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("True Labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Predicted Labels", &pred_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("True labels");
+        ImGui::Combo("##true_labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Predicted labels");
+        ImGui::Combo("##predicted_labels", &pred_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
         ImGui::Spacing();
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_CALCULATOR " Compute Matrix", ImVec2(-1, 30))) {
+        if (ui::PrimaryButton("Compute Matrix", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             ComputeMatrix();
         }
     }
 
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void ConfusionMatrixPanel::RenderMatrixHeatmap() {
     if (!result_.success || result_.matrix.empty()) return;
 
-    int n = result_.n_classes;
-
-    // Find max value for color scaling
+    // Colour by count relative to the largest cell.
     int max_val = 0;
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (result_.matrix[i][j] > max_val) max_val = result_.matrix[i][j];
-        }
+    for (const auto& row : result_.matrix) {
+        for (int value : row) max_val = std::max(max_val, value);
     }
 
     ImGui::Text("Confusion Matrix (Rows: True, Columns: Predicted)");
     ImGui::Spacing();
-
-    float cell_size = 50.0f;
-    float label_width = 80.0f;
-
-    // Draw header row
-    ImGui::Dummy(ImVec2(label_width, 0));
-    ImGui::SameLine();
-    for (int j = 0; j < n; ++j) {
-        ImGui::BeginGroup();
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 2));
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cell_size - ImGui::CalcTextSize(result_.class_names[j].c_str()).x) / 2);
-        ImGui::Text("%s", result_.class_names[j].c_str());
-        ImGui::PopStyleVar();
-        ImGui::EndGroup();
-        if (j < n - 1) ImGui::SameLine(0, 2);
-    }
-
-    // Draw matrix cells
-    for (int i = 0; i < n; ++i) {
-        // Row label
-        ImGui::Text("%-10s", result_.class_names[i].c_str());
-        ImGui::SameLine(label_width);
-
-        for (int j = 0; j < n; ++j) {
-            int val = result_.matrix[i][j];
-            float ratio = (max_val > 0) ? static_cast<float>(val) / max_val : 0.0f;
-
-            // Interpolate color
-            int color_idx = static_cast<int>(ratio * 4);
-            color_idx = (color_idx > 4) ? 4 : color_idx;
-            ImU32 bg_color = HEATMAP_COLORS[color_idx];
-
-            // Use dark text for light backgrounds, light text for dark backgrounds
-            ImU32 text_color = (color_idx < 2) ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
-
-            ImVec2 pos = ImGui::GetCursorScreenPos();
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-            // Draw cell background
-            draw_list->AddRectFilled(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), bg_color);
-            draw_list->AddRect(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), IM_COL32(100, 100, 100, 255));
-
-            // Draw cell value
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%d", val);
-            ImVec2 text_size = ImGui::CalcTextSize(buf);
-            ImVec2 text_pos = ImVec2(pos.x + (cell_size - text_size.x) / 2, pos.y + (cell_size - text_size.y) / 2);
-            draw_list->AddText(text_pos, text_color, buf);
-
-            ImGui::Dummy(ImVec2(cell_size, cell_size));
-            if (j < n - 1) ImGui::SameLine(0, 2);
-        }
-    }
+    RenderGrid([&](int i, int j) {
+        const int value = result_.matrix[i][j];
+        return std::make_pair(max_val > 0 ? static_cast<float>(value) / max_val : 0.0f, std::to_string(value));
+    });
 
     ImGui::Spacing();
     ImGui::Text("Total Samples: %d | Accuracy: %.2f%%", result_.total_samples, result_.accuracy * 100);
@@ -175,56 +102,77 @@ void ConfusionMatrixPanel::RenderMatrixHeatmap() {
 void ConfusionMatrixPanel::RenderNormalizedMatrix() {
     if (!result_.success || result_.matrix.empty()) return;
 
-    int n = result_.n_classes;
-
-    ImGui::Text("Normalized Confusion Matrix (Row-wise %)");
+    ImGui::TextUnformatted("Normalized Confusion Matrix (Row-wise %)");
     ImGui::Spacing();
+    RenderGrid([&](int i, int j) {
+        const int row_sum = result_.support[i];
+        const float ratio = row_sum > 0 ? static_cast<float>(result_.matrix[i][j]) / row_sum : 0.0f;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f%%", ratio * 100);
+        return std::make_pair(ratio, std::string(buf));
+    });
+}
 
-    float cell_size = 60.0f;
-    float label_width = 80.0f;
+void ConfusionMatrixPanel::RenderGrid(const std::function<std::pair<float, std::string>(int, int)>& cell_at) {
+    const int n = result_.n_classes;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImGuiStyle& style = ImGui::GetStyle();
 
-    // Draw header row
-    ImGui::Dummy(ImVec2(label_width, 0));
-    ImGui::SameLine();
+    // Sized from the text it holds (fixed 50 px cells and an 80 px label
+    // column clipped "tested_negative"): cells fit their widest value, the
+    // label column the longest class name, and column names alternate between
+    // two lines so each has two cells of width.
+    const float gap = 2.0f;
+    const float line = ImGui::GetTextLineHeight();
+    float value_width = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) value_width = std::max(value_width, ImGui::CalcTextSize(cell_at(i, j).second.c_str()).x);
+    }
+    const float cell = std::max(50.0f, value_width + 2.0f * style.FramePadding.x + gap);
+    float label_width = 0.0f;
+    for (const std::string& name : result_.class_names) label_width = std::max(label_width, ImGui::CalcTextSize(name.c_str()).x);
+    label_width += style.ItemSpacing.x * 2.0f;
+    // Stagger the column names over two lines only when one is wider than its cell.
+    bool stagger = false;
+    for (const std::string& name : result_.class_names) {
+        stagger = stagger || ImGui::CalcTextSize(name.c_str()).x > cell - gap;
+    }
+    stagger = stagger && n > 1;
+    const float header_height = (stagger ? 2.0f : 1.0f) * line + style.ItemSpacing.y * 2.0f;
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImU32 label_colour = ui::ToU32(t.text_dim);
+    const float grid_x = origin.x + label_width;
+    const float grid_y = origin.y + header_height;
+
     for (int j = 0; j < n; ++j) {
-        ImGui::BeginGroup();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cell_size - ImGui::CalcTextSize(result_.class_names[j].c_str()).x) / 2);
-        ImGui::Text("%s", result_.class_names[j].c_str());
-        ImGui::EndGroup();
-        if (j < n - 1) ImGui::SameLine(0, 2);
+        const char* name = result_.class_names[j].c_str();
+        const float width = ImGui::CalcTextSize(name).x;
+        const float room = (stagger ? 2.0f * cell : cell) - style.ItemSpacing.x;
+        // Centred over the column when it fits, otherwise left-aligned and clipped to its room.
+        const float x = width <= cell - gap ? grid_x + j * cell + (cell - gap - width) / 2 : grid_x + j * cell;
+        const ImVec2 pos(x, origin.y + (stagger ? (j % 2) * (line + style.ItemSpacing.y) : 0.0f));
+        const ImVec4 clip(pos.x, pos.y, grid_x + j * cell + room, pos.y + line);
+        draw_list->AddText(nullptr, 0.0f, pos, label_colour, name, nullptr, 0.0f, &clip);
     }
 
-    // Draw matrix cells
     for (int i = 0; i < n; ++i) {
-        int row_sum = result_.support[i];
-
-        ImGui::Text("%-10s", result_.class_names[i].c_str());
-        ImGui::SameLine(label_width);
-
+        draw_list->AddText(ImVec2(origin.x, grid_y + i * cell + (cell - gap - line) / 2), label_colour,
+                           result_.class_names[i].c_str());
         for (int j = 0; j < n; ++j) {
-            float ratio = (row_sum > 0) ? static_cast<float>(result_.matrix[i][j]) / row_sum : 0.0f;
-
-            int color_idx = static_cast<int>(ratio * 4);
-            color_idx = (color_idx > 4) ? 4 : color_idx;
-            ImU32 bg_color = HEATMAP_COLORS[color_idx];
-            ImU32 text_color = (color_idx < 2) ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
-
-            ImVec2 pos = ImGui::GetCursorScreenPos();
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-            draw_list->AddRectFilled(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), bg_color);
-            draw_list->AddRect(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), IM_COL32(100, 100, 100, 255));
-
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%.1f%%", ratio * 100);
-            ImVec2 text_size = ImGui::CalcTextSize(buf);
-            ImVec2 text_pos = ImVec2(pos.x + (cell_size - text_size.x) / 2, pos.y + (cell_size - text_size.y) / 2);
-            draw_list->AddText(text_pos, text_color, buf);
-
-            ImGui::Dummy(ImVec2(cell_size, cell_size));
-            if (j < n - 1) ImGui::SameLine(0, 2);
+            const auto [ratio, text] = cell_at(i, j);
+            const ImVec4 fill = ui::SequentialAt(t, ratio);
+            const ImVec2 min(grid_x + j * cell, grid_y + i * cell);
+            const ImVec2 max(min.x + cell - gap, min.y + cell - gap);
+            draw_list->AddRectFilled(min, max, ui::ToU32(fill));
+            const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+            draw_list->AddText(ImVec2(min.x + (cell - gap - text_size.x) / 2, min.y + (cell - gap - text_size.y) / 2),
+                               ui::ToU32(ui::ReadableOn(t, fill)), text.c_str());
         }
     }
+
+    ImGui::Dummy(ImVec2(label_width + cell * n, header_height + cell * n));
 }
 
 void ConfusionMatrixPanel::RenderMetricsTable() {
@@ -278,20 +226,22 @@ void ConfusionMatrixPanel::RenderMetricsTable() {
         ImPlot::SetupAxes("Class", "F1 Score");
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1.1);
 
+        // One tick per class, named (a numeric axis put ticks at -0.2, 0.2).
         std::vector<double> x_pos(result_.n_classes);
-        for (int i = 0; i < result_.n_classes; ++i) x_pos[i] = i;
+        std::vector<const char*> tick_labels(result_.n_classes);
+        for (int i = 0; i < result_.n_classes; ++i) {
+            x_pos[i] = i;
+            tick_labels[i] = result_.class_names[i].c_str();
+        }
+        ImPlot::SetupAxisTicks(ImAxis_X1, x_pos.data(), result_.n_classes, tick_labels.data());
 
         ImPlot::PlotBars("F1", x_pos.data(), result_.f1_scores.data(), result_.n_classes, 0.6);
         ImPlot::EndPlot();
     }
 }
 
-void ConfusionMatrixPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void ConfusionMatrixPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     true_label_column_ = 0;
     int max_col = static_cast<int>(column_names_.size()) - 1;
@@ -307,16 +257,14 @@ void ConfusionMatrixPanel::ComputeMatrix() {
         return;
     }
 
+    // True and predicted labels share one class set; text labels
+    // ("tested_negative") keep their names.
+    const TableClassLabels labels = ReadTableClassLabels(*current_table_, {true_label_column_, pred_label_column_});
     std::vector<int> y_true, y_pred;
-    int n_rows = static_cast<int>(current_table_->GetRowCount());
-
-    for (int row = 0; row < n_rows; ++row) {
-        auto true_val = DataAnalyzer::ToDouble(current_table_->GetCell(row, true_label_column_));
-        auto pred_val = DataAnalyzer::ToDouble(current_table_->GetCell(row, pred_label_column_));
-
-        if (true_val.has_value() && pred_val.has_value()) {
-            y_true.push_back(static_cast<int>(true_val.value()));
-            y_pred.push_back(static_cast<int>(pred_val.value()));
+    for (size_t row = 0; row < labels.columns[0].size(); ++row) {
+        if (labels.columns[0][row] && labels.columns[1][row]) {
+            y_true.push_back(*labels.columns[0][row]);
+            y_pred.push_back(*labels.columns[1][row]);
         }
     }
 
@@ -325,7 +273,14 @@ void ConfusionMatrixPanel::ComputeMatrix() {
         return;
     }
 
-    result_ = ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred);
+    // Names line up with the sorted class ids present in these rows.
+    std::vector<std::string> class_names;
+    if (labels.IsText()) {
+        std::set<int> present(y_true.begin(), y_true.end());
+        present.insert(y_pred.begin(), y_pred.end());
+        for (int id : present) class_names.push_back(labels.Name(id));
+    }
+    result_ = ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred, class_names);
 
     if (result_.success) {
         status_message_ = "Computed: " + std::to_string(result_.n_classes) + " classes, " +

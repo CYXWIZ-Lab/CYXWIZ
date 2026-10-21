@@ -46,8 +46,10 @@ message JobConfig {
   string payment_address = 13;
   string escrow_tx_hash = 14;
 
-  // Reservation timing (HOTEL ROOM MODEL)
-  int32 reservation_duration_minutes = 15;  // How long the node is reserved for
+  // 15 was reservation_duration_minutes: the node takes the reservation's
+  // end from the Central Server's P2P token instead (TOFIX118 gap 2).
+  reserved 15;
+  reserved "reservation_duration_minutes";
 }
 
 // Job status

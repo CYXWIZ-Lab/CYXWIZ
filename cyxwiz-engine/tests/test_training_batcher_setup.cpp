@@ -1,0 +1,1822 @@
+#include "../src/core/arrow_dataset.h"
+#include "../src/core/classification_decision.h"
+#include "../src/core/label_vocabulary.h"
+#include "../src/core/model_builder.h"
+#include "../src/core/parquet_backed_dataset.h"
+#include "../src/core/sparse_feature_dataset.h"
+#include "../src/core/test_dataset_selection.h"
+#include "../src/core/training_batcher_setup.h"
+#include "../src/core/training_executor.h"
+#include "../src/core/worker_defaults.h"
+
+#include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
+#include <cyxwiz/losses/probability.h>
+#include <nlohmann/json.hpp>
+
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace {
+
+using json = nlohmann::json;
+
+void Check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAIL: " << message << "\n";
+        std::exit(1);
+    }
+}
+
+std::shared_ptr<arrow::Array> FinishFloatArray(const std::vector<float>& values) {
+    arrow::FloatBuilder builder;
+    for (float value : values) {
+        auto st = builder.Append(value);
+        Check(st.ok(), st.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto st = builder.Finish(&array);
+    Check(st.ok(), st.ToString());
+    return array;
+}
+
+std::shared_ptr<arrow::Array> FinishIntArray(const std::vector<int32_t>& values) {
+    arrow::Int32Builder builder;
+    for (int32_t value : values) {
+        auto st = builder.Append(value);
+        Check(st.ok(), st.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto st = builder.Finish(&array);
+    Check(st.ok(), st.ToString());
+    return array;
+}
+
+std::shared_ptr<arrow::Array> FinishInt8Array(const std::vector<int8_t>& values) {
+    arrow::Int8Builder builder;
+    for (int8_t value : values) {
+        auto st = builder.Append(value);
+        Check(st.ok(), st.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto st = builder.Finish(&array);
+    Check(st.ok(), st.ToString());
+    return array;
+}
+
+json LoadTrainingCoreFixture(const std::filesystem::path& executable_path) {
+    const auto fixture_path = std::filesystem::absolute(executable_path)
+        .parent_path() / "computation_truth_fixtures" /
+        "training_core_pytorch.json";
+    std::ifstream stream(fixture_path);
+    Check(stream.is_open(), "unable to open PyTorch fixture: " +
+          fixture_path.string());
+
+    json fixture;
+    try {
+        stream >> fixture;
+    } catch (const std::exception& error) {
+        Check(false, "unable to parse PyTorch fixture " +
+              fixture_path.string() + ": " + error.what());
+    }
+    Check(fixture.value("schema_version", 0) == 1,
+          "unsupported PyTorch fixture schema");
+    Check(fixture.at("oracle").value("name", "") == "PyTorch",
+          "weighted sampler fixture must identify PyTorch as its oracle");
+    return fixture;
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset>
+MakeWeightedSamplerDistributionDataset(const std::vector<size_t>& class_counts) {
+    std::vector<float> features;
+    std::vector<int32_t> labels;
+    size_t total_samples = 0;
+    for (size_t count : class_counts) {
+        total_samples += count;
+    }
+    features.reserve(total_samples);
+    labels.reserve(total_samples);
+    for (size_t label = 0; label < class_counts.size(); ++label) {
+        for (size_t row = 0; row < class_counts[label]; ++row) {
+            features.push_back(static_cast<float>(features.size()));
+            labels.push_back(static_cast<int32_t>(label));
+        }
+    }
+
+    auto schema = arrow::schema({
+        arrow::field("x", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray(features),
+        FinishIntArray(labels),
+    }, static_cast<int64_t>(total_samples));
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "weighted_sampler_pytorch_distribution");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f}),
+        FinishIntArray({0, 1, 0, 1}),
+    }, 4);
+    return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiGroupDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f}),
+        FinishIntArray({0, 1, 0, 1, 0, 1}),
+    }, 6);
+    return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_multi");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeStratifiedDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f,
+                          5.0f, 6.0f, 7.0f, 8.0f,
+                          9.0f, 10.0f, 11.0f, 12.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f,
+                          50.0f, 60.0f, 70.0f, 80.0f,
+                          90.0f, 100.0f, 110.0f, 120.0f}),
+        FinishIntArray({0, 0, 0, 0, 0, 0, 0, 0,
+                        1, 1, 1, 1}),
+    }, 12);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_stratified");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeWideStratifiedDataset(
+    int64_t rows = 64,
+    size_t features = 8000) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    fields.reserve(features + 1);
+    columns.reserve(features + 1);
+
+    std::vector<float> values(static_cast<size_t>(rows), 0.0f);
+    for (size_t feature = 0; feature < features; ++feature) {
+        for (int64_t row = 0; row < rows; ++row) {
+            values[static_cast<size_t>(row)] =
+                static_cast<float>((row + static_cast<int64_t>(feature)) % 17) /
+                17.0f;
+        }
+        fields.push_back(arrow::field(
+            "x" + std::to_string(feature), arrow::float32()));
+        columns.push_back(FinishFloatArray(values));
+    }
+
+    std::vector<int32_t> labels(static_cast<size_t>(rows), 0);
+    for (int64_t row = 0; row < rows; ++row) {
+        labels[static_cast<size_t>(row)] = row % 4 == 0 ? 1 : 0;
+    }
+    fields.push_back(arrow::field("label", arrow::int32()));
+    columns.push_back(FinishIntArray(labels));
+
+    auto table = arrow::Table::Make(
+        arrow::schema(fields), columns, rows);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_wide_stratified");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("y", arrow::float32()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f}),
+        FinishFloatArray({1.5f, 2.5f, 3.5f, 4.5f}),
+        FinishInt8Array({0, 0, 0, 1}),
+    }, 4);
+    return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_ts");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiStepTimeSeriesDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("y", arrow::float32()),
+        arrow::field("y_1", arrow::float32()),
+        arrow::field("y_2", arrow::float32()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f}),
+        FinishFloatArray({1.5f, 2.5f, 3.5f, 4.5f}),
+        FinishFloatArray({2.5f, 3.5f, 4.5f, 5.5f}),
+        FinishFloatArray({3.5f, 4.5f, 5.5f, 6.5f}),
+        FinishInt8Array({0, 0, 0, 1}),
+    }, 4);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_ts_multistep");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiGroupTimeSeriesDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("y", arrow::float32()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f}),
+        FinishFloatArray({1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f}),
+        FinishInt8Array({0, 1, 0, 1, 0, 1}),
+    }, 6);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_ts_multi");
+}
+
+cyxwiz::TrainingConfiguration MakeConfig() {
+    cyxwiz::TrainingConfiguration config;
+    config.output_size = 2;
+    config.train_ratio = 0.75f;
+    config.shuffle = false;
+    config.num_workers = 0;
+    return config;
+}
+
+std::shared_ptr<cyxwiz::SparseFeatureDataset> MakeSparseDataset(
+    const std::string& name,
+    std::vector<std::string> feature_names = {
+        "alpha", "beta", "delta", "gamma"}) {
+    cyxwiz::SparseFeatureDataset::Contents contents;
+    contents.name = name;
+    contents.num_rows = 6;
+    contents.num_features = 4;
+    contents.row_offsets = {0, 1, 2, 2, 3, 4, 6};
+    contents.column_indices = {0, 1, 2, 3, 0, 3};
+    contents.values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    contents.feature_names = std::move(feature_names);
+    contents.labels = std::make_shared<arrow::ChunkedArray>(
+        FinishIntArray({0, 0, 0, 0, 1, 1}));
+    contents.label_name = "label";
+    auto dataset = cyxwiz::SparseFeatureDataset::Create(std::move(contents));
+    Check(dataset.ok(), dataset.status().ToString());
+    return dataset.ValueOrDie();
+}
+
+cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
+    auto config = MakeConfig();
+    config.is_time_series = true;
+    config.input_size = 2;
+    config.output_size = 1;
+    return config;
+}
+
+cyxwiz::TrainingConfiguration MakeMultiStepTimeSeriesConfig() {
+    auto config = MakeTimeSeriesConfig();
+    config.output_size = 3;
+    config.time_series_target_width = 3;
+    config.target.value_kind = cyxwiz::TargetValueKind::Continuous;
+    return config;
+}
+
+cyxwiz::TrainingConfiguration MakeTrainingLoopConfig(
+    const std::filesystem::path& checkpoint_dir) {
+    auto config = MakeConfig();
+    config.input_size = 2;
+    config.input_shape = {2};
+    config.output_size = 2;
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.optimizer_type = gui::NodeType::Adam;
+    config.learning_rate = 0.001f;
+    config.batch_size = 2;
+    config.epochs = 1;
+    config.save_best_checkpoint = false;
+    config.early_stopping_patience = 0;
+    config.checkpoint_dir = checkpoint_dir.string();
+
+    cyxwiz::CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 2;
+    config.layers.push_back(dense);
+    return config;
+}
+
+void CheckFeatureAndLabelShapes(const cyxwiz::Batch& batch,
+                                size_t batch_rows,
+                                size_t feature_width,
+                                size_t label_width,
+                                const std::string& label) {
+    Check(batch.IsValid(), label + " batch should be valid");
+    Check(batch.data.Shape().size() == 2, label + " feature tensor should be 2D");
+    Check(batch.data.Shape()[0] == batch_rows, label + " batch dimension should match");
+    Check(batch.data.Shape()[1] == feature_width, label + " feature width should match");
+    Check(batch.labels.Shape().size() == 2, label + " label tensor should be 2D");
+    Check(batch.labels.Shape()[0] == batch_rows, label + " label rows should match");
+    Check(batch.labels.Shape()[1] == label_width, label + " label width should match");
+}
+
+void CheckSparseFeatureAndLabelShapes(const cyxwiz::Batch& batch,
+                                      size_t batch_rows,
+                                      size_t feature_width,
+                                      size_t label_width,
+                                      const std::string& label) {
+    Check(batch.IsValid() && batch.HasSparseFeatures(),
+          label + " batch should contain typed sparse features");
+    Check(batch.data.Shape().empty(),
+          label + " batch must not allocate a dense feature Tensor");
+    Check(batch.sparse_features->rows == batch_rows,
+          label + " sparse batch dimension should match");
+    Check(batch.sparse_features->columns == feature_width,
+          label + " sparse feature width should match");
+    Check(batch.labels.Shape().size() == 2,
+          label + " label tensor should be 2D");
+    Check(batch.labels.Shape()[0] == batch_rows,
+          label + " label rows should match");
+    Check(batch.labels.Shape()[1] == label_width,
+          label + " label width should match");
+}
+
+std::vector<size_t> CountOneHotLabels(cyxwiz::IBatcher& batcher,
+                                      size_t num_classes,
+                                      const std::string& label) {
+    std::vector<size_t> counts(num_classes, 0);
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.labels.Shape().size() == 2,
+              label + " labels should be one-hot 2D");
+        Check(batch.labels.Shape()[1] == num_classes,
+              label + " one-hot width should match class count");
+        const float* values = batch.labels.Data<float>();
+        for (size_t row = 0; row < batch.labels.Shape()[0]; ++row) {
+            size_t best = 0;
+            float best_value = values[row * num_classes];
+            for (size_t cls = 1; cls < num_classes; ++cls) {
+                const float value = values[row * num_classes + cls];
+                if (value > best_value) {
+                    best = cls;
+                    best_value = value;
+                }
+            }
+            ++counts[best];
+        }
+    }
+    return counts;
+}
+
+std::vector<size_t> CountScalarBinaryLabels(cyxwiz::IBatcher& batcher,
+                                            const std::string& label) {
+    std::vector<size_t> counts(2, 0);
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.labels.Shape().size() == 2,
+              label + " labels should be 2D");
+        Check(batch.labels.Shape()[1] == 1,
+              label + " labels should be scalar [batch, 1]");
+        const float* values = batch.labels.Data<float>();
+        for (size_t row = 0; row < batch.labels.Shape()[0]; ++row) {
+            const float value = values[row];
+            Check(value == 0.0f || value == 1.0f,
+                  label + " labels should contain encoded 0/1 values");
+            ++counts[static_cast<size_t>(value)];
+        }
+    }
+    return counts;
+}
+
+std::vector<size_t> CollectOneHotLabels(cyxwiz::IBatcher& batcher,
+                                        size_t num_classes,
+                                        const std::string& label) {
+    std::vector<size_t> labels;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.labels.Shape().size() == 2,
+              label + " labels should be one-hot 2D");
+        Check(batch.labels.Shape()[1] == num_classes,
+              label + " one-hot width should match class count");
+        const float* values = batch.labels.Data<float>();
+        for (size_t row = 0; row < batch.labels.Shape()[0]; ++row) {
+            size_t best = 0;
+            float best_value = values[row * num_classes];
+            for (size_t cls = 1; cls < num_classes; ++cls) {
+                const float value = values[row * num_classes + cls];
+                if (value > best_value) {
+                    best = cls;
+                    best_value = value;
+                }
+            }
+            labels.push_back(best);
+        }
+    }
+    return labels;
+}
+
+void TestWeightedSamplerPyTorchDistribution(const json& fixture) {
+    const auto& sampler_case =
+        fixture.at("cases").at("weighted_sampler_inverse_frequency");
+    Check(sampler_case.value("operation", "") ==
+              "torch.utils.data.WeightedRandomSampler",
+          "weighted sampler fixture should name the PyTorch operation");
+    Check(sampler_case.value("sample_weight_rule", "") ==
+              "inverse_class_frequency",
+          "weighted sampler fixture should use inverse-frequency weights");
+    Check(sampler_case.value("replacement", false),
+          "weighted sampler fixture should sample with replacement");
+
+    const auto class_counts =
+        sampler_case.at("class_counts").get<std::vector<size_t>>();
+    const auto expected_probabilities = sampler_case
+        .at("expected_class_probabilities").get<std::vector<double>>();
+    const auto pytorch_counts = sampler_case
+        .at("pytorch_empirical_class_counts").get<std::vector<size_t>>();
+    const size_t num_samples = sampler_case.at("num_samples").get<size_t>();
+    Check(class_counts.size() == expected_probabilities.size() &&
+              class_counts.size() == pytorch_counts.size(),
+          "weighted sampler fixture class vectors should have equal width");
+
+    auto config = MakeConfig();
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.shuffle = false;
+    config.balance_classes = true;
+    config.balance_mode = "weighted_sampler";
+    config.balance_target = "max";
+    config.balance_seed = sampler_case.at("seed").get<int>();
+    config.prefetch_factor = 0;
+
+    auto batchers = cyxwiz::BuildArrowTrainingBatchers(
+        config,
+        MakeWeightedSamplerDistributionDataset(class_counts),
+        "label",
+        /*batch_size=*/256);
+    Check(batchers.num_train_samples == num_samples,
+          "weighted sampler should preserve the PyTorch fixture epoch length");
+    const auto labels = CollectOneHotLabels(
+        *batchers.train, class_counts.size(),
+        "PyTorch weighted sampler distribution");
+    Check(labels.size() == num_samples,
+          "weighted sampler should emit the configured number of draws");
+
+    std::vector<size_t> observed_counts(class_counts.size(), 0);
+    for (size_t label : labels) {
+        Check(label < observed_counts.size(),
+              "weighted sampler emitted an out-of-range class");
+        ++observed_counts[label];
+    }
+
+    const double probability_tolerance =
+        sampler_case.at("absolute_probability_tolerance").get<double>();
+    const double cross_rng_tolerance =
+        sampler_case.at("cross_rng_probability_tolerance").get<double>();
+    for (size_t label = 0; label < observed_counts.size(); ++label) {
+        const double observed_probability =
+            static_cast<double>(observed_counts[label]) / num_samples;
+        const double pytorch_probability =
+            static_cast<double>(pytorch_counts[label]) / num_samples;
+        Check(std::abs(observed_probability - expected_probabilities[label]) <=
+                  probability_tolerance,
+              "weighted sampler class probability should match inverse-frequency mass");
+        Check(std::abs(observed_probability - pytorch_probability) <=
+                  cross_rng_tolerance,
+              "weighted sampler distribution should match the seeded PyTorch reference");
+    }
+}
+
+void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
+                                  const std::string& path,
+                                  int64_t row_group_size) {
+    auto table = dataset.GetArrowTable();
+    Check(table != nullptr, "source table should exist for row-group parquet write");
+    auto output = arrow::io::FileOutputStream::Open(path);
+    Check(output.ok(), output.status().ToString());
+    auto status = parquet::arrow::WriteTable(*table,
+                                             arrow::default_memory_pool(),
+                                             *output,
+                                             row_group_size);
+    Check(status.ok(), status.ToString());
+}
+
+void RunModelTrainValidationSmoke(cyxwiz::IBatcher& train,
+                                  cyxwiz::IBatcher& val,
+                                  const cyxwiz::TrainingConfiguration& config,
+                                  const std::string& label) {
+    auto built = cyxwiz::BuildSequentialFromConfig(config);
+    Check(built.ok(), label + " model/loss/optimizer should build");
+    Check(built.model != nullptr, label + " model should exist");
+    Check(built.loss != nullptr, label + " loss should exist");
+    Check(built.optimizer != nullptr, label + " optimizer should exist");
+
+    built.model->SetTraining(true);
+    train.Reset();
+    int train_batches = 0;
+    while (!train.IsEpochComplete()) {
+        auto batch = train.GetNextBatch();
+        if (!batch.IsValid()) break;
+        auto predictions = built.model->Forward(batch.data);
+        auto loss = built.loss->Forward(predictions, batch.labels);
+        Check(loss.NumElements() == 1, label + " train loss should be scalar");
+        Check(std::isfinite(loss.Data<float>()[0]),
+              label + " train loss should be finite");
+        auto grad = built.loss->Backward(predictions, batch.labels);
+        built.model->Backward(grad);
+        built.model->UpdateParameters(built.optimizer.get());
+        ++train_batches;
+    }
+    Check(train_batches == 2, label + " train pass should consume two batches");
+
+    built.model->SetTraining(false);
+    val.Reset();
+    int val_batches = 0;
+    while (!val.IsEpochComplete()) {
+        auto batch = val.GetNextBatch();
+        if (!batch.IsValid()) break;
+        auto predictions = built.model->Forward(batch.data);
+        auto loss = built.loss->Forward(predictions, batch.labels);
+        Check(loss.NumElements() == 1, label + " validation loss should be scalar");
+        Check(std::isfinite(loss.Data<float>()[0]),
+              label + " validation loss should be finite");
+        ++val_batches;
+    }
+    Check(val_batches == 1, label + " validation pass should consume one batch");
+}
+
+} // namespace
+
+// Text class labels (TOFIX145): one sorted vocabulary, encoded before the
+// batchers; Arrow and Parquet paths agree; unencoded text is refused.
+// A table on disk splits by row (TOFIX154): 1,000 rows sorted by class
+// (700 of class 0, then 300 of class 1) in 10 row groups. Row-group slicing
+// put only class 1 in validation and test; the row split gives the in-memory
+// split: the same rows unshuffled, the same sizes per class shuffled.
+void TestParquetRowSplit(const std::filesystem::path& work_dir) {
+    constexpr int kRows = 1000;
+    std::vector<float> ids, noise;
+    std::vector<int32_t> labels;
+    for (int i = 0; i < kRows; ++i) {
+        ids.push_back(static_cast<float>(i));
+        noise.push_back(static_cast<float>(i % 7));
+        labels.push_back(i < 700 ? 0 : 1);
+    }
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                 arrow::field("label", arrow::int32())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray(ids), FinishFloatArray(noise), FinishIntArray(labels)},
+                                    kRows);
+    cyxwiz::ArrowDataset source(table, "row_split_source");
+    const auto path = work_dir / "cyxwiz_parquet_row_split.parquet";
+    WriteParquetWithRowGroupSize(source, path.string(), 100);
+    auto dataset = cyxwiz::ParquetBackedDataset::Open(path.string(), "row_split");
+    Check(dataset && dataset->GetNumRowGroups() == 10, "row split fixture has 10 row groups");
+
+    std::string error;
+    // Stratified, unshuffled: each class in file order (the in-memory rows).
+    auto split = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, false, 17, error);
+    Check(split != nullptr, "row split builds: " + error);
+    bool ordered = true;
+    for (int i = 0; i < kRows; ++i) {
+        const int within = i < 700 ? i : i - 700;
+        const int train = i < 700 ? 560 : 240, val = i < 700 ? 70 : 30;
+        ordered = ordered && split->bucket[i] == (within < train ? 0 : within < train + val ? 1 : 2);
+    }
+    Check(ordered, "unshuffled, each class fills train, validation, test in file order");
+    // Shuffled: CountsFor's sizes per class (floor train, floor val, the
+    // rest test), drawn by the seed.
+    auto shuffled = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    Check(shuffled != nullptr, "shuffled row split builds: " + error);
+    std::array<std::array<int, 3>, 2> per_class{};
+    for (int i = 0; i < kRows; ++i) ++per_class[labels[i]][shuffled->bucket[i]];
+    Check(per_class[0] == std::array<int, 3>{560, 70, 70}, "class 0 splits 560 / 70 / 70");
+    Check(per_class[1] == std::array<int, 3>{240, 30, 30}, "class 1 splits 240 / 30 / 30");
+    Check(shuffled->counts == std::array<size_t, 3>{800, 100, 100}, "split totals 800 / 100 / 100");
+    Check(shuffled->bucket != split->bucket, "a shuffled split draws other rows than file order");
+    auto again = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    Check(again && again->bucket == shuffled->bucket, "the same seed draws the same rows");
+    auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 18, error);
+    Check(other && other->bucket != shuffled->bucket, "another seed draws other rows");
+    // Unstratified: ArrowDatasetBatcher's contiguous slices.
+    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, true, 17, error);
+    bool contiguous = plain != nullptr;
+    for (int i = 0; contiguous && i < kRows; ++i) contiguous = plain->bucket[i] == (i < 800 ? 0 : i < 900 ? 1 : 2);
+    Check(contiguous, "unstratified: rows 0-799 train, 800-899 validation, 900-999 test");
+    Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, 17, error) &&
+              error.find("missing") != std::string::npos,
+          "a missing column is refused with its name");
+
+    // Through the training builder: each phase serves exactly its rows.
+    auto config = MakeConfig();
+    config.has_data_split = true;
+    config.stratified = true;
+    config.train_ratio = 0.8f;
+    config.val_ratio = 0.1f;
+    config.test_ratio = 0.1f;
+    config.split_seed = 17;  // MakeConfig leaves shuffle off: the file-order split above
+    auto batchers = cyxwiz::BuildParquetTrainingBatchers(config, dataset, "label", /*batch_size=*/64);
+    Check(batchers.num_train_samples == 800 && batchers.num_val_samples == 100 && batchers.num_test_samples == 100,
+          "the batchers report the row split's sizes");
+    std::vector<int> seen(kRows, -1);
+    bool overlap = false;
+    int class1_held_out = 0;
+    const std::array<cyxwiz::IBatcher*, 3> phases{batchers.train, batchers.val, batchers.test};
+    for (int phase = 0; phase < 3; ++phase) {
+        auto* batcher = phases[phase];
+        batcher->Reset();
+        while (!batcher->IsEpochComplete()) {
+            auto batch = batcher->GetNextBatch();
+            if (!batch.IsValid()) break;
+            const auto rows = batch.data.Shape()[0];
+            const auto* features = batch.data.Data<float>();
+            for (size_t r = 0; r < rows; ++r) {
+                const int id = static_cast<int>(features[r * 2]);
+                Check(id >= 0 && id < kRows, "a served row id is in range");
+                overlap = overlap || seen[id] >= 0;
+                seen[id] = phase;
+                if (phase > 0 && id >= 700) ++class1_held_out;
+                Check(static_cast<int>(split->bucket[id]) == phase, "a row is served by its own split");
+            }
+        }
+    }
+    Check(!overlap, "no row is served twice");
+    Check(std::count(seen.begin(), seen.end(), -1) == 0, "every row is served once");
+    Check(class1_held_out == 60, "validation and test hold 60 rows of class 1");
+    std::error_code ignored;  // the batchers above still map the file
+    std::filesystem::remove(path, ignored);
+}
+
+// Class balancing on disk (TOFIX157 A3): the in-memory rules on a table
+// that stays on disk. The row-split fixture's train split holds 560 rows of
+// class 0 and 240 of class 1 (rows 0-559 and 700-939, unshuffled).
+void TestParquetClassBalancing(const std::filesystem::path& work_dir) {
+    constexpr int kRows = 1000;
+    std::vector<float> ids, noise;
+    std::vector<int32_t> labels;
+    for (int i = 0; i < kRows; ++i) {
+        ids.push_back(static_cast<float>(i));
+        noise.push_back(static_cast<float>(i % 7));
+        labels.push_back(i < 700 ? 0 : 1);
+    }
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                 arrow::field("label", arrow::int32())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray(ids), FinishFloatArray(noise), FinishIntArray(labels)},
+                                    kRows);
+    cyxwiz::ArrowDataset source(table, "balance_source");
+    const auto path = work_dir / "cyxwiz_parquet_class_balance.parquet";
+    WriteParquetWithRowGroupSize(source, path.string(), 100);
+    auto dataset = cyxwiz::ParquetBackedDataset::Open(path.string(), "balance");
+    Check(dataset != nullptr, "class balancing fixture opens");
+
+    auto balanced = [&](const std::string& mode, const std::string& target, int seed) {
+        auto config = MakeConfig();
+        config.has_data_split = true;
+        config.stratified = true;
+        config.train_ratio = 0.8f;
+        config.val_ratio = 0.1f;
+        config.test_ratio = 0.1f;
+        config.split_seed = 17;
+        config.balance_classes = true;
+        config.balance_mode = mode;
+        config.balance_target = target;
+        config.balance_seed = seed;
+        return cyxwiz::BuildParquetTrainingBatchers(config, dataset, "label", /*batch_size=*/64);
+    };
+    // How often each row is served in one epoch.
+    auto served = [&](cyxwiz::IBatcher& batcher) {
+        std::vector<int> times(kRows, 0);
+        batcher.Reset();
+        while (!batcher.IsEpochComplete()) {
+            auto batch = batcher.GetNextBatch();
+            if (!batch.IsValid()) break;
+            const auto* features = batch.data.Data<float>();
+            for (size_t r = 0; r < batch.data.Shape()[0]; ++r) ++times[static_cast<int>(features[r * 2])];
+        }
+        return times;
+    };
+    auto class_total = [](const std::vector<int>& times, int cls) {
+        int total = 0;
+        for (int i = 0; i < kRows; ++i)
+            if ((i < 700 ? 0 : 1) == cls) total += times[i];
+        return total;
+    };
+
+    // Oversample to the largest class: 560 each; every class-1 row twice,
+    // 80 of them a third time; class 0 once each.
+    auto over = balanced("oversample", "max", 11);
+    Check(over.num_train_samples == 1120 && over.num_val_samples == 100 && over.num_test_samples == 100,
+          "oversample: 1120 train rows, validation and test unchanged (" + std::to_string(over.num_train_samples) + ")");
+    const auto over_times = served(*over.train);
+    Check(class_total(over_times, 0) == 560 && class_total(over_times, 1) == 560, "oversample: 560 rows per class");
+    int twice = 0, thrice = 0, once = 0;
+    for (int i = 0; i < kRows; ++i) {
+        if (i >= 700 && i < 940) (over_times[i] == 2 ? twice : over_times[i] == 3 ? thrice : once)++;
+        if (i < 560) Check(over_times[i] == 1, "oversample: a class-0 train row once");
+        if ((i >= 560 && i < 700) || i >= 940) Check(over_times[i] == 0, "oversample: no held-out row");
+    }
+    Check(twice == 160 && thrice == 80 && once == 0, "oversample: class-1 rows twice (160) or three times (80)");
+    Check(served(*over.train) != over_times, "oversample: each epoch draws other rows for the third copy");
+
+    // Undersample to the smallest: 240 distinct rows of each class.
+    auto under = balanced("undersample", "min", 11);
+    Check(under.num_train_samples == 480, "undersample: 480 train rows");
+    const auto under_times = served(*under.train);
+    Check(class_total(under_times, 0) == 240 && class_total(under_times, 1) == 240, "undersample: 240 per class");
+    Check(std::all_of(under_times.begin(), under_times.end(), [](int t) { return t <= 1; }),
+          "undersample: no row twice");
+
+    // Weighted sampler: the epoch keeps its 800 rows, about half each class,
+    // the same for the same seed.
+    auto weighted = balanced("weighted_sampler", "max", 19);
+    Check(weighted.num_train_samples == 800, "weighted sampler: 800 train rows");
+    const auto weighted_times = served(*weighted.train);
+    const int weighted_one = class_total(weighted_times, 1);
+    Check(class_total(weighted_times, 0) + weighted_one == 800 && weighted_one > 340 && weighted_one < 460,
+          "weighted sampler: about half the draws class 1 (" + std::to_string(weighted_one) + ")");
+    auto weighted_again = balanced("weighted_sampler", "max", 19);
+    Check(served(*weighted_again.train) == weighted_times, "weighted sampler: the same seed, the same rows");
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+void TestTextLabels(const std::filesystem::path& work_dir) {
+    arrow::StringBuilder labels;
+    for (const char* v : {"north", "east", "north", "delta", "east", "delta", "north", "east"})
+        Check(labels.Append(v).ok(), "label append");
+    std::shared_ptr<arrow::Array> label_array;
+    Check(labels.Finish(&label_array).ok(), "label finish");
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("segment", arrow::utf8())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray({1, 2, 3, 4, 5, 6, 7, 8}), label_array}, 8);
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "text_labels");
+    const cyxwiz::LabelVocabulary full = cyxwiz::BuildLabelVocabulary({table->GetColumnByName("segment")});
+    Check(cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"north", "", "east", "delta", "east"}).names ==
+              full.names,
+          "plain values give the same sorted vocabulary (empty = missing)");
+
+    auto config = MakeConfig();
+    config.output_size = 3;
+    config.train_ratio = 1.0f;
+    const std::vector<size_t> expected = {2, 3, 3};  // delta, east, north
+
+    auto arrow_set = cyxwiz::BuildArrowTrainingBatchers(config, dataset, "segment", /*batch_size=*/3);
+    Check(arrow_set.label_classes == std::vector<std::string>({"delta", "east", "north"}),
+          "Arrow text labels: sorted class names");
+    Check(CountOneHotLabels(*arrow_set.train, 3, "Arrow text labels") == expected,
+          "Arrow text labels: each row keeps its class");
+
+    const std::filesystem::path parquet_path = work_dir / "cyxwiz_text_labels.parquet";
+    Check(dataset->ExportParquet(parquet_path.string()), "text labels export to Parquet");
+    auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "text_labels_parquet");
+    Check(parquet_dataset != nullptr, "text label Parquet opens");
+    {
+        auto parquet_set = cyxwiz::BuildParquetTrainingBatchers(config, parquet_dataset, "segment", /*batch_size=*/3);
+        Check(parquet_set.label_classes == arrow_set.label_classes, "Parquet text labels: same class names");
+        Check(CountOneHotLabels(*parquet_set.train, 3, "Parquet text labels") == expected,
+              "Parquet text labels: each row keeps its class");
+    }
+
+    bool refused = false;
+    try {
+        cyxwiz::ArrowDatasetBatcher unencoded(dataset, "segment", 3);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Check(refused, "an unencoded text label column is refused, not read as class 0");
+
+    cyxwiz::LabelVocabulary partial = full;
+    partial.names.pop_back();
+    partial.index.erase("north");
+    Check(!cyxwiz::EncodeLabelColumn(table, "segment", partial).ok(), "a value outside the vocabulary is an error");
+
+    arrow::StringBuilder with_null;
+    Check(with_null.Append("east").ok() && with_null.AppendNull().ok(), "null append");
+    std::shared_ptr<arrow::Array> null_array;
+    Check(with_null.Finish(&null_array).ok(), "null finish");
+    auto encoded = cyxwiz::EncodeLabels(arrow::ChunkedArray(null_array), full);
+    Check(encoded.ok() && (*encoded)->null_count() == 1 &&
+              std::static_pointer_cast<arrow::Int32Array>((*encoded)->chunk(0))->Value(0) == 1,
+          "east encodes to 1 and nulls stay null");
+    parquet_dataset.reset();
+    std::filesystem::remove(parquet_path);
+}
+
+int main(int argc, char** argv) {
+    namespace fs = std::filesystem;
+
+    const auto training_core_fixture = LoadTrainingCoreFixture(
+        argc > 0 ? fs::path(argv[0]) : fs::path{});
+
+    Check(cyxwiz::ClampNumWorkersToPlatform(-3) == 0,
+          "negative workers should normalize to single-threaded");
+    Check(cyxwiz::ClampNumWorkersToPlatform(0) == 0,
+          "zero workers should remain single-threaded");
+    Check(cyxwiz::ClampNumWorkersToPlatform(cyxwiz::GetDefaultNumWorkers() + 64) ==
+              cyxwiz::GetDefaultNumWorkers(),
+          "oversized workers should clamp to platform default");
+
+    auto tabular_resolution =
+        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), 5);
+    Check(tabular_resolution.input_size == 4,
+          "tabular input size should reserve one label column");
+    Check(!tabular_resolution.used_compiled_override,
+          "tabular input size should not use compiled override");
+    Check(tabular_resolution.has_separate_label_column,
+          "tabular multi-column data should report a separate label column");
+
+    auto single_col_resolution =
+        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), 1);
+    Check(single_col_resolution.input_size == 1,
+          "single-column input size should use the only column");
+    Check(!single_col_resolution.has_separate_label_column,
+          "single-column data should not report a separate label column");
+
+    auto ts_config = MakeConfig();
+    ts_config.is_time_series = true;
+    ts_config.input_size = 12;
+    auto ts_resolution =
+        cyxwiz::ResolveTabularTrainingInputSize(ts_config, 99);
+    Check(ts_resolution.input_size == 12,
+          "time-series input size should preserve GraphCompiler override");
+    Check(ts_resolution.used_compiled_override,
+          "time-series input size should mark compiled override");
+
+    auto batchers = cyxwiz::BuildArrowTrainingBatchers(
+        MakeConfig(),
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+
+    Check(batchers.arrow_train != nullptr, "train Arrow batcher should be owned");
+    Check(batchers.arrow_val != nullptr, "val Arrow batcher should be owned");
+    Check(batchers.train == batchers.arrow_train.get(), "train pointer should target train owner");
+    Check(batchers.val == batchers.arrow_val.get(), "val pointer should target val owner");
+    Check(batchers.num_train_samples == 3, "train split should contain 3 samples");
+
+    auto batch = batchers.train->GetNextBatch();
+    Check(batch.IsValid(), "train batch should be valid");
+    Check(batch.data.Shape().size() == 2, "feature tensor should be 2D");
+    Check(batch.data.Shape()[0] == 2, "batch dimension should be 2");
+    Check(batch.data.Shape()[1] == 2, "feature width should be 2");
+    Check(batch.labels.Shape().size() == 2, "label tensor should be 2D");
+    Check(batch.labels.Shape()[1] == 2, "labels should be one-hot by output_size");
+
+    auto prefetch_config = MakeConfig();
+    prefetch_config.prefetch_factor = 2;
+    auto prefetch_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        prefetch_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    Check(prefetch_batchers.prefetch_train != nullptr,
+          "prefetch train wrapper should be owned when prefetch_factor is positive");
+    Check(prefetch_batchers.prefetch_val != nullptr,
+          "prefetch val wrapper should be owned when prefetch_factor is positive");
+    Check(prefetch_batchers.train == prefetch_batchers.prefetch_train.get(),
+          "train pointer should target prefetch wrapper");
+    Check(prefetch_batchers.train != prefetch_batchers.arrow_train.get(),
+          "prefetch wrapper should sit in front of Arrow train batcher");
+    Check(prefetch_batchers.num_train_samples == 3,
+          "prefetch train split should preserve sample count");
+    auto prefetch_first = prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(prefetch_first, 2, 2, 2, "prefetch Arrow first");
+    auto prefetch_second = prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(prefetch_second, 1, 2, 2, "prefetch Arrow second");
+    auto prefetch_end = prefetch_batchers.train->GetNextBatch();
+    Check(!prefetch_end.IsValid(),
+          "prefetch train should return an invalid batch after epoch end");
+    Check(prefetch_batchers.train->IsEpochComplete(),
+          "prefetch train should complete after queued batches are consumed");
+    prefetch_batchers.train->Reset();
+    auto prefetch_after_reset = prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(prefetch_after_reset, 2, 2, 2,
+                               "prefetch Arrow after reset");
+
+    auto explicit_split_config = MakeConfig();
+    explicit_split_config.has_data_split = true;
+    explicit_split_config.train_ratio = 0.50f;
+    explicit_split_config.val_ratio = 0.25f;
+    explicit_split_config.test_ratio = 0.25f;
+    auto explicit_split_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        explicit_split_config,
+        MakeMultiGroupDataset(),
+        "label",
+        /*batch_size=*/2);
+    Check(explicit_split_batchers.num_train_samples == 3,
+          "explicit Arrow DataSplit train split should contain 3 samples");
+    Check(explicit_split_batchers.num_val_samples == 1,
+          "explicit Arrow DataSplit val split should contain 1 sample");
+    Check(explicit_split_batchers.num_test_samples == 2,
+          "explicit Arrow DataSplit test split should contain 2 held-out samples");
+
+    // Validation 0 with a Test share (TOFIX157): the rows after Train are
+    // the Test set, and Validation is empty.
+    auto test_only_config = explicit_split_config;
+    test_only_config.val_ratio = 0.0f;
+    test_only_config.test_ratio = 0.50f;
+    auto test_only_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        test_only_config, MakeMultiGroupDataset(), "label", /*batch_size=*/2);
+    Check(test_only_batchers.num_train_samples == 3 &&
+              test_only_batchers.num_val_samples == 0 &&
+              test_only_batchers.num_test_samples == 3,
+          "Arrow DataSplit with Validation 0 should test the rows after Train");
+
+    auto stratified_split_config = MakeConfig();
+    stratified_split_config.has_data_split = true;
+    stratified_split_config.train_ratio = 0.50f;
+    stratified_split_config.val_ratio = 0.25f;
+    stratified_split_config.test_ratio = 0.25f;
+    stratified_split_config.stratified = true;
+    stratified_split_config.split_seed = 7;
+    stratified_split_config.shuffle = false;
+    auto stratified_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        stratified_split_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/3);
+    Check(stratified_batchers.num_train_samples == 6,
+          "stratified Arrow DataSplit train split should contain 6 samples");
+    Check(stratified_batchers.num_val_samples == 3,
+          "stratified Arrow DataSplit val split should contain 3 samples");
+    Check(stratified_batchers.num_test_samples == 3,
+          "stratified Arrow DataSplit test split should contain 3 samples");
+    auto stratified_train_counts =
+        CountOneHotLabels(*stratified_batchers.train, 2, "stratified train");
+    auto stratified_val_counts =
+        CountOneHotLabels(*stratified_batchers.val, 2, "stratified val");
+    auto stratified_test_counts =
+        CountOneHotLabels(*stratified_batchers.test, 2, "stratified test");
+    Check(stratified_train_counts == std::vector<size_t>({4, 2}),
+          "stratified train split should preserve 2:1 class ratio");
+    Check(stratified_val_counts == std::vector<size_t>({2, 1}),
+          "stratified val split should preserve 2:1 class ratio");
+    Check(stratified_test_counts == std::vector<size_t>({2, 1}),
+          "stratified test split should preserve 2:1 class ratio");
+
+    auto balanced_loader_config = MakeConfig();
+    balanced_loader_config.train_ratio = 0.75f;
+    balanced_loader_config.shuffle = false;
+    balanced_loader_config.balance_classes = true;
+    balanced_loader_config.balance_mode = "oversample";
+    balanced_loader_config.balance_target = "max";
+    balanced_loader_config.balance_seed = 11;
+    auto balanced_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        balanced_loader_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    Check(balanced_batchers.num_train_samples == 16,
+          "balanced Arrow oversampling should expand train split to max class count per class");
+    Check(balanced_batchers.num_val_samples == 3,
+          "balanced Arrow oversampling should not alter validation split");
+    Check(balanced_batchers.num_test_samples == 0,
+          "balanced Arrow oversampling should not create test samples");
+    auto balanced_train_counts =
+        CountOneHotLabels(*balanced_batchers.train, 2, "balanced train");
+    Check(balanced_train_counts == std::vector<size_t>({8, 8}),
+          "balanced Arrow oversampling should equalize train class counts");
+
+    auto stale_target_config = balanced_loader_config;
+    stale_target_config.target.required_by_objective = true;
+    stale_target_config.target.origin = cyxwiz::TargetOrigin::DatasetColumn;
+    stale_target_config.target.value_kind = cyxwiz::TargetValueKind::Categorical;
+    stale_target_config.target.primary_column = "status";
+    stale_target_config.target.width = 1;
+    auto stale_target_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        stale_target_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    Check(stale_target_batchers.num_train_samples == 16,
+          "runtime label fallback should keep class balancing enabled when "
+          "the compiled target name is stale");
+    auto stale_target_counts = CountOneHotLabels(
+        *stale_target_batchers.train, 2, "stale target balanced train");
+    Check(stale_target_counts == std::vector<size_t>({8, 8}),
+          "runtime label fallback should balance using the effective label column");
+
+    auto weighted_sampler_config = MakeConfig();
+    weighted_sampler_config.train_ratio = 0.75f;
+    weighted_sampler_config.shuffle = false;
+    weighted_sampler_config.balance_classes = true;
+    weighted_sampler_config.balance_mode = "weighted_sampler";
+    weighted_sampler_config.balance_target = "max";
+    weighted_sampler_config.balance_seed = 19;
+    auto weighted_sampler_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        weighted_sampler_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    Check(weighted_sampler_batchers.num_train_samples == 9,
+          "weighted sampler should preserve the configured Train epoch length");
+    Check(weighted_sampler_batchers.train->GetNumBatches() == 3,
+          "weighted sampler should preserve the configured optimizer-update count");
+    Check(weighted_sampler_batchers.num_val_samples == 3,
+          "weighted sampler should not alter validation split");
+    Check(weighted_sampler_batchers.num_test_samples == 0,
+          "weighted sampler should not create test samples");
+    auto weighted_labels = CollectOneHotLabels(
+        *weighted_sampler_batchers.train, 2, "weighted sampler train");
+    auto weighted_sampler_batchers_repeat = cyxwiz::BuildArrowTrainingBatchers(
+        weighted_sampler_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    auto weighted_labels_repeat = CollectOneHotLabels(
+        *weighted_sampler_batchers_repeat.train, 2, "weighted sampler repeat");
+    Check(weighted_labels == weighted_labels_repeat,
+          "weighted sampler should be deterministic for a fixed balance_seed");
+    size_t weighted_minority_count = 0;
+    for (size_t label : weighted_labels) {
+        if (label == 1) {
+            ++weighted_minority_count;
+        }
+    }
+    Check(weighted_minority_count > 1,
+          "weighted sampler should sample minority class rows with replacement");
+    TestWeightedSamplerPyTorchDistribution(training_core_fixture);
+
+    auto wide_sampler_config = MakeConfig();
+    wide_sampler_config.train_ratio = 0.8f;
+    wide_sampler_config.val_ratio = 0.1f;
+    wide_sampler_config.test_ratio = 0.1f;
+    wide_sampler_config.has_data_split = true;
+    wide_sampler_config.stratified = true;
+    wide_sampler_config.shuffle = true;
+    wide_sampler_config.split_seed = 42;
+    wide_sampler_config.balance_classes = true;
+    wide_sampler_config.balance_mode = "weighted_sampler";
+    wide_sampler_config.balance_target = "median";
+    wide_sampler_config.balance_seed = 42;
+    wide_sampler_config.prefetch_factor = 0;
+    auto wide_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        wide_sampler_config,
+        MakeWideStratifiedDataset(),
+        "label",
+        /*batch_size=*/8);
+    Check(wide_batchers.num_train_samples > 0,
+          "wide weighted sampler should create train samples");
+    Check(wide_batchers.num_val_samples > 0,
+          "wide weighted sampler should create validation samples");
+    auto wide_first_batch = wide_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(wide_first_batch, 8, 8000, 2,
+                               "wide weighted sampler first batch");
+
+    auto balanced_loss_config = MakeConfig();
+    balanced_loss_config.train_ratio = 0.75f;
+    balanced_loss_config.output_size = 2;
+    balanced_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
+    balanced_loss_config.loss_params["class_weight"] = "balanced";
+    const bool applied_balanced_weights =
+        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
+            balanced_loss_config,
+            MakeStratifiedDataset()->GetArrowTable(),
+            "label",
+            "",
+            "test balanced loss weights");
+    Check(applied_balanced_weights,
+          "balanced CrossEntropy weights should be computed from Arrow train split");
+    Check(balanced_loss_config.loss_params["class_weight"] == "manual",
+          "balanced class_weight should be resolved to manual weights");
+    Check(balanced_loss_config.loss_params["class_weights"] == "[0.5625, 4.5]",
+          "balanced class_weights should use n_samples / (n_classes * class_count)");
+
+    auto stratified_loss_config = MakeConfig();
+    stratified_loss_config.has_data_split = true;
+    stratified_loss_config.train_ratio = 0.50f;
+    stratified_loss_config.val_ratio = 0.25f;
+    stratified_loss_config.test_ratio = 0.25f;
+    stratified_loss_config.stratified = true;
+    stratified_loss_config.split_seed = 7;
+    stratified_loss_config.shuffle = false;
+    stratified_loss_config.output_size = 2;
+    stratified_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
+    stratified_loss_config.loss_params["class_weight"] = "balanced";
+    const bool applied_stratified_weights =
+        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
+            stratified_loss_config,
+            MakeStratifiedDataset()->GetArrowTable(),
+            "label",
+            "",
+            "test stratified balanced loss weights");
+    Check(applied_stratified_weights,
+          "balanced CrossEntropy weights should support stratified train splits");
+    Check(stratified_loss_config.loss_params["class_weights"] == "[0.75, 1.5]",
+          "stratified balanced class_weights should use stratified train counts");
+
+    auto high_worker_config = MakeConfig();
+    high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;
+    auto high_worker_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        high_worker_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    auto high_worker_batch = high_worker_batchers.train->GetNextBatch();
+    Check(high_worker_batch.IsValid(),
+          "oversized worker config should still produce a valid batch");
+
+    const fs::path parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup.parquet";
+    const fs::path ts_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts.parquet";
+    const fs::path multi_step_ts_parquet_path =
+        fs::temp_directory_path() /
+        "cyxwiz_training_batcher_setup_ts_multistep.parquet";
+    const fs::path multi_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_multi.parquet";
+    const fs::path multi_ts_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts_multi.parquet";
+    fs::remove(parquet_path);
+    fs::remove(ts_parquet_path);
+    fs::remove(multi_step_ts_parquet_path);
+    fs::remove(multi_parquet_path);
+    fs::remove(multi_ts_parquet_path);
+
+    auto parquet_source = MakeDataset();
+    Check(parquet_source->ExportParquet(parquet_path.string()),
+          "tabular Arrow table should export to Parquet");
+    auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        parquet_path.string(), "batcher_setup_parquet");
+    Check(parquet_dataset != nullptr, "tabular Parquet dataset should open");
+    auto parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeConfig(),
+        parquet_dataset,
+        "label",
+        /*batch_size=*/2);
+    Check(parquet_batchers.parquet_train != nullptr,
+          "train Parquet batcher should be owned");
+    Check(parquet_batchers.parquet_val != nullptr,
+          "val Parquet batcher should be owned");
+    Check(parquet_batchers.train == parquet_batchers.parquet_train.get(),
+          "train pointer should target Parquet train owner");
+    auto parquet_batch = parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
+
+    // Validation 0 with a Test share on disk, as in memory.
+    auto parquet_test_only_config = MakeConfig();
+    parquet_test_only_config.has_data_split = true;
+    parquet_test_only_config.train_ratio = 0.50f;
+    parquet_test_only_config.val_ratio = 0.0f;
+    parquet_test_only_config.test_ratio = 0.50f;
+    auto parquet_test_only = cyxwiz::BuildParquetTrainingBatchers(
+        parquet_test_only_config, parquet_dataset, "label", /*batch_size=*/2);
+    const size_t parquet_rows = static_cast<size_t>(parquet_source->GetArrowTable()->num_rows());
+    Check(parquet_test_only.num_val_samples == 0 && parquet_test_only.num_test_samples > 0 &&
+              parquet_test_only.num_train_samples + parquet_test_only.num_test_samples == parquet_rows,
+          "Parquet DataSplit with Validation 0 should test the rows after Train");
+
+    auto parquet_prefetch_config = MakeConfig();
+    parquet_prefetch_config.prefetch_factor = 2;
+    auto parquet_prefetch_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        parquet_prefetch_config,
+        parquet_dataset,
+        "label",
+        /*batch_size=*/2);
+    Check(parquet_prefetch_batchers.prefetch_train != nullptr,
+          "prefetch train wrapper should be owned for Parquet");
+    Check(parquet_prefetch_batchers.train == parquet_prefetch_batchers.prefetch_train.get(),
+          "Parquet train pointer should target prefetch wrapper");
+    Check(parquet_prefetch_batchers.train != parquet_prefetch_batchers.parquet_train.get(),
+          "Parquet prefetch wrapper should sit in front of train batcher");
+    // The disk split is row-level (TOFIX154): 75% of 4 rows is 3, as in memory.
+    Check(parquet_prefetch_batchers.num_train_samples == 3,
+          "Parquet prefetch train split should preserve sample count");
+    auto parquet_prefetch_first = parquet_prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_prefetch_first, 2, 2, 2,
+                               "prefetch Parquet first");
+    auto parquet_prefetch_second = parquet_prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_prefetch_second, 1, 2, 2,
+                               "prefetch Parquet second");
+    auto parquet_prefetch_end = parquet_prefetch_batchers.train->GetNextBatch();
+    Check(!parquet_prefetch_end.IsValid(),
+          "Parquet prefetch train should return invalid batch after epoch end");
+    Check(parquet_prefetch_batchers.train->IsEpochComplete(),
+          "Parquet prefetch train should complete after queued batches are consumed");
+    parquet_prefetch_batchers.train->Reset();
+    auto parquet_prefetch_after_reset = parquet_prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_prefetch_after_reset, 2, 2, 2,
+                               "prefetch Parquet after reset");
+
+    auto resolved_prefetch_source = cyxwiz::BuildArrowTrainingBatchers(
+        parquet_prefetch_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    auto resolved_prefetch = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(resolved_prefetch_source));
+    Check(resolved_prefetch.train != nullptr &&
+              resolved_prefetch.train->GetNumSamples() == 3,
+          "resolved-role handoff must retain the prefetch source lifetime");
+    auto resolved_prefetch_batch = resolved_prefetch.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(resolved_prefetch_batch, 2, 2, 2,
+                               "resolved-role prefetch handoff");
+
+    cyxwiz::ResolvedTabularDatasets resolved_datasets;
+    resolved_datasets.train_arrow = MakeDataset();
+    resolved_datasets.test_parquet = parquet_dataset;
+
+    auto external_role_config = MakeConfig();
+    external_role_config.has_data_split = true;
+    external_role_config.prefetch_factor = 2;
+    external_role_config.dataset_roles.train = {
+        "resolved_train_arrow", "label", 1, true};
+    external_role_config.dataset_roles.test = {
+        "resolved_test_parquet", "label", 2, true};
+    external_role_config.dataset_roles.policy.train_ratio = 0.75f;
+    external_role_config.dataset_roles.policy.dev_ratio = 0.25f;
+    external_role_config.dataset_roles.policy.test_ratio = 0.0f;
+    external_role_config.dataset_roles.policy.seed = 17;
+    auto resolved_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        external_role_config, resolved_datasets, /*batch_size=*/2);
+    Check(resolved_build.ok(), resolved_build.error_message);
+    Check(resolved_build.batchers.arrow_train != nullptr &&
+              resolved_build.batchers.parquet_test != nullptr,
+          "typed partition builder should support mixed Arrow Train and Parquet Test");
+    Check(resolved_build.batchers.num_train_samples == 3 &&
+              resolved_build.batchers.num_val_samples == 1 &&
+              resolved_build.batchers.num_test_samples == 4,
+          "typed partition builder must derive Dev only and preserve every external Test row");
+    Check(external_role_config.dataset_roles.manifest.train_rows == 3 &&
+              external_role_config.dataset_roles.manifest.dev_rows == 1 &&
+              external_role_config.dataset_roles.manifest.test_rows == 4 &&
+              external_role_config.dataset_roles.manifest.manifest_fingerprint.size() == 16,
+          "typed partition builder must finalize exact runtime rows and manifest identity");
+    Check(resolved_build.batchers.prefetch_train != nullptr &&
+              resolved_build.batchers.prefetch_test != nullptr,
+          "typed partition builder should attach prefetch only after final role assembly");
+    auto resolved_external_role = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(resolved_build.batchers));
+    Check(resolved_external_role.test != nullptr &&
+              resolved_external_role.test->GetNumSamples() == 4,
+          "typed external Test handoff must retain its Parquet owner");
+    auto resolved_external_test_batch =
+        resolved_external_role.test->GetNextBatch();
+    CheckFeatureAndLabelShapes(resolved_external_test_batch, 2, 2, 2,
+                               "typed external Test prefetch handoff");
+
+    auto train_only_config = MakeConfig();
+    train_only_config.dataset_roles.train = {
+        "train_only_arrow", "label", 10, true};
+    train_only_config.dataset_roles.policy.train_ratio = 0.5f;
+    train_only_config.dataset_roles.policy.dev_ratio = 0.25f;
+    train_only_config.dataset_roles.policy.test_ratio = 0.25f;
+    cyxwiz::ResolvedTabularDatasets train_only_datasets;
+    train_only_datasets.train_arrow = MakeDataset();
+    auto train_only_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        train_only_config, train_only_datasets, /*batch_size=*/2);
+    Check(train_only_build.ok(), train_only_build.error_message);
+    Check(train_only_build.batchers.num_train_samples == 2 &&
+              train_only_build.batchers.num_val_samples == 1 &&
+              train_only_build.batchers.num_test_samples == 1,
+          "Train-only typed partitions must derive Dev and Test only from Train");
+
+    auto train_dev_config = MakeConfig();
+    train_dev_config.dataset_roles.train = {
+        "train_dev_train_arrow", "label", 20, true};
+    train_dev_config.dataset_roles.dev = {
+        "train_dev_external_arrow", "label", 21, true};
+    train_dev_config.dataset_roles.policy.train_ratio = 0.75f;
+    train_dev_config.dataset_roles.policy.dev_ratio = 0.0f;
+    train_dev_config.dataset_roles.policy.test_ratio = 0.25f;
+    cyxwiz::ResolvedTabularDatasets train_dev_datasets;
+    train_dev_datasets.train_arrow = MakeDataset();
+    train_dev_datasets.dev_arrow = MakeDataset();
+    auto train_dev_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        train_dev_config, train_dev_datasets, /*batch_size=*/2);
+    Check(train_dev_build.ok(), train_dev_build.error_message);
+    Check(train_dev_build.batchers.num_train_samples == 3 &&
+              train_dev_build.batchers.num_val_samples == 4 &&
+              train_dev_build.batchers.num_test_samples == 1,
+          "Train+Dev typed partitions must preserve Dev and derive Test only from Train");
+
+    auto all_external_config = MakeConfig();
+    all_external_config.dataset_roles.train = {
+        "all_external_train_arrow", "label", 30, true};
+    all_external_config.dataset_roles.dev = {
+        "all_external_dev_arrow", "label", 31, true};
+    all_external_config.dataset_roles.test = {
+        "all_external_test_parquet", "label", 32, true};
+    all_external_config.dataset_roles.policy.train_ratio = 1.0f;
+    all_external_config.dataset_roles.policy.dev_ratio = 0.0f;
+    all_external_config.dataset_roles.policy.test_ratio = 0.0f;
+    cyxwiz::ResolvedTabularDatasets all_external_datasets;
+    all_external_datasets.train_arrow = MakeDataset();
+    all_external_datasets.dev_arrow = MakeDataset();
+    all_external_datasets.test_parquet = parquet_dataset;
+    auto all_external_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        all_external_config, all_external_datasets, /*batch_size=*/2);
+    Check(all_external_build.ok(), all_external_build.error_message);
+    Check(all_external_build.batchers.num_train_samples == 4 &&
+              all_external_build.batchers.num_val_samples == 4 &&
+              all_external_build.batchers.num_test_samples == 4,
+          "Train+Dev+Test typed partitions must preserve every external role in full");
+
+    auto sparse_config = MakeConfig();
+    sparse_config.has_data_split = true;
+    sparse_config.train_ratio = 2.0f / 3.0f;
+    sparse_config.val_ratio = 1.0f / 6.0f;
+    sparse_config.test_ratio = 1.0f / 6.0f;
+    sparse_config.drop_last = true;
+    sparse_config.prefetch_factor = 2;
+    auto sparse_batchers = cyxwiz::BuildSparseTrainingBatchers(
+        sparse_config, MakeSparseDataset("sparse_direct"), /*batch_size=*/3);
+    Check(sparse_batchers.sparse_train != nullptr &&
+              sparse_batchers.sparse_val != nullptr &&
+              sparse_batchers.sparse_test != nullptr,
+          "sparse training setup must retain typed Train/Dev/Test owners");
+    Check(sparse_batchers.prefetch_train != nullptr &&
+              sparse_batchers.train == sparse_batchers.prefetch_train.get(),
+          "sparse training setup must attach prefetch after typed ownership");
+    Check(sparse_batchers.num_train_samples == 4 &&
+              sparse_batchers.num_val_samples == 1 &&
+              sparse_batchers.num_test_samples == 1 &&
+              sparse_batchers.train->GetNumBatches() == 1,
+          "sparse split and drop-last counts must be exact");
+    auto sparse_batch = sparse_batchers.train->GetNextBatch();
+    CheckSparseFeatureAndLabelShapes(
+        sparse_batch, 3, 4, 2, "sparse training");
+
+    auto sparse_roles_config = MakeConfig();
+    sparse_roles_config.dataset_roles.train = {
+        "sparse_train", "label", 40, true};
+    sparse_roles_config.dataset_roles.dev = {
+        "sparse_dev", "label", 41, true};
+    sparse_roles_config.dataset_roles.test = {
+        "sparse_test", "label", 42, true};
+    sparse_roles_config.dataset_roles.policy.train_ratio = 1.0f;
+    sparse_roles_config.dataset_roles.policy.dev_ratio = 0.0f;
+    sparse_roles_config.dataset_roles.policy.test_ratio = 0.0f;
+    sparse_roles_config.prefetch_factor = 1;
+    cyxwiz::ResolvedTabularDatasets sparse_role_datasets;
+    sparse_role_datasets.train_sparse = MakeSparseDataset("sparse_train");
+    sparse_role_datasets.dev_sparse = MakeSparseDataset("sparse_dev");
+    sparse_role_datasets.test_sparse = MakeSparseDataset("sparse_test");
+    auto sparse_roles_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        sparse_roles_config, sparse_role_datasets, /*batch_size=*/2);
+    Check(sparse_roles_build.ok(), sparse_roles_build.error_message);
+    Check(sparse_roles_build.batchers.num_train_samples == 6 &&
+              sparse_roles_build.batchers.num_val_samples == 6 &&
+              sparse_roles_build.batchers.num_test_samples == 6,
+          "resolved sparse roles must preserve every supplied role row");
+    Check(sparse_roles_config.dataset_roles.manifest.train_rows == 6 &&
+              sparse_roles_config.dataset_roles.manifest.dev_rows == 6 &&
+              sparse_roles_config.dataset_roles.manifest.test_rows == 6 &&
+              sparse_roles_config.dataset_roles.manifest.manifest_fingerprint.size() == 16,
+          "resolved sparse roles must finalize the runtime manifest");
+    auto sparse_external = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(sparse_roles_build.batchers));
+    Check(sparse_external.dev != nullptr && sparse_external.test != nullptr,
+          "resolved sparse handoff must retain external role lifetimes");
+    CheckSparseFeatureAndLabelShapes(
+        sparse_external.test->GetNextBatch(), 2, 4, 2,
+        "resolved sparse external Test");
+
+    auto sparse_mismatch_config = sparse_roles_config;
+    cyxwiz::ResolvedTabularDatasets sparse_mismatch_datasets;
+    sparse_mismatch_datasets.train_sparse = MakeSparseDataset("mismatch_train");
+    sparse_mismatch_datasets.dev_sparse = MakeSparseDataset(
+        "mismatch_dev", {"alpha", "beta", "gamma", "delta"});
+    sparse_mismatch_datasets.test_sparse = MakeSparseDataset("mismatch_test");
+    auto sparse_mismatch_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        sparse_mismatch_config, sparse_mismatch_datasets, /*batch_size=*/2);
+    Check(!sparse_mismatch_build.ok() &&
+              sparse_mismatch_build.error_message.find("vocabulary/order") !=
+                  std::string::npos,
+          "resolved sparse roles must reject a different fitted vocabulary order");
+
+    auto sparse_mixed_config = sparse_roles_config;
+    cyxwiz::ResolvedTabularDatasets sparse_mixed_datasets;
+    sparse_mixed_datasets.train_sparse = MakeSparseDataset("mixed_train");
+    sparse_mixed_datasets.dev_arrow = MakeDataset();
+    sparse_mixed_datasets.test_sparse = MakeSparseDataset("mixed_test");
+    auto sparse_mixed_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        sparse_mixed_config, sparse_mixed_datasets, /*batch_size=*/2);
+    Check(!sparse_mixed_build.ok() &&
+              sparse_mixed_build.error_message.find("same sparse") !=
+                  std::string::npos,
+          "resolved roles must reject mixed sparse and dense representations");
+
+    auto binary_config = MakeConfig();
+    binary_config.output_size = 1;
+    binary_config.loss_type = gui::NodeType::BCEWithLogits;
+    auto binary_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        binary_config, MakeDataset(), "label", /*batch_size=*/2);
+    auto binary_batch = binary_batchers.train->GetNextBatch();
+    Check(binary_batch.labels.Shape() == std::vector<size_t>({2, 1}),
+          "BCEWithLogits labels must be scalar float [batch, 1], not one-hot");
+    const float* binary_labels = binary_batch.labels.Data<float>();
+    Check(binary_labels[0] == 0.0f && binary_labels[1] == 1.0f,
+          "binary scalar labels must preserve encoded 0/1 values");
+
+    auto balanced_binary_config = balanced_loader_config;
+    balanced_binary_config.output_size = 1;
+    balanced_binary_config.loss_type = gui::NodeType::BCEWithLogits;
+    auto balanced_binary_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        balanced_binary_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    const auto balanced_binary_counts = CountScalarBinaryLabels(
+        *balanced_binary_batchers.train, "balanced binary train");
+    Check(balanced_binary_counts == std::vector<size_t>({8, 8}),
+          "binary scalar-label mode must preserve class balancing after reset");
+
+    auto test_role_config = binary_config;
+    test_role_config.dataset_name = "train_dataset";
+    test_role_config.data_source_node_id = 1;
+    test_role_config.dataset_roles.train = {
+        "train_dataset", "label", 1, true};
+    test_role_config.dataset_roles.test = {
+        "external_test_dataset", "label", 14, true};
+    const auto test_selection =
+        cyxwiz::ResolveGraphTestDataset(test_role_config);
+    Check(test_selection.dataset_name == "external_test_dataset" &&
+              test_selection.label_column == "label" &&
+              test_selection.source_node_id == 14 &&
+              test_selection.scope ==
+                  cyxwiz::TestDatasetScope::EntireProvidedDataset,
+          "Tools > Test must select the supplied Test role, not Train");
+
+    const auto entire_test_config = cyxwiz::ConfigureTestDatasetScope(
+        test_role_config, test_selection.scope);
+    Check(entire_test_config.train_ratio == 1.0f &&
+              entire_test_config.val_ratio == 0.0f &&
+              entire_test_config.test_ratio == 0.0f &&
+              !entire_test_config.shuffle &&
+              !entire_test_config.balance_classes,
+          "supplied Test role must consume every row without reshuffling or balancing");
+    auto entire_test_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        entire_test_config, MakeDataset(), "label", /*batch_size=*/2);
+    Check(entire_test_batchers.train->GetNumSamples() == 4,
+          "entire provided Test dataset must retain all rows");
+
+    test_role_config.loss_params["pos_weight"] = "59";
+    auto configured_binary_loss =
+        cyxwiz::BuildLossFromConfig(test_role_config);
+    auto* weighted_binary_loss =
+        dynamic_cast<cyxwiz::BCEWithLogitsLoss*>(
+            configured_binary_loss.get());
+    Check(weighted_binary_loss &&
+              weighted_binary_loss->GetPosWeight() == 59.0f,
+          "Tools > Test must reuse BCEWithLogits pos_weight from training");
+
+    {
+        auto binary_parquet_batchers =
+            cyxwiz::BuildParquetTrainingBatchers(
+                binary_config, parquet_dataset, "label", /*batch_size=*/2);
+        auto binary_parquet_batch =
+            binary_parquet_batchers.train->GetNextBatch();
+        Check(binary_parquet_batch.labels.Shape() ==
+                  std::vector<size_t>({2, 1}),
+              "Parquet BCEWithLogits labels must be scalar float [batch, 1]");
+        const float* binary_parquet_labels =
+            binary_parquet_batch.labels.Data<float>();
+        Check(binary_parquet_labels[0] == 0.0f &&
+                  binary_parquet_labels[1] == 1.0f,
+              "Parquet binary labels must preserve encoded 0/1 values");
+    }
+
+    const float binary_logits[] = {-2.0f, 2.0f, 0.1f, -0.1f};
+    const float binary_targets[] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const auto binary_accuracy = cyxwiz::CountClassificationDecisions(
+        binary_logits, binary_targets, 4, 1,
+        cyxwiz::ClassificationDecisionMode::BinaryLogit);
+    Check(binary_accuracy.correct == 2 && binary_accuracy.total == 4,
+          "binary-logit accuracy must threshold logits instead of using argmax");
+
+    const float multiclass_scores[] = {0.1f, 0.8f, 0.1f, 0.7f, 0.2f, 0.1f};
+    const float multiclass_targets[] = {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    const auto multiclass_accuracy = cyxwiz::CountClassificationDecisions(
+        multiclass_scores, multiclass_targets, 2, 3,
+        cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(multiclass_accuracy.correct == 2 && multiclass_accuracy.total == 2,
+          "multiclass accuracy must retain argmax behavior");
+
+    cyxwiz::Tensor binary_logit_tensor(
+        {4, 1}, binary_logits, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor binary_target_tensor(
+        {4, 1}, binary_targets, cyxwiz::DataType::Float32);
+    const auto binary_tensor_accuracy =
+        cyxwiz::CountClassificationDecisionScalars(
+            binary_logit_tensor,
+            binary_target_tensor,
+            4,
+            1,
+            cyxwiz::ClassificationDecisionMode::BinaryLogit);
+    Check(binary_tensor_accuracy.correct == 2 &&
+              binary_tensor_accuracy.total == 4,
+          "binary tensor accuracy must read back only the scalar decision count");
+
+    cyxwiz::Tensor multiclass_score_tensor(
+        {2, 3}, multiclass_scores, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor multiclass_target_tensor(
+        {2, 3}, multiclass_targets, cyxwiz::DataType::Float32);
+    const auto multiclass_tensor_accuracy =
+        cyxwiz::CountClassificationDecisionScalars(
+            multiclass_score_tensor,
+            multiclass_target_tensor,
+            2,
+            3,
+            cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(multiclass_tensor_accuracy.correct == 2 &&
+              multiclass_tensor_accuracy.total == 2,
+          "multiclass tensor accuracy must count argmax matches on tensor data");
+
+    const float ignored_scores[] = {
+        0.1f, 0.8f, 0.1f,
+        0.9f, 0.05f, 0.05f,
+        0.7f, 0.2f, 0.1f,
+        0.1f, 0.8f, 0.1f,
+    };
+    const int32_t ignored_targets[] = {1, -100, 0, 2};
+    cyxwiz::Tensor ignored_score_tensor(
+        {4, 3}, ignored_scores, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor ignored_target_tensor(
+        {4}, ignored_targets, cyxwiz::DataType::Int32);
+    const auto ignored_tensor_accuracy =
+        cyxwiz::CountClassificationDecisionScalars(
+            ignored_score_tensor,
+            ignored_target_tensor,
+            4,
+            3,
+            cyxwiz::ClassificationDecisionMode::MulticlassScores,
+            -100);
+    Check(ignored_tensor_accuracy.correct == 2 &&
+              ignored_tensor_accuracy.total == 3,
+          "class-index accuracy must exclude ignored targets from both "
+          "the numerator and denominator");
+
+    // TOFIX140 F6: the device count takes any layout with batch x width
+    // values ([batch, 1, width] here), breaks argmax ties at the first class
+    // like std::max_element, and refuses a mismatched element count.
+    const float tied_scores[] = {0.5f, 0.5f, 0.1f, 0.2f, 0.9f, 0.9f};
+    const int32_t tied_targets[] = {0, 1};
+    const auto tied_accuracy = cyxwiz::CountClassificationDecisionScalars(
+        cyxwiz::Tensor({2, 1, 3}, tied_scores, cyxwiz::DataType::Float32),
+        cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+        2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(tied_accuracy.correct == 2 && tied_accuracy.total == 2,
+          "argmax ties must resolve to the first class on the device");
+    bool mismatch_refused = false;
+    try {
+        (void)cyxwiz::CountClassificationDecisionScalars(
+            cyxwiz::Tensor({2, 2}, tied_scores, cyxwiz::DataType::Float32),
+            cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+            2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    } catch (const std::invalid_argument&) {
+        mismatch_refused = true;
+    }
+    Check(mismatch_refused, "a prediction element count that is not batch x width must be refused");
+
+    auto ts_arrow_dataset = MakeTimeSeriesDataset();
+    auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        MakeTimeSeriesConfig(),
+        ts_arrow_dataset,
+        "ignored_label",
+        /*batch_size=*/2);
+    Check(ts_arrow_batchers.num_train_samples == 3,
+          "time-series Arrow train split should use partition 0 rows");
+    Check(ts_arrow_batchers.val->GetNumSamples() == 1,
+          "time-series Arrow val split should use partition 1 rows");
+    auto ts_arrow_batch = ts_arrow_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(ts_arrow_batch, 2, 2, 1, "time-series Arrow");
+
+    Check(ts_arrow_dataset->ExportParquet(ts_parquet_path.string()),
+          "time-series Arrow table should export to Parquet");
+    auto ts_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        ts_parquet_path.string(), "batcher_setup_ts_parquet");
+    Check(ts_parquet_dataset != nullptr, "time-series Parquet dataset should open");
+    auto ts_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeTimeSeriesConfig(),
+        ts_parquet_dataset,
+        "ignored_label",
+        /*batch_size=*/2);
+    Check(ts_parquet_batchers.num_train_samples == 3,
+          "time-series Parquet train split should use partition 0 rows");
+    Check(ts_parquet_batchers.val->GetNumSamples() == 1,
+          "time-series Parquet val split should use partition 1 rows");
+    auto ts_parquet_batch = ts_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(ts_parquet_batch, 2, 2, 1, "time-series Parquet");
+
+    auto multi_step_arrow_dataset = MakeMultiStepTimeSeriesDataset();
+    auto multi_step_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        MakeMultiStepTimeSeriesConfig(), multi_step_arrow_dataset,
+        "ignored_label", /*batch_size=*/2);
+    auto multi_step_arrow_batch =
+        multi_step_arrow_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(
+        multi_step_arrow_batch, 2, 2, 3, "multi-step time-series Arrow");
+    const float* arrow_targets = multi_step_arrow_batch.labels.Data<float>();
+    Check(arrow_targets[0] == 1.5f && arrow_targets[1] == 2.5f &&
+              arrow_targets[2] == 3.5f && arrow_targets[3] == 2.5f,
+          "Arrow multi-step labels should be row-major ordered horizons");
+
+    Check(multi_step_arrow_dataset->ExportParquet(
+              multi_step_ts_parquet_path.string()),
+          "multi-step time-series table should export to Parquet");
+    auto multi_step_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        multi_step_ts_parquet_path.string(),
+        "batcher_setup_ts_multistep_parquet");
+    Check(multi_step_parquet_dataset != nullptr,
+          "multi-step time-series Parquet dataset should open");
+    auto multi_step_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeMultiStepTimeSeriesConfig(), multi_step_parquet_dataset,
+        "ignored_label", /*batch_size=*/2);
+    auto multi_step_parquet_batch =
+        multi_step_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(
+        multi_step_parquet_batch, 2, 2, 3,
+        "multi-step time-series Parquet");
+    const float* parquet_targets = multi_step_parquet_batch.labels.Data<float>();
+    Check(parquet_targets[0] == 1.5f && parquet_targets[1] == 2.5f &&
+              parquet_targets[2] == 3.5f && parquet_targets[3] == 2.5f,
+          "Parquet multi-step labels should be row-major ordered horizons");
+
+    auto multi_step_model_config = MakeMultiStepTimeSeriesConfig();
+    multi_step_model_config.input_shape = {2};
+    multi_step_model_config.loss_type = gui::NodeType::MSELoss;
+    multi_step_model_config.optimizer_type = gui::NodeType::Adam;
+    multi_step_model_config.learning_rate = 0.001f;
+    cyxwiz::CompiledLayer multi_step_dense;
+    multi_step_dense.type = gui::NodeType::Dense;
+    multi_step_dense.units = 3;
+    multi_step_model_config.layers.push_back(multi_step_dense);
+    RunModelTrainValidationSmoke(
+        *multi_step_arrow_batchers.train,
+        *multi_step_arrow_batchers.val,
+        multi_step_model_config,
+        "multi-step Arrow model-step");
+    RunModelTrainValidationSmoke(
+        *multi_step_parquet_batchers.train,
+        *multi_step_parquet_batchers.val,
+        multi_step_model_config,
+        "multi-step Parquet model-step");
+
+    auto multi_source = MakeMultiGroupDataset();
+    WriteParquetWithRowGroupSize(*multi_source, multi_parquet_path.string(), 2);
+    auto multi_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        multi_parquet_path.string(), "batcher_setup_multi_parquet");
+    Check(multi_parquet_dataset != nullptr, "multi-row-group Parquet dataset should open");
+    Check(multi_parquet_dataset->GetNumRowGroups() == 3,
+          "tabular Parquet test fixture should have three row groups");
+    auto multi_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeConfig(),
+        multi_parquet_dataset,
+        "label",
+        /*batch_size=*/3);
+    Check(multi_parquet_batchers.num_train_samples == 4,
+          "multi-row-group Parquet train split should use first two row groups");
+    Check(multi_parquet_batchers.val->GetNumSamples() == 2,
+          "multi-row-group Parquet val split should use remaining row group");
+    auto multi_parquet_first = multi_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_parquet_first, 3, 2, 2,
+                               "multi-row-group tabular Parquet first");
+    auto multi_parquet_second = multi_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_parquet_second, 1, 2, 2,
+                               "multi-row-group tabular Parquet second");
+
+    auto multi_ts_source = MakeMultiGroupTimeSeriesDataset();
+    WriteParquetWithRowGroupSize(*multi_ts_source,
+                                 multi_ts_parquet_path.string(),
+                                 2);
+    auto multi_ts_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        multi_ts_parquet_path.string(), "batcher_setup_ts_multi_parquet");
+    Check(multi_ts_parquet_dataset != nullptr,
+          "multi-row-group time-series Parquet dataset should open");
+    Check(multi_ts_parquet_dataset->GetNumRowGroups() == 3,
+          "time-series Parquet test fixture should have three row groups");
+    auto multi_ts_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeTimeSeriesConfig(),
+        multi_ts_parquet_dataset,
+        "ignored_label",
+        /*batch_size=*/2);
+    Check(multi_ts_parquet_batchers.num_train_samples == 3,
+          "multi-row-group time-series Parquet train split should count partition 0 rows");
+    Check(multi_ts_parquet_batchers.val->GetNumSamples() == 3,
+          "multi-row-group time-series Parquet val split should count partition 1 rows");
+    auto multi_ts_parquet_first = multi_ts_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_ts_parquet_first, 2, 2, 1,
+                               "multi-row-group time-series Parquet first");
+    auto multi_ts_parquet_second = multi_ts_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_ts_parquet_second, 1, 2, 1,
+                               "multi-row-group time-series Parquet second");
+
+    const fs::path work_dir =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_work";
+    fs::remove_all(work_dir);
+    fs::create_directories(work_dir);
+    auto training_config = MakeTrainingLoopConfig(work_dir / "checkpoints");
+    auto loop_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        training_config,
+        MakeMultiGroupDataset(),
+        "label",
+        /*batch_size=*/2);
+    RunModelTrainValidationSmoke(
+        *loop_arrow_batchers.train,
+        *loop_arrow_batchers.val,
+        training_config,
+        "Arrow model-step");
+    auto loop_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        training_config,
+        multi_parquet_dataset,
+        "label",
+        /*batch_size=*/2);
+    RunModelTrainValidationSmoke(
+        *loop_parquet_batchers.train,
+        *loop_parquet_batchers.val,
+        training_config,
+        "Parquet model-step");
+
+    auto external_test = std::make_unique<cyxwiz::ArrowDatasetBatcher>(
+        MakeMultiGroupDataset(), "label", 2, false, 1.0f, true, "", 0, 0,
+        cyxwiz::BatcherPhase::Train, 0.0f, 42);
+    Check(external_test->GetNumSamples() == 6,
+          "external test batcher must preserve every supplied row");
+
+    auto external_parquet_test = std::make_unique<cyxwiz::ParquetArrowBatcher>(
+        multi_parquet_dataset, "label", 2, false, 1.0f, true, "", 0, 0,
+        cyxwiz::BatcherPhase::Train, 0.0f, 42);
+    Check(external_parquet_test->GetNumSamples() == 6,
+          "external Parquet test batcher must preserve every supplied row group");
+    external_test.reset();
+    external_parquet_test.reset();
+
+    parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    prefetch_batchers = cyxwiz::TrainingBatcherSet{};
+    parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
+    explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
+    test_only_batchers = cyxwiz::TrainingBatcherSet{};
+    parquet_test_only = cyxwiz::TrainingBatcherSet{};
+    stratified_batchers = cyxwiz::TrainingBatcherSet{};
+    balanced_batchers = cyxwiz::TrainingBatcherSet{};
+    ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_step_arrow_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_step_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    loop_arrow_batchers = cyxwiz::TrainingBatcherSet{};
+    loop_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    resolved_external_role = cyxwiz::ResolvedExternalBatchers{};
+    resolved_datasets = cyxwiz::ResolvedTabularDatasets{};
+    train_only_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    train_only_datasets = cyxwiz::ResolvedTabularDatasets{};
+    train_dev_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    train_dev_datasets = cyxwiz::ResolvedTabularDatasets{};
+    all_external_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    all_external_datasets = cyxwiz::ResolvedTabularDatasets{};
+    sparse_batchers = cyxwiz::TrainingBatcherSet{};
+    sparse_external = cyxwiz::ResolvedExternalBatchers{};
+    sparse_role_datasets = cyxwiz::ResolvedTabularDatasets{};
+    sparse_mismatch_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    sparse_mismatch_datasets = cyxwiz::ResolvedTabularDatasets{};
+    sparse_mixed_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    sparse_mixed_datasets = cyxwiz::ResolvedTabularDatasets{};
+    parquet_dataset.reset();
+    ts_parquet_dataset.reset();
+    multi_parquet_dataset.reset();
+    multi_ts_parquet_dataset.reset();
+    multi_step_parquet_dataset.reset();
+    parquet_source.reset();
+    ts_arrow_dataset.reset();
+    multi_source.reset();
+    multi_ts_source.reset();
+    multi_step_arrow_dataset.reset();
+
+    fs::remove(parquet_path);
+    fs::remove(ts_parquet_path);
+    fs::remove(multi_parquet_path);
+    fs::remove(multi_ts_parquet_path);
+    fs::remove(multi_step_ts_parquet_path);
+    TestTextLabels(fs::temp_directory_path());
+    TestParquetRowSplit(fs::temp_directory_path());
+    TestParquetClassBalancing(fs::temp_directory_path());
+    fs::remove_all(work_dir);
+
+    std::cout << "Training batcher setup passed\n";
+    return 0;
+}

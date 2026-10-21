@@ -16,7 +16,9 @@ import "execution.proto";  // For P2P training control messages
 // Request to reserve a node for training
 message ReserveNodeRequest {
   string node_id = 1;              // Selected node from free list
-  string user_wallet = 2;          // User's Solana wallet for payment
+  // 2 was user_wallet: the user comes from the caller's sign-in token (TOFIX136).
+  reserved 2;
+  reserved "user_wallet";
   int32 duration_minutes = 3;      // Reservation duration in minutes
   JobConfig job_config = 4;        // Initial model/hyperparameters (optional)
 }
@@ -64,6 +66,9 @@ message ExtendReservationResponse {
   int64 new_expires = 2;           // New expiration timestamp
   int64 additional_escrow = 3;     // Additional escrow amount locked
   string escrow_tx_hash = 4;       // Transaction hash for additional escrow
+  // A P2P token carrying the new end; the Engine forwards it to the node
+  // (TrainingCommand.reservation_extension_token, TOFIX118 gap 5).
+  string p2p_auth_token = 5;
   Error error = 10;
 }
 
@@ -110,8 +115,9 @@ enum ReservationStatus {
 // Detailed reservation information
 message ReservationInfo {
   string reservation_id = 1;
-  string user_id = 2;
-  string user_wallet = 3;
+  string user_id = 2;               // the account that reserved
+  reserved 3;
+  reserved "user_wallet";
   string node_id = 4;
   string node_wallet = 5;
   string node_endpoint = 6;
@@ -157,8 +163,10 @@ message ListReservationsResponse {
 // Payment is FULL to node (no refund - hotel room model).
 
 // Check if user has active reservations (for reconnection)
+// The caller's reservations: the user comes from the sign-in token.
 message GetActiveReservationsRequest {
-  string user_wallet = 1;            // User's wallet address
+  reserved 1;
+  reserved "user_wallet";
 }
 
 message GetActiveReservationsResponse {
@@ -180,8 +188,9 @@ message ActiveReservationInfo {
 
 // Request new P2P token for reconnection
 message GetReconnectionTokenRequest {
-  string reservation_id = 1;
-  string user_wallet = 2;
+  string reservation_id = 1;         // must belong to the signed-in user
+  reserved 2;
+  reserved "user_wallet";
 }
 
 message GetReconnectionTokenResponse {
@@ -234,6 +243,8 @@ message ReportJobCompleteFromNodeRequest {
   map<string, double> final_metrics = 6;
   int64 training_time_seconds = 7;
   int32 epochs_completed = 8;
+  JobTiming timing = 9;                    // where the time went (TOFIX118 P3)
+  EnvironmentFingerprint environment = 10; // what ran it
 }
 
 message ReportJobCompleteFromNodeResponse {

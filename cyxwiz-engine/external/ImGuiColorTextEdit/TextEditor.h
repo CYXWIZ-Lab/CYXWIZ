@@ -140,9 +140,10 @@ public:
 		bool mComment : 1;
 		bool mMultiLineComment : 1;
 		bool mPreprocessor : 1;
+		bool mMultiLineString : 1;  // inside a Python ''' or """ string (CyxWiz)
 
 		Glyph(Char aChar, PaletteIndex aColorIndex) : mChar(aChar), mColorIndex(aColorIndex),
-			mComment(false), mMultiLineComment(false), mPreprocessor(false) {}
+			mComment(false), mMultiLineComment(false), mPreprocessor(false), mMultiLineString(false) {}
 	};
 
 	typedef std::vector<Glyph> Line;
@@ -167,6 +168,11 @@ public:
 		TokenRegexStrings mTokenRegexStrings;
 
 		bool mCaseSensitive;
+
+		// CyxWiz: Python string rules in the comment pass: ' and " strings end
+		// on the same quote (no "" escape), ''' and """ span lines and are
+		// coloured as strings, # starts a comment outside strings.
+		bool mPythonStrings = false;
 
 		LanguageDefinition()
 			: mPreprocChar('#'), mAutoIndentation(true), mTokenize(nullptr), mCaseSensitive(true)
@@ -323,6 +329,7 @@ private:
 	void Colorize(int aFromLine = 0, int aCount = -1);
 	void ColorizeRange(int aFromLine = 0, int aToLine = 0);
 	void ColorizeInternal();
+	void ColorizePythonStrings();  // CyxWiz
 	float TextDistanceToLineStart(const Coordinates& aFrom) const;
 	void EnsureCursorVisible();
 	int GetPageSize() const;
@@ -334,6 +341,12 @@ private:
 	int InsertTextAt(Coordinates& aWhere, const char* aValue);
 	void AddUndo(UndoRecord& aValue);
 	Coordinates ScreenPosToCoordinates(const ImVec2& aPosition) const;
+public:
+	// CyxWiz: bottom-left of the cursor's character on the last Render, in
+	// screen pixels (for popups such as completion). Ignores word wrap.
+	ImVec2 GetCursorScreenPos() const { return mCursorScreenPos; }
+private:
+	ImVec2 mCursorScreenPos = ImVec2(0.0f, 0.0f);
 	Coordinates FindWordStart(const Coordinates& aFrom) const;
 	Coordinates FindWordEnd(const Coordinates& aFrom) const;
 	Coordinates FindNextWord(const Coordinates& aFrom) const;

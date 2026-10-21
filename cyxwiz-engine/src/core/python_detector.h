@@ -10,7 +10,7 @@ namespace core {
 /**
  * @brief Detects and validates Python installations on the system.
  *
- * Searches for Python 3.12+ installations in common locations and validates
+ * Searches for Python installations in common locations and validates
  * that they meet CyxWiz requirements (venv module, pip).
  */
 class PythonDetector {
@@ -51,7 +51,7 @@ public:
      * @brief Find the best Python installation for CyxWiz.
      *
      * Prefers:
-     * 1. Python 3.12 or 3.13 (stable versions)
+     * 1. Python 3.12 or 3.13 (supported versions)
      * 2. Has venv module
      * 3. Has pip
      * 4. Newest version
@@ -86,7 +86,7 @@ public:
      * @brief Validate that a Python installation meets CyxWiz requirements.
      *
      * Requirements:
-     * - Python >= 3.12
+     * - Python 3.12 or 3.13
      * - Has venv module
      *
      * @param python Python installation to validate

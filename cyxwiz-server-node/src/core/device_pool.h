@@ -23,6 +23,9 @@ struct DeviceState {
     size_t total_memory = 0;
     size_t available_memory = 0;
     size_t used_memory = 0;
+    // False when the backend cannot report free memory (available_memory is
+    // then 0 and says nothing): memory checks do not apply.
+    bool available_memory_known = false;
 
     // Utilization (0.0 - 1.0)
     float utilization = 0.0f;

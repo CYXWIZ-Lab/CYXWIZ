@@ -33,9 +33,6 @@ struct ActiveJob {
     cyxwiz::protocol::JobConfig original_config;
     std::string initial_dataset_bytes;  // For inline dataset transfer
 
-    // Dataset handle for remote streaming (lazy loading)
-    std::shared_ptr<cyxwiz::DatasetHandle> remote_dataset;
-
     // Cancel safety flag - prevents callbacks from accessing job after cancel
     std::shared_ptr<std::atomic<bool>> is_cancelled = std::make_shared<std::atomic<bool>>(false);
 };
@@ -65,10 +62,6 @@ public:
 
     // P2P workflow: Connect to assigned node and start P2P job execution
     bool StartP2PExecution(const std::string& job_id);
-
-    // Set dataset for remote streaming (lazy loading from Engine)
-    // Call this before StartP2PExecution to enable dataset streaming
-    void SetRemoteDataset(const std::string& job_id, std::shared_ptr<cyxwiz::DatasetHandle> dataset);
 
     // Get P2P client for a specific job (for UI integration)
     std::shared_ptr<P2PClient> GetP2PClient(const std::string& job_id);

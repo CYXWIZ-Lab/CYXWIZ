@@ -1,11 +1,14 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
+#include <cstdio>  // sscanf in PluginVersion::Parse
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <functional>
 #include <filesystem>
-#include <nlohmann/json.hpp>
+#include "plugin_fingerprint.h"
 
 namespace cyxwiz::plugin {
 
@@ -14,7 +17,7 @@ namespace cyxwiz::plugin {
 // ============================================================================
 
 constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
-constexpr uint16_t PLUGIN_API_VERSION_MINOR = 0;
+constexpr uint16_t PLUGIN_API_VERSION_MINOR = 2;  // 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125)
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 
 // ============================================================================
@@ -129,6 +132,7 @@ enum class PluginCapability : uint32_t {
     RequiresPython  = 1 << 5,
     RequiresGPU     = 1 << 6,
     RequiresNetwork = 1 << 7,
+    ProvidesTensorNodes = 1 << 8,  // trainable nodes, ITensorNodeProvider (API 1.1)
 };
 
 using PluginCapabilityFlags = uint32_t;
@@ -172,7 +176,7 @@ struct PluginDependency {
 };
 
 // ============================================================================
-// Plugin Manifest (loaded from plugin.json)
+// Plugin Manifest (loaded from plugin.json by the Engine's loader)
 // ============================================================================
 
 struct PluginManifest {
@@ -202,89 +206,6 @@ struct PluginManifest {
 
     // Plugin directory (set at load time, not from JSON)
     std::filesystem::path plugin_dir;
-
-    // Serialization
-    static PluginManifest FromJson(const nlohmann::json& j) {
-        PluginManifest m;
-        m.id = j.value("id", "");
-        m.name = j.value("name", m.id);
-        m.description = j.value("description", "");
-        m.version = PluginVersion::Parse(j.value("version", "0.0.0"));
-        m.api_version = PluginVersion::Parse(j.value("api_version", "1.0.0"));
-        m.author = j.value("author", "");
-        m.license = j.value("license", "");
-        m.homepage = j.value("homepage", "");
-        m.repository = j.value("repository", "");
-
-        // Permissions
-        if (j.contains("permissions") && j["permissions"].is_array()) {
-            m.permissions = ParsePermissions(j["permissions"].get<std::vector<std::string>>());
-        }
-
-        // Capabilities
-        if (j.contains("capabilities") && j["capabilities"].is_array()) {
-            for (const auto& cap : j["capabilities"]) {
-                std::string s = cap.get<std::string>();
-                if (s == "ProvidesNodes")       m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesNodes);
-                else if (s == "ProvidesPanels")  m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesPanels);
-                else if (s == "ProvidesData")    m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesData);
-                else if (s == "ProvidesTraining") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesTraining);
-                else if (s == "ProvidesAnalytics") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesAnalytics);
-                else if (s == "RequiresPython")  m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresPython);
-                else if (s == "RequiresGPU")     m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresGPU);
-                else if (s == "RequiresNetwork") m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresNetwork);
-            }
-        }
-
-        // Dependencies
-        if (j.contains("dependencies") && j["dependencies"].is_array()) {
-            for (const auto& dep : j["dependencies"]) {
-                m.dependencies.push_back({
-                    dep.value("id", ""),
-                    dep.value("version", ">=0.0.0")
-                });
-            }
-        }
-
-        // Platform library
-#ifdef _WIN32
-        if (j.contains("platforms") && j["platforms"].contains("windows")) {
-            m.library = j["platforms"]["windows"].value("library", "");
-        }
-#elif defined(__APPLE__)
-        if (j.contains("platforms") && j["platforms"].contains("macos")) {
-            m.library = j["platforms"]["macos"].value("library", "");
-        }
-#else
-        if (j.contains("platforms") && j["platforms"].contains("linux")) {
-            m.library = j["platforms"]["linux"].value("library", "");
-        }
-#endif
-        // Fallback: top-level library field
-        if (m.library.empty()) {
-            m.library = j.value("library", "");
-        }
-
-        // Signature
-        m.signature = j.value("signature", "");
-
-        return m;
-    }
-
-    nlohmann::json ToJson() const {
-        nlohmann::json j;
-        j["id"] = id;
-        j["name"] = name;
-        j["description"] = description;
-        j["version"] = version.ToString();
-        j["api_version"] = api_version.ToString();
-        j["author"] = author;
-        j["license"] = license;
-        if (!homepage.empty()) j["homepage"] = homepage;
-        if (!repository.empty()) j["repository"] = repository;
-        j["permissions"] = PermissionsToStrings(permissions);
-        return j;
-    }
 
     bool IsValid() const {
         return !id.empty() && !name.empty() && (version.major > 0 || version.minor > 0 || version.patch > 0);
@@ -336,9 +257,16 @@ public:
 // Factory function signatures
 using CreatePluginFunc  = IPlugin* (*)();
 using DestroyPluginFunc = void (*)(IPlugin*);
+using BuildFingerprintFunc = const char* (*)();
 
-// Convenience macro for plugin authors
+// Convenience macro for plugin authors. It also exports the plugin's build
+// fingerprint (plugin_fingerprint.h): the Engine refuses a plugin built
+// differently before creating it (API 1.2).
 #define CYXWIZ_PLUGIN_ENTRY(PluginClass) \
+    CYXWIZ_PLUGIN_EXPORT const char* CyxwizPluginBuildFingerprint() { \
+        static const std::string fingerprint = ::cyxwiz::plugin::CurrentBuildFingerprint(); \
+        return fingerprint.c_str(); \
+    } \
     CYXWIZ_PLUGIN_EXPORT cyxwiz::plugin::IPlugin* CreatePlugin() { \
         return new PluginClass(); \
     } \

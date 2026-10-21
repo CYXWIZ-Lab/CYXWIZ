@@ -5,21 +5,76 @@ project(cyxwiz-backend VERSION 0.1.0)
 # Add cmake module path for custom Find modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-# Find ArrayFire (needs to be installed separately)
-# Download from: https://arrayfire.com/download
+# ArrayFire is required: every computation runs on it (its CUDA, OpenCL or CPU
+# backend; TOFIX140). Download from: https://arrayfire.com/download
 find_package(ArrayFire QUIET)
-
 if(NOT ArrayFire_FOUND)
-    message(WARNING "ArrayFire not found. Backend will build without GPU acceleration.")
-    message(STATUS "Download ArrayFire from: https://arrayfire.com/download")
-    set(CYXWIZ_HAS_ARRAYFIRE FALSE)
-else()
-    message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
-    set(CYXWIZ_HAS_ARRAYFIRE TRUE)
+    message(FATAL_ERROR
+        "ArrayFire is required: the backend computes on ArrayFire only (its CPU "
+        "backend is the CPU option). Install ArrayFire and set ArrayFire_DIR to "
+        "its CMake package directory.")
 endif()
+message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
 # Find other packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+
+set(CYXWIZ_HAS_SENTENCEPIECE FALSE)
+set(CYXWIZ_SENTENCEPIECE_TARGET "")
+if(CYXWIZ_ENABLE_SENTENCEPIECE)
+    find_package(sentencepiece CONFIG QUIET)
+    if(TARGET sentencepiece::sentencepiece)
+        set(CYXWIZ_SENTENCEPIECE_TARGET sentencepiece::sentencepiece)
+    elseif(TARGET sentencepiece)
+        set(CYXWIZ_SENTENCEPIECE_TARGET sentencepiece)
+    elseif(TARGET sentencepiece-static)
+        set(CYXWIZ_SENTENCEPIECE_TARGET sentencepiece-static)
+    else()
+        find_path(CYXWIZ_SENTENCEPIECE_INCLUDE_DIR
+            NAMES sentencepiece_processor.h)
+        if(CYXWIZ_SENTENCEPIECE_INCLUDE_DIR)
+            cmake_path(GET CYXWIZ_SENTENCEPIECE_INCLUDE_DIR PARENT_PATH CYXWIZ_SENTENCEPIECE_ROOT_DIR)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE
+                NAMES sentencepiece
+                PATHS "${CYXWIZ_SENTENCEPIECE_ROOT_DIR}/lib"
+                NO_DEFAULT_PATH)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG
+                NAMES sentencepiece
+                PATHS "${CYXWIZ_SENTENCEPIECE_ROOT_DIR}/debug/lib"
+                NO_DEFAULT_PATH)
+        endif()
+        if(NOT CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE
+                NAMES sentencepiece
+                PATH_SUFFIXES lib)
+        endif()
+        if(NOT CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG
+                NAMES sentencepiece
+                PATH_SUFFIXES debug/lib)
+        endif()
+        if(NOT CYXWIZ_SENTENCEPIECE_INCLUDE_DIR OR
+           NOT CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE)
+            message(FATAL_ERROR
+                "CYXWIZ_ENABLE_SENTENCEPIECE=ON but the official SentencePiece "
+                "headers/library were not found. Install the manifest feature "
+                "with: vcpkg install --x-feature=sentencepiece")
+        endif()
+        add_library(cyxwiz-sentencepiece UNKNOWN IMPORTED)
+        set_target_properties(cyxwiz-sentencepiece PROPERTIES
+            IMPORTED_LOCATION "${CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE}"
+            IMPORTED_LOCATION_RELEASE "${CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE}"
+            INTERFACE_INCLUDE_DIRECTORIES "${CYXWIZ_SENTENCEPIECE_INCLUDE_DIR}")
+        if(CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG)
+            set_target_properties(cyxwiz-sentencepiece PROPERTIES
+                IMPORTED_LOCATION_DEBUG "${CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG}")
+        endif()
+        set(CYXWIZ_SENTENCEPIECE_TARGET cyxwiz-sentencepiece)
+    endif()
+    set(CYXWIZ_HAS_SENTENCEPIECE TRUE)
+    message(STATUS "SentencePiece tokenizer provider target: ${CYXWIZ_SENTENCEPIECE_TARGET}")
+endif()
 
 # pybind11 is optional - controlled by parent CYXWIZ_HAS_PYTHON
 if(CYXWIZ_HAS_PYTHON)
@@ -47,8 +102,8 @@ else()
 endif()
 
 # Find DuckDB (optional - for SQL-based data loading)
-find_package(duckdb CONFIG QUIET)
-if(duckdb_FOUND)
+find_package(DuckDB CONFIG QUIET)
+if(DuckDB_FOUND)
     message(STATUS "DuckDB found - SQL data loading enabled")
     set(CYXWIZ_HAS_DUCKDB TRUE)
 else()
@@ -60,42 +115,173 @@ endif()
 set(BACKEND_SOURCES
     src/core/engine.cpp
     src/core/tensor.cpp
+    src/core/tensor_factory.cpp
+    src/core/tensor_utils.cpp
+    src/core/tensor_shape.cpp
+    src/core/tensor_reductions.cpp
+    src/core/tensor_elementwise.cpp
+    src/core/tensor_arithmetic.cpp
+    src/core/tensor_comparison.cpp
+    src/core/tensor_logical.cpp
+    src/core/tensor_linalg.cpp
+    src/core/tensor_broadcast.cpp
+    src/core/tensor_indexing.cpp
+    src/core/tensor_concat.cpp
     src/core/device.cpp
+    src/core/debug_hooks.cpp
+    src/core/device_identity.cpp
+    src/core/device_identity.h
+    src/core/device_probe.h
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
+    src/algorithms/arrayfire_backend_utils.cpp
+    src/algorithms/arrayfire_host_materialization.cpp
+    src/algorithms/providers/neural_provider_registry.cpp
+    src/algorithms/providers/neural_device_interop.cpp
+    src/algorithms/optimizers/optimizer_utils.cpp
+    src/algorithms/optimizers/sgd.cpp
+    src/algorithms/optimizers/adam_family.cpp
+    src/algorithms/optimizers/gradient_clipping.cpp
+    src/algorithms/optimizers/adaptive_optimizers.cpp
+    src/algorithms/optimizers/lamb.cpp
+    src/algorithms/optimizers/lr_warmup.cpp
     src/algorithms/loss.cpp
+    src/algorithms/losses/loss_utils.cpp
+    src/algorithms/losses/regression_losses.cpp
+    src/algorithms/losses/probability_losses.cpp
+    src/algorithms/losses/classification_losses.cpp
+    src/algorithms/losses/metric_learning_losses.cpp
     src/algorithms/activation.cpp
     src/algorithms/layer.cpp
-    src/algorithms/model.cpp
+    src/algorithms/layers/layer_arrayfire_utils.cpp
+    src/algorithms/layers/layer_recurrent_utils.cpp
+    src/algorithms/layers/flatten.cpp
+    src/algorithms/layers/dropout.cpp
+    src/algorithms/layers/pooling.cpp
+    src/algorithms/layers/batch_norm.cpp
+    src/algorithms/layers/embedding.cpp
+    src/algorithms/layers/normalization.cpp
+    src/algorithms/layers/layer_norm_arrayfire.cpp
+    src/algorithms/layers/group_norm_arrayfire.cpp
+    src/algorithms/layers/rms_norm.cpp
+    src/algorithms/layers/conv1d.cpp
+    src/algorithms/layers/conv2d.cpp
+    src/algorithms/layers/depthwise_conv2d.cpp
+    src/algorithms/layers/conv_transpose2d.cpp
+    src/algorithms/layers/upsampling.cpp
+    src/algorithms/layers/pixel_shuffle.cpp
+    src/algorithms/layers/dense.cpp
     src/algorithms/layers/linear.cpp
+    src/algorithms/layers/multi_head_attention.cpp
+    src/algorithms/layers/multi_head_attention_arrayfire.cpp
+    src/algorithms/layers/transformer_layers.cpp
+    src/algorithms/layers/gru.cpp
+    src/algorithms/layers/gru_backward.cpp
+    src/algorithms/layers/lstm.cpp
+    src/algorithms/layers/rnn.cpp
+    src/algorithms/layers/lstm_state_parameters.cpp
+    src/algorithms/layers/lstm_initialization.cpp
+    src/algorithms/layers/lstm_backward.cpp
+    src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
+    src/algorithms/gradient_check.cpp
+    src/algorithms/sequential/activation_modules.cpp
+    src/algorithms/sequential/feedforward_modules.cpp
+    src/algorithms/sequential/spatial_modules.cpp
+    src/algorithms/sequential/recurrent_modules.cpp
+    src/algorithms/sequential/regularization_shape_modules.cpp
+    src/algorithms/sequential/tensor_modules.cpp
+    src/algorithms/sequential/attention_modules.cpp
+    src/algorithms/sequential/volume_modules.cpp
+    src/algorithms/image/image_augmentation.cpp
+    src/algorithms/image/image_quality.cpp
+    src/algorithms/sequential/transformer_modules.cpp
+    src/algorithms/sequential/normalization_modules.cpp
+    src/algorithms/sequential/spatial_normalization_modules.cpp
+    src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
-    src/algorithms/clustering.cpp
+    src/algorithms/analysis_device.cpp
+    src/algorithms/clustering_kmeans.cpp
+    src/algorithms/clustering_dbscan.cpp
+    src/algorithms/clustering_hierarchical.cpp
+    src/algorithms/clustering_gmm.cpp
+    src/algorithms/classic_ml_naive_bayes.cpp
+    src/algorithms/classic_ml_knn.cpp
+    src/algorithms/classic_ml_logistic.cpp
+    src/algorithms/classic_ml_svm.cpp
+    src/algorithms/classic_ml_svm_probability.cpp
+    src/algorithms/word_embeddings.cpp
+    src/algorithms/word2vec.cpp
+    src/algorithms/glove.cpp
+    src/algorithms/fasttext.cpp
+    src/algorithms/fasttext_bin.cpp
+    src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp
+    src/algorithms/evaluation/cross_validation.cpp
+    src/algorithms/evaluation/classification_metrics.cpp
+    src/algorithms/evaluation/roc_pr_curves.cpp
     src/algorithms/dimensionality_reduction.cpp
     src/algorithms/feature_importance.cpp
     src/algorithms/model_interpretability.cpp
     src/algorithms/linear_algebra.cpp
+    src/algorithms/linear_algebra_tensor.cpp
+    src/algorithms/linear_algebra_utilities.cpp
     src/algorithms/signal_processing.cpp
+    src/algorithms/signal_processing_generation.cpp
+    src/algorithms/signal_processing_windows.cpp
+    src/algorithms/signal_processing_analysis.cpp
+    src/algorithms/signal_processing_utilities.cpp
+    src/algorithms/signal_processing_spectrogram.cpp
+    src/algorithms/signal_processing_wavelet.cpp
+    src/algorithms/signal_processing_convolution.cpp
+    src/algorithms/signal_processing_filters.cpp
+    src/algorithms/signal_processing_fft.cpp
     src/algorithms/optimization.cpp
     src/algorithms/time_series.cpp
+    src/algorithms/time_series/statistics.cpp
+    src/algorithms/time_series/decomposition.cpp
+    src/algorithms/time_series/diagnostics.cpp
+    src/algorithms/time_series/stationarity.cpp
+    src/algorithms/time_series/seasonality.cpp
+    src/algorithms/time_series/forecasting.cpp
+    src/algorithms/time_series/generation.cpp
+    src/algorithms/time_series/windowing.cpp
     src/algorithms/text_processing.cpp
+    src/algorithms/text_processing_tfidf.cpp
+    src/algorithms/text_processing_sentiment.cpp
+    src/algorithms/text_processing_embeddings.cpp
+    src/algorithms/text_processing_samples.cpp
+    src/algorithms/text_processing_frequency.cpp
+    src/algorithms/text_processing_utilities.cpp
     src/algorithms/tokenizer.cpp
+    src/algorithms/tokenizer/vocabulary_persistence.cpp
+    src/algorithms/tokenizer/byte_bpe.cpp
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
+    src/algorithms/dataloader.cpp
+    src/algorithms/data/synthetic_dataset.cpp
+    src/algorithms/data/mnist_dataset.cpp
+    src/algorithms/data/training_data_loader.cpp
+    src/algorithms/data/training_data_factories.cpp
     src/core/data_loader.cpp
+    src/core/data_loader_file_loading.cpp
+    src/core/data_loader_queries.cpp
+    src/core/data_loader_schema.cpp
+    src/core/data_loader_conversion.cpp
+    src/core/data_loader_batch_iterator.cpp
     # Distributed training
     src/algorithms/distributed/process_group.cpp
     src/algorithms/distributed/cpu_backend.cpp
     src/algorithms/distributed/ddp.cpp
     src/algorithms/distributed/distributed_sampler.cpp
     src/algorithms/distributed/distributed_trainer.cpp
+    src/algorithms/distributed/distributed_trainer_checkpoint.cpp
 )
 
 # Header files
@@ -105,13 +291,38 @@ set(BACKEND_HEADERS
     include/cyxwiz/device.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
+    include/cyxwiz/optimizers/adaptive.h
+    include/cyxwiz/optimizers/adam.h
+    include/cyxwiz/optimizers/lamb.h
+    include/cyxwiz/optimizers/lr_warmup.h
+    include/cyxwiz/optimizers/optimizer_base.h
+    include/cyxwiz/optimizers/sgd.h
     include/cyxwiz/loss.h
+    include/cyxwiz/losses/classification.h
+    include/cyxwiz/losses/loss_base.h
+    include/cyxwiz/losses/metric_learning.h
+    include/cyxwiz/losses/probability.h
+    include/cyxwiz/losses/regression.h
     include/cyxwiz/activation.h
     include/cyxwiz/layer.h
     include/cyxwiz/model.h
     include/cyxwiz/cyxwiz.h
+    include/cyxwiz/version.h
     include/cyxwiz/cyxwiz_c.h
+    include/cyxwiz/layers/attention.h
+    include/cyxwiz/layers/convolution.h
+    include/cyxwiz/layers/layer_base.h
+    include/cyxwiz/layers/dense.h
+    include/cyxwiz/layers/dropout.h
+    include/cyxwiz/layers/embedding.h
+    include/cyxwiz/layers/flatten.h
+    include/cyxwiz/layers/normalization.h
+    include/cyxwiz/layers/pooling.h
+    include/cyxwiz/layers/recurrent.h
+    include/cyxwiz/layers/transformer.h
+    include/cyxwiz/layers/upsampling.h
     include/cyxwiz/layers/linear.h
+    include/cyxwiz/layers/linear_sparse_csr.h
     include/cyxwiz/activations/relu.h
     include/cyxwiz/activations/sigmoid.h
     include/cyxwiz/activations/tanh.h
@@ -131,6 +342,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/utilities.h
     include/cyxwiz/rl_interface.h
     include/cyxwiz/data_loader.h
+    include/cyxwiz/dataloader.h
     # Distributed training
     include/cyxwiz/distributed/process_group.h
     include/cyxwiz/distributed/cpu_backend.h
@@ -162,65 +374,243 @@ target_include_directories(cyxwiz-backend PUBLIC
 
 # Link libraries
 target_link_libraries(cyxwiz-backend PUBLIC
-    fmt::fmt
+    # Keep spdlog before its fmt dependency. Apple's static linker retains the
+    # first duplicate archive, so the inverse order can leave fmt symbols used
+    # by spdlog unresolved even though both imported targets are present.
     spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
     cyxwiz-protocol
 )
+
+if(CYXWIZ_HAS_SENTENCEPIECE)
+    target_link_libraries(cyxwiz-backend PRIVATE ${CYXWIZ_SENTENCEPIECE_TARGET})
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_SENTENCEPIECE=1)
+else()
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_SENTENCEPIECE=0)
+endif()
+
+# Utilities exposes SHA/MD5 file and text hashing. Keep its advertised result
+# truthful: enable the existing OpenSSL implementation when Crypto is
+# available; callers that require SHA fail closed when it is unavailable.
+find_package(OpenSSL QUIET)
+if(OpenSSL_FOUND)
+    target_link_libraries(cyxwiz-backend PRIVATE OpenSSL::Crypto)
+    target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_OPENSSL)
+endif()
 
 # Platform-specific libraries for distributed training
 if(WIN32)
     target_link_libraries(cyxwiz-backend PRIVATE ws2_32)
 endif()
 
-if(CYXWIZ_HAS_ARRAYFIRE)
-    target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
-    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
+target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
+# Marks code that links ArrayFire; only sources shared with the ArrayFire-free
+# installer (route qualification) still test it.
+target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
 
-    if(CYXWIZ_ENABLE_CUDA)
-        # Keep CUDA backend support runtime-selected via ArrayFire.
-        # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.
-        target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
-        message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
-
-        # NCCL for distributed GPU training (optional).
-        # This is the only path that requires direct CUDA Toolkit linkage.
-        option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
-        if(CYXWIZ_ENABLE_NCCL)
-            find_package(CUDAToolkit QUIET)
-            if(CUDAToolkit_FOUND)
-                message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
-                find_package(NCCL QUIET)
-                if(NCCL_FOUND)
-                    message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
-                    if(NCCL_VERSION)
-                        message(STATUS "  NCCL version: ${NCCL_VERSION}")
-                    endif()
-                    target_sources(cyxwiz-backend PRIVATE
-                        src/algorithms/distributed/nccl_backend.cpp
-                    )
-                    target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl CUDA::cudart)
-                    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
-                    set(CYXWIZ_HAS_NCCL TRUE)
-                else()
-                    message(WARNING "NCCL not found - distributed GPU training will use CPU fallback")
-                    message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
-                    set(CYXWIZ_HAS_NCCL FALSE)
-                endif()
+# Optional OpenCL neural-network provider (tofix68, device-keyed dispatch
+# tenant #2): hand-written tiled OpenCL GEMMs + fused cell kernels behind
+# the same INeuralNetworkProvider boundary as the NVIDIA provider. OFF by
+# default; independent of CUDA (an OpenCL ICD is the only requirement).
+option(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER
+       "Enable the optional OpenCL neural-network provider" OFF)
+if(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER)
+    find_package(OpenCL QUIET)
+    if(OpenCL_FOUND)
+        message(STATUS "OpenCL DNN provider enabled (OpenCL ${OpenCL_VERSION_STRING})")
+        target_sources(cyxwiz-backend PRIVATE
+            src/algorithms/providers/opencl_cell_provider.cpp
+        )
+        target_link_libraries(cyxwiz-backend PUBLIC OpenCL::OpenCL)
+        target_compile_definitions(cyxwiz-backend PUBLIC
+            CYXWIZ_HAS_OPENCL_DNN_PROVIDER)
+        set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER TRUE)
+        # Optional CLBlast GEMMs (vcpkg manifest feature `opencl-clblast`).
+        # OFF by default; the provider's built-in tiled kernels remain the
+        # fallback at runtime even when CLBlast is linked.
+        option(CYXWIZ_ENABLE_OPENCL_CLBLAST
+               "Use CLBlast GEMMs in the OpenCL neural provider" OFF)
+        if(CYXWIZ_ENABLE_OPENCL_CLBLAST)
+            find_package(CLBlast CONFIG QUIET)
+            if(CLBlast_FOUND)
+                message(STATUS "OpenCL DNN provider: CLBlast GEMMs enabled")
+                target_link_libraries(cyxwiz-backend PRIVATE clblast)
+                target_compile_definitions(cyxwiz-backend PRIVATE
+                    CYXWIZ_HAS_OPENCL_CLBLAST)
             else()
-                message(WARNING "CUDA Toolkit not found - NCCL backend disabled")
-                set(CYXWIZ_HAS_NCCL FALSE)
+                message(WARNING
+                    "CYXWIZ_ENABLE_OPENCL_CLBLAST=ON but CLBlast was not "
+                    "found (install the vcpkg feature opencl-clblast) - "
+                    "using built-in GEMM kernels")
             endif()
+        endif()
+    else()
+        message(WARNING
+            "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER=ON but no OpenCL SDK was "
+            "found - provider disabled")
+        set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER FALSE)
+    endif()
+endif()
+
+# Optional oneAPI (SYCL) neural provider (tofix112 phase 5b, tenant #3):
+# fused attention on ArrayFire's oneAPI backend. The kernels are a
+# separate library built with the Intel DPC++ compiler (icx) and loaded
+# at runtime by oneapi_sycl_provider.cpp, so cyxwiz-backend itself keeps
+# building with the host compiler. OFF by default. The toolkit must be
+# the SYCL generation ArrayFire's afoneapi links (sycl8 = oneAPI 2025.x).
+option(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER
+       "Enable the optional oneAPI (SYCL) neural-network provider" OFF)
+if(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER)
+    set(_cyxwiz_oneapi_default "")
+    if(DEFINED ENV{CMPLR_ROOT})
+        set(_cyxwiz_oneapi_default "$ENV{CMPLR_ROOT}")
+    elseif(DEFINED ENV{ONEAPI_ROOT})
+        set(_cyxwiz_oneapi_default "$ENV{ONEAPI_ROOT}/compiler/latest")
+    endif()
+    set(CYXWIZ_ONEAPI_COMPILER_ROOT "${_cyxwiz_oneapi_default}" CACHE PATH
+        "Intel oneAPI DPC++ compiler root (holds bin/icx and the env script), e.g. D:/Intel/oneAPI/2025.1")
+    if(WIN32)
+        set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icx.exe")
+        set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/oneapi-vars.bat")
+        if(NOT EXISTS "${_cyxwiz_oneapi_env}")
+            set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.bat")
+        endif()
+        set(_cyxwiz_oneapi_kernels_name "cyxwiz-oneapi-kernels.dll")
+    else()
+        set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icpx")
+        set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.sh")
+        set(_cyxwiz_oneapi_kernels_name "libcyxwiz-oneapi-kernels.so")
+    endif()
+    if(EXISTS "${_cyxwiz_icx}" AND EXISTS "${_cyxwiz_oneapi_env}")
+        message(STATUS "oneAPI DNN provider enabled (DPC++ at ${CYXWIZ_ONEAPI_COMPILER_ROOT})")
+        set(_cyxwiz_oneapi_src "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.cpp")
+        set(_cyxwiz_oneapi_hdr "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.h")
+        set(_cyxwiz_oneapi_out_dir "${CMAKE_CURRENT_BINARY_DIR}/oneapi")
+        set(_cyxwiz_oneapi_out "${_cyxwiz_oneapi_out_dir}/${_cyxwiz_oneapi_kernels_name}")
+        file(MAKE_DIRECTORY "${_cyxwiz_oneapi_out_dir}")
+        if(WIN32)
+            # icx on Windows needs the MSVC environment of the host compiler.
+            string(REGEX REPLACE "/Tools/MSVC/.*$" "" _cyxwiz_vc_dir "${CMAKE_CXX_COMPILER}")
+            set(_cyxwiz_vcvars "${_cyxwiz_vc_dir}/Auxiliary/Build/vcvars64.bat")
+            file(TO_NATIVE_PATH "${_cyxwiz_vcvars}" _n_vcvars)
+            file(TO_NATIVE_PATH "${_cyxwiz_oneapi_env}" _n_env)
+            file(TO_NATIVE_PATH "${_cyxwiz_oneapi_src}" _n_src)
+            file(TO_NATIVE_PATH "${_cyxwiz_oneapi_out}" _n_out)
+            set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.bat")
+            file(WRITE "${_cyxwiz_oneapi_script}"
+                "@echo off\r\n"
+                "call \"${_n_vcvars}\" >nul || exit /b 1\r\n"
+                "call \"${_n_env}\" --force >nul 2>nul\r\n"
+                "icx -fsycl /nologo /EHsc /O2 /DNDEBUG /LD \"${_n_src}\" /Fe:\"${_n_out}\" || exit /b 1\r\n")
+            set(_cyxwiz_oneapi_command cmd /c "${_cyxwiz_oneapi_script}")
+        else()
+            set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.sh")
+            file(WRITE "${_cyxwiz_oneapi_script}"
+                "set -e\n"
+                ". \"${_cyxwiz_oneapi_env}\" >/dev/null 2>&1 || true\n"
+                "icpx -fsycl -O2 -DNDEBUG -fPIC -shared \"${_cyxwiz_oneapi_src}\" -o \"${_cyxwiz_oneapi_out}\"\n")
+            set(_cyxwiz_oneapi_command sh "${_cyxwiz_oneapi_script}")
+        endif()
+        add_custom_command(
+            OUTPUT "${_cyxwiz_oneapi_out}"
+            COMMAND ${_cyxwiz_oneapi_command}
+            DEPENDS "${_cyxwiz_oneapi_src}" "${_cyxwiz_oneapi_hdr}"
+            COMMENT "Building oneAPI SYCL kernels with the Intel DPC++ compiler"
+            VERBATIM)
+        add_custom_target(cyxwiz-oneapi-kernels ALL DEPENDS "${_cyxwiz_oneapi_out}")
+        add_dependencies(cyxwiz-backend cyxwiz-oneapi-kernels)
+        # The provider looks for the kernels next to the backend library.
+        add_custom_command(TARGET cyxwiz-backend POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_cyxwiz_oneapi_out}" "$<TARGET_FILE_DIR:cyxwiz-backend>"
+            VERBATIM)
+        install(FILES "${_cyxwiz_oneapi_out}" DESTINATION bin)
+        target_sources(cyxwiz-backend PRIVATE
+            src/algorithms/providers/oneapi_sycl_provider.cpp
+        )
+        target_compile_definitions(cyxwiz-backend PUBLIC
+            CYXWIZ_HAS_ONEAPI_DNN_PROVIDER)
+        set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER TRUE)
+    else()
+        message(WARNING
+            "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER=ON but the DPC++ compiler was not "
+            "found under CYXWIZ_ONEAPI_COMPILER_ROOT='${CYXWIZ_ONEAPI_COMPILER_ROOT}' "
+            "- provider disabled")
+        set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER FALSE)
+    endif()
+endif()
+
+if(CYXWIZ_ENABLE_CUDA)
+    # Keep CUDA backend support runtime-selected via ArrayFire.
+    # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+    message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
+
+    # Optional NVIDIA neural-network provider (tofix68): cuBLAS GEMMs +
+    # fused cell kernels behind the INeuralNetworkProvider boundary.
+    # OFF by default so portable builds never require the CUDA Toolkit.
+    option(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER
+           "Enable the optional NVIDIA cuBLAS neural-network provider" OFF)
+    if(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER)
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            message(STATUS "NVIDIA DNN provider enabled (CUDA Toolkit ${CUDAToolkit_VERSION})")
+            target_sources(cyxwiz-backend PRIVATE
+                src/algorithms/providers/nvidia_cublas_provider.cpp
+            )
+            target_link_libraries(cyxwiz-backend PUBLIC
+                CUDA::cudart CUDA::cublas CUDA::nvrtc CUDA::cuda_driver)
+            target_compile_definitions(cyxwiz-backend PUBLIC
+                CYXWIZ_HAS_NVIDIA_DNN_PROVIDER)
+            set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER TRUE)
+        else()
+            message(WARNING
+                "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON but the CUDA "
+                "Toolkit was not found - provider disabled")
+            set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER FALSE)
         endif()
     endif()
 
-    if(CYXWIZ_ENABLE_OPENCL)
-        find_package(OpenCL REQUIRED)
-        target_link_libraries(cyxwiz-backend PUBLIC
-            ArrayFire::afopencl
-            OpenCL::OpenCL  # OpenCL library for clGetDeviceInfo()
-        )
-        target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
+    # NCCL for distributed GPU training (optional).
+    option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
+    if(CYXWIZ_ENABLE_NCCL)
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
+            find_package(NCCL QUIET)
+            if(NCCL_FOUND)
+                message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
+                if(NCCL_VERSION)
+                    message(STATUS "  NCCL version: ${NCCL_VERSION}")
+                endif()
+                target_sources(cyxwiz-backend PRIVATE
+                    src/algorithms/distributed/nccl_backend.cpp
+                )
+                target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl CUDA::cudart)
+                target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
+                set(CYXWIZ_HAS_NCCL TRUE)
+            else()
+                message(WARNING "NCCL not found - distributed GPU training will use the native CPU distributed backend")
+                message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
+                set(CYXWIZ_HAS_NCCL FALSE)
+            endif()
+        else()
+            message(WARNING "CUDA Toolkit not found - NCCL backend disabled")
+            set(CYXWIZ_HAS_NCCL FALSE)
+        endif()
     endif()
+endif()
+
+if(CYXWIZ_ENABLE_OPENCL)
+    # Keep OpenCL runtime-selected via ArrayFire, like CUDA: device
+    # identity resolves clGetDeviceInfo and afcl_get_device_id at runtime,
+    # so the portable backend never imports OpenCL or afopencl.
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
+endif()
+
+if(CMAKE_DL_LIBS)
+    target_link_libraries(cyxwiz-backend PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 # Link libsndfile and FFTW3 if available (for audio processing)
@@ -250,6 +640,15 @@ if(CYXWIZ_HAS_DUCKDB)
         message(WARNING "DuckDB found but no valid target available")
     endif()
     target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_DUCKDB)
+    if(UNIX AND NOT APPLE)
+        # Keep this static DuckDB copy private; see the map for the double
+        # free it prevents when the Engine links its own copy.
+        set(_cyxwiz_backend_map "${CMAKE_CURRENT_SOURCE_DIR}/cyxwiz-backend-linux.map")
+        target_link_options(cyxwiz-backend PRIVATE
+            "LINKER:--version-script=${_cyxwiz_backend_map}")
+        set_property(TARGET cyxwiz-backend APPEND PROPERTY
+            LINK_DEPENDS "${_cyxwiz_backend_map}")
+    endif()
 endif()
 
 # Set properties
@@ -264,11 +663,36 @@ set_target_properties(cyxwiz-backend PROPERTIES
 if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     pybind11_add_module(pycyxwiz
         python/bindings.cpp
+        python/bindings_tensor.cpp
+        python/bindings_module.cpp
     )
 
     target_link_libraries(pycyxwiz PRIVATE
         cyxwiz-backend
     )
+
+    # pycyxwiz.nodes is Python source compiled into the module (Part C6).
+    set(_pycyxwiz_nodes_inc ${CMAKE_CURRENT_BINARY_DIR}/generated/pycyxwiz_nodes_source.inc)
+    add_custom_command(
+        OUTPUT ${_pycyxwiz_nodes_inc}
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_nodes.py
+                -DOUTPUT=${_pycyxwiz_nodes_inc} -DNAME=kPycyxwizNodesSource
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_nodes.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        COMMENT "Embedding pycyxwiz.nodes")
+    target_sources(pycyxwiz PRIVATE ${_pycyxwiz_nodes_inc})
+    target_include_directories(pycyxwiz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+    # Python subclasses of pycyxwiz.Module (TOFIX125 P3): run with the Python
+    # pycyxwiz is built for; the backend DLLs are in the runtime folder.
+    if(Python3_EXECUTABLE)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle)
+            add_test(NAME pycyxwiz_${_pycyxwiz_test}
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
+                        $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)
+        endforeach()
+    endif()
 endif()
 
 # Install rules
@@ -287,3 +711,44 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

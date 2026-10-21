@@ -1,13 +1,12 @@
 #include "statistics_calculator.h"
+#include "algorithms/arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <cctype>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -134,7 +133,6 @@ DatasetStatistics StatisticsCalculator::Compute(
     // Compute PCA for whitening using ArrayFire SVD
     spdlog::info("Computing PCA components for whitening...");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // 1. Calculate total features per sample from shape
         size_t n_features = 1;
@@ -178,15 +176,30 @@ DatasetStatistics StatisticsCalculator::Compute(
         // Eigenvectors (columns of V = rows of Vt transposed)
         af::array V = af::transpose(Vt);
         std::vector<float> V_host(n_features * n_features);
-        V.host(V_host.data());
+        MaterializeArrayFireToHost(
+            V,
+            V_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "StatisticsCalculator::ComputePCA::Components",
+            "arrayfire_column_major");
 
         // Singular values
         std::vector<float> S_host(n_features);
-        S.host(S_host.data());
+        MaterializeArrayFireToHost(
+            S,
+            S_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "StatisticsCalculator::ComputePCA::SingularValues",
+            "arrayfire_native");
 
         // Mean vector
         std::vector<float> mean_host(n_features);
-        mean_af.host(mean_host.data());
+        MaterializeArrayFireToHost(
+            mean_af,
+            mean_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "StatisticsCalculator::ComputePCA::Mean",
+            "arrayfire_native");
 
         // 7. Store in stats structure
         stats.pca_components.resize(n_features);
@@ -222,10 +235,6 @@ DatasetStatistics StatisticsCalculator::Compute(
         spdlog::error("PCA computation failed: {}", e.what());
         stats.pca_computed = false;
     }
-#else
-    spdlog::warn("PCA computation requires ArrayFire (GPU support not available)");
-    stats.pca_computed = false;
-#endif
 
     stats.is_valid = true;
 

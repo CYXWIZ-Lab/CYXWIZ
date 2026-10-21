@@ -1,0 +1,373 @@
+#include "convolution_test_support.h"
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include "algorithms/arrayfire_backend_utils.h"
+
+#include <cyxwiz/device.h>
+#include <cyxwiz/layers/convolution.h>
+#include <cyxwiz/optimizers/sgd.h>
+#include <cyxwiz/sequential.h>
+#include <cyxwiz/tensor.h>
+
+#include <arrayfire.h>
+
+#include <cstdlib>
+#include <map>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+
+using namespace cyxwiz::test::convolution;
+
+void ConfigureReferenceConv(cyxwiz::Conv1DLayer& layer) {
+    const std::vector<float> weights{1.0f, 2.0f};
+    const std::vector<float> bias{0.5f};
+    layer.SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {1, 1, 2}, weights.data(),
+                        cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor(
+                     {1}, bias.data(), cyxwiz::DataType::Float32)},
+    });
+}
+
+
+void ConfigureReferenceConvDeviceOnly(cyxwiz::Conv1DLayer& layer) {
+    layer.SetParameters({
+        {"weights", DeviceOnlyTensor({1, 1, 2}, {1.0f, 2.0f})},
+        {"bias", DeviceOnlyTensor({1}, {0.5f})},
+    });
+}
+
+
+} // namespace
+
+TEST_CASE("Conv1D computes deterministic forward and backward values",
+          "[conv][conv1d][correctness]") {
+    cyxwiz::Conv1DLayer layer(1, 1, 2, 1, 0, 1, true);
+    ConfigureReferenceConv(layer);
+
+    const std::vector<float> input_values{
+        1.0f, 10.0f,
+        2.0f, 20.0f,
+        3.0f, 30.0f,
+        4.0f, 40.0f,
+    };
+    const cyxwiz::Tensor input(
+        {4, 1, 2}, input_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(
+        layer.Forward(input),
+        {3, 1, 2},
+        {5.5f, 50.5f, 8.5f, 80.5f, 11.5f, 110.5f});
+
+    const std::vector<float> grad_values{
+        1.0f, 10.0f,
+        2.0f, 20.0f,
+        3.0f, 30.0f,
+    };
+    const cyxwiz::Tensor grad_output(
+        {3, 1, 2}, grad_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(
+        layer.Backward(grad_output),
+        {4, 1, 2},
+        {1.0f, 10.0f, 4.0f, 40.0f,
+         7.0f, 70.0f, 6.0f, 60.0f});
+
+    const std::map<std::string, cyxwiz::Tensor> params =
+        layer.GetParameters();
+    CheckValues(
+        params.at("grad_weights"), {1, 1, 2}, {1414.0f, 2020.0f});
+    CheckValues(params.at("grad_bias"), {1}, {66.0f});
+}
+
+TEST_CASE("Conv1D preserves channel output and batch layout",
+          "[conv][conv1d][correctness][layout]") {
+    cyxwiz::Conv1DLayer layer(2, 2, 1, 1, 0, 1, true);
+    const std::vector<float> weights{1.0f, 2.0f, -1.0f, 0.5f};
+    const std::vector<float> bias{0.5f, -0.5f};
+    layer.SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {2, 2, 1}, weights.data(),
+                        cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor(
+                     {2}, bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const std::vector<float> input_values{
+        1.0f, 10.0f, 2.0f, 20.0f,
+        3.0f, 30.0f, 4.0f, 40.0f,
+    };
+    const cyxwiz::Tensor input(
+        {2, 2, 2}, input_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(
+        layer.Forward(input),
+        {2, 2, 2},
+        {5.5f, 50.5f, -0.5f, -0.5f,
+         11.5f, 110.5f, -1.5f, -10.5f});
+
+    const std::vector<float> grad_values{
+        1.0f, 2.0f, 3.0f, 4.0f,
+        5.0f, 6.0f, 7.0f, 8.0f,
+    };
+    const cyxwiz::Tensor grad_output(
+        {2, 2, 2}, grad_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(
+        layer.Backward(grad_output),
+        {2, 2, 2},
+        {-2.0f, -2.0f, 3.5f, 6.0f,
+         -2.0f, -2.0f, 13.5f, 16.0f});
+
+    const std::map<std::string, cyxwiz::Tensor> params =
+        layer.GetParameters();
+    CheckValues(
+        params.at("grad_weights"),
+        {2, 2, 1},
+        {216.0f, 302.0f, 304.0f, 434.0f});
+    CheckValues(params.at("grad_bias"), {2}, {14.0f, 22.0f});
+}
+
+TEST_CASE("Conv1D handles padding and stride in forward and backward",
+          "[conv][conv1d][correctness][padding]") {
+    cyxwiz::Conv1DLayer layer(1, 1, 2, 2, 1, 1, false);
+    const std::vector<float> weights{1.0f, 1.0f};
+    layer.SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {1, 1, 2}, weights.data(),
+                        cyxwiz::DataType::Float32)},
+    });
+
+    const std::vector<float> input_values{1.0f, 2.0f, 3.0f};
+    const cyxwiz::Tensor input(
+        {3, 1, 1}, input_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(layer.Forward(input), {2, 1, 1}, {1.0f, 5.0f});
+
+    const std::vector<float> grad_values{1.0f, 2.0f};
+    const cyxwiz::Tensor grad_output(
+        {2, 1, 1}, grad_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(layer.Backward(grad_output), {3, 1, 1}, {1.0f, 2.0f, 2.0f});
+    CheckValues(
+        layer.GetParameters().at("grad_weights"),
+        {1, 1, 2},
+        {4.0f, 7.0f});
+}
+
+TEST_CASE("Conv1D updates parameters through a multi-batch SequentialModel",
+          "[conv][conv1d][module][optimizer][multi_batch]") {
+    auto module = std::make_unique<cyxwiz::Conv1DModule>(
+        1, 1, 1, 1, 0, 1, false);
+    const std::vector<float> weights{2.0f};
+    module->SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {1, 1, 1}, weights.data(),
+                        cyxwiz::DataType::Float32)},
+    });
+
+    cyxwiz::SequentialModel model;
+    model.AddModule(std::move(module));
+    const std::vector<float> input_values{3.0f, 4.0f};
+    const cyxwiz::Tensor input(
+        {1, 1, 2}, input_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(model.Forward(input), {1, 1, 2}, {6.0f, 8.0f});
+
+    const std::vector<float> grad_values{1.0f, 2.0f};
+    const cyxwiz::Tensor grad_output(
+        {1, 1, 2}, grad_values.data(), cyxwiz::DataType::Float32);
+    CheckValues(model.Backward(grad_output), {1, 1, 2}, {2.0f, 4.0f});
+    CheckValues(
+        model.GetGradients().at("layer0.weights"),
+        {1, 1, 1},
+        {11.0f});
+
+    cyxwiz::SGDOptimizer optimizer(0.1);
+    model.UpdateParameters(&optimizer);
+    CheckValues(
+        model.GetParameters().at("layer0.weights"),
+        {1, 1, 1},
+        {0.9f});
+    CheckValues(model.Forward(input), {1, 1, 2}, {2.7f, 3.6f});
+}
+
+TEST_CASE("Conv1D validates lifecycle shapes dtypes and parameters",
+          "[conv][conv1d][validation]") {
+    cyxwiz::Conv1DLayer layer(1, 1, 2, 1, 0, 1, true);
+    ConfigureReferenceConv(layer);
+    const std::vector<float> input_values(4, 1.0f);
+    const cyxwiz::Tensor input(
+        {4, 1, 1}, input_values.data(), cyxwiz::DataType::Float32);
+    const std::vector<float> grad_values(3, 1.0f);
+    const cyxwiz::Tensor grad(
+        {3, 1, 1}, grad_values.data(), cyxwiz::DataType::Float32);
+
+    CHECK_THROWS_AS(layer.Backward(grad), std::logic_error);
+    (void)layer.Forward(input);
+    const std::vector<float> wrong_grad_values(2, 1.0f);
+    const cyxwiz::Tensor wrong_grad(
+        {2, 1, 1}, wrong_grad_values.data(),
+        cyxwiz::DataType::Float32);
+    CHECK_THROWS_AS(layer.Backward(wrong_grad), std::runtime_error);
+
+    const std::vector<float> wrong_channels(8, 1.0f);
+    const cyxwiz::Tensor wrong_channel_input(
+        {4, 2, 1}, wrong_channels.data(), cyxwiz::DataType::Float32);
+    CHECK_THROWS_AS(
+        layer.Forward(wrong_channel_input), std::runtime_error);
+    CHECK_THROWS_AS(layer.Backward(grad), std::logic_error);
+
+    ConfigureReferenceConv(layer);
+    (void)layer.Forward(input);
+    ConfigureReferenceConv(layer);
+    CHECK_THROWS_AS(layer.Backward(grad), std::logic_error);
+
+    const std::vector<double> double_values(4, 1.0);
+    const cyxwiz::Tensor double_input(
+        {4, 1, 1}, double_values.data(), cyxwiz::DataType::Float64);
+    CHECK_THROWS_AS(layer.Forward(double_input), std::runtime_error);
+
+    const std::vector<float> wrong_weights(3, 1.0f);
+    layer.SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {1, 1, 3}, wrong_weights.data(),
+                        cyxwiz::DataType::Float32)},
+    });
+    CHECK_THROWS_AS(layer.Forward(input), std::runtime_error);
+
+    CHECK_THROWS_AS(
+        cyxwiz::Conv1DLayer(0, 1, 1), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::Conv1DLayer(1, 1, 0), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::Conv1DLayer(1, 1, 1, 0), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::Conv1DLayer(1, 1, 1, 1, -1), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::Conv1DLayer(1, 1, 1, 1, 0, 0),
+        std::invalid_argument);
+}
+
+
+TEST_CASE("Conv1D remains ArrayFire resident under strict fallback policy",
+          "[conv][conv1d][arrayfire][residency]") {
+    const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();
+    REQUIRE(current != nullptr);
+    const cyxwiz::DeviceType original_type = current->GetType();
+    const int original_id = current->GetDeviceId();
+    struct RestoreDevice {
+        cyxwiz::DeviceType type;
+        int id;
+        ~RestoreDevice() {
+            cyxwiz::Device(type, id).SetActive();
+        }
+    } restore{original_type, original_id};
+
+    const char* requested_value =
+        std::getenv("CYXWIZ_TEST_ARRAYFIRE_BACKEND");
+    const std::string requested_backend =
+        requested_value != nullptr && requested_value[0] != '\0'
+            ? requested_value
+            : cyxwiz::CurrentArrayFireBackendName();
+    size_t exercised_backends = 0;
+    for (const cyxwiz::DeviceInfo& info :
+         cyxwiz::Device::GetAvailableDevices()) {
+        if ((info.type != cyxwiz::DeviceType::CPU &&
+             info.type != cyxwiz::DeviceType::CUDA &&
+             info.type != cyxwiz::DeviceType::OPENCL &&
+             info.type != cyxwiz::DeviceType::ONEAPI) ||
+            !info.device_selectable) {
+            continue;
+        }
+        if (info.type == cyxwiz::DeviceType::ONEAPI &&
+            !cyxwiz::IsUncertifiedOneAPITrainingEnabled()) {
+            continue;
+        }
+        if (requested_backend != ExpectedBackendName(info.type)) {
+            continue;
+        }
+
+        const cyxwiz::Device device(info.type, info.device_id);
+        const cyxwiz::DeviceActivationResult activation =
+            device.ActivateExact(true);
+        if (!activation.success) {
+            CHECK(info.type != cyxwiz::DeviceType::CPU);
+            continue;
+        }
+        REQUIRE(activation.effective_type == info.type);
+        REQUIRE(activation.effective_device_id == info.device_id);
+        CHECK(cyxwiz::CurrentArrayFireBackendName() ==
+              ExpectedBackendName(info.type));
+        ++exercised_backends;
+
+        cyxwiz::Conv1DLayer layer(1, 1, 2, 1, 1, 1, true);
+        ConfigureReferenceConvDeviceOnly(layer);
+        const cyxwiz::Tensor input = DeviceOnlyTensor(
+            {3, 1, 2},
+            {1.0f, 10.0f, 2.0f, 20.0f, 3.0f, 30.0f});
+
+        ResetConvObservations();
+        cyxwiz::Tensor output;
+        cyxwiz::Tensor grad_input;
+        {
+            const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
+                &CountConvHostSync);
+            output = layer.Forward(input);
+            grad_input = layer.Backward(DeviceOnlyOnes(output.Shape()));
+            const std::map<std::string, cyxwiz::Tensor> params =
+                layer.GetParameters();
+            output.GetSemanticArray().eval();
+            grad_input.GetSemanticArray().eval();
+            params.at("grad_weights").GetSemanticArray().eval();
+            params.at("grad_bias").GetSemanticArray().eval();
+            af::sync();
+        }
+
+        CHECK(conv_host_sync_count == 0);
+        CHECK(output.Shape() == std::vector<size_t>{4, 1, 2});
+        CHECK(grad_input.Shape() == input.Shape());
+    }
+    if (exercised_backends == 0) {
+        if (requested_backend == "oneapi" &&
+            !cyxwiz::IsUncertifiedOneAPITrainingEnabled()) {
+            SKIP("oneAPI Conv1D is skipped by the existing uncertified-training policy");
+        }
+        SKIP("Requested ArrayFire backend is unavailable or failed execution validation");
+    }
+}
+
+TEST_CASE("Conv1D runs dilation and wide padding on the device",
+          "[conv][conv1d][arrayfire][policy]") {
+    // One ArrayFire path (TOFIX140): dilation and padding >= kernel no longer
+    // leave the device, so the strict policy sees no fallback and no host sync.
+    cyxwiz::Conv1DLayer layer(1, 1, 2, 1, 0, 2, false);
+    layer.SetParameters({
+        {"weights", DeviceOnlyTensor({1, 1, 2}, {1.0f, 2.0f})},
+    });
+    const cyxwiz::Tensor input =
+        DeviceOnlyTensor({3, 1, 1}, {1.0f, 2.0f, 3.0f});
+
+    ResetConvObservations();
+    cyxwiz::Tensor output;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
+            &CountConvHostSync);
+        output = layer.Forward(input);
+        output.GetSemanticArray().eval();
+    }
+    CHECK(conv_host_sync_count == 0);
+    CheckValues(output, {1, 1, 1}, {7.0f});  // 1*1 + 2*3
+
+    cyxwiz::Conv1DLayer padded(1, 1, 2, 1, 3, 1, false);  // padding 3 > kernel 2
+    padded.SetParameters({
+        {"weights", DeviceOnlyTensor({1, 1, 2}, {1.0f, 2.0f})},
+    });
+    ResetConvObservations();
+    {
+        output = padded.Forward(input);
+        output.GetSemanticArray().eval();
+    }
+    // [0 0 0 1 2 3 0 0 0] with taps (1, 2): 0 0 2 5 8 3 0 0
+    CheckValues(output, {8, 1, 1}, {0.0f, 0.0f, 2.0f, 5.0f, 8.0f, 3.0f, 0.0f, 0.0f});
+}
+

@@ -1,4 +1,7 @@
 #include "node_documentation.h"
+#include "../core/extension_node_metadata.h"
+#include "../core/node_metadata_registry.h"
+#include "ui_tokens.h"
 #include <imgui.h>
 
 namespace gui {
@@ -21,27 +24,75 @@ const NodeDocumentation* NodeDocumentationManager::GetDocumentation(NodeType typ
 }
 
 void NodeDocumentationManager::RenderTooltip(NodeType type) {
-    const NodeDocumentation* doc = GetDocumentation(type);
-    if (!doc) return;
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    registry.Initialize();
+    RenderTooltip(registry.GetMetadata(type), GetDocumentation(type));
+}
 
+void NodeDocumentationManager::RenderTooltip(const MLNode& node) {
+    if (node.type != NodeType::PluginCustom) {
+        RenderTooltip(node.type);
+        return;
+    }
+    const auto metadata = cyxwiz::ResolveNodeMetadata(node);
+    RenderTooltip(metadata ? &*metadata : nullptr, nullptr);
+}
+
+void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadata,
+                                             const NodeDocumentation* doc) {
+    if (!metadata && !doc) return;
+
+    const std::string title = metadata ? metadata->name : doc->title;
+    const std::string category = metadata
+        ? cyxwiz::GetCategoryDisplayName(metadata->category)
+        : doc->category;
+    const std::string brief = metadata
+        ? metadata->brief_description
+        : doc->description;
+    const std::string details = metadata
+        ? metadata->help_text
+        : std::string{};
+    const std::string usage = metadata
+        ? metadata->example_usage
+        : doc->usage;
+
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::BeginTooltip();
 
     // Title with category
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", doc->title.c_str());
+    ImGui::TextColored(t.accent_text, "%s", title.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("[%s]", doc->category.c_str());
+    ImGui::TextDisabled("[%s]", category.c_str());
 
     ImGui::Separator();
 
     // Description
     ImGui::PushTextWrapPos(400.0f);
-    ImGui::TextWrapped("%s", doc->description.c_str());
+    if (!brief.empty()) {
+        ImGui::TextWrapped("%s", brief.c_str());
+    }
+    if (!details.empty() && details != brief) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", details.c_str());
+    }
     ImGui::PopTextWrapPos();
 
     // Parameters
-    if (!doc->parameters.empty()) {
+    if (metadata && !metadata->parameters.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
+        ImGui::TextColored(t.text_bright, "Parameters:");
+        for (const auto& param : metadata->parameters) {
+            const std::string& label = param.display_name.empty()
+                ? param.name
+                : param.display_name;
+            ImGui::BulletText("%s%s", label.c_str(),
+                              param.required ? " *" : "");
+            ImGui::SameLine();
+            ImGui::TextDisabled("- %s", param.description.c_str());
+        }
+    } else if (doc && !doc->parameters.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_bright, "Parameters:");
         for (const auto& param : doc->parameters) {
             ImGui::BulletText("%s", param.first.c_str());
             ImGui::SameLine();
@@ -49,20 +100,21 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
         }
     }
 
-    // Tips
-    if (!doc->tips.empty()) {
+    // Legacy documentation remains a fallback for types not represented in
+    // the authoritative metadata registry.
+    if (!metadata && doc && !doc->tips.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "Tips:");
+        ImGui::TextColored(t.text_bright, "Tips:");
         for (const auto& tip : doc->tips) {
             ImGui::BulletText("%s", tip.c_str());
         }
     }
 
     // Usage example
-    if (!doc->usage.empty()) {
+    if (!usage.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Usage:");
-        ImGui::TextDisabled("%s", doc->usage.c_str());
+        ImGui::TextColored(t.text_bright, "Usage:");
+        ImGui::TextDisabled("%s", usage.c_str());
     }
 
     ImGui::EndTooltip();
@@ -126,14 +178,12 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU:
-        case NodeType::Bidirectional:
         case NodeType::TimeDistributed:
         case NodeType::Embedding:
             return "Recurrent";
 
         // Attention
         case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention:
         case NodeType::TransformerEncoder:
@@ -171,6 +221,29 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::Average:
             return "Merge Operations";
 
+        case NodeType::TensorSum:
+        case NodeType::TensorMean:
+        case NodeType::TensorMax:
+        case NodeType::TensorMin:
+        case NodeType::TensorProd:
+        case NodeType::TensorVar:
+        case NodeType::TensorStd:
+        case NodeType::TensorBroadcastTo:
+        case NodeType::TensorExpand:
+        case NodeType::TensorIndexSelect:
+        case NodeType::TensorPow:
+        case NodeType::TensorSqrt:
+        case NodeType::TensorExp:
+        case NodeType::TensorLog:
+        case NodeType::TensorAbs:
+        case NodeType::TensorSign:
+        case NodeType::TensorClip:
+        case NodeType::TensorDot:
+        case NodeType::TensorBatchMatMul:
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask:
+            return "Tensor Operations";
+
         // Output
         case NodeType::Output:
             return "Output";
@@ -184,6 +257,9 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::SmoothL1Loss:
         case NodeType::HuberLoss:
         case NodeType::NLLLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss:
             return "Loss Functions";
 
         // Optimizers
@@ -219,40 +295,27 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         // Data Pipeline
         case NodeType::DatasetInput:
         case NodeType::DataLoader:
-        case NodeType::Augmentation:
         case NodeType::DataSplit:
-        case NodeType::TensorReshape:
         case NodeType::Normalize:
         case NodeType::OneHotEncode:
+        case NodeType::Resize:
+        case NodeType::CenterCrop:
+        case NodeType::RandomCrop:
+        case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip:
+        case NodeType::ImageRotate:
+        case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur:
+        case NodeType::Grayscale:
+        case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment:
+        case NodeType::AugmentationPreset:
+        case NodeType::QualityAnalyzer:
             return "Data Pipeline";
 
         default:
             return "Other";
     }
-}
-
-unsigned int NodeDocumentationManager::GetCategoryColor(NodeType type) {
-    const char* category = GetCategoryName(type);
-
-    // Return ImU32 colors for each category
-    if (strcmp(category, "Core Layers") == 0) return IM_COL32(100, 150, 200, 255);
-    if (strcmp(category, "Convolutional") == 0) return IM_COL32(150, 100, 200, 255);
-    if (strcmp(category, "Pooling") == 0) return IM_COL32(100, 200, 150, 255);
-    if (strcmp(category, "Normalization") == 0) return IM_COL32(200, 150, 100, 255);
-    if (strcmp(category, "Regularization") == 0) return IM_COL32(200, 100, 150, 255);
-    if (strcmp(category, "Recurrent") == 0) return IM_COL32(150, 200, 100, 255);
-    if (strcmp(category, "Attention") == 0) return IM_COL32(200, 200, 100, 255);
-    if (strcmp(category, "Activation") == 0) return IM_COL32(100, 200, 200, 255);
-    if (strcmp(category, "Shape Operations") == 0) return IM_COL32(180, 180, 180, 255);
-    if (strcmp(category, "Merge Operations") == 0) return IM_COL32(200, 150, 200, 255);
-    if (strcmp(category, "Output") == 0) return IM_COL32(100, 200, 100, 255);
-    if (strcmp(category, "Loss Functions") == 0) return IM_COL32(200, 100, 100, 255);
-    if (strcmp(category, "Optimizers") == 0) return IM_COL32(100, 100, 200, 255);
-    if (strcmp(category, "LR Schedulers") == 0) return IM_COL32(150, 150, 200, 255);
-    if (strcmp(category, "Utility") == 0) return IM_COL32(150, 150, 150, 255);
-    if (strcmp(category, "Data Pipeline") == 0) return IM_COL32(100, 180, 180, 255);
-
-    return IM_COL32(128, 128, 128, 255);  // Default gray
 }
 
 void NodeDocumentationManager::InitializeDocumentation() {
@@ -277,9 +340,11 @@ void NodeDocumentationManager::InitializeDocumentation() {
     // ===== Convolutional Layers =====
     docs_[NodeType::Conv1D] = {
         "Conv1D",
-        "1D convolution layer for sequence data. Slides a kernel across the input sequence "
-        "to extract local features. Commonly used for text and time series.",
-        "Input shape: (batch, channels, length). Output: (batch, out_channels, new_length).",
+        "1D convolution over a sequence: slides a kernel along the length to extract local "
+        "patterns. Put it first for time-series windows, audio features or table rows (channel-major "
+        "rows), or after an Embedding for text. End with Flatten or Global Avg Pool before Dense.",
+        "[L, C] -> [floor((L + 2p - k) / s) + 1, filters], as torch.nn.Conv1d on (batch, channels, "
+        "length).",
         {
             {"filters", "Number of output channels/filters"},
             {"kernel_size", "Size of the sliding window"},
@@ -314,31 +379,37 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::Conv3D] = {
         "Conv3D",
-        "3D convolution layer for volumetric data. Used for video processing (time as 3rd dimension) "
-        "or 3D medical imaging like CT/MRI scans.",
-        "Input shape: (batch, channels, depth, height, width).",
+        "3D convolution for volumes: CT or MRI scans, voxel grids, short clips with time as depth. "
+        "Slides a cubic kernel through depth, height and width.",
+        "[D,H,W,C] -> [D',H',W',filters], as torch.nn.Conv3d(C, filters, k, stride, padding): each axis "
+        "X' = (X + 2p - k) / s + 1. Set the Data Input's shape to [D, H, W, C]; each row holds the volume "
+        "channel by channel (torch x.view(N, C, D, H, W)). First model layer or after another Conv3D; "
+        "end the section with Flatten before Dense.",
         {
             {"filters", "Number of output channels"},
-            {"kernel_size", "3D kernel size (d, h, w)"},
-            {"stride", "Step size in each dimension"},
-            {"padding", "Zero-padding for each dimension"}
+            {"kernel_size", "Cubic kernel size (3 means 3x3x3)"},
+            {"stride", "Step size on every axis"},
+            {"padding", "'same' keeps D, H and W at stride 1 (odd kernels); 'valid' adds none"}
         },
         {
-            "Very memory intensive - start with small batch sizes",
-            "Consider (1, 3, 3) kernels to reduce computation"
+            "A k x k x k kernel has C x k^3 weights per filter: start with few filters",
+            "Use stride 2 to shrink the volume before Flatten, which keeps the Dense head small",
+            "Code export does not cover Conv3D yet; train it in Studio"
         },
         "Convolutional"
     };
 
     docs_[NodeType::DepthwiseConv2D] = {
         "Depthwise Conv2D",
-        "Depthwise separable convolution that applies a single filter per input channel. "
-        "Much more efficient than standard Conv2D, used in MobileNet and EfficientNet.",
-        "Each input channel is convolved independently.",
+        "Convolves each input channel with its own depth_multiplier kernels. Far fewer weights than "
+        "Conv2D; used in MobileNet and EfficientNet.",
+        "[H,W,C] -> [H',W',C*M], as torch.nn.Conv2d(C, C*M, k, groups=C): output channel c*M + m "
+        "sees only input channel c. H' = floor((H + 2p - k) / s) + 1.",
         {
-            {"kernel_size", "Size of the depthwise kernel"},
-            {"stride", "Step size"},
-            {"padding", "Zero-padding"}
+            {"kernel_size", "Square kernel size k"},
+            {"stride", "Step size s"},
+            {"padding", "same ((k-1)/2, odd k) or valid (0)"},
+            {"depth_multiplier", "Output channels per input channel M"}
         },
         {
             "Follow with 1x1 Conv2D (pointwise) for full depthwise separable conv",
@@ -384,41 +455,43 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::GlobalMaxPool] = {
         "Global Max Pooling",
-        "Takes the maximum value across all spatial dimensions. "
-        "Reduces each feature map to a single value.",
-        "Output shape: (batch, channels). Often used before final Dense layer.",
+        "Takes each channel's maximum over its height and width (or over the sequence length after "
+        "Conv1D). Ends the convolution section the way Flatten does, with one value per channel.",
+        "[H,W,C] -> [C] or [L,C] -> [C], as torch adaptive_max_pool2d / adaptive_max_pool1d(x, 1)"
+        ".flatten(1); the gradient goes to the first position holding the maximum.",
         {},
         {
-            "Alternative to Flatten that's input-size independent",
-            "Good for variable-size inputs"
+            "Max-over-time pooling for text CNNs: Embedding -> Conv1D -> ReLU -> Global Max Pool",
+            "Far fewer Dense weights than Flatten: C inputs"
         },
         "Pooling"
     };
 
     docs_[NodeType::GlobalAvgPool] = {
         "Global Average Pooling",
-        "Takes the average across all spatial dimensions. "
-        "Popular in modern architectures like ResNet and EfficientNet.",
-        "Reduces (batch, C, H, W) to (batch, C).",
+        "Averages each channel over its height and width. Ends the convolution section of a model "
+        "the way Flatten does, with one value per channel. Used by ResNet and EfficientNet.",
+        "[H,W,C] -> [C], as torch adaptive_avg_pool2d(x, 1).flatten(1); the gradient spreads each "
+        "channel's gradient evenly over its H x W positions.",
         {},
         {
-            "Reduces overfitting compared to large Dense layers",
-            "Standard in most modern CNN architectures"
+            "Place it after the last convolution block, before Dense",
+            "Far fewer Dense weights than Flatten: C inputs instead of H x W x C"
         },
         "Pooling"
     };
 
     docs_[NodeType::AdaptiveAvgPool] = {
         "Adaptive Average Pooling",
-        "Pools to a fixed output size regardless of input size. "
-        "Automatically calculates kernel and stride.",
-        "Set output_size to (1,1) for global average pooling.",
+        "Average-pools a feature map to a fixed output_size x output_size, whatever its input size.",
+        "[H,W,C] -> [s,s,C], as torch.nn.AdaptiveAvgPool2d(s): cell i averages rows floor(i*H/s) to "
+        "ceil((i+1)*H/s) - 1 and the same columns; bins may overlap.",
         {
-            {"output_size", "Target output dimensions (H, W)"}
+            {"output_size", "Output height and width s"}
         },
         {
-            "Enables networks to accept variable input sizes",
-            "Use (1,1) as GAP, (7,7) for certain transfer learning"
+            "output_size 1 is a global average pool that keeps [1,1,C]; Flatten then gives C",
+            "Before Flatten it fixes the Dense input size: s x s x C"
         },
         "Pooling"
     };
@@ -464,7 +537,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Independent of batch size, good for small batch training.",
         {
             {"num_groups", "Number of groups to divide channels into"},
-            {"num_channels", "Total number of channels"}
+            {"num_channels", "Total number of input channels"},
+            {"eps", "Positive numerical stability constant"},
+            {"affine", "Learn one scale and bias per channel"}
         },
         {
             "Use when batch size is too small for BatchNorm",
@@ -479,7 +554,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Popular in style transfer and image generation.",
         "Equivalent to GroupNorm with num_groups = num_channels.",
         {
-            {"num_features", "Number of channels"}
+            {"num_features", "Number of input channels"},
+            {"eps", "Positive numerical stability constant"},
+            {"affine", "Learn one scale and bias per channel"}
         },
         {
             "Standard for style transfer networks",
@@ -521,17 +598,21 @@ void NodeDocumentationManager::InitializeDocumentation() {
     docs_[NodeType::LSTM] = {
         "LSTM",
         "Long Short-Term Memory network for sequence modeling. Uses gates to "
-        "control information flow, solving the vanishing gradient problem.",
-        "Input: (batch, sequence_length, features). Can return all timesteps or just last.",
+        "control information flow. Engine training currently supports the "
+        "unidirectional configuration with dropout=0.0.",
+        "Input: [batch, sequence_length, features]. Output can retain all "
+        "timesteps or select the final timestep.",
         {
-            {"units", "Number of hidden units"},
+            {"input_size", "Read-only input feature size derived from upstream"},
+            {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked LSTM layers"},
-            {"bidirectional", "Process sequence in both directions"},
-            {"dropout", "Dropout between LSTM layers"}
+            {"bidirectional", "Must remain false for Engine training; reverse backward is incomplete"},
+            {"return_sequences", "Return all timesteps instead of only the final timestep"},
+            {"dropout", "Must remain 0.0; use a separate Dropout node"}
         },
         {
-            "Standard choice for sequence tasks",
-            "Use bidirectional for classification, unidirectional for generation"
+            "Use the Output pin; the legacy Hidden pin is not routed separately",
+            "Compile fails closed for bidirectional training or nonzero recurrent dropout"
         },
         "Recurrent"
     };
@@ -539,74 +620,78 @@ void NodeDocumentationManager::InitializeDocumentation() {
     docs_[NodeType::GRU] = {
         "GRU",
         "Gated Recurrent Unit - simplified LSTM with fewer parameters. "
-        "Often performs similarly with less computation.",
-        "Faster than LSTM, good when data is limited.",
+        "Engine training supports unidirectional and split-path bidirectional "
+        "execution with dropout=0.0.",
+        "Input: [batch, sequence_length, features]. Output can retain all "
+        "timesteps or select the final timestep.",
         {
-            {"units", "Number of hidden units"},
+            {"input_size", "Read-only input feature size derived from upstream"},
+            {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked GRU layers"},
-            {"bidirectional", "Process both directions"}
+            {"bidirectional", "Run explicit forward and reverse GRU branches"},
+            {"return_sequences", "Return all timesteps instead of only the final timestep"},
+            {"dropout", "Must remain 0.0; use a separate Dropout node"}
         },
         {
-            "Try GRU first - simpler and often sufficient",
-            "Switch to LSTM if GRU underperforms"
+            "Use the Output pin; the legacy Hidden pin is not routed separately"
         },
         "Recurrent"
     };
 
     docs_[NodeType::RNN] = {
         "Simple RNN",
-        "Basic recurrent layer with simple hidden state update. "
-        "Suffers from vanishing gradients for long sequences.",
-        "Use LSTM/GRU for better long-term memory.",
+        "Trainable simple (Elman) recurrent layer: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1} + b_hh).",
+        "Runs on the native neural provider (CUDA/OpenCL) when one serves the "
+        "run's device, else on ArrayFire (the CPU option is ArrayFire's CPU "
+        "backend), with tanh or relu nonlinearity. dropout=0.0 only; "
+        "bidirectional runs forward and reverse branches on the device.",
         {
-            {"units", "Number of hidden units"},
-            {"activation", "Activation function (default: tanh)"}
+            {"input_size", "Input feature size per timestep (auto-derived)"},
+            {"hidden_size", "Number of hidden units"},
+            {"num_layers", "Number of stacked layers"},
+            {"bidirectional", "Run explicit forward and reverse RNN branches"},
+            {"return_sequences", "Return every timestep instead of the last"},
+            {"dropout", "Must remain 0.0; use an explicit Dropout node"},
+            {"nonlinearity", "Cell activation: tanh or relu"}
         },
         {
-            "Only for very short sequences or educational purposes",
-            "LSTM/GRU are almost always better"
-        },
-        "Recurrent"
-    };
-
-    docs_[NodeType::Bidirectional] = {
-        "Bidirectional Wrapper",
-        "Wraps an RNN layer to process the sequence in both directions. "
-        "Doubles the output features (forward + backward).",
-        "Use for tasks where future context helps (classification).",
-        {},
-        {
-            "Output is concatenated forward and backward states",
-            "Not suitable for autoregressive generation"
+            "Trains on the CPU reference path unless a native provider serves the run's device",
+            "The placement audit shows which path was selected for the run"
         },
         "Recurrent"
     };
 
     docs_[NodeType::Embedding] = {
         "Embedding",
-        "Learns dense vector representations for discrete tokens (words, IDs). "
-        "Maps indices to trainable vectors.",
-        "Input: integer indices. Output: (batch, sequence, embedding_dim).",
+        "Looks up trainable dense vectors for exact integer token IDs.",
+        "Input is [sequence] or [batch, sequence]. Output appends embedding_dim. "
+        "A configured padding row produces zeros and receives no gradient.",
         {
             {"num_embeddings", "Vocabulary size (number of unique tokens)"},
-            {"embedding_dim", "Dimension of the dense vectors"}
+            {"embedding_dim", "Dimension of each dense token vector"},
+            {"padding_idx", "Padding token id, or -1 to disable padding"},
+            {"max_norm", "Optional per-row L2 norm cap; 0 disables clipping"},
+            {"weights_file", "Optional pretrained Float32 text matrix"},
+            {"freeze", "Keep loaded pretrained weights fixed during training"}
         },
         {
-            "Use pre-trained embeddings (GloVe, Word2Vec) for better results",
-            "embedding_dim 128-512 is typical"
+            "Vocabulary size must match the tokenizer's emitted token-id range",
+            "Use the configuration dialog to inspect or build a matrix file"
         },
         "Recurrent"
     };
 
     docs_[NodeType::TimeDistributed] = {
-        "TimeDistributed",
-        "Applies a layer to every temporal slice of an input. "
-        "Useful for applying Dense/Conv to sequence outputs.",
-        "Wraps a layer and applies it at each timestep.",
-        {},
+        "TimeDistributed Dense",
+        "Applies one shared bias-enabled Dense projection to every timestep.",
+        "Input [batch, sequence, features] becomes [batch, sequence, units]. "
+        "This node is a specific Dense sequence head, not a generic layer wrapper.",
+        {{"units", "Per-timestep output features/classes"},
+         {"tie_embedding", "Language-model head: reuse the upstream Embedding table (logits = h E^T, no bias)"}},
         {
-            "Use to apply Dense to each LSTM output",
-            "Preserves sequence structure"
+            "Use after a sequence-producing recurrent or transformer layer",
+            "All timesteps share the same weights and bias",
+            "tie_embedding needs input width = embedding_dim and units = vocabulary size; PyTorch export does not cover this node yet"
         },
         "Recurrent"
     };
@@ -614,13 +699,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
     // ===== Attention Layers =====
     docs_[NodeType::MultiHeadAttention] = {
         "Multi-Head Attention",
-        "Core building block of Transformers. Computes attention with multiple parallel heads, "
-        "allowing the model to attend to different representation subspaces.",
-        "Takes Query, Key, Value inputs. Key and Value are often the same.",
+        "One CPU-backed unary self-attention block with multiple parallel heads.",
+        "Current Studio execution uses Input as Query, Key, and Value. The legacy "
+        "Key, Value, and Mask pins are reserved and fail closed when connected.",
         {
             {"embed_dim", "Total dimension of the model"},
             {"num_heads", "Number of parallel attention heads"},
-            {"dropout", "Dropout on attention weights"}
+            {"dropout", "Dropout on attention weights"},
+            {"use_bias", "Whether attention projections use bias"}
         },
         {
             "embed_dim must be divisible by num_heads",
@@ -629,102 +715,131 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Attention"
     };
 
-    docs_[NodeType::SelfAttention] = {
-        "Self-Attention",
-        "Attention where Query, Key, and Value all come from the same sequence. "
-        "Each position attends to all positions in the input.",
-        "Building block for encoders. Q=K=V=input.",
-        {
-            {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"}
-        },
-        {
-            "Add positional encoding for position awareness",
-            "Use causal mask for autoregressive models"
-        },
-        "Attention"
-    };
-
     docs_[NodeType::CrossAttention] = {
         "Cross-Attention",
-        "Attention where Query comes from one sequence and Key/Value from another. "
-        "Used in encoder-decoder architectures.",
-        "Query from decoder, Key/Value from encoder output.",
+        "Trainable attention of a Query sequence over a Key / Value sequence.",
+        "Each Query position attends over the Key / Value sequence (softmax(Q K^T / sqrt(d)) V per head) "
+        "with learned projections, as torch.nn.MultiheadAttention(query, key, value) with batch_first. "
+        "Query, Key and Value usually come from different graph branches; the output has the Query's shape.",
         {
-            {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"}
+            {"embed_dim", "Feature width of Query, Key and Value"},
+            {"num_heads", "Number of attention heads (embed_dim must divide evenly)"},
+            {"dropout", "Dropout on the attention weights while training"},
+            {"use_bias", "Bias in the attention projections"}
         },
         {
-            "Essential for seq2seq with attention",
-            "Used in decoder layers of Transformers"
+            "Link the same layer to Key and Value for the usual encoder memory input",
+            "Query and Key may have different lengths; Key and Value must match",
+            "Code export does not support Cross Attention yet"
         },
         "Attention"
     };
 
     docs_[NodeType::LinearAttention] = {
         "Linear Attention",
-        "O(n) complexity attention using kernel approximations. "
-        "Scales to very long sequences unlike quadratic attention.",
-        "Trade-off: faster but may lose some attention precision.",
+        "Self-attention whose cost grows linearly with sequence length.",
+        "Replaces softmax(Q K^T) with a kernel feature map phi, so each head summarises "
+        "all keys and values once (phi(K)^T V) and every query reads that summary: "
+        "O(length x head_dim^2) work instead of O(length^2). "
+        "out_i = phi(q_i) S / (phi(q_i) . z + eps), with S = sum_j phi(k_j) v_j^T and "
+        "z = sum_j phi(k_j) (Katharopoulos et al. 2020).",
         {
-            {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"}
+            {"embed_dim", "Feature width of the input; must match the incoming sequence"},
+            {"num_heads", "Number of heads; embed_dim must divide evenly"},
+            {"feature_map", "elu = elu(x) + 1 (the paper's choice, always positive); relu = max(x, 0)"},
+            {"eps", "Added to each normaliser so a zero feature sum cannot divide by zero"},
+            {"causal", "Each position attends to itself and earlier positions only"},
+            {"use_bias", "Bias in the Q, K, V and output projections"}
         },
         {
-            "Use for sequences longer than 2048 tokens",
-            "Good for efficient inference"
+            "Use it after an Embedding (+ Positional Encoding) where Multi-Head Attention would be too large",
+            "Causal mode is computed as a masked length x length product: same result, quadratic cost",
+            "Not identical to softmax attention: it is a different, cheaper model, not an approximation of it",
+            "Code export does not support it yet; train it in Studio"
         },
         "Attention"
     };
 
     docs_[NodeType::TransformerEncoder] = {
         "Transformer Encoder",
-        "Stack of encoder layers with self-attention and feedforward networks. "
-        "Used for encoding sequences (BERT-style models).",
-        "Each layer: Self-Attention -> Add&Norm -> FFN -> Add&Norm.",
+        "One CPU-backed encoder block with self-attention and a feedforward network.",
+        "Stack multiple nodes to create a deeper encoder. One node does not expand "
+        "a num_layers setting internally.",
         {
-            {"num_layers", "Number of encoder layers"},
             {"d_model", "Model dimension"},
             {"num_heads", "Number of attention heads"},
-            {"d_ff", "Feedforward hidden dimension"}
+            {"dim_feedforward", "Feedforward hidden dimension"},
+            {"dropout", "Dropout probability"},
+            {"ffn_dropout", "Hidden FFN dropout after activation; default 0 preserves legacy behavior"},
+            {"norm_first", "Apply normalization before attention and feedforward"}
         },
         {
-            "6 layers is standard, 12 for BERT-base",
-            "d_ff is typically 4x d_model"
+            "d_model must divide evenly by num_heads",
+            "dim_feedforward is commonly 4x d_model"
         },
         "Attention"
     };
 
     docs_[NodeType::TransformerDecoder] = {
         "Transformer Decoder",
-        "Stack of decoder layers with causal self-attention, cross-attention, "
-        "and feedforward networks. Used for generation (GPT-style).",
-        "Uses causal mask to prevent attending to future tokens.",
+        "One decoder-only Transformer block with masked self-attention, residual "
+        "paths, normalization, and an internal feed-forward network. The feed-forward "
+        "path is Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model), "
+        "or a gated GLU-family network. Defaults are the original 2017 block; architecture_preset=llama_style "
+        "sets norm_first=true, norm_type=rms_norm, ffn_type=gated, ffn_activation=silu (SwiGLU), ffn_bias=false, "
+        "position_encoding=rope, attention_bias=false. qk_norm adds per-head query/key RMSNorm (OLMo 2, Gemma 3, Qwen3). "
+        "Also: ALiBi positions, partial RoPE, parallel (GPT-J/PaLM) and sandwich (Gemma) layouts, grouped-query "
+        "attention, sliding window, logit soft-cap and GPT-2 residual init scaling.",
+        "Stack multiple nodes for depth. Internal attention projections and Dense/FC "
+        "layers are owned by this composite node; edit dim_feedforward to change the "
+        "hidden Dense width. Add another TransformerDecoder node to add a block. The Memory pin is reserved and fails "
+        "closed when connected because cross-attention is not yet owned by the "
+        "Studio runtime.",
         {
-            {"num_layers", "Number of decoder layers"},
             {"d_model", "Model dimension"},
             {"num_heads", "Number of attention heads"},
-            {"d_ff", "Feedforward hidden dimension"}
+            {"dim_feedforward", "Feedforward hidden dimension"},
+            {"dropout", "Dropout probability"},
+            {"ffn_dropout", "Hidden FFN dropout after activation; default 0 preserves legacy behavior"},
+            {"norm_first", "Apply normalization before attention and feedforward (pre-norm)"},
+            {"norm_type", "layer_norm or rms_norm (RMSNorm: scale only, no mean centring; LLaMA)"},
+            {"norm_eps", "Epsilon inside the normalization square root (default 1e-5)"},
+            {"ffn_type", "mlp, or gated: act(gate(x)) * up(x) then down; adds a third weight matrix"},
+            {"architecture_preset", "custom, classic or llama_style; fills the block fields, editing one switches to custom"},
+            {"ffn_activation", "relu, gelu (tanh approximation), gelu_exact (erf), silu/Swish, mish, elu, selu, leaky_relu, sigmoid, tanh, hardswish, squared_relu; gated+silu = SwiGLU, gated+gelu = GEGLU"},
+            {"ffn_bias", "Learn biases in the feed-forward Dense layers (LLaMA turns this off)"},
+            {"position_encoding", "external (Positional Encoding node) or rope (rotary embedding inside self-attention)"},
+            {"rope_base", "Rotary frequency base, default 10000"},
+            {"attention_bias", "Learn biases in the attention Q/K/V/output projections (LLaMA turns this off)"},
+            {"qk_norm", "Per-head RMSNorm of queries and keys before the scores; stabilises training at higher learning rates"},
+            {"rope_fraction", "Partial RoPE: fraction of head features rotated (GPT-NeoX 0.25)"},
+            {"block_layout", "sequential, or parallel (GPT-J/PaLM: x + attn(n(x)) + ffn(n(x)); pre-norm only)"},
+            {"sandwich_norm", "Gemma-style extra norm on each sub-layer output before the residual add (pre-norm only)"},
+            {"num_kv_heads", "Grouped-query attention key/value heads; 0 = num_heads, 1 = multi-query"},
+            {"sliding_window", "Mistral-style local causal window; 0 = full"},
+            {"attn_logit_softcap", "Gemma 2 soft-cap on attention scores; 0 = off"},
+            {"residual_init_scale", "Scales initial attention-output and FFN-down weights (GPT-2: 1/sqrt(2N))"}
         },
         {
-            "For decoder-only (GPT): no cross-attention",
-            "For encoder-decoder: add cross-attention"
+            "d_model must divide evenly by num_heads",
+            "Autoregressive generation loops remain a separate future contract",
+            "position_encoding=rope/alibi, qk_norm, grouped-query attention and soft-capping run on the ArrayFire attention path (the CPU is ArrayFire's CPU backend)"
         },
         "Attention"
     };
 
     docs_[NodeType::PositionalEncoding] = {
         "Positional Encoding",
-        "Adds position information to embeddings using sinusoidal functions. "
-        "Essential because attention is position-invariant.",
-        "Add to embeddings before first attention layer.",
+        "Adds deterministic sinusoidal position information to rank-3 embeddings.",
+        "This node is CPU-backed, has no trainable parameters, and preserves the "
+        "input shape. Add it before the first attention block.",
         {
-            {"max_len", "Maximum sequence length"},
-            {"d_model", "Model dimension"}
+            {"d_model", "Model dimension"},
+            {"max_sequence_length", "Maximum supported sequence length"}
         },
         {
-            "Learnable positional embeddings are an alternative",
-            "Critical for Transformer performance"
+            "The input feature width must match d_model",
+            "This implementation does not apply dropout"
         },
         "Attention"
     };
@@ -955,15 +1070,18 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::Split] = {
         "Split",
-        "Divides tensor into multiple parts along a dimension.",
-        "Can split into equal parts or specify sizes.",
+        "Divides a tensor in two along a sample dimension.",
+        "Output 1 takes the first split_size entries along dim and Output 2 the rest, "
+        "like torch.split(x, [split_size, n - split_size], dim). Each output feeds its own "
+        "branch; merge the branches again with Concatenate, Add, Multiply or Average.",
         {
-            {"split_size", "Size of each split or list of sizes"},
-            {"dim", "Dimension to split"}
+            {"split_size", "Entries in Output 1 (at least 1, less than the dimension's size)"},
+            {"dim", "Batched dimension to split: 1 = features, -1 = last; 0 (the batch) is refused"}
         },
         {
-            "Useful for multi-head attention",
-            "Inverse of Concatenate"
+            "An unused output passes a zero gradient back",
+            "Inverse of Concatenate on the same dim",
+            "In a CNN, split after Flatten"
         },
         "Shape Operations"
     };
@@ -1152,6 +1270,55 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Loss Functions"
     };
 
+    docs_[NodeType::SoftDiceLoss] = {
+        "Soft Dice Loss",
+        "Dice overlap loss for segmentation-style probability masks. "
+        "Predictions and targets must be same-shaped Float32 tensors.",
+        "Computes 1 - Dice coefficient with a smoothing constant.",
+        {
+            {"smooth", "Smoothing constant to avoid division by zero"}
+        },
+        {
+            "Use with probability masks, not raw logits",
+            "Targets must match prediction shape"
+        },
+        "Loss Functions"
+    };
+
+    docs_[NodeType::TverskyLoss] = {
+        "Tversky Loss",
+        "Tversky overlap loss for imbalanced segmentation-style probability masks. "
+        "Predictions and targets must be same-shaped Float32 tensors.",
+        "Computes 1 - (TP + smooth) / (TP + alpha*FP + beta*FN + smooth).",
+        {
+            {"alpha", "False-positive penalty"},
+            {"beta", "False-negative penalty"},
+            {"smooth", "Smoothing constant to avoid division by zero"}
+        },
+        {
+            "Use with probability masks, not raw logits",
+            "Targets must match prediction shape",
+            "Increase beta when false negatives are more costly"
+        },
+        "Loss Functions"
+    };
+
+    docs_[NodeType::JaccardLoss] = {
+        "Jaccard / IoU Loss",
+        "Intersection-over-union loss for segmentation-style probability masks. "
+        "Predictions and targets must be same-shaped Float32 tensors.",
+        "Computes 1 - (intersection + smooth) / (union + smooth).",
+        {
+            {"smooth", "Smoothing constant to avoid division by zero"}
+        },
+        {
+            "Use with probability masks, not raw logits",
+            "Targets must match prediction shape",
+            "Equivalent to optimizing soft IoU overlap"
+        },
+        "Loss Functions"
+    };
+
     // ===== Optimizers =====
     docs_[NodeType::SGD] = {
         "Stochastic Gradient Descent",
@@ -1159,9 +1326,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Add momentum for faster convergence.",
         "weight = weight - lr * gradient.",
         {
-            {"lr", "Learning rate (e.g., 0.01)"},
-            {"momentum", "Momentum factor (0.9 typical)"},
-            {"weight_decay", "L2 regularization"}
+            {"learning_rate", "Positive update step size (0.01 default)"},
+            {"momentum", "Momentum coefficient in [0, 1)"}
         },
         {
             "Use momentum >= 0.9 for better convergence",
@@ -1176,9 +1342,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good default choice that works well for most tasks.",
         "Tracks running mean and variance of gradients.",
         {
-            {"lr", "Learning rate (e.g., 0.001)"},
-            {"betas", "Coefficients for running averages (0.9, 0.999)"},
-            {"eps", "Numerical stability (1e-8)"}
+            {"learning_rate", "Positive update step size (0.001 default)"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Default choice for most deep learning",
@@ -1193,13 +1360,15 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Better generalization than standard Adam.",
         "Weight decay applied directly to weights, not to gradient.",
         {
-            {"lr", "Learning rate"},
-            {"betas", "Running average coefficients"},
+            {"learning_rate", "Positive update step size"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"},
             {"weight_decay", "Weight decay coefficient (0.01 typical)"}
         },
         {
             "Preferred over Adam when using weight decay",
-            "Standard for Transformer fine-tuning"
+            "Common in Transformer training stacks"
         },
         "Optimizers"
     };
@@ -1210,9 +1379,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good for non-stationary objectives and RNNs.",
         "Divides learning rate by running average of recent gradient magnitudes.",
         {
-            {"lr", "Learning rate (0.01 typical)"},
+            {"learning_rate", "Positive update step size (0.001 default)"},
             {"alpha", "Smoothing constant (0.99)"},
-            {"eps", "Numerical stability"}
+            {"epsilon", "Positive numerical-stability constant"},
+            {"momentum", "Momentum coefficient in [0, 1)"}
         },
         {
             "Often works well for RNNs",
@@ -1227,8 +1397,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good for sparse data but learning rate decays aggressively.",
         "Parameters with large gradients get smaller updates.",
         {
-            {"lr", "Initial learning rate"},
-            {"eps", "Numerical stability"}
+            {"learning_rate", "Positive initial update step size"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Good for sparse features (NLP, recommender systems)",
@@ -1243,8 +1413,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Often slightly faster convergence than Adam.",
         "Combines Adam's adaptivity with Nesterov's look-ahead.",
         {
-            {"lr", "Learning rate"},
-            {"betas", "Running average coefficients"}
+            {"learning_rate", "Positive update step size"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Try if Adam is working well",
@@ -1255,79 +1427,85 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     // ===== LR Schedulers =====
     docs_[NodeType::StepLR] = {
-        "Step LR Scheduler",
-        "Decays learning rate by gamma every step_size epochs. "
-        "Simple and predictable schedule.",
-        "new_lr = lr * gamma^(epoch // step_size).",
+        "Step LR",
+        "Multiplies the learning rate by gamma every step_size epochs. Connect the optimizer's "
+        "State output to its Optimizer input.",
+        "lr = learning_rate * gamma^floor(epoch / step_size), set after each completed epoch "
+        "(torch.optim.lr_scheduler.StepLR).",
         {
-            {"step_size", "Epochs between LR decay"},
-            {"gamma", "Multiplicative factor (e.g., 0.1)"}
+            {"step_size", "Epochs between decays"},
+            {"gamma", "Factor applied at each decay (0.1 is common)"}
         },
         {
             "Common: decay by 0.1 every 30 epochs",
-            "Good for fixed training schedules"
+            "One scheduler per optimizer; not together with the optimizer's lr_schedule",
+            "Resuming a run continues the schedule from the checkpoint"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::CosineAnnealing] = {
-        "Cosine Annealing LR",
-        "Smoothly decreases LR following a cosine curve to eta_min. "
-        "Warm restarts version resets periodically.",
-        "LR follows cosine from initial to minimum over T_max epochs.",
+        "Cosine LR",
+        "Anneals the learning rate along a cosine from learning_rate down to eta_min over T_max epochs.",
+        "lr = eta_min + (learning_rate - eta_min) * (1 + cos(pi * epoch / T_max)) / 2, set after each "
+        "completed epoch (torch.optim.lr_scheduler.CosineAnnealingLR).",
         {
-            {"T_max", "Maximum number of iterations"},
-            {"eta_min", "Minimum learning rate"}
+            {"T_max", "Epochs from learning_rate down to eta_min (usually the epoch count)"},
+            {"eta_min", "Lowest learning rate"}
         },
         {
-            "Good for training to convergence",
-            "Often combined with warm restarts"
+            "Set T_max to the run's epochs to end at eta_min",
+            "Past T_max the cosine rises again, as in PyTorch"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::ReduceOnPlateau] = {
-        "Reduce LR on Plateau",
-        "Reduces LR when a metric stops improving. Adaptive schedule based on validation loss.",
-        "Monitors a metric and reduces LR after 'patience' epochs of no improvement.",
+        "Reduce LR",
+        "Cuts the learning rate by factor when the validation loss has not improved for patience "
+        "validated epochs. Needs validation data (Data Split val_ratio above 0, or a Dev dataset).",
+        "After each epoch that ran validation: if the loss is not below best - threshold for more than "
+        "patience epochs, lr = max(lr * factor, min_lr) (torch ReduceLROnPlateau, mode='min', "
+        "threshold_mode='abs', cooldown=0).",
         {
-            {"mode", "min or max (track loss or accuracy)"},
-            {"factor", "Factor to reduce LR by"},
-            {"patience", "Epochs to wait before reducing"}
+            {"factor", "Factor applied when the loss plateaus"},
+            {"patience", "Validated epochs without improvement before a cut"},
+            {"threshold", "Smallest loss decrease that counts as improvement (absolute)"},
+            {"min_lr", "Learning rate floor"}
         },
         {
-            "Requires passing validation loss each epoch",
-            "Good when optimal schedule is unknown"
+            "With validation_freq above 1 it steps only on validated epochs",
+            "Good when the right schedule is unknown"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::ExponentialLR] = {
-        "Exponential LR Scheduler",
-        "Decays LR by gamma every epoch. Continuous decay.",
-        "new_lr = lr * gamma^epoch.",
+        "Exponential LR",
+        "Multiplies the learning rate by gamma after every epoch.",
+        "lr = learning_rate * gamma^epoch, set after each completed epoch "
+        "(torch.optim.lr_scheduler.ExponentialLR).",
         {
-            {"gamma", "Decay rate per epoch (e.g., 0.95)"}
+            {"gamma", "Factor applied after each epoch (e.g. 0.95)"}
         },
         {
-            "Smooth continuous decay",
-            "May decay too fast - use gamma close to 1"
+            "Decays fast: keep gamma close to 1"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::WarmupScheduler] = {
-        "Warmup Scheduler",
-        "Linearly increases LR during initial epochs before main schedule. "
-        "Helps with training stability for large batches.",
-        "LR starts at 0 and increases to target over warmup epochs.",
+        "Warmup LR",
+        "Ramps the learning rate up linearly from start_factor * learning_rate to learning_rate over "
+        "warmup_epochs, then holds it.",
+        "lr = learning_rate * (start_factor + (1 - start_factor) * min(epoch / warmup_epochs, 1)), set "
+        "after each completed epoch (torch LinearLR, end_factor=1.0, total_iters=warmup_epochs).",
         {
-            {"warmup_epochs", "Number of warmup epochs"},
-            {"initial_lr", "Target learning rate after warmup"}
+            {"warmup_epochs", "Epochs to reach learning_rate"},
+            {"start_factor", "First epoch's rate as a fraction of learning_rate (above 0, at most 1)"}
         },
         {
-            "Essential for Transformer training",
-            "5-10% of total epochs is typical warmup"
+            "Per-update warmup with a decay after it: use the optimizer's lr_schedule instead"
         },
         "LR Schedulers"
     };
@@ -1335,46 +1513,51 @@ void NodeDocumentationManager::InitializeDocumentation() {
     // ===== Regularization Nodes =====
     docs_[NodeType::L1Regularization] = {
         "L1 Regularization (Lasso)",
-        "Adds sum of absolute weights to loss. Encourages sparsity - "
-        "some weights become exactly zero.",
-        "loss = original_loss + lambda * sum(|weights|).",
+        "Adds lambda x the sum of absolute parameter values to the training loss. Pushes weights "
+        "towards exactly zero. Wire it between the loss and the optimizer: Loss -> L1 -> Optimizer.",
+        "loss = loss + lambda * sum(|w|) over every trainable parameter (weights and biases); the "
+        "gradient lambda * sign(w) joins every optimizer step before gradient clipping, as PyTorch's "
+        "loss + lam * sum(p.abs().sum() for p in model.parameters()).",
         {
-            {"lambda", "Regularization strength"}
+            {"lambda", "Penalty strength (0 or above)"}
         },
         {
-            "Use for feature selection (zeroes unimportant weights)",
-            "Usually applied via optimizer weight_decay"
+            "One regularization node per loss; Elastic Net combines L1 and L2",
+            "The reported training loss is the data loss without the penalty"
         },
         "Regularization"
     };
 
     docs_[NodeType::L2Regularization] = {
         "L2 Regularization (Ridge)",
-        "Adds sum of squared weights to loss. Encourages small weights, "
-        "prevents any weight from being too large.",
-        "loss = original_loss + lambda * sum(weights^2).",
+        "Adds lambda x the sum of squared parameter values to the training loss. Keeps weights small. "
+        "Wire it between the loss and the optimizer: Loss -> L2 -> Optimizer.",
+        "loss = loss + lambda * sum(w^2) over every trainable parameter (weights and biases); the "
+        "gradient 2 * lambda * w joins every optimizer step before gradient clipping.",
         {
-            {"lambda", "Regularization strength"}
+            {"lambda", "Penalty strength (0 or above)"}
         },
         {
-            "Standard regularization, usually via weight_decay",
-            "Doesn't produce sparse weights like L1"
+            "With SGD this equals weight_decay = 2 * lambda; with Adam it is not the same, and AdamW's "
+            "weight_decay is decoupled from the loss",
+            "The reported training loss is the data loss without the penalty"
         },
         "Regularization"
     };
 
     docs_[NodeType::ElasticNet] = {
         "Elastic Net Regularization",
-        "Combines L1 and L2 regularization. Balance between sparsity (L1) "
-        "and weight shrinkage (L2).",
-        "loss = original_loss + alpha*L1 + beta*L2.",
+        "Adds a mix of the L1 and L2 penalties to the training loss. Wire it between the loss and the "
+        "optimizer: Loss -> Elastic Net -> Optimizer.",
+        "loss = loss + lambda * (l1_ratio * sum(|w|) + (1 - l1_ratio) * sum(w^2)) over every trainable "
+        "parameter. l1_ratio 1 is L1 Regularization, 0 is L2 Regularization.",
         {
-            {"l1_ratio", "Balance between L1 and L2 (0-1)"},
-            {"alpha", "Overall regularization strength"}
+            {"lambda", "Penalty strength (0 or above)"},
+            {"l1_ratio", "Share of the L1 term, 0 to 1"}
         },
         {
-            "Good when you want some sparsity with stability",
-            "l1_ratio=0.5 for equal L1/L2"
+            "l1_ratio 0.5 weighs both terms equally",
+            "The reported training loss is the data loss without the penalty"
         },
         "Regularization"
     };
@@ -1457,63 +1640,38 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::DataLoader] = {
         "Data Loader",
-        "Creates batched iterator with shuffling and parallel loading. "
-        "Wraps dataset for efficient training.",
-        "Outputs batches of (features, labels).",
+        "Creates runtime batchers from the resolved Dataset partitions. "
+        "Train updates weights; Validation/Test batchers are owned by runtime evaluation.",
+        "Consumes one Partitions Dataset contract and emits model-facing batched Data/Labels.",
         {
             {"batch_size", "Samples per batch"},
-            {"shuffle", "Randomize order each epoch"},
-            {"drop_last", "Drop incomplete final batch"}
+            {"shuffle", "Randomize training order each epoch"},
+            {"drop_last", "Drop incomplete final training batch"}
         },
         {
-            "shuffle=True for training, False for validation",
-            "Larger batch_size = faster but more memory"
-        },
-        "Data Pipeline"
-    };
-
-    docs_[NodeType::Augmentation] = {
-        "Augmentation",
-        "Applies data augmentation transforms. Increases effective "
-        "dataset size through variations.",
-        "Applied during training, disabled during inference.",
-        {
-            {"transforms", "List of transforms to apply"}
-        },
-        {
-            "Use for images: flip, rotate, color jitter",
-            "Reduces overfitting significantly"
+            "Training shuffle/balancing applies to Train only",
+            "Validation and Test are resolved from the partition manifest, not separate canvas branches"
         },
         "Data Pipeline"
     };
 
     docs_[NodeType::DataSplit] = {
         "Data Split",
-        "Splits dataset into training, validation, and optionally test sets. "
-        "Essential for proper model evaluation.",
-        "Outputs multiple dataset handles.",
+        "Resolves train, validation, and test partition policy for a dataset. "
+        "Runtime batchers consume the compiler-resolved partitions.",
+        "New nodes expose Dataset role inputs and one partition output. Older "
+        "saved graphs may still show Train/Val/Test tensor pins as legacy "
+        "compatibility pins, not separate model-branch execution paths.",
         {
-            {"train_ratio", "Fraction for training (e.g., 0.8)"},
-            {"val_ratio", "Fraction for validation (e.g., 0.1)"},
-            {"shuffle", "Shuffle before splitting"}
+            {"train_ratio", "Fraction for training when a role is derived (e.g., 0.8)"},
+            {"val_ratio", "Fraction for validation when derived from Train (e.g., 0.1)"},
+            {"test_ratio", "Fraction for test when derived from Train (e.g., 0.1)"},
+            {"stratified", "Preserve class distribution when supported"},
+            {"seed", "Deterministic split seed"}
         },
         {
-            "80/10/10 is a common split",
-            "Always shuffle for non-time-series data"
-        },
-        "Data Pipeline"
-    };
-
-    docs_[NodeType::TensorReshape] = {
-        "Tensor Reshape (Legacy)",
-        "Reshapes tensor dimensions. Legacy node - prefer the Reshape node instead.",
-        "Same as Reshape but with older interface.",
-        {
-            {"shape", "Target shape"}
-        },
-        {
-            "Use Reshape node instead",
-            "Kept for backward compatibility"
+            "External Dev/Test sources are preserved by role resolution",
+            "Do not build separate Val/Test model branches from legacy pins"
         },
         "Data Pipeline"
     };
@@ -1530,6 +1688,203 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "ImageNet mean/std for pre-trained models",
             "Compute on training set for custom data"
+        },
+        "Data Pipeline"
+    };
+
+    // Image transforms (TOFIX140): between Resize and Normalize, run by the
+    // image batcher on the ArrayFire device; torchvision semantics.
+    docs_[NodeType::CenterCrop] = {
+        "Center Crop",
+        "Keeps the middle height x width of every image (torchvision CenterCrop).",
+        "Runs in training, validation and test. The model's input becomes [height, width, C].",
+        {
+            {"width", "Crop width in pixels, at most the image width"},
+            {"height", "Crop height in pixels, at most the image height"}
+        },
+        {
+            "Classic pipeline: Resize 256 -> Center Crop 224",
+            "Place between Resize and Normalize"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::RandomCrop] = {
+        "Random Crop",
+        "Crops each training image at its own random position (torchvision RandomCrop).",
+        "Validation and test take the centre crop of the same size, so the input shape stays "
+        "[height, width, C] in every phase.",
+        {
+            {"width", "Crop width in pixels, at most the padded image width"},
+            {"height", "Crop height in pixels, at most the padded image height"},
+            {"padding", "Zero border added on every side first (0 = none)"}
+        },
+        {
+            "Resize a little larger than the crop (e.g. 72 -> 64) so crops differ",
+            "CIFAR recipe: Random Crop 32 with padding 4 on 32 x 32 images",
+            "Teaches the model that position does not decide the class"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::HorizontalFlip] = {
+        "Horizontal Flip",
+        "Mirrors training images left to right with the given probability (torchvision RandomHorizontalFlip).",
+        "Validation and test images pass through unchanged.",
+        {
+            {"probability", "Chance that a training image is flipped (0 to 1)"}
+        },
+        {
+            "Safe for most photos; avoid for text or digits where left and right differ",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::VerticalFlip] = {
+        "Vertical Flip",
+        "Flips training images top to bottom with the given probability (torchvision RandomVerticalFlip).",
+        "Validation and test images pass through unchanged.",
+        {
+            {"probability", "Chance that a training image is flipped (0 to 1)"}
+        },
+        {
+            "For images with no natural up: satellite, microscopy, textures",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageRotate] = {
+        "Image Rotate",
+        "Rotates training images about their centre by a random angle (torchvision RandomRotation).",
+        "With the given probability the angle is drawn from [-max_angle, max_angle] degrees; the size "
+        "stays the same and corners outside the image become 0. Validation and test pass through.",
+        {
+            {"max_angle", "Largest rotation in degrees, either way (0 to 180)"},
+            {"probability", "Chance that a training image is rotated (0 to 1)"},
+            {"interpolation", "nearest (torchvision's default) or bilinear"}
+        },
+        {
+            "Small angles (10-20 degrees) suit photos; large ones suit rotation-free subjects",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ColorJitter] = {
+        "Color Jitter",
+        "Varies brightness, contrast, saturation and hue of each training image (torchvision ColorJitter).",
+        "Each image gets its own factors, applied in a random order: brightness, contrast and "
+        "saturation from [max(0, 1 - v), 1 + v], hue shifted by [-hue, hue]. Validation and test pass through.",
+        {
+            {"brightness", "Brightness spread (0 turns it off)"},
+            {"contrast", "Contrast spread (0 turns it off)"},
+            {"saturation", "Saturation spread (0 turns it off; no effect on one channel)"},
+            {"hue", "Hue shift, 0 to 0.5 (0 turns it off; no effect on one channel)"}
+        },
+        {
+            "Helps models that must cope with different lighting and cameras",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageGaussianBlur] = {
+        "Image Gaussian Blur",
+        "Smooths every image with a Gaussian kernel, edges reflected (torchvision gaussian_blur).",
+        "Runs in training, validation and test; the shape stays the same.",
+        {
+            {"kernel_size", "Odd kernel width; kernel_size / 2 must be below both image sides"},
+            {"sigma", "Gaussian standard deviation in pixels"}
+        },
+        {
+            "Removes fine noise; large kernels also remove detail the model may need",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::Grayscale] = {
+        "Grayscale",
+        "Turns every image into one luminance channel: 0.2989 R + 0.587 G + 0.114 B (torchvision Grayscale).",
+        "Runs in training, validation and test. The model's input becomes [H, W, 1].",
+        {},
+        {
+            "A third of the input size when colour does not matter",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::MorphologyTransform] = {
+        "Morphology Transform",
+        "Grey-level erosion, dilation, opening, closing and their differences with a flat square kernel.",
+        "Pixels outside the image are ignored (kornia.morphology). Runs in training, validation and test.",
+        {
+            {"operation", "erode, dilate, open, close, gradient, tophat or blackhat"},
+            {"kernel_size", "Odd width of the square kernel"}
+        },
+        {
+            "open removes small bright specks; close fills small dark holes",
+            "gradient outlines shapes; tophat keeps small bright details"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::AugmentationPreset] = {
+        "Augmentation Preset",
+        "A standard training augmentation recipe in one node; it compiles into the image transforms it stands for.",
+        "flip = Horizontal Flip. cifar = Random Crop (image size, padding 4) + Horizontal Flip. "
+        "cifar_cutout = cifar + cutout 16. randaugment = Horizontal Flip + RandAugment (2, 9). "
+        "Training only; Normalize stays its own node.",
+        {
+            {"preset", "flip, cifar, cifar_cutout or randaugment"}
+        },
+        {
+            "cifar suits small images (32 x 32); randaugment suits larger photos",
+            "Replace the preset with the single nodes to tune any step"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::AdvancedAugment] = {
+        "Advanced Augment",
+        "Erases a random patch of training images, or mixes training images and their labels.",
+        "cutout: a cutout_size square centred at a random pixel, clipped at the edges (DeVries & Taylor). "
+        "random_erasing: a box of random area and aspect ratio (torchvision RandomErasing). "
+        "mixup / cutmix: the batch is mixed with itself rolled by one, one lambda from Beta(alpha, alpha), "
+        "labels mixed the same way (torchvision v2 MixUp / CutMix); needs Cross Entropy. "
+        "randaugment: num_ops random ops out of 14 per image at strength magnitude (torchvision v2 RandAugment). "
+        "Validation and test pass through unchanged.",
+        {
+            {"method", "cutout, random_erasing, mixup, cutmix or randaugment"},
+            {"num_ops / magnitude", "randaugment: ops per image, and their strength bin 0 to 30"},
+            {"probability", "Chance that a training image is erased, or a training batch mixed (0 to 1)"},
+            {"alpha", "mixup / cutmix: Beta(alpha, alpha); 1.0 draws lambda uniformly"},
+            {"cutout_size", "cutout: side of the square in pixels"},
+            {"scale_min / scale_max", "random_erasing: box area as a fraction of the image"},
+            {"ratio_min / ratio_max", "random_erasing: box aspect ratio (height / width)"},
+            {"value", "Pixel value written into the box, 0 to 1 (before Normalize)"}
+        },
+        {
+            "CIFAR-10 recipe: Random Crop (padding 4) -> Horizontal Flip -> cutout 16",
+            "Training accuracy compares with the larger share of a mixed label",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::QualityAnalyzer] = {
+        "Quality Analyzer",
+        "Leaves blurry, too dark or bright, low-contrast and near-duplicate images out of training.",
+        "Open the node and click Analyze: each image is measured once on the GPU at the Resize size. "
+        "Blur is the variance of the Laplacian (low = blurry), brightness the mean luminance (0 to 255), "
+        "contrast the luminance standard deviation / 255; near-duplicates share a difference hash within "
+        "4 bits and the first one stays. Training leaves the rejected files out and refuses to start "
+        "without a current analysis. Files are never deleted.",
+        {
+            {"Blur", "Reject images whose Laplacian variance is below this (at the Resize size)"},
+            {"Brightness", "Reject images darker or brighter than these mean luminances"},
+            {"Contrast", "Reject images whose luminance standard deviation / 255 is below this"},
+            {"Near-duplicates", "Reject later copies of an image, keeping the first"}
+        },
+        {
+            "Analyze again after adding images or changing the Resize size",
+            "Changing a check re-judges the saved measurements at once",
         },
         "Data Pipeline"
     };

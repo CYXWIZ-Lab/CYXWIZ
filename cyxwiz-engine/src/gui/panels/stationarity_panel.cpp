@@ -1,5 +1,8 @@
 #include "stationarity_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -9,7 +12,7 @@ namespace cyxwiz {
 
 StationarityPanel::StationarityPanel() {
     GenerateData();
-    spdlog::info("StationarityPanel initialized");
+    spdlog::debug("StationarityPanel initialized");
 }
 
 StationarityPanel::~StationarityPanel() {
@@ -30,23 +33,18 @@ void StationarityPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("stationarity", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
 }
 
 void StationarityPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Test Stationarity")) {
         TestAsync();
     }
@@ -74,50 +72,50 @@ void StationarityPanel::RenderToolbar() {
     if (has_result_) {
         ImGui::SameLine();
         if (result_.is_stationary) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "| Stationary");
+            ImGui::TextColored(t.success, "| Stationary");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "| Non-stationary (d=%d)", result_.suggested_differencing);
+            ImGui::TextColored(t.caution, "| Non-stationary (d=%d)", result_.suggested_differencing);
         }
     }
 }
 
 void StationarityPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* signal_types[] = { "Random Walk", "Trend + Noise", "Stationary", "AR(1)" };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples", &num_samples_, 1.0f, 50, 1000);
+    ui::FieldLabel("Samples");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 1000);
     static const double kNoiseMin = 0.1, kNoiseMax = 5.0;
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
     if (signal_type_ == SignalType::TrendNoise) {
         static const double kSlopeMin = -0.5, kSlopeMax = 0.5;
-        ImGui::SliderScalar("Trend Slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
+        ui::FieldLabel("Trend slope");
+        ImGui::SliderScalar("##trend_slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SLIDERS " Test Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Test");
 
-    ImGui::DragInt("Max Lags", &max_lags_, 1.0f, -1, 50);
+    ui::FieldLabel("Max lags");
+    ImGui::DragInt("##max_lags", &max_lags_, 1.0f, -1, 50);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("-1 = automatic selection");
     }
 
+    ui::SettingsSection("Differencing");
+
+    ui::FieldLabel("Order");
+    ImGui::DragInt("##diff_order", &diff_order_, 1.0f, 1, 3);
+
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_ARROW_DOWN " Differencing");
-    ImGui::Separator();
-
-    ImGui::DragInt("Order", &diff_order_, 1.0f, 1, 3);
-
-    if (ImGui::Button(ICON_FA_PLAY " Apply Differencing")) {
+    if (ui::SecondaryButton("Apply Differencing", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyDifferencing();
     }
 }
@@ -130,8 +128,9 @@ void StationarityPanel::RenderLoadingIndicator() {
 }
 
 void StationarityPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -215,6 +214,7 @@ void StationarityPanel::RenderRollingStats() {
 }
 
 void StationarityPanel::RenderTestResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_FLASK " Statistical Tests");
     ImGui::Separator();
     ImGui::Spacing();
@@ -238,9 +238,9 @@ void StationarityPanel::RenderTestResults() {
 
     ImGui::Text("Result:"); ImGui::NextColumn();
     if (result_.adf_stationary) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Reject H0 (Stationary)");
+        ImGui::TextColored(t.success, "Reject H0 (Stationary)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "Fail to reject H0 (Non-stationary)");
+        ImGui::TextColored(t.caution, "Fail to reject H0 (Non-stationary)");
     }
     ImGui::NextColumn();
     ImGui::Columns(1);
@@ -260,9 +260,9 @@ void StationarityPanel::RenderTestResults() {
 
     ImGui::Text("Result:"); ImGui::NextColumn();
     if (result_.kpss_stationary) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Fail to reject H0 (Stationary)");
+        ImGui::TextColored(t.success, "Fail to reject H0 (Stationary)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "Reject H0 (Non-stationary)");
+        ImGui::TextColored(t.caution, "Reject H0 (Non-stationary)");
     }
     ImGui::NextColumn();
     ImGui::Columns(1);
@@ -277,10 +277,10 @@ void StationarityPanel::RenderTestResults() {
     ImGui::Indent();
 
     if (result_.is_stationary) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            ICON_FA_CHECK " Series is STATIONARY");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f),
+        ImGui::TextColored(t.caution,
                            ICON_FA_XMARK " Series is NON-STATIONARY");
         ImGui::Text("Suggested differencing order: d = %d", result_.suggested_differencing);
     }
@@ -291,6 +291,7 @@ void StationarityPanel::RenderTestResults() {
 }
 
 void StationarityPanel::RenderDifferencedPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (differenced_data_.empty()) return;
 
     ImGui::Text("Differenced Series (order=%d):", diff_order_);
@@ -308,7 +309,7 @@ void StationarityPanel::RenderDifferencedPlot() {
         // Zero line
         double zero_x[] = {0, static_cast<double>(differenced_data_.size())};
         double zero_y[] = {0, 0};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 0.5f));
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f));
         ImPlot::PlotLine("##zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();

@@ -9,9 +9,9 @@
 //   - CYXWIZ_PLUGIN_ENTRY macro usage
 
 #include <imgui.h>
-#include "../../cyxwiz-engine/src/plugin/plugin_types.h"
-#include "../../cyxwiz-engine/src/plugin/plugin_context.h"
-#include "../../cyxwiz-engine/src/plugin/interfaces/i_training_hook.h"
+#include "plugin/plugin_types.h"
+#include "plugin/plugin_context.h"
+#include "plugin/interfaces/i_training_hook.h"
 
 #include <string>
 #include <vector>

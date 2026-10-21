@@ -8,6 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <optional>
 #include <queue>
 
 // Protocol includes
@@ -18,6 +19,9 @@
 
 // Core includes
 #include "core/device_pool.h"
+#include "core/executable_model.h"
+#include "core/graph_training_job_timing.h"
+#include "core/training_failure.h"
 
 namespace cyxwiz {
 namespace servernode {
@@ -37,6 +41,14 @@ struct TrainingMetrics {
     int64_t samples_processed = 0;
     int64_t time_elapsed_ms = 0;
     std::unordered_map<std::string, double> custom_metrics;
+    // Live position within the run (TOFIX118 P4c), from the batch callback;
+    // current_epoch above stays the last completed epoch.
+    int running_epoch = 0;          // 1-based epoch in progress
+    int current_batch = 0;          // 1-based batch within it
+    int total_batches = 0;          // batches per epoch
+    double fraction_complete = 0.0; // 0..1 over all epochs
+    double samples_per_second = 0.0;
+    double eta_seconds = -1.0;      // < 0 while still estimating
 };
 
 /**
@@ -65,6 +77,9 @@ public:
 
     // Cancel a running job
     bool CancelJob(const std::string& job_id);
+    // Stop a running job, writing a resume checkpoint where the run supports
+    // one mid-epoch; its checkpoints stay for a resume (TOFIX118 gap 6).
+    bool StopJobWithCheckpoint(const std::string& job_id);
 
     // Pause a running job
     bool PauseJob(const std::string& job_id);
@@ -96,21 +111,31 @@ public:
     // Set progress callback
     void SetProgressCallback(ProgressCallback callback);
 
+    // A resume checkpoint of a running job was written (TOFIX118 P4e-3).
+    using CheckpointCallback = std::function<void(const std::string& job_id, const std::string& checkpoint,
+                                                  int epoch, int next_batch)>;
+    void SetCheckpointCallback(CheckpointCallback callback);
+
     // Set completion callback
     void SetCompletionCallback(CompletionCallback callback);
+
+    // The job's prepare/train split once training ended; readable from the
+    // completion callback (TOFIX118 P3).
+    std::optional<cyxwiz::GraphTrainingJobTiming> GetJobRunTiming(const std::string& job_id);
+    // Why the job's training failed (None when it did not); readable from the
+    // completion callback (TOFIX118 P4a).
+    cyxwiz::TrainingFailureKind GetJobFailure(const std::string& job_id);
 
     // Set node client for progress reporting
     void SetNodeClient(NodeClient* client);
 
-    // Build model from JSON definition (public access for remote training)
-    // input_size: If > 0, use this as the input size for the first layer (overrides DatasetInput node)
-    std::unique_ptr<cyxwiz::SequentialModel> BuildModelFromDefinition(const std::string& model_definition, size_t input_size = 0);
 
 private:
     // Job execution state
     struct JobState {
         std::thread worker_thread;
         std::atomic<bool> should_cancel{false};
+        std::atomic<bool> stop_with_checkpoint{false};
         std::atomic<bool> is_running{false};
         std::atomic<bool> is_paused{false};  // Pause flag for P2P control
         protocol::JobConfig config;
@@ -119,8 +144,12 @@ private:
         int assigned_device_id = -1;  // Device from pool
 
         // Model storage for weights extraction
-        std::unique_ptr<cyxwiz::SequentialModel> model;
+        std::unique_ptr<cyxwiz::IExecutableModel> model;  // what RunGraphTrainingJob hands back
         std::mutex model_mutex;
+        // The shared runner's time split and failure category (guarded by
+        // model_mutex).
+        std::optional<cyxwiz::GraphTrainingJobTiming> run_timing;
+        cyxwiz::TrainingFailureKind failure = cyxwiz::TrainingFailureKind::None;
 
         // Pause/resume synchronization
         std::condition_variable pause_cv;
@@ -130,14 +159,6 @@ private:
     // Execute job in worker thread (synchronous)
     void ExecuteJob(const std::string& job_id);
 
-    // Dataset loading
-    bool LoadDataset(const std::string& dataset_uri,
-                    std::vector<cyxwiz::Tensor>& train_data,
-                    std::vector<cyxwiz::Tensor>& train_labels);
-
-    // Model building from definition (returns SequentialModel for training)
-    // input_size: If > 0, use this as the input size for the first layer
-    std::unique_ptr<cyxwiz::SequentialModel> BuildModel(const std::string& model_definition, size_t input_size = 0);
 
     // Training loop
     bool RunTraining(const std::string& job_id, JobState* state);
@@ -147,30 +168,6 @@ private:
 
     // Progress reporting
     void ReportProgress(const std::string& job_id, JobState* state);
-
-    // Helper: Parse hyperparameters
-    std::unordered_map<std::string, double> ParseHyperparameters(
-        const google::protobuf::Map<std::string, std::string>& hyper_params);
-
-    // Helper: Create optimizer from hyperparameters
-    std::unique_ptr<cyxwiz::Optimizer> CreateOptimizer(
-        const std::unordered_map<std::string, double>& hyperparameters);
-
-    // Dataset loading helpers
-    bool LoadMockDataset(std::vector<cyxwiz::Tensor>& train_data,
-                        std::vector<cyxwiz::Tensor>& train_labels);
-
-    bool LoadMNISTDataset(const std::string& path,
-                         std::vector<cyxwiz::Tensor>& train_data,
-                         std::vector<cyxwiz::Tensor>& train_labels);
-
-    bool LoadCIFAR10Dataset(const std::string& path,
-                           std::vector<cyxwiz::Tensor>& train_data,
-                           std::vector<cyxwiz::Tensor>& train_labels);
-
-    bool LoadCSVDataset(const std::string& path,
-                       std::vector<cyxwiz::Tensor>& train_data,
-                       std::vector<cyxwiz::Tensor>& train_labels);
 
     // Process pending jobs when a device becomes available
     void ProcessPendingJobs();
@@ -193,6 +190,7 @@ private:
 
     // Callbacks
     ProgressCallback progress_callback_;
+    CheckpointCallback checkpoint_callback_;
     CompletionCallback completion_callback_;
     std::mutex callback_mutex_;
 

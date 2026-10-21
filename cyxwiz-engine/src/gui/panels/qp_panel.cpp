@@ -1,5 +1,6 @@
 #include "qp_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
@@ -107,10 +108,10 @@ void QPPanel::RenderToolbar() {
         ImGui::SameLine();
 
         if (result_.status == "Optimal") {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().success,
                 ICON_FA_CHECK " Optimal: %.4f", result_.objective_value);
         } else {
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().warning,
                 ICON_FA_EXCLAMATION " %s", result_.status.c_str());
         }
     }
@@ -174,7 +175,7 @@ void QPPanel::RenderConstraints() {
     ImGui::Text("Constraints (Ax <= b):");
 
     if (constraint_matrix_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(no constraints)");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "(no constraints)");
         return;
     }
 
@@ -225,7 +226,8 @@ void QPPanel::RenderConstraints() {
 
 void QPPanel::RenderLoadingIndicator() {
     ImGui::Text("Solving QP problem...");
-    float progress = 0.5f + 0.5f * std::sin(ImGui::GetTime() * 5.0f);
+    float progress = 0.5f + 0.5f * static_cast<float>(
+        std::sin(ImGui::GetTime() * 5.0));
     ImGui::ProgressBar(progress, ImVec2(-1, 0));
 }
 
@@ -293,7 +295,7 @@ void QPPanel::RenderContourPlot() {
 
                 if (!line_x.empty()) {
                     std::string label = "C" + std::to_string(i + 1);
-                    ImPlot::SetNextLineStyle(ImVec4(1.0f, 1.0f, 1.0f, 0.8f), 2.0f);
+                    ImPlot::SetNextLineStyle(ui::WithAlpha(ui::CurrentTokens().text, 0.8f), 2.0f);
                     ImPlot::PlotLine(label.c_str(), line_x.data(), line_y.data(),
                         static_cast<int>(line_x.size()));
                 }
@@ -304,7 +306,7 @@ void QPPanel::RenderContourPlot() {
         if (has_result_ && result_.success && result_.solution.size() >= 2) {
             double opt_x = result_.solution[0];
             double opt_y = result_.solution[1];
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 12, ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 12, ui::CurrentTokens().accent, 2.0f);
             ImPlot::PlotScatter("Optimal", &opt_x, &opt_y, 1);
         }
 
@@ -314,7 +316,7 @@ void QPPanel::RenderContourPlot() {
 
 void QPPanel::RenderSolutionDetails() {
     if (!has_result_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Click 'Solve' to find optimal solution");
         return;
     }
@@ -323,7 +325,7 @@ void QPPanel::RenderSolutionDetails() {
     ImGui::Separator();
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().error,
             "Error: %s", result_.error_message.c_str());
         return;
     }

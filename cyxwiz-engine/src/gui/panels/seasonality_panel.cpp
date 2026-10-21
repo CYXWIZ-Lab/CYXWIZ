@@ -1,5 +1,7 @@
 #include "seasonality_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -9,7 +11,7 @@ namespace cyxwiz {
 
 SeasonalityPanel::SeasonalityPanel() {
     GenerateData();
-    spdlog::info("SeasonalityPanel initialized");
+    spdlog::debug("SeasonalityPanel initialized");
 }
 
 SeasonalityPanel::~SeasonalityPanel() {
@@ -30,23 +32,18 @@ void SeasonalityPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("seasonality", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
 }
 
 void SeasonalityPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Detect")) {
         DetectAsync();
     }
@@ -72,50 +69,59 @@ void SeasonalityPanel::RenderToolbar() {
     if (has_result_) {
         ImGui::SameLine();
         if (result_.has_seasonality) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            ImGui::TextColored(t.success,
                                "| Period: %d (%.0f%%)",
                                result_.detected_period,
                                result_.strength * 100);
         } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "| No seasonality");
+            ImGui::TextColored(t.text_dim, "| No seasonality");
         }
     }
 }
 
 void SeasonalityPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* signal_types[] = { "Seasonal", "Multi-Seasonal", "Trend+Seasonal", "No Seasonality" };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples", &num_samples_, 1.0f, 50, 1000);
+    ui::FieldLabel("Samples");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 1000);
 
     if (signal_type_ != SignalType::NoSeason) {
-        ImGui::DragInt("Period", &primary_period_, 1.0f, 2, 52);
+        ui::FieldLabel("Period");
+        ImGui::DragInt("##period", &primary_period_, 1.0f, 2, 52);
         static const double kAmpMin = 0.1, kAmpMax = 10.0;
-        ImGui::SliderScalar("Amplitude", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
+        ui::FieldLabel("Amplitude");
+        ImGui::SliderScalar("##amplitude", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
     }
 
     if (signal_type_ == SignalType::MultiSeasonal) {
-        ImGui::DragInt("Period 2", &secondary_period_, 1.0f, 2, 52);
+        ui::FieldLabel("Period 2");
+        ImGui::DragInt("##period_2", &secondary_period_, 1.0f, 2, 52);
     }
 
     static const double kNoiseMin = 0.0, kNoiseMax = 5.0;
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SLIDERS " Detection Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Detection");
 
-    ImGui::DragInt("Min Period", &min_period_, 1.0f, 2, 20);
-    ImGui::DragInt("Max Period", &max_period_, 1.0f, -1, 100);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("-1 = automatic (n/2)");
+    if (ImGui::BeginTable("##period_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min period");
+        ImGui::DragInt("##min_period", &min_period_, 1.0f, 2, 20);
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Max period");
+        ImGui::DragInt("##max_period", &max_period_, 1.0f, -1, 100);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("-1 = automatic (n/2)");
+        }
+        ImGui::EndTable();
     }
 }
 
@@ -127,8 +133,9 @@ void SeasonalityPanel::RenderLoadingIndicator() {
 }
 
 void SeasonalityPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -166,6 +173,7 @@ void SeasonalityPanel::RenderResults() {
 }
 
 void SeasonalityPanel::RenderPeriodogramPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Periodogram (Spectral Density):");
 
     if (result_.periodogram.empty()) {
@@ -198,7 +206,7 @@ void SeasonalityPanel::RenderPeriodogramPlot() {
             if (result_.has_seasonality && result_.detected_period > 0) {
                 double peak_x[] = {static_cast<double>(result_.detected_period)};
                 double peak_y[] = {*std::max_element(power.begin(), power.end())};
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ImVec4(1, 0, 0, 1));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, t.accent_text);
                 ImPlot::PlotScatter("Peak", peak_x, peak_y, 1);
             }
         }
@@ -208,6 +216,7 @@ void SeasonalityPanel::RenderPeriodogramPlot() {
 }
 
 void SeasonalityPanel::RenderACFPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("ACF with Seasonal Peaks:");
 
     // Compute ACF for display
@@ -224,7 +233,7 @@ void SeasonalityPanel::RenderACFPlot() {
 
         // Confidence bounds
         if (!acf.confidence_upper.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.2f));
             ImPlot::PlotShaded("95% CI", acf.lags.data(),
                               acf.confidence_upper.data(),
                               acf.confidence_lower.data(),
@@ -232,7 +241,7 @@ void SeasonalityPanel::RenderACFPlot() {
         }
 
         // ACF
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.8f));
         ImPlot::PlotBars("ACF", acf.lags.data(), acf.acf.data(),
                         static_cast<int>(acf.acf.size()), 0.6);
 
@@ -246,7 +255,7 @@ void SeasonalityPanel::RenderACFPlot() {
                 }
             }
             if (!peak_x.empty()) {
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ImVec4(1, 0.3f, 0, 1));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, t.accent_text);
                 ImPlot::PlotScatter("Seasonal Peaks", peak_x.data(), peak_y.data(),
                                    static_cast<int>(peak_x.size()));
             }
@@ -257,16 +266,17 @@ void SeasonalityPanel::RenderACFPlot() {
 }
 
 void SeasonalityPanel::RenderSummary() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CIRCLE_INFO " Seasonality Analysis Summary");
     ImGui::Separator();
     ImGui::Spacing();
 
     // Main result
     if (result_.has_seasonality) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            ICON_FA_CHECK " Seasonality DETECTED");
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
                            ICON_FA_XMARK " No significant seasonality detected");
     }
 

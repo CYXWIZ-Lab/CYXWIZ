@@ -14,7 +14,7 @@ namespace formats {
 /**
  * CyxModel format handler
  *
- * The .cyxmodel format is a ZIP archive (or directory) containing:
+ * The .cyxmodel format is a CYXW v3 binary package (or legacy directory) containing:
  * - manifest.json: Model metadata and version info
  * - graph.cyxgraph: Node graph definition (JSON)
  * - config.json: Training configuration
@@ -52,7 +52,8 @@ public:
         const std::map<std::string, std::vector<uint8_t>>& weights,
         const std::map<std::string, std::vector<int64_t>>& weight_shapes,
         const std::map<std::string, std::vector<uint8_t>>* optimizer_state,
-        const ExportOptions& options
+        const ExportOptions& options,
+        const std::map<std::string, TensorDType>* weight_dtypes = nullptr
     );
 
     /**
@@ -77,7 +78,23 @@ public:
         std::map<std::string, std::vector<uint8_t>>& weights,
         std::map<std::string, std::vector<int64_t>>& weight_shapes,
         std::map<std::string, std::vector<uint8_t>>* optimizer_state,
-        const ImportOptions& options
+        const ImportOptions& options,
+        std::map<std::string, TensorDType>* weight_dtypes = nullptr
+    );
+
+
+    // Validate/extract one captured inventory without reopening a conversion source.
+    bool Extract(
+        const std::map<std::string, std::vector<uint8_t>>& files,
+        ModelManifest& manifest,
+        std::string& graph_json,
+        TrainingConfig& config,
+        TrainingHistory* history,
+        std::map<std::string, std::vector<uint8_t>>& weights,
+        std::map<std::string, std::vector<int64_t>>& weight_shapes,
+        std::map<std::string, std::vector<uint8_t>>* optimizer_state,
+        const ImportOptions& options,
+        std::map<std::string, TensorDType>* weight_dtypes = nullptr
     );
 
     /**
@@ -93,6 +110,53 @@ public:
      * @return Graph JSON string or empty on error
      */
     std::string ExtractGraphOnly(const std::string& input_path);
+
+    /**
+     * Extract tokenizer deployment assets from a .cyxmodel package.
+     * @param input_path Path to .cyxmodel directory/archive
+     * @param config_json Output tokenizer/config.json contents, if present
+     * @param vocab_text Output tokenizer/vocab.txt contents, if present
+     * @param model_data Output tokenizer/model.spm bytes, if present
+     * @return true when at least one tokenizer asset is present
+     */
+    bool ExtractTextTokenizerAssets(
+        const std::string& input_path,
+        std::string& config_json,
+        std::string& vocab_text
+    );
+
+    bool ExtractTextTokenizerAssets(
+        const std::string& input_path,
+        std::string& config_json,
+        std::string& vocab_text,
+        std::string& model_data
+    );
+
+    /**
+     * Extract sequence vocabulary assets from a .cyxmodel package.
+     * @param input_path Path to .cyxmodel directory/archive
+     * @param token_vocab_text Output sequence/token vocabulary contents, if present
+     * @param pos_vocab_text Output sequence/pos vocabulary contents, if present
+     * @param tag_vocab_text Output sequence/tag vocabulary contents, if present
+     * @return true when any sequence vocabulary asset is present
+     */
+    bool ExtractSequenceVocabularyAssets(
+        const std::string& input_path,
+        std::string& token_vocab_text,
+        std::string& pos_vocab_text,
+        std::string& tag_vocab_text
+    );
+
+    /**
+     * Extract a native tree-family model artifact from a .cyxmodel package.
+     * @param input_path Path to .cyxmodel directory/archive
+     * @param artifact_json Output cyxwiz_tree_model JSON payload
+     * @return true when tree/model.json is present
+     */
+    bool ExtractTreeModelArtifact(
+        const std::string& input_path,
+        std::string& artifact_json
+    );
 
     /**
      * Get last error message
@@ -129,32 +193,14 @@ private:
         TensorDType& dtype
     );
 
-    // ZIP operations (using directory fallback if minizip not available)
-    bool CreateArchive(
-        const std::string& output_path,
-        const std::map<std::string, std::vector<uint8_t>>& files,
-        bool compress
-    );
-
-    bool ExtractArchive(
-        const std::string& input_path,
-        std::map<std::string, std::vector<uint8_t>>& files
-    );
-
-    // Directory-based fallback operations
-    bool CreateDirectory(
-        const std::string& output_path,
-        const std::map<std::string, std::vector<uint8_t>>& files
-    );
-
-    bool ReadDirectory(
-        const std::string& input_path,
-        std::map<std::string, std::vector<uint8_t>>& files
-    );
+    bool CreateArchive(const std::string& output_path,
+                       const std::map<std::string, std::vector<uint8_t>>& files,
+                       bool compress);
+    bool ReadPackage(const std::string& input_path,
+                     std::map<std::string, std::vector<uint8_t>>& files);
 
     // Utility
     std::string GetTimestamp();
-    bool IsZipFile(const std::string& path);
 };
 
 } // namespace formats

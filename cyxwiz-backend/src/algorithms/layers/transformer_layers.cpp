@@ -1,0 +1,891 @@
+#include "cyxwiz/layers/transformer.h"
+#include "cyxwiz/activations/relu.h"
+#include "../arrayfire_backend_utils.h"
+
+#include <arrayfire.h>
+
+#include <cmath>
+#include <map>
+#include <memory>
+#include <limits>
+#include <stdexcept>
+#include <string>
+
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
+
+namespace cyxwiz {
+
+bool TransformerFfnActivationFromName(const std::string& name, ActivationType& out) {
+    static const std::map<std::string, ActivationType> names = {
+        {"relu", ActivationType::ReLU}, {"gelu", ActivationType::GELU},
+        {"gelu_exact", ActivationType::GELUExact}, {"silu", ActivationType::SiLU},
+        {"mish", ActivationType::Mish}, {"elu", ActivationType::ELU},
+        {"selu", ActivationType::SELU}, {"leaky_relu", ActivationType::LeakyReLU},
+        {"sigmoid", ActivationType::Sigmoid}, {"tanh", ActivationType::Tanh},
+        {"hardswish", ActivationType::Hardswish}, {"squared_relu", ActivationType::SquaredReLU}};
+    const auto it = names.find(name);
+    if (it == names.end()) return false;
+    out = it->second;
+    return true;
+}
+
+namespace {
+
+void ValidateTransformerSequence(const Tensor& input, int width) {
+    const auto& shape = input.Shape();
+    if (input.GetDataType() != DataType::Float32 || shape.size() != 3 ||
+        shape[0] == 0 || shape[1] == 0 || shape[2] != static_cast<size_t>(width)) {
+        throw std::invalid_argument("Transformer expects nonempty Float32 [batch, seq_len, d_model]");
+    }
+}
+
+Tensor FlattenTransformerSequenceForDense(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 3) {
+        return input;
+    }
+    return input.Reshape({input.NumElements() / shape[2], shape[2]});
+}
+
+Tensor RestoreTransformerSequenceFromDense(const Tensor& input,
+                                           size_t batch,
+                                           size_t seq_len) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 2) {
+        return input;
+    }
+    return input.Reshape({batch, seq_len, shape[1]});
+}
+
+Tensor AddSameShape(const Tensor& lhs, const Tensor& rhs) {
+    if (lhs.GetDataType() != DataType::Float32 ||
+        rhs.GetDataType() != DataType::Float32 ||
+        lhs.Shape() != rhs.Shape()) {
+        throw std::runtime_error("Transformer residual backward shape mismatch");
+    }
+
+    return lhs + rhs;
+}
+
+} // namespace
+
+TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
+                                                   int dim_feedforward, float dropout,
+                                                   bool norm_first)
+    : TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, norm_first, 0.0f) {}
+
+TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
+    int dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
+    : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
+      dropout_(dropout), norm_first_(norm_first) {
+    if (dim_feedforward <= 0) {
+        throw std::invalid_argument("Transformer dim_feedforward must be positive");
+    }
+    if (!std::isfinite(ffn_dropout) || ffn_dropout < 0.0f || ffn_dropout >= 1.0f) {
+        throw std::invalid_argument("Transformer ffn_dropout must be finite and in [0,1)");
+    }
+    ffn_dropout_ = std::make_unique<DropoutLayer>(ffn_dropout);
+
+    self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
+    norm1_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    norm2_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    linear1_ = std::make_unique<DenseLayer>(d_model, dim_feedforward);
+    linear2_ = std::make_unique<DenseLayer>(dim_feedforward, d_model);
+    dropout1_ = std::make_unique<DropoutLayer>(dropout);
+    dropout2_ = std::make_unique<DropoutLayer>(dropout);
+}
+
+Tensor TransformerEncoderLayer::Forward(const Tensor& input) {
+    return Forward(input, nullptr);
+}
+
+Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_mask) {
+    ValidateTransformerSequence(input, d_model_);
+    cached_input_ = input;
+
+    if (norm_first_) {
+        // Pre-LN: x + attn(norm(x))
+        Tensor normed = norm1_->Forward(input);
+        Tensor attn_out = self_attn_->Forward(normed, normed, normed, src_mask);
+        attn_out = dropout1_->Forward(attn_out);
+        cached_residual1_ = input;
+
+        // Add residual
+        const auto& shape = input.Shape();
+        Tensor x = AddSameShape(input, attn_out);
+        cached_attn_output_ = x;
+
+        // FFN
+        Tensor normed2 = norm2_->Forward(x);
+        Tensor ffn_out = linear1_->Forward(
+            FlattenTransformerSequenceForDense(normed2));
+
+        // ReLU activation
+        ffn_out = ReLU().Forward(ffn_out);
+        cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
+
+        ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
+        ffn_out = dropout2_->Forward(ffn_out);
+        cached_residual2_ = x;
+
+        // Add residual
+        Tensor result = AddSameShape(x, ffn_out);
+
+        return result;
+    } else {
+        // Post-LN: norm(x + attn(x))
+        Tensor attn_out = self_attn_->Forward(input, input, input, src_mask);
+        attn_out = dropout1_->Forward(attn_out);
+        cached_residual1_ = input;
+
+        // Add residual and norm
+        const auto& shape = input.Shape();
+        Tensor x = AddSameShape(input, attn_out);
+
+        x = norm1_->Forward(x);
+        cached_attn_output_ = x;
+
+        // FFN
+        Tensor ffn_out = linear1_->Forward(
+            FlattenTransformerSequenceForDense(x));
+
+        // ReLU activation
+        ffn_out = ReLU().Forward(ffn_out);
+        cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
+
+        ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
+        ffn_out = dropout2_->Forward(ffn_out);
+        cached_residual2_ = x;
+
+        // Add residual and norm
+        Tensor result = AddSameShape(x, ffn_out);
+
+        return norm2_->Forward(result);
+    }
+}
+
+Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
+    Tensor grad = grad_output;
+
+    if (!norm_first_) {
+        grad = norm2_->Backward(grad);
+    }
+
+    Tensor grad_ffn = dropout2_->Backward(grad);
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape.size() == 3) {
+        grad_ffn = FlattenTransformerSequenceForDense(grad_ffn);
+    }
+    grad_ffn = linear2_->Backward(grad_ffn);
+    grad_ffn = ffn_dropout_->Backward(grad_ffn);
+
+    grad_ffn = ReLU().Backward(grad_ffn, cached_ffn_mid_);
+
+    grad_ffn = linear1_->Backward(grad_ffn);
+    if (grad_shape.size() == 3) {
+        grad_ffn = RestoreTransformerSequenceFromDense(
+            grad_ffn, grad_shape[0], grad_shape[1]);
+    }
+
+    if (norm_first_) {
+        grad_ffn = norm2_->Backward(grad_ffn);
+    }
+
+    Tensor grad_after_ffn_residual = AddSameShape(grad, grad_ffn);
+    Tensor grad_before_attn_residual = grad_after_ffn_residual;
+    if (!norm_first_) {
+        grad_before_attn_residual = norm1_->Backward(grad_after_ffn_residual);
+    }
+
+    Tensor grad_attn = dropout1_->Backward(grad_before_attn_residual);
+    grad_attn = self_attn_->Backward(grad_attn);
+    if (norm_first_) {
+        grad_attn = norm1_->Backward(grad_attn);
+    }
+
+    return AddSameShape(grad_before_attn_residual, grad_attn);
+}
+
+std::map<std::string, Tensor> TransformerEncoderLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+
+    auto attn_params = self_attn_->GetParameters();
+    for (const auto& [key, val] : attn_params) {
+        params["self_attn." + key] = val;
+    }
+
+    auto norm1_params = norm1_->GetParameters();
+    for (const auto& [key, val] : norm1_params) {
+        params["norm1." + key] = val;
+    }
+
+    auto norm2_params = norm2_->GetParameters();
+    for (const auto& [key, val] : norm2_params) {
+        params["norm2." + key] = val;
+    }
+
+    auto linear1_params = linear1_->GetParameters();
+    for (const auto& [key, val] : linear1_params) {
+        params["linear1." + key] = val;
+    }
+
+    auto linear2_params = linear2_->GetParameters();
+    for (const auto& [key, val] : linear2_params) {
+        params["linear2." + key] = val;
+    }
+
+    return params;
+}
+
+void TransformerEncoderLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    std::map<std::string, Tensor> attn_params, norm1_params, norm2_params;
+    std::map<std::string, Tensor> linear1_params, linear2_params;
+
+    for (const auto& [key, val] : params) {
+        if (key.find("self_attn.") == 0) {
+            attn_params[key.substr(10)] = val;
+        } else if (key.find("norm1.") == 0) {
+            norm1_params[key.substr(6)] = val;
+        } else if (key.find("norm2.") == 0) {
+            norm2_params[key.substr(6)] = val;
+        } else if (key.find("linear1.") == 0) {
+            linear1_params[key.substr(8)] = val;
+        } else if (key.find("linear2.") == 0) {
+            linear2_params[key.substr(8)] = val;
+        }
+    }
+
+    self_attn_->SetParameters(attn_params);
+    norm1_->SetParameters(norm1_params);
+    norm2_->SetParameters(norm2_params);
+    linear1_->SetParameters(linear1_params);
+    linear2_->SetParameters(linear2_params);
+}
+
+void TransformerEncoderLayer::SetTraining(bool training) {
+    training_ = training;
+    self_attn_->SetTraining(training);
+    norm1_->SetTraining(training);
+    norm2_->SetTraining(training);
+    linear1_->SetTraining(training);
+    linear2_->SetTraining(training);
+    ffn_dropout_->SetTraining(training);
+    dropout1_->SetTraining(training);
+    dropout2_->SetTraining(training);
+}
+
+// ============================================================================
+// TransformerDecoderLayer Implementation
+// ============================================================================
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
+                                                   int dim_feedforward, float dropout,
+                                                   bool norm_first)
+    : TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, norm_first, 0.0f) {}
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
+    int dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
+    : TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, norm_first,
+                              ffn_dropout, TransformerBlockOptions{}) {}
+
+std::unique_ptr<Layer> TransformerDecoderLayer::MakeNorm() const {
+    if (options_.norm_type == TransformerNormType::RMSNorm) {
+        return std::make_unique<RMSNormLayer>(d_model_, options_.norm_eps);
+    }
+    return std::make_unique<LayerNormLayer>(std::vector<int>{d_model_}, options_.norm_eps);
+}
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
+    int dim_feedforward, float dropout, bool norm_first, float ffn_dropout,
+    const TransformerBlockOptions& options)
+    : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
+      dropout_(dropout), norm_first_(norm_first), options_(options) {
+    if (!std::isfinite(options_.norm_eps) || options_.norm_eps <= 0.0f) {
+        throw std::invalid_argument("Transformer norm_eps must be finite and positive");
+    }
+    switch (options_.ffn_activation) {
+        case ActivationType::ReLU: case ActivationType::GELU: case ActivationType::Swish:
+        case ActivationType::SiLU: case ActivationType::Mish: case ActivationType::ELU:
+        case ActivationType::SELU: case ActivationType::LeakyReLU: case ActivationType::Sigmoid:
+        case ActivationType::Tanh: case ActivationType::Hardswish:
+        case ActivationType::SquaredReLU: case ActivationType::GELUExact:
+            break;
+        default:
+            throw std::invalid_argument(
+                "Transformer ffn_activation must be an elementwise activation without learned parameters");
+    }
+    if (dim_feedforward <= 0) {
+        throw std::invalid_argument("Transformer dim_feedforward must be positive");
+    }
+    if (!std::isfinite(ffn_dropout) || ffn_dropout < 0.0f || ffn_dropout >= 1.0f) {
+        throw std::invalid_argument("Transformer ffn_dropout must be finite and in [0,1)");
+    }
+    ffn_dropout_ = std::make_unique<DropoutLayer>(ffn_dropout);
+
+    const bool pre_norm_only = options_.block_layout == TransformerBlockLayout::Parallel || options_.sandwich_norm;
+    if (pre_norm_only && !norm_first) {
+        throw std::invalid_argument("Transformer block_layout=parallel and sandwich_norm need norm_first (pre-norm)");
+    }
+    if (options_.block_layout == TransformerBlockLayout::Parallel && options_.sandwich_norm) {
+        throw std::invalid_argument("Transformer block_layout=parallel cannot be combined with sandwich_norm");
+    }
+    if (!std::isfinite(options_.residual_init_scale) || options_.residual_init_scale <= 0.0f) {
+        throw std::invalid_argument("Transformer residual_init_scale must be finite and positive");
+    }
+    if (options_.sliding_window < 0) {
+        throw std::invalid_argument("Transformer sliding_window must be >= 0 (0 disables)");
+    }
+    const int kv_heads = options_.num_kv_heads > 0 ? options_.num_kv_heads : nhead;
+    self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout, options_.attention_bias, kv_heads);
+    cross_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout, options_.attention_bias);
+    // Position and score options apply to self-attention only.
+    if (options_.position_encoding == TransformerPositionEncoding::Rope) {
+        self_attn_->SetRotaryEmbedding(true, options_.rope_base, options_.rope_fraction);
+    } else if (options_.position_encoding == TransformerPositionEncoding::Alibi) {
+        self_attn_->SetAlibi(true);
+    }
+    if (options_.qk_norm) {
+        self_attn_->SetQKNorm(true, options_.norm_eps);
+    }
+    self_attn_->SetLogitSoftcap(options_.attn_logit_softcap);
+    // The decoder-only path always passes GenerateCausalMask(seq, window).
+    self_attn_->DeclareStandardMask(true, options_.sliding_window);
+    norm1_ = MakeNorm();
+    norm2_ = MakeNorm();
+    norm3_ = MakeNorm();
+    // Construction order (and therefore weight initialization order) of the
+    // classic layers is unchanged; the gate projection is created last.
+    linear1_ = std::make_unique<DenseLayer>(d_model, dim_feedforward, options_.ffn_bias);
+    linear2_ = std::make_unique<DenseLayer>(dim_feedforward, d_model, options_.ffn_bias);
+    if (options_.ffn_type == TransformerFeedForwardType::Gated) {
+        ffn_gate_ = std::make_unique<DenseLayer>(d_model, dim_feedforward, options_.ffn_bias);
+    }
+    if (options_.ffn_type == TransformerFeedForwardType::Gated ||
+        options_.ffn_activation != ActivationType::ReLU) {
+        // ELU uses the standard alpha=1 (the factory default 0.01 is LeakyReLU's).
+        ffn_activation_ = options_.ffn_activation == ActivationType::ELU
+            ? std::make_unique<ELUActivation>(1.0f)
+            : CreateActivation(options_.ffn_activation);
+    }
+    dropout1_ = std::make_unique<DropoutLayer>(dropout);
+    dropout2_ = std::make_unique<DropoutLayer>(dropout);
+    dropout3_ = std::make_unique<DropoutLayer>(dropout);
+    if (options_.sandwich_norm) {
+        post_attn_norm_ = MakeNorm();
+        post_ffn_norm_ = MakeNorm();
+    }
+    if (options_.residual_init_scale != 1.0f) {
+        // Scale after construction so the random stream (and therefore every
+        // other initial weight) is the same as without the option.
+        auto attn = self_attn_->GetParameters();
+        self_attn_->SetParameters({{"W_o", attn.at("W_o") * options_.residual_init_scale}});
+        auto down = linear2_->GetParameters();
+        linear2_->SetParameters({{"weights", down.at("weights") * options_.residual_init_scale}});
+    }
+}
+
+Tensor TransformerDecoderLayer::SequenceFeedForward(const Tensor& input) {
+    const auto& shape = input.Shape();
+    Tensor out = FeedForward(FlattenTransformerSequenceForDense(input));
+    return dropout3_->Forward(RestoreTransformerSequenceFromDense(out, shape[0], shape[1]));
+}
+
+Tensor TransformerDecoderLayer::SequenceFeedForwardBackward(const Tensor& grad) {
+    const auto& shape = grad.Shape();
+    Tensor g = FeedForwardBackward(FlattenTransformerSequenceForDense(dropout3_->Backward(grad)));
+    return RestoreTransformerSequenceFromDense(g, shape[0], shape[1]);
+}
+
+// Pre-norm variants beyond the sequential block (decoder-only path):
+//   parallel: y = x + attn(n1(x)) + ffn(n1(x))
+//   sandwich: h = x + pn_a(attn(n1(x))),  y = h + pn_f(ffn(n2(h)))
+Tensor TransformerDecoderLayer::ForwardModernPreNorm(const Tensor& input, const Tensor& mask) {
+    if (options_.block_layout == TransformerBlockLayout::Parallel) {
+        Tensor normed = norm1_->Forward(input);
+        Tensor attn = dropout1_->Forward(self_attn_->Forward(normed, normed, normed, &mask));
+        Tensor ffn = SequenceFeedForward(normed);
+        Tensor result = AddSameShape(AddSameShape(input, attn), ffn);
+        cached_self_attn_output_ = result;
+        cached_cross_attn_output_ = result;
+        return result;
+    }
+    Tensor normed = norm1_->Forward(input);
+    Tensor attn = self_attn_->Forward(normed, normed, normed, &mask);
+    attn = dropout1_->Forward(post_attn_norm_->Forward(attn));
+    Tensor x = AddSameShape(input, attn);
+    cached_self_attn_output_ = x;
+    cached_cross_attn_output_ = x;
+    const auto& shape = x.Shape();
+    Tensor ffn = FeedForward(FlattenTransformerSequenceForDense(norm2_->Forward(x)));
+    ffn = RestoreTransformerSequenceFromDense(ffn, shape[0], shape[1]);
+    ffn = dropout3_->Forward(post_ffn_norm_->Forward(ffn));
+    return AddSameShape(x, ffn);
+}
+
+Tensor TransformerDecoderLayer::BackwardModernPreNorm(const Tensor& grad_output) {
+    if (options_.block_layout == TransformerBlockLayout::Parallel) {
+        Tensor grad_attn = self_attn_->Backward(dropout1_->Backward(grad_output));
+        Tensor grad_ffn = SequenceFeedForwardBackward(grad_output);
+        Tensor grad_normed = norm1_->Backward(AddSameShape(grad_attn, grad_ffn));
+        return AddSameShape(grad_output, grad_normed);
+    }
+    const auto& shape = grad_output.Shape();
+    Tensor grad_ffn = post_ffn_norm_->Backward(dropout3_->Backward(grad_output));
+    grad_ffn = FeedForwardBackward(FlattenTransformerSequenceForDense(grad_ffn));
+    grad_ffn = norm2_->Backward(RestoreTransformerSequenceFromDense(grad_ffn, shape[0], shape[1]));
+    Tensor grad_x = AddSameShape(grad_output, grad_ffn);
+    Tensor grad_attn = post_attn_norm_->Backward(dropout1_->Backward(grad_x));
+    grad_attn = norm1_->Backward(self_attn_->Backward(grad_attn));
+    return AddSameShape(grad_x, grad_attn);
+}
+
+Tensor TransformerDecoderLayer::FeedForward(const Tensor& flat_input) {
+    if (options_.ffn_type == TransformerFeedForwardType::Gated) {
+        Tensor up = linear1_->Forward(flat_input);
+        Tensor gate = ffn_gate_->Forward(flat_input);
+        Tensor gate_act = ffn_activation_->Forward(gate);
+        cached_ffn_mid_ = gate;
+        cached_ffn_up_ = up;
+        cached_ffn_gate_act_ = gate_act;
+        Tensor mid = ffn_dropout_->Forward(gate_act * up);
+        return linear2_->Forward(mid);
+    }
+    Tensor mid = linear1_->Forward(flat_input);
+    if (ffn_activation_) {
+        cached_ffn_mid_ = mid;  // activation input
+        mid = ffn_activation_->Forward(mid);
+    } else {
+        mid = ReLU().Forward(mid);
+        cached_ffn_mid_ = mid;  // classic path: ReLU output (legacy cache)
+    }
+    mid = ffn_dropout_->Forward(mid);
+    return linear2_->Forward(mid);
+}
+
+Tensor TransformerDecoderLayer::FeedForwardBackward(const Tensor& grad_flat) {
+    Tensor grad_mid = linear2_->Backward(grad_flat);
+    grad_mid = ffn_dropout_->Backward(grad_mid);
+    if (options_.ffn_type == TransformerFeedForwardType::Gated) {
+        Tensor grad_up = grad_mid * cached_ffn_gate_act_;
+        Tensor grad_gate = ffn_activation_->Backward(grad_mid * cached_ffn_up_, cached_ffn_mid_);
+        return AddSameShape(linear1_->Backward(grad_up), ffn_gate_->Backward(grad_gate));
+    }
+    if (ffn_activation_) {
+        grad_mid = ffn_activation_->Backward(grad_mid, cached_ffn_mid_);
+    } else {
+        grad_mid = ReLU().Backward(grad_mid, cached_ffn_mid_);
+    }
+    return linear1_->Backward(grad_mid);
+}
+
+Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
+    // Decoder-only mode: causal self-attention + feed-forward, no encoder memory.
+    const auto& shape = input.Shape();
+    if (shape.size() != 3) {
+        throw std::invalid_argument("TransformerDecoderLayer expects [batch, seq_len, d_model] input");
+    }
+    ValidateTransformerSequence(input, d_model_);
+    cached_input_ = input;
+    cached_memory_ = Tensor();
+    cached_has_cross_attention_ = false;
+
+    if (shape[1] > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument("TransformerDecoderLayer sequence exceeds causal-mask size limit");
+    }
+    Tensor causal_mask;
+    {
+        ScopedProfileSpan span("Decoder.causal_mask");
+        causal_mask = GenerateCausalMask(static_cast<int>(shape[1]), options_.sliding_window);
+    }
+    self_attn_->DeclareStandardMask(true, options_.sliding_window);
+
+    if (UsesModernPreNormPath()) {
+        return ForwardModernPreNorm(input, causal_mask);
+    }
+
+    if (norm_first_) {
+        Tensor normed;
+        {
+            ScopedProfileSpan span("Decoder.norm1");
+            normed = norm1_->Forward(input);
+        }
+        Tensor self_attn_out;
+        {
+            ScopedProfileSpan span("Decoder.attention");
+            self_attn_out = self_attn_->Forward(normed, normed, normed, &causal_mask);
+        }
+        self_attn_out = dropout1_->Forward(self_attn_out);
+
+        Tensor x = AddSameShape(input, self_attn_out);
+        cached_self_attn_output_ = x;
+        cached_cross_attn_output_ = x;
+
+        ScopedProfileSpan ffn_span("Decoder.norm2_ffn");
+        Tensor normed2 = norm2_->Forward(x);
+        Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(normed2));
+
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
+        ffn_out = dropout3_->Forward(ffn_out);
+
+        Tensor result = AddSameShape(x, ffn_out);
+        return result;
+    }
+
+    Tensor self_attn_out = self_attn_->Forward(input, input, input, &causal_mask);
+    self_attn_out = dropout1_->Forward(self_attn_out);
+
+    Tensor x = AddSameShape(input, self_attn_out);
+    x = norm1_->Forward(x);
+    cached_self_attn_output_ = x;
+    cached_cross_attn_output_ = x;
+
+    Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(x));
+
+    ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
+    ffn_out = dropout3_->Forward(ffn_out);
+
+    Tensor result = AddSameShape(x, ffn_out);
+
+    return norm2_->Forward(result);
+}
+
+Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
+                                         const Tensor* tgt_mask, const Tensor* memory_mask) {
+    ValidateTransformerSequence(tgt, d_model_);
+    ValidateTransformerSequence(memory, d_model_);
+    if (!cross_attn_) {
+        throw std::logic_error(
+            "TransformerDecoderLayer cross-attention was disabled (decoder-only block)");
+    }
+    if (UsesModernPreNormPath()) {
+        throw std::invalid_argument(
+            "TransformerDecoderLayer block_layout=parallel and sandwich_norm support the decoder-only path only");
+    }
+    // The caller's tgt_mask is arbitrary here: keep self-attention on the
+    // ArrayFire path, which applies the mask as given.
+    self_attn_->ClearStandardMaskDeclaration();
+    cached_input_ = tgt;
+    cached_memory_ = memory;
+    cached_has_cross_attention_ = true;
+
+    const auto& shape = tgt.Shape();
+
+    if (norm_first_) {
+        // Pre-LN decoder
+
+        // Self-attention
+        Tensor normed = norm1_->Forward(tgt);
+        Tensor self_attn_out = self_attn_->Forward(normed, normed, normed, tgt_mask);
+        self_attn_out = dropout1_->Forward(self_attn_out);
+
+        // Residual
+        Tensor x = AddSameShape(tgt, self_attn_out);
+        cached_self_attn_output_ = x;
+
+        // Cross-attention
+        Tensor normed2 = norm2_->Forward(x);
+        Tensor cross_attn_out = cross_attn_->Forward(normed2, memory, memory, memory_mask);
+        cross_attn_out = dropout2_->Forward(cross_attn_out);
+
+        // Residual
+        Tensor x2 = AddSameShape(x, cross_attn_out);
+        cached_cross_attn_output_ = x2;
+
+        // FFN
+        Tensor normed3 = norm3_->Forward(x2);
+        Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(normed3));
+
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
+        ffn_out = dropout3_->Forward(ffn_out);
+
+        // Residual
+        Tensor result = AddSameShape(x2, ffn_out);
+
+        return result;
+    } else {
+        // Post-LN decoder
+
+        // Self-attention
+        Tensor self_attn_out = self_attn_->Forward(tgt, tgt, tgt, tgt_mask);
+        self_attn_out = dropout1_->Forward(self_attn_out);
+
+        // Residual + norm
+        Tensor x = AddSameShape(tgt, self_attn_out);
+        x = norm1_->Forward(x);
+        cached_self_attn_output_ = x;
+
+        // Cross-attention
+        Tensor cross_attn_out = cross_attn_->Forward(x, memory, memory, memory_mask);
+        cross_attn_out = dropout2_->Forward(cross_attn_out);
+
+        // Residual + norm
+        Tensor x2 = AddSameShape(x, cross_attn_out);
+        x2 = norm2_->Forward(x2);
+        cached_cross_attn_output_ = x2;
+
+        // FFN
+        Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(x2));
+
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
+        ffn_out = dropout3_->Forward(ffn_out);
+
+        // Residual + norm
+        Tensor result = AddSameShape(x2, ffn_out);
+
+        return norm3_->Forward(result);
+    }
+}
+
+Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
+    if (!cached_has_cross_attention_ && UsesModernPreNormPath()) {
+        return BackwardModernPreNorm(grad_output);
+    }
+    Tensor grad = grad_output;
+
+    if (!norm_first_) {
+        grad = (cached_has_cross_attention_ ? norm3_ : norm2_)->Backward(grad);
+    }
+
+    Tensor grad_ffn = dropout3_->Backward(grad);
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape.size() == 3) {
+        grad_ffn = FlattenTransformerSequenceForDense(grad_ffn);
+    }
+    grad_ffn = FeedForwardBackward(grad_ffn);
+    if (grad_shape.size() == 3) {
+        grad_ffn = RestoreTransformerSequenceFromDense(
+            grad_ffn, grad_shape[0], grad_shape[1]);
+    }
+
+    if (norm_first_) {
+        grad_ffn = (cached_has_cross_attention_ ? norm3_ : norm2_)->Backward(grad_ffn);
+    }
+
+    Tensor grad_after_ffn_residual = AddSameShape(grad, grad_ffn);
+    Tensor grad_before_self_residual = grad_after_ffn_residual;
+
+    if (cached_has_cross_attention_) {
+        Tensor grad_cross_norm_input = grad_after_ffn_residual;
+        if (!norm_first_) {
+            grad_cross_norm_input = norm2_->Backward(grad_after_ffn_residual);
+        }
+
+        Tensor grad_cross = dropout2_->Backward(grad_cross_norm_input);
+        grad_cross = cross_attn_->Backward(grad_cross);
+        if (norm_first_) {
+            grad_cross = norm2_->Backward(grad_cross);
+        }
+
+        grad_before_self_residual = AddSameShape(grad_cross_norm_input, grad_cross);
+    }
+
+    if (!norm_first_) {
+        grad_before_self_residual = norm1_->Backward(grad_before_self_residual);
+    }
+
+    Tensor grad_self = dropout1_->Backward(grad_before_self_residual);
+    grad_self = self_attn_->Backward(grad_self);
+    if (norm_first_) {
+        grad_self = norm1_->Backward(grad_self);
+    }
+
+    return AddSameShape(grad_before_self_residual, grad_self);
+}
+
+Tensor TransformerDecoderLayer::GetLastMemoryGradient() const {
+    if (!cached_has_cross_attention_) {
+        throw std::runtime_error(
+            "TransformerDecoderLayer memory gradient requires a forward pass with encoder memory");
+    }
+
+    const Tensor grad_key = cross_attn_->GetLastKeyGradient();
+    const Tensor grad_value = cross_attn_->GetLastValueGradient();
+    if (grad_key.Shape().empty() || grad_value.Shape().empty()) {
+        throw std::runtime_error(
+            "TransformerDecoderLayer memory gradient requires backward after forward_with_memory");
+    }
+
+    return AddSameShape(grad_key, grad_value);
+}
+
+void TransformerDecoderLayer::DisableCrossAttention() {
+    cross_attn_.reset();
+    norm3_.reset();
+}
+
+std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+
+    auto self_attn_params = self_attn_->GetParameters();
+    for (const auto& [key, val] : self_attn_params) {
+        params["self_attn." + key] = val;
+    }
+
+    if (cross_attn_) {
+        for (const auto& [key, val] : cross_attn_->GetParameters()) params["cross_attn." + key] = val;
+    }
+
+    auto norm1_params = norm1_->GetParameters();
+    for (const auto& [key, val] : norm1_params) {
+        params["norm1." + key] = val;
+    }
+
+    // Parallel blocks share norm1 between attention and FFN; norm2 is unused.
+    if (options_.block_layout != TransformerBlockLayout::Parallel) {
+        for (const auto& [key, val] : norm2_->GetParameters()) {
+            params["norm2." + key] = val;
+        }
+    }
+
+    if (norm3_) {
+        for (const auto& [key, val] : norm3_->GetParameters()) params["norm3." + key] = val;
+    }
+
+    auto linear1_params = linear1_->GetParameters();
+    for (const auto& [key, val] : linear1_params) {
+        params["linear1." + key] = val;
+    }
+
+    auto linear2_params = linear2_->GetParameters();
+    for (const auto& [key, val] : linear2_params) {
+        params["linear2." + key] = val;
+    }
+
+    if (ffn_gate_) {
+        for (const auto& [key, val] : ffn_gate_->GetParameters()) {
+            params["ffn_gate." + key] = val;
+        }
+    }
+    if (post_attn_norm_) {
+        for (const auto& [key, val] : post_attn_norm_->GetParameters()) params["post_attn_norm." + key] = val;
+        for (const auto& [key, val] : post_ffn_norm_->GetParameters()) params["post_ffn_norm." + key] = val;
+    }
+
+    return params;
+}
+
+void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    std::map<std::string, Tensor> self_attn_params, cross_attn_params;
+    std::map<std::string, Tensor> norm1_params, norm2_params, norm3_params;
+    std::map<std::string, Tensor> linear1_params, linear2_params, gate_params;
+    std::map<std::string, Tensor> post_attn_params, post_ffn_params;
+
+    for (const auto& [key, val] : params) {
+        if (key.find("self_attn.") == 0) {
+            self_attn_params[key.substr(10)] = val;
+        } else if (key.find("cross_attn.") == 0) {
+            cross_attn_params[key.substr(11)] = val;
+        } else if (key.find("norm1.") == 0) {
+            norm1_params[key.substr(6)] = val;
+        } else if (key.find("norm2.") == 0) {
+            norm2_params[key.substr(6)] = val;
+        } else if (key.find("norm3.") == 0) {
+            norm3_params[key.substr(6)] = val;
+        } else if (key.find("linear1.") == 0) {
+            linear1_params[key.substr(8)] = val;
+        } else if (key.find("linear2.") == 0) {
+            linear2_params[key.substr(8)] = val;
+        } else if (key.find("ffn_gate.") == 0) {
+            gate_params[key.substr(9)] = val;
+        } else if (key.find("post_attn_norm.") == 0) {
+            post_attn_params[key.substr(15)] = val;
+        } else if (key.find("post_ffn_norm.") == 0) {
+            post_ffn_params[key.substr(14)] = val;
+        }
+    }
+
+    self_attn_->SetParameters(self_attn_params);
+    // Without cross-attention, older models' cross_attn./norm3. keys are ignored.
+    if (cross_attn_) cross_attn_->SetParameters(cross_attn_params);
+    norm1_->SetParameters(norm1_params);
+    norm2_->SetParameters(norm2_params);
+    if (norm3_) norm3_->SetParameters(norm3_params);
+    linear1_->SetParameters(linear1_params);
+    linear2_->SetParameters(linear2_params);
+    if (ffn_gate_) ffn_gate_->SetParameters(gate_params);
+    if (post_attn_norm_) {
+        post_attn_norm_->SetParameters(post_attn_params);
+        post_ffn_norm_->SetParameters(post_ffn_params);
+    }
+}
+
+void TransformerDecoderLayer::SetTraining(bool training) {
+    training_ = training;
+    self_attn_->SetTraining(training);
+    if (cross_attn_) cross_attn_->SetTraining(training);
+    norm1_->SetTraining(training);
+    norm2_->SetTraining(training);
+    if (norm3_) norm3_->SetTraining(training);
+    linear1_->SetTraining(training);
+    linear2_->SetTraining(training);
+    if (ffn_gate_) ffn_gate_->SetTraining(training);
+    if (post_attn_norm_) {
+        post_attn_norm_->SetTraining(training);
+        post_ffn_norm_->SetTraining(training);
+    }
+    ffn_dropout_->SetTraining(training);
+    dropout1_->SetTraining(training);
+    dropout2_->SetTraining(training);
+    dropout3_->SetTraining(training);
+}
+
+Tensor TransformerDecoderLayer::ForwardIncremental(const Tensor& input, size_t position_offset) {
+    // The normal decoder-only path runs unchanged; self-attention reads and
+    // extends its key/value cache and builds the offset causal mask itself.
+    self_attn_->BeginIncremental(position_offset, options_.sliding_window);
+    try {
+        Tensor out = Forward(input);
+        self_attn_->EndIncremental();
+        return out;
+    } catch (...) {
+        self_attn_->EndIncremental();
+        throw;
+    }
+}
+
+void TransformerDecoderLayer::ResetIncrementalState() {
+    self_attn_->ResetKvCache();
+}
+
+Tensor TransformerDecoderLayer::GenerateCausalMask(int size, int window) {
+    if (window <= 0 || window >= size) {
+        return GenerateCausalMask(size);
+    }
+    try {
+        const af::dim4 dims(size, size);
+        const af::array query = af::range(dims, 0, s32);
+        const af::array key = af::range(dims, 1, s32);
+        const af::array hidden = (key > query) || (query - key >= window);
+        const af::array mask = hidden.as(f32) * -1e9f;
+        mask.eval();
+        return Tensor::FromSemanticArray(mask, {static_cast<size_t>(size), static_cast<size_t>(size)});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("TransformerDecoderLayer::GenerateCausalMask failed on the ArrayFire device: ") + e.what());
+    }
+}
+
+Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
+    if (size <= 0) {
+        throw std::invalid_argument("TransformerDecoderLayer causal mask size must be positive");
+    }
+
+    try {
+        const af::dim4 dims(size, size);
+        const af::array mask = (af::range(dims, 1, u32) > af::range(dims, 0, u32)).as(f32) * -1e9f;
+        mask.eval(); // Complete mask generation inside its fallback boundary.
+        return Tensor::FromSemanticArray(mask, {static_cast<size_t>(size), static_cast<size_t>(size)});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("TransformerDecoderLayer::GenerateCausalMask failed on the ArrayFire device: ") + e.what());
+    }
+}
+
+} // namespace cyxwiz

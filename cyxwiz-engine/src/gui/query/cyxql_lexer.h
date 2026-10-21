@@ -16,7 +16,7 @@ namespace cyxwiz::query {
  * - Symbols: (, ), [, ], {, }, :, ,, ., ->, <-, etc.
  * - Literals: strings ("..." or '...'), integers, floats, booleans
  * - Identifiers: variable and label names
- * - Comments: // single-line and /* multi-line
+ * - Comments: C++-style single-line and C-style block comments
  */
 class Lexer {
 public:

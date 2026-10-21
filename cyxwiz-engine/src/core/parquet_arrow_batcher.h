@@ -1,0 +1,214 @@
+#pragma once
+
+#include "parquet_backed_dataset.h"
+#include "dataset_batcher.h"
+#include "label_vocabulary.h"  // for the shared Batch struct
+
+#include <cyxwiz/tensor.h>
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <random>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace cyxwiz {
+
+// Which split each row of a table on disk belongs to (0 train, 1 validation,
+// 2 test), one byte per row in file order (TOFIX154), by the in-memory
+// split's rules: unstratified, contiguous slices in file order
+// (ArrowDatasetBatcher); stratified, each class's CountsFor share
+// (split_partitioning.h) in file order, or drawn by `seed` when shuffled.
+struct ParquetRowSplit {
+    std::vector<uint8_t> bucket;        // per row, file order
+    std::vector<int64_t> group_offset;  // first row of each row group
+    std::array<size_t, 3> counts{};     // rows per split
+};
+
+// ratios: train, validation, test. Unstratified (empty stratify_column):
+// Train is the first floor(rows * train) rows, Validation the next
+// floor(rows * validation) (every other row when its ratio is 0), Test the
+// rest. Stratified: two passes over the column a row group at a time, one to
+// count each class, one to give each row a split from what its class still
+// needs (in file order, or a seeded draw when shuffle). Null with `error`
+// set when the column cannot be read.
+std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
+                                                            const std::string& stratify_column,
+                                                            const std::array<double, 3>& ratios,
+                                                            bool shuffle, uint32_t seed, std::string& error);
+
+/**
+ * ParquetArrowBatcher - Training batcher for disk-backed Parquet datasets.
+ *
+ * Mirrors the shape of ArrowDatasetBatcher (same Batch struct, same
+ * lifecycle methods) but reads data lazily from a ParquetBackedDataset
+ * one row group at a time instead of holding the whole table in RAM.
+ *
+ * Row group strategy:
+ *   - With a ParquetRowSplit (SetRowSplit), every row group is read and
+ *     only this split's rows are served: an exact row-level split, per
+ *     class when stratified (TOFIX154).
+ *   - Without one, row groups are partitioned between train and val splits
+ *     by index (first train_split fraction -> train, remainder -> val).
+ *   - Shuffling happens at two levels: the *order* of row groups is
+ *     permuted at epoch start (Reset()), and when a row group is loaded
+ *     its rows are also shuffled into a local order. This keeps memory
+ *     access sequential within a loaded group while still giving good
+ *     statistical shuffling across an epoch.
+ *   - Only one row group is resident at a time. Loading the next one
+ *     discards the previous; the OS page cache handles eviction behind
+ *     the scenes via the memory-mapped Parquet file.
+ *
+ * Output matches ArrowDatasetBatcher: float32 feature batches,
+ * int-as-float labels (or one-hot if enabled). The per-cell type dispatch
+ * for converting Parquet columns to float is currently duplicated from
+ * ArrowDatasetBatcher; a shared helper is a follow-up.
+ */
+class ParquetArrowBatcher : public IBatcher {
+public:
+    /**
+     * @param dataset         Parquet-backed dataset to iterate over.
+     * @param label_column    Name of the label column in the dataset schema.
+     * @param batch_size      Samples per batch.
+     * @param shuffle         Shuffle row group order + intra-group rows each epoch.
+     * @param train_split     Fraction (0..1) of row groups assigned to the train split.
+     * @param is_training     True for train batcher, false for val batcher.
+     *                        Determines which row group range this batcher iterates.
+     */
+    ParquetArrowBatcher(std::shared_ptr<ParquetBackedDataset> dataset,
+                        const std::string& label_column,
+                        size_t batch_size,
+                        bool shuffle = true,
+                        float train_split = 0.8f,
+                        bool is_training = true,
+                        const std::string& partition_column = "",
+                        int partition_value = 0,
+                        int num_workers = 0,
+                        BatcherPhase split_phase = BatcherPhase::Train,
+                        float val_split = 0.0f,
+                        uint32_t seed = 42,
+                        std::shared_ptr<const LabelVocabulary> label_vocabulary = nullptr);
+
+    // IBatcher interface
+    Batch GetNextBatch() override;
+    void Reset() override;
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
+    bool IsEpochComplete() const override;
+    size_t GetNumBatches() const override;
+    size_t GetNumSamples() const override { return num_samples_; }
+
+    // Preprocessing (IBatcher)
+    void SetNormalization(float mean, float std_dev) override;
+    void SetOneHotEncoding(size_t num_classes) override;
+    void SetFlatten(bool flatten) override { flatten_ = flatten; }
+    void SetDropLast(bool drop_last) override { drop_last_ = drop_last; }
+    void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
+    void SetClassIndexLabelMode(bool enable) override {
+        class_index_label_mode_ = enable;
+        if (enable) one_hot_ = false;
+    }
+    void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
+    // Serve only this batcher's split of `split` (its phase); recounts and
+    // restarts the epoch.
+    void SetRowSplit(std::shared_ptr<const ParquetRowSplit> split);
+    void SetRegressionTargetWidth(
+        size_t width, const std::string& target_base = {});
+    // Class balancing of the train split (TOFIX157 A3), by the in-memory
+    // batcher's rules: mode oversample, undersample or weighted_sampler;
+    // target min, median, a number or (default) the largest class
+    // (BalanceTargetCount). No list of rows is kept: a pass over the label
+    // column counts each class, and each epoch, as a row group is read, every
+    // row is served as many times as a seeded draw gives it (each class gets
+    // exactly its target, the rows chosen at random). Val and test batchers,
+    // and fewer than two classes, are not balanced.
+    void SetClassBalancing(const std::string& mode, const std::string& target, uint32_t seed);
+
+private:
+    // Configuration
+    std::shared_ptr<ParquetBackedDataset> dataset_;
+    std::string label_column_;
+    size_t batch_size_;
+    bool shuffle_;
+    bool is_training_;
+    bool drop_last_ = false;
+    int num_workers_ = 0;
+    float train_split_;
+    float val_split_ = 0.0f;
+    BatcherPhase split_phase_ = BatcherPhase::Train;
+    std::string partition_column_;
+    int partition_value_ = 0;
+    std::shared_ptr<const ParquetRowSplit> row_split_;
+
+    // Column layout (populated by InitializeColumns at construction)
+    std::vector<int> feature_cols_;   // column indices that carry feature data
+    int label_col_idx_ = -1;          // column index of the label column, -1 = none
+    std::vector<int> label_col_indices_;  // ordered regression target columns
+    size_t num_features_ = 0;
+
+    // Row group assignment: which row groups this batcher is allowed to read
+    std::vector<int> assigned_row_groups_;
+
+    // Shuffled order of row groups for this epoch (same contents as
+    // assigned_row_groups_, possibly permuted).
+    std::vector<int> epoch_group_order_;
+
+    // Current position within the epoch
+    size_t current_group_position_ = 0;  // index into epoch_group_order_
+    std::shared_ptr<arrow::Table> current_table_;
+    int64_t current_group_first_row_ = 0;      // the file row of the current table's row 0
+    std::vector<size_t> current_row_indices_;  // row order within the current table
+    size_t current_row_cursor_ = 0;            // next row to emit (index into current_row_indices_)
+
+    // Stats
+    size_t num_samples_ = 0;    // total samples in this split
+    size_t samples_served_ = 0; // samples served so far this epoch
+
+    // Preprocessing state (same semantics as ArrowDatasetBatcher)
+    bool normalize_ = false;
+    float norm_mean_ = 0.0f;
+    float norm_std_ = 1.0f;
+    bool one_hot_ = false;
+    size_t num_classes_ = 10;
+    bool flatten_ = true;
+    bool scalar_label_mode_ = false;
+    bool class_index_label_mode_ = false;
+
+    std::mt19937 rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+
+    // Class balancing (SetClassBalancing). Per class: its rows in this
+    // split, and this epoch's draw state.
+    struct BalanceClass {
+        uint64_t rows = 0;        // rows of the class in this split
+        uint64_t rows_left = 0;   // not yet read this epoch
+        uint64_t base = 0;        // copies every row gets (oversample)
+        uint64_t extra_left = 0;  // one more copy for this many of the rows left (draws, weighted_sampler)
+    };
+    bool balancing_ = false;
+    std::string balance_mode_;
+    std::string balance_target_;
+    uint32_t balance_seed_ = 0;
+    uint32_t balance_epoch_ = 0;
+    std::unordered_map<std::string, uint32_t> balance_ids_;  // label value -> class
+    std::vector<BalanceClass> balance_classes_;
+    std::mt19937_64 balance_rng_;
+    bool CountBalanceClasses();        // false: fewer than two classes, or the labels cannot be read
+    void StartBalancedEpoch();         // this epoch's draw; sets num_samples_
+    void BalanceCurrentGroupRows();    // repeats current_row_indices_ by the draw
+
+    // Helpers
+    void InitializeColumns();
+    void AssignRowGroups();
+    void ShuffleEpochGroupOrder();
+    bool LoadNextRowGroup();  // returns false if no more groups
+    size_t CountPartitionRowsInGroup(int row_group_idx) const;
+    // Text class labels map through this (TOFIX145); nullptr for numeric labels.
+    std::shared_ptr<const LabelVocabulary> label_vocabulary_;
+};
+
+} // namespace cyxwiz

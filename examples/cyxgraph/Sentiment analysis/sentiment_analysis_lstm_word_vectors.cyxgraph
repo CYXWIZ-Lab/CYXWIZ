@@ -1,0 +1,382 @@
+{
+  "annotations": [
+    {
+      "id": 1,
+      "title": "How this graph works",
+      "content": "Two branches start at the Data Input.\n1. Word vectors (top): a preparation step. It trains word2vec on the posts and saves one vector per vocabulary token. It is not wired to the model: the saved file is the connection.\n2. Training (bottom): Tokenizer -> Split -> Loader -> Embedding -> LSTM -> Dense -> CrossEntropy -> AdamW. The Embedding loads the saved vectors as its starting weights.\nThe Tokenizer, the Word vectors node and the Embedding share one vocabulary file (sentiment_analysis_vocab.txt, 5,000 tokens), so row i of the vectors is the vector of token id i.\nRun the Word vectors node first, then Train. Result 2026-10-14 (GTX 1050 Ti): best validation accuracy 73.8% (early stop at epoch 10).",
+      "pos_x": -60.0,
+      "pos_y": -520.0,
+      "width": 900.0,
+      "height": 230.0,
+      "minimized": false
+    },
+    {
+      "id": 2,
+      "title": "The vocabulary file",
+      "content": "Made by prepare_sentiment_analysis_demo.py (examples/cyxgraph/Sentiment analysis):\n- each post lowercased and split into words AND single punctuation marks (regex [A-Za-z0-9_]+ | [^\\w\\s]), so ',' '.' '?' are tokens too;\n- tokens counted over all posts; kept if seen at least 5 times;\n- sorted most frequent first (ties A-Z), cut to 5,000 including the 4 special tokens;\n- written one per line: line number = token id. [PAD]=0, [UNK]=1, [BOS]=2, [EOS]=3, then i, '.', to, and, ',', the, my ...\nThe Tokenizer reads it to turn words into ids; the Word vectors node reads it to order its rows.",
+      "pos_x": 980.0,
+      "pos_y": -520.0,
+      "width": 820.0,
+      "height": 230.0,
+      "minimized": false
+    },
+    {
+      "id": 3,
+      "title": "Word vectors node vs Embedding layer",
+      "content": "Word vectors: data preparation, runs once before training, learns from neighbouring words without labels, output is a file that does not change during training.\nEmbedding: part of the model, runs on every batch, learns from the sentiment labels through the loss, its numbers keep changing (Freeze off).\nThe word vectors are a general dictionary built from all the posts; the Embedding is the model's own copy, refined for telling the 7 labels apart. Random start (Weights: Random) is the comparison to see what the word vectors add.",
+      "pos_x": 1880.0,
+      "pos_y": -520.0,
+      "width": 820.0,
+      "height": 230.0,
+      "minimized": false
+    }
+  ],
+  "data_boundary_version": 2,
+  "data_validator_contract_version": 2,
+  "evaluation_table_contract_version": 2,
+  "execution_mode": 0,
+  "framework": 0,
+  "groups": [],
+  "links": [
+    {
+      "from_node": 1,
+      "from_pin_index": 0,
+      "id": 1,
+      "link_type": 0,
+      "to_node": 3,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 1,
+      "from_pin_index": 0,
+      "id": 2,
+      "link_type": 0,
+      "to_node": 2,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 3,
+      "from_pin_index": 0,
+      "id": 3,
+      "link_type": 0,
+      "to_node": 4,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 4,
+      "from_pin_index": 0,
+      "id": 4,
+      "link_type": 0,
+      "to_node": 5,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 5,
+      "from_pin_index": 0,
+      "id": 5,
+      "link_type": 0,
+      "to_node": 6,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 6,
+      "from_pin_index": 0,
+      "id": 6,
+      "link_type": 0,
+      "to_node": 7,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 7,
+      "from_pin_index": 0,
+      "id": 7,
+      "link_type": 0,
+      "to_node": 8,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 8,
+      "from_pin_index": 0,
+      "id": 8,
+      "link_type": 0,
+      "to_node": 9,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 9,
+      "from_pin_index": 0,
+      "id": 9,
+      "link_type": 0,
+      "to_node": 10,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 10,
+      "from_pin_index": 0,
+      "id": 10,
+      "link_type": 0,
+      "to_node": 11,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 11,
+      "from_pin_index": 0,
+      "id": 11,
+      "link_type": 0,
+      "to_node": 12,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 5,
+      "from_pin_index": 1,
+      "id": 12,
+      "link_type": 0,
+      "to_node": 12,
+      "to_pin_index": 1
+    },
+    {
+      "from_node": 12,
+      "from_pin_index": 0,
+      "id": 13,
+      "link_type": 0,
+      "to_node": 13,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 13,
+      "from_pin_index": 0,
+      "id": 14,
+      "link_type": 0,
+      "to_node": 14,
+      "to_pin_index": 0
+    }
+  ],
+  "nodes": [
+    {
+      "category": 0,
+      "description": "sentiment_mental_health.csv: 53,043 posts.\n'statement' = the text, 'status' = one of 7 labels.\nFeeds the Tokenizer (training) and Word vectors (side branch).",
+      "id": 1,
+      "name": "Sentiment CSV",
+      "parameters": {
+        "source_type": "file",
+        "file_category": "text",
+        "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+        "text_column": "statement",
+        "text_label_column": "status",
+        "text_tokenizer_type": "1",
+        "text_max_length": "64",
+        "text_lowercase": "true",
+        "text_min_freq": "5",
+        "text_max_vocab_size": "5000"
+      },
+      "pos_x": 0.0,
+      "pos_y": 300.0,
+      "type": 157
+    },
+    {
+      "category": 0,
+      "description": "word2vec, skip-gram, 100 values per word, 2 epochs.\nLearns from which words appear near each other (no labels).\nLines its rows up with the vocabulary file, saves\nartifacts/word_embeddings/sentiment_word_vectors.vec.\nRun it first (Train in its dialog).",
+      "id": 2,
+      "name": "Word vectors (word2vec)",
+      "parameters": {
+        "source": "word2vec",
+        "text_col": "statement",
+        "vocab_file": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt",
+        "architecture": "skipgram",
+        "vector_size": "100",
+        "window": "5",
+        "min_count": "5",
+        "negative": "5",
+        "epochs": "2",
+        "train_seed": "1",
+        "vectors_path": "artifacts/word_embeddings/sentiment_word_vectors.vec",
+        "row_vectors": "false"
+      },
+      "pos_x": 250.0,
+      "pos_y": 60.0,
+      "type": 266
+    },
+    {
+      "category": 0,
+      "description": "Word mode: lowercase, split into words.\nEach word -> its id in sentiment_analysis_vocab.txt\n(unknown -> 1); every post cut/padded to 64 ids.\nOutput: 64 id columns + the label as a class number.",
+      "id": 3,
+      "name": "Tokenizer (word)",
+      "parameters": {
+        "tokenizer_type": "1",
+        "max_length": "64",
+        "lowercase": "true",
+        "min_freq": "5",
+        "max_vocab_size": "5000",
+        "text_col": "statement",
+        "label_col": "status",
+        "source_csv": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+        "min_word_freq": "5",
+        "vocab_file": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt",
+        "vocab_build_if_missing": "true",
+        "padding": "true",
+        "truncation": "true",
+        "pad_value": "0"
+      },
+      "pos_x": 250.0,
+      "pos_y": 300.0,
+      "type": 135
+    },
+    {
+      "category": 0,
+      "description": "80% train / 10% validation / 10% test,\nstratified by label (seed 42).",
+      "id": 4,
+      "name": "Split 80/10/10",
+      "parameters": {
+        "train_ratio": "0.8",
+        "val_ratio": "0.1",
+        "test_ratio": "0.1",
+        "stratified": "true",
+        "seed": "42"
+      },
+      "pos_x": 1000.0,
+      "pos_y": 300.0,
+      "type": 106
+    },
+    {
+      "category": 0,
+      "description": "Batches of 64 posts: a 64 x 64 grid of ids\nplus their labels.",
+      "id": 5,
+      "name": "DataLoader",
+      "parameters": {
+        "batch_size": "64",
+        "epochs": "20",
+        "shuffle": "true",
+        "drop_last": "false",
+        "num_workers": "4",
+        "seed": "42",
+        "validation_freq": "1"
+      },
+      "pos_x": 1250.0,
+      "pos_y": 300.0,
+      "type": 104
+    },
+    {
+      "category": 0,
+      "description": "A trainable table, 5,000 rows x 100 numbers.\nEach id -> its row: a post becomes 64 vectors.\nStarts from the Word vectors file (Weights: From a\nWord Embeddings node), then keeps learning (Freeze off).",
+      "id": 6,
+      "name": "Embedding (word2vec vectors)",
+      "parameters": {
+        "num_embeddings": "5000",
+        "embedding_dim": "100",
+        "padding_idx": "0",
+        "max_norm": "0",
+        "freeze": "false",
+        "init_mode": "normal",
+        "weights_file": "artifacts/word_embeddings/sentiment_word_vectors.vec",
+        "output_weights_file": ""
+      },
+      "pos_x": 1500.0,
+      "pos_y": 300.0,
+      "type": 21
+    },
+    {
+      "category": 0,
+      "description": "Reads the 64 vectors in order and keeps\none summary of the post (the last state).",
+      "id": 7,
+      "name": "LSTM (last state, placement-probed)",
+      "parameters": {
+        "hidden_size": "32",
+        "num_layers": "1",
+        "bidirectional": "false",
+        "return_sequences": "false"
+      },
+      "pos_x": 1750.0,
+      "pos_y": 300.0,
+      "type": 17
+    },
+    {
+      "category": 0,
+      "description": "",
+      "id": 8,
+      "name": "Dense 64",
+      "parameters": {
+        "units": "64"
+      },
+      "pos_x": 2000.0,
+      "pos_y": 300.0,
+      "type": 0
+    },
+    {
+      "category": 0,
+      "description": "",
+      "id": 9,
+      "name": "ReLU",
+      "parameters": {},
+      "pos_x": 2250.0,
+      "pos_y": 300.0,
+      "type": 29
+    },
+    {
+      "category": 0,
+      "description": "",
+      "id": 10,
+      "name": "Dropout",
+      "parameters": {
+        "rate": "0.25"
+      },
+      "pos_x": 2500.0,
+      "pos_y": 300.0,
+      "type": 14
+    },
+    {
+      "category": 0,
+      "description": "7 scores, one per label.",
+      "id": 11,
+      "name": "Dense 7",
+      "parameters": {
+        "units": "7"
+      },
+      "pos_x": 2750.0,
+      "pos_y": 300.0,
+      "type": 0
+    },
+    {
+      "category": 0,
+      "description": "Compares the 7 scores with the true label.",
+      "id": 12,
+      "name": "CrossEntropy",
+      "parameters": {
+        "reduction": "mean",
+        "label_smoothing": "0.05"
+      },
+      "pos_x": 3500.0,
+      "pos_y": 300.0,
+      "type": 73
+    },
+    {
+      "category": 0,
+      "description": "Updates every weight, the Embedding's included.",
+      "id": 13,
+      "name": "AdamW",
+      "parameters": {
+        "learning_rate": "0.001",
+        "weight_decay": "0.01",
+        "beta1": "0.9",
+        "beta2": "0.999",
+        "epsilon": "1e-8"
+      },
+      "pos_x": 3750.0,
+      "pos_y": 300.0,
+      "type": 82
+    },
+    {
+      "category": 0,
+      "description": "",
+      "id": 14,
+      "name": "Output",
+      "parameters": {
+        "num_classes": "7"
+      },
+      "pos_x": 4000.0,
+      "pos_y": 300.0,
+      "type": 71
+    }
+  ],
+  "version": "2.1",
+  "workflow_description": "Sentiment (7 labels) classifier whose Embedding starts from word2vec vectors trained on the same posts. Run the Word vectors node first (its dialog > Train), then Train. Notes on the canvas explain each node, the vocabulary file and word vectors versus the Embedding."
+}

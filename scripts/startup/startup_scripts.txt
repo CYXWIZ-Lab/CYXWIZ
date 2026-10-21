@@ -1,0 +1,6 @@
+# CyxWiz startup scripts (one path per line).
+# The public default is intentionally empty. Enable only scripts you trust.
+#
+# Example paths after building:
+# scripts/startup/welcome.cyx
+# scripts/startup/init_imports.cyx

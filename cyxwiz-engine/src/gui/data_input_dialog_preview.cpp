@@ -1,0 +1,369 @@
+// DataInputDialog preview rendering.
+
+#include "node_config_dialog.h"
+#include "data_input_preview.h"
+#include "data_preview_table_renderer.h"
+#include "ui_buttons.h"
+#include "ui_tokens.h"
+#include "../core/async_task_manager.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <string>
+
+namespace fs = std::filesystem;
+
+namespace gui {
+
+void DataInputDialog::RenderPreviewPanel() {
+    if (IsHdf5Source()) {
+        SyncHdf5InspectorSource();
+        hdf5_inspector_.RenderPreview();
+        return;
+    }
+    namespace ui = cyxwiz::ui;
+    // Shown, the tab reads its rows: the whole loaded dataset after Apply,
+    // else a sample from the start of the file (board 7: it emptied to a
+    // "Load Preview" button after Apply).
+    if (!preview_loaded_ && IsPreviewSupported() && (file_path_[0] || folder_path_[0])) LoadPreview();
+    if (preview_loaded_) {
+        if (ui::SecondaryButton("Refresh preview", true, nullptr, ui::ButtonSize::Small)) LoadPreview();
+        ImGui::Spacing();
+    }
+
+    if (file_category_ == FileCategory::Text && !CanPageRegisteredPreview() &&
+        text_layout_ == TextLayout::SingleFile && detected_type_ <= 2) {
+        ImGui::SetNextItemWidth(110.0f);
+        ImGui::InputInt("Source sample rows", &preview_sample_rows_, 25, 100);
+        preview_sample_rows_ = std::clamp(preview_sample_rows_, 1, 1000);
+        ImGui::TextWrapped("Load or Refresh to read this many data rows from the start of the file "
+                           "(up to 1000). Apply to browse the complete loaded dataset.");
+    }
+
+    if (!preview_loaded_) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", IsPreviewSupported() ? "Choose a file or folder in Source; its rows show here."
+                                                       : PreviewUnavailableMessage());
+        ImGui::PopTextWrapPos();
+        return;
+    } else if (!preview_error_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", preview_error_.c_str());
+        ImGui::PopTextWrapPos();
+        if (preview_is_paged_ && preview_failed_offset_ >= 0) {
+            if (ui::LinkButton("Retry")) {
+                const int64_t retry_offset = preview_failed_offset_;
+                preview_failed_offset_ = -1;
+                preview_error_.clear();
+                RequestPreviewPage(retry_offset);
+            }
+        }
+    } else if (preview_is_paged_ && preview_columns_.empty()) {
+        ImGui::TextDisabled("Loading the first preview page...");
+    } else {
+        switch (file_category_) {
+            case FileCategory::Tabular: RenderTabularPreview(); break;
+            case FileCategory::Image:   RenderImagePreview(); break;
+            case FileCategory::Audio:   RenderAudioPreview(); break;
+            case FileCategory::Text:    RenderTextPreview(); break;
+            default: RenderTabularPreview(); break;
+        }
+    }
+
+    if (preview_loaded_ && estimated_ram_mb_ > 0) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Text("Est. RAM: %.1f MB", estimated_ram_mb_);
+    }
+    RenderDataPreviewCellDetails(preview_view_);
+}
+
+void DataInputDialog::RenderTabularPreview() {
+    if (preview_columns_.empty()) {
+        ImGui::TextDisabled("No data to preview");
+        return;
+    }
+
+    const std::size_t rows_in_view = preview_is_paged_
+        ? preview_page_cache_.RowCount()
+        : preview_data_.size();
+    if (preview_total_rows_ > 0) {
+        std::string backend_label;
+        if (!preview_backend_.empty()) {
+            backend_label = " (" + preview_backend_ + ")";
+        }
+        ImGui::Text("%zu columns, %zu rows %s of %lld%s",
+                    preview_columns_.size(),
+                    rows_in_view,
+                    preview_is_paged_ ? "cached" : "shown",
+                    static_cast<long long>(preview_total_rows_),
+                    backend_label.c_str());
+    } else {
+        ImGui::Text("%zu columns, %zu rows",
+                    preview_columns_.size(),
+                    rows_in_view);
+    }
+    if (preview_is_paged_) {
+        ImGui::SameLine();
+        if (preview_page_loading_) {
+            ImGui::TextDisabled("loading rows %lld-%lld...",
+                static_cast<long long>(preview_loading_offset_ + 1),
+                static_cast<long long>(preview_loading_offset_ +
+                    preview_page_cache_.PageSize()));
+            ImGui::SameLine();
+            if (cyxwiz::ui::LinkButton("Cancel")) {
+                if (preview_page_task_id_ != 0) {
+                    cyxwiz::AsyncTaskManager::Instance().Cancel(preview_page_task_id_);
+                }
+                ++preview_generation_;
+                preview_page_state_.reset();
+                preview_page_task_id_ = 0;
+                preview_page_loading_ = false;
+                preview_loading_offset_ = -1;
+                preview_failed_offset_ = -1;
+                preview_page_error_ = "Preview request cancelled";
+            }
+        } else {
+            ImGui::TextDisabled("scroll to load more");
+        }
+    }
+    ImGui::Spacing();
+
+    std::vector<cyxwiz::DataPreviewColumn> preview_schema;
+    preview_schema.reserve(preview_columns_.size());
+    for (const auto& name : preview_columns_) {
+        cyxwiz::DataPreviewColumn column;
+        column.name = name;
+        preview_schema.push_back(std::move(column));
+    }
+    const int64_t total_rows = preview_is_paged_
+        ? preview_total_rows_
+        : static_cast<int64_t>(preview_data_.size());
+    if (!preview_is_paged_) ImGui::TextWrapped("Loaded preview sample only; not the full dataset.");
+    const int64_t row_count = RenderDataPreviewControls(preview_view_, total_rows);
+    const auto table_result = RenderDataPreviewTable(
+        "data_input",
+        preview_schema,
+        preview_view_.offset,
+        row_count,
+        [this](int64_t row_index) -> const DataPreviewRow* {
+            if (preview_is_paged_) {
+                return preview_page_cache_.FindRow(row_index);
+            }
+            if (row_index < 0 ||
+                row_index >= static_cast<int64_t>(preview_data_.size())) {
+                return nullptr;
+            }
+            return &preview_data_[static_cast<size_t>(row_index)];
+        },
+        ImVec2(0, std::max(160.0f, ImGui::GetContentRegionAvail().y - 30)),
+        true, file_category_ == FileCategory::Text ? text_column_ : nullptr, &preview_view_);
+    const int64_t first_missing_row = table_result.first_missing_row;
+    const int64_t last_visible_row = table_result.last_visible_row;
+
+    if (preview_is_paged_ && !preview_page_loading_) {
+        if (first_missing_row >= 0) {
+            RequestPreviewPage(first_missing_row);
+        } else if (last_visible_row >= 0) {
+            const int64_t page_offset =
+                preview_page_cache_.AlignOffset(last_visible_row);
+            const int64_t next_offset =
+                page_offset + preview_page_cache_.PageSize();
+            const bool near_page_end =
+                last_visible_row + 20 >= next_offset;
+            if (near_page_end && next_offset < preview_total_rows_) {
+                RequestPreviewPage(next_offset);
+            }
+        }
+    }
+
+    if (!preview_page_error_.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().caution,
+                           "%s", preview_page_error_.c_str());
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Retry")) {
+            const int64_t retry_offset = preview_failed_offset_;
+            preview_failed_offset_ = -1;
+            RequestPreviewPage(retry_offset);
+        }
+    }
+}
+
+void DataInputDialog::RenderImagePreview() {
+    if (preview_image_textures_.empty()) {
+        ImGui::TextWrapped("%s", PreviewUnavailableMessage());
+        return;
+    }
+
+    ImGui::Text("%zu images", preview_image_textures_.size());
+    ImGui::Spacing();
+
+    float thumb_size = 64.0f;
+    float avail_width = ImGui::GetContentRegionAvail().x;
+    int cols = std::max(1, static_cast<int>(avail_width / (thumb_size + 8)));
+
+    int idx = 0;
+    for (ImTextureID tex_id : preview_image_textures_) {
+        if (idx > 0 && (idx % cols) != 0) {
+            ImGui::SameLine();
+        }
+
+        ImGui::BeginGroup();
+        ImGui::Image(tex_id, ImVec2(thumb_size, thumb_size));
+        if (idx < static_cast<int>(preview_image_labels_.size())) {
+            ImGui::TextDisabled("%s", preview_image_labels_[idx].c_str());
+        }
+        ImGui::EndGroup();
+
+        idx++;
+        if (idx >= 12) break;
+    }
+}
+
+void DataInputDialog::RenderAudioPreview() {
+    ImGui::TextWrapped("%s", PreviewUnavailableMessage());
+}
+
+void DataInputDialog::RenderTextPreview() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+
+    if (text_layout_ == TextLayout::CorpusSubdirs && !preview_is_paged_) {
+        // The folder scan from Source (once per folder, not per frame).
+        if (folder_scan_path_ != folder_path_) RescanFolder();
+        ImGui::Text("%zu class folders, %d text files", folder_scan_.class_names.size(), folder_scan_.files);
+        ImGui::TextDisabled("Each class folder's name is the label. Apply reads the texts; then this tab shows "
+                            "them all.");
+        return;
+    }
+
+    if (preview_columns_.empty()) {
+        ImGui::TextDisabled("No rows to show yet.");
+        return;
+    }
+
+    auto col_exists = [&](const std::string& name) {
+        if (name.empty()) return false;
+        for (const auto& c : preview_columns_) if (c == name) return true;
+        return false;
+    };
+
+    ImGui::PushTextWrapPos(0.0f);
+
+    std::string text_col_str = text_column_;
+    std::string label_col_str = text_label_column_;
+    ImVec4 ok_color  = t.success;
+    ImVec4 err_color = t.error;
+
+    ImGui::Text("Text:  ");
+    ImGui::SameLine();
+    if (text_col_str.empty()) {
+        ImGui::TextColored(err_color, "(not set)");
+    } else if (col_exists(text_col_str)) {
+        ImGui::TextColored(ok_color, "%s", text_col_str.c_str());
+    } else {
+        ImGui::TextColored(err_color, "%s (not in file)", text_col_str.c_str());
+    }
+
+    ImGui::Text("Label: ");
+    ImGui::SameLine();
+    if (label_col_str.empty()) {
+        ImGui::TextDisabled("(unlabeled)");
+    } else if (col_exists(label_col_str)) {
+        ImGui::TextColored(ok_color, "%s", label_col_str.c_str());
+    } else {
+        ImGui::TextColored(err_color, "%s (not in file)", label_col_str.c_str());
+    }
+
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    if (!preview_is_paged_) {
+        ImGui::Text("%zu columns, %zu source sample rows", preview_columns_.size(), preview_data_.size());
+        ImGui::TextWrapped("This is the beginning of the file, not a representative sample. "
+                           "Apply to browse all loaded rows and calculate the full class distribution.");
+    }
+    ImGui::Spacing();
+
+    if (col_exists(label_col_str)) {
+        if (!preview_is_paged_ && label_distribution_column_ != label_col_str) {
+            UpdateTextLabelDistribution();
+        }
+        if (ImGui::CollapsingHeader(preview_is_paged_
+                ? "Class distribution (loaded dataset)" : "Class distribution (source sample)")) {
+            const float height = std::clamp(ImGui::GetContentRegionAvail().y * 0.35f,
+                                            70.0f, 150.0f);
+            if (ImGui::BeginChild("PreviewClassDistribution", ImVec2(0, height))) {
+                RenderTextLabelDistribution();
+            }
+            ImGui::EndChild();
+        }
+    }
+
+    if (preview_is_paged_) {
+        RenderTabularPreview();
+        return;
+    }
+    std::vector<cyxwiz::DataPreviewColumn> columns;
+    columns.reserve(preview_columns_.size());
+    for (const auto& name : preview_columns_) {
+        cyxwiz::DataPreviewColumn column;
+        column.name = name;
+        columns.push_back(std::move(column));
+    }
+    ImGui::TextWrapped("Loaded preview sample only. Click a cell to read it; right-click to copy.");
+    const int64_t rows = RenderDataPreviewControls(preview_view_, static_cast<int64_t>(preview_data_.size()));
+    RenderDataPreviewTable("TextPreview", columns, preview_view_.offset, rows,
+        [this](int64_t row) -> const DataPreviewRow* {
+            return &preview_data_[static_cast<size_t>(row)];
+        }, ImVec2(0, std::max(120.0f, ImGui::GetContentRegionAvail().y - 30.0f)),
+        true, text_column_, &preview_view_);
+}
+
+void DataInputDialog::UpdateTextLabelDistribution() {
+    const auto distribution = data_input::ComputeLabelDistribution(
+        preview_columns_,
+        preview_data_,
+        text_label_column_);
+    label_distribution_ = distribution.values;
+    label_distribution_column_ = distribution.column;
+    label_distribution_total_ = distribution.total;
+}
+
+void DataInputDialog::RenderTextLabelDistribution() {
+    if (!label_distribution_error_.empty()) {
+        ImGui::TextWrapped("Class distribution unavailable: %s", label_distribution_error_.c_str());
+        return;
+    }
+    if (label_distribution_.empty() || label_distribution_total_ == 0) {
+        ImGui::TextDisabled("No label distribution available for preview rows.");
+        return;
+    }
+
+    ImGui::TextWrapped("%zu classes in %zu rows (%s)", label_distribution_.size(),
+        label_distribution_total_, preview_is_paged_ ? "full loaded dataset" : "beginning-of-file sample only");
+
+    size_t max_count = 1;
+    for (const auto& [_, count] : label_distribution_) {
+        max_count = std::max(max_count, count);
+    }
+
+    const size_t max_rows = label_distribution_.size();
+    for (size_t i = 0; i < max_rows; ++i) {
+        const auto& [label, count] = label_distribution_[i];
+        float fraction = static_cast<float>(count) / static_cast<float>(max_count);
+        float pct = 100.0f * static_cast<float>(count) /
+                    static_cast<float>(label_distribution_total_);
+
+        ImGui::TextWrapped("%s", label.c_str());
+        char summary[64];
+        snprintf(summary, sizeof(summary), "%zu (%.1f%%)", count, pct);
+        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), summary);
+    }
+
+}
+
+} // namespace gui

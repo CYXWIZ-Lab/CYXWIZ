@@ -4,16 +4,20 @@
 #include "../../core/model_format.h"
 #include "../../core/model_exporter.h"
 #include <string>
+#include <vector>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <thread>
+#include <optional>
+#include <cyxwiz/device.h>
 #include <atomic>
 #include <mutex>
 
 namespace cyxwiz {
 
 // Forward declarations
-class SequentialModel;
+class IExecutableModel;
 class Optimizer;
 struct TrainingMetrics;
 
@@ -29,20 +33,34 @@ public:
     void Render() override;
 
     // Dialog control
-    void Open();
+    void Open(ModelFormat initial_format = ModelFormat::CyxModel);
     void Close();
     bool IsOpen() const { return is_open_; }
 
-    // Set model data for export
+    // Set model data for export (a layer stack or a graph with branches; the
+    // dialog shares its ownership while it may export it).
     void SetModelData(
-        SequentialModel* model,
+        std::shared_ptr<IExecutableModel> model,
         const Optimizer* optimizer,
         const TrainingMetrics* metrics,
-        const std::string& graph_json
+        const std::string& graph_json,
+        uint64_t graph_hash,
+        const ExportOptions& trained_metadata = {},
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
 
+    // The graph the model was trained from (its name prefills the file and the
+    // model name).
+    void SetSourceGraph(const std::string& graph_path) { graph_path_ = graph_path; }
+
     // Callbacks
-    using ExportCompleteCallback = std::function<void(const ExportResult&)>;
+    using ExportCompleteCallback = std::function<void(
+        const ExportResult&,
+        const ExportOptions&,
+        uint64_t,
+        const std::string&,
+        bool,
+        bool)>;
     void SetExportCompleteCallback(ExportCompleteCallback callback) {
         export_complete_callback_ = callback;
     }
@@ -54,24 +72,30 @@ private:
     void RenderProgress();
     void RenderButtons();
 
-    // File dialog helper
-    std::string SaveFileDialog(const char* filter, const char* default_ext);
-
     // Start export in background thread
     void StartExport();
 
     // State
     bool is_open_ = false;
 
-    // Model data (non-owning pointers)
-    SequentialModel* model_ = nullptr;
+    // Model data (the optimizer and metrics are not owned)
+    std::shared_ptr<IExecutableModel> model_;
+    bool LayerStack() const;
+    // A layer is an extension node (TOFIX125 P6).
+    bool HasExtensionModules() const;
+    // ONNX can describe the model: built-in layers only.
+    bool OnnxWritable() const;
+    std::optional<ProcessDeviceSelection> model_device_;
     const Optimizer* optimizer_ = nullptr;
     const TrainingMetrics* metrics_ = nullptr;
     std::string graph_json_;
+    uint64_t graph_hash_ = 0;
+    std::string graph_path_;
 
     // Export settings
     ModelFormat selected_format_ = ModelFormat::CyxModel;
     ExportOptions export_options_;
+    ExportOptions trained_metadata_;
 
     // UI buffers
     char output_path_[512] = "";
@@ -80,12 +104,9 @@ private:
     char description_[1024] = "";
 
     // Options
-    bool include_optimizer_state_ = true;
     bool include_training_history_ = true;
     bool include_graph_ = true;
-    int quantization_index_ = 0;
     int opset_version_ = 17;
-    bool compress_ = true;
 
     // Export state
     std::atomic<bool> is_exporting_{false};
@@ -97,6 +118,12 @@ private:
 
     ExportResult last_result_;
     bool show_result_ = false;
+    std::atomic<bool> completion_pending_{false};
+    ExportOptions completed_export_options_;
+    uint64_t completed_graph_hash_ = 0;
+    std::string completed_graph_json_;
+    bool completed_optimizer_available_ = false;
+    bool completed_metrics_available_ = false;
 
     // Callbacks
     ExportCompleteCallback export_complete_callback_;

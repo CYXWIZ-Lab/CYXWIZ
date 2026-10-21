@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 #include "api_export.h"
@@ -11,6 +13,13 @@ namespace cyxwiz {
 
 namespace cyxwiz {
 
+/**
+ * @brief Minimal legacy base for direct Layer-owned models.
+ *
+ * New backend training/runtime integrations should prefer
+ * SequentialModel + Module from sequential.h. This base remains for
+ * compatibility with code that wants to own raw Layer primitives directly.
+ */
 class CYXWIZ_API Model {
 public:
     Model() = default;

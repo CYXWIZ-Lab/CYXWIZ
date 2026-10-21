@@ -1,5 +1,7 @@
 #pragma once
 
+#include "executable_model.h"
+
 #include "model_format.h"
 #include "formats/cyxmodel_format.h"
 #include <cyxwiz/sequential.h>
@@ -43,7 +45,7 @@ public:
      * @return ExportResult with success status and details
      */
     ExportResult Export(
-        SequentialModel& model,
+        IExecutableModel& model,
         const Optimizer* optimizer,
         const TrainingMetrics* training_metrics,
         const std::string& graph_json,
@@ -53,8 +55,20 @@ public:
     );
 
     /**
-     * Export model to CyxModel format (.cyxmodel)
+     * Export model to CyxModel format (.cyxmodel). A graph with branches
+     * (GraphExecutableModel) is written with its graph, which rebuilds it
+     * (manifest model_type "GraphModel").
      */
+    ExportResult ExportCyxModel(
+        IExecutableModel& model,
+        const Optimizer* optimizer,
+        const TrainingMetrics* training_metrics,
+        const std::string& graph_json,
+        const std::string& output_path,
+        const ExportOptions& options,
+        ProgressCallback progress_cb = nullptr
+    );
+    // A layer stack, as above.
     ExportResult ExportCyxModel(
         SequentialModel& model,
         const Optimizer* optimizer,
@@ -67,7 +81,7 @@ public:
 
     /**
      * Export model to ONNX format (.onnx)
-     * Note: Requires CYXWIZ_HAS_ONNX compile flag
+     * Note: Requires CYXWIZ_HAS_ONNX_EXPORT compile flag
      */
     ExportResult ExportONNX(
         SequentialModel& model,
@@ -80,7 +94,7 @@ public:
      * Export model to Safetensors format (.safetensors)
      */
     ExportResult ExportSafetensors(
-        SequentialModel& model,
+        IExecutableModel& model,
         const std::string& output_path,
         const ExportOptions& options,
         ProgressCallback progress_cb = nullptr
@@ -144,12 +158,26 @@ private:
     // Helper to get tensor shape as int64 vector
     std::vector<int64_t> GetTensorShape(const Tensor& tensor);
 
-    // Helper to count total parameters
-    int CountParameters(SequentialModel& model);
+    // The .cyxmodel writer both ExportCyxModel overloads use: the model's
+    // parameters, its layer count, and whether it is a layer stack (a graph
+    // with branches needs its graph in the package).
+    ExportResult WriteCyxModel(
+        const std::map<std::string, Tensor>& params,
+        size_t layer_count,
+        bool layer_stack,
+        const Optimizer* optimizer,
+        const TrainingMetrics* training_metrics,
+        const std::string& graph_json,
+        const std::string& output_path,
+        const ExportOptions& options,
+        ProgressCallback progress_cb
+    );
 
-    // Create ModelManifest from model and options
+    // Create ModelManifest from the model's figures and options
     ModelManifest CreateManifest(
-        SequentialModel& model,
+        const std::map<std::string, Tensor>& params,
+        size_t layer_count,
+        bool layer_stack,
         const TrainingMetrics* metrics,
         const ExportOptions& options
     );

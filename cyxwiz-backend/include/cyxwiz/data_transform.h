@@ -1,24 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 #include "cyxwiz/api_export.h"
 #include <vector>
 #include <map>
 #include <string>
-#include <optional>
-#include <cmath>
 
 namespace cyxwiz {
+
+// Column transforms, column statistics and the normality test behind the data
+// transformation panels. Everything runs on ArrayFire on the active device (its
+// CPU backend is the CPU option).
+// Each input column is a std::vector<double>; columns may differ in length.
 
 // Result structure for all transforms
 struct CYXWIZ_API TransformResult {
     std::vector<std::vector<double>> transformed_data;
-    std::map<std::string, double> params;  // Store for inverse transform
+    std::map<std::string, double> params;  // fitted values per column (col<i>_<name>)
     std::string method;
     bool success = false;
     std::string error_message;
 };
 
-// Statistics for a single column
+// Statistics for a single column. Standard deviation is the population one (divide
+// by n), as Standardize uses; percentiles interpolate linearly (numpy "linear").
+// count is 0 and error_message is set when the column could not be summarised.
 struct CYXWIZ_API ColumnStats {
     double min = 0.0;
     double max = 0.0;
@@ -28,141 +35,163 @@ struct CYXWIZ_API ColumnStats {
     double q1 = 0.0;  // 25th percentile
     double q3 = 0.0;  // 75th percentile
     double iqr = 0.0; // Interquartile range
+    double skewness = 0.0;  // Moment skewness m3 / m2^1.5 (scipy.stats.skew); 0 for constant data
     int count = 0;
-    bool has_negatives = false;
-    bool has_zeros = false;
+    std::string error_message;
 };
 
-// Box-Cox lambda finder result
+// Maximum-likelihood lambda search (Box-Cox or Yeo-Johnson). lambdas_tested and
+// log_likelihoods are the coarse profile across [lambda_min, lambda_max];
+// optimal_lambda is refined beyond the grid spacing.
 struct CYXWIZ_API BoxCoxLambdaResult {
     double optimal_lambda = 0.0;
     std::vector<double> lambdas_tested;
     std::vector<double> log_likelihoods;
     double best_log_likelihood = 0.0;
     bool success = false;
+    std::string error_message;
 };
 
 // Normality test result
 struct CYXWIZ_API NormalityTestResult {
     double statistic = 0.0;
     double p_value = 0.0;
-    bool is_normal = false;  // Based on alpha = 0.05
+    bool is_normal = false;  // p_value > 0.05
+    bool computed = false;   // false: see error_message (e.g. too few values)
     std::string test_name;
+    std::string error_message;
+};
+
+// scikit-learn RobustScaler options: centre on the median, scale by the spread
+// between two percentiles (a zero spread scales by 1).
+struct CYXWIZ_API RobustScaleOptions {
+    double quantile_min = 25.0;  // percent, 0 <= quantile_min < quantile_max <= 100
+    double quantile_max = 75.0;
+    bool with_centering = true;
+    bool with_scaling = true;
+};
+
+// scikit-learn StandardScaler options.
+struct CYXWIZ_API StandardizeOptions {
+    bool with_mean = true;  // subtract the mean
+    bool with_std = true;   // divide by the population std (a zero std divides by 1)
+};
+
+// Rows flagged as outliers in one column (FindOutliers).
+struct CYXWIZ_API OutlierFlags {
+    std::vector<unsigned char> is_outlier;  // one flag per value
+    size_t count = 0;
+    bool success = false;
+    std::string error_message;
 };
 
 class CYXWIZ_API DataTransform {
 public:
     // ========== Normalization (Min-Max Scaling) ==========
-    // Transforms data to [range_min, range_max] (default [0, 1])
-    // Formula: x_scaled = (x - min) / (max - min) * (range_max - range_min) + range_min
+    // x_scaled = (x - min) / (max - min) * (range_max - range_min) + range_min
+    // (scikit-learn MinMaxScaler: a constant column maps to range_min).
     static TransformResult Normalize(const std::vector<std::vector<double>>& data,
                                      double range_min = 0.0, double range_max = 1.0);
 
-    // Normalize single column
-    static TransformResult NormalizeColumn(const std::vector<double>& data,
-                                           double range_min = 0.0, double range_max = 1.0);
-
     // ========== Standardization (Z-Score) ==========
-    // Transforms data to have mean=0 and std=1
-    // Formula: z = (x - mean) / std
-    static TransformResult Standardize(const std::vector<std::vector<double>>& data);
+    // z = (x - mean) / std, population std (scikit-learn StandardScaler). Params per
+    // column: col<i>_mean (the centre used) and col<i>_std (the scale used).
+    static TransformResult Standardize(const std::vector<std::vector<double>>& data,
+                                       const StandardizeOptions& options = {});
 
-    // Standardize single column
-    static TransformResult StandardizeColumn(const std::vector<double>& data);
+    // Standardization in batches (data bigger than memory, TOFIX154): each
+    // batch's per-column moments come from the device (Moments), merge exactly
+    // across batches (CombineMoments, Chan et al.), and give the center and
+    // scale Standardize would use on all the data (StandardizeParameters).
+    struct ColumnMoments {
+        double count = 0.0;
+        double mean = 0.0;
+        double m2 = 0.0;  // sum of squared deviations from the mean
+        double min = 0.0;
+        double max = 0.0;
+    };
+    static bool Moments(const std::vector<std::vector<double>>& data, std::vector<ColumnMoments>& moments,
+                        std::string& error);
+    static void CombineMoments(ColumnMoments& total, const ColumnMoments& batch);
+    // False (with no center/scale) for missing or non-finite values.
+    static bool StandardizeParameters(const ColumnMoments& moments, const StandardizeOptions& options,
+                                      double& center, double& scale);
+
+    // Normalize with given per-column min and max (the streamed MinMaxScaler:
+    // the extremes merged over every batch); the same formula as Normalize.
+    static TransformResult NormalizeColumns(const std::vector<std::vector<double>>& data,
+                                            const std::vector<double>& lows, const std::vector<double>& highs,
+                                            double range_min = 0.0, double range_max = 1.0);
+
+    // (x - center) / scale per column with given values (re-applying a fitted
+    // scaler); one center and one scale per column, scales non-zero.
+    static TransformResult ScaleColumns(const std::vector<std::vector<double>>& data,
+                                        const std::vector<double>& centers,
+                                        const std::vector<double>& scales);
+
+    // ========== Outliers ==========
+    // "iqr": outside [q1 - t * IQR, q3 + t * IQR] (linear quartiles); "zscore":
+    // |x - mean| / std > t (population std, scipy.stats.zscore; none when the std
+    // is 0).
+    static OutlierFlags FindOutliers(const std::vector<double>& data, const std::string& method, double threshold);
 
     // ========== Log Transforms ==========
-    // Natural log, log10, log2
-    // log1p: log(1 + x) - safe for values close to 0
+    // base "natural", "log10" or "log2"; log1p takes log(1 + x)
     static TransformResult LogTransform(const std::vector<std::vector<double>>& data,
-                                        const std::string& base = "natural",  // "natural", "log10", "log2"
+                                        const std::string& base = "natural",
                                         bool use_log1p = true);
 
-    static TransformResult LogTransformColumn(const std::vector<double>& data,
-                                              const std::string& base = "natural",
-                                              bool use_log1p = true);
-
     // ========== Box-Cox Transform ==========
-    // Power transform for positive data to achieve normality
-    // y = (x^lambda - 1) / lambda   if lambda != 0
-    // y = log(x)                    if lambda == 0
-    static TransformResult BoxCox(const std::vector<std::vector<double>>& data,
-                                  double lambda = 0.0,  // 0 = auto-find optimal
-                                  bool auto_lambda = true);
-
+    // Strictly positive data. y = (x^lambda - 1) / lambda, or log(x) at lambda 0.
+    // auto_lambda: maximum-likelihood lambda (scipy.stats.boxcox).
     static TransformResult BoxCoxColumn(const std::vector<double>& data,
                                         double lambda = 0.0,
                                         bool auto_lambda = true);
 
-    // Find optimal lambda for Box-Cox
     static BoxCoxLambdaResult FindOptimalLambda(const std::vector<double>& data,
                                                 double lambda_min = -5.0,
                                                 double lambda_max = 5.0,
                                                 int n_steps = 100);
 
     // ========== Yeo-Johnson Transform ==========
-    // Similar to Box-Cox but supports negative values
-    static TransformResult YeoJohnson(const std::vector<std::vector<double>>& data,
-                                      double lambda = 0.0,
-                                      bool auto_lambda = true);
-
+    // Any real data (scipy.stats.yeojohnson).
     static TransformResult YeoJohnsonColumn(const std::vector<double>& data,
                                             double lambda = 0.0,
                                             bool auto_lambda = true);
 
-    // ========== Robust Scaling ==========
-    // Uses median and IQR instead of mean and std
-    // More robust to outliers
-    // Formula: x_scaled = (x - median) / IQR
-    static TransformResult RobustScale(const std::vector<std::vector<double>>& data);
+    static BoxCoxLambdaResult FindOptimalYeoJohnsonLambda(const std::vector<double>& data,
+                                                          double lambda_min = -5.0,
+                                                          double lambda_max = 5.0,
+                                                          int n_steps = 100);
 
-    static TransformResult RobustScaleColumn(const std::vector<double>& data);
+    // ========== Robust Scaling ==========
+    // x_scaled = (x - median) / (q_max - q_min) (scikit-learn RobustScaler). Params per
+    // column: col<i>_median (the centre used, 0 without centering) and col<i>_iqr (the
+    // scale used, 1 without scaling or for a zero spread).
+    static TransformResult RobustScale(const std::vector<std::vector<double>>& data,
+                                       const RobustScaleOptions& options = {});
 
     // ========== Max Abs Scaling ==========
-    // Scales by maximum absolute value to [-1, 1]
-    // Formula: x_scaled = x / max(|x|)
+    // x_scaled = x / max(|x|)
     static TransformResult MaxAbsScale(const std::vector<std::vector<double>>& data);
 
-    static TransformResult MaxAbsScaleColumn(const std::vector<double>& data);
-
     // ========== Quantile Transform ==========
-    // Transform features to follow a uniform or normal distribution
+    // Maps each column through min(n_quantiles, n) empirical quantiles onto a
+    // uniform or standard normal distribution (scikit-learn QuantileTransformer,
+    // fitted on the whole column: no subsampling).
     static TransformResult QuantileTransform(const std::vector<std::vector<double>>& data,
-                                             const std::string& output_distribution = "uniform",  // "uniform" or "normal"
+                                             const std::string& output_distribution = "uniform",  // or "normal"
                                              int n_quantiles = 1000);
-
-    // ========== Power Transform ==========
-    // General power transform: y = x^power
-    static TransformResult PowerTransform(const std::vector<std::vector<double>>& data,
-                                          double power);
-
-    // ========== Inverse Transforms ==========
-    static std::vector<std::vector<double>> InverseTransform(
-        const std::vector<std::vector<double>>& data,
-        const TransformResult& original_result);
-
-    static std::vector<double> InverseTransformColumn(
-        const std::vector<double>& data,
-        const TransformResult& original_result);
 
     // ========== Statistics ==========
     static ColumnStats ComputeColumnStats(const std::vector<double>& data);
 
-    // Shapiro-Wilk normality test (for small samples < 5000)
-    static NormalityTestResult ShapiroWilkTest(const std::vector<double>& data);
-
-    // D'Agostino-Pearson normality test
+    // D'Agostino-Pearson K^2 test (scipy.stats.normaltest), at least 20 values.
     static NormalityTestResult DAgostinoPearsonTest(const std::vector<double>& data);
 
-    // ========== Utility Functions ==========
-    // Check if data can be transformed (e.g., for log, need positive values)
+    // ========== Input checks ==========
     static bool CanApplyLogTransform(const std::vector<double>& data, bool use_log1p);
     static bool CanApplyBoxCox(const std::vector<double>& data);
-
-    // Detect outliers using IQR method
-    static std::vector<int> DetectOutliers(const std::vector<double>& data, double iqr_multiplier = 1.5);
-
-    // Get percentile value
-    static double GetPercentile(std::vector<double> data, double percentile);
 };
 
 } // namespace cyxwiz

@@ -1,20 +1,30 @@
 #pragma once
 
 #include "graph_compiler.h"
+#include "metric_learning_metrics.h"
 #include "dataset_batcher.h"
 #include "data_registry.h"
+#include "test_dataset_selection.h"
+#include "executable_model.h"
 #include <cyxwiz/tensor.h>
+#include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/model_evaluation.h>
 #include <functional>
 #include <atomic>
+#include <cmath>
 #include <mutex>
 #include <memory>
 #include <vector>
 #include <string>
 #include <chrono>
+#include <optional>
 
 namespace cyxwiz {
+
+class ArrowDataset;
+class ParquetBackedDataset;
 
 /**
  * Per-class metrics for detailed analysis
@@ -53,6 +63,8 @@ struct TestingMetrics {
     int current_batch = 0;
     int total_batches = 0;
     int total_samples = 0;
+    int batch_limit = 0;      // > 0: a quick test that stops after this many batches
+    bool partial = false;     // true when the quick test stopped before the end
     int correct_predictions = 0;
 
     // Overall metrics
@@ -62,6 +74,18 @@ struct TestingMetrics {
     float macro_recall = 0.0f;
     float macro_f1 = 0.0f;
     float weighted_f1 = 0.0f;
+    bool regression_mode = false;
+    bool causal_lm_mode = false;
+    float test_mae = 0.0f;
+    float test_rmse = 0.0f;
+    size_t total_target_values = 0;
+    // Metric-learning model (TOFIX140 A5): accuracy, confusion matrix and
+    // per-class metrics are those of a 1-NN classifier over the test rows
+    // (each row takes the class of its nearest other row); the Pair /
+    // Retrieval Metrics nodes add their results.
+    bool metric_learning_mode = false;
+    std::optional<PairMetricResult> pair_metrics;
+    std::optional<RetrievalMetricResult> retrieval_metrics;
 
     // Detailed results
     ConfusionMatrix confusion_matrix;
@@ -71,6 +95,30 @@ struct TestingMetrics {
     std::vector<int> predictions;
     std::vector<int> ground_truth;
     std::vector<float> confidences;
+    // Regression: the true and predicted targets per sample, row-major
+    // [samples][regression_width]; empty when the test set has too many
+    // values to keep (regression_note says so).
+    std::vector<float> regression_truth;
+    std::vector<float> regression_predictions;
+    int regression_width = 0;
+    std::string regression_note;
+    // The dataset row of each sample (as Batch::row_ids), in the table named
+    // source_dataset; empty when the test batcher does not report rows.
+    std::vector<int64_t> row_ids;
+    std::string source_dataset;
+
+    // Per-sample class probabilities, row-major [total_samples][probability_classes]
+    // (binary: P(class 0), P(class 1)), kept for the ROC / PR curves. Empty when
+    // the test set is too large to keep them; curves_note then says so.
+    std::vector<float> class_probabilities;
+    int probability_classes = 0;
+    // ROC and precision-recall over the test set, on the device at the end:
+    // binary - the positive class (1); multi-class - one-vs-rest per class,
+    // skipping a class the test set has no sample of. curves_note says why
+    // there are no curves, or which classes were skipped.
+    std::optional<ROCCurveData> roc;
+    std::optional<PRCurveData> pr;
+    std::string curves_note;
 
     // Timing
     float total_time_seconds = 0.0f;
@@ -85,8 +133,23 @@ struct TestingMetrics {
 /**
  * Callback types for testing progress
  */
+// The end of a classifier test: per-class precision / recall / F1 from the
+// confusion matrix (a class without a name gets "Class N"), the macro and
+// support-weighted averages, accuracy, and the ROC / precision-recall curves
+// from the kept class probabilities. A test run and a test read back from its
+// per-row table (test_predictions_metrics.h) both finish with it, so every
+// view shows the same numbers.
+void FinishClassifierMetrics(TestingMetrics& m);
+
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
+
+// Test batcher built by the host when the run starts (batch size known), and
+// optional class names to label metrics with.
+struct ExternalTestSource {
+    std::function<std::unique_ptr<IBatcher>(const TrainingConfiguration& config, int batch_size)> make_batcher;
+    std::vector<std::string> class_names;
+};
 
 /**
  * TestExecutor - Runs inference on test data and computes metrics
@@ -100,11 +163,18 @@ using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 class TestExecutor {
 public:
     /**
-     * Create a test executor
-     * @param config Compiled training configuration from GraphCompiler
-     * @param dataset Dataset handle from DataRegistry
+     * Create a test executor for a host-built test batcher (e.g. DataRegistry
+     * datasets, see legacy_dataset_batchers.h).
      */
-    TestExecutor(TrainingConfiguration config, DatasetHandle dataset);
+    TestExecutor(TrainingConfiguration config, ExternalTestSource source);
+    TestExecutor(TrainingConfiguration config,
+                 std::shared_ptr<ArrowDataset> arrow_dataset,
+                 std::string label_column,
+                 TestDatasetScope dataset_scope);
+    TestExecutor(TrainingConfiguration config,
+                 std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+                 std::string label_column,
+                 TestDatasetScope dataset_scope);
 
     ~TestExecutor();
 
@@ -124,6 +194,8 @@ public:
      * Stop testing (thread-safe, cooperative cancellation)
      */
     void Stop();
+    // Quick test (TOFIX129 G3): stop after this many batches, 0 = all.
+    void SetBatchLimit(int batches) { batch_limit_ = batches; }
 
     /**
      * Check if testing is currently running
@@ -139,7 +211,14 @@ public:
      * Set a pre-trained model for testing
      * If not set, will build model from config
      */
-    void SetModel(std::shared_ptr<SequentialModel> model);
+    // Pass the recorded owner when handing off from a different thread.
+    // Omitting it means the calling thread owns the supplied model's tensors.
+    // Any trained model: sequential or a graph with branches (TOFIX157).
+    void SetModel(std::shared_ptr<IExecutableModel> model,
+                  std::optional<ProcessDeviceSelection> model_device = std::nullopt);
+    // A layer stack someone else holds (shared, not copied).
+    void SetModel(std::shared_ptr<SequentialModel> model,
+                  std::optional<ProcessDeviceSelection> model_device = std::nullopt);
 
     /**
      * Get the testing configuration
@@ -148,18 +227,29 @@ public:
 
 private:
     TrainingConfiguration config_;
-    DatasetHandle dataset_;
+    std::shared_ptr<ArrowDataset> arrow_dataset_;
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
+    ExternalTestSource external_source_;
+    bool use_arrow_dataset_ = false;
+    bool use_parquet_dataset_ = false;
+    TestDatasetScope dataset_scope_ =
+        TestDatasetScope::ConfiguredTestSplit;
+    std::string arrow_label_column_;
+    std::string parquet_label_column_;
 
     // Thread safety
     std::atomic<bool> is_testing_{false};
     std::atomic<bool> stop_requested_{false};
+    int batch_limit_ = 0;
 
     mutable std::mutex metrics_mutex_;
     TestingMetrics metrics_;
 
     // Model and loss (no optimizer needed for testing)
-    std::shared_ptr<SequentialModel> model_;
+    std::shared_ptr<IExecutableModel> model_;
+    std::optional<ProcessDeviceSelection> model_device_;
     std::unique_ptr<Loss> loss_;
+    RegressionMetricAccumulator regression_metrics_;
 
     // Internal methods
 
@@ -167,6 +257,8 @@ private:
      * Initialize testing components
      */
     bool Initialize(int batch_size);
+    void TestImpl(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
+    void TestCausalSequence(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
 
     /**
      * Build model from configuration if not already set
@@ -177,16 +269,11 @@ private:
      * Process a single batch
      */
     void ProcessBatch(const Batch& batch);
+    // Metric-learning models: the loss over the builder's pairs / triplets and
+    // the 1-NN / Pair / Retrieval evaluation of the test rows.
+    void TestMetricLearning(IBatcher& rows, int batch_size);
 
-    /**
-     * Compute per-class metrics from confusion matrix
-     */
-    void ComputePerClassMetrics();
-
-    /**
-     * Compute macro and weighted averages
-     */
-    void ComputeAggregateMetrics();
+    void ApplyLabelClassNames(const std::vector<std::string>& names);
 
     /**
      * Update metrics (thread-safe)
@@ -207,16 +294,6 @@ private:
      * Compute loss between predictions and targets
      */
     float ComputeLoss(const Tensor& predictions, const Tensor& targets);
-
-    /**
-     * Get the predicted class (argmax)
-     */
-    int ArgMax(const float* data, size_t size);
-
-    /**
-     * Get confidence (softmax probability) for predicted class
-     */
-    float GetConfidence(const float* data, size_t size, int predicted_class);
 
     /**
      * Apply preprocessing to batch data

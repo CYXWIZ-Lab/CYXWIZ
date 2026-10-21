@@ -1,21 +1,34 @@
 #include "application.h"
+#include "gui/appearance_settings.h"
 #include "gui/main_window.h"
+#include "gui/node_editor.h"
 #include "gui/console.h"
-#include "gui/console_sink.h"
+#include "gui/display_density.h"
+#include "gui/editor_fonts.h"
+#include "gui/ui_fonts.h"
+#include "gui/ui_buttons.h"
+#include "gui/ui_tokens.h"
+#include "gui/panel_memory.h"
+#include "gui/separate_windows.h"
+#include "gui/ui_widgets.h"
 #include "gui/theme.h"
-#include "gui/dialogs/python_setup_wizard.h"
+#include "gui/dialogs/python_setup_dialog.h"
 #include "gui/dialogs/start_page.h"
 #include "auth/auth_client.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
+#include "core/data_budget.h"
 #include "core/data_registry.h"
+#include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
 #include "core/engine_config.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
 
+#include <chrono>
+#include <cmath>
 #include <cstdlib>  // for _exit()
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -35,10 +48,17 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <imgui.h>
+#include <imgui_internal.h>  // ErrorRecoveryStoreState / ErrorRecoveryTryToRecoverState
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
+#include <implot_internal.h>
+#include <implot3d.h>
+#include <implot3d_internal.h>
+#include "gui/plot/plot_style.h"
+#include "gui/plot/plot_capture_gl.h"
 #include <imnodes.h>
+#include <imnodes_internal.h>
 #include <cyxwiz/device.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -48,6 +68,33 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+
+// An exception out of the window's frame skips the End calls of everything
+// that was open where it was thrown: ImGui windows, children and ID scopes,
+// a plot, the node editor. Close them, innermost first, so the next frame
+// starts clean; ImGui alone recovers its own stacks, ImPlot and imnodes do
+// not (a Dashboard widget that threw every frame left them open, TOFIX157).
+static void CloseScopesLeftOpen(const ImGuiErrorRecoveryState& before) {
+    if (GImNodes) {
+        if (GImNodes->CurrentScope == ImNodesScope_Attribute) ImNodes::EndInputAttribute();
+        if (GImNodes->CurrentScope == ImNodesScope_Node) ImNodes::EndNode();
+        if (GImNodes->CurrentScope == ImNodesScope_Editor) ImNodes::EndNodeEditor();
+    }
+    if (ImPlot3DContext* p3 = ImPlot3D::GetCurrentContext(); p3 && p3->CurrentPlot) ImPlot3D::EndPlot();
+    if (ImPlotContext* p = ImPlot::GetCurrentContext()) {
+        if (p->CurrentPlot) ImPlot::EndPlot();
+        if (p->CurrentSubplot) ImPlot::EndSubplots();
+    }
+    // Recovering here is intended: no assert and no "Message from Dear ImGui"
+    // box every frame (the exception is in the log).
+    ImGuiIO& io = ImGui::GetIO();
+    const bool assert_on = io.ConfigErrorRecoveryEnableAssert, tooltip_on = io.ConfigErrorRecoveryEnableTooltip;
+    io.ConfigErrorRecoveryEnableAssert = false;
+    io.ConfigErrorRecoveryEnableTooltip = false;
+    ImGui::ErrorRecoveryTryToRecoverState(&before);
+    io.ConfigErrorRecoveryEnableAssert = assert_on;
+    io.ConfigErrorRecoveryEnableTooltip = tooltip_on;
+}
 
 static void glfw_error_callback(int error, const char* description) {
     spdlog::error("GLFW Error {}: {}", error, description);
@@ -72,7 +119,7 @@ static void enable_dark_title_bar(GLFWwindow* window) {
     }
 
     if (SUCCEEDED(hr)) {
-        spdlog::info("Dark title bar enabled");
+        spdlog::debug("Dark title bar enabled");
     } else {
         spdlog::debug("Dark title bar not available on this Windows version");
     }
@@ -81,6 +128,11 @@ static void enable_dark_title_bar(GLFWwindow* window) {
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
+#ifdef __APPLE__
+    (void)window;
+    spdlog::debug("macOS uses the application bundle icon for regular windows");
+    return true;
+#else
     // Try both possible locations
     std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
 
@@ -108,58 +160,12 @@ static bool load_window_icon(GLFWwindow* window) {
     glfwSetWindowIcon(window, 1, &image);
     stbi_image_free(pixels);
 
-    spdlog::info("Window icon loaded successfully ({}x{})", width, height);
+    spdlog::debug("Window icon loaded successfully ({}x{})", width, height);
     return true;
+#endif
 }
 
 namespace {
-
-std::string ToLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
-bool HasCyxwizExtension(const std::filesystem::path& path) {
-    return ToLower(path.extension().string()) == ".cyxwiz";
-}
-
-std::optional<std::filesystem::path> FindProjectFileInDir(const std::filesystem::path& dir) {
-    if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
-        return std::nullopt;
-    }
-
-    std::filesystem::path named = dir / (dir.filename().string() + ".cyxwiz");
-    if (std::filesystem::exists(named)) {
-        return std::filesystem::absolute(named);
-    }
-
-    std::filesystem::path first_match;
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-            if (!entry.is_regular_file()) {
-                continue;
-            }
-            if (HasCyxwizExtension(entry.path())) {
-                if (!first_match.empty()) {
-                    spdlog::warn("Multiple .cyxwiz files found in {}, using first: {}",
-                                 dir.string(), first_match.string());
-                    return std::filesystem::absolute(first_match);
-                }
-                first_match = entry.path();
-            }
-        }
-    } catch (const std::exception& e) {
-        spdlog::warn("Failed to scan project directory {}: {}", dir.string(), e.what());
-        return std::nullopt;
-    }
-
-    if (!first_match.empty()) {
-        return std::filesystem::absolute(first_match);
-    }
-
-    return std::nullopt;
-}
 
 std::optional<std::filesystem::path> ResolveProjectArg(const std::string& arg) {
     if (arg.empty()) {
@@ -179,17 +185,8 @@ std::optional<std::filesystem::path> ResolveProjectArg(const std::string& arg) {
     }
 
     for (const auto& attempt : attempts) {
-        if (!std::filesystem::exists(attempt)) {
-            continue;
-        }
-        if (std::filesystem::is_directory(attempt)) {
-            if (auto found = FindProjectFileInDir(attempt)) {
-                return found;
-            }
-            continue;
-        }
-        if (HasCyxwizExtension(attempt)) {
-            return std::filesystem::absolute(attempt);
+        if (auto resolved = cyxwiz::ProjectManager::ResolveProjectFilePath(attempt.string())) {
+            return std::filesystem::path(*resolved);
         }
     }
 
@@ -208,9 +205,18 @@ CyxWizApp::CyxWizApp(int argc, char** argv)
     }
 }
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4722)
+#endif
 CyxWizApp::~CyxWizApp() {
+    // Shutdown intentionally ends the process with _exit(0) after
+    // explicit resource cleanup to avoid unsafe singleton destruction.
     Shutdown();
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
@@ -219,8 +225,24 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         if (startup_project_path_.empty()) {
             if (auto resolved = ResolveProjectArg(arg)) {
                 startup_project_path_ = resolved->string();
+                startup_project_from_command_line_ = true;
                 spdlog::info("Startup project detected: {}", startup_project_path_);
+                continue;
             }
+        }
+        // Scripts open in the Script Editor once the workspace is up
+        // (cyxwiz-engine train.py, like an editor's command line).
+        std::error_code ec;
+        const std::filesystem::path script = std::filesystem::absolute(arg, ec);
+        const std::string ext = script.extension().string();
+        if (!ec && (ext == ".py" || ext == ".cyx" || ext == ".ipynb") && std::filesystem::is_regular_file(script, ec)) {
+            startup_scripts_.push_back(script.string());
+            spdlog::info("Startup script: {}", startup_scripts_.back());
+        } else if (!ec && ext == ".cyxgraph" && std::filesystem::is_regular_file(script, ec)) {
+            // cyxwiz-engine <project> graph.cyxgraph opens the graph in the Node Editor.
+            startup_graph_path_ = script.string();
+            startup_graph_from_command_line_ = true;
+            spdlog::info("Startup graph: {}", startup_graph_path_);
         }
     }
 }
@@ -230,12 +252,34 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
         return;
     }
 
+    // The start page opens its pick itself; OpenProject then sees the same
+    // project and does nothing. Only a command-line project is opened here.
     auto& pm = cyxwiz::ProjectManager::Instance();
     if (pm.OpenProject(startup_project_path_)) {
-        spdlog::info("Opened project from command line: {}", startup_project_path_);
+        if (startup_project_from_command_line_)
+            spdlog::debug("Opened project from the command line: {}", startup_project_path_);
         UpdateWindowTitle();  // Update window title with project name
     } else {
-        spdlog::error("Failed to open project from command line: {}", startup_project_path_);
+        spdlog::error("Failed to open project {}", startup_project_path_);
+    }
+}
+
+void CyxWizApp::OpenStartupGraphIfRequested() {
+    if (startup_graph_path_.empty() || !main_window_) {
+        return;
+    }
+
+    if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
+        // A starter is a copy to work on: Save asks for a name instead of
+        // overwriting the example next to the Engine. A graph named on the
+        // command line is the user's own file.
+        if (!startup_graph_from_command_line_) {
+            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
+        }
+        spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
+                     startup_graph_path_);
+    } else {
+        spdlog::error("Failed to open graph: {}", startup_graph_path_);
     }
 }
 
@@ -248,72 +292,15 @@ void CyxWizApp::UpdateWindowTitle() {
     std::string title = "CyxWiz Engine";
 
     if (pm.HasActiveProject()) {
-        // Get project name from the project file path
-        std::filesystem::path project_path(pm.GetProjectFilePath());
-        std::string project_name = project_path.stem().string();  // Get filename without extension
+        // The project's own name, as the menu bar shows it; the file name
+        // only when the project has none.
+        std::string project_name = pm.GetProjectName();
+        if (project_name.empty()) project_name = std::filesystem::path(pm.GetProjectFilePath()).stem().string();
         title = "CyxWiz Engine - " + project_name;
     }
 
     glfwSetWindowTitle(window_, title.c_str());
     spdlog::debug("Window title updated to: {}", title);
-}
-
-void CyxWizApp::ScanForPython() {
-    spdlog::info("Scanning for Python installation...");
-
-    auto& config = cyxwiz::core::EngineConfig::Instance();
-
-    // First check if system Python is already configured
-    if (config.HasSystemPython()) {
-        auto python_info = cyxwiz::core::PythonDetector::ValidatePythonInstallation(config.GetSystemPythonPath());
-        if (python_info) {
-            python_scan_.scanned = true;
-            python_scan_.found = true;
-            python_scan_.version = python_info->version;
-            python_scan_.major = python_info->major;
-            python_scan_.minor = python_info->minor;
-            python_scan_.path = python_info->executable_path;
-
-            // Check version warnings
-            if (python_scan_.major == 3 && python_scan_.minor >= 14) {
-                python_scan_.warning = "Python 3.14+ detected. We recommend Python 3.12 for stable packages (built with 3.12 bindings).";
-                spdlog::warn("{}", python_scan_.warning);
-            } else if (python_scan_.major < 3 || (python_scan_.major == 3 && python_scan_.minor < 12)) {
-                python_scan_.warning = "Python version < 3.12 detected. Please install Python 3.12 or higher.";
-                spdlog::warn("{}", python_scan_.warning);
-            }
-
-            spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
-            return;
-        }
-    }
-
-    // No configured Python or validation failed - scan for available Python
-    auto best_python = cyxwiz::core::PythonDetector::FindBestPython();
-    if (best_python) {
-        python_scan_.scanned = true;
-        python_scan_.found = true;
-        python_scan_.version = best_python->version;
-        python_scan_.major = best_python->major;
-        python_scan_.minor = best_python->minor;
-        python_scan_.path = best_python->executable_path;
-
-        // Check version warnings
-        if (python_scan_.major == 3 && python_scan_.minor >= 14) {
-            python_scan_.warning = "Python 3.14+ detected. We recommend Python 3.12 for stable packages (built with 3.12 bindings).";
-            spdlog::warn("{}", python_scan_.warning);
-        } else if (python_scan_.major < 3 || (python_scan_.major == 3 && python_scan_.minor < 12)) {
-            python_scan_.warning = "Python version < 3.12 detected. Please install Python 3.12 or higher.";
-            spdlog::warn("{}", python_scan_.warning);
-        }
-
-        spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
-    } else {
-        python_scan_.scanned = true;
-        python_scan_.found = false;
-        python_scan_.warning = "No Python installation found. Please install Python 3.12 or higher.";
-        spdlog::warn("{}", python_scan_.warning);
-    }
 }
 
 bool CyxWizApp::Initialize() {
@@ -329,7 +316,7 @@ bool CyxWizApp::Initialize() {
 
     // Window hints for resizable window (set before context hints)
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);  // Start maximized
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_FALSE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 
 #ifdef __APPLE__
@@ -390,6 +377,16 @@ bool CyxWizApp::Initialize() {
     // Make sure window is visible and focused
     glfwShowWindow(window_);
     glfwFocusWindow(window_);
+#ifdef _WIN32
+    if (HWND hwnd = glfwGetWin32Window(window_)) {
+        ShowWindow(hwnd, SW_RESTORE);
+        SetWindowPos(hwnd, HWND_TOP, 100, 100, 1280, 720, SWP_SHOWWINDOW);
+        SetForegroundWindow(hwnd);
+        spdlog::debug("Native Windows window shown: HWND={}", reinterpret_cast<void*>(hwnd));
+    } else {
+        spdlog::error("GLFW window was created but no native HWND is available");
+    }
+#endif
 
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1); // Enable vsync
@@ -399,165 +396,101 @@ bool CyxWizApp::Initialize() {
         spdlog::error("Failed to initialize GLAD");
         return false;
     }
-    spdlog::info("OpenGL {}.{} initialized", GLVersion.major, GLVersion.minor);
+    spdlog::info("Window ready: OpenGL {}.{}", GLVersion.major, GLVersion.minor);
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImPlot::CreateContext();  // Initialize ImPlot for plotting functionality
+    implot_context_ = ImPlot::CreateContext();  // the one ImPlot context (TOFIX134 P0 item 1)
+    ImPlot3D::CreateContext();                  // 3D plots (TOFIX134 P4)
+    cyxwiz::plot::InstallPlotViewHooks();  // PNG export, save dialog, image copy (TOFIX134 P1)
     ImNodes::CreateContext();  // Initialize ImNodes for visual node editor
     ImGuiIO& io = ImGui::GetIO();
 
     // Set persistent ini file path (same directory as executable)
-    imgui_ini_path_ = "imgui.ini";
+    // Absolute: Python script runs change the working directory to the
+    // project root, and a relative path then wrote imgui.ini there.
+    {
+        std::error_code ec;
+        const auto ini = std::filesystem::absolute("imgui.ini", ec);
+        imgui_ini_path_ = ec ? std::string("imgui.ini") : ini.string();
+    }
     io.IniFilename = imgui_ini_path_.c_str();
+    // Open panels are kept in imgui.ini next to the layout (TOFIX129 0.6).
+    gui::InstallPanelMemory();
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // TODO: ViewportsEnable causes crash on Windows - needs investigation
-    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // The big windows may become windows of their own (TOFIX129 A8).
+    gui::InstallSeparateWindows();
 
-    // Setup Dear ImGui style - Apply CyxWiz professional theme
-    gui::GetTheme().ApplyPreset(gui::ThemePreset::CyxWizDark);
-
-    // When viewports are enabled we tweak WindowRounding/WindowBg
-    ImGuiStyle& style = ImGui::GetStyle();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
+    // Engine-wide appearance (theme, code text size, sidebar) from the
+    // Engine settings; the interface text size is used by LoadFonts.
+    gui::ApplyStartupAppearance();
+    spdlog::set_level(cyxwiz::core::EngineConfig::Instance().RecordDebugLogs() ? spdlog::level::debug
+                                                                              : spdlog::level::info);
+    cyxwiz::SetDataBudgetBytes(cyxwiz::core::EngineConfig::Instance().DataBudgetBytes());
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+    gui::NameSeparateWindows();
+    cyxwiz::plot::CapturePlotsInSeparateWindows();
+    // A window of its own gets the main window's title bar and icon.
+    {
+        ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+        static void (*backend_create_window)(ImGuiViewport*) = pio.Platform_CreateWindow;
+        pio.Platform_CreateWindow = [](ImGuiViewport* viewport) {
+            backend_create_window(viewport);
+            if (auto* window = static_cast<GLFWwindow*>(viewport->PlatformHandle)) {
+#ifdef _WIN32
+                enable_dark_title_bar(window);
+#endif
+                load_window_icon(window);
+            }
+        };
+    }
+
+    // Match font rasterization to the physical framebuffer while preserving
+    // logical font metrics and UI layout.
+    font_rasterizer_density_ = DetectFontRasterizerDensity(true);
 
     // Load professional fonts
     LoadFonts(io);
 
-    // Scan for Python on startup (no initialization yet)
-    ScanForPython();
-
-    // Check if Python is configured - show wizard if not
-    auto& config = cyxwiz::core::EngineConfig::Instance();
-    python_configured_ = config.HasSystemPython();
-
-    if (!python_configured_) {
-        spdlog::info("No system Python configured - showing setup wizard");
-        python_wizard_ = std::make_unique<cyxwiz::PythonSetupWizard>();
-        // Main window will be created after wizard completes
-        return true;
+    GLint max_texture_size = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+    spdlog::debug("Font atlas dimensions: {}x{} (GPU maximum texture size: {})",
+                 io.Fonts->TexWidth, io.Fonts->TexHeight, max_texture_size);
+    if (io.Fonts->TexWidth > max_texture_size ||
+        io.Fonts->TexHeight > max_texture_size) {
+        spdlog::error("Font atlas exceeds the GPU texture-size limit");
+        return false;
     }
-
-    // Python is configured - show start page
-    spdlog::info("Python configured - showing start page");
-    start_page_ = std::make_unique<cyxwiz::StartPage>();
-
-    // If project was specified on command line, we'll still show the start page
-    // but it can be skipped by the user
-    return true;
-
-    // Both Python and project are ready - create main window
-    project_selected_ = true;
-    spdlog::info("Python configured and project specified - creating main window");
-
-    // Initialize components
-    main_window_ = std::make_unique<gui::MainWindow>();
-    OpenStartupProjectIfRequested();
-    grpc_client_ = std::make_unique<network::GRPCClient>();
-    job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
-
-    // Connect network components to main window
-    main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
-
-    // Connect debug logging flags to main window (for View menu toggles)
-    main_window_->SetIdleLogPtr(&log_idle_transitions_);
-
-    // Set exit request callback (triggered by File > Exit menu)
-    main_window_->SetExitRequestCallback([this]() {
-        spdlog::info("Exit requested via menu");
-        glfwSetWindowShouldClose(window_, GLFW_TRUE);
-    });
-
-    // Register console sink with spdlog to show logs in GUI
-    if (main_window_ && main_window_->GetConsole()) {
-        auto* console = main_window_->GetConsole();
-
-        // Add welcome message directly to console
-        console->AddSuccess("=== CyxWiz Engine Console ===");
-        console->AddInfo("Console panel initialized - logs will appear here");
-
-        // Show Python scan results
-        if (python_scan_.scanned) {
-            if (python_scan_.found) {
-                console->AddSuccess("Python " + python_scan_.version + " detected at: " + python_scan_.path);
-                if (!python_scan_.warning.empty()) {
-                    console->AddWarning(python_scan_.warning);
-                }
-            } else {
-                console->AddError("No Python installation found");
-                console->AddWarning(python_scan_.warning);
-            }
-        }
-
-        // Show initialization message based on project status
-        if (!startup_project_path_.empty()) {
-            console->AddInfo("Project loaded - Python will be initialized from project's virtual environment");
-        } else {
-            console->AddInfo("No project loaded - Python not initialized");
-            console->AddInfo("Create or open a project to use Python");
-        }
-
-        // Register spdlog sink for future logs
-        auto console_sink = std::make_shared<gui::ConsoleSinkMt>(console);
-        auto logger = spdlog::default_logger();
-        logger->sinks().push_back(console_sink);
-
-        // Test log to verify spdlog integration
-        spdlog::info("✓ Console logging enabled");
-        console->AddSuccess("✓ spdlog integration working");
+    if (!ImGui_ImplOpenGL3_CreateFontsTexture()) {
+        spdlog::error("Failed to upload initial font atlas texture");
+        return false;
     }
+    spdlog::debug("Initial font atlas texture uploaded successfully");
 
-    // Restore saved auth session at startup
-    auto& auth = cyxwiz::auth::AuthClient::Instance();
-    if (auth.LoadSavedSession()) {
-        spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
+#ifdef CYXWIZ_HAS_PYTHON
+    // The Python scan runs on a worker while the start page is up (TOFIX129
+    // A2-3); the start page chip shows its state.
+    python_setup_ = std::make_unique<cyxwiz::PythonSetupDialog>();
+    python_setup_->StartScan();
+#else
+    // Do not block the core Engine on an interpreter when scripting was not built.
+    python_configured_ = true;
+    spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
+#endif
+    // A project named on the command line opens straight away; the start
+    // page is for choosing one (its "Continue without project" used to drop
+    // the command-line project).
+    if (!startup_project_path_.empty()) {
+        project_selected_ = true;
+    } else {
+        start_page_ = std::make_unique<cyxwiz::StartPage>();
     }
-
-    spdlog::info("Application initialized successfully");
-
-    // Log device information to GUI console
-    if (main_window_ && main_window_->GetConsole()) {
-        auto* console = main_window_->GetConsole();
-
-        // Log backend initialization status
-        console->AddSuccess("CyxWiz Backend initialized");
-
-        // Get and log available devices
-        auto devices = cyxwiz::Device::GetAvailableDevices();
-        console->AddInfo("Available compute devices:");
-
-        bool has_gpu = false;
-        for (const auto& device : devices) {
-            std::string device_type_str;
-            switch(device.type) {
-                case cyxwiz::DeviceType::CPU: device_type_str = "CPU"; break;
-                case cyxwiz::DeviceType::CUDA: device_type_str = "CUDA GPU"; has_gpu = true; break;
-                case cyxwiz::DeviceType::OPENCL: device_type_str = "OpenCL GPU"; has_gpu = true; break;
-                default: device_type_str = "Unknown"; break;
-            }
-
-            std::string log_msg = "  - " + device.name + " (" + device_type_str + ")";
-            if (device.memory_total > 0) {
-                log_msg += " - " + std::to_string(device.memory_total / (1024*1024)) + " MB";
-            }
-            console->AddInfo(log_msg);
-        }
-
-        if (has_gpu) {
-            console->AddSuccess("GPU acceleration enabled!");
-        }
-    }
-
     return true;
 }
 
@@ -572,23 +505,12 @@ int CyxWizApp::Run() {
                 break;
             }
 
-            // Check if we should prevent close (script running)
-            if (ShouldPreventClose()) {
-                // Cancel the close and show confirmation dialog
+            // Anything still open (running script, unsaved scripts, loaded
+            // data) is listed in one dialog; otherwise close at once.
+            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
-                show_close_confirmation_ = true;
-            }
-            // Check for unsaved files
-            else if (HasUnsavedWork()) {
-                glfwSetWindowShouldClose(window_, GLFW_FALSE);
-                show_unsaved_confirmation_ = true;
-            }
-            // Check for loaded data in memory
-            else if (HasLoadedData()) {
-                glfwSetWindowShouldClose(window_, GLFW_FALSE);
-                show_data_loaded_confirmation_ = true;
+                show_close_dialog_ = true;
             } else {
-                // OK to close
                 break;
             }
         }
@@ -599,6 +521,12 @@ int CyxWizApp::Run() {
 
         HandleInput();
         Update(delta_time);
+        // A minimised window has nothing to show: keep background work and
+        // event handling going, skip the frame (TOFIX129 step 0.7).
+        if (glfwGetWindowAttrib(window_, GLFW_ICONIFIED)) {
+            glfwWaitEventsTimeout(MINIMISED_WAIT_TIME);
+            continue;
+        }
         Render();
     }
 
@@ -627,170 +555,92 @@ bool CyxWizApp::HasLoadedData() {
     return !registry.GetDatasetNames().empty();
 }
 
-void CyxWizApp::HandleCloseConfirmation() {
-    if (!show_close_confirmation_) return;
+void CyxWizApp::HandleCloseRequest() {
+    // One dialog for every way of closing (File > Exit and the window's close
+    // box): unsaved scripts, a running script and loaded datasets are listed
+    // together, and the choice made here is final (TOFIX129 A2-2).
+    if (!show_close_dialog_) return;
+    using namespace cyxwiz::ui;
+    const Tokens& t = CurrentTokens();
+    constexpr const char* kTitle = "Close CyxWiz Engine?###close_engine";
+    if (!ImGui::IsPopupOpen(kTitle)) ImGui::OpenPopup(kTitle);
 
-    // Center the popup
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 0.0f), ImVec2(640.0f, viewport->WorkSize.y * 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, t.rounding_card);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(t.space_xl, t.space_lg));
+    const bool open = ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
 
-    if (ImGui::BeginPopupModal("Script Running###CloseConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("A Python script is currently running.");
-        ImGui::Spacing();
-        ImGui::Text("What would you like to do?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+    const std::vector<std::string> unsaved = main_window_ ? main_window_->GetUnsavedFileNames() : std::vector<std::string>{};
+    const bool script_running = main_window_ && main_window_->IsScriptRunning();
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const std::vector<std::string> datasets = registry.GetDatasetNames();
 
-        if (ImGui::Button("Stop Script & Close", ImVec2(150, 0))) {
-            // Stop the script and close
-            if (main_window_) {
-                main_window_->StopRunningScript();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
+    ImGui::TextUnformatted("Some work is still open. Choose what happens to it.");
+    ImGui::Spacing();
+
+    auto section = [&](const char* title, const std::vector<std::string>& lines, const char* note) {
+        BeginCard(title);
+        ImGui::TextColored(t.text_dim, "%s", title);
+        for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
+        if (note && note[0]) ImGui::TextColored(t.text_dim, "%s", note);
+        EndCard();
+    };
+    if (!unsaved.empty()) {
+        section(("Unsaved scripts (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
+    }
+    if (script_running) {
+        section("Running script", {"A Python script is running. Closing stops it."}, nullptr);
+    }
+    if (!datasets.empty()) {
+        const auto stats = registry.GetMemoryStats();
+        std::string names;
+        for (size_t i = 0; i < datasets.size() && i < 6; ++i) names += (i ? ", " : "") + datasets[i];
+        if (datasets.size() > 6) names += ", and " + std::to_string(datasets.size() - 6) + " more";
+        section(("Datasets in memory (" + stats.FormatBytes(stats.total_allocated) + ")").c_str(), {names},
+                "Closing unloads them. Prepared data stays on disk and reloads next time.");
+    }
+    if (!close_error_.empty()) StatusText(Status::NotSupported, close_error_.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    auto close_now = [&]() {
+        if (script_running && main_window_) main_window_->StopRunningScript();
+        registry.UnloadAll();
+        show_close_dialog_ = false;
+        force_close_ = true;
+        running_ = false;
+        ImGui::CloseCurrentPopup();
+    };
+
+    if (!unsaved.empty()) {
+        if (PrimaryButton("Save scripts and close")) {
+            main_window_->SaveAllFiles();
+            if (main_window_->HasUnsavedFiles()) {
+                close_error_ = "Some scripts could not be saved; they are still listed above. Details are in the log.";
+            } else {
+                close_now();
             }
-            show_close_confirmation_ = false;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
         }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Force Close", ImVec2(100, 0))) {
-            // Force close without stopping
-            show_close_confirmation_ = false;
-            force_close_ = true;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            show_close_confirmation_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
+        ImGui::SameLine(0.0f, t.space_md);
+        if (DangerButton("Close without saving", true, nullptr, ButtonSize::Regular)) close_now();
+    } else {
+        if (PrimaryButton("Close")) close_now();
     }
-
-    // Open the popup if we need to show it
-    if (show_close_confirmation_ && !ImGui::IsPopupOpen("Script Running###CloseConfirm")) {
-        ImGui::OpenPopup("Script Running###CloseConfirm");
+    const float keep_w = ButtonWidth("Keep working", ButtonSize::Regular);
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - keep_w);
+    if (SecondaryButton("Keep working", true, nullptr, ButtonSize::Regular) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        show_close_dialog_ = false;
+        close_error_.clear();
+        ImGui::CloseCurrentPopup();
     }
-}
-
-void CyxWizApp::HandleUnsavedConfirmation() {
-    if (!show_unsaved_confirmation_) return;
-
-    // Center the popup
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-
-    if (ImGui::BeginPopupModal("Unsaved Changes###UnsavedConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("You have unsaved changes in the following files:");
-        ImGui::Spacing();
-
-        // List unsaved files
-        if (main_window_) {
-            auto unsaved_files = main_window_->GetUnsavedFileNames();
-            for (const auto& filename : unsaved_files) {
-                ImGui::BulletText("%s", filename.c_str());
-            }
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("What would you like to do?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        if (ImGui::Button("Save All & Close", ImVec2(130, 0))) {
-            // Save all files and close
-            if (main_window_) {
-                main_window_->SaveAllFiles();
-            }
-            show_unsaved_confirmation_ = false;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Discard & Close", ImVec2(120, 0))) {
-            // Close without saving
-            show_unsaved_confirmation_ = false;
-            force_close_ = true;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            show_unsaved_confirmation_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // Open the popup if we need to show it
-    if (show_unsaved_confirmation_ && !ImGui::IsPopupOpen("Unsaved Changes###UnsavedConfirm")) {
-        ImGui::OpenPopup("Unsaved Changes###UnsavedConfirm");
-    }
-}
-
-void CyxWizApp::HandleDataLoadedConfirmation() {
-    if (!show_data_loaded_confirmation_) return;
-
-    // Center the popup
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-
-    if (ImGui::BeginPopupModal("Data Loaded###DataLoadedConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto& registry = cyxwiz::DataRegistry::Instance();
-        auto dataset_names = registry.GetDatasetNames();
-        auto stats = registry.GetMemoryStats();
-
-        ImGui::Text("You have datasets loaded in memory:");
-        ImGui::Spacing();
-
-        // List loaded datasets
-        for (const auto& name : dataset_names) {
-            ImGui::BulletText("%s", name.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Total memory usage: %s",
-                          stats.FormatBytes(stats.total_allocated).c_str());
-        ImGui::Spacing();
-        ImGui::Text("Closing will unload all data from memory.");
-        ImGui::Text("Make sure you've saved any work that depends on this data.");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        if (ImGui::Button("Unload & Close", ImVec2(130, 0))) {
-            // Unload all datasets and close
-            registry.UnloadAll();
-            show_data_loaded_confirmation_ = false;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            show_data_loaded_confirmation_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // Open the popup if we need to show it
-    if (show_data_loaded_confirmation_ && !ImGui::IsPopupOpen("Data Loaded###DataLoadedConfirm")) {
-        ImGui::OpenPopup("Data Loaded###DataLoadedConfirm");
-    }
+    ImGui::EndPopup();
 }
 
 void CyxWizApp::HandleInput() {
@@ -822,36 +672,39 @@ void CyxWizApp::HandleInput() {
 
     // Track state transitions for debugging
     static bool was_idle = false;
-    static int idle_frame_count = 0;
-    static int active_frame_count = 0;
+
+    const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
 
     if (is_idle_ && !training_active) {
         // Use wait with timeout for reduced CPU/GPU usage when idle
         glfwWaitEventsTimeout(IDLE_FRAME_TIME);
 
-        idle_frame_count++;
         if (!was_idle) {
             if (log_idle_transitions_) {
                 spdlog::info("Entering IDLE mode (reduced GPU usage)");
             }
             was_idle = true;
-            active_frame_count = 0;
         }
+    } else if (!focused) {
+        // Another window has focus: 30 frames a second is plenty for a
+        // training chart in the background (TOFIX129 step 0.7).
+        glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
+        was_idle = false;
     } else {
         glfwPollEvents();
 
-        active_frame_count++;
         if (was_idle) {
             if (log_idle_transitions_) {
                 spdlog::info("Exiting IDLE mode (full frame rate)");
             }
             was_idle = false;
-            idle_frame_count = 0;
         }
     }
 }
 
 void CyxWizApp::Update(float delta_time) {
+    (void)delta_time;
+
     // Update components
     if (job_manager_) {
         job_manager_->Update();
@@ -859,40 +712,72 @@ void CyxWizApp::Update(float delta_time) {
 
     // Process async task completion callbacks
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    // Dataset changes (loaded, replaced, removed) to their subscribers, on this thread.
+    // Each change is logged once (one subscriber for the app's lifetime).
+    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe({}, [](const cyxwiz::DatasetChange& c) {
+        const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added ? "added" : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced" : "removed";
+        spdlog::debug("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
+    });
+    (void)catalog_log;
+    cyxwiz::DatasetCatalog::Instance().Pump();
+}
+
+void CyxWizApp::RenderPythonWait() {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##python_wait", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoMove);
+    cyxwiz::ui::StatusText(cyxwiz::ui::Status::Verifying, "Checking Python before opening the workspace...");
+    ImGui::End();
 }
 
 void CyxWizApp::Render() {
+    RefreshFontRasterizerDensity();
+    // Interface text size changed in Preferences > Appearance: new fonts
+    // are built between frames.
+    if (gui::ConsumeFontRebuildRequest()) {
+        spdlog::info("Interface text size changed; rebuilding font atlas");
+        RebuildFontAtlas();
+    }
+
     // Start ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-
-    // Render Python setup wizard if active (shown on first launch)
-    if (python_wizard_) {
-        bool wizard_still_active = python_wizard_->Render();
-
-        if (!wizard_still_active) {
-            // Wizard completed or cancelled
-            auto result = python_wizard_->GetResult();
-
-            if (result == cyxwiz::PythonSetupWizard::Result::Completed) {
-                spdlog::info("Python setup wizard completed successfully");
-                python_configured_ = true;
-                python_wizard_.reset();
-
-                // Check if project needs to be selected
-                // Show start page after Python wizard completes
-                spdlog::info("Python setup complete - showing start page");
-                start_page_ = std::make_unique<cyxwiz::StartPage>();
-
-            } else if (result == cyxwiz::PythonSetupWizard::Result::Cancelled) {
-                spdlog::info("Python setup wizard cancelled - exiting application");
-                glfwSetWindowShouldClose(window_, GLFW_TRUE);
-            }
+    // Every chart draws in the Engine's ImPlot context. A panel that swapped
+    // it (the Data Studio Visualizer once made its own and left it current)
+    // is put right here, once per frame, and named in the log once.
+    if (ImPlot::GetCurrentContext() != implot_context_) {
+        static bool reported = false;
+        if (!reported) {
+            spdlog::error("ImPlot context was replaced by a panel; restoring the Engine's");
+            reported = true;
         }
+        ImPlot::SetCurrentContext(implot_context_);
+    }
+    // Plot colours follow the theme tokens (TOFIX134 P1).
+    cyxwiz::plot::ApplyPlotStyle();
+
+    // Python scan and dialog (TOFIX129 A2-3).
+    if (python_setup_) {
+        python_setup_->Poll();
+        if (start_page_) {
+            const auto view = python_setup_->View();
+            cyxwiz::StartPage::PythonStatus status;
+            status.text = view.chip;
+            status.level = view.level;
+            status.on_click = [this]() { python_setup_->Open(); };
+            start_page_->SetPythonStatus(std::move(status));
+        }
+        python_setup_->Render();
+        if (python_setup_->Settled()) python_configured_ = true;
+        // A project was chosen before the scan finished: say why the
+        // workspace has not opened yet.
+        if (!start_page_ && project_selected_ && python_setup_->Scanning()) RenderPythonWait();
     }
 
-    // Render start page if active (shown after Python wizard)
+    // Render start page if active
     if (start_page_) {
         bool page_still_active = start_page_->Render();
 
@@ -901,31 +786,41 @@ void CyxWizApp::Render() {
             auto result = start_page_->GetResult();
 
             if (result == cyxwiz::StartPage::Result::ProjectSelected) {
-                spdlog::info("Project selected from start page");
+                spdlog::debug("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
+                startup_project_from_command_line_ = false;
+                startup_graph_path_.clear();
+                project_selected_ = true;
+                start_page_.reset();
+
+            } else if (result == cyxwiz::StartPage::Result::ExampleGraphSelected) {
+                spdlog::info("Starter graph selected from start page");
+                startup_project_path_.clear();
+                startup_graph_path_ = start_page_->GetSelectedGraphPath();
+                startup_graph_from_command_line_ = false;
                 project_selected_ = true;
                 start_page_.reset();
 
             } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
                 spdlog::info("User chose to continue without project");
                 startup_project_path_ = "";  // No project
+                startup_graph_path_.clear();
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 
-            } else if (result == cyxwiz::StartPage::Result::Exit) {
-                spdlog::info("User exited start page - closing application");
-                glfwSetWindowShouldClose(window_, GLFW_TRUE);
-                start_page_.reset();
             }
         }
     }
 
     // Create main window once Python is configured and project is selected
     if (python_configured_ && project_selected_ && !main_window_) {
-        spdlog::info("Creating main window with project: {}", startup_project_path_);
+        spdlog::debug("Creating main window with project: {}", startup_project_path_);
 
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
+        OpenStartupGraphIfRequested();
+        for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
+        startup_scripts_.clear();
         UpdateWindowTitle();  // Update window title regardless (shows project name or just "CyxWiz Engine")
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
@@ -942,41 +837,9 @@ void CyxWizApp::Render() {
             glfwSetWindowShouldClose(window_, GLFW_TRUE);
         });
 
-        // Register console sink with spdlog
-        if (main_window_ && main_window_->GetConsole()) {
-            auto* console = main_window_->GetConsole();
-
-            console->AddSuccess("=== CyxWiz Engine Console ===");
-            console->AddInfo("Console panel initialized - logs will appear here");
-
-            auto console_sink = std::make_shared<gui::ConsoleSinkMt>(console);
-            auto logger = spdlog::default_logger();
-            logger->sinks().push_back(console_sink);
-
-            spdlog::info("✓ Console logging enabled");
-            console->AddSuccess("✓ spdlog integration working");
-
-            // Show Python scan results
-            if (python_scan_.scanned) {
-                if (python_scan_.found) {
-                    console->AddSuccess("Python " + python_scan_.version + " detected at: " + python_scan_.path);
-                    if (!python_scan_.warning.empty()) {
-                        console->AddWarning(python_scan_.warning);
-                    }
-                } else {
-                    console->AddError("No Python installation found");
-                    console->AddWarning(python_scan_.warning);
-                }
-            }
-
-            // Show initialization message based on project status
-            if (!startup_project_path_.empty()) {
-                console->AddInfo("Project loaded - Python will be initialized from project's virtual environment");
-            } else {
-                console->AddInfo("No project loaded - Python not initialized");
-                console->AddInfo("Create or open a project to use Python");
-            }
-        }
+        // Runtime startup evidence is already captured by the core spdlog
+        // sink. The Commands transcript is reserved for interactive output.
+        spdlog::debug("Console panel initialized; runtime logs available");
 
         // Restore saved auth session
         auto& auth = cyxwiz::auth::AuthClient::Instance();
@@ -984,44 +847,40 @@ void CyxWizApp::Render() {
             spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
         }
 
-        // Log device information
-        if (main_window_ && main_window_->GetConsole()) {
-            auto* console = main_window_->GetConsole();
-            console->AddSuccess("CyxWiz Backend initialized");
-
-            auto devices = cyxwiz::Device::GetAvailableDevices();
-            console->AddInfo("Available compute devices:");
-
-            for (const auto& device : devices) {
-                std::string device_type_str;
-                switch(device.type) {
-                    case cyxwiz::DeviceType::CPU: device_type_str = "CPU"; break;
-                    case cyxwiz::DeviceType::CUDA: device_type_str = "CUDA GPU"; break;
-                    case cyxwiz::DeviceType::OPENCL: device_type_str = "OpenCL GPU"; break;
-                    default: device_type_str = "Unknown"; break;
-                }
-
-                std::string log_msg = "  - " + device.name + " (" + device_type_str + ")";
-                console->AddInfo(log_msg);
-            }
-        }
     }
 
     // Render main window (with docking)
     if (main_window_) {
+        ImGuiErrorRecoveryState before;
+        ImGui::ErrorRecoveryStoreState(&before);
+        std::string failure;
         try {
             main_window_->Render();
         } catch (const std::exception& e) {
-            spdlog::error("Exception in main_window_->Render(): {}", e.what());
+            failure = e.what();
         } catch (...) {
-            spdlog::error("Unknown exception in main_window_->Render()");
+            failure = "unknown exception";
+        }
+        if (!failure.empty()) {
+            CloseScopesLeftOpen(before);
+            // Once per message, then a count every 10 s: a widget that throws
+            // throws every frame.
+            const auto now = std::chrono::steady_clock::now();
+            ++render_failures_;
+            if (failure != render_failure_ || now - render_failure_logged_ > std::chrono::seconds(10)) {
+                if (failure == render_failure_)
+                    spdlog::error("Exception in main_window_->Render() again ({} frames): {}", render_failures_, failure);
+                else
+                    spdlog::error("Exception in main_window_->Render(): {}", failure);
+                render_failure_ = failure;
+                render_failure_logged_ = now;
+                render_failures_ = 0;
+            }
         }
     }
 
     // Handle close confirmation dialogs
-    HandleCloseConfirmation();
-    HandleUnsavedConfirmation();
-    HandleDataLoadedConfirmation();
+    HandleCloseRequest();
 
     // Rendering
     ImGui::Render();
@@ -1035,6 +894,7 @@ void CyxWizApp::Render() {
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data != nullptr) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
+        cyxwiz::plot::CompletePlotCaptures(ImGui::GetMainViewport());  // plot images asked for this frame
     } else {
         spdlog::error("ImGui::GetDrawData() returned nullptr - skipping render");
     }
@@ -1054,15 +914,21 @@ void CyxWizApp::Render() {
 void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
 
-    // Remove console sink from spdlog BEFORE destroying main_window
-    // The console sink points to the Console panel which will be destroyed
-    {
-        auto logger = spdlog::default_logger();
-        auto& sinks = logger->sinks();
-        // Keep only the first sink (stdout) - remove any additional sinks like ConsoleSink
-        if (sinks.size() > 1) {
-            sinks.resize(1);
-        }
+    // Stop scripts, model downloads and the inference server first; this call
+    // was dropped from Shutdown in b4599389 and is restored here.
+    if (main_window_) {
+        main_window_->PrepareForShutdown();
+    }
+
+    // Background work stops before the UI it reports to is destroyed: queued
+    // tasks retire, running tasks are asked to stop, stale main-thread
+    // delivery is discarded. Bounded, so a task that ignores cancellation
+    // cannot hang exit; the process ends with _exit below regardless.
+    const auto tasks =
+        cyxwiz::AsyncTaskManager::Instance().Shutdown(std::chrono::seconds(5));
+    if (!tasks.drained) {
+        spdlog::warn("Shutdown continues with {} background task(s) still running",
+                     tasks.unfinished_tasks.size());
     }
 
     // Cleanup components
@@ -1078,7 +944,9 @@ void CyxWizApp::Shutdown() {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImNodes::DestroyContext();  // Cleanup ImNodes context
-    ImPlot::DestroyContext();  // Cleanup ImPlot context
+    ImPlot3D::DestroyContext();
+    ImPlot::DestroyContext(implot_context_);  // the Engine's context, whatever is current
+    implot_context_ = nullptr;
     ImGui::DestroyContext();
 
     // Cleanup GLFW
@@ -1095,12 +963,88 @@ void CyxWizApp::Shutdown() {
     _exit(0);
 }
 
+float CyxWizApp::DetectFontRasterizerDensity(bool log_metrics) const {
+    int window_width = 0;
+    int window_height = 0;
+    int framebuffer_width = 0;
+    int framebuffer_height = 0;
+    if (window_) {
+        glfwGetWindowSize(window_, &window_width, &window_height);
+        glfwGetFramebufferSize(window_, &framebuffer_width, &framebuffer_height);
+    }
+
+    float density = 1.0f;
+#if defined(__APPLE__) || defined(__linux__)
+    const bool has_valid_dimensions =
+        window_width > 0 && window_height > 0 && framebuffer_width > 0 &&
+        framebuffer_height > 0;
+    density = has_valid_dimensions
+                  ? cyxwiz::gui::CalculateFramebufferDensity(
+                        window_width, window_height, framebuffer_width,
+                        framebuffer_height)
+                  : font_rasterizer_density_;
+#endif
+
+    if (log_metrics) {
+        spdlog::debug(
+            "Display metrics: logical={}x{} framebuffer={}x{} font_density={:.2f}x",
+            window_width, window_height, framebuffer_width, framebuffer_height,
+            density);
+    }
+    return density;
+}
+
+void CyxWizApp::RefreshFontRasterizerDensity() {
+#if defined(__APPLE__) || defined(__linux__)
+    const float detected_density = DetectFontRasterizerDensity(false);
+    if (!cyxwiz::gui::HasMaterialFontDensityChange(
+            font_rasterizer_density_, detected_density)) {
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Locked) {
+        spdlog::warn("Deferring font atlas density change while atlas is locked");
+        return;
+    }
+
+    spdlog::info("Display density changed from {:.2f}x to {:.2f}x; rebuilding font atlas",
+                 font_rasterizer_density_, detected_density);
+    font_rasterizer_density_ = detected_density;
+    RebuildFontAtlas();
+#endif
+}
+
+void CyxWizApp::RebuildFontAtlas() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Locked) {
+        spdlog::warn("Deferring font atlas rebuild while the atlas is locked");
+        return;
+    }
+    ImGui_ImplOpenGL3_DestroyFontsTexture();
+    io.FontDefault = nullptr;
+    cyxwiz::gui::ClearEditorMonoFonts();
+    cyxwiz::ui::ClearFonts();
+    font_regular_ = nullptr;
+    font_medium_ = nullptr;
+    font_bold_ = nullptr;
+    font_mono_ = nullptr;
+    font_mono_bold_ = nullptr;
+    io.Fonts->Clear();
+    LoadFonts(io);
+    if (!ImGui_ImplOpenGL3_CreateFontsTexture()) {
+        spdlog::error("Failed to upload rebuilt font atlas texture");
+    }
+}
+
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Font configuration for crisp rendering (high quality)
     ImFontConfig font_config;
-    font_config.OversampleH = 3;  // Higher oversampling for sharper text/icons
-    font_config.OversampleV = 2;  // Vertical oversampling for better quality
+    const bool needs_manual_oversampling = font_rasterizer_density_ <= 1.0f;
+    font_config.OversampleH = needs_manual_oversampling ? 3 : 1;
+    font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
     font_config.PixelSnapH = true;
+    font_config.RasterizerDensity = font_rasterizer_density_;
 
     // Try multiple font paths (running from different directories)
     std::vector<std::string> font_paths = {
@@ -1126,7 +1070,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     char exec_path[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
     if (len != -1) {
-        exec_path[len] = ' ';
+        exec_path[len] = '\0';
         char* exec_path_copy = strdup(exec_path);
         std::string exec_dir = dirname(exec_path_copy);
         free(exec_path_copy);
@@ -1138,12 +1082,24 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
 #endif
 
     std::string font_base_path;
+    if (!resolved_font_base_path_.empty() &&
+        std::filesystem::exists(resolved_font_base_path_ + "Inter-Regular.ttf")) {
+        font_base_path = resolved_font_base_path_;
+    }
     for (const auto& path : font_paths) {
+        if (!font_base_path.empty()) break;
         std::string test_path = path + "Inter-Regular.ttf";
         spdlog::debug("Checking font path: {}", test_path);
         if (std::filesystem::exists(test_path)) {
-            font_base_path = path;
-            spdlog::info("Found fonts at: {}", path);
+            std::error_code ec;
+            const auto absolute = std::filesystem::absolute(path, ec);
+            font_base_path = ec ? path : absolute.string();
+            if (!font_base_path.empty() && font_base_path.back() != '/' &&
+                font_base_path.back() != '\\') {
+                font_base_path += '/';
+            }
+            resolved_font_base_path_ = font_base_path;
+            spdlog::debug("Found fonts at: {}", font_base_path);
             break;
         }
     }
@@ -1151,14 +1107,15 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (font_base_path.empty()) {
         spdlog::warn("Custom fonts not found in any of the search paths, using default ImGui font");
         spdlog::warn("Current working directory: {}", std::filesystem::current_path().string());
-        io.Fonts->AddFontDefault();
+        io.Fonts->AddFontDefault(&font_config);
         return;
     }
 
-    spdlog::info("Loading fonts from: {}", font_base_path);
+    spdlog::debug("Loading fonts from: {}", font_base_path);
 
     // Define font sizes (scaled for high DPI)
-    const float base_font_size = 15.0f;
+    // Interface text size (Preferences > Appearance): 13, 15, 17 or 20 px.
+    const float base_font_size = static_cast<float>(gui::UiTextPixels());
     const float mono_font_size = 14.0f;
 
     // Load Inter font family (UI font)
@@ -1169,6 +1126,19 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Load JetBrains Mono (code font)
     std::string mono_regular = font_base_path + "JetBrainsMono-Regular.ttf";
     std::string mono_bold = font_base_path + "JetBrainsMono-Bold.ttf";
+
+    std::string terminal_symbol_fallback;
+#ifdef _WIN32
+    wchar_t windows_directory[MAX_PATH]{};
+    const UINT windows_directory_length =
+        GetWindowsDirectoryW(windows_directory, MAX_PATH);
+    if (windows_directory_length > 0 && windows_directory_length < MAX_PATH) {
+        const auto candidate = std::filesystem::path(windows_directory) /
+                               "Fonts" / "seguisym.ttf";
+        if (std::filesystem::is_regular_file(candidate))
+            terminal_symbol_fallback = candidate.string();
+    }
+#endif
 
     // FontAwesome icon font
     std::string fa_solid = font_base_path + "fa-solid-900.ttf";
@@ -1198,50 +1168,51 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     ImFontConfig icon_config;
     icon_config.MergeMode = true;
     icon_config.PixelSnapH = true;
-    icon_config.OversampleH = 3;  // Sharp icons
-    icon_config.OversampleV = 2;
+    icon_config.OversampleH = needs_manual_oversampling ? 3 : 1;
+    icon_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
     // Load regular font (this becomes the default)
     if (std::filesystem::exists(inter_regular)) {
         font_regular_ = io.Fonts->AddFontFromFileTTF(inter_regular.c_str(), base_font_size, &font_config);
         if (font_regular_) {
-            spdlog::info("Loaded Inter-Regular ({}px)", base_font_size);
+            spdlog::debug("Loaded Inter-Regular ({}px)", base_font_size);
 
             // Merge FontAwesome icons into regular font
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
-                spdlog::info("Merged FontAwesome icons into regular font");
+                spdlog::debug("Merged FontAwesome icons into regular font");
             }
 
             // Merge Tabler icons into regular font (POC for node icon themes)
             if (std::filesystem::exists(tabler_icons)) {
                 io.Fonts->AddFontFromFileTTF(tabler_icons.c_str(), base_font_size - 1.0f, &icon_config, tabler_icon_ranges);
-                spdlog::info("Merged Tabler icons into regular font");
+                spdlog::debug("Merged Tabler icons into regular font");
             }
 
             // Merge Remix icons into regular font
             if (std::filesystem::exists(remix_icons)) {
                 io.Fonts->AddFontFromFileTTF(remix_icons.c_str(), base_font_size - 1.0f, &icon_config, remix_icon_ranges);
-                spdlog::info("Merged Remix icons into regular font");
+                spdlog::debug("Merged Remix icons into regular font");
             }
 
             // Merge Lucide icons into regular font
             if (std::filesystem::exists(lucide_icons)) {
                 io.Fonts->AddFontFromFileTTF(lucide_icons.c_str(), base_font_size - 1.0f, &icon_config, lucide_icon_ranges);
-                spdlog::info("Merged Lucide icons into regular font");
+                spdlog::debug("Merged Lucide icons into regular font");
             }
 
             // Merge Iconoir icons into regular font
             if (std::filesystem::exists(iconoir_icons)) {
                 io.Fonts->AddFontFromFileTTF(iconoir_icons.c_str(), base_font_size - 1.0f, &icon_config, iconoir_icon_ranges);
-                spdlog::info("Merged Iconoir icons into regular font");
+                spdlog::debug("Merged Iconoir icons into regular font");
             }
 
             // Merge Phosphor icons into regular font
             if (std::filesystem::exists(phosphor_icons)) {
                 io.Fonts->AddFontFromFileTTF(phosphor_icons.c_str(), base_font_size - 1.0f, &icon_config, phosphor_icon_ranges);
-                spdlog::info("Merged Phosphor icons into regular font");
+                spdlog::debug("Merged Phosphor icons into regular font");
             }
         }
     }
@@ -1250,12 +1221,28 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(inter_medium)) {
         font_medium_ = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), base_font_size, &font_config);
         if (font_medium_) {
-            spdlog::info("Loaded Inter-Medium ({}px)", base_font_size);
+            spdlog::debug("Loaded Inter-Medium ({}px)", base_font_size);
 
             // Merge FontAwesome icons
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+        }
+    }
+
+    // Heading font: Inter-Medium at a larger size, for section and dialog
+    // titles (TOFIX129). Screens get it through cyxwiz::ui::GetFont.
+    const float heading_font_size = std::round(base_font_size * 1.35f);
+    if (std::filesystem::exists(inter_medium)) {
+        ImFont* heading = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), heading_font_size, &font_config);
+        if (heading) {
+            spdlog::debug("Loaded Inter-Medium heading ({}px)", heading_font_size);
+            if (std::filesystem::exists(fa_solid)) {
+                icon_config.GlyphMinAdvanceX = heading_font_size;
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), heading_font_size - 1.0f, &icon_config, icon_ranges);
+                icon_config.GlyphMinAdvanceX = base_font_size;
+            }
+            cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Heading, heading);
         }
     }
 
@@ -1263,7 +1250,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(inter_bold)) {
         font_bold_ = io.Fonts->AddFontFromFileTTF(inter_bold.c_str(), base_font_size, &font_config);
         if (font_bold_) {
-            spdlog::info("Loaded Inter-Bold ({}px)", base_font_size);
+            spdlog::debug("Loaded Inter-Bold ({}px)", base_font_size);
 
             // Merge FontAwesome icons
             if (std::filesystem::exists(fa_solid)) {
@@ -1272,17 +1259,32 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         }
     }
 
-    // Load monospace font (for code/console)
-    if (std::filesystem::exists(mono_regular)) {
-        font_mono_ = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), mono_font_size, &font_config);
-        if (font_mono_) {
-            spdlog::info("Loaded JetBrainsMono-Regular ({}px)", mono_font_size);
+    // Load monospace editor fonts as real atlas sizes. Runtime scaling blurs text.
+    auto merge_code_icons = [&](float font_size) {
+        if (std::filesystem::exists(fa_solid)) {
+            icon_config.GlyphMinAdvanceX = font_size;
+            io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), font_size - 1.0f, &icon_config, icon_ranges);
+            icon_config.GlyphMinAdvanceX = base_font_size;
+        }
+    };
 
-            // Merge FontAwesome icons
-            if (std::filesystem::exists(fa_solid)) {
-                icon_config.GlyphMinAdvanceX = mono_font_size;
-                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), mono_font_size - 1.0f, &icon_config, icon_ranges);
-                icon_config.GlyphMinAdvanceX = base_font_size;  // Reset
+    if (std::filesystem::exists(mono_regular)) {
+        for (size_t i = 0; i < cyxwiz::gui::kEditorFontScales.size(); ++i) {
+            const float scale = cyxwiz::gui::kEditorFontScales[i];
+            const float pixel_size = cyxwiz::gui::kEditorMonoFontPixels[i];
+            ImFont* mono_font = cyxwiz::gui::AddTerminalCapableMonoFont(
+                io.Fonts, mono_regular.c_str(),
+                terminal_symbol_fallback.empty()
+                    ? nullptr
+                    : terminal_symbol_fallback.c_str(),
+                pixel_size, &font_config);
+            if (mono_font) {
+                cyxwiz::gui::RegisterEditorMonoFont(scale, mono_font);
+                if (i == 0) {
+                    font_mono_ = mono_font;
+                }
+                spdlog::debug("Loaded JetBrainsMono-Regular ({}px) for editor scale {}", pixel_size, scale);
+                merge_code_icons(pixel_size);
             }
         }
     }
@@ -1291,7 +1293,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(mono_bold)) {
         font_mono_bold_ = io.Fonts->AddFontFromFileTTF(mono_bold.c_str(), mono_font_size, &font_config);
         if (font_mono_bold_) {
-            spdlog::info("Loaded JetBrainsMono-Bold ({}px)", mono_font_size);
+            spdlog::debug("Loaded JetBrainsMono-Bold ({}px)", mono_font_size);
 
             // Merge FontAwesome icons
             if (std::filesystem::exists(fa_solid)) {
@@ -1304,12 +1306,18 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // If no fonts were loaded, add default
     if (!font_regular_) {
         spdlog::warn("Failed to load Inter-Regular, using default font");
-        io.Fonts->AddFontDefault();
+        io.Fonts->AddFontDefault(&font_config);
     }
 
+    io.FontDefault = font_regular_;
+    cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Regular, font_regular_);
+    cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Medium, font_medium_);
+    cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Bold, font_bold_);
+
     // Build font atlas
-    spdlog::info("Building font atlas...");
+    spdlog::debug("Building font atlas...");
     spdlog::default_logger()->flush();  // Force flush before potential crash
     io.Fonts->Build();
-    spdlog::info("Font atlas built successfully");
+    spdlog::debug("Font atlas built successfully at {:.2f}x rasterizer density",
+                 font_rasterizer_density_);
 }

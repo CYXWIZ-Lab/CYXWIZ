@@ -1,5 +1,6 @@
 #include "tutorial_system.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <spdlog/spdlog.h>
@@ -147,7 +148,7 @@ void TutorialSystem::RenderOverlay() {
 
     // Auto-advance for non-interactive steps
     if (!step.requires_interaction && step.delay_seconds > 0) {
-        float elapsed = ImGui::GetTime() - step_start_time_;
+        const double elapsed = ImGui::GetTime() - step_start_time_;
         if (elapsed >= step.delay_seconds) {
             NextStep();
         }
@@ -156,6 +157,7 @@ void TutorialSystem::RenderOverlay() {
 
 void TutorialSystem::RenderHighlight(const ImRect& target_rect) {
     ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Pulsing glow effect - more pronounced since no dark overlay
     float pulse_alpha = 0.7f + 0.3f * sinf(highlight_pulse_);
@@ -165,7 +167,7 @@ void TutorialSystem::RenderHighlight(const ImRect& target_rect) {
     for (int i = 5; i >= 0; i--) {
         float expand = pulse_size + i * 3.0f;
         float alpha = pulse_alpha * (1.0f - i * 0.15f);
-        ImVec4 glow_color = highlight_color_;
+        ImVec4 glow_color = t.accent_text;
         glow_color.w = alpha;
 
         draw_list->AddRect(
@@ -177,13 +179,13 @@ void TutorialSystem::RenderHighlight(const ImRect& target_rect) {
 
     // Solid inner border - thicker and brighter
     draw_list->AddRect(target_rect.Min, target_rect.Max,
-        IM_COL32(0, 220, 255, 255), 6.0f, 0, 4.0f);
+        ui::ToU32(t.accent_text), 6.0f, 0, 4.0f);
 
     // Add a subtle filled highlight behind the target area
     draw_list->AddRectFilled(
         ImVec2(target_rect.Min.x - 2, target_rect.Min.y - 2),
         ImVec2(target_rect.Max.x + 2, target_rect.Max.y + 2),
-        IM_COL32(0, 180, 220, 30),  // Very subtle cyan tint
+        ui::ToU32(ui::WithAlpha(t.accent_text, 30.0f / 255.0f)),  // Very subtle accent tint
         6.0f);
 }
 
@@ -221,14 +223,15 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
     ImGui::SetNextWindowSize(ImVec2(tooltip_width, 0), ImGuiCond_Always);  // Auto height
     ImGui::SetNextWindowBgAlpha(1.0f);
 
-    // Push bright, opaque styling - solid dark background for readability
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.14f, 1.0f));  // Solid dark background
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.86f, 1.0f, 1.0f));  // Bright cyan
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.47f, 0.86f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.27f, 0.59f, 0.98f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.35f, 0.7f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.3f, 0.3f, 0.4f, 1.0f));
+    // Push opaque styling from the theme - solid panel background for readability
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::WithAlpha(t.bg_panel, 1.0f));  // Solid background
+    ImGui::PushStyleColor(ImGuiCol_Border, t.accent_text);
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
+    ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.accent_active);
+    ImGui::PushStyleColor(ImGuiCol_Separator, t.border_soft);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tooltip_padding, tooltip_padding));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);
@@ -240,30 +243,30 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
 
     if (ImGui::Begin("##TutorialTooltip", nullptr, window_flags)) {
-        // Step counter - bright cyan
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Step %d of %d",
+        // Step counter - accent
+        ImGui::TextColored(t.accent_text, "Step %d of %d",
             current_step_index_ + 1, static_cast<int>(current_tutorial_->steps.size()));
 
         ImGui::Spacing();
 
-        // Title - pure white, larger
+        // Title - heading colour, larger
         ImGui::PushFont(ImGui::GetFont());  // Could use a bold font here
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", step.title.c_str());
+        ImGui::TextColored(t.text_bright, "%s", step.title.c_str());
         ImGui::PopFont();
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Description - white, wrapped
+        // Description - body text, wrapped
         ImGui::PushTextWrapPos(tooltip_width - tooltip_padding * 2);
-        ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.95f, 1.0f), "%s", step.description.c_str());
+        ImGui::TextColored(t.text, "%s", step.description.c_str());
         ImGui::PopTextWrapPos();
 
-        // Action hint - bright yellow
+        // Action hint - info colour
         if (!step.action_hint.empty()) {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f), "%s %s",
+            ImGui::TextColored(t.info, "%s %s",
                 ICON_FA_CIRCLE_INFO, step.action_hint.c_str());
         }
 
@@ -288,8 +291,8 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
                     NextStep();
                 }
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, ui::Mix(t.success, t.bg_window, 0.35f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.success);
                 if (ImGui::Button(ICON_FA_CHECK " Complete", ImVec2(button_width, 0))) {
                     NextStep();
                 }
@@ -303,8 +306,8 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
         if (avail > button_width) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - button_width);
         }
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ui::Mix(t.error, t.bg_window, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.bg_window, 0.3f));
         if (ImGui::Button(ICON_FA_XMARK " Skip", ImVec2(button_width, 0))) {
             SkipTutorial();
         }
@@ -328,10 +331,10 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
         bg_draw->AddRectFilled(
             ImVec2(win_pos.x - 2, win_pos.y - 2),
             ImVec2(win_max.x + 2, win_max.y + 2),
-            IM_COL32(20, 20, 28, 255),  // Solid dark background
+            ui::ToU32(ui::WithAlpha(t.bg_panel, 1.0f)),  // Solid panel background
             14.0f);  // Rounded corners
 
-        // Draw bright cyan glow border on foreground
+        // Draw accent glow border on foreground
         ImDrawList* fg_draw = ImGui::GetForegroundDrawList();
         for (int i = 2; i >= 0; i--) {
             float expand = i * 2.0f;
@@ -339,7 +342,7 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
             fg_draw->AddRect(
                 ImVec2(win_pos.x - expand, win_pos.y - expand),
                 ImVec2(win_max.x + expand, win_max.y + expand),
-                IM_COL32(0, 220, 255, (int)(alpha * 255)),
+                ui::ToU32(ui::WithAlpha(t.accent_text, alpha)),
                 12.0f + expand, 0, 2.0f);
         }
     }
@@ -350,6 +353,7 @@ void TutorialSystem::RenderProgressBar() {
 
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     float progress = static_cast<float>(current_step_index_) / current_tutorial_->steps.size();
     float bar_width = 300.0f;
@@ -361,14 +365,14 @@ void TutorialSystem::RenderProgressBar() {
     draw_list->AddRectFilled(
         ImVec2(bar_x, bar_y),
         ImVec2(bar_x + bar_width, bar_y + bar_height),
-        ImGui::ColorConvertFloat4ToU32(ImVec4(0.2f, 0.2f, 0.2f, 0.8f)),
+        ui::ToU32(ui::WithAlpha(t.bg_raised, 0.8f)),
         bar_height / 2);
 
     // Progress
     draw_list->AddRectFilled(
         ImVec2(bar_x, bar_y),
         ImVec2(bar_x + bar_width * progress, bar_y + bar_height),
-        ImGui::ColorConvertFloat4ToU32(highlight_color_),
+        ui::ToU32(t.accent_text),
         bar_height / 2);
 
     // Step indicators
@@ -379,11 +383,11 @@ void TutorialSystem::RenderProgressBar() {
 
         ImU32 dot_color;
         if (static_cast<int>(i) < current_step_index_) {
-            dot_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.3f, 0.8f, 0.3f, 1.0f)); // Completed
+            dot_color = ui::ToU32(t.success); // Completed
         } else if (static_cast<int>(i) == current_step_index_) {
-            dot_color = ImGui::ColorConvertFloat4ToU32(highlight_color_); // Current
+            dot_color = ui::ToU32(t.accent_text); // Current
         } else {
-            dot_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.5f, 0.5f, 0.5f, 1.0f)); // Pending
+            dot_color = ui::ToU32(t.pending); // Pending
         }
 
         draw_list->AddCircleFilled(ImVec2(dot_x, dot_y), dot_radius, dot_color);
@@ -393,13 +397,14 @@ void TutorialSystem::RenderProgressBar() {
 void TutorialSystem::ShowTutorialBrowser() {
     ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
 
-    // Push explicit styling for visibility
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.16f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+    // Push explicit styling for visibility (theme tokens)
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::WithAlpha(t.bg_panel, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text);
+    ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
+    ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
 
     if (!ImGui::Begin("Interactive Tutorials", &show_browser_)) {
         ImGui::End();
@@ -408,7 +413,7 @@ void TutorialSystem::ShowTutorialBrowser() {
     }
 
     // Header with icon
-    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), ICON_FA_BOOK " Available Tutorials");
+    ImGui::TextColored(t.accent_text, ICON_FA_BOOK " Available Tutorials");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -420,12 +425,12 @@ void TutorialSystem::ShowTutorialBrowser() {
 
     // Show count for debugging
     if (tutorials_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No tutorials registered!");
+        ImGui::TextColored(t.error, "No tutorials registered!");
     }
 
     for (auto& [category, tuts] : by_category) {
         // Category header
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
         bool open = ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         ImGui::PopStyleColor();
 
@@ -439,16 +444,16 @@ void TutorialSystem::ShowTutorialBrowser() {
 
                 // Status icon
                 if (is_completed) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), ICON_FA_CIRCLE_CHECK);
+                    ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK);
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_CIRCLE);
+                    ImGui::TextColored(t.pending, ICON_FA_CIRCLE);
                 }
                 ImGui::SameLine();
 
-                // Tutorial name - bright white
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", tutorial->name.c_str());
+                // Tutorial name - heading colour
+                ImGui::TextColored(t.text_bright, "%s", tutorial->name.c_str());
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.7f, 1.0f), "(%zu steps)", tutorial->steps.size());
+                ImGui::TextColored(t.text_dim, "(%zu steps)", tutorial->steps.size());
 
                 // Start button
                 ImGui::SameLine(ImGui::GetWindowWidth() - 90);
@@ -796,7 +801,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
         RegisterTutorial(std::move(tutorial));
     }
 
-    spdlog::info("Registered {} built-in tutorials", tutorials_.size());
+    spdlog::debug("Registered {} built-in tutorials", tutorials_.size());
 }
 
 } // namespace cyxwiz

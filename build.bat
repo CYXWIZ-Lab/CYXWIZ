@@ -12,7 +12,7 @@ REM   --debug              Build in Debug mode (default: Release)
 REM   --clean              Clean build directory before building
 REM   --engine             Build only Engine component
 REM   --server-node        Build only Server Node component
-REM   --central-server     Build only Central Server component
+REM   --build-dir PATH     Use a compatible existing or custom build tree
 REM   -j N                 Use N parallel jobs (default: 8)
 REM ============================================================================
 
@@ -25,7 +25,7 @@ set CLEAN_BUILD=0
 set PARALLEL_JOBS=8
 set BUILD_ENGINE=ON
 set BUILD_SERVER_NODE=ON
-set BUILD_CENTRAL_SERVER=ON
+set "BUILD_DIR_OVERRIDE="
 
 :parse_args
 if "%~1"=="" goto end_parse
@@ -45,7 +45,6 @@ if /i "%~1"=="--engine" (
     set BUILD_TARGET=engine
     set BUILD_ENGINE=ON
     set BUILD_SERVER_NODE=OFF
-    set BUILD_CENTRAL_SERVER=OFF
     shift
     goto parse_args
 )
@@ -53,15 +52,16 @@ if /i "%~1"=="--server-node" (
     set BUILD_TARGET=server-node
     set BUILD_ENGINE=OFF
     set BUILD_SERVER_NODE=ON
-    set BUILD_CENTRAL_SERVER=OFF
     shift
     goto parse_args
 )
-if /i "%~1"=="--central-server" (
-    set BUILD_TARGET=central-server
-    set BUILD_ENGINE=OFF
-    set BUILD_SERVER_NODE=OFF
-    set BUILD_CENTRAL_SERVER=ON
+if /i "%~1"=="--build-dir" (
+    if "%~2"=="" (
+        echo [ERROR] --build-dir requires a path
+        exit /b 1
+    )
+    set "BUILD_DIR_OVERRIDE=%~2"
+    shift
     shift
     goto parse_args
 )
@@ -89,13 +89,14 @@ echo   --debug              Build in Debug mode (default: Release)
 echo   --clean              Clean build directory before building
 echo   --engine             Build only Engine component
 echo   --server-node        Build only Server Node component
-echo   --central-server     Build only Central Server component
+echo   --build-dir PATH     Use a compatible existing or custom build tree
 echo   -j N                 Use N parallel jobs (default: 8)
 echo.
 echo Examples:
 echo   build.bat                    Build all components in Release mode
 echo   build.bat --debug            Build all in Debug mode
 echo   build.bat --server-node      Build only Server Node
+echo   build.bat --debug --engine --build-dir build
 echo   build.bat --clean            Clean build and rebuild all
 echo   build.bat -j 16              Build with 16 parallel jobs
 echo.
@@ -103,6 +104,14 @@ echo ===========================================================================
 exit /b 0
 
 :end_parse
+
+if defined BUILD_DIR_OVERRIDE (
+    set "BUILD_DIR=%BUILD_DIR_OVERRIDE%"
+) else if /i "%BUILD_TYPE%"=="Debug" (
+    set "BUILD_DIR=build\windows-debug"
+) else (
+    set "BUILD_DIR=build\windows-release"
+)
 
 REM Record start time
 set START_TIME=%TIME%
@@ -116,6 +125,7 @@ echo.
 echo Configuration:
 echo   Build Type:      %BUILD_TYPE%
 echo   Components:      %BUILD_TARGET%
+echo   Build Directory: %BUILD_DIR%
 echo   Parallel Jobs:   %PARALLEL_JOBS%
 echo   Clean Build:     %CLEAN_BUILD%
 echo.
@@ -131,10 +141,14 @@ if not exist "vcpkg\vcpkg.exe" (
     exit /b 1
 )
 
-set BUILD_DIR=build\windows-release
-
 REM Clean build if requested
 if %CLEAN_BUILD%==1 (
+    for %%I in ("%BUILD_DIR%") do set "BUILD_DIR_FULL=%%~fI"
+    for %%I in (".") do set "PROJECT_DIR_FULL=%%~fI"
+    if /i "!BUILD_DIR_FULL!"=="!PROJECT_DIR_FULL!" (
+        echo [ERROR] Refusing to clean the repository root
+        exit /b 1
+    )
     echo [CLEAN] Cleaning build directory...
     if exist "%BUILD_DIR%" (
         rmdir /s /q "%BUILD_DIR%"
@@ -146,18 +160,26 @@ if %CLEAN_BUILD%==1 (
 REM ============================================================================
 REM Step 1: Configure CMake
 REM ============================================================================
-echo [1/4] Configuring CMake...
+echo [1/3] Configuring CMake...
 set CMAKE_START=%TIME%
 echo.
 
-cmake -B %BUILD_DIR% -S . ^
-    -G "Visual Studio 18 2026" -A x64 ^
+set "CMAKE_GENERATOR_ARGS="
+set "CMAKE_TOOLCHAIN_ARGS="
+if exist "%BUILD_DIR%\CMakeCache.txt" (
+    echo [INFO] Reusing generator and platform from %BUILD_DIR%\CMakeCache.txt
+) else (
+    set "CMAKE_GENERATOR_ARGS=-G "Visual Studio 18 2026" -A x64"
+    set "CMAKE_TOOLCHAIN_ARGS=-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake"
+)
+
+cmake -B "%BUILD_DIR%" -S . ^
+    %CMAKE_GENERATOR_ARGS% ^
+    %CMAKE_TOOLCHAIN_ARGS% ^
     -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
-    -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake ^
-    -DVCPKG_OVERLAY_PORTS=vcpkg-overlays/ports ^
+    -DVCPKG_OVERLAY_PORTS=vcpkg-ports ^
     -DCYXWIZ_BUILD_ENGINE=%BUILD_ENGINE% ^
     -DCYXWIZ_BUILD_SERVER_NODE=%BUILD_SERVER_NODE% ^
-    -DCYXWIZ_BUILD_CENTRAL_SERVER=%BUILD_CENTRAL_SERVER% ^
     -DCYXWIZ_BUILD_TESTS=ON
 
 if %ERRORLEVEL% NEQ 0 (
@@ -181,16 +203,16 @@ echo.
 REM ============================================================================
 REM Step 2: Build C++ components
 REM ============================================================================
-if /i "%BUILD_TARGET%"=="central-server" goto build_central_server
-
-echo [2/4] Building C++ components...
+echo [2/3] Building C++ components...
 set CPP_START=%TIME%
 echo.
 
 if /i "%BUILD_TARGET%"=="all" (
-    cmake --build %BUILD_DIR% --config %BUILD_TYPE% -j %PARALLEL_JOBS%
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% -j %PARALLEL_JOBS%
+) else if /i "%BUILD_TARGET%"=="server-node" (
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target cyxwiz-server-daemon cyxwiz-server-gui -j %PARALLEL_JOBS%
 ) else (
-    cmake --build %BUILD_DIR% --config %BUILD_TYPE% --target cyxwiz-%BUILD_TARGET% -j %PARALLEL_JOBS%
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target cyxwiz-engine -j %PARALLEL_JOBS%
 )
 
 if %ERRORLEVEL% NEQ 0 (
@@ -207,48 +229,14 @@ echo [OK] C++ build completed ^(%CPP_DURATION%^)
 echo.
 
 REM ============================================================================
-REM Step 3: Build Central Server (Rust)
-REM ============================================================================
-:build_central_server
-if /i "%BUILD_TARGET%"=="engine" goto build_summary
-if /i "%BUILD_TARGET%"=="server-node" goto build_summary
-
-echo [3/4] Building Central Server ^(Rust^)...
-set RUST_START=%TIME%
-echo.
-
-cd cyxwiz-central-server
-
-if "%BUILD_TYPE%"=="Debug" (
-    cargo build
-) else (
-    cargo build --release
-)
-
-if %ERRORLEVEL% NEQ 0 (
-    cd ..
-    echo.
-    echo [ERROR] Rust build failed!
-    echo.
-    exit /b 1
-)
-
-cd ..
-set RUST_END=%TIME%
-call :calculate_time "%RUST_START%" "%RUST_END%" RUST_DURATION
-echo.
-echo [OK] Rust build completed ^(%RUST_DURATION%^)
-echo.
-
-REM ============================================================================
-REM Step 4: Build Summary
+REM Step 3: Build Summary
 REM ============================================================================
 :build_summary
 set END_TIME=%TIME%
 call :calculate_time "%START_TIME%" "%END_TIME%" TOTAL_DURATION
 
 echo ============================================================================
-echo [4/4] Build Summary
+echo [3/3] Build Summary
 echo ============================================================================
 echo.
 echo Total Time: %TOTAL_DURATION%
@@ -259,13 +247,11 @@ if /i "%BUILD_TARGET%"=="all" (
     if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-engine.exe" (
         echo   Engine:         %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-engine.exe
     )
-    if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-node.exe" (
-        echo   Server Node:    %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-node.exe
+    if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-daemon.exe" (
+        echo   Server daemon:  %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-daemon.exe
     )
-    if exist "cyxwiz-central-server\target\release\cyxwiz-central-server.exe" (
-        echo   Central Server: cyxwiz-central-server\target\release\cyxwiz-central-server.exe
-    ) else if exist "cyxwiz-central-server\target\debug\cyxwiz-central-server.exe" (
-        echo   Central Server: cyxwiz-central-server\target\debug\cyxwiz-central-server.exe
+    if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-gui.exe" (
+        echo   Server GUI:     %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-gui.exe
     )
 ) else if /i "%BUILD_TARGET%"=="engine" (
     echo Executable:
@@ -273,16 +259,12 @@ if /i "%BUILD_TARGET%"=="all" (
         echo   Engine:         %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-engine.exe
     )
 ) else if /i "%BUILD_TARGET%"=="server-node" (
-    echo Executable:
-    if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-node.exe" (
-        echo   Server Node:    %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-node.exe
+    echo Executables:
+    if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-daemon.exe" (
+        echo   Server daemon:  %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-daemon.exe
     )
-) else if /i "%BUILD_TARGET%"=="central-server" (
-    echo Executable:
-    if exist "cyxwiz-central-server\target\release\cyxwiz-central-server.exe" (
-        echo   Central Server: cyxwiz-central-server\target\release\cyxwiz-central-server.exe
-    ) else if exist "cyxwiz-central-server\target\debug\cyxwiz-central-server.exe" (
-        echo   Central Server: cyxwiz-central-server\target\debug\cyxwiz-central-server.exe
+    if exist "%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-gui.exe" (
+        echo   Server GUI:     %BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-gui.exe
     )
 )
 
@@ -290,14 +272,13 @@ echo.
 echo Next Steps:
 if /i "%BUILD_TARGET%"=="all" (
     echo   - Run the Engine:         .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-engine.exe
-    echo   - Run the Server Node:    .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-node.exe
-    echo   - Run the Central Server: cd cyxwiz-central-server ^&^& cargo run --release
+    echo   - Run the Server GUI:     .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-gui.exe
+    echo   - Run the daemon:         .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-daemon.exe
 ) else if /i "%BUILD_TARGET%"=="engine" (
     echo   - Run the Engine:         .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-engine.exe
 ) else if /i "%BUILD_TARGET%"=="server-node" (
-    echo   - Run the Server Node:    .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-node.exe
-) else if /i "%BUILD_TARGET%"=="central-server" (
-    echo   - Run the Central Server: cd cyxwiz-central-server ^&^& cargo run --release
+    echo   - Run the Server GUI:     .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-gui.exe
+    echo   - Run the daemon:         .\%BUILD_DIR%\bin\%BUILD_TYPE%\cyxwiz-server-daemon.exe
 )
 
 echo.

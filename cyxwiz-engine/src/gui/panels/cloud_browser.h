@@ -54,7 +54,7 @@ private:
     void RenderPublicDatasetsTab();
     void RenderDatasetContextMenu(const network::CloudDatasetInfo& dataset);
     void RenderPublicDatasetContextMenu(const network::PublicDatasetInfo& dataset);
-    void RenderDatasetTable(const std::vector<network::CloudDatasetInfo>& datasets, bool is_public = false);
+    void RenderDatasetTable(const std::vector<network::CloudDatasetInfo>& datasets);
     void RenderPublicDatasetTable(const std::vector<network::PublicDatasetInfo>& datasets);
     void RenderDatasetInfoPopup();
     void RenderVerificationPopup();
@@ -87,8 +87,8 @@ private:
     // Selected dataset
     int selected_index_ = -1;
     int selected_public_index_ = -1;
-    network::CloudDatasetInfo* selected_dataset_ = nullptr;
-    network::PublicDatasetInfo* selected_public_dataset_ = nullptr;
+    const network::CloudDatasetInfo* selected_dataset_ = nullptr;
+    const network::PublicDatasetInfo* selected_public_dataset_ = nullptr;
 
     // Detailed info for selected dataset
     std::vector<network::CloudFileInfo> selected_dataset_files_;

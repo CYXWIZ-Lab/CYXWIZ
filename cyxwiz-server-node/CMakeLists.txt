@@ -21,14 +21,7 @@ find_package(OpenSSL REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(jwt-cpp CONFIG REQUIRED)
 
-# Optional: Find ArrayFire for GPU support
-find_package(ArrayFire QUIET)
-if(ArrayFire_FOUND)
-    message(STATUS "ArrayFire found - GPU support enabled")
-    # Note: CYXWIZ_HAS_ARRAYFIRE is added per-target, not globally
-else()
-    message(WARNING "ArrayFire not found - GPU metrics will be limited")
-endif()
+# ArrayFire (and CYXWIZ_HAS_ARRAYFIRE) comes with cyxwiz-backend, which requires it.
 
 # ========== GUI Dependencies (Conditional) ==========
 if(CYXWIZ_BUILD_GUI)
@@ -47,15 +40,22 @@ if(CYXWIZ_BUILD_TUI)
     message(STATUS "TUI mode enabled - FTXUI found")
 endif()
 
+# ========== Shared training core (TOFIX118 P2) ==========
+# Jobs train with the Engine's graph loader, compiler, preparation and
+# executor (cyxwiz-training-core); defined once for both hosts.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
+
 # ========== Shared Core Sources (Used by both daemon and client) ==========
 set(SHARED_CORE_SOURCES
     src/core/backend_manager.cpp
+    src/core/allocation_device_type.cpp
     src/core/state_manager.cpp
     src/core/config_manager.cpp
     src/core/metrics_collector.cpp
     src/core/metrics_storage.cpp
     src/core/device_pool.cpp
     src/api/api_key_manager.cpp
+    src/auth/token_refresh.cpp
 )
 
 # ========== IPC Sources ==========
@@ -81,7 +81,8 @@ set(DAEMON_SOURCES
     src/job_execution_service.cpp
     src/node_server.cpp
     src/job_executor.cpp
-    src/remote_data_loader.cpp
+    src/remote_dataset_fetcher.cpp
+    src/node_doctor.cpp
     # API layer
     src/api/api_key_manager.cpp
     src/api/rate_limiter.cpp
@@ -118,6 +119,10 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/server_panel.cpp
         src/gui/theme.cpp
         src/gui/dock_style.cpp
+        src/gui/ui_widgets.cpp
+        src/gui/texture.cpp
+        src/gui/window_frame.cpp
+        src/gui/ui_watchdog.cpp
         src/gui/panels/dashboard_panel.cpp
         src/gui/panels/hardware_panel.cpp
         src/gui/panels/allocation_panel.cpp
@@ -133,6 +138,7 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/panels/analytics_panel.cpp
         src/gui/panels/fine_tuning_panel.cpp
         src/gui/panels/login_panel.cpp
+        src/core/sign_in_presentation.cpp
         src/gui/panels/account_settings_panel.cpp
         # Authentication
         src/auth/auth_manager.cpp
@@ -165,7 +171,11 @@ if(CYXWIZ_BUILD_DAEMON)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(cyxwiz-server-daemon PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(cyxwiz-server-daemon PRIVATE
+        cyxwiz-training-core
         fmt::fmt
         spdlog::spdlog
         nlohmann_json::nlohmann_json
@@ -200,12 +210,6 @@ if(CYXWIZ_BUILD_DAEMON)
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY} ${IOKIT_LIBRARY})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
-    endif()
-
-    # ArrayFire linkage
-    if(ArrayFire_FOUND)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE ArrayFire::af)
-        target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_ARRAYFIRE)
     endif()
 
     # ONNX Runtime linkage
@@ -273,6 +277,15 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     endif()
 
     # Core libraries
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(cyxwiz-server-gui PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    # Symbols beside the Release executable, so the UI watchdog names the
+    # function a hang sits in (TOFIX139); no effect on code generation.
+    if(MSVC)
+        target_compile_options(cyxwiz-server-gui PRIVATE /Zi)
+        target_link_options(cyxwiz-server-gui PRIVATE /DEBUG)
+    endif()
     target_link_libraries(cyxwiz-server-gui PRIVATE
         fmt::fmt
         spdlog::spdlog
@@ -320,12 +333,6 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
         )
     else()
         target_link_libraries(cyxwiz-server-gui PRIVATE pthread)
-    endif()
-
-    # ArrayFire linkage (for device pool)
-    if(ArrayFire_FOUND)
-        target_link_libraries(cyxwiz-server-gui PRIVATE ArrayFire::af)
-        target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_ARRAYFIRE)
     endif()
 
     # ONNX Runtime linkage
@@ -378,12 +385,14 @@ if(CYXWIZ_BUILD_TESTS)
     # P2P Service Tests
     add_executable(test_job_execution_service
         tests/test_job_execution_service.cpp
+        ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src/network/dataset_file_server.cpp
         src/job_execution_service.cpp
         src/job_executor.cpp
-        src/remote_data_loader.cpp
+        src/remote_dataset_fetcher.cpp
         src/node_client.cpp
+        src/node_doctor.cpp
         src/auth/p2p_jwt_validator.cpp
-        src/core/device_pool.cpp
+        ${SHARED_CORE_SOURCES}
     )
 
     target_include_directories(test_job_execution_service PRIVATE
@@ -391,7 +400,11 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(test_job_execution_service PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(test_job_execution_service PRIVATE
+        cyxwiz-training-core
         Catch2::Catch2
         Catch2::Catch2WithMain
         fmt::fmt
@@ -402,7 +415,15 @@ if(CYXWIZ_BUILD_TESTS)
         gRPC::grpc++
         protobuf::libprotobuf
         Threads::Threads
+        yaml-cpp::yaml-cpp
+        unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
+        httplib::httplib
+    )
+
+    target_compile_definitions(test_job_execution_service PRIVATE
+        CYXWIZ_P2P_TEST_SHORT_DISCONNECT_WAIT
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
     )
 
     if(WIN32)
@@ -414,6 +435,29 @@ if(CYXWIZ_BUILD_TESTS)
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     endif()
+
+    # Sign-in screen words and states (TOFIX139): pure presentation model
+    add_executable(test_sign_in_presentation
+        tests/test_sign_in_presentation.cpp
+        src/core/sign_in_presentation.cpp
+    )
+    target_include_directories(test_sign_in_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_sign_in_presentation PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_sign_in_presentation PRIVATE cxx_std_17)
+    add_test(NAME test_sign_in_presentation COMMAND test_sign_in_presentation)
+
+    # The runtime behind a lent GPU (TOFIX139 P8): pure mapping
+    add_executable(test_allocation_device_type
+        tests/test_allocation_device_type.cpp
+        src/core/allocation_device_type.cpp
+    )
+    target_include_directories(test_allocation_device_type PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    )
+    target_link_libraries(test_allocation_device_type PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_allocation_device_type PRIVATE cxx_std_17)
+    add_test(NAME test_allocation_device_type COMMAND test_allocation_device_type)
 
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
@@ -465,10 +509,10 @@ if(CYXWIZ_BUILD_TESTS)
         tests/standalone_p2p_server.cpp
         src/job_execution_service.cpp
         src/job_executor.cpp
-        src/remote_data_loader.cpp
+        src/remote_dataset_fetcher.cpp
         src/node_client.cpp
         src/auth/p2p_jwt_validator.cpp
-        src/core/device_pool.cpp
+        ${SHARED_CORE_SOURCES}
     )
 
     target_include_directories(standalone_p2p_server PRIVATE
@@ -477,6 +521,7 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     target_link_libraries(standalone_p2p_server PRIVATE
+        cyxwiz-training-core
         cyxwiz-backend
         cyxwiz-protocol
         gRPC::grpc++
@@ -484,6 +529,8 @@ if(CYXWIZ_BUILD_TESTS)
         spdlog::spdlog
         fmt::fmt
         Threads::Threads
+        yaml-cpp::yaml-cpp
+        unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
     )
 
@@ -512,6 +559,9 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(test_security PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(test_security PRIVATE
         Catch2::Catch2
         Catch2::Catch2WithMain
@@ -531,6 +581,33 @@ if(CYXWIZ_BUILD_TESTS)
             WIN32_LEAN_AND_MEAN
             NOGDI
         )
+    endif()
+
+    # CyxWizLoader refuses models with extension nodes (TOFIX125 P6)
+    add_executable(test_cyxwiz_loader_extension
+        tests/test_cyxwiz_loader_extension.cpp
+        src/model_loader.cpp
+    )
+    target_include_directories(test_cyxwiz_loader_extension PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+    target_link_libraries(test_cyxwiz_loader_extension PRIVATE
+        Catch2::Catch2
+        Catch2::Catch2WithMain
+        fmt::fmt
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        cyxwiz-backend
+        Threads::Threads
+    )
+    if(CYXWIZ_HAS_ONNX)
+        target_link_libraries(test_cyxwiz_loader_extension PRIVATE onnxruntime::onnxruntime)
+        target_compile_definitions(test_cyxwiz_loader_extension PRIVATE CYXWIZ_HAS_ONNX)
+    endif()
+    # model_loader.cpp defines NOMINMAX and WIN32_LEAN_AND_MEAN itself.
+    if(WIN32)
+        target_compile_definitions(test_cyxwiz_loader_extension PRIVATE NOGDI)
     endif()
 
     # ONNX Loader Tests (conditional on ONNX support)
@@ -556,20 +633,16 @@ if(CYXWIZ_BUILD_TESTS)
             Threads::Threads
         )
 
-        # Link ONNX protobuf for test model creation
-        if(CYXWIZ_HAS_ONNX_EXPORT)
-            find_package(ONNX CONFIG QUIET)
-            if(ONNX_FOUND)
-                # Use namespaced targets: ONNX::onnx already includes ONNX::onnx_proto
-                target_link_libraries(test_onnx_loader PRIVATE ONNX::onnx)
-                target_compile_definitions(test_onnx_loader PRIVATE
-                    CYXWIZ_HAS_ONNX_EXPORT
-                    ONNX_ML  # Required for vcpkg ONNX headers
-                )
-            endif()
-        endif()
+        target_compile_definitions(test_onnx_loader PRIVATE
+            CYXWIZ_HAS_ONNX
+            "CYXWIZ_ONNX_TEST_MODEL_PATH=\"${CMAKE_SOURCE_DIR}/mnist.onnx\""
+        )
 
-        target_compile_definitions(test_onnx_loader PRIVATE CYXWIZ_HAS_ONNX)
+        add_custom_command(TARGET test_onnx_loader POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:onnxruntime::onnxruntime>
+                $<TARGET_FILE_DIR:test_onnx_loader>
+        )
 
         if(WIN32)
             target_compile_definitions(test_onnx_loader PRIVATE

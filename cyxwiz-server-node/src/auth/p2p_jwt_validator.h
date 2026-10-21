@@ -29,6 +29,8 @@ struct P2PAuthClaims {
     std::string sub;       // Engine wallet/user ID
     std::string job_id;    // Job UUID
     std::string node_id;   // Server Node UUID
+    std::string reservation_id;   // The reservation this token belongs to
+    int64_t reservation_expires;  // When the reservation ends (Unix time)
     int64_t exp;           // Expiration (Unix timestamp)
     int64_t iat;           // Issued at (Unix timestamp)
     std::string iss;       // Issuer (should be "CyxWiz-Central-Server")
@@ -60,9 +62,9 @@ public:
      * @param token The JWT token string
      * @param expected_job_id The job ID this connection should be for
      * @param expected_node_id This node's UUID
-     * @return true if token is valid AND matches job/node, false otherwise
+     * @return The claims if the token is valid AND matches job/node, nullopt otherwise
      */
-    bool ValidateForJob(const std::string& token,
+    std::optional<P2PAuthClaims> ValidateForJob(const std::string& token,
                         const std::string& expected_job_id,
                         const std::string& expected_node_id);
 

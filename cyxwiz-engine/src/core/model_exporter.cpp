@@ -1,10 +1,16 @@
 #include "model_exporter.h"
+#include "error_codes.h"
 #include "training_executor.h"
+#include "node_executors/tree_model_artifact.h"
+#include "graph_model.h"
+#include "guarded_extension_module.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
+#include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <nlohmann/json.hpp>
 
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
 #include <onnx/onnx_pb.h>
@@ -12,8 +18,716 @@
 
 namespace cyxwiz {
 
+namespace {
+
+struct InferredSequenceConfig {
+    bool enabled = false;
+    bool batch_first = true;
+    bool create_attention_mask = true;
+    bool create_causal_lm_targets = false;
+    size_t max_sequence_length = 0;
+    int64_t word_pad_id = 0;
+    int64_t pos_pad_id = 0;
+    int64_t tag_ignore_index = -100;
+    int64_t target_ignore_index = -100;
+    std::string token_vocab_path;
+    std::string pos_vocab_path;
+    std::string tag_vocab_path;
+};
+
+struct InferredBertEncoderConfig {
+    bool detected = false;
+    bool supported = false;
+    std::string task;
+    std::string input_kind;
+    std::string output_contract;
+    bool has_attention_mask = false;
+    bool requires_token_type_ids = false;
+};
+
+bool LooksLikeTokenizerParams(const nlohmann::json& params) {
+    return params.contains("tokenizer_type") ||
+           params.contains("method") ||
+           params.contains("vocab_file") ||
+           params.contains("model_file") ||
+           params.contains("text_col") ||
+           params.contains("text_column") ||
+           params.contains("max_length") ||
+           params.contains("min_word_freq") ||
+           params.contains("max_vocab_size");
+}
+
+void CopyParamIfPresent(nlohmann::json& target,
+                        const nlohmann::json& params,
+                        const char* key) {
+    if (!params.contains(key)) {
+        return;
+    }
+    target[key] = params[key];
+}
+
+bool InferTextTokenizerAssetsFromGraph(
+    const std::string& graph_json,
+    std::string& out_config_json,
+    std::string& out_vocab_path,
+    std::string& out_model_path
+) {
+    out_config_json.clear();
+    out_vocab_path.clear();
+    out_model_path.clear();
+
+    if (graph_json.empty()) {
+        return false;
+    }
+
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        if (!graph.contains("nodes") || !graph["nodes"].is_array()) {
+            return false;
+        }
+
+        nlohmann::json package_config;
+        package_config["version"] = "1.0";
+        package_config["source"] = "graph";
+        package_config["effective"] = nlohmann::json::object();
+        package_config["nodes"] = nlohmann::json::array();
+
+        bool found = false;
+        std::string candidate_vocab_path;
+        std::string candidate_model_path;
+
+        for (const auto& node : graph["nodes"]) {
+            if (!node.contains("parameters") || !node["parameters"].is_object()) {
+                continue;
+            }
+
+            const auto& params = node["parameters"];
+            if (!LooksLikeTokenizerParams(params)) {
+                continue;
+            }
+
+            found = true;
+
+            nlohmann::json node_record;
+            if (node.contains("id")) {
+                node_record["id"] = node["id"];
+            }
+            if (node.contains("name")) {
+                node_record["name"] = node["name"];
+            }
+            node_record["parameters"] = params;
+            package_config["nodes"].push_back(std::move(node_record));
+
+            auto& effective = package_config["effective"];
+            CopyParamIfPresent(effective, params, "method");
+            CopyParamIfPresent(effective, params, "tokenizer_type");
+            CopyParamIfPresent(effective, params, "max_length");
+            CopyParamIfPresent(effective, params, "lowercase");
+            CopyParamIfPresent(effective, params, "min_word_freq");
+            CopyParamIfPresent(effective, params, "max_vocab_size");
+            CopyParamIfPresent(effective, params, "pad_value");
+            CopyParamIfPresent(effective, params, "text_col");
+            CopyParamIfPresent(effective, params, "text_column");
+            CopyParamIfPresent(effective, params, "label_col");
+            CopyParamIfPresent(effective, params, "label_column");
+            CopyParamIfPresent(effective, params, "vocab_file");
+            CopyParamIfPresent(effective, params, "model_file");
+
+            if (params.contains("vocab_file") &&
+                params["vocab_file"].is_string() &&
+                !params["vocab_file"].get<std::string>().empty()) {
+                candidate_vocab_path = params["vocab_file"].get<std::string>();
+            }
+            if (params.contains("model_file") &&
+                params["model_file"].is_string() &&
+                !params["model_file"].get<std::string>().empty()) {
+                candidate_model_path = params["model_file"].get<std::string>();
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        if (!candidate_vocab_path.empty()) {
+            package_config["effective"]["vocab_file_packaged"] =
+                "tokenizer/vocab.txt";
+            if (std::filesystem::exists(candidate_vocab_path)) {
+                out_vocab_path = candidate_vocab_path;
+            } else {
+                package_config["effective"]["vocab_file_packaged"] = nullptr;
+                package_config["effective"]["vocab_file_package_warning"] =
+                    "Original vocab_file path did not exist at export time";
+            }
+        }
+
+        if (!candidate_model_path.empty()) {
+            package_config["effective"]["model_file_packaged"] =
+                "tokenizer/model.spm";
+            if (std::filesystem::exists(candidate_model_path)) {
+                out_model_path = candidate_model_path;
+            } else {
+                package_config["effective"]["model_file_packaged"] = nullptr;
+                package_config["effective"]["model_file_package_warning"] =
+                    "Original model_file path did not exist at export time";
+            }
+        }
+
+        out_config_json = package_config.dump(4);
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::warn("Could not infer text tokenizer assets from graph: {}",
+                     e.what());
+        return false;
+    }
+}
+
+std::string ToLowerInvariant(const std::string& value) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lowered;
+}
+
+bool ReadInt64Param(
+    const nlohmann::json& params,
+    const char* key,
+    int64_t& out_value
+) {
+    if (!params.contains(key)) {
+        return false;
+    }
+
+    const auto& value = params[key];
+    if (value.is_number_integer()) {
+        out_value = value.get<int64_t>();
+        return true;
+    }
+    if (value.is_number_unsigned()) {
+        out_value = static_cast<int64_t>(value.get<uint64_t>());
+        return true;
+    }
+    if (value.is_number_float()) {
+        out_value = static_cast<int64_t>(value.get<double>());
+        return true;
+    }
+    if (value.is_string()) {
+        try {
+            out_value = std::stoll(value.get<std::string>());
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool ReadBoolParam(
+    const nlohmann::json& params,
+    const char* key,
+    bool& out_value
+) {
+    if (!params.contains(key)) {
+        return false;
+    }
+
+    const auto& value = params[key];
+    if (value.is_boolean()) {
+        out_value = value.get<bool>();
+        return true;
+    }
+    if (value.is_number_integer()) {
+        out_value = value.get<int64_t>() != 0;
+        return true;
+    }
+    if (value.is_string()) {
+        const auto lowered = ToLowerInvariant(value.get<std::string>());
+        if (lowered == "true" || lowered == "1" || lowered == "yes" ||
+            lowered == "on") {
+            out_value = true;
+            return true;
+        }
+        if (lowered == "false" || lowered == "0" || lowered == "off") {
+            out_value = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool InferSequenceAssetsFromGraph(
+    const std::string& graph_json,
+    InferredSequenceConfig& out_config
+) {
+    out_config = InferredSequenceConfig{};
+    if (graph_json.empty()) {
+        return false;
+    }
+
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        if (!graph.contains("nodes") || !graph["nodes"].is_array()) {
+            return false;
+        }
+
+        const auto is_sequence_like_key = [](const std::string& key) {
+            static const char* keys[] = {
+                "token_column",
+                "tokens_column",
+                "token_sequence_column",
+                "pos_column",
+                "pos_sequence_column",
+                "tag_column",
+                "tags_column",
+                "tag_sequence_column",
+                "sentence_id_column",
+                "sequence_id_column",
+                "max_sequence_length",
+                "sequence_length",
+                "ignore_index",
+                "target_ignore_index",
+                "causal_lm_targets",
+                "create_causal_lm_targets",
+                "shifted_targets",
+                "batch_layout",
+                "attention_mask",
+                "create_attention_mask",
+                "return_sequences",
+                "sequence_payload",
+                "tag_vocab_file",
+                "vocab_file"
+            };
+
+            for (const char* known_key : keys) {
+                if (key == known_key) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        for (const auto& node : graph["nodes"]) {
+            if (!node.contains("parameters") || !node["parameters"].is_object()) {
+                continue;
+            }
+
+            const auto& params = node["parameters"];
+            const std::string node_name =
+                node.contains("name") && node["name"].is_string()
+                    ? node["name"].get<std::string>()
+                    : "";
+            const std::string node_name_lower = ToLowerInvariant(node_name);
+
+            bool looks_sequence_like = false;
+            for (const auto& param : params.items()) {
+                if (is_sequence_like_key(param.key())) {
+                    looks_sequence_like = true;
+                    break;
+                }
+            }
+
+            if (!looks_sequence_like) {
+                // Keep this conservative: only promote to sequence assets if we
+                // clearly see sequence semantics in parameters.
+                const bool has_vocab_like = params.contains("vocab_file") ||
+                                           params.contains("tag_vocab_file") ||
+                                           params.contains("outside_tag") ||
+                                           params.contains("pad_tag") ||
+                                           params.contains("bio_scheme");
+                if (!has_vocab_like) {
+                    continue;
+                }
+                looks_sequence_like = has_vocab_like;
+            }
+
+            if (looks_sequence_like) {
+                out_config.enabled = true;
+            }
+
+            if (params.contains("batch_layout")) {
+                bool batch_first = true;
+                if (ReadBoolParam(params, "batch_layout", batch_first)) {
+                    out_config.batch_first = batch_first;
+                } else {
+                    const auto layout =
+                        ToLowerInvariant(params["batch_layout"].get<std::string>());
+                    out_config.batch_first = layout != "time_first";
+                }
+            }
+
+            bool attention_mask = out_config.create_attention_mask;
+            if (ReadBoolParam(params, "create_attention_mask", attention_mask) ||
+                ReadBoolParam(params, "attention_mask", attention_mask)) {
+                out_config.create_attention_mask = attention_mask;
+            }
+
+            bool causal_lm_targets = out_config.create_causal_lm_targets;
+            if (ReadBoolParam(params, "create_causal_lm_targets", causal_lm_targets) ||
+                ReadBoolParam(params, "causal_lm_targets", causal_lm_targets) ||
+                (params.contains("target_ids") && params["target_ids"].is_array()) ||
+                (params.contains("shifted_targets") && params["shifted_targets"].is_array())) {
+                out_config.create_causal_lm_targets = causal_lm_targets;
+            }
+
+            int64_t max_sequence_length = out_config.max_sequence_length;
+            if (ReadInt64Param(params, "max_sequence_length", max_sequence_length) ||
+                ReadInt64Param(params, "sequence_length", max_sequence_length)) {
+                out_config.max_sequence_length =
+                    max_sequence_length < 0 ? 0 : static_cast<size_t>(max_sequence_length);
+            }
+
+            int64_t tag_ignore_index = out_config.tag_ignore_index;
+            if (ReadInt64Param(params, "ignore_index", tag_ignore_index)) {
+                out_config.tag_ignore_index = tag_ignore_index;
+            }
+
+            int64_t target_ignore_index = out_config.target_ignore_index;
+            if (ReadInt64Param(params, "target_ignore_index", target_ignore_index)) {
+                out_config.target_ignore_index = target_ignore_index;
+            }
+
+            int64_t token_pad_id = out_config.word_pad_id;
+            if (ReadInt64Param(params, "token_pad_value", token_pad_id)) {
+                out_config.word_pad_id = token_pad_id;
+            }
+            int64_t pos_pad_id = out_config.pos_pad_id;
+            if (ReadInt64Param(params, "pos_pad_value", pos_pad_id)) {
+                out_config.pos_pad_id = pos_pad_id;
+            }
+
+            auto infer_vocab_for_node = [&]() {
+                auto resolve_path = [&](const nlohmann::json& path_value) {
+                    if (!path_value.is_string()) {
+                        return std::string{};
+                    }
+                    const auto path = path_value.get<std::string>();
+                    return path;
+                };
+
+                if (params.contains("tag_vocab_file")) {
+                    const auto tag_path = resolve_path(params["tag_vocab_file"]);
+                    if (!tag_path.empty()) {
+                        out_config.tag_vocab_path = tag_path;
+                    }
+                    return;
+                }
+
+                if (!params.contains("vocab_file")) {
+                    return;
+                }
+
+                const auto vocab_path = resolve_path(params["vocab_file"]);
+                if (vocab_path.empty()) {
+                    return;
+                }
+
+                const bool tag_like = params.contains("outside_tag") ||
+                                      params.contains("pad_tag") ||
+                                      params.contains("bio_scheme") ||
+                                      (node_name_lower.find("tag") != std::string::npos);
+                const bool pos_like = params.contains("pad_tag") == false &&
+                                     !tag_like &&
+                                     (node_name_lower.find("pos") != std::string::npos);
+
+                if (tag_like) {
+                    out_config.tag_vocab_path = vocab_path;
+                } else if (pos_like) {
+                    out_config.pos_vocab_path = vocab_path;
+                } else {
+                    out_config.token_vocab_path = vocab_path;
+                }
+            };
+            infer_vocab_for_node();
+        }
+
+        return out_config.enabled;
+    } catch (const std::exception&) {
+        spdlog::warn("Could not infer sequence assets from graph");
+        out_config = InferredSequenceConfig{};
+        return false;
+    }
+}
+
+std::string ReadStringParam(const nlohmann::json& params, const char* key) {
+    if (!params.contains(key)) {
+        return {};
+    }
+    const auto& value = params[key];
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<int64_t>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<uint64_t>());
+    }
+    return {};
+}
+
+bool ReadTruthyParam(const nlohmann::json& params, const char* key) {
+    bool bool_value = false;
+    if (ReadBoolParam(params, key, bool_value)) {
+        return bool_value;
+    }
+    const std::string value = ToLowerInvariant(ReadStringParam(params, key));
+    return value == "required" || value == "present";
+}
+
+bool HasNonEmptyParam(const nlohmann::json& params, const char* key) {
+    return params.contains(key) && !ReadStringParam(params, key).empty();
+}
+
+bool DeclaresBertEncoderFamily(const nlohmann::json& node,
+                               const nlohmann::json& params) {
+    const std::string node_name =
+        node.contains("name") && node["name"].is_string()
+            ? ToLowerInvariant(node["name"].get<std::string>())
+            : "";
+    if (node_name.find("bert") != std::string::npos) {
+        return true;
+    }
+
+    static const char* family_keys[] = {
+        "model_family", "encoder_family", "text_model_family"
+    };
+    for (const char* key : family_keys) {
+        const std::string value = ToLowerInvariant(ReadStringParam(params, key));
+        if (value == "bert" || value == "bert_encoder" ||
+            value == "bert-style" || value == "bert_style") {
+            return true;
+        }
+    }
+
+    return ReadTruthyParam(params, "bert_style") ||
+           ReadTruthyParam(params, "bert_encoder");
+}
+
+bool DeclaresBertAttentionMask(const nlohmann::json& params) {
+    return ReadTruthyParam(params, "attention_mask") ||
+           ReadTruthyParam(params, "create_attention_mask") ||
+           HasNonEmptyParam(params, "attention_mask_column");
+}
+
+bool DeclaresBertTokenTypeIds(const nlohmann::json& params) {
+    if (ReadTruthyParam(params, "token_type_ids") ||
+        ReadTruthyParam(params, "segment_ids") ||
+        ReadTruthyParam(params, "use_token_type_ids") ||
+        ReadTruthyParam(params, "use_segment_ids")) {
+        return true;
+    }
+
+    static const char* keys[] = {
+        "token_type_column", "token_type_ids_column", "segment_column",
+        "segment_ids_column", "segment_vocab_file", "token_type_vocab_file",
+        "type_vocab_size"
+    };
+    for (const char* key : keys) {
+        if (HasNonEmptyParam(params, key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<int> ReadIntListParam(const nlohmann::json& params,
+                                  const char* key) {
+    std::vector<int> result;
+    if (!params.contains(key)) {
+        return result;
+    }
+    const auto& value = params[key];
+    if (value.is_array()) {
+        for (const auto& item : value) {
+            if (item.is_number_integer()) {
+                result.push_back(item.get<int>());
+            } else if (item.is_string()) {
+                try {
+                    result.push_back(std::stoi(item.get<std::string>()));
+                } catch (...) {
+                    return {};
+                }
+            }
+        }
+        return result;
+    }
+
+    std::string text = ReadStringParam(params, key);
+    text.erase(std::remove(text.begin(), text.end(), '['), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ']'), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ' '), text.end());
+    std::stringstream stream(text);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        if (token.empty()) {
+            continue;
+        }
+        try {
+            result.push_back(std::stoi(token));
+        } catch (...) {
+            return {};
+        }
+    }
+    return result;
+}
+
+bool SelectsClsToken(const nlohmann::json& params) {
+    int64_t dim = 0;
+    if (ReadInt64Param(params, "dim", dim) && dim != 0) {
+        return false;
+    }
+    const auto indices = ReadIntListParam(params, "indices");
+    return indices.size() == 1 && indices.front() == 0;
+}
+
+bool PoolsSequence(const nlohmann::json& params) {
+    int64_t dim = -1;
+    return ReadInt64Param(params, "dim", dim) && dim == 0;
+}
+
+bool InferBertEncoderConfigFromGraph(
+    const std::string& graph_json,
+    InferredBertEncoderConfig& out_config
+) {
+    out_config = InferredBertEncoderConfig{};
+    if (graph_json.empty()) {
+        return false;
+    }
+
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        if (!graph.contains("nodes") || !graph["nodes"].is_array()) {
+            return false;
+        }
+
+        bool declared_bert = false;
+        bool has_token_embedding = false;
+        bool has_positional_encoding = false;
+        bool has_encoder_stack = false;
+        bool has_cls_extraction = false;
+        bool has_sequence_pooling = false;
+        bool has_dense_head = false;
+        bool has_time_distributed_head = false;
+        bool has_sequence_tag_output = false;
+
+        for (const auto& node : graph["nodes"]) {
+            const nlohmann::json empty_params = nlohmann::json::object();
+            const auto& params =
+                node.contains("parameters") && node["parameters"].is_object()
+                    ? node["parameters"]
+                    : empty_params;
+            declared_bert = declared_bert ||
+                            DeclaresBertEncoderFamily(node, params);
+            out_config.has_attention_mask =
+                out_config.has_attention_mask ||
+                DeclaresBertAttentionMask(params);
+            out_config.requires_token_type_ids =
+                out_config.requires_token_type_ids ||
+                DeclaresBertTokenTypeIds(params);
+
+            const auto type = static_cast<gui::NodeType>(
+                node.value("type", static_cast<int>(gui::NodeType::DataInput)));
+            switch (type) {
+                case gui::NodeType::Embedding:
+                    has_token_embedding = true;
+                    break;
+                case gui::NodeType::PositionalEncoding:
+                    has_positional_encoding = true;
+                    break;
+                case gui::NodeType::TransformerEncoder:
+                    has_encoder_stack = true;
+                    break;
+                case gui::NodeType::TensorIndexSelect:
+                    has_cls_extraction = has_cls_extraction ||
+                                         SelectsClsToken(params);
+                    break;
+                case gui::NodeType::TensorMean:
+                case gui::NodeType::TensorMax:
+                    has_sequence_pooling = has_sequence_pooling ||
+                                           PoolsSequence(params);
+                    break;
+                case gui::NodeType::Dense:
+                    has_dense_head = true;
+                    break;
+                case gui::NodeType::TimeDistributed:
+                    has_time_distributed_head = true;
+                    break;
+                case gui::NodeType::SequenceTagOutput:
+                    has_sequence_tag_output = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        out_config.detected =
+            declared_bert ||
+            (has_encoder_stack &&
+             (has_time_distributed_head || has_sequence_tag_output ||
+              has_cls_extraction || has_sequence_pooling));
+        if (!out_config.detected) {
+            return false;
+        }
+
+        out_config.input_kind = has_token_embedding ? "token_ids"
+                                                    : "encoded_tensor";
+        if (has_sequence_tag_output || has_time_distributed_head) {
+            out_config.task = "token_classification";
+            out_config.output_contract = "Float32[batch,seq,classes]";
+            out_config.supported = has_encoder_stack &&
+                                   has_time_distributed_head &&
+                                   !out_config.requires_token_type_ids;
+        } else {
+            out_config.task = "sequence_classification";
+            out_config.output_contract = "Float32[batch,classes]";
+            out_config.supported = has_encoder_stack && has_dense_head &&
+                                   (has_cls_extraction || has_sequence_pooling) &&
+                                   !out_config.requires_token_type_ids;
+        }
+
+        if (out_config.input_kind == "token_ids" &&
+            !has_positional_encoding) {
+            out_config.supported = false;
+        }
+        return true;
+    } catch (const std::exception&) {
+        spdlog::warn("Could not infer BERT encoder metadata from graph");
+        out_config = InferredBertEncoderConfig{};
+        return false;
+    }
+}
+} // namespace
+
+namespace {
+// The extension node types a graph uses, once each, from its nodes'
+// extension blocks (TOFIX125 P6). Empty for a graph without any.
+std::vector<ModelExtensionRequirement> ExtensionRequirementsFromGraph(const std::string& graph_json) {
+    std::vector<ModelExtensionRequirement> out;
+    if (graph_json.empty()) return out;
+    const auto graph = nlohmann::json::parse(graph_json, nullptr, false);
+    if (graph.is_discarded() || !graph.contains("nodes") || !graph["nodes"].is_array()) return out;
+    for (const auto& node : graph["nodes"]) {
+        if (!node.is_object() || !node.contains("extension") || !node["extension"].is_object()) continue;
+        const auto& block = node["extension"];
+        ModelExtensionRequirement requirement{block.value("type_id", ""), block.value("version", ""),
+                                              block.value("content_hash", "")};
+        if (requirement.type_id.empty()) continue;
+        const bool known = std::any_of(out.begin(), out.end(), [&](const auto& item) {
+            return item.type_id == requirement.type_id;
+        });
+        if (!known) out.push_back(std::move(requirement));
+    }
+    return out;
+}
+}  // namespace
+
 ExportResult ModelExporter::Export(
-    SequentialModel& model,
+    IExecutableModel& model,
     const Optimizer* optimizer,
     const TrainingMetrics* training_metrics,
     const std::string& graph_json,
@@ -30,6 +744,16 @@ ExportResult ModelExporter::Export(
     }
 
     ExportResult result;
+    // ONNX and GGUF are written from a layer stack.
+    SequentialModel* stack = model.AsSequentialModel();
+    if (!stack && (format == ModelFormat::ONNX || format == ModelFormat::GGUF)) {
+        result.success = false;
+        result.error_message = errors::FormatError(
+            errors::Serialization::ExportFormatUnavailable,
+            "A graph with branches exports to a CyxWiz package (.cyxmodel) or Safetensors, not this format yet");
+        last_error_ = result.error_message;
+        return result;
+    }
 
     switch (format) {
         case ModelFormat::CyxModel:
@@ -38,7 +762,7 @@ ExportResult ModelExporter::Export(
             break;
 
         case ModelFormat::ONNX:
-            result = ExportONNX(model, output_path, options, progress_cb);
+            result = ExportONNX(*stack, output_path, options, progress_cb);
             break;
 
         case ModelFormat::Safetensors:
@@ -46,12 +770,14 @@ ExportResult ModelExporter::Export(
             break;
 
         case ModelFormat::GGUF:
-            result = ExportGGUF(model, output_path, options, progress_cb);
+            result = ExportGGUF(*stack, output_path, options, progress_cb);
             break;
 
         default:
             result.success = false;
-            result.error_message = "Unknown or unsupported export format";
+            result.error_message = errors::FormatError(
+                errors::Serialization::ExportFormatUnavailable,
+                "Unknown or unsupported export format");
             return result;
     }
 
@@ -71,40 +797,227 @@ ExportResult ModelExporter::ExportCyxModel(
     const ExportOptions& options,
     ProgressCallback progress_cb
 ) {
+    return WriteCyxModel(model.GetParameters(), model.Size(), true, optimizer, training_metrics, graph_json,
+                         output_path, options, progress_cb);
+}
+
+ExportResult ModelExporter::ExportCyxModel(
+    IExecutableModel& model,
+    const Optimizer* optimizer,
+    const TrainingMetrics* training_metrics,
+    const std::string& graph_json,
+    const std::string& output_path,
+    const ExportOptions& options,
+    ProgressCallback progress_cb
+) {
+    return WriteCyxModel(model.GetParameters(), model.LayerCount(), model.AsSequentialModel() != nullptr,
+                         optimizer, training_metrics, graph_json, output_path, options, progress_cb);
+}
+
+ExportResult ModelExporter::WriteCyxModel(
+    const std::map<std::string, Tensor>& params,
+    size_t layer_count,
+    bool layer_stack,
+    const Optimizer* optimizer,
+    const TrainingMetrics* training_metrics,
+    const std::string& graph_json,
+    const std::string& output_path,
+    const ExportOptions& options,
+    ProgressCallback progress_cb
+) {
     ExportResult result;
     result.output_path = output_path;
 
     if (progress_cb) progress_cb(0, 6, "Preparing model data...");
 
     try {
+        ExportOptions resolved_options = options;
+        if (resolved_options.include_tokenizer_assets &&
+            resolved_options.text_tokenizer_vocab_data.empty() &&
+            resolved_options.text_tokenizer_model_data.empty() &&
+            resolved_options.text_tokenizer_config_json.empty()) {
+            std::string inferred_config;
+            std::string inferred_vocab_path;
+            std::string inferred_model_path;
+            if (InferTextTokenizerAssetsFromGraph(graph_json,
+                                                  inferred_config,
+                                                  inferred_vocab_path,
+                                                  inferred_model_path)) {
+                resolved_options.text_tokenizer_config_json =
+                    std::move(inferred_config);
+                if (resolved_options.text_tokenizer_vocab_path.empty()) {
+                    resolved_options.text_tokenizer_vocab_path =
+                        std::move(inferred_vocab_path);
+                }
+                if (resolved_options.text_tokenizer_model_path.empty()) {
+                    resolved_options.text_tokenizer_model_path =
+                        std::move(inferred_model_path);
+                }
+            }
+        }
+
+        InferredSequenceConfig inferred_sequence_config;
+        if (resolved_options.include_sequence_assets && resolved_options.text_tokenizer_vocab_data.empty() &&
+            InferSequenceAssetsFromGraph(graph_json, inferred_sequence_config)) {
+            if (resolved_options.sequence_token_vocabulary_path.empty() &&
+                !inferred_sequence_config.token_vocab_path.empty()) {
+                resolved_options.sequence_token_vocabulary_path =
+                    inferred_sequence_config.token_vocab_path;
+            }
+            if (resolved_options.sequence_pos_vocabulary_path.empty() &&
+                !inferred_sequence_config.pos_vocab_path.empty()) {
+                resolved_options.sequence_pos_vocabulary_path =
+                    inferred_sequence_config.pos_vocab_path;
+            }
+            if (resolved_options.sequence_tag_vocabulary_path.empty() &&
+                !inferred_sequence_config.tag_vocab_path.empty()) {
+                resolved_options.sequence_tag_vocabulary_path =
+                    inferred_sequence_config.tag_vocab_path;
+            }
+
+            resolved_options.sequence_max_sequence_length =
+                inferred_sequence_config.max_sequence_length != 0
+                    ? inferred_sequence_config.max_sequence_length
+                    : resolved_options.sequence_max_sequence_length;
+            resolved_options.sequence_batch_first =
+                inferred_sequence_config.batch_first;
+            resolved_options.sequence_create_attention_mask =
+                inferred_sequence_config.create_attention_mask;
+            resolved_options.sequence_create_causal_lm_targets =
+                inferred_sequence_config.create_causal_lm_targets;
+            resolved_options.sequence_word_pad_id =
+                inferred_sequence_config.word_pad_id;
+            resolved_options.sequence_pos_pad_id =
+                inferred_sequence_config.pos_pad_id;
+            resolved_options.sequence_tag_ignore_index =
+                inferred_sequence_config.tag_ignore_index;
+            resolved_options.sequence_target_ignore_index =
+                inferred_sequence_config.target_ignore_index;
+        }
+
+        InferredBertEncoderConfig inferred_bert_config;
+        const bool has_bert_encoder_config =
+            InferBertEncoderConfigFromGraph(graph_json, inferred_bert_config);
+
         // 1. Create manifest
-        ModelManifest manifest = CreateManifest(model, training_metrics, options);
+        ModelManifest manifest = CreateManifest(params, layer_count, layer_stack, training_metrics,
+                                                resolved_options);
+        if (resolved_options.sequence_create_causal_lm_targets) {
+            manifest.model_family = "causal_lm";
+            manifest.supports_generation = true;
+            manifest.generation_output_contract = "Float32[1,seq,vocab]";
+        }
+        if (has_bert_encoder_config && inferred_bert_config.supported &&
+            !resolved_options.sequence_create_causal_lm_targets) {
+            manifest.model_family = "bert_encoder";
+            manifest.supports_bert_encoder = true;
+            manifest.bert_encoder_task = inferred_bert_config.task;
+            manifest.bert_encoder_input_kind = inferred_bert_config.input_kind;
+            manifest.bert_encoder_output_contract =
+                inferred_bert_config.output_contract;
+            manifest.bert_encoder_has_attention_mask =
+                inferred_bert_config.has_attention_mask;
+            manifest.bert_encoder_requires_token_type_ids =
+                inferred_bert_config.requires_token_type_ids;
+        }
+        manifest.has_tokenizer = resolved_options.include_tokenizer_assets &&
+            !resolved_options.text_tokenizer_config_json.empty();
+        manifest.has_vocabulary = resolved_options.include_tokenizer_assets &&
+            (!resolved_options.text_tokenizer_vocab_path.empty() || !resolved_options.text_tokenizer_vocab_data.empty());
+        manifest.has_tree_model_artifact =
+            resolved_options.include_tree_model_artifact;
+        if (manifest.has_tree_model_artifact) {
+            if (!resolved_options.tree_model_artifact_json.empty()) {
+                try {
+                    const auto artifact_json =
+                        nlohmann::json::parse(
+                            resolved_options.tree_model_artifact_json);
+                    manifest.tree_model_type =
+                        artifact_json.value("model_type", "");
+                } catch (const std::exception&) {
+                    manifest.tree_model_type.clear();
+                }
+            } else if (!resolved_options.tree_model_artifact_path.empty()) {
+                manifest.tree_model_type = ReadTreeModelArtifactType(
+                    resolved_options.tree_model_artifact_path);
+            }
+        }
+        if (resolved_options.include_sequence_assets) {
+            manifest.has_sequence =
+                inferred_sequence_config.enabled ||
+                !resolved_options.sequence_token_vocabulary_path.empty() ||
+                !resolved_options.sequence_pos_vocabulary_path.empty() ||
+                !resolved_options.sequence_tag_vocabulary_path.empty() ||
+                resolved_options.sequence_max_sequence_length != 0;
+            manifest.has_sequence_token_vocabulary =
+                !resolved_options.sequence_token_vocabulary_path.empty();
+            manifest.has_sequence_pos_vocabulary =
+                !resolved_options.sequence_pos_vocabulary_path.empty();
+            manifest.has_sequence_tag_vocabulary =
+                !resolved_options.sequence_tag_vocabulary_path.empty();
+            manifest.sequence_batch_first =
+                resolved_options.sequence_batch_first;
+            manifest.sequence_create_attention_mask =
+                resolved_options.sequence_create_attention_mask;
+            manifest.sequence_create_causal_lm_targets =
+                resolved_options.sequence_create_causal_lm_targets;
+            manifest.sequence_max_sequence_length =
+                resolved_options.sequence_max_sequence_length;
+            manifest.sequence_word_pad_id =
+                resolved_options.sequence_word_pad_id;
+            manifest.sequence_pos_pad_id =
+                resolved_options.sequence_pos_pad_id;
+            manifest.sequence_tag_ignore_index =
+                resolved_options.sequence_tag_ignore_index;
+            manifest.sequence_target_ignore_index =
+                resolved_options.sequence_target_ignore_index;
+            manifest.sequence_token_vocabulary_path =
+                manifest.has_sequence_token_vocabulary ? "sequence/token_vocab.txt" : "";
+            manifest.sequence_pos_vocabulary_path =
+                manifest.has_sequence_pos_vocabulary ? "sequence/pos_vocab.txt" : "";
+            manifest.sequence_tag_vocabulary_path =
+                manifest.has_sequence_tag_vocabulary ? "sequence/tag_vocab.txt" : "";
+        }
+        if (manifest.has_tree_model_artifact) {
+            manifest.tree_model_artifact_path = "tree/model.json";
+        }
 
         if (progress_cb) progress_cb(1, 6, "Extracting weights...");
 
         // 2. Extract weights from model
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
 
-        auto params = model.GetParameters();
         result.num_parameters = 0;
         result.total_tensor_bytes = 0;
 
         for (const auto& [name, tensor] : params) {
             weights[name] = TensorToBytes(tensor);
             weight_shapes[name] = GetTensorShape(tensor);
+            switch(tensor.GetDataType()) {
+                case DataType::Float32: weight_dtypes[name]=TensorDType::Float32; break;
+                case DataType::Float64: weight_dtypes[name]=TensorDType::Float64; break;
+                case DataType::Int32: weight_dtypes[name]=TensorDType::Int32; break;
+                case DataType::Int64: weight_dtypes[name]=TensorDType::Int64; break;
+                case DataType::UInt8: weight_dtypes[name]=TensorDType::UInt8; break;
+                default: throw std::runtime_error("Unsupported native export dtype: "+name);
+            }
             result.num_parameters += static_cast<int>(tensor.NumElements());
             result.total_tensor_bytes += tensor.NumBytes();
         }
 
-        result.num_layers = static_cast<int>(model.Size());
+        result.num_layers = static_cast<int>(layer_count);
         manifest.num_parameters = result.num_parameters;
         manifest.num_layers = result.num_layers;
 
         if (progress_cb) progress_cb(2, 6, "Creating training config...");
 
         // 3. Create training config
-        TrainingConfig config = CreateTrainingConfig(optimizer, training_metrics);
+        TrainingConfig config = resolved_options.trained_config
+            ? *resolved_options.trained_config : CreateTrainingConfig(optimizer, training_metrics);
+        if (training_metrics) config.epochs = training_metrics->last_executed_epoch > 0
+            ? training_metrics->last_executed_epoch : training_metrics->current_epoch;
 
         if (progress_cb) progress_cb(3, 6, "Creating training history...");
 
@@ -131,6 +1044,28 @@ ExportResult ModelExporter::ExportCyxModel(
 
         // Update manifest flags
         manifest.has_graph = options.include_graph && !graph_json.empty();
+        manifest.extensions = ExtensionRequirementsFromGraph(graph_json);
+        // An extension node is rebuilt through its extension from the
+        // graph's extension block: without the graph it cannot be placed
+        // (TOFIX125 P6).
+        if (!manifest.extensions.empty() && !manifest.has_graph) {
+            result.success = false;
+            result.error_message = errors::FormatError(
+                errors::Serialization::ModelSaveFailed,
+                "A model with extension nodes needs its graph in the package (Include: Graph)");
+            last_error_ = result.error_message;
+            return result;
+        }
+        // A graph model is rebuilt from its graph: without it the weights
+        // cannot be placed.
+        if (!layer_stack && !manifest.has_graph) {
+            result.success = false;
+            result.error_message = errors::FormatError(
+                errors::Serialization::ModelSaveFailed,
+                "A graph with branches needs its graph in the package (Include: Graph)");
+            last_error_ = result.error_message;
+            return result;
+        }
 
         if (progress_cb) progress_cb(5, 6, "Writing .cyxmodel file...");
 
@@ -139,18 +1074,21 @@ ExportResult ModelExporter::ExportCyxModel(
         bool success = cyxmodel.Create(
             output_path,
             manifest,
-            options.include_graph ? graph_json : "",
+            resolved_options.include_graph ? graph_json : "",
             config,
             history_ptr,
             weights,
             weight_shapes,
             optimizer_state_ptr,
-            options
+            resolved_options,
+            &weight_dtypes
         );
 
         if (!success) {
             result.success = false;
-            result.error_message = cyxmodel.GetLastError();
+            result.error_message = errors::FormatError(
+                errors::Serialization::ModelSaveFailed,
+                cyxmodel.GetLastError());
             last_error_ = result.error_message;
             return result;
         }
@@ -179,7 +1117,10 @@ ExportResult ModelExporter::ExportCyxModel(
 
     } catch (const std::exception& e) {
         result.success = false;
-        result.error_message = std::string("Export failed: ") + e.what();
+        result.error_message = errors::FormatError(
+            errors::Serialization::ModelSaveFailed,
+            "Export failed",
+            e.what());
         last_error_ = result.error_message;
         spdlog::error("Model export failed: {}", e.what());
     }
@@ -196,10 +1137,33 @@ ExportResult ModelExporter::ExportONNX(
     ExportResult result;
     result.output_path = output_path;
 
+    // ONNX is written from the built-in layers it recognises; an extension
+    // node's computation is the extension's own code, so it would be dropped
+    // and the file would describe another model (TOFIX125 P6).
+    for (size_t i = 0; i < model.Size(); ++i) {
+        const auto* extension = dynamic_cast<const GuardedExtensionModule*>(model.GetModule(i));
+        if (!extension) continue;
+        result.success = false;
+        result.error_message = errors::FormatError(
+            errors::Serialization::ExportFormatUnavailable,
+            "The model has the extension node " + extension->NodeName() + " (" + extension->TypeId() +
+                "); ONNX cannot describe its computation. Export a CyxWiz package (.cyxmodel) or Safetensors");
+        last_error_ = result.error_message;
+        return result;
+    }
+
 #ifndef CYXWIZ_HAS_ONNX_EXPORT
+    result.num_layers = static_cast<int>(model.Size());
     result.success = false;
-    result.error_message = "ONNX export support not compiled. Build with CYXWIZ_ENABLE_ONNX=ON and ensure onnx package is installed.";
+    result.error_message = errors::FormatError(
+        errors::Serialization::ExportFormatNotCompiled,
+        "ONNX export support not compiled. Requested opset " +
+            std::to_string(options.onnx_opset_version) +
+            ". Build with CYXWIZ_ENABLE_ONNX=ON and ensure the onnx package is installed.");
     last_error_ = result.error_message;
+    if (progress_cb) {
+        progress_cb(0, 1, result.error_message);
+    }
     return result;
 #else
     try {
@@ -275,7 +1239,7 @@ ExportResult ModelExporter::ExportONNX(
 
             // Set raw data
             size_t num_bytes = tensor.NumBytes();
-            initializer->set_raw_data(tensor.Data(), num_bytes);
+            initializer->set_raw_data(tensor.ReadData(), num_bytes);
 
             result.num_parameters += static_cast<int>(tensor.NumElements());
             result.total_tensor_bytes += num_bytes;
@@ -445,7 +1409,7 @@ ExportResult ModelExporter::ExportONNX(
 }
 
 ExportResult ModelExporter::ExportSafetensors(
-    SequentialModel& model,
+    IExecutableModel& model,
     const std::string& output_path,
     const ExportOptions& options,
     ProgressCallback progress_cb
@@ -541,7 +1505,7 @@ ExportResult ModelExporter::ExportSafetensors(
 
         // Write tensor data in order
         for (const auto& [name, tensor] : ordered_tensors) {
-            file.write(static_cast<const char*>(tensor->Data()), tensor->NumBytes());
+            file.write(static_cast<const char*>(tensor->ReadData()), tensor->NumBytes());
             result.total_tensor_bytes += tensor->NumBytes();
         }
 
@@ -550,7 +1514,7 @@ ExportResult ModelExporter::ExportSafetensors(
         if (progress_cb) progress_cb(3, 3, "Export complete!");
 
         result.success = true;
-        result.num_layers = static_cast<int>(model.Size());
+        result.num_layers = static_cast<int>(model.LayerCount());
         result.file_size_bytes = std::filesystem::file_size(output_path);
 
         spdlog::info("Exported model to Safetensors: {} ({} tensors, {} bytes)",
@@ -683,7 +1647,7 @@ std::vector<uint8_t> ModelExporter::TensorToBytes(const Tensor& tensor) {
     size_t num_bytes = tensor.NumBytes();
     std::vector<uint8_t> bytes(num_bytes);
 
-    const void* data = tensor.Data();
+    const void* data = tensor.ReadData();
     if (data && num_bytes > 0) {
         std::memcpy(bytes.data(), data, num_bytes);
     }
@@ -703,17 +1667,10 @@ std::vector<int64_t> ModelExporter::GetTensorShape(const Tensor& tensor) {
     return result;
 }
 
-int ModelExporter::CountParameters(SequentialModel& model) {
-    int total = 0;
-    auto params = model.GetParameters();
-    for (const auto& [name, tensor] : params) {
-        total += static_cast<int>(tensor.NumElements());
-    }
-    return total;
-}
-
 ModelManifest ModelExporter::CreateManifest(
-    SequentialModel& model,
+    const std::map<std::string, Tensor>& params,
+    size_t layer_count,
+    bool layer_stack,
     const TrainingMetrics* metrics,
     const ExportOptions& options
 ) {
@@ -732,9 +1689,13 @@ ModelManifest ModelExporter::CreateManifest(
 
     // Model info
     manifest.model_name = options.model_name.empty() ? "Untitled Model" : options.model_name;
-    manifest.model_type = "SequentialModel";
-    manifest.num_parameters = CountParameters(model);
-    manifest.num_layers = static_cast<int>(model.Size());
+    manifest.model_type = layer_stack ? "SequentialModel" : "GraphModel";
+    manifest.model_family = "";
+    manifest.supports_generation = false;
+    manifest.generation_output_contract = "";
+    manifest.num_parameters = 0;
+    for (const auto& [name, tensor] : params) manifest.num_parameters += static_cast<int>(tensor.NumElements());
+    manifest.num_layers = static_cast<int>(layer_count);
 
     // Training summary (if available)
     if (metrics) {
@@ -747,6 +1708,29 @@ ModelManifest ModelExporter::CreateManifest(
     manifest.author = options.author;
     manifest.description = options.description;
     manifest.custom_metadata = options.custom_metadata;
+    auto family_it = manifest.custom_metadata.find("model_family");
+    if (family_it != manifest.custom_metadata.end()) {
+        manifest.model_family = family_it->second;
+    }
+    auto supports_generation_it =
+        manifest.custom_metadata.find("supports_generation");
+    if (supports_generation_it != manifest.custom_metadata.end()) {
+        const std::string value = supports_generation_it->second;
+        manifest.supports_generation = value == "true" || value == "1";
+    }
+    auto contract_it =
+        manifest.custom_metadata.find("generation_output_contract");
+    if (contract_it != manifest.custom_metadata.end()) {
+        manifest.generation_output_contract = contract_it->second;
+    }
+    if (options.include_tokenizer_assets &&
+        !options.text_tokenizer_config_json.empty()) {
+        manifest.custom_metadata["text_tokenizer"] = "packaged";
+    }
+    if (options.include_tokenizer_assets &&
+        !options.text_tokenizer_vocab_path.empty()) {
+        manifest.custom_metadata["text_vocabulary"] = "packaged";
+    }
 
     return manifest;
 }
@@ -770,7 +1754,7 @@ TrainingConfig ModelExporter::CreateTrainingConfig(
 
     if (metrics) {
         config.epochs = metrics->total_epochs;
-        config.batch_size = metrics->total_batches > 0 ? 32 : 0;  // Approximation
+        config.batch_size = 0;  // Unknown without the completed training configuration.
     }
 
     return config;

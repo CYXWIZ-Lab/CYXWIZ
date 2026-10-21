@@ -1,0 +1,13 @@
+/* Linux export map for libcyxwiz-backend.so.
+ *
+ * DuckDB is linked statically into this library and into the Engine. Its
+ * objects have default visibility, so without this map the Engine's copy
+ * interposes the library's and both run the same global destructors at exit
+ * ("free(): double free detected" after "Shutting down CyxWiz Backend").
+ * Keeping DuckDB local binds the library to its own copy. A lone "*" has the
+ * lowest precedence, so the local pattern wins for DuckDB symbols.
+ */
+{
+  global: *;
+  local: *duckdb*;
+};

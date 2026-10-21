@@ -1,11 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 // Main header file for CyxWiz Backend
 // Include this to get access to all backend functionality
 
-#define CYXWIZ_VERSION_MAJOR 0
-#define CYXWIZ_VERSION_MINOR 2
-#define CYXWIZ_VERSION_PATCH 0
+#include "version.h"
 
 // API export macros
 #include "api_export.h"
@@ -39,13 +39,13 @@
 // Learning rate schedulers
 #include "scheduler.h"
 
-// Clustering algorithms (GPU-accelerated)
+// Clustering algorithms (ArrayFire-backed where available)
 #include "clustering.h"
 
-// Data transformation (GPU-accelerated)
+// Data transformation (ArrayFire-backed where available)
 #include "data_transform.h"
 
-// Model evaluation metrics (GPU-accelerated)
+// Model evaluation metrics (ArrayFire-backed where available)
 #include "model_evaluation.h"
 
 // Dimensionality reduction (PCA, t-SNE, UMAP)
@@ -57,7 +57,7 @@
 // Model interpretability (Grad-CAM, Saliency Maps)
 #include "model_interpretability.h"
 
-// Linear algebra operations (GPU-accelerated)
+// Linear algebra operations (ArrayFire-backed where available)
 #include "linear_algebra.h"
 
 // Signal processing (FFT, Convolution, Filters, Wavelets)
@@ -80,8 +80,15 @@ namespace cyxwiz {
 // Initialize the backend
 CYXWIZ_API bool Initialize();
 
+// Return true after successful initialization and before shutdown.
+CYXWIZ_API bool IsInitialized();
+
 // Shutdown the backend
 CYXWIZ_API void Shutdown();
+
+// Return unused device buffers to the driver (ArrayFire garbage collection).
+// Safe to call at any time.
+CYXWIZ_API void ReleaseUnusedDeviceMemory();
 
 // Get version string
 CYXWIZ_API const char* GetVersionString();

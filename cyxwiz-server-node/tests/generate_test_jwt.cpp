@@ -35,6 +35,10 @@ std::string GenerateP2PToken(
         .set_expires_at(exp)
         .set_payload_claim("job_id", jwt::basic_claim<jwt_traits>(job_id))
         .set_payload_claim("node_id", jwt::basic_claim<jwt_traits>(node_id))
+        .set_payload_claim("reservation_id", jwt::basic_claim<jwt_traits>(job_id))
+        .set_payload_claim("reservation_expires",
+                           jwt::basic_claim<jwt_traits>(static_cast<int64_t>(
+                               std::chrono::duration_cast<std::chrono::seconds>(exp.time_since_epoch()).count())))
         .sign(jwt::algorithm::hs256{secret});
 
     return token;

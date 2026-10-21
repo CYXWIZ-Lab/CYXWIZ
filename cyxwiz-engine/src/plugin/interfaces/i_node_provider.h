@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 #include <string>
@@ -33,7 +35,7 @@ struct PluginNodeTypeInfo {
     std::string category;               // Menu category (e.g. "Image Processing")
     std::string description;
 
-    uint32_t color = 0xFF4488AAUL;      // Node header color (ABGR)
+    uint32_t color = 0;                 // Node header color (ABGR); 0: the theme's plugin colour
     std::string icon;                   // FontAwesome icon codepoint
 
     struct PinInfo {
@@ -112,6 +114,8 @@ public:
     virtual DynamicPinResult ResolveDynamicPins(
         const std::string& node_type_name,
         const std::map<std::string, std::string>& parameters) {
+        (void)node_type_name;
+        (void)parameters;
         return {};
     }
 
@@ -119,6 +123,7 @@ public:
     // Called by GraphExecutor each tick for plugin nodes.
     // Default returns failure — plugins must override to support live execution.
     virtual PluginNodeEvalResult EvaluateNode(const PluginNodeEvalContext& ctx) {
+        (void)ctx;
         PluginNodeEvalResult r;
         r.success = false;
         r.error_message = "EvaluateNode not implemented";

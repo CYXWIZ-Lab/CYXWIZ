@@ -1,5 +1,8 @@
 #include "task_progress_panel.h"
+#include "core/execution_policy.h"
+#include "core/training_trace_collector.h"
 #include "gui/icons.h"
+#include "gui/ui_tokens.h"
 #include <imgui.h>
 #include <cmath>
 #include <sstream>
@@ -24,6 +27,8 @@ void TaskProgressPanel::Render() {
 
     if (ImGui::Begin("Background Tasks", &visible_, ImGuiWindowFlags_None)) {
         auto& manager = AsyncTaskManager::Instance();
+
+        RenderTrainingTraceSummary();
 
         // Toolbar
         if (ImGui::Button(ICON_FA_STOP " Cancel All")) {
@@ -75,6 +80,45 @@ void TaskProgressPanel::Render() {
         }
     }
     ImGui::End();
+}
+
+void TaskProgressPanel::RenderTrainingTraceSummary() {
+    const auto trace = TrainingTraceCollector::LatestTrace();
+    if (!trace.available || trace.effective_backend.empty()) {
+        return;
+    }
+
+    ImGui::Text(trace.status == "running"
+                    ? "Current Training Run"
+                    : "Last Training Run");
+    ImGui::Separator();
+    ImGui::Text("Status: %s", trace.status.c_str());
+    ImGui::Text("Requested: %s", trace.requested_backend.empty()
+        ? "not recorded" : trace.requested_backend.c_str());
+    ImGui::Text("Effective: %s", trace.effective_backend.c_str());
+    if (!trace.effective_device_name.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", trace.effective_device_name.c_str());
+    }
+    if (!trace.execution_policy.empty()) {
+        ImGui::Text("Policy: %s",
+                    RecordedExecutionPolicyDisplayName(trace.execution_policy));
+    }
+    ImGui::Text("Placement: %s", trace.placement_fingerprint.empty()
+        ? "not recorded" : trace.placement_fingerprint.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%llu entries)",
+                        static_cast<unsigned long long>(
+                            trace.placement_entry_count));
+    ImGui::Text("Residency: %s", trace.residency_verdict.empty()
+        ? "not recorded" : trace.residency_verdict.c_str());
+    ImGui::Text("Transfers: %llu events, %llu known bytes",
+                static_cast<unsigned long long>(trace.transfer_event_count),
+                static_cast<unsigned long long>(trace.transfer_known_bytes));
+    ImGui::Text("Syncs: %llu events, %llu known bytes",
+                static_cast<unsigned long long>(trace.synchronization_event_count),
+                static_cast<unsigned long long>(trace.synchronization_known_bytes));
+    ImGui::Separator();
 }
 
 void TaskProgressPanel::RenderTaskItem(const TaskInfo& info) {
@@ -139,7 +183,7 @@ void TaskProgressPanel::RenderTaskItem(const TaskInfo& info) {
 
     // Error message
     if (info.state == TaskState::Failed && !info.error_message.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("Error: %s", info.error_message.c_str());
         ImGui::PopStyleColor();
     }
@@ -186,13 +230,14 @@ std::string TaskProgressPanel::GetStateString(TaskState state) const {
 }
 
 ImVec4 TaskProgressPanel::GetStateColor(TaskState state) const {
+    const ui::Tokens& t = ui::CurrentTokens();
     switch (state) {
-        case TaskState::Pending: return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-        case TaskState::Running: return ImVec4(0.3f, 0.7f, 1.0f, 1.0f);
-        case TaskState::Completed: return ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
-        case TaskState::Failed: return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-        case TaskState::Cancelled: return ImVec4(1.0f, 0.7f, 0.3f, 1.0f);
-        default: return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        case TaskState::Pending: return t.pending;
+        case TaskState::Running: return t.running;
+        case TaskState::Completed: return t.success;
+        case TaskState::Failed: return t.error;
+        case TaskState::Cancelled: return t.warning;
+        default: return t.text;
     }
 }
 
@@ -233,7 +278,7 @@ bool TaskStatusIndicator::Render() {
     auto tasks = manager.GetActiveTasks();
 
     // Spinner + count
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().running);
 
     // Use spinner icon
     ImGui::Text(ICON_FA_SPINNER);
@@ -291,7 +336,7 @@ void TaskStatusIndicator::RenderSpinner(float radius) {
             center.y + sinf(angle) * radius
         );
 
-        ImU32 line_color = ImGui::GetColorU32(ImVec4(0.3f, 0.7f, 1.0f, alpha));
+        ImU32 line_color = ImGui::GetColorU32(ui::WithAlpha(ui::CurrentTokens().running, alpha));
         draw_list->AddLine(p1, p2, line_color, 2.0f);
     }
 

@@ -1,5 +1,6 @@
 ﻿#include "python_sandbox.h"
 #include "python_engine.h"
+#include "../core/process_memory_snapshot.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/eval.h>
 #include <spdlog/spdlog.h>
@@ -30,36 +31,8 @@ namespace {
  * Cross-platform implementation
  */
 size_t GetCurrentMemoryUsage() {
-#ifdef _WIN32
-    // Windows: Use GetProcessMemoryInfo
-    PROCESS_MEMORY_COUNTERS_EX pmc;
-    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
-        return pmc.WorkingSetSize;  // Physical memory currently in use
-    }
-    return 0;
-#elif defined(__APPLE__)
-    // macOS: Use mach API
-    struct mach_task_basic_info info;
-    mach_msg_type_number_t size = MACH_TASK_BASIC_INFO_COUNT;
-    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &size) == KERN_SUCCESS) {
-        return info.resident_size;
-    }
-    return 0;
-#else
-    // Linux: Read from /proc/self/status
-    std::ifstream status_file("/proc/self/status");
-    std::string line;
-    while (std::getline(status_file, line)) {
-        if (line.compare(0, 6, "VmRSS:") == 0) {
-            // Parse VmRSS value (in kB)
-            size_t kb = 0;
-            std::istringstream iss(line.substr(6));
-            iss >> kb;
-            return kb * 1024;  // Convert to bytes
-        }
-    }
-    return 0;
-#endif
+    return static_cast<size_t>(
+        cyxwiz::DetectProcessMemorySnapshot().resident_bytes);
 }
 
 } // anonymous namespace
@@ -70,7 +43,7 @@ PythonSandbox::PythonSandbox()
     : initialized_(false)
     , monitoring_active_(false)
 {
-    spdlog::info("PythonSandbox created with default configuration");
+    spdlog::debug("PythonSandbox created with default configuration");
 }
 
 PythonSandbox::PythonSandbox(const Config& config)
@@ -78,7 +51,7 @@ PythonSandbox::PythonSandbox(const Config& config)
     , initialized_(false)
     , monitoring_active_(false)
 {
-    spdlog::info("PythonSandbox created with custom configuration");
+    spdlog::debug("PythonSandbox created with custom configuration");
     spdlog::info("  Timeout: {}s", config_.timeout.count());
     spdlog::info("  Max memory: {} MB", config_.max_memory_mb);
     spdlog::info("  Allowed modules: {}", config_.allowed_modules.size());
@@ -392,7 +365,7 @@ void PythonSandbox::SetupTimeoutWatchdog() {
         // - Windows: Use sys.settrace (checks elapsed time on each line)
         // - Fallback: sys.settrace works everywhere but can't interrupt C code
 
-        long timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(config_.timeout).count();
+        const long long timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(config_.timeout).count();
 
         std::string timeout_code = R"PY(
 import sys
@@ -599,7 +572,7 @@ bool PythonSandbox::CheckASTForDangerousPatterns(const std::string& code, std::s
         py::object tree;
         try {
             tree = ast.attr("parse")(code);
-        } catch (const py::error_already_set& e) {
+        } catch (const py::error_already_set&) {
             // Syntax error in code - let it through, Python will catch it later
             // AST check is for security, not syntax validation
             return true;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 #include "api_export.h"
@@ -131,7 +133,8 @@ public:
         const std::vector<std::vector<double>>& A
     );
 
-    // Matrix rank
+    // Matrix rank: singular values above tolerance * max(rows, cols) * the largest;
+    // the tolerance is at least the compute precision's epsilon.
     static ScalarResult Rank(
         const std::vector<std::vector<double>>& A,
         double tolerance = 1e-10

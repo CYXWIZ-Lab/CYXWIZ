@@ -6,6 +6,7 @@
 // for architectures like ResNet, DenseNet, U-Net, and Transformers.
 
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -31,77 +32,46 @@ bool NodeEditor::IsMergeNode(NodeType type) const {
 
 // ========== Link Color Functions ==========
 
-ImU32 NodeEditor::GetLinkColor(LinkType type) const {
+// Link types are categories: standard data flow is neutral, each special
+// link type takes one theme series colour in a fixed order.
+static ImVec4 LinkTypeColour(const cyxwiz::ui::Tokens& t, LinkType type) {
     switch (type) {
+        case LinkType::AttentionFlow: return t.series[0];
+        case LinkType::DenseSkip:     return t.series[1];
+        case LinkType::ResidualSkip:  return t.series[2];
+        case LinkType::ParameterFlow: return t.series[3];
+        case LinkType::GradientFlow:  return t.series[4];
+        case LinkType::LossFlow:      return t.series[5];
         case LinkType::TensorFlow:
-            return IM_COL32(200, 200, 200, 255);  // Light gray - standard
-        case LinkType::ResidualSkip:
-            return IM_COL32(255, 165, 0, 255);    // Orange - residual/skip
-        case LinkType::DenseSkip:
-            return IM_COL32(0, 191, 255, 255);    // Deep sky blue - dense skip
-        case LinkType::AttentionFlow:
-            return IM_COL32(186, 85, 211, 255);   // Medium orchid - attention
-        case LinkType::GradientFlow:
-            return IM_COL32(255, 99, 71, 255);    // Tomato red - gradients
-        case LinkType::ParameterFlow:
-            return IM_COL32(144, 238, 144, 255);  // Light green - parameters
-        case LinkType::LossFlow:
-            return IM_COL32(220, 20, 60, 255);    // Crimson - loss
-        default:
-            return IM_COL32(200, 200, 200, 255);
+        default:                      return t.text_dim;
     }
+}
+
+ImU32 NodeEditor::GetLinkColor(LinkType type) const {
+    return cyxwiz::ui::ToU32(LinkTypeColour(cyxwiz::ui::CurrentTokens(), type));
 }
 
 ImU32 NodeEditor::GetLinkHoverColor(LinkType type) const {
-    // Return brighter version of the link color
-    ImU32 base = GetLinkColor(type);
-    int r = (base & 0xFF);
-    int g = ((base >> 8) & 0xFF);
-    int b = ((base >> 16) & 0xFF);
-
-    // Brighten by 20%
-    r = std::min(255, r + 50);
-    g = std::min(255, g + 50);
-    b = std::min(255, b + 50);
-
-    return IM_COL32(r, g, b, 255);
+    // A brighter version of the link colour
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    return cyxwiz::ui::ToU32(cyxwiz::ui::Mix(LinkTypeColour(t, type), t.text_bright, 0.3f));
 }
 
-// ========== Pin Type Color Functions ==========
-// Professional color palette for different data types flowing through the graph
+// ========== Pin Type Colours ==========
+// Data types flowing through the graph are categories: one theme series
+// colour each, in a fixed order (shared with the Node Info panel).
 
-ImU32 NodeEditor::GetPinTypeColor(PinType type) const {
+ImVec4 PinTypeColour(PinType type) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     switch (type) {
-        case PinType::Tensor:
-            return IM_COL32(65, 150, 255, 255);   // Bright blue - tensor data
-        case PinType::Labels:
-            return IM_COL32(100, 200, 100, 255);  // Green - labels/targets
-        case PinType::Parameters:
-            return IM_COL32(255, 165, 80, 255);   // Orange - model parameters
-        case PinType::Loss:
-            return IM_COL32(220, 80, 80, 255);    // Red - loss values
-        case PinType::Optimizer:
-            return IM_COL32(180, 100, 220, 255);  // Purple - optimizer state
-        case PinType::Dataset:
-            return IM_COL32(80, 200, 200, 255);   // Cyan - dataset handles
-        default:
-            return IM_COL32(180, 180, 180, 255);  // Gray - fallback
+        case PinType::Optimizer:  return t.series[0];
+        case PinType::Tensor:     return t.series[1];
+        case PinType::Parameters: return t.series[2];
+        case PinType::Labels:     return t.series[3];
+        case PinType::Loss:       return t.series[4];
+        case PinType::Dataset:    return t.series[5];
+        default:                  return t.text_dim;
     }
-}
-
-ImU32 NodeEditor::GetPinTypeHoverColor(PinType type) const {
-    // Return brighter version of the pin type color
-    ImU32 base = GetPinTypeColor(type);
-    int r = (base & 0xFF);
-    int g = ((base >> 8) & 0xFF);
-    int b = ((base >> 16) & 0xFF);
-
-    // Brighten by 30%
-    r = std::min(255, r + 60);
-    g = std::min(255, g + 60);
-    b = std::min(255, b + 60);
-
-    return IM_COL32(r, g, b, 255);
 }
 
 // ========== Skip Connection Detection ==========
@@ -141,8 +111,8 @@ bool NodeEditor::IsSkipConnection(const NodeLink& link) const {
 
     int path_length = 0;
     while (!queue.empty() && path_length < 10) {  // Limit search depth
-        int level_size = queue.size();
-        for (int i = 0; i < level_size; ++i) {
+        const size_t level_size = queue.size();
+        for (size_t i = 0; i < level_size; ++i) {
             int current = queue.front();
             queue.pop();
 

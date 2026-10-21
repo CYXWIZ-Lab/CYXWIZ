@@ -1,5 +1,10 @@
 #include "dbscan_panel.h"
+#include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -9,19 +14,6 @@
 
 namespace cyxwiz {
 
-const ImU32 DBSCANPanel::CLUSTER_COLORS[MAX_CLUSTERS] = {
-    IM_COL32(31, 119, 180, 255),  IM_COL32(255, 127, 14, 255),
-    IM_COL32(44, 160, 44, 255),   IM_COL32(214, 39, 40, 255),
-    IM_COL32(148, 103, 189, 255), IM_COL32(140, 86, 75, 255),
-    IM_COL32(227, 119, 194, 255), IM_COL32(127, 127, 127, 255),
-    IM_COL32(188, 189, 34, 255),  IM_COL32(23, 190, 207, 255),
-    IM_COL32(174, 199, 232, 255), IM_COL32(255, 187, 120, 255),
-    IM_COL32(152, 223, 138, 255), IM_COL32(255, 152, 150, 255),
-    IM_COL32(197, 176, 213, 255), IM_COL32(196, 156, 148, 255),
-    IM_COL32(247, 182, 210, 255), IM_COL32(199, 199, 199, 255),
-    IM_COL32(219, 219, 141, 255), IM_COL32(158, 218, 229, 255),
-};
-
 DBSCANPanel::DBSCANPanel() : Panel("DBSCAN Clustering", true) {}
 
 DBSCANPanel::~DBSCANPanel() {
@@ -29,112 +21,103 @@ DBSCANPanel::~DBSCANPanel() {
 }
 
 void DBSCANPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_CIRCLE_NODES) + " DBSCAN Clustering###DBSCANPanel").c_str(), &is_open_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
+    if (ImGui::Begin((std::string(ICON_FA_CIRCLE_NODES) + " DBSCAN Clustering###DBSCANPanel").c_str(), &visible_)) {
+        ui::BeginSettingsColumn("dbscan", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderParameters();
-        ImGui::Separator();
         RenderKDistanceAnalysis();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         RenderResults();
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void DBSCANPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("dbscan_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 120), true);
+        ui::SettingsSection("Columns");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Feature columns");
+        ui::BeginInsetList("##columns", 120);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
-        ImGui::Combo("X Axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Y Axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        if (ImGui::BeginTable("##xy", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ui::FieldLabel("X axis");
+            ImGui::Combo("##x_axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::TableNextColumn();
+            ui::FieldLabel("Y axis");
+            ImGui::Combo("##y_axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::EndTable();
+        }
     }
 }
 
 void DBSCANPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("Parameters");
 
-    ImGui::SliderFloat("Epsilon (eps)", (float*)&eps_, 0.01f, 10.0f, "%.3f");
-    ImGui::SliderInt("Min Samples", &min_samples_, 1, 50);
+    const double eps_min = 0.01, eps_max = 10.0;
+    ui::FieldLabel("Epsilon (eps)");
+    ImGui::SliderScalar("##eps", ImGuiDataType_Double, &eps_, &eps_min, &eps_max, "%.3f");
+    ui::FieldLabel("Min samples");
+    ImGui::SliderInt("##min_samples", &min_samples_, 1, 50);
 
     const char* metrics[] = {"Euclidean", "Manhattan", "Cosine"};
-    ImGui::Combo("Distance Metric", &metric_idx_, metrics, 3);
+    ui::FieldLabel("Distance metric");
+    ImGui::Combo("##metric", &metric_idx_, metrics, 3);
 
     ImGui::Spacing();
 
-    bool can_run = !is_computing_ && !input_data_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Run DBSCAN", ImVec2(-1, 30))) {
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "DBSCAN is running" : "Pick a dataset first";
+    if (ui::PrimaryButton("Run DBSCAN", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunClustering();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Computing...");
+        ImGui::PopStyleColor();
     }
 
     if (!status_message_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void DBSCANPanel::RenderKDistanceAnalysis() {
-    ImGui::Text(ICON_FA_CHART_LINE " K-Distance Graph");
-    ImGui::Spacing();
+    ui::SettingsSection("K-distance graph");
 
-    ImGui::SliderInt("K", &k_distance_k_, 1, 20);
+    ui::FieldLabel("K");
+    ImGui::SliderInt("##k_distance_k", &k_distance_k_, 1, 20);
 
-    bool can_run = !is_computing_ && !input_data_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Compute K-Distances", ImVec2(-1, 25))) {
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "DBSCAN is running" : "Pick a dataset first";
+    if (ui::SecondaryButton("Compute K-Distances", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ComputeKDistances();
     }
-
-    if (!can_run) ImGui::EndDisabled();
 
     if (!k_distances_.empty()) {
         ImGui::Text("Suggested eps: %.3f", suggested_eps_);
 
-        if (ImGui::Button("Use Suggested eps")) {
+        if (ui::SecondaryButton("Use Suggested eps")) {
             eps_ = suggested_eps_;
         }
 
@@ -151,7 +134,8 @@ void DBSCANPanel::RenderKDistanceAnalysis() {
 
 void DBSCANPanel::RenderResults() {
     if (!result_.success) {
-        ImGui::Text("Run DBSCAN clustering to see results.");
+        ui::EmptyState(ICON_FA_CIRCLE_NODES, "No clusters yet",
+                       "Pick a dataset and feature columns, then Run DBSCAN.");
         return;
     }
 
@@ -213,10 +197,12 @@ void DBSCANPanel::RenderScatterPlot() {
         if (selected_col_indices[i] == y_axis_column_) y_idx = static_cast<int>(i);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("##ScatterPlot", ImVec2(-1, -1))) {
         ImPlot::SetupAxes(column_names_[x_axis_column_].c_str(), column_names_[y_axis_column_].c_str());
 
-        // Plot noise points (gray)
+        // Plot noise points (dim)
         std::vector<double> noise_x, noise_y;
         for (size_t i = 0; i < input_data_.size(); ++i) {
             if (result_.labels[i] == -1) {
@@ -225,7 +211,8 @@ void DBSCANPanel::RenderScatterPlot() {
             }
         }
         if (!noise_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, ImVec4(0.5f, 0.5f, 0.5f, 0.5f));
+            const ImVec4 noise = ui::WithAlpha(t.text_dim, 0.5f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, noise, IMPLOT_AUTO, noise);
             ImPlot::PlotScatter("Noise", noise_x.data(), noise_y.data(), static_cast<int>(noise_x.size()));
         }
 
@@ -239,8 +226,8 @@ void DBSCANPanel::RenderScatterPlot() {
                 }
             }
             if (!x_data.empty()) {
-                ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
+                ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color, IMPLOT_AUTO, color);
                 ImPlot::PlotScatter(("Cluster " + std::to_string(k)).c_str(), x_data.data(), y_data.data(), static_cast<int>(x_data.size()));
             }
         }
@@ -249,12 +236,8 @@ void DBSCANPanel::RenderScatterPlot() {
     }
 }
 
-void DBSCANPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void DBSCANPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
 
@@ -278,9 +261,9 @@ void DBSCANPanel::LoadSelectedData() {
     status_message_ = "Data loaded.";
 }
 
-void DBSCANPanel::RunClustering() {
-    if (!current_table_ || is_computing_) return;
-
+// Rows of the selected columns that parse as numbers; false (with a
+// status message) when there is nothing to cluster.
+bool DBSCANPanel::CollectInputData() {
     std::vector<int> col_indices;
     for (size_t i = 0; i < selected_columns_.size(); ++i) {
         if (selected_columns_[i]) col_indices.push_back(static_cast<int>(i));
@@ -288,7 +271,7 @@ void DBSCANPanel::RunClustering() {
 
     if (col_indices.size() < 2) {
         status_message_ = "Select at least 2 columns.";
-        return;
+        return false;
     }
 
     input_data_.clear();
@@ -306,45 +289,56 @@ void DBSCANPanel::RunClustering() {
 
     if (input_data_.empty()) {
         status_message_ = "No valid data.";
-        return;
+        return false;
     }
+    return true;
+}
+
+void DBSCANPanel::RunClustering() {
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     status_message_ = "Computing...";
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
-        const char* metrics[] = {"euclidean", "manhattan", "cosine"};
-        result_ = Clustering::DBSCAN(input_data_, eps_, min_samples_, metrics[metric_idx_]);
-        is_computing_ = false;
-
-        if (result_.success) {
-            status_message_ = std::to_string(result_.n_clusters) + " clusters, " + std::to_string(result_.n_noise_points) + " noise points.";
-        } else {
-            status_message_ = "Failed: " + result_.error_message;
-        }
+    const char* metrics[] = {"euclidean", "manhattan", "cosine"};
+    compute_thread_ = std::thread([this, data = input_data_, eps = eps_, min_samples = min_samples_,
+                                   metric = std::string(metrics[metric_idx_])]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        DBSCANResult result = Clustering::DBSCAN(data, eps, min_samples, metric);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                status_message_ = std::to_string(result_.n_clusters) + " clusters, " + std::to_string(result_.n_noise_points) + " noise points.";
+            } else {
+                status_message_ = "Failed: " + result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
 void DBSCANPanel::ComputeKDistances() {
-    if (input_data_.empty() || is_computing_) return;
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
-        k_distances_ = Clustering::ComputeKDistances(input_data_, k_distance_k_);
-
-        // Find elbow point
-        if (k_distances_.size() > 10) {
-            size_t elbow_idx = k_distances_.size() * 9 / 10;  // 90th percentile
-            suggested_eps_ = k_distances_[elbow_idx];
-        } else if (!k_distances_.empty()) {
-            suggested_eps_ = k_distances_.back() * 0.9;
-        }
-
-        is_computing_ = false;
+    compute_thread_ = std::thread([this, data = input_data_, k = k_distance_k_]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        std::vector<double> distances = Clustering::ComputeKDistances(data, k);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, distances = std::move(distances)]() mutable {
+            k_distances_ = std::move(distances);
+            // Find elbow point
+            if (k_distances_.size() > 10) {
+                size_t elbow_idx = k_distances_.size() * 9 / 10;  // 90th percentile
+                suggested_eps_ = k_distances_[elbow_idx];
+            } else if (!k_distances_.empty()) {
+                suggested_eps_ = k_distances_.back() * 0.9;
+            }
+            is_computing_ = false;
+        });
     });
 }
 

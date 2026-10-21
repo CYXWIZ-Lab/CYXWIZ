@@ -1,7 +1,7 @@
 {
   "name": "cyxwiz",
   "version": "0.1.0",
-  "description": "CyxWiz - Decentralized ML Compute Platform",
+  "description": "CyxWiz visual machine-learning and data workflow platform",
   "dependencies": [
     {
       "name": "imgui",
@@ -22,6 +22,10 @@
     "fmt",
     "sqlite3",
     "openssl",
+    {
+      "name": "libarchive",
+      "default-features": false
+    },
     "pybind11",
     "catch2",
     "highfive",
@@ -41,14 +45,33 @@
       "platform": "!osx"
     },
     "nativefiledialog-extended",
+    "libvterm",
     "duckdb",
+    "openxlsx",
     "libsndfile",
     "fftw3",
-    "arrow",
     {
       "name": "arrow",
       "features": ["parquet", "csv", "json"]
     }
   ],
+  "features": {
+    "html-parser": {
+      "description": "Optional Lexbor provider for parsed HTML in Text Clean.",
+      "dependencies": ["lexbor"]
+    },
+    "sentencepiece": {
+      "description": "Optional official SentencePiece C++ tokenizer provider for TextTokenizer SentencePiece BPE/Unigram families.",
+      "dependencies": [
+        "sentencepiece"
+      ]
+    },
+    "opencl-clblast": {
+      "description": "Optional CLBlast (Apache-2.0) BLAS for the OpenCL neural provider's GEMMs; the provider falls back to its built-in tiled kernels without it.",
+      "dependencies": [
+        "clblast"
+      ]
+    }
+  },
   "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
 }

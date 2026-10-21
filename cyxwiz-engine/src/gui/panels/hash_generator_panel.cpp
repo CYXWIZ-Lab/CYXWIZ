@@ -1,5 +1,6 @@
 #include "hash_generator_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -11,7 +12,7 @@ namespace cyxwiz {
 
 HashGeneratorPanel::HashGeneratorPanel() {
     strcpy(text_buffer_, "Hello, World!");
-    spdlog::info("HashGeneratorPanel initialized");
+    spdlog::debug("HashGeneratorPanel initialized");
 }
 
 HashGeneratorPanel::~HashGeneratorPanel() {
@@ -105,7 +106,7 @@ void HashGeneratorPanel::RenderInputSection() {
                     auto size = file.tellg();
                     ImGui::TextDisabled("File size: %lld bytes", static_cast<long long>(size));
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
                     ImGui::Text("File not found or cannot be opened");
                     ImGui::PopStyleColor();
                 }
@@ -120,7 +121,7 @@ void HashGeneratorPanel::RenderInputSection() {
 
 void HashGeneratorPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -146,7 +147,7 @@ void HashGeneratorPanel::RenderResults() {
         ImGui::SameLine();
 
         if (highlight) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
         }
 
         ImGui::Text("%s:", name);
@@ -200,11 +201,11 @@ void HashGeneratorPanel::RenderVerification() {
     if (has_verification_result_) {
         ImGui::Spacing();
         if (verification_result_) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().success);
             ImGui::Text(ICON_FA_CHECK " Hashes match!");
             ImGui::PopStyleColor();
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
             ImGui::Text(ICON_FA_XMARK " Hashes do not match!");
             ImGui::PopStyleColor();
         }

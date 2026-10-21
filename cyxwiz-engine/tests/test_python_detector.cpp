@@ -36,9 +36,9 @@ int main() {
     auto best_python = PythonDetector::FindBestPython();
 
     if (!best_python.has_value()) {
-        std::cout << "  ❌ No suitable Python 3.12+ found!" << std::endl;
+        std::cout << "  ❌ No suitable Python 3.12-3.13 found!" << std::endl;
         std::cout << std::endl;
-        std::cout << "Please install Python 3.12 or newer:" << std::endl;
+        std::cout << "Please install Python 3.12 or 3.13:" << std::endl;
         std::cout << "  https://www.python.org/downloads/" << std::endl;
         return 1;
     }

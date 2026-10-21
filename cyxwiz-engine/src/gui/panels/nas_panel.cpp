@@ -1,5 +1,6 @@
 #include "nas_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -194,9 +195,10 @@ void NASPanel::RenderCurrentScore() {
 
             float normalized = static_cast<float>(value / max_good);
             ImVec4 color;
-            if (normalized >= 0.7f) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-            else if (normalized >= 0.4f) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-            else color = ImVec4(0.8f, 0.4f, 0.2f, 1.0f);
+            const ui::Tokens& tokens = ui::CurrentTokens();
+            if (normalized >= 0.7f) color = tokens.success;
+            else if (normalized >= 0.4f) color = tokens.warning;
+            else color = tokens.caution;
 
             ImGui::TextColored(color, "%.3f", value);
             ImGui::SameLine();
@@ -284,9 +286,6 @@ void NASPanel::RenderMutationControls() {
 }
 
 void NASPanel::RenderSuggestions() {
-    // Task type for suggestions
-    const char* task_names[] = {"classification", "regression", "image_classification"};
-
     ImGui::Text("Generate architecture suggestions for your task:");
     ImGui::Spacing();
 
@@ -420,7 +419,7 @@ void NASPanel::RenderSearchProgress() {
 
 void NASPanel::RenderSearchResults() {
     if (!search_result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Search failed: %s",
+        ImGui::TextColored(ui::CurrentTokens().error, "Search failed: %s",
                           search_result_.error_message.c_str());
         return;
     }
@@ -611,16 +610,6 @@ void NASPanel::RunEvolutionarySearch() {
 
     compute_thread_ = std::make_unique<std::thread>([this, initial_nodes, initial_links, input_shape, config]() {
         try {
-            auto callback = [this](int generation, const ArchitectureScore& best) {
-                search_generation_ = generation;
-                search_best_score_ = best.overall_score;
-
-                // Check if search should stop
-                return is_searching_.load();
-            };
-
-            // Note: The callback signature doesn't match - we'd need to modify this
-            // For now, use a simpler approach
             auto result = NASEvaluator::EvolveArchitecture(
                 initial_nodes, initial_links, input_shape, config,
                 [this](int gen, const ArchitectureScore& best) {

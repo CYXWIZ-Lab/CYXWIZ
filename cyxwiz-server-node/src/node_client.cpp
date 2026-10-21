@@ -1,8 +1,11 @@
+#include "auth/token_refresh.h"
+#include "core/jwt_expiry.h"
 #include "node_client.h"
 #include "core/backend_manager.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <chrono>
+#include <ctime>
 #include <thread>
 
 #ifdef _WIN32
@@ -29,6 +32,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #endif
+
+#include "core/execution_device_preferences.h"
+#include "core/machine_capability.h"
+#include "node_job_timing.h"
 
 // Workaround for MSVC protobuf arena allocation issue
 // Force explicit template instantiation to avoid linker errors
@@ -79,8 +86,8 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
     info.set_port(p2p_port);
     info.set_region("unknown");  // TODO: Detect geographic region
 
-    // Performance (initialize with defaults)
-    info.set_compute_score(0.0);
+    // Performance: measured training capability (TOFIX118 P3)
+    HardwareDetector::FillMeasuredCapability(&info);
     info.set_reputation_score(0.5);  // Start with neutral reputation
     info.set_total_jobs_completed(0);
     info.set_total_compute_hours(0);
@@ -110,6 +117,46 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
     info.add_available_runtimes("pytorch");
 
     return info;
+}
+
+void HardwareDetector::FillMeasuredCapability(protocol::NodeInfo* info) {
+    const auto capability = DetectMachineCapability();
+    info->set_compute_score(capability.compute_score);
+    for (const auto& entry : capability.routes) {
+        const auto& route = entry.route;
+        auto* out = info->add_routes();
+        out->set_backend(ExecutionDeviceSelectionBackendName(route.type));
+        out->set_device_id(route.device_id);
+        out->set_device_name(route.display_name);
+        out->set_device_kind(route.device_kind_known ? DeviceKindName(route.device_kind) : "");
+        out->set_physical_fingerprint(route.physical_fingerprint);
+        out->set_provider(route.provider);
+        out->set_driver_version(route.driver_version);
+        out->set_runtime_version(route.runtime_version);
+        out->set_certified(route.certified);
+        out->set_operations_passed(route.pass_count);
+        out->set_operation_count(route.operation_count);
+        if (entry.benchmark) {
+            const auto& measured = *entry.benchmark;
+            auto* benchmark = out->mutable_benchmark();
+            benchmark->set_benchmark_id(measured.benchmark_id);
+            benchmark->set_ok(measured.ok);
+            benchmark->set_error(measured.error);
+            benchmark->set_current(entry.benchmark_current);
+            benchmark->set_tokens_per_second(measured.tokens_per_second);
+            benchmark->set_step_ms_median(measured.step_ms_median);
+            benchmark->set_step_ms_p90(measured.step_ms_p90);
+            benchmark->set_build(measured.build);
+            benchmark->set_measured_at(measured.measured_at);
+        }
+    }
+    FillEnvironmentFingerprint(capability.environment, info->mutable_environment());
+    if (capability.compute_score > 0.0) {
+        spdlog::info("Measured capability: {:.0f} tokens/s on {} ({} verified route(s))", capability.compute_score,
+                     capability.compute_score_route, capability.routes.size());
+    } else {
+        spdlog::warn("No current training benchmark; compute_score 0 (run cyxwiz-server-daemon --benchmark)");
+    }
 }
 
 int HardwareDetector::GetCPUCores() {
@@ -327,10 +374,11 @@ NodeClient::NodeClient(const std::string& central_server_address, const std::str
 }
 
 void NodeClient::AddAuthMetadata(grpc::ClientContext& context) {
-    if (!auth_token_.empty()) {
+    const std::string token = CurrentToken();
+    if (!token.empty()) {
         // Add Bearer token to authorization header
-        context.AddMetadata("authorization", "Bearer " + auth_token_);
-        spdlog::debug("Added auth token to gRPC request (token length: {})", auth_token_.length());
+        context.AddMetadata("authorization", "Bearer " + token);
+        spdlog::debug("Added auth token to gRPC request (token length: {})", token.length());
     } else {
         spdlog::warn("AddAuthMetadata called but auth_token_ is empty!");
     }
@@ -349,7 +397,7 @@ bool NodeClient::Register() {
     // Create registration request
     protocol::RegisterNodeRequest request;
     *request.mutable_info() = node_info;
-    request.set_authentication_token(auth_token_);  // JWT from user login
+    request.set_authentication_token(CurrentToken());  // JWT from user login
     request.set_public_key("");            // TODO: Implement crypto
 
     // Send registration request
@@ -367,7 +415,10 @@ bool NodeClient::Register() {
 
     if (status.ok()) {
         if (response.status() == protocol::STATUS_SUCCESS) {
-            node_id_ = response.node_id();
+            {
+                std::lock_guard<std::mutex> lock(node_id_mutex_);
+                node_id_ = response.node_id();
+            }
             session_token_ = response.session_token();
             is_registered_ = true;
 
@@ -418,12 +469,13 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
         // Create device capability locally to avoid arena allocation issues
         protocol::DeviceCaps device;
 
-        // Map device type (0=CPU, 1=CUDA, 2=OpenCL in DeviceAllocation)
-        // Protocol uses: DEVICE_CPU=0, DEVICE_CUDA=1, DEVICE_OPENCL=2
+        // DeviceAllocation::device_type: 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal
+        // (core/allocation_device_type.h); the protocol has its own values.
         switch (alloc.device_type) {
             case 0: device.set_device_type(protocol::DEVICE_CPU); break;
             case 1: device.set_device_type(protocol::DEVICE_CUDA); break;
             case 2: device.set_device_type(protocol::DEVICE_OPENCL); break;
+            case 3: device.set_device_type(protocol::DEVICE_METAL); break;
             default: device.set_device_type(protocol::DEVICE_UNKNOWN); break;
         }
 
@@ -434,7 +486,7 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
         device.set_compute_units(alloc.compute_units);
 
         // For GPU devices, set GPU-specific fields
-        if (alloc.device_type == 1 || alloc.device_type == 2) {
+        if (alloc.device_type >= 1) {
             device.set_gpu_model(alloc.device_name);
             device.set_vram_total(static_cast<int64_t>(alloc.vram_total_mb) * 1024 * 1024);
             device.set_vram_available(static_cast<int64_t>(alloc.vram_allocated_mb) * 1024 * 1024);
@@ -455,7 +507,7 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
     // Create registration request
     protocol::RegisterNodeRequest request;
     *request.mutable_info() = node_info;
-    request.set_authentication_token(auth_token_);  // JWT from user login
+    request.set_authentication_token(CurrentToken());  // JWT from user login
     request.set_public_key("");            // TODO: Implement crypto
 
     // Send registration request
@@ -473,7 +525,10 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
 
     if (status.ok()) {
         if (response.status() == protocol::STATUS_SUCCESS) {
-            node_id_ = response.node_id();
+            {
+                std::lock_guard<std::mutex> lock(node_id_mutex_);
+                node_id_ = response.node_id();
+            }
             session_token_ = response.session_token();
             is_registered_ = true;
 
@@ -587,6 +642,29 @@ void NodeClient::SetActiveJobs(const std::vector<std::string>& job_ids) {
     active_jobs_ = job_ids;
 }
 
+bool NodeClient::RefreshAuthTokenIfDue() {
+    const std::string token = CurrentToken();
+    if (token.empty()) return false;
+    const long long now = static_cast<long long>(std::time(nullptr));
+    const long long left = cyxwiz::JwtExpiry(token) - now;
+    if (left >= cyxwiz::kJwtRefreshBeforeSeconds) return true;
+
+    auto& backend = core::BackendManager::Instance();
+    const std::string api = backend.IsInitialized() ? backend.GetConfig().auth_api_url
+                                                    : std::string("http://127.0.0.1:3002/api");
+    if (const auto fresh = auth::RefreshTokenWithApi(api, token)) {
+        SetAuthToken(*fresh);
+        spdlog::info("Sign-in token refreshed ({} min were left)", left / 60);
+        return true;
+    }
+    if (left <= 0) {
+        spdlog::error("Sign-in token expired and could not be refreshed: sign in again in the Server Node app");
+        if (auth_failed_callback_) auth_failed_callback_("Sign-in expired");
+        return false;
+    }
+    return true;  // still valid; try again on the next heartbeat
+}
+
 void NodeClient::HeartbeatLoop() {
     spdlog::debug("Heartbeat loop started");
 
@@ -594,6 +672,7 @@ void NodeClient::HeartbeatLoop() {
     int consecutive_failures = 0;
 
     while (!should_stop_heartbeat_) {
+        RefreshAuthTokenIfDue();
         bool heartbeat_success = SendHeartbeat();
 
         if (!heartbeat_success) {
@@ -712,7 +791,9 @@ bool NodeClient::ReportJobResult(
     const std::string& model_weights_hash,
     int64_t model_size,
     int64_t total_compute_time_ms,
-    const std::string& error_message)
+    const std::string& error_message,
+    const protocol::JobTiming* timing,
+    const protocol::EnvironmentFingerprint* environment)
 {
     if (!is_registered_) {
         spdlog::error("Cannot report job result: node not registered");
@@ -733,6 +814,8 @@ bool NodeClient::ReportJobResult(
     request.set_model_size(model_size);
     request.set_total_compute_time(total_compute_time_ms);
     request.set_error_message(error_message);
+    if (timing) *request.mutable_timing() = *timing;
+    if (environment) *request.mutable_environment() = *environment;
 
     // Add final metrics
     auto* metrics_map = request.mutable_final_metrics();
@@ -777,7 +860,9 @@ bool NodeClient::ReportJobCompleteFromNode(
     const std::string& model_hash,
     const std::map<std::string, double>& final_metrics,
     int64_t training_time_seconds,
-    int32_t epochs_completed)
+    int32_t epochs_completed,
+    const protocol::JobTiming* timing,
+    const protocol::EnvironmentFingerprint* environment)
 {
     if (!is_registered_) {
         spdlog::error("Cannot report job complete: node not registered");
@@ -814,6 +899,8 @@ bool NodeClient::ReportJobCompleteFromNode(
     context.set_deadline(deadline);
     AddAuthMetadata(context);
 
+    if (timing) *request.mutable_timing() = *timing;
+    if (environment) *request.mutable_environment() = *environment;
     grpc::Status grpc_status = reservation_stub_->ReportJobCompleteFromNode(&context, request, &response);
 
     if (grpc_status.ok()) {

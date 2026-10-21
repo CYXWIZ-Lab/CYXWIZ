@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
+#pragma once
+
+#include "cyxwiz/losses/loss_base.h"
+
+namespace cyxwiz {
+
+class CYXWIZ_API MSELoss : public Loss {
+public:
+    explicit MSELoss(Reduction reduction = Reduction::Mean) : Loss(reduction) {}
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override { return "MSE"; }
+};
+
+class CYXWIZ_API L1Loss : public Loss {
+public:
+    explicit L1Loss(Reduction reduction = Reduction::Mean) : Loss(reduction) {}
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override { return "L1"; }
+};
+
+class CYXWIZ_API SmoothL1Loss : public Loss {
+public:
+    explicit SmoothL1Loss(
+        float delta = 1.0f,
+        Reduction reduction = Reduction::Mean);
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override { return "SmoothL1"; }
+
+    float GetDelta() const { return delta_; }
+
+private:
+    float delta_;
+};
+
+class CYXWIZ_API HuberLoss : public Loss {
+public:
+    explicit HuberLoss(
+        float delta = 1.0f,
+        Reduction reduction = Reduction::Mean);
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override { return "Huber"; }
+
+    float GetDelta() const { return delta_; }
+
+private:
+    float delta_;
+};
+
+} // namespace cyxwiz

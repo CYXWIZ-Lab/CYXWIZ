@@ -36,6 +36,8 @@ public:
     bool* GetVisiblePtr(const std::string& panel_id);
 
     size_t GetCount() const;
+    // Windows a plugin added (the Plugin Manager card and Apps menu).
+    size_t CountForPlugin(const std::string& plugin_id) const;
 
 private:
     PluginPanelRegistry() = default;

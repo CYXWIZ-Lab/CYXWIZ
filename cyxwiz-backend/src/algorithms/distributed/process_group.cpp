@@ -17,6 +17,15 @@ namespace cyxwiz {
 namespace {
     std::unique_ptr<ProcessGroup> g_default_process_group;
     std::mutex g_pg_mutex;
+
+    void FinalizeDefaultProcessGroupLocked() {
+        if (g_default_process_group) {
+            spdlog::info("Finalizing distributed training (rank {})",
+                         g_default_process_group->GetRank());
+            g_default_process_group->Finalize();
+            g_default_process_group.reset();
+        }
+    }
 }
 
 ProcessGroup* GetDefaultProcessGroup() {
@@ -74,7 +83,7 @@ DistributedConfig DistributedConfig::FromEnvironment() {
 #ifdef CYXWIZ_HAS_NCCL
         config.backend = BackendType::NCCL;
 #else
-        spdlog::warn("NCCL backend requested but not available, falling back to CPU");
+        spdlog::warn("NCCL backend requested but not available, using native CPU distributed backend");
         config.backend = BackendType::CPU;
 #endif
     } else {
@@ -174,7 +183,7 @@ void ProcessGroup::ReduceScatter(Tensor& tensor, ReduceOp op) {
     size_t offset = GetRank() * chunk_size;
     std::vector<float> my_chunk(chunk_size);
 
-    const float* src = tensor.Data<float>();
+    const float* src = tensor.ReadData<float>();
     std::copy(src + offset, src + offset + chunk_size, my_chunk.begin());
 
     // Resize tensor to chunk size
@@ -191,10 +200,12 @@ bool init_distributed(const DistributedConfig& config) {
         return false;
     }
 
+    std::lock_guard<std::mutex> lock(g_pg_mutex);
+
     // Check if already initialized
-    if (GetDefaultProcessGroup() != nullptr) {
+    if (g_default_process_group != nullptr) {
         spdlog::warn("init_distributed: already initialized, finalizing first");
-        finalize_distributed();
+        FinalizeDefaultProcessGroupLocked();
     }
 
     // Create process group
@@ -213,19 +224,13 @@ bool init_distributed(const DistributedConfig& config) {
     spdlog::info("Distributed training initialized: rank {}/{} using {} backend",
                  pg->GetRank(), pg->GetWorldSize(), pg->GetBackendName());
 
-    SetDefaultProcessGroup(std::move(pg));
+    g_default_process_group = std::move(pg);
     return true;
 }
 
 void finalize_distributed() {
     std::lock_guard<std::mutex> lock(g_pg_mutex);
-
-    if (g_default_process_group) {
-        spdlog::info("Finalizing distributed training (rank {})",
-                     g_default_process_group->GetRank());
-        g_default_process_group->Finalize();
-        g_default_process_group.reset();
-    }
+    FinalizeDefaultProcessGroupLocked();
 }
 
 int get_rank() {

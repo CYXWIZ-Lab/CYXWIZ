@@ -1,6 +1,11 @@
 // local_inference_server.h - Embedded HTTP inference server for the Engine
 #pragma once
 
+#include <optional>
+#include "core/metric_learning_inference_outputs.h"
+#include "bert_encoder_inference_contract.h"
+#include "language_model_inference_contract.h"
+
 #include <string>
 #include <memory>
 #include <thread>
@@ -19,6 +24,7 @@ namespace cyxwiz {
 
 // Forward declare
 class SequentialModel;
+class Tokenizer;
 
 /**
  * LocalInferenceServer - Embedded HTTP server for model inference
@@ -30,6 +36,9 @@ class SequentialModel;
  *   GET  /health       - Health check
  *   GET  /v1/model     - Model info (architecture, layers)
  *   POST /v1/predict   - Run inference
+ *   POST /v1/embeddings - Run embedding extraction inference
+ *   POST /v1/pair-score - Score pairs through the loaded embedding model
+ *   POST /v1/generate  - Greedy text generation for packaged text models
  */
 class LocalInferenceServer {
 public:
@@ -109,6 +118,9 @@ private:
     void HandleHealth(const httplib::Request& req, httplib::Response& res);
     void HandleModelInfo(const httplib::Request& req, httplib::Response& res);
     void HandlePredict(const httplib::Request& req, httplib::Response& res);
+    void HandleEmbeddings(const httplib::Request& req, httplib::Response& res);
+    void HandlePairScore(const httplib::Request& req, httplib::Response& res);
+    void HandleGenerate(const httplib::Request& req, httplib::Response& res);
 
     // Server thread function
     void ServerThread();
@@ -120,6 +132,27 @@ private:
     std::unique_ptr<httplib::Server> server_;
     std::unique_ptr<std::thread> server_thread_;
     std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<Tokenizer> text_tokenizer_;
+    bool has_text_vocabulary_ = false;
+    LanguageModelPackageContract language_model_contract_;
+    BertEncoderPackageContract bert_encoder_contract_;
+    bool has_sequence_model_ = false;
+    bool has_sequence_token_vocabulary_ = false;
+    bool has_sequence_pos_vocabulary_ = false;
+    bool has_sequence_tag_vocabulary_ = false;
+    bool sequence_batch_first_ = true;
+    bool sequence_create_attention_mask_ = true;
+    bool sequence_create_causal_lm_targets_ = false;
+    size_t sequence_max_sequence_length_ = 0;
+    int64_t sequence_word_pad_id_ = 0;
+    int64_t sequence_pos_pad_id_ = 0;
+    int64_t sequence_tag_ignore_index_ = -100;
+    int64_t sequence_target_ignore_index_ = -100;
+    std::vector<std::string> sequence_token_vocabulary_;
+    std::vector<std::string> sequence_pos_vocabulary_;
+    std::vector<std::string> sequence_tag_vocabulary_;
+    // Pair Score Output settings saved with the model (TOFIX140 A5).
+    std::optional<PairScoreDefaults> pair_score_defaults_;
 
     std::string model_path_;
     int port_ = 0;

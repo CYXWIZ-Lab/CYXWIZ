@@ -1,22 +1,26 @@
-// Windows compatibility
+// Host-matrix linear algebra (the analysis panels' API) on ArrayFire: the CPU
+// option is ArrayFire's CPU backend and there are no hand-written CPU kernels
+// (TOFIX140). Matrices cross the host boundary
+// once on the way in and once on the way out; float64 where the active device
+// has it, else float32.
+
 #ifdef _WIN32
 #define NOMINMAX
 #endif
 
 #include "cyxwiz/linear_algebra.h"
-#include <spdlog/spdlog.h>
-#include <cmath>
+#include "arrayfire_backend_utils.h"
+#include "arrayfire_host_values.h"
+
 #include <algorithm>
-#include <numeric>
-#include <cstring>
-#include <cstdint>
+#include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
-// Undefine Windows macros that conflict with std::min/max
 #ifdef min
 #undef min
 #endif
@@ -26,179 +30,120 @@
 
 namespace cyxwiz {
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
+namespace {
 
-static bool s_gpu_checked = false;
-static bool s_use_gpu = false;
+using Matrix = std::vector<std::vector<double>>;
 
-static bool CheckGPUAvailable() {
-    if (s_gpu_checked) return s_use_gpu;
-    s_gpu_checked = true;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::Backend backend = af::getActiveBackend();
-        s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        if (s_use_gpu) {
-            spdlog::info("[LinearAlgebra] GPU acceleration enabled");
-        }
-    } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] GPU check failed: {}", e.what());
-        s_use_gpu = false;
+bool IsRectangularMatrix(const Matrix& A) {
+    if (A.empty() || A[0].empty()) return false;
+    for (const auto& row : A) {
+        if (row.size() != A[0].size()) return false;
     }
-#endif
-    return s_use_gpu;
+    return true;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-static af::array VectorToAfArray(const std::vector<std::vector<double>>& mat) {
-    if (mat.empty()) return af::array();
-
-    size_t rows = mat.size();
-    size_t cols = mat[0].size();
-    std::vector<double> flat;
-    flat.reserve(rows * cols);
-
-    // ArrayFire uses column-major order
-    for (size_t c = 0; c < cols; ++c) {
-        for (size_t r = 0; r < rows; ++r) {
-            flat.push_back(mat[r][c]);
-        }
+// Eigenvector of a 2x2 matrix for eigenvalue lambda (closed form, unit length).
+std::vector<std::complex<double>> Eigenvector2x2(const Matrix& A, const std::complex<double>& lambda) {
+    const std::complex<double> a(A[0][0], 0.0), b(A[0][1], 0.0), c(A[1][0], 0.0), d(A[1][1], 0.0);
+    std::vector<std::complex<double>> vector;
+    if (std::abs(b) >= std::abs(c) && std::abs(b) > 1e-12) {
+        vector = {b, lambda - a};
+    } else if (std::abs(c) > 1e-12) {
+        vector = {lambda - d, c};
+    } else {
+        vector = {1.0, 0.0};
     }
+    const double norm = std::sqrt(std::norm(vector[0]) + std::norm(vector[1]));
+    if (norm <= 1e-12) return {1.0, 0.0};
+    return {vector[0] / norm, vector[1] / norm};
+}
 
+// Relative pivot / singular-value threshold for the compute precision.
+double SingularTolerance() {
+    return DeviceHasDouble() ? 1e-12 : 1e-6;
+}
+
+template <typename T>
+af::array PackColumnMajor(const Matrix& A) {
+    const size_t rows = A.size(), cols = A[0].size();
+    std::vector<T> flat(rows * cols);
+    for (size_t c = 0; c < cols; ++c) {
+        for (size_t r = 0; r < rows; ++r) flat[c * rows + r] = static_cast<T>(A[r][c]);
+    }
     return af::array(static_cast<dim_t>(rows), static_cast<dim_t>(cols), flat.data());
 }
 
-static std::vector<std::vector<double>> AfArrayToVector(const af::array& arr) {
-    int rows = static_cast<int>(arr.dims(0));
-    int cols = static_cast<int>(arr.dims(1));
+af::array ToDevice(const Matrix& A) {
+    return DeviceHasDouble() ? PackColumnMajor<double>(A) : PackColumnMajor<float>(A);
+}
 
-    std::vector<double> flat(rows * cols);
-    arr.host(flat.data());
-
-    std::vector<std::vector<double>> result(rows, std::vector<double>(cols));
-    // ArrayFire uses column-major order
-    for (int c = 0; c < cols; ++c) {
-        for (int r = 0; r < rows; ++r) {
-            result[r][c] = flat[c * rows + r];
-        }
+Matrix ToHostMatrix(const af::array& source, const char* operation) {
+    const size_t rows = static_cast<size_t>(source.dims(0)), cols = static_cast<size_t>(source.dims(1));
+    const std::vector<double> values = DeviceToHostValues(source, operation);
+    Matrix result(rows, std::vector<double>(cols));
+    for (size_t c = 0; c < cols; ++c) {
+        for (size_t r = 0; r < rows; ++r) result[r][c] = values[c * rows + r];
     }
-
     return result;
 }
 
-static cyxwiz::DataType AfTypeToTensorType(af::dtype dtype) {
-    switch (dtype) {
-        case af::dtype::f32: return cyxwiz::DataType::Float32;
-        case af::dtype::f64: return cyxwiz::DataType::Float64;
-        case af::dtype::s32: return cyxwiz::DataType::Int32;
-        case af::dtype::s64: return cyxwiz::DataType::Int64;
-        case af::dtype::u8:  return cyxwiz::DataType::UInt8;
-        default: return cyxwiz::DataType::Float64;
-    }
+MatrixResult MatrixFromDevice(const af::array& source, const char* operation) {
+    MatrixResult result;
+    result.matrix = ToHostMatrix(source, operation);
+    result.rows = static_cast<int>(source.dims(0));
+    result.cols = static_cast<int>(source.dims(1));
+    result.success = true;
+    return result;
 }
 
-static cyxwiz::Tensor AfArrayToTensorWithShape(const af::array& arr, const std::vector<size_t>& shape) {
-    cyxwiz::Tensor out(shape, AfTypeToTensorType(arr.type()));
-    if (out.NumBytes() > 0) {
-        arr.host(out.Data());
-    }
-    return out;
-}
-#endif
-
-static double TensorValueAsDouble(const Tensor& t, size_t idx) {
-    switch (t.GetDataType()) {
-        case DataType::Float64:
-            return static_cast<const double*>(t.Data())[idx];
-        case DataType::Float32:
-            return static_cast<double>(static_cast<const float*>(t.Data())[idx]);
-        case DataType::Int32:
-            return static_cast<double>(static_cast<const int32_t*>(t.Data())[idx]);
-        case DataType::Int64:
-            return static_cast<double>(static_cast<const int64_t*>(t.Data())[idx]);
-        case DataType::UInt8:
-            return static_cast<double>(static_cast<const uint8_t*>(t.Data())[idx]);
-        default:
-            return 0.0;
-    }
+// Singular values (descending) of a.
+std::vector<double> SingularValues(const af::array& a, const char* operation) {
+    af::array u, s, vt;
+    af::svd(u, s, vt, a);
+    return DeviceToHostValues(s, operation);
 }
 
-static std::vector<std::vector<double>> Tensor2DToMatrix(const Tensor& t) {
-    const auto& shape = t.Shape();
-    if (shape.size() != 2) {
-        return {};
-    }
-
-    const size_t rows = shape[0];
-    const size_t cols = shape[1];
-    std::vector<std::vector<double>> out(rows, std::vector<double>(cols));
-
-    if (rows == 0 || cols == 0) {
-        return out;
-    }
-
-    if (t.GetDataType() == DataType::Float64) {
-        const double* src = static_cast<const double*>(t.Data());
-        for (size_t r = 0; r < rows; ++r) {
-            std::memcpy(out[r].data(), src + r * cols, cols * sizeof(double));
-        }
-        return out;
-    }
-
-    for (size_t r = 0; r < rows; ++r) {
-        for (size_t c = 0; c < cols; ++c) {
-            out[r][c] = TensorValueAsDouble(t, r * cols + c);
-        }
-    }
-    return out;
+// True when a square matrix is singular or numerically singular: its smallest
+// singular value is below the relative tolerance. (An LU pivot test does not
+// work everywhere: OpenCL's getrf throws on an exactly singular matrix.)
+bool NearlySingular(const af::array& a, const char* operation) {
+    const std::vector<double> singular = SingularValues(a, operation);
+    return singular.front() == 0.0 || singular.back() <= SingularTolerance() * singular.front();
 }
 
-static std::vector<std::vector<double>> TensorVectorOr2DToMatrix(const Tensor& t) {
-    const auto& shape = t.Shape();
-    if (shape.size() == 2) {
-        return Tensor2DToMatrix(t);
-    }
-    if (shape.size() == 1) {
-        const size_t n = shape[0];
-        std::vector<std::vector<double>> out(n, std::vector<double>(1));
-        for (size_t i = 0; i < n; ++i) {
-            out[i][0] = TensorValueAsDouble(t, i);
-        }
-        return out;
-    }
-    return {};
+// Cholesky factor of a, or false when a is not positive definite. The status
+// alone is not enough (CUDA reports 0 for an indefinite matrix), so the
+// factor must also be finite, have a positive diagonal and reproduce a.
+bool CholeskyLower(const af::array& a, af::array& lower) {
+    if (af::cholesky(lower, a, /*is_upper=*/false) != 0) return false;
+    if (!af::allTrue<bool>(af::isInf(lower) == 0 && af::isNaN(lower) == 0)) return false;
+    if (!af::allTrue<bool>(af::diag(lower) > 0.0)) return false;
+    const af::array residual = af::matmul(lower, lower, AF_MAT_NONE, AF_MAT_TRANS) - a;
+    const double scale = std::sqrt(af::sum<double>(a * a));
+    return std::sqrt(af::sum<double>(residual * residual)) <= std::sqrt(SingularTolerance()) * (1.0 + scale);
 }
 
-static Tensor MatrixToTensor(const std::vector<std::vector<double>>& mat, bool squeeze_single_col) {
-    if (mat.empty()) {
-        if (squeeze_single_col) {
-            return Tensor({0}, DataType::Float64);
-        }
-        return Tensor({0, 0}, DataType::Float64);
-    }
-
-    const size_t rows = mat.size();
-    const size_t cols = mat[0].size();
-
-    if (squeeze_single_col && cols == 1) {
-        Tensor out({rows}, DataType::Float64);
-        double* dst = static_cast<double*>(out.Data());
-        for (size_t r = 0; r < rows; ++r) {
-            dst[r] = mat[r][0];
-        }
-        return out;
-    }
-
-    Tensor out({rows, cols}, DataType::Float64);
-    double* dst = static_cast<double*>(out.Data());
-    for (size_t r = 0; r < rows; ++r) {
-        std::memcpy(dst + r * cols, mat[r].data(), cols * sizeof(double));
-    }
-    return out;
+template <typename Result>
+Result Failure(std::string message) {
+    Result result;
+    result.error_message = std::move(message);
+    return result;
 }
+
+template <typename Result>
+bool RequireMatrix(const Matrix& A, Result& result) {
+    if (A.empty()) {
+        result.error_message = "Input matrix cannot be empty";
+        return false;
+    }
+    if (!IsRectangularMatrix(A)) {
+        result.error_message = "Input matrix must be rectangular and non-empty";
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
 
 bool LinearAlgebra::IsSquare(const std::vector<std::vector<double>>& A) {
     if (A.empty()) return false;
@@ -223,315 +168,83 @@ bool LinearAlgebra::ValidateDimensions(const std::vector<std::vector<double>>& A
 
 MatrixResult LinearAlgebra::Add(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
     MatrixResult result;
-
-    if (A.empty() || B.empty()) {
-        result.error_message = "Input matrices cannot be empty";
-        return result;
-    }
-
-    int rowsA, colsA, rowsB, colsB;
-    GetDimensions(A, rowsA, colsA);
-    GetDimensions(B, rowsB, colsB);
-
-    if (rowsA != rowsB || colsA != colsB) {
+    if (!RequireMatrix(A, result) || !RequireMatrix(B, result)) return result;
+    if (A.size() != B.size() || A[0].size() != B[0].size()) {
         result.error_message = "Matrix dimensions must match for addition";
         return result;
     }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array aB = VectorToAfArray(B);
-            af::array aC = aA + aB;
-            result.matrix = AfArrayToVector(aC);
-            result.rows = rowsA;
-            result.cols = colsA;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Add failed, fallback to CPU: {}", e.what());
-        }
+    try {
+        return MatrixFromDevice(ToDevice(A) + ToDevice(B), "LinearAlgebra::Add");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::Add", e));
     }
-#endif
-
-    // CPU fallback
-    result.matrix.resize(rowsA, std::vector<double>(colsA));
-    for (int i = 0; i < rowsA; ++i) {
-        for (int j = 0; j < colsA; ++j) {
-            result.matrix[i][j] = A[i][j] + B[i][j];
-        }
-    }
-    result.rows = rowsA;
-    result.cols = colsA;
-    result.success = true;
-    return result;
 }
 
 MatrixResult LinearAlgebra::Subtract(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
     MatrixResult result;
-
-    if (A.empty() || B.empty()) {
-        result.error_message = "Input matrices cannot be empty";
-        return result;
-    }
-
-    int rowsA, colsA, rowsB, colsB;
-    GetDimensions(A, rowsA, colsA);
-    GetDimensions(B, rowsB, colsB);
-
-    if (rowsA != rowsB || colsA != colsB) {
+    if (!RequireMatrix(A, result) || !RequireMatrix(B, result)) return result;
+    if (A.size() != B.size() || A[0].size() != B[0].size()) {
         result.error_message = "Matrix dimensions must match for subtraction";
         return result;
     }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array aB = VectorToAfArray(B);
-            af::array aC = aA - aB;
-            result.matrix = AfArrayToVector(aC);
-            result.rows = rowsA;
-            result.cols = colsA;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Subtract failed, fallback to CPU: {}", e.what());
-        }
+    try {
+        return MatrixFromDevice(ToDevice(A) - ToDevice(B), "LinearAlgebra::Subtract");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::Subtract", e));
     }
-#endif
-
-    // CPU fallback
-    result.matrix.resize(rowsA, std::vector<double>(colsA));
-    for (int i = 0; i < rowsA; ++i) {
-        for (int j = 0; j < colsA; ++j) {
-            result.matrix[i][j] = A[i][j] - B[i][j];
-        }
-    }
-    result.rows = rowsA;
-    result.cols = colsA;
-    result.success = true;
-    return result;
 }
 
 MatrixResult LinearAlgebra::Multiply(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
     MatrixResult result;
-
-    if (A.empty() || B.empty()) {
-        result.error_message = "Input matrices cannot be empty";
+    if (!RequireMatrix(A, result) || !RequireMatrix(B, result)) return result;
+    if (A[0].size() != B.size()) {
+        result.error_message = "Matrix dimensions incompatible for multiplication (A cols must equal B rows)";
         return result;
     }
-
-    int rowsA, colsA, rowsB, colsB;
-    GetDimensions(A, rowsA, colsA);
-    GetDimensions(B, rowsB, colsB);
-
-    if (colsA != rowsB) {
-        result.error_message = "Matrix A columns must equal Matrix B rows for multiplication";
-        return result;
+    try {
+        return MatrixFromDevice(af::matmul(ToDevice(A), ToDevice(B)), "LinearAlgebra::Multiply");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::Multiply", e));
     }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array aB = VectorToAfArray(B);
-            af::array aC = af::matmul(aA, aB);
-            result.matrix = AfArrayToVector(aC);
-            result.rows = rowsA;
-            result.cols = colsB;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Multiply failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback - naive O(n^3) multiplication
-    result.matrix.resize(rowsA, std::vector<double>(colsB, 0.0));
-    for (int i = 0; i < rowsA; ++i) {
-        for (int j = 0; j < colsB; ++j) {
-            for (int k = 0; k < colsA; ++k) {
-                result.matrix[i][j] += A[i][k] * B[k][j];
-            }
-        }
-    }
-    result.rows = rowsA;
-    result.cols = colsB;
-    result.success = true;
-    return result;
 }
 
 MatrixResult LinearAlgebra::ScalarMultiply(const std::vector<std::vector<double>>& A, double scalar) {
     MatrixResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
+    if (!RequireMatrix(A, result)) return result;
+    try {
+        return MatrixFromDevice(ToDevice(A) * scalar, "LinearAlgebra::ScalarMultiply");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::ScalarMultiply", e));
     }
-
-    int rows, cols;
-    GetDimensions(A, rows, cols);
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array aC = scalar * aA;
-            result.matrix = AfArrayToVector(aC);
-            result.rows = rows;
-            result.cols = cols;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU ScalarMultiply failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    result.matrix.resize(rows, std::vector<double>(cols));
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            result.matrix[i][j] = scalar * A[i][j];
-        }
-    }
-    result.rows = rows;
-    result.cols = cols;
-    result.success = true;
-    return result;
 }
 
 MatrixResult LinearAlgebra::Transpose(const std::vector<std::vector<double>>& A) {
     MatrixResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
+    if (!RequireMatrix(A, result)) return result;
+    try {
+        return MatrixFromDevice(af::transpose(ToDevice(A)), "LinearAlgebra::Transpose");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::Transpose", e));
     }
-
-    int rows, cols;
-    GetDimensions(A, rows, cols);
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array aT = af::transpose(aA);
-            result.matrix = AfArrayToVector(aT);
-            result.rows = cols;
-            result.cols = rows;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Transpose failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    result.matrix.resize(cols, std::vector<double>(rows));
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            result.matrix[j][i] = A[i][j];
-        }
-    }
-    result.rows = cols;
-    result.cols = rows;
-    result.success = true;
-    return result;
 }
 
 MatrixResult LinearAlgebra::Inverse(const std::vector<std::vector<double>>& A) {
     MatrixResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for inversion";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array aInv = af::inverse(aA);
-            result.matrix = AfArrayToVector(aInv);
-            result.rows = n;
-            result.cols = n;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Inverse failed (matrix may be singular): {}", e.what());
-            result.error_message = "Matrix inversion failed - matrix may be singular";
-            return result;
-        }
-    }
-#endif
-
-    // CPU fallback using Gauss-Jordan elimination
-    std::vector<std::vector<double>> aug(n, std::vector<double>(2 * n));
-
-    // Create augmented matrix [A | I]
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            aug[i][j] = A[i][j];
-            aug[i][j + n] = (i == j) ? 1.0 : 0.0;
-        }
-    }
-
-    // Forward elimination with partial pivoting
-    for (int col = 0; col < n; ++col) {
-        // Find pivot
-        int maxRow = col;
-        for (int row = col + 1; row < n; ++row) {
-            if (std::abs(aug[row][col]) > std::abs(aug[maxRow][col])) {
-                maxRow = row;
-            }
-        }
-        std::swap(aug[col], aug[maxRow]);
-
-        if (std::abs(aug[col][col]) < 1e-12) {
+    try {
+        const af::array a = ToDevice(A);
+        if (NearlySingular(a, "LinearAlgebra::Inverse")) {
             result.error_message = "Matrix is singular or nearly singular";
             return result;
         }
-
-        // Scale pivot row
-        double pivot = aug[col][col];
-        for (int j = 0; j < 2 * n; ++j) {
-            aug[col][j] /= pivot;
-        }
-
-        // Eliminate column
-        for (int row = 0; row < n; ++row) {
-            if (row != col) {
-                double factor = aug[row][col];
-                for (int j = 0; j < 2 * n; ++j) {
-                    aug[row][j] -= factor * aug[col][j];
-                }
-            }
-        }
+        return MatrixFromDevice(af::inverse(a), "LinearAlgebra::Inverse");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::Inverse", e));
     }
-
-    // Extract inverse from right half
-    result.matrix.resize(n, std::vector<double>(n));
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            result.matrix[i][j] = aug[i][j + n];
-        }
-    }
-    result.rows = n;
-    result.cols = n;
-    result.success = true;
-    return result;
 }
 
 // ============================================================================
@@ -540,532 +253,279 @@ MatrixResult LinearAlgebra::Inverse(const std::vector<std::vector<double>>& A) {
 
 ScalarResult LinearAlgebra::Determinant(const std::vector<std::vector<double>>& A) {
     ScalarResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for determinant";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            double det = af::det<double>(aA);
-            result.value = det;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Determinant failed, fallback to CPU: {}", e.what());
-        }
+    try {
+        // A (numerically) singular matrix has determinant 0; checked first
+        // because OpenCL's getrf throws on an exactly singular matrix.
+        const af::array a = ToDevice(A);
+        result.value = NearlySingular(a, "LinearAlgebra::Determinant") ? 0.0 : af::det<double>(a);
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Failure<ScalarResult>(DeviceError("LinearAlgebra::Determinant", e));
     }
-#endif
-
-    // CPU fallback using LU decomposition
-    std::vector<std::vector<double>> L(n, std::vector<double>(n, 0.0));
-    std::vector<std::vector<double>> U = A;
-    int swaps = 0;
-
-    for (int col = 0; col < n; ++col) {
-        // Find pivot
-        int maxRow = col;
-        for (int row = col + 1; row < n; ++row) {
-            if (std::abs(U[row][col]) > std::abs(U[maxRow][col])) {
-                maxRow = row;
-            }
-        }
-
-        if (maxRow != col) {
-            std::swap(U[col], U[maxRow]);
-            swaps++;
-        }
-
-        if (std::abs(U[col][col]) < 1e-12) {
-            result.value = 0.0;
-            result.success = true;
-            return result;
-        }
-
-        for (int row = col + 1; row < n; ++row) {
-            double factor = U[row][col] / U[col][col];
-            for (int j = col; j < n; ++j) {
-                U[row][j] -= factor * U[col][j];
-            }
-        }
-    }
-
-    // Determinant is product of diagonal of U, with sign from swaps
-    double det = (swaps % 2 == 0) ? 1.0 : -1.0;
-    for (int i = 0; i < n; ++i) {
-        det *= U[i][i];
-    }
-
-    result.value = det;
-    result.success = true;
-    return result;
 }
 
 ScalarResult LinearAlgebra::Trace(const std::vector<std::vector<double>>& A) {
     ScalarResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for trace";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
-    double trace = 0.0;
-    for (int i = 0; i < n; ++i) {
-        trace += A[i][i];
+    try {
+        result.value = af::sum<double>(af::diag(ToDevice(A)));
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Failure<ScalarResult>(DeviceError("LinearAlgebra::Trace", e));
     }
-
-    result.value = trace;
-    result.success = true;
-    return result;
 }
 
 ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, double tolerance) {
     ScalarResult result;
-
     if (A.empty()) {
         result.value = 0;
         result.success = true;
         return result;
     }
-
-    // Use SVD to compute rank (count singular values > tolerance)
-    SVDResult svd = SVD(A, false);
-    if (!svd.success) {
-        result.error_message = "SVD failed: " + svd.error_message;
+    if (!RequireMatrix(A, result)) return result;
+    try {
+        const std::vector<double> singular = SingularValues(ToDevice(A), "LinearAlgebra::Rank");
+        const double largest = singular.empty() ? 0.0 : singular.front();
+        // Singular values carry the compute precision's rounding: a float32 device
+        // leaves ~1e-7 relative where float64 has zeros, so the relative tolerance is
+        // at least that precision's epsilon (torch.linalg.matrix_rank's rtol).
+        const double epsilon =
+            DeviceHasDouble() ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
+        const double threshold =
+            std::max(tolerance, epsilon) * static_cast<double>(std::max(A.size(), A[0].size())) * largest;
+        result.value = static_cast<double>(
+            std::count_if(singular.begin(), singular.end(), [&](double s) { return s > threshold; }));
+        result.success = true;
         return result;
+    } catch (const af::exception& e) {
+        return Failure<ScalarResult>(DeviceError("LinearAlgebra::Rank", e));
     }
-
-    int rank = 0;
-    double maxSV = svd.S.empty() ? 0.0 : svd.S[0];
-    double thresh = tolerance * std::max(svd.m, svd.n) * maxSV;
-
-    for (double s : svd.S) {
-        if (s > thresh) {
-            rank++;
-        }
-    }
-
-    result.value = static_cast<double>(rank);
-    result.success = true;
-    return result;
 }
 
 ScalarResult LinearAlgebra::FrobeniusNorm(const std::vector<std::vector<double>>& A) {
     ScalarResult result;
-
     if (A.empty()) {
         result.value = 0.0;
         result.success = true;
         return result;
     }
-
-    double sum = 0.0;
-    for (const auto& row : A) {
-        for (double val : row) {
-            sum += val * val;
-        }
+    if (!RequireMatrix(A, result)) return result;
+    try {
+        const af::array a = ToDevice(A);
+        result.value = std::sqrt(af::sum<double>(a * a));
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Failure<ScalarResult>(DeviceError("LinearAlgebra::FrobeniusNorm", e));
     }
-
-    result.value = std::sqrt(sum);
-    result.success = true;
-    return result;
 }
 
 ScalarResult LinearAlgebra::ConditionNumber(const std::vector<std::vector<double>>& A) {
     ScalarResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
+    if (!RequireMatrix(A, result)) return result;
+    try {
+        const std::vector<double> singular = SingularValues(ToDevice(A), "LinearAlgebra::ConditionNumber");
+        if (singular.empty()) {
+            result.error_message = "No singular values computed";
+            return result;
+        }
+        const double smallest = singular.back();
+        result.value = smallest < 1e-15 ? std::numeric_limits<double>::infinity() : singular.front() / smallest;
+        result.success = true;
         return result;
+    } catch (const af::exception& e) {
+        return Failure<ScalarResult>(DeviceError("LinearAlgebra::ConditionNumber", e));
     }
-
-    SVDResult svd = SVD(A, false);
-    if (!svd.success) {
-        result.error_message = "SVD failed: " + svd.error_message;
-        return result;
-    }
-
-    if (svd.S.empty()) {
-        result.error_message = "No singular values computed";
-        return result;
-    }
-
-    double maxSV = svd.S.front();
-    double minSV = svd.S.back();
-
-    if (minSV < 1e-15) {
-        result.value = std::numeric_limits<double>::infinity();
-    } else {
-        result.value = maxSV / minSV;
-    }
-
-    result.success = true;
-    return result;
 }
 
 // ============================================================================
 // Decompositions
 // ============================================================================
 
+// Symmetric matrices: ArrayFire has no eigensolver, but A + cI with c above
+// the spectral radius (c = ||A||_F + 1) is symmetric positive definite, whose
+// SVD is its eigendecomposition: eigenvalues s - c (descending), eigenvectors
+// the columns of U. Nonsymmetric 2x2: closed form (complex pairs included).
 EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
     EigenResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for eigendecomposition";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
+    const int n = static_cast<int>(A.size());
     result.n = n;
 
-    // Note: ArrayFire v3 does not have built-in eigendecomposition (af::eigen removed)
-    // Using CPU implementation via QR iteration algorithm
-    // For future ArrayFire versions, GPU acceleration can be added back
-
-    // CPU fallback: Power iteration for dominant eigenvalue (simplified)
-    // For a full implementation, use QR algorithm or Jacobi method
-    result.error_message = "CPU eigendecomposition not fully implemented - requires ArrayFire";
-
-    // Simple power iteration for largest eigenvalue
-    std::vector<double> v(n, 1.0);
-    double lambda = 0.0;
-
-    for (int iter = 0; iter < 1000; ++iter) {
-        // Compute Av
-        std::vector<double> Av(n, 0.0);
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                Av[i] += A[i][j] * v[j];
-            }
+    if (!IsSymmetric(A)) {
+        if (n != 2) {
+            result.error_message =
+                "Eigendecomposition supports symmetric matrices and nonsymmetric 2x2 matrices only";
+            return result;
         }
-
-        // Find max absolute value
-        double maxVal = 0.0;
-        for (double x : Av) {
-            maxVal = std::max(maxVal, std::abs(x));
+        const double trace = A[0][0] + A[1][1];
+        const double determinant = A[0][0] * A[1][1] - A[0][1] * A[1][0];
+        const std::complex<double> root = std::sqrt(std::complex<double>(trace * trace - 4.0 * determinant, 0.0));
+        const std::complex<double> lambda0 = (trace + root) / 2.0;
+        const std::complex<double> lambda1 = (trace - root) / 2.0;
+        if (std::abs(lambda0 - lambda1) <= 1e-12) {
+            result.error_message = "Nonsymmetric 2x2 eigendecomposition does not support repeated eigenvalues";
+            return result;
         }
-
-        if (maxVal < 1e-12) break;
-
-        // Normalize
-        double newLambda = maxVal;
-        for (int i = 0; i < n; ++i) {
-            v[i] = Av[i] / maxVal;
-        }
-
-        if (std::abs(newLambda - lambda) < 1e-10) {
-            lambda = newLambda;
-            break;
-        }
-        lambda = newLambda;
+        result.eigenvalues = {lambda0, lambda1};
+        const auto vector0 = Eigenvector2x2(A, lambda0);
+        const auto vector1 = Eigenvector2x2(A, lambda1);
+        result.eigenvectors = {{vector0[0], vector1[0]}, {vector0[1], vector1[1]}};
+        result.success = true;
+        return result;
     }
 
-    result.eigenvalues.push_back(std::complex<double>(lambda, 0.0));
-    result.eigenvectors.resize(n, std::vector<std::complex<double>>(1));
-    for (int i = 0; i < n; ++i) {
-        result.eigenvectors[i][0] = std::complex<double>(v[i], 0.0);
+    try {
+        const af::array a = ToDevice(A);
+        const double shift = std::sqrt(af::sum<double>(a * a)) + 1.0;
+        af::array u, s, vt;
+        af::svd(u, s, vt, a + shift * af::identity(n, n, a.type()));
+        const std::vector<double> values = DeviceToHostValues(s, "LinearAlgebra::Eigen");
+        const Matrix vectors = ToHostMatrix(u, "LinearAlgebra::Eigen");
+        result.eigenvalues.resize(n);
+        result.eigenvectors.assign(n, std::vector<std::complex<double>>(n));
+        for (int col = 0; col < n; ++col) {
+            result.eigenvalues[col] = values[col] - shift;
+            for (int row = 0; row < n; ++row) result.eigenvectors[row][col] = vectors[row][col];
+        }
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Failure<EigenResult>(DeviceError("LinearAlgebra::Eigen", e));
     }
-
-    result.success = true;
-    result.error_message = "Note: Only dominant eigenvalue computed (CPU fallback)";
-    return result;
 }
 
 SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool full_matrices) {
     SVDResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
-    int rows, cols;
-    GetDimensions(A, rows, cols);
-    result.m = rows;
-    result.n = cols;
-    result.k = std::min(rows, cols);
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array U, S, Vt;
-            af::svd(U, S, Vt, aA);
-
-            result.U = AfArrayToVector(U);
-            result.Vt = AfArrayToVector(af::transpose(Vt));  // ArrayFire returns V, we want V^T
-
-            // Extract singular values
-            std::vector<float> svals(result.k);
-            S.host(svals.data());
-            result.S.resize(result.k);
-            for (int i = 0; i < result.k; ++i) {
-                result.S[i] = static_cast<double>(svals[i]);
-            }
-
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU SVD failed, fallback to CPU: {}", e.what());
+    if (!RequireMatrix(A, result)) return result;
+    GetDimensions(A, result.m, result.n);
+    result.k = std::min(result.m, result.n);
+    try {
+        af::array u, s, vt;
+        af::svd(u, s, vt, ToDevice(A));  // full: U m x m, Vt n x n
+        if (!full_matrices) {
+            u = u(af::span, af::seq(0, result.k - 1));
+            vt = vt(af::seq(0, result.k - 1), af::span);
         }
+        result.U = ToHostMatrix(u, "LinearAlgebra::SVD");
+        result.S = DeviceToHostValues(s, "LinearAlgebra::SVD");
+        result.Vt = ToHostMatrix(vt, "LinearAlgebra::SVD");
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        auto failed = Failure<SVDResult>(DeviceError("LinearAlgebra::SVD", e));
+        failed.m = result.m;
+        failed.n = result.n;
+        failed.k = result.k;
+        return failed;
     }
-#endif
-
-    // CPU fallback: Simplified SVD using power iteration
-    // For production, use LAPACK or similar
-    result.error_message = "CPU SVD not fully implemented - requires ArrayFire for full SVD";
-    result.S.resize(result.k, 0.0);
-    result.success = false;
-    return result;
 }
 
-QRResult LinearAlgebra::QR(const std::vector<std::vector<double>>& A) {
-    QRResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
+// A_k = U_k diag(S_k) Vt_k from the top k singular triplets.
+MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<double>>& A, int k) {
+    MatrixResult result;
+    if (!RequireMatrix(A, result)) return result;
+    if (k <= 0 || k > static_cast<int>(std::min(A.size(), A[0].size()))) {
+        result.error_message = "k must be between 1 and min(m,n)";
         return result;
     }
-
-    int rows, cols;
-    GetDimensions(A, rows, cols);
-    result.m = rows;
-    result.n = cols;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array Q, R;
-            af::qr(Q, R, aA);
-
-            result.Q = AfArrayToVector(Q);
-            result.R = AfArrayToVector(R);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU QR failed, fallback to CPU: {}", e.what());
-        }
+    try {
+        af::array u, s, vt;
+        af::svd(u, s, vt, ToDevice(A));
+        const af::seq top(0, k - 1);
+        const af::array scaled =  // column j times s_j
+            u(af::span, top) * af::tile(af::transpose(s(top)), static_cast<unsigned>(A.size()));
+        return MatrixFromDevice(af::matmul(scaled, vt(top, af::span)), "LinearAlgebra::LowRankApproximation");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::LowRankApproximation", e));
     }
-#endif
+}
 
-    // CPU fallback: Gram-Schmidt orthogonalization
-    int k = std::min(rows, cols);
-    result.Q.resize(rows, std::vector<double>(k, 0.0));
-    result.R.resize(k, std::vector<double>(cols, 0.0));
-
-    for (int j = 0; j < k; ++j) {
-        // Copy column j of A to v
-        std::vector<double> v(rows);
-        for (int i = 0; i < rows; ++i) {
-            v[i] = A[i][j];
-        }
-
-        // Orthogonalize against previous columns
-        for (int i = 0; i < j; ++i) {
-            double dot = 0.0;
-            for (int r = 0; r < rows; ++r) {
-                dot += result.Q[r][i] * A[r][j];
-            }
-            result.R[i][j] = dot;
-            for (int r = 0; r < rows; ++r) {
-                v[r] -= dot * result.Q[r][i];
-            }
-        }
-
-        // Normalize
-        double norm = 0.0;
-        for (int r = 0; r < rows; ++r) {
-            norm += v[r] * v[r];
-        }
-        norm = std::sqrt(norm);
-
-        result.R[j][j] = norm;
-        if (norm > 1e-12) {
-            for (int r = 0; r < rows; ++r) {
-                result.Q[r][j] = v[r] / norm;
-            }
-        }
+// Reduced QR (PyTorch's default): Q m x k with orthonormal columns, R k x n,
+// k = min(m, n).
+QRResult LinearAlgebra::QR(const std::vector<std::vector<double>>& A) {
+    QRResult result;
+    if (!RequireMatrix(A, result)) return result;
+    GetDimensions(A, result.m, result.n);
+    try {
+        const int k = std::min(result.m, result.n);
+        af::array q, r, tau;
+        af::qr(q, r, tau, ToDevice(A));
+        result.Q = ToHostMatrix(q(af::span, af::seq(0, k - 1)), "LinearAlgebra::QR");
+        result.R = ToHostMatrix(r(af::seq(0, k - 1), af::span), "LinearAlgebra::QR");
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Failure<QRResult>(DeviceError("LinearAlgebra::QR", e));
     }
-
-    result.success = true;
-    return result;
 }
 
 CholeskyResult LinearAlgebra::Cholesky(const std::vector<std::vector<double>>& A) {
     CholeskyResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for Cholesky decomposition";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
-    result.n = n;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array L;
-            af::cholesky(L, aA, true);  // true = lower triangular
-
-            result.L = AfArrayToVector(L);
-            result.is_positive_definite = true;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Cholesky failed (matrix may not be positive definite): {}", e.what());
-            result.error_message = "Cholesky decomposition failed - matrix may not be positive definite";
-            result.is_positive_definite = false;
+    result.n = static_cast<int>(A.size());
+    try {
+        af::array lower;
+        if (!CholeskyLower(ToDevice(A), lower)) {
+            result.error_message = "Matrix is not positive definite";
             return result;
         }
+        result.L = ToHostMatrix(lower, "LinearAlgebra::Cholesky");
+        result.is_positive_definite = true;
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        auto failed = Failure<CholeskyResult>(DeviceError("LinearAlgebra::Cholesky", e));
+        failed.n = result.n;
+        return failed;
     }
-#endif
-
-    // CPU fallback: Cholesky-Banachiewicz algorithm
-    result.L.resize(n, std::vector<double>(n, 0.0));
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j <= i; ++j) {
-            double sum = 0.0;
-
-            if (i == j) {
-                for (int k = 0; k < j; ++k) {
-                    sum += result.L[j][k] * result.L[j][k];
-                }
-                double val = A[j][j] - sum;
-                if (val <= 0) {
-                    result.error_message = "Matrix is not positive definite";
-                    result.is_positive_definite = false;
-                    return result;
-                }
-                result.L[j][j] = std::sqrt(val);
-            } else {
-                for (int k = 0; k < j; ++k) {
-                    sum += result.L[i][k] * result.L[j][k];
-                }
-                result.L[i][j] = (A[i][j] - sum) / result.L[j][j];
-            }
-        }
-    }
-
-    result.is_positive_definite = true;
-    result.success = true;
-    return result;
 }
 
+// P A = L U with partial pivoting; P[i] is the row of A that lands in row i.
 LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
     LUResult result;
-
-    if (A.empty()) {
-        result.error_message = "Input matrix cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for LU decomposition";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
-    result.n = n;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array L, U, P;
-            af::lu(L, U, P, aA);
-
-            result.L = AfArrayToVector(L);
-            result.U = AfArrayToVector(U);
-
-            // Extract permutation indices from P matrix
-            std::vector<int> perm(n);
-            std::vector<float> Pdata(n * n);
-            P.host(Pdata.data());
-            for (int i = 0; i < n; ++i) {
-                for (int j = 0; j < n; ++j) {
-                    if (Pdata[j * n + i] > 0.5) {
-                        perm[i] = j;
-                        break;
-                    }
-                }
-            }
-            result.P = perm;
-
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU LU failed, fallback to CPU: {}", e.what());
-        }
+    result.n = static_cast<int>(A.size());
+    try {
+        af::array lower, upper, pivot;
+        af::lu(lower, upper, pivot, ToDevice(A));  // pivot: permutation indices
+        result.L = ToHostMatrix(lower, "LinearAlgebra::LU");
+        result.U = ToHostMatrix(upper, "LinearAlgebra::LU");
+        af::array permutation = pivot.as(s32);
+        permutation.eval();
+        result.P.resize(static_cast<size_t>(result.n));
+        MaterializeArrayFireToHost(permutation, result.P.data(), ArrayFireHostSyncCategory::OutputMaterialization,
+                                   "LinearAlgebra::LU", "permutation_indices");
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        auto failed = Failure<LUResult>(DeviceError("LinearAlgebra::LU", e));
+        failed.n = result.n;
+        return failed;
     }
-#endif
-
-    // CPU fallback: Doolittle's method with partial pivoting
-    result.L.resize(n, std::vector<double>(n, 0.0));
-    result.U = A;
-    result.P.resize(n);
-    std::iota(result.P.begin(), result.P.end(), 0);  // P = [0, 1, 2, ..., n-1]
-
-    for (int k = 0; k < n; ++k) {
-        // Find pivot
-        int maxRow = k;
-        for (int i = k + 1; i < n; ++i) {
-            if (std::abs(result.U[i][k]) > std::abs(result.U[maxRow][k])) {
-                maxRow = i;
-            }
-        }
-
-        if (maxRow != k) {
-            std::swap(result.U[k], result.U[maxRow]);
-            std::swap(result.P[k], result.P[maxRow]);
-            std::swap(result.L[k], result.L[maxRow]);
-        }
-
-        result.L[k][k] = 1.0;
-
-        for (int i = k + 1; i < n; ++i) {
-            if (std::abs(result.U[k][k]) < 1e-12) {
-                result.error_message = "Matrix is singular";
-                return result;
-            }
-            result.L[i][k] = result.U[i][k] / result.U[k][k];
-            for (int j = k; j < n; ++j) {
-                result.U[i][j] -= result.L[i][k] * result.U[k][j];
-            }
-        }
-    }
-
-    result.success = true;
-    return result;
 }
 
 // ============================================================================
@@ -1074,633 +534,74 @@ LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
 
 MatrixResult LinearAlgebra::Solve(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
     MatrixResult result;
-
-    if (A.empty() || b.empty()) {
-        result.error_message = "Input matrices cannot be empty";
-        return result;
-    }
-
+    if (!RequireMatrix(A, result) || !RequireMatrix(b, result)) return result;
     if (!IsSquare(A)) {
         result.error_message = "Matrix A must be square for Solve";
         return result;
     }
-
-    int n = static_cast<int>(A.size());
-    int bRows, bCols;
-    GetDimensions(b, bRows, bCols);
-
-    if (bRows != n) {
+    if (b.size() != A.size()) {
         result.error_message = "Dimensions mismatch: A rows must equal b rows";
         return result;
     }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array ab = VectorToAfArray(b);
-            af::array x = af::solve(aA, ab);
-            result.matrix = AfArrayToVector(x);
-            result.rows = n;
-            result.cols = bCols;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Solve failed: {}", e.what());
-            result.error_message = "Linear system solve failed - matrix may be singular";
+    try {
+        const af::array a = ToDevice(A);
+        if (NearlySingular(a, "LinearAlgebra::Solve")) {
+            result.error_message = "Matrix is singular or nearly singular";
             return result;
         }
+        return MatrixFromDevice(af::solve(a, ToDevice(b)), "LinearAlgebra::Solve");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::Solve", e));
     }
-#endif
-
-    // CPU fallback: Use LU decomposition
-    LUResult lu = LU(A);
-    if (!lu.success) {
-        result.error_message = "LU decomposition failed: " + lu.error_message;
-        return result;
-    }
-
-    // Apply permutation to b
-    std::vector<std::vector<double>> Pb(n, std::vector<double>(bCols));
-    for (int i = 0; i < n; ++i) {
-        Pb[i] = b[lu.P[i]];
-    }
-
-    // Forward substitution: L * y = Pb
-    std::vector<std::vector<double>> y(n, std::vector<double>(bCols));
-    for (int c = 0; c < bCols; ++c) {
-        for (int i = 0; i < n; ++i) {
-            y[i][c] = Pb[i][c];
-            for (int j = 0; j < i; ++j) {
-                y[i][c] -= lu.L[i][j] * y[j][c];
-            }
-        }
-    }
-
-    // Back substitution: U * x = y
-    result.matrix.resize(n, std::vector<double>(bCols));
-    for (int c = 0; c < bCols; ++c) {
-        for (int i = n - 1; i >= 0; --i) {
-            result.matrix[i][c] = y[i][c];
-            for (int j = i + 1; j < n; ++j) {
-                result.matrix[i][c] -= lu.U[i][j] * result.matrix[j][c];
-            }
-            result.matrix[i][c] /= lu.U[i][i];
-        }
-    }
-
-    result.rows = n;
-    result.cols = bCols;
-    result.success = true;
-    return result;
 }
 
 MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
     MatrixResult result;
-
-    if (A.empty() || b.empty()) {
-        result.error_message = "Input matrices cannot be empty";
-        return result;
-    }
-
-    int rowsA, colsA, rowsB, colsB;
-    GetDimensions(A, rowsA, colsA);
-    GetDimensions(b, rowsB, colsB);
-
-    if (rowsA != rowsB) {
+    if (!RequireMatrix(A, result) || !RequireMatrix(b, result)) return result;
+    if (A.size() != b.size()) {
         result.error_message = "A and b must have same number of rows";
         return result;
     }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array ab = VectorToAfArray(b);
-            af::array x = af::solve(aA, ab, AF_MAT_NONE);  // Least squares for non-square
-            result.matrix = AfArrayToVector(x);
-            result.rows = colsA;
-            result.cols = colsB;
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU LeastSquares failed, fallback to CPU: {}", e.what());
-        }
+    try {
+        // af::solve takes the QR least-squares route for a non-square A.
+        return MatrixFromDevice(af::solve(ToDevice(A), ToDevice(b)), "LinearAlgebra::LeastSquares");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::LeastSquares", e));
     }
-#endif
-
-    // CPU fallback: Normal equations (A^T * A) * x = A^T * b
-    auto At = Transpose(A);
-    if (!At.success) {
-        result.error_message = "Transpose failed: " + At.error_message;
-        return result;
-    }
-
-    auto AtA = Multiply(At.matrix, A);
-    if (!AtA.success) {
-        result.error_message = "Matrix multiplication failed: " + AtA.error_message;
-        return result;
-    }
-
-    auto Atb = Multiply(At.matrix, b);
-    if (!Atb.success) {
-        result.error_message = "Matrix multiplication failed: " + Atb.error_message;
-        return result;
-    }
-
-    return Solve(AtA.matrix, Atb.matrix);
 }
 
 // ============================================================================
-// Matrix Properties
+// Matrix Properties (an ArrayFire error throws: a bool cannot carry it)
 // ============================================================================
 
 bool LinearAlgebra::IsSymmetric(const std::vector<std::vector<double>>& A, double tolerance) {
-    if (!IsSquare(A)) return false;
-
-    int n = static_cast<int>(A.size());
-    for (int i = 0; i < n; ++i) {
-        for (int j = i + 1; j < n; ++j) {
-            if (std::abs(A[i][j] - A[j][i]) > tolerance) {
-                return false;
-            }
-        }
+    if (!IsRectangularMatrix(A) || !IsSquare(A)) return false;
+    try {
+        const af::array a = ToDevice(A);
+        return af::allTrue<bool>(af::abs(a - af::transpose(a)) <= tolerance);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("LinearAlgebra::IsSymmetric", e));
     }
-    return true;
 }
 
 bool LinearAlgebra::IsPositiveDefinite(const std::vector<std::vector<double>>& A) {
-    CholeskyResult chol = Cholesky(A);
-    return chol.is_positive_definite;
+    return Cholesky(A).is_positive_definite;
 }
 
+// Orthonormal columns: A^T A = I (a square A is then orthogonal; a reduced
+// QR's Q qualifies too).
 bool LinearAlgebra::IsOrthogonal(const std::vector<std::vector<double>>& A, double tolerance) {
-    if (!IsSquare(A)) return false;
-
-    int n = static_cast<int>(A.size());
-    auto At = Transpose(A);
-    auto AtA = Multiply(At.matrix, A);
-
-    if (!AtA.success) return false;
-
-    // Check if AtA is identity
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            double expected = (i == j) ? 1.0 : 0.0;
-            if (std::abs(AtA.matrix[i][j] - expected) > tolerance) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-MatrixResult LinearAlgebra::Identity(int n) {
-    MatrixResult result;
-    if (n <= 0) {
-        result.error_message = "Size must be positive";
-        return result;
-    }
-
-    result.matrix.resize(n, std::vector<double>(n, 0.0));
-    for (int i = 0; i < n; ++i) {
-        result.matrix[i][i] = 1.0;
-    }
-    result.rows = n;
-    result.cols = n;
-    result.success = true;
-    return result;
-}
-
-MatrixResult LinearAlgebra::Identity(int rows, int cols) {
-    MatrixResult result;
-    if (rows <= 0 || cols <= 0) {
-        result.error_message = "Dimensions must be positive";
-        return result;
-    }
-
-    result.matrix.resize(rows, std::vector<double>(cols, 0.0));
-    int diag_len = std::min(rows, cols);
-    for (int i = 0; i < diag_len; ++i) {
-        result.matrix[i][i] = 1.0;
-    }
-    result.rows = rows;
-    result.cols = cols;
-    result.success = true;
-    return result;
-}
-
-MatrixResult LinearAlgebra::Zeros(int n) {
-    return Zeros(n, n);
-}
-
-MatrixResult LinearAlgebra::Zeros(int rows, int cols) {
-    MatrixResult result;
-    if (rows <= 0 || cols <= 0) {
-        result.error_message = "Dimensions must be positive";
-        return result;
-    }
-
-    result.matrix.resize(rows, std::vector<double>(cols, 0.0));
-    result.rows = rows;
-    result.cols = cols;
-    result.success = true;
-    return result;
-}
-
-MatrixResult LinearAlgebra::Ones(int n) {
-    return Ones(n, n);
-}
-
-MatrixResult LinearAlgebra::Ones(int rows, int cols) {
-    MatrixResult result;
-    if (rows <= 0 || cols <= 0) {
-        result.error_message = "Dimensions must be positive";
-        return result;
-    }
-
-    result.matrix.resize(rows, std::vector<double>(cols, 1.0));
-    result.rows = rows;
-    result.cols = cols;
-    result.success = true;
-    return result;
-}
-
-MatrixResult LinearAlgebra::Diagonal(const std::vector<double>& diag) {
-    MatrixResult result;
-    if (diag.empty()) {
-        result.error_message = "Diagonal cannot be empty";
-        return result;
-    }
-
-    int n = static_cast<int>(diag.size());
-    result.matrix.resize(n, std::vector<double>(n, 0.0));
-    for (int i = 0; i < n; ++i) {
-        result.matrix[i][i] = diag[i];
-    }
-    result.rows = n;
-    result.cols = n;
-    result.success = true;
-    return result;
-}
-
-std::vector<double> LinearAlgebra::GetDiagonal(const std::vector<std::vector<double>>& A) {
-    if (A.empty()) return {};
-
-    int n = std::min(static_cast<int>(A.size()), static_cast<int>(A[0].size()));
-    std::vector<double> diag(n);
-    for (int i = 0; i < n; ++i) {
-        diag[i] = A[i][i];
-    }
-    return diag;
-}
-
-MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<double>>& A, int k) {
-    MatrixResult result;
-
-    SVDResult svd = SVD(A, false);
-    if (!svd.success) {
-        result.error_message = "SVD failed: " + svd.error_message;
-        return result;
-    }
-
-    if (k <= 0 || k > svd.k) {
-        result.error_message = "k must be between 1 and min(m,n)";
-        return result;
-    }
-
-    // Truncate to k components: A_k = U_k * S_k * V_k^T
-    int m = svd.m;
-    int n = svd.n;
-
-    // Compute U_k * S_k
-    std::vector<std::vector<double>> US(m, std::vector<double>(k));
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < k; ++j) {
-            US[i][j] = svd.U[i][j] * svd.S[j];
-        }
-    }
-
-    // Compute (U_k * S_k) * V_k^T
-    result.matrix.resize(m, std::vector<double>(n, 0.0));
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < n; ++j) {
-            for (int l = 0; l < k; ++l) {
-                result.matrix[i][j] += US[i][l] * svd.Vt[l][j];
-            }
-        }
-    }
-
-    result.rows = m;
-    result.cols = n;
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Tensor-First Operations
-// ============================================================================
-
-TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
-    TensorResult result;
-
-    const auto& shapeA = A.Shape();
-    const auto& shapeB = B.Shape();
-    if (shapeA.size() != 2 || shapeB.size() != 2) {
-        result.error_message = "A and B must be 2D tensors for matrix multiplication";
-        return result;
-    }
-
-    const size_t rowsA = shapeA[0];
-    const size_t colsA = shapeA[1];
-    const size_t rowsB = shapeB[0];
-    const size_t colsB = shapeB[1];
-    if (colsA != rowsB) {
-        result.error_message = "Matrix A columns must equal Matrix B rows for multiplication";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (!IsRectangularMatrix(A) || A.size() < A[0].size()) return false;
     try {
-        af::array aA = A.GetArray();
-        af::array aB = B.GetArray();
-        if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
-            aA = aA.as(af::dtype::f64);
-        }
-        if (aB.type() != af::dtype::f32 && aB.type() != af::dtype::f64) {
-            aB = aB.as(af::dtype::f64);
-        }
-
-        af::array aC = af::matmul(aA, aB);
-        result.tensor = AfArrayToTensorWithShape(aC, {rowsA, colsB});
-        result.success = true;
-        return result;
+        const af::array a = ToDevice(A);
+        const af::array gram = af::matmul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
+        const af::array eye = af::identity(gram.dims(0), gram.dims(1), gram.type());
+        // float32 devices cannot reach the float64 default tolerance.
+        const double effective = DeviceHasDouble() ? tolerance : std::max(tolerance, 1e-5);
+        return af::allTrue<bool>(af::abs(gram - eye) <= effective);
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Multiply AF path failed, fallback to CPU: {}", e.what());
+        throw std::runtime_error(DeviceError("LinearAlgebra::IsOrthogonal", e));
     }
-#endif
-
-    auto A_mat = Tensor2DToMatrix(A);
-    auto B_mat = Tensor2DToMatrix(B);
-    auto cpu_result = Multiply(A_mat, B_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
-        return result;
-    }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, false);
-    result.success = true;
-    return result;
-}
-
-TensorResult LinearAlgebra::Transpose(const Tensor& A) {
-    TensorResult result;
-
-    const auto& shape = A.Shape();
-    if (shape.size() != 2) {
-        result.error_message = "A must be a 2D tensor";
-        return result;
-    }
-
-    const size_t rows = shape[0];
-    const size_t cols = shape[1];
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array aA = A.GetArray();
-        if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
-            aA = aA.as(af::dtype::f64);
-        }
-
-        af::array aT = af::transpose(aA);
-        result.tensor = AfArrayToTensorWithShape(aT, {cols, rows});
-        result.success = true;
-        return result;
-    } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Transpose AF path failed, fallback to CPU: {}", e.what());
-    }
-#endif
-
-    auto A_mat = Tensor2DToMatrix(A);
-    auto cpu_result = Transpose(A_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
-        return result;
-    }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, false);
-    result.success = true;
-    return result;
-}
-
-TensorResult LinearAlgebra::Inverse(const Tensor& A) {
-    TensorResult result;
-
-    const auto& shape = A.Shape();
-    if (shape.size() != 2) {
-        result.error_message = "A must be a 2D tensor";
-        return result;
-    }
-    if (shape[0] != shape[1]) {
-        result.error_message = "Matrix must be square for inversion";
-        return result;
-    }
-
-    const size_t n = shape[0];
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array aA = A.GetArray();
-        if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
-            aA = aA.as(af::dtype::f64);
-        }
-
-        af::array aInv = af::inverse(aA);
-        result.tensor = AfArrayToTensorWithShape(aInv, {n, n});
-        result.success = true;
-        return result;
-    } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Inverse AF path failed, fallback to CPU: {}", e.what());
-    }
-#endif
-
-    auto A_mat = Tensor2DToMatrix(A);
-    auto cpu_result = Inverse(A_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
-        return result;
-    }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, false);
-    result.success = true;
-    return result;
-}
-
-ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
-    ScalarResult result;
-
-    const auto& shape = A.Shape();
-    if (shape.size() != 2) {
-        result.error_message = "A must be a 2D tensor";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array aA = A.GetArray();
-        if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
-            aA = aA.as(af::dtype::f64);
-        }
-        af::array sq = aA * aA;
-        result.value = std::sqrt(af::sum<double>(af::flat(sq)));
-        result.success = true;
-        return result;
-    } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor FrobeniusNorm AF path failed, fallback to CPU: {}", e.what());
-    }
-#endif
-
-    auto A_mat = Tensor2DToMatrix(A);
-    return FrobeniusNorm(A_mat);
-}
-
-TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
-    TensorResult result;
-
-    const auto& shapeA = A.Shape();
-    const auto& shapeB = b.Shape();
-
-    if (shapeA.size() != 2) {
-        result.error_message = "A must be a 2D tensor";
-        return result;
-    }
-    if (shapeA[0] != shapeA[1]) {
-        result.error_message = "Matrix A must be square for Solve";
-        return result;
-    }
-    if (shapeB.size() != 1 && shapeB.size() != 2) {
-        result.error_message = "b must be a 1D or 2D tensor";
-        return result;
-    }
-
-    const size_t n = shapeA[0];
-    const bool b_was_vector = (shapeB.size() == 1);
-    const size_t b_rows = b_was_vector ? shapeB[0] : shapeB[0];
-    const size_t b_cols = b_was_vector ? 1 : shapeB[1];
-    if (b_rows != n) {
-        result.error_message = "Dimensions mismatch: A rows must equal b rows";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array aA = A.GetArray();
-        af::array aB = b.GetArray();
-        if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
-            aA = aA.as(af::dtype::f64);
-        }
-        if (aB.type() != af::dtype::f32 && aB.type() != af::dtype::f64) {
-            aB = aB.as(af::dtype::f64);
-        }
-        if (b_was_vector) {
-            aB = af::moddims(aB, static_cast<dim_t>(n), static_cast<dim_t>(1));
-        }
-
-        af::array x = af::solve(aA, aB);
-        if (b_was_vector) {
-            af::array x_vec = af::moddims(x, static_cast<dim_t>(n));
-            result.tensor = AfArrayToTensorWithShape(x_vec, {n});
-        } else {
-            result.tensor = AfArrayToTensorWithShape(x, {n, b_cols});
-        }
-        result.success = true;
-        return result;
-    } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Solve AF path failed, fallback to CPU: {}", e.what());
-    }
-#endif
-
-    auto A_mat = Tensor2DToMatrix(A);
-    auto b_mat = TensorVectorOr2DToMatrix(b);
-    auto cpu_result = Solve(A_mat, b_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
-        return result;
-    }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, b_was_vector);
-    result.success = true;
-    return result;
-}
-
-TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
-    TensorResult result;
-
-    const auto& shapeA = A.Shape();
-    const auto& shapeB = b.Shape();
-
-    if (shapeA.size() != 2) {
-        result.error_message = "A must be a 2D tensor";
-        return result;
-    }
-    if (shapeB.size() != 1 && shapeB.size() != 2) {
-        result.error_message = "b must be a 1D or 2D tensor";
-        return result;
-    }
-
-    const size_t rowsA = shapeA[0];
-    const size_t colsA = shapeA[1];
-    const bool b_was_vector = (shapeB.size() == 1);
-    const size_t rowsB = b_was_vector ? shapeB[0] : shapeB[0];
-    const size_t colsB = b_was_vector ? 1 : shapeB[1];
-    if (rowsA != rowsB) {
-        result.error_message = "A and b must have same number of rows";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array aA = A.GetArray();
-        af::array aB = b.GetArray();
-        if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
-            aA = aA.as(af::dtype::f64);
-        }
-        if (aB.type() != af::dtype::f32 && aB.type() != af::dtype::f64) {
-            aB = aB.as(af::dtype::f64);
-        }
-        if (b_was_vector) {
-            aB = af::moddims(aB, static_cast<dim_t>(rowsB), static_cast<dim_t>(1));
-        }
-
-        af::array x = af::solve(aA, aB, AF_MAT_NONE);
-        if (b_was_vector) {
-            af::array x_vec = af::moddims(x, static_cast<dim_t>(colsA));
-            result.tensor = AfArrayToTensorWithShape(x_vec, {colsA});
-        } else {
-            result.tensor = AfArrayToTensorWithShape(x, {colsA, colsB});
-        }
-        result.success = true;
-        return result;
-    } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor LeastSquares AF path failed, fallback to CPU: {}", e.what());
-    }
-#endif
-
-    auto A_mat = Tensor2DToMatrix(A);
-    auto b_mat = TensorVectorOr2DToMatrix(b);
-    auto cpu_result = LeastSquares(A_mat, b_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
-        return result;
-    }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, b_was_vector);
-    result.success = true;
-    return result;
 }
 
 } // namespace cyxwiz

@@ -1,0 +1,16 @@
+{
+    "id": "com.cyxwiz.assistant",
+    "name": "CyxWiz Assistant",
+    "version": "0.1.0",
+    "api_version": "1.0.0",
+    "description": "Read-only CyxWiz source-aware assistant provider for Console Agent LLM",
+    "author": "CyxWiz Lab",
+    "license": "MIT",
+    "capabilities": [],
+    "permissions": ["FileSystem", "Network"],
+    "platforms": {
+        "windows": { "library": "bin/cyxwiz_assistant.dll" },
+        "linux": { "library": "bin/libcyxwiz_assistant.so" },
+        "macos": { "library": "bin/libcyxwiz_assistant.dylib" }
+    }
+}

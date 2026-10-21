@@ -1,4 +1,5 @@
 #include "table_preview.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -74,7 +75,8 @@ void TablePreviewRenderer::LoadFromFile(const std::string& filepath, char delimi
             for (const auto& t : tokens) {
                 if (!t.empty()) {
                     try {
-                        std::stod(t);
+                        const double parsed = std::stod(t);
+                        (void)parsed;
                     } catch (...) {
                         is_header = true;
                         break;
@@ -103,45 +105,6 @@ void TablePreviewRenderer::LoadFromFile(const std::string& filepath, char delimi
     spdlog::info("TablePreview: Loaded {} rows, {} columns from {}", rows_.size(), headers_.size(), filepath);
 }
 
-void TablePreviewRenderer::LoadFromDataset(const cyxwiz::DatasetHandle& handle,
-                                            const std::vector<std::string>& column_names) {
-    if (!handle.IsValid()) return;
-
-    // Check if same dataset (avoid reloading)
-    std::string dataset_name = handle.GetName();
-    if (dataset_name == cached_source_ && !rows_.empty()) return;
-    cached_source_ = dataset_name;
-
-    headers_ = column_names;
-    rows_.clear();
-    current_page_ = 0;
-
-    size_t num_samples = std::min(handle.Size(), static_cast<size_t>(1000));
-
-    for (size_t i = 0; i < num_samples; i++) {
-        auto [data, label] = handle.GetSample(i);
-        std::vector<std::string> row;
-
-        for (float val : data) {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%.4f", val);
-            row.push_back(buf);
-        }
-        row.push_back(std::to_string(label));
-        rows_.push_back(std::move(row));
-    }
-
-    // Add "Label" column if not in headers
-    if (!headers_.empty() && headers_.size() < rows_[0].size()) {
-        headers_.push_back("Label");
-    } else if (headers_.empty() && !rows_.empty()) {
-        for (size_t i = 0; i < rows_[0].size() - 1; i++) {
-            headers_.push_back("F" + std::to_string(i));
-        }
-        headers_.push_back("Label");
-    }
-}
-
 void TablePreviewRenderer::SetData(const std::vector<std::string>& headers,
                                     const std::vector<std::vector<std::string>>& rows) {
     headers_ = headers;
@@ -150,13 +113,14 @@ void TablePreviewRenderer::SetData(const std::vector<std::string>& headers,
 }
 
 void TablePreviewRenderer::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (rows_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No data to display.");
+        ImGui::TextColored(t.text_dim, "No data to display.");
         return;
     }
 
     // Info and pagination
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+    ImGui::TextColored(t.text_dim,
         "%zu rows, %zu columns", rows_.size(), headers_.size());
 
     ImGui::SameLine();
@@ -199,7 +163,7 @@ void TablePreviewRenderer::Render() {
 
             // Row number
             ImGui::TableNextColumn();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             ImGui::Text("%d", r + 1);
             ImGui::PopStyleColor();
 
@@ -218,7 +182,7 @@ void TablePreviewRenderer::Render() {
 
     // Show note if columns were truncated
     if (static_cast<int>(headers_.size()) > 50) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
+        ImGui::TextColored(t.warning,
             "Showing 50 of %zu columns", headers_.size());
     }
 }

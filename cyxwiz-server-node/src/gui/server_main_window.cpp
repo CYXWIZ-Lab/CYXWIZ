@@ -107,6 +107,7 @@ void ServerMainWindow::Render() {
     // Update login panel (check async login results)
     if (login_) {
         login_->Update();
+        if (login_->TakeOpenAllocationRequest()) selected_item_ = SidebarItem::Allocation;
     }
 
     // Check if user is logged in

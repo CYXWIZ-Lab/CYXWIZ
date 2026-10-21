@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
+#pragma once
+
+#include "cyxwiz/api_export.h"
+#include "cyxwiz/layers/layer_base.h"
+#include "cyxwiz/tensor.h"
+
+#include <map>
+#include <string>
+
+namespace cyxwiz {
+
+// ============================================================================
+// MaxPool2D Layer - 2D Max Pooling using ArrayFire
+// ============================================================================
+
+class CYXWIZ_API MaxPool2DLayer : public Layer {
+public:
+    /**
+     * Create a 2D max pooling layer
+     * @param pool_size Size of the pooling window (assumes square)
+     * @param stride Stride of the pooling (default: same as pool_size)
+     * @param padding Padding added to input (default: 0)
+     */
+    MaxPool2DLayer(int pool_size, int stride = -1, int padding = 0);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "MaxPool2D"; }
+
+private:
+    int pool_size_;
+    int stride_;
+    int padding_;
+
+    Tensor max_indices_;  // Store indices for backward pass
+    bool has_forward_ = false;
+};
+
+// ============================================================================
+// AvgPool2D Layer - 2D Average Pooling using ArrayFire
+// ============================================================================
+
+class CYXWIZ_API AvgPool2DLayer : public Layer {
+public:
+    /**
+     * Create a 2D average pooling layer
+     * @param pool_size Size of the pooling window (assumes square)
+     * @param stride Stride of the pooling (default: same as pool_size)
+     * @param padding Padding added to input (default: 0)
+     */
+    AvgPool2DLayer(int pool_size, int stride = -1, int padding = 0);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "AvgPool2D"; }
+
+private:
+    int pool_size_;
+    int stride_;
+    int padding_;
+    bool has_forward_ = false;
+};
+
+// ============================================================================
+// GlobalAvgPool2D Layer - Global Average Pooling
+// ============================================================================
+
+class CYXWIZ_API GlobalAvgPool2DLayer : public Layer {
+public:
+    GlobalAvgPool2DLayer() = default;
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "GlobalAvgPool2D"; }
+
+private:
+    bool has_forward_ = false;
+};
+
+// ============================================================================
+// GlobalMaxPool2D Layer - each channel's maximum over H and W
+// ============================================================================
+
+// [H,W,C,N] -> [C,N] (torch adaptive_max_pool2d(x, 1)); the gradient goes to
+// the first position holding the maximum.
+class CYXWIZ_API GlobalMaxPool2DLayer : public Layer {
+public:
+    GlobalMaxPool2DLayer() = default;
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "GlobalMaxPool2D"; }
+
+private:
+    bool has_forward_ = false;
+};
+
+// ============================================================================
+// AdaptiveAvgPool2D Layer - average pooling to a fixed output size
+// ============================================================================
+
+// [H,W,C,N] -> [out_h,out_w,C,N] (torch AdaptiveAvgPool2d): output bin i
+// averages input rows floor(i*H/out_h) .. ceil((i+1)*H/out_h) - 1, likewise
+// for columns. Bins may overlap; out may exceed H.
+class CYXWIZ_API AdaptiveAvgPool2DLayer : public Layer {
+public:
+    AdaptiveAvgPool2DLayer(int out_h, int out_w);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "AdaptiveAvgPool2D"; }
+
+private:
+    int out_h_;
+    int out_w_;
+    bool has_forward_ = false;
+};
+
+} // namespace cyxwiz

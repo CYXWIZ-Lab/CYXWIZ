@@ -9,6 +9,7 @@
 
 #include "serving_panel.h"
 #include "../../serving/inference_server.h"
+#include "../ui_tokens.h"
 #include <cyxwiz/sequential.h>
 #include <imgui.h>
 #include <implot.h>
@@ -87,6 +88,7 @@ void ServingPanel::Render() {
 }
 
 void ServingPanel::RenderServerControl() {
+    const ui::Tokens& t = ui::CurrentTokens();
     bool running = server_ && server_->IsRunning();
     auto model = server_ ? server_->GetModel() : nullptr;
 
@@ -94,9 +96,9 @@ void ServingPanel::RenderServerControl() {
     ImGui::Text("Status:");
     ImGui::SameLine();
     if (running) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "RUNNING");
+        ImGui::TextColored(t.running, "RUNNING");
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "STOPPED");
+        ImGui::TextColored(t.pending, "STOPPED");
     }
 
     ImGui::Separator();
@@ -105,11 +107,11 @@ void ServingPanel::RenderServerControl() {
     ImGui::Text("Model:");
     ImGui::SameLine();
     if (model) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s",
+        ImGui::TextColored(t.accent_text, "%s",
             server_->GetModelName().c_str());
         ImGui::Text("Layers: %zu", model->Size());
     } else {
-        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "No model loaded");
+        ImGui::TextColored(t.warning, "No model loaded");
     }
 
     ImGui::Separator();
@@ -152,7 +154,7 @@ void ServingPanel::RenderServerControl() {
         ImGui::EndDisabled();
         if (!model) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), "(Load a model first)");
+            ImGui::TextColored(t.warning, "(Load a model first)");
         }
     }
 
@@ -162,7 +164,7 @@ void ServingPanel::RenderServerControl() {
         ImGui::Text("Server URL:");
         ImGui::SameLine();
         std::string url = server_->GetServerUrl();
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", url.c_str());
+        ImGui::TextColored(t.accent_text, "%s", url.c_str());
 
         if (ImGui::Button("Copy URL")) {
             ImGui::SetClipboardText(url.c_str());
@@ -175,9 +177,9 @@ void ServingPanel::RenderServerControl() {
         ImGui::Separator();
         ImGui::Spacing();
         if (status_is_error_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", status_message_.c_str());
+            ImGui::TextColored(t.error, "%s", status_message_.c_str());
         } else {
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", status_message_.c_str());
+            ImGui::TextColored(t.success, "%s", status_message_.c_str());
         }
     }
 
@@ -199,6 +201,7 @@ void ServingPanel::RenderServerControl() {
 }
 
 void ServingPanel::RenderMetricsDashboard() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!server_) return;
 
     const auto& metrics = server_->GetMetrics();
@@ -206,7 +209,7 @@ void ServingPanel::RenderMetricsDashboard() {
 
     // Running status
     if (!running) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Server not running");
+        ImGui::TextColored(t.text_dim, "Server not running");
         return;
     }
 
@@ -219,7 +222,7 @@ void ServingPanel::RenderMetricsDashboard() {
     // Total requests
     ImGui::BeginChild("TotalReq", ImVec2(card_width, card_height), true);
     ImGui::Text("Total Requests");
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%llu",
+    ImGui::TextColored(t.series[0], "%llu",
         static_cast<unsigned long long>(metrics.total_requests.load()));
     ImGui::EndChild();
 
@@ -231,9 +234,9 @@ void ServingPanel::RenderMetricsDashboard() {
     uint64_t total = metrics.total_requests.load();
     uint64_t success = metrics.successful_requests.load();
     float rate = total > 0 ? (static_cast<float>(success) / total * 100.0f) : 100.0f;
-    ImVec4 rate_color = rate >= 95 ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) :
-                       rate >= 80 ? ImVec4(0.8f, 0.8f, 0.2f, 1.0f) :
-                                    ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+    ImVec4 rate_color = rate >= 95 ? t.success :
+                       rate >= 80 ? t.warning :
+                                    t.error;
     ImGui::TextColored(rate_color, "%.1f%%", rate);
     ImGui::EndChild();
 
@@ -242,7 +245,7 @@ void ServingPanel::RenderMetricsDashboard() {
     // Requests per second
     ImGui::BeginChild("RPS", ImVec2(card_width, card_height), true);
     ImGui::Text("Requests/sec");
-    ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), "%.1f",
+    ImGui::TextColored(t.series[1], "%.1f",
         metrics.requests_per_second.load());
     ImGui::EndChild();
 
@@ -251,7 +254,7 @@ void ServingPanel::RenderMetricsDashboard() {
     // Average latency
     ImGui::BeginChild("AvgLatency", ImVec2(card_width, card_height), true);
     ImGui::Text("Avg Latency");
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%.2f ms",
+    ImGui::TextColored(t.series[2], "%.2f ms",
         metrics.avg_latency_ms.load());
     ImGui::EndChild();
 
@@ -287,6 +290,7 @@ void ServingPanel::RenderMetricsDashboard() {
 }
 
 void ServingPanel::RenderRequestLog() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!server_) return;
 
     // Get recent requests
@@ -327,7 +331,7 @@ void ServingPanel::RenderRequestLog() {
             // Method
             ImGui::TableNextColumn();
             ImVec4 method_color = req.method == "POST" ?
-                ImVec4(0.2f, 0.6f, 1.0f, 1.0f) : ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                t.series[0] : t.series[1];
             ImGui::TextColored(method_color, "%s", req.method.c_str());
 
             // Endpoint
@@ -337,7 +341,7 @@ void ServingPanel::RenderRequestLog() {
             // Status
             ImGui::TableNextColumn();
             ImVec4 status_color = req.status_code == 200 ?
-                ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                t.success : t.error;
             ImGui::TextColored(status_color, "%d", req.status_code);
 
             // Latency
@@ -350,12 +354,13 @@ void ServingPanel::RenderRequestLog() {
 }
 
 void ServingPanel::RenderTestInference() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!server_) return;
 
     bool running = server_->IsRunning();
 
     if (!running) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Start the server first");
+        ImGui::TextColored(t.text_dim, "Start the server first");
         return;
     }
 
@@ -407,7 +412,7 @@ void ServingPanel::RenderTestInference() {
 
     // Output
     if (!test_error_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", test_error_.c_str());
+        ImGui::TextColored(t.error, "Error: %s", test_error_.c_str());
     } else if (!test_output_.empty()) {
         ImGui::Text("Output:");
         ImGui::InputTextMultiline("##test_output", const_cast<char*>(test_output_.c_str()),

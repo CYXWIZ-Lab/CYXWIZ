@@ -4,17 +4,22 @@
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
 #include "training_executor.h"
+#include "checkpoint_tokenizer.h"
 #include <string>
 #include <map>
 #include <optional>
 #include <filesystem>
+#include <limits>
 
 namespace cyxwiz {
+
+class IExecutableModel;
 
 /**
  * Checkpoint metadata stored alongside model weights
  */
 struct CheckpointMetadata {
+    TrainingRandomness randomness; // Seed provenance, not random-stream continuation.
     // Training state
     int epoch = 0;
     int global_step = 0;
@@ -22,8 +27,12 @@ struct CheckpointMetadata {
     // Metrics at checkpoint time
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
+    float train_mae = 0.0f;
+    float train_rmse = 0.0f;
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
+    float val_mae = 0.0f;
+    float val_rmse = 0.0f;
 
     // Model architecture info
     std::string model_name;
@@ -33,12 +42,38 @@ struct CheckpointMetadata {
     // History
     std::vector<float> loss_history;
     std::vector<float> accuracy_history;
+    std::vector<float> mae_history;
+    std::vector<float> rmse_history;
     std::vector<float> val_loss_history;
     std::vector<float> val_accuracy_history;
+    std::vector<float> val_mae_history;
+    std::vector<float> val_rmse_history;
 
     // Timestamp
     std::string timestamp;
     std::string version = "1.0";
+
+    // Provenance (optional; empty/0 in checkpoints written before TOFIX143)
+    std::string tokenizer_sha256;   // sha256 of the training token-window vocabulary
+    int context = 0;                // training sequence length
+    std::string initialized_from;   // warm-start checkpoint this run started from
+};
+
+/**
+ * Read-only capability classification for one checkpoint.
+ *
+ * Loading weights for testing, warm-starting, and exact resume are distinct
+ * operations. Callers must not infer exact-resume support from the mere
+ * presence of model parameters or a learning rate.
+ */
+struct CheckpointInspection {
+    bool valid = false;
+    std::string format_version;
+    bool can_load_for_testing = false;
+    bool can_warm_start = false;
+    bool can_exact_resume = false;
+    std::string exact_resume_reason;
+    std::string error;
 };
 
 /**
@@ -73,8 +108,11 @@ public:
      * @param checkpoint_name Name for this checkpoint (e.g., "epoch_10", "best")
      * @return Path to saved checkpoint directory, or empty if failed
      */
+    // Model: SequentialModel or IExecutableModel (a graph with branches,
+    // TOFIX157); only its parameter map is read or written.
+    template <typename Model>
     std::string SaveCheckpoint(
-        const SequentialModel& model,
+        const Model& model,
         const Optimizer* optimizer,
         const TrainingMetrics& metrics,
         const std::string& checkpoint_name = ""
@@ -87,11 +125,24 @@ public:
      * @param checkpoint_name Name of checkpoint to load, or empty for latest
      * @return Metadata from checkpoint, or nullopt if failed
      */
+    template <typename Model>
     std::optional<CheckpointMetadata> LoadCheckpoint(
-        SequentialModel& model,
+        Model& model,
         Optimizer* optimizer = nullptr,
         const std::string& checkpoint_name = ""
     );
+
+    /**
+     * Inspect checkpoint format and supported operations without mutating a
+     * model or optimizer. Version 1 checkpoints are intentionally classified
+     * as test-load/warm-start only.
+     */
+    CheckpointInspection InspectCheckpoint(
+        const std::string& checkpoint_name = ""
+    );
+
+    /** Detailed failure from the most recent save/load operation. */
+    const std::string& GetLastError() const { return last_error_; }
 
     /**
      * Save as "best" checkpoint if validation loss improved
@@ -101,8 +152,9 @@ public:
      * @param val_loss Current validation loss
      * @return true if this was the best model and was saved
      */
+    template <typename Model>
     bool SaveBestModel(
-        const SequentialModel& model,
+        const Model& model,
         const Optimizer* optimizer,
         const TrainingMetrics& metrics,
         float val_loss
@@ -149,11 +201,25 @@ public:
      */
     void SetAutoSaveBest(bool enable) { auto_save_best_ = enable; }
 
+    /** The run's tokenizer, kept in every checkpoint saved after this call
+     *  (<checkpoint>/tokenizer/, TOFIX159); none when it is empty. */
+    void SetTokenizer(CheckpointTokenizer tokenizer) { tokenizer_ = std::move(tokenizer); }
+
+    /** Provenance written into every checkpoint saved after this call. */
+    void SetProvenance(std::string tokenizer_sha256, int context, std::string initialized_from) {
+        provenance_.tokenizer_sha256 = std::move(tokenizer_sha256);
+        provenance_.context = context;
+        provenance_.initialized_from = std::move(initialized_from);
+    }
+
 private:
     std::filesystem::path checkpoint_dir_;
     float best_val_loss_ = std::numeric_limits<float>::infinity();
     size_t max_to_keep_ = 5;  // Keep last 5 checkpoints by default
     bool auto_save_best_ = true;
+    std::string last_error_;
+    CheckpointMetadata provenance_;  // only the provenance fields are used
+    CheckpointTokenizer tokenizer_;
 
     // Internal helpers
 
@@ -175,12 +241,14 @@ private:
     /**
      * Save model parameters to directory
      */
-    bool SaveModelParameters(const std::filesystem::path& dir, const SequentialModel& model);
+    template <typename Model>
+    bool SaveModelParameters(const std::filesystem::path& dir, const Model& model);
 
     /**
      * Load model parameters from directory
      */
-    bool LoadModelParameters(const std::filesystem::path& dir, SequentialModel& model);
+    template <typename Model>
+    bool LoadModelParameters(const std::filesystem::path& dir, Model& model);
 
     /**
      * Save a single tensor to binary file
@@ -202,5 +270,20 @@ private:
      */
     std::filesystem::path GetCheckpointPath(const std::string& name) const;
 };
+
+/**
+ * Warm start (TOFIX143): load only the model parameters of one checkpoint
+ * folder into a new run's model. Optimizer, schedule, RNG, data cursor and
+ * epochs stay fresh. Names, shapes and dtypes must match exactly. When
+ * expected_tokenizer_sha256 is set (language-model runs) the checkpoint's
+ * tokenizer must match it: from metadata.json, or for checkpoints written
+ * before TOFIX143 from the same run's generation_previews/*.json.
+ */
+template <typename Model>
+std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(
+    const std::filesystem::path& checkpoint,
+    Model& model,
+    const std::string& expected_tokenizer_sha256,
+    std::string& error);
 
 } // namespace cyxwiz

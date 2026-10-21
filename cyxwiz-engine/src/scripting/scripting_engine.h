@@ -1,10 +1,17 @@
 #pragma once
 
+#include "language_service.h"
+#include "variables_service.h"
+#include "debug_types.h"
+#include "plot_inbox.h"
 #include "python_engine.h"
 #include "python_sandbox.h"
 #include <string>
+#include <map>
+#include <cstdint>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <functional>
 #include <thread>
 #include <atomic>
@@ -19,16 +26,6 @@ namespace cyxwiz {
 }
 
 namespace scripting {
-
-/**
- * Captured plot/image from matplotlib or other plotting libraries
- */
-struct CapturedPlot {
-    std::vector<unsigned char> png_data;  // PNG image data
-    int width = 0;
-    int height = 0;
-    std::string label;  // Optional label (e.g., figure title)
-};
 
 /**
  * Execution result from ScriptingEngine
@@ -47,8 +44,29 @@ struct ExecutionResult {
     // Async execution info
     bool was_cancelled{false};
 
+    // Interactive (REPL) detail: stderr on success (warnings), the exception
+    // type and the formatted traceback with the user's own frames.
+    std::string stderr_output;
+    std::string exception_type;
+    std::string traceback;
+
     // Captured matplotlib/plotting figures
     std::vector<CapturedPlot> plots;
+
+    // Notebook cells (TOFIX133 P4): repr of the last expression's value
+    // (empty when it was None or the cell ended with a statement), and the
+    // exception's frames, innermost last.
+    std::string result_repr;
+    std::string result_html;   // the value's _repr_html_ (pandas tables), when it has one
+    std::string exception_value;
+    struct Frame {
+        std::string file;
+        int line = 0;
+        std::string function;
+        std::string code;
+        std::string cause;     // set on the first frame of a chained exception ("URLError: ...")
+    };
+    std::vector<Frame> frames;
 };
 
 /**
@@ -84,9 +102,96 @@ public:
     ExecutionResult ExecuteFile(const std::string& filepath);
 
     // ========== Asynchronous Execution (non-blocking) ==========
-    // Start script execution in background thread
-    // Returns immediately, script runs in background
-    void ExecuteScriptAsync(const std::string& script);
+    using CompletionCallback = std::function<void(const ExecutionResult&)>;
+    using OutputCallback = std::function<void(const std::string&)>;
+    // Callbacks for one run only (TOFIX133 P0 item 9: they used to be global
+    // and never cleared, so output went to whichever cell or panel set them
+    // last). Both run on the worker thread; on_complete also runs at once if
+    // Python cannot start.
+    // Script Editor debugger (TOFIX133 P6): see debug_types.h.
+    using DebugBreakpoint = scripting::DebugBreakpoint;
+    using DebugFrame = scripting::DebugFrame;
+    using DebugSnapshot = scripting::DebugSnapshot;
+
+    struct RunCallbacks {
+        OutputCallback on_output;
+        CompletionCallback on_complete;
+        // Notebook cells (TOFIX133 P4, decision D4). Set notebook_namespace
+        // to run in that notebook's own namespace with the last expression
+        // echoed; empty runs in __main__ as before. on_stderr empty: stderr
+        // goes to on_output.
+        OutputCallback on_stderr;
+        std::string notebook_namespace;
+        std::string cell_filename;  // shown in tracebacks, e.g. "Cell In[3]"
+        int execution_count = 0;    // the value is kept as Out[n] in the namespace
+        // Debug (TOFIX133 P6): run under python_tools/cyxwiz_debug.py with
+        // these breakpoints. script_filename names a script (tracebacks and
+        // breakpoints); a cell uses cell_filename.
+        bool debug = false;
+        bool stop_on_error = true;
+        std::string script_filename;
+        std::vector<DebugBreakpoint> breakpoints;
+    };
+    DebugSnapshot GetDebugSnapshot() const;
+    bool IsDebugPaused() const { return debug_paused_.load(); }
+    // continue, over, into, out (while paused); false otherwise.
+    bool DebugCommand(const std::string& command);
+    // Pause a running debug run at its next line.
+    bool DebugPause();
+    // The running debug run's breakpoints (F9 while debugging).
+    void DebugSetBreakpoints(const std::vector<DebugBreakpoint>& breakpoints);
+    // evaluate / console of cyxwiz_debug while paused (JSON in and out);
+    // *busy when not paused.
+    std::string CallDebugTool(const std::string& function, const std::string& args_json, bool* busy);
+    // Starts the script in a background thread and returns at once. Returns
+    // false when another script is still running (nothing is started and no
+    // callback is called).
+    bool ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks);
+    // (An overload, not "= {}": GCC rejects a default argument of a nested
+    // struct with member initialisers inside its own class.)
+    bool ExecuteScriptAsync(const std::string& script) { return ExecuteScriptAsync(script, RunCallbacks{}); }
+
+    // Restart for a notebook: forgets the namespace its cells ran in.
+    // Returns false (nothing done) while a script is running.
+    bool DropNotebookNamespace(const std::string& key);
+
+    // Script Editor language intelligence (TOFIX133 P3). CallLanguageTool runs
+    // one function of python_tools/cyxwiz_intel.py with JSON keyword arguments
+    // (and a notebook's namespace when given) under the GIL, on the caller's
+    // thread; it returns the result as JSON, or "" when Python is not running
+    // or the tools are missing. Language() runs them on a worker thread.
+    std::string CallLanguageTool(const std::string& function, const std::string& args_json,
+                                 const std::string& notebook_namespace = {});
+    LanguageService& Language();
+    // Starts Python now (UI thread), as a first run would; false with the reason.
+    bool StartPython(std::string* error = nullptr) { return EnsurePythonInitialized(error); }
+    // Whether the bundled tools loaded ("" until tried; else the reason).
+    std::string LanguageToolsError() const;
+
+    // Variable Explorer and Data Viewer (TOFIX133 P5). CallVariablesTool runs
+    // one function of python_tools/cyxwiz_vars.py on a namespace ("" = the
+    // Python session's __main__, else a notebook key) under the GIL, on the
+    // caller's thread, and returns its result as JSON ("" when Python is not
+    // running). *busy is set, and nothing read, while a script, cell or
+    // Console command runs. Variables() runs them on a worker thread.
+    std::string CallVariablesTool(const std::string& function, const std::string& args_json, const std::string& scope,
+                                  bool* busy);
+    struct VariableTable {
+        std::shared_ptr<cyxwiz::DataTable> table;
+        std::string kind;             // frame, array, list
+        std::vector<long long> shape;
+        long long rows = 0;
+        long long shown = 0;
+        std::vector<std::string> dtypes;
+        std::vector<int> slice;
+        std::string error;
+    };
+    // The Data Viewer's columns of a value, straight into a DataTable.
+    bool ReadVariableTable(const std::string& scope, const std::string& path_json, long long max_rows,
+                           const std::vector<int>& index, VariableTable* out, bool* busy);
+    VariablesService& Variables();
+
+
 
     // Stop currently running script
     // Sends interrupt signal to Python interpreter
@@ -98,20 +203,20 @@ public:
     // Get the result of the last async execution (if finished)
     // Returns nullopt if still running or no async execution started
     std::optional<ExecutionResult> GetAsyncResult();
+    // Figures of finished script runs (not notebook cells, which show their
+    // own), for the Plot Output window; each figure is returned once.
+    std::vector<CapturedPlot> TakePublishedPlots() { return published_plots_.Take(); }
+    // Plots asked for with the cyxwiz module, and windows it closed (TOFIX134 P5).
+    std::vector<PythonPlot> TakePythonPlots() { return python_plots_.Take(); }
+    // Values scripts reported with pycyxwiz.rl_update_metric, for the RL
+    // Training Dashboard; each value is returned once.
+    std::vector<RLMetricSample> TakeRLMetrics() { return rl_metrics_.Take(); }
 
     // Get any pending output from the running script
     // Call this periodically from GUI to get real-time output
     std::string GetPendingOutput();
 
-    // Completion callback (called when async script finishes)
-    using CompletionCallback = std::function<void(const ExecutionResult&)>;
-    void SetCompletionCallback(CompletionCallback callback);
-
     // ========== Output & Configuration ==========
-    // Output callback (for real-time output streaming)
-    using OutputCallback = std::function<void(const std::string&)>;
-    void SetOutputCallback(OutputCallback callback);
-
     // Sandbox configuration
     void EnableSandbox(bool enable);
     bool IsSandboxEnabled() const { return sandbox_enabled_; }
@@ -137,18 +242,44 @@ public:
     // Reload interpreter config for active project (picks up python_env.json)
     bool ReloadPythonForProject();
 
-    // Register Training Dashboard with Python module (deferred - stores panel pointer)
-    void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
-    // Actually register with Python (called lazily when scripts run)
-    void EnsureTrainingDashboardRegistered();
+    // ---- Python REPL support (tofix121) ----
+    struct InterpreterInfo {
+        bool initialized = false;
+        std::string version;           // "3.12.14" once started
+        std::string interpreter_path;  // running, else the one the next start uses
+        std::string source;            // "project" / "system" when running
+        std::string mismatch;          // non-empty: restart needed
+        std::string wanted_path;       // with a mismatch: the interpreter the project asks for now
+    };
+    // Cheap enough for UI refreshes; the preview path is resolved without logging.
+    InterpreterInfo GetInterpreterInfo();
+    // Names completing `text` (identifiers, dotted attributes) from the REPL
+    // namespace, using rlcompleter directly (no code built from user text).
+    // Empty while a command or script runs or before Python starts.
+    std::vector<std::string> CompleteSync(const std::string& text, size_t max_results = 50);
+    // Clears the REPL's variables and imports (the embedded interpreter keeps
+    // running; it cannot be restarted inside the Engine process).
+    bool ResetSession(std::string* error_out = nullptr);
+    // Last message from a failed Python start, empty when none.
+    std::string GetLastInitError() const;
+
 
 private:
-    cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
-    bool training_dashboard_registered_{false};
+    mutable std::mutex init_error_mutex_;
+    std::string last_init_error_;
+    std::string cached_python_version_;
     std::unique_ptr<PythonEngine> python_engine_;
+    std::unique_ptr<LanguageService> language_;  // stopped before Python ends
+    std::unique_ptr<VariablesService> variables_;  // the same
+    void OnDebugState(const std::string& state, const std::string& reason, const std::string& info_json);
+    mutable std::mutex debug_mutex_;
+    DebugSnapshot debug_snapshot_;
+    std::string debug_file_;
+    std::atomic<bool> debug_paused_{false};
+    bool RunActive() const;
+    mutable std::mutex language_mutex_;
+    std::string language_error_;
     std::unique_ptr<PythonSandbox> sandbox_;
-    OutputCallback output_callback_;
-    CompletionCallback completion_callback_;
     bool sandbox_enabled_;
     bool verbose_logging_{false};  // Log all commands including internal ones
     double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
@@ -165,16 +296,19 @@ private:
     // Thread-safe plot queue
     std::mutex plot_mutex_;
     std::vector<CapturedPlot> plot_queue_;
+    PlotInbox published_plots_;
+    PythonPlotInbox python_plots_;
+    cyxwiz::ThreadInbox<RLMetricSample> rl_metrics_;
 
     // Result storage
     std::mutex result_mutex_;
     std::optional<ExecutionResult> async_result_;
 
     // Worker thread function
-    void ScriptWorker(const std::string& script);
+    void ScriptWorker(const std::string& script, RunCallbacks callbacks);
 
     // Internal execution with output streaming
-    ExecutionResult ExecuteWithStreaming(const std::string& script);
+    ExecutionResult ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks);
 
     // Convert sandbox result to engine result
     ExecutionResult ConvertSandboxResult(const PythonSandbox::ExecutionResult& sandbox_result);
@@ -184,9 +318,8 @@ private:
 
     // Queue plot for async retrieval
     void QueuePlot(const CapturedPlot& plot);
-
-    // Get pending plots and clear queue
-    std::vector<CapturedPlot> GetPendingPlots();
+    // Once per interpreter: plt.show() figures reach the Engine (cyxwiz_capture).
+    void InstallFigureCapture();
 
     // Shared cancellation flag - accessible from Python without GIL
     static std::atomic<int> shared_cancel_flag_;

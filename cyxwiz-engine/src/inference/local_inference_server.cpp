@@ -1,18 +1,254 @@
 // local_inference_server.cpp - Embedded HTTP inference server implementation
 #include "local_inference_server.h"
+#include "metric_learning_inference_input.h"
+#include "text_inference_input.h"
+#include "../core/bert_encoder_contract.h"
+#include "../core/language_model_generation.h"
 #include "../core/model_importer.h"
+#include "../core/formats/cyxmodel_format.h"
+#include "../core/sequence_inference_response.h"
+#include "../core/sequence_model_input.h"
+#include "../core/sequence_tag_metrics.h"
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
+#include <cyxwiz/tokenizer.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <chrono>
+#include <cstddef>
+#include <algorithm>
+#include <limits>
+#include <utility>
 
 namespace cyxwiz {
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+namespace {
+
+bool ReadInt64Value(const json& value, int64_t& out) {
+    if (value.is_number_integer()) {
+        out = value.get<int64_t>();
+        return true;
+    }
+    if (value.is_number_unsigned()) {
+        out = static_cast<int64_t>(value.get<uint64_t>());
+        return true;
+    }
+    if (value.is_number_float()) {
+        out = static_cast<int64_t>(value.get<double>());
+        return true;
+    }
+    if (value.is_string()) {
+        try {
+            out = std::stoll(value.get<std::string>());
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool ParseIntIdRows(const json& input,
+                    const char* field_name,
+                    std::vector<int64_t>& data,
+                    std::vector<size_t>& shape) {
+    if (!input.is_array()) {
+        throw std::runtime_error(std::string("`") + field_name +
+                                 "` must be an array");
+    }
+
+    data.clear();
+    shape.clear();
+
+    if (input.empty()) {
+        shape = {1, 0};
+        return true;
+    }
+
+    const bool nested = input[0].is_array();
+    if (nested) {
+        const size_t rows = input.size();
+        size_t cols = 0;
+        for (const auto& row_json : input) {
+            if (!row_json.is_array()) {
+                throw std::runtime_error(std::string("`") + field_name +
+                                         "` must be 2D int array or 1D int array");
+            }
+            if (cols == 0) {
+                cols = row_json.size();
+            } else if (row_json.size() != cols) {
+                throw std::runtime_error(std::string("`") + field_name +
+                                         "` rows must have matching lengths");
+            }
+            for (const auto& value : row_json) {
+                int64_t parsed = 0;
+                if (!ReadInt64Value(value, parsed)) {
+                    throw std::runtime_error(std::string("`") + field_name +
+                                             "` contains non-integer values");
+                }
+                data.push_back(parsed);
+            }
+        }
+        shape = {rows, cols};
+    } else {
+        shape = {1, input.size()};
+        for (const auto& value : input) {
+            int64_t parsed = 0;
+            if (!ReadInt64Value(value, parsed)) {
+                throw std::runtime_error(std::string("`") + field_name +
+                                         "` contains non-integer values");
+            }
+            data.push_back(parsed);
+        }
+    }
+
+    return true;
+}
+
+bool ParseIntIdVector(const json& input,
+                      const char* field_name,
+                      std::vector<int64_t>& data) {
+    if (!input.is_array()) {
+        throw std::runtime_error(std::string("`") + field_name +
+                                 "` must be an integer array");
+    }
+
+    data.clear();
+    for (const auto& value : input) {
+        int64_t parsed = 0;
+        if (!ReadInt64Value(value, parsed)) {
+            throw std::runtime_error(std::string("`") + field_name +
+                                     "` contains non-integer values");
+        }
+        data.push_back(parsed);
+    }
+    return true;
+}
+
+void AppendTensorValues(const Tensor& tensor, std::vector<float>& output) {
+    const size_t total_size = tensor.NumElements();
+    output.resize(total_size, 0.0f);
+
+    if (tensor.GetDataType() == DataType::Float32) {
+        const auto* data_ptr = tensor.Data<float>();
+        if (data_ptr) {
+            std::copy(data_ptr, data_ptr + total_size, output.begin());
+        }
+        return;
+    }
+
+    if (tensor.GetDataType() == DataType::Float64) {
+        const auto* data_ptr = tensor.Data<double>();
+        if (data_ptr) {
+            for (size_t i = 0; i < total_size; ++i) {
+                output[i] = static_cast<float>(data_ptr[i]);
+            }
+        }
+        return;
+    }
+
+    if (tensor.GetDataType() == DataType::Int64) {
+        const auto* data_ptr = tensor.Data<int64_t>();
+        if (data_ptr) {
+            for (size_t i = 0; i < total_size; ++i) {
+                output[i] = static_cast<float>(data_ptr[i]);
+            }
+        }
+        return;
+    }
+
+    if (tensor.GetDataType() == DataType::Int32) {
+        const auto* data_ptr = tensor.Data<int32_t>();
+        if (data_ptr) {
+            for (size_t i = 0; i < total_size; ++i) {
+                output[i] = static_cast<float>(data_ptr[i]);
+            }
+        }
+        return;
+    }
+
+    throw std::runtime_error("Unsupported tensor type for inference response");
+}
+
+json Int64RowsToJson(const std::vector<std::vector<int64_t>>& rows) {
+    json rows_json = json::array();
+    for (const auto& row : rows) {
+        json row_json = json::array();
+        for (const int64_t value : row) {
+            row_json.push_back(value);
+        }
+        rows_json.push_back(std::move(row_json));
+    }
+    return rows_json;
+}
+
+json StringRowsToJson(const std::vector<std::vector<std::string>>& rows) {
+    json rows_json = json::array();
+    for (const auto& row : rows) {
+        json row_json = json::array();
+        for (const auto& value : row) {
+            row_json.push_back(value);
+        }
+        rows_json.push_back(std::move(row_json));
+    }
+    return rows_json;
+}
+
+json SizeRowsToJson(const std::vector<size_t>& values) {
+    json values_json = json::array();
+    for (const size_t value : values) {
+        values_json.push_back(value);
+    }
+    return values_json;
+}
+
+BertEncoderTask BertEncoderTaskFromContract(const std::string& task) {
+    if (task == "sequence_classification") {
+        return BertEncoderTask::SequenceClassification;
+    }
+    if (task == "token_classification") {
+        return BertEncoderTask::TokenClassification;
+    }
+    return BertEncoderTask::None;
+}
+
+Tensor TransposeSequenceLogits(const Tensor& logits) {
+    const auto& shape = logits.Shape();
+    if (shape.size() != 3) {
+        throw std::runtime_error("sequence logits must be 3D");
+    }
+    const size_t time_steps = shape[0];
+    const size_t batch = shape[1];
+    const size_t tags = shape[2];
+    if (time_steps == 0 || batch == 0 || tags == 0) {
+        throw std::runtime_error("sequence logits shape must be non-zero");
+    }
+
+    std::vector<float> transposed_data(logits.NumElements());
+    const float* input_ptr = logits.Data<float>();
+    if (!input_ptr) {
+        throw std::runtime_error("sequence logits must be Float32 for argmax");
+    }
+
+    for (size_t t = 0; t < time_steps; ++t) {
+        for (size_t b = 0; b < batch; ++b) {
+            for (size_t c = 0; c < tags; ++c) {
+                const size_t in_offset = t * batch * tags + b * tags + c;
+                const size_t out_offset = b * time_steps * tags + t * tags + c;
+                transposed_data[out_offset] = input_ptr[in_offset];
+            }
+        }
+    }
+
+    return Tensor({batch, time_steps, tags}, transposed_data.data(), DataType::Float32);
+}
+
+}  // namespace
 
 LocalInferenceServer::LocalInferenceServer()
     : server_(std::make_unique<httplib::Server>()) {
@@ -50,7 +286,139 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         // Set model to evaluation mode (disable dropout, etc.)
         new_model->SetTraining(false);
 
+        auto new_tokenizer = std::unique_ptr<Tokenizer>();
+        bool new_has_text_vocabulary = false;
+        bool new_has_sequence_model = false;
+        bool new_has_sequence_token_vocabulary = false;
+        bool new_has_sequence_pos_vocabulary = false;
+        bool new_has_sequence_tag_vocabulary = false;
+        bool new_sequence_batch_first = true;
+        bool new_sequence_create_attention_mask = true;
+        bool new_sequence_create_causal_lm_targets = false;
+        size_t new_sequence_max_sequence_length = 0;
+        int64_t new_sequence_word_pad_id = 0;
+        int64_t new_sequence_pos_pad_id = 0;
+        int64_t new_sequence_tag_ignore_index = -100;
+        int64_t new_sequence_target_ignore_index = -100;
+        std::optional<PairScoreDefaults> new_pair_score_defaults;
+        std::vector<std::string> new_sequence_token_vocabulary;
+        std::vector<std::string> new_sequence_pos_vocabulary;
+        std::vector<std::string> new_sequence_tag_vocabulary;
+
+        formats::CyxModelFormat cyxmodel_format;
+        std::string tokenizer_config_json;
+        std::string tokenizer_vocab_text;
+        std::string tokenizer_model_data;
+        TextTokenizerPackage new_tokenizer_package;
+        bool new_has_tokenizer_package = false;
+        if (cyxmodel_format.ExtractTextTokenizerAssets(
+                model_path,
+                tokenizer_config_json,
+                tokenizer_vocab_text,
+                tokenizer_model_data)) {
+            std::string tokenizer_error;
+            if (!LoadTextTokenizerPackage(tokenizer_config_json,
+                                          tokenizer_vocab_text,
+                                          tokenizer_model_data,
+                                          new_tokenizer_package,
+                                          tokenizer_error)) {
+                last_error_ = "Failed to load tokenizer assets: " +
+                              tokenizer_error;
+                spdlog::error("{}", last_error_);
+                return false;
+            }
+            new_has_tokenizer_package = new_tokenizer_package.tokenizer != nullptr;
+            new_has_text_vocabulary = new_tokenizer_package.has_vocabulary ||
+                                      new_tokenizer_package.has_model_artifact;
+        }
+
+        const auto probe = cyxmodel_format.Probe(model_path);
+        LanguageModelPackageContract new_language_model_contract =
+            ValidateLanguageModelPackageContract(
+                probe,
+                new_has_tokenizer_package ? &new_tokenizer_package : nullptr,
+                model_path);
+        BertEncoderPackageContract new_bert_encoder_contract =
+            ValidateBertEncoderPackageContract(
+                probe,
+                new_has_tokenizer_package ? &new_tokenizer_package : nullptr,
+                model_path);
+        new_tokenizer = std::move(new_tokenizer_package.tokenizer);
+        new_has_sequence_model = probe.has_sequence;
+        new_sequence_batch_first = probe.sequence_batch_first;
+        new_sequence_create_attention_mask = probe.sequence_create_attention_mask;
+        new_sequence_create_causal_lm_targets = probe.sequence_create_causal_lm_targets;
+        new_sequence_max_sequence_length = probe.sequence_max_sequence_length;
+        new_sequence_word_pad_id = probe.sequence_word_pad_id;
+        new_sequence_pos_pad_id = probe.sequence_pos_pad_id;
+        new_sequence_tag_ignore_index = probe.sequence_tag_ignore_index;
+        new_sequence_target_ignore_index = probe.sequence_target_ignore_index;
+        new_pair_score_defaults = PairScoreDefaultsFromMetadata(probe.custom_metadata);
+
+        if (probe.has_sequence_token_vocabulary ||
+            probe.has_sequence_pos_vocabulary ||
+            probe.has_sequence_tag_vocabulary) {
+            std::string token_vocab_text;
+            std::string pos_vocab_text;
+            std::string tag_vocab_text;
+            if (cyxmodel_format.ExtractSequenceVocabularyAssets(
+                    model_path,
+                    token_vocab_text,
+                    pos_vocab_text,
+                    tag_vocab_text)) {
+                if (!token_vocab_text.empty()) {
+                    new_sequence_token_vocabulary = ParseVocabularyWords(token_vocab_text);
+                    new_has_sequence_token_vocabulary =
+                        !new_sequence_token_vocabulary.empty();
+                }
+                if (!pos_vocab_text.empty()) {
+                    new_sequence_pos_vocabulary = ParseVocabularyWords(pos_vocab_text);
+                    new_has_sequence_pos_vocabulary =
+                        !new_sequence_pos_vocabulary.empty();
+                }
+                if (!tag_vocab_text.empty()) {
+                    new_sequence_tag_vocabulary = ParseVocabularyWords(tag_vocab_text);
+                    new_has_sequence_tag_vocabulary =
+                        !new_sequence_tag_vocabulary.empty();
+                }
+            } else {
+                last_error_ = "Failed to load sequence vocabulary assets: " +
+                              cyxmodel_format.GetLastError();
+                spdlog::error("{}", last_error_);
+                return false;
+            }
+        }
+        try {
+            RequireDeclaredSequenceTagVocabulary(
+                probe.has_sequence_tag_vocabulary,
+                new_sequence_tag_vocabulary);
+        } catch (const std::exception& e) {
+            last_error_ = e.what();
+            spdlog::error("{}", last_error_);
+            return false;
+        }
+
         model_ = std::move(new_model);
+        text_tokenizer_ = std::move(new_tokenizer);
+        has_text_vocabulary_ = new_has_text_vocabulary;
+        language_model_contract_ = std::move(new_language_model_contract);
+        bert_encoder_contract_ = std::move(new_bert_encoder_contract);
+        has_sequence_model_ = new_has_sequence_model;
+        has_sequence_token_vocabulary_ = new_has_sequence_token_vocabulary;
+        has_sequence_pos_vocabulary_ = new_has_sequence_pos_vocabulary;
+        has_sequence_tag_vocabulary_ = new_has_sequence_tag_vocabulary;
+        sequence_batch_first_ = new_sequence_batch_first;
+        sequence_create_attention_mask_ = new_sequence_create_attention_mask;
+        sequence_create_causal_lm_targets_ = new_sequence_create_causal_lm_targets;
+        sequence_max_sequence_length_ = new_sequence_max_sequence_length;
+        sequence_word_pad_id_ = new_sequence_word_pad_id;
+        sequence_pos_pad_id_ = new_sequence_pos_pad_id;
+        sequence_tag_ignore_index_ = new_sequence_tag_ignore_index;
+        sequence_target_ignore_index_ = new_sequence_target_ignore_index;
+        sequence_token_vocabulary_ = std::move(new_sequence_token_vocabulary);
+        sequence_pos_vocabulary_ = std::move(new_sequence_pos_vocabulary);
+        sequence_tag_vocabulary_ = std::move(new_sequence_tag_vocabulary);
+        pair_score_defaults_ = new_pair_score_defaults;
         model_path_ = model_path;
 
         spdlog::info("Loaded model: {} ({} layers)", GetModelName(), model_->Size());
@@ -66,6 +434,26 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
 void LocalInferenceServer::UnloadModel() {
     std::lock_guard<std::mutex> lock(model_mutex_);
     model_.reset();
+    text_tokenizer_.reset();
+    has_text_vocabulary_ = false;
+    language_model_contract_ = {};
+    bert_encoder_contract_ = {};
+    has_sequence_model_ = false;
+    has_sequence_token_vocabulary_ = false;
+    has_sequence_pos_vocabulary_ = false;
+    has_sequence_tag_vocabulary_ = false;
+    sequence_batch_first_ = true;
+    sequence_create_attention_mask_ = true;
+    sequence_create_causal_lm_targets_ = false;
+    sequence_max_sequence_length_ = 0;
+    sequence_word_pad_id_ = 0;
+    sequence_pos_pad_id_ = 0;
+    sequence_tag_ignore_index_ = -100;
+    sequence_target_ignore_index_ = -100;
+    sequence_token_vocabulary_.clear();
+    sequence_pos_vocabulary_.clear();
+    sequence_tag_vocabulary_.clear();
+    pair_score_defaults_.reset();
     model_path_.clear();
 }
 
@@ -170,7 +558,22 @@ void LocalInferenceServer::RegisterRoutes() {
         HandlePredict(req, res);
     });
 
-    spdlog::info("Registered routes: /health, /v1/model, /v1/predict");
+    // Metric-learning embedding extraction
+    server_->Post("/v1/embeddings", [this](const httplib::Request& req, httplib::Response& res) {
+        HandleEmbeddings(req, res);
+    });
+
+    // Metric-learning pair scoring
+    server_->Post("/v1/pair-score", [this](const httplib::Request& req, httplib::Response& res) {
+        HandlePairScore(req, res);
+    });
+
+    // Greedy text generation
+    server_->Post("/v1/generate", [this](const httplib::Request& req, httplib::Response& res) {
+        HandleGenerate(req, res);
+    });
+
+    spdlog::info("Registered routes: /health, /v1/model, /v1/predict, /v1/embeddings, /v1/pair-score, /v1/generate");
 }
 
 void LocalInferenceServer::HandleHealth(const httplib::Request&, httplib::Response& res) {
@@ -202,8 +605,67 @@ void LocalInferenceServer::HandleModelInfo(const httplib::Request&, httplib::Res
         {"model_name", GetModelName()},
         {"model_path", model_path_},
         {"num_layers", model_->Size()},
+        {"has_text_tokenizer", text_tokenizer_ != nullptr},
+        {"has_text_vocabulary", has_text_vocabulary_},
+        {"has_sequence_model", has_sequence_model_},
+        {"has_sequence_token_vocabulary", has_sequence_token_vocabulary_},
+        {"has_sequence_pos_vocabulary", has_sequence_pos_vocabulary_},
+        {"has_sequence_tag_vocabulary", has_sequence_tag_vocabulary_},
+        {"sequence_batch_first", sequence_batch_first_},
+        {"sequence_create_attention_mask", sequence_create_attention_mask_},
+        {"sequence_create_causal_lm_targets", sequence_create_causal_lm_targets_},
+        {"sequence_max_sequence_length", sequence_max_sequence_length_},
+        {"sequence_word_pad_id", sequence_word_pad_id_},
+        {"sequence_pos_pad_id", sequence_pos_pad_id_},
+        {"sequence_tag_ignore_index", sequence_tag_ignore_index_},
+        {"sequence_target_ignore_index", sequence_target_ignore_index_},
+        {"supports_sequence_decoding", has_sequence_tag_vocabulary_},
+        {"model_family", language_model_contract_.model_family},
+        {"supports_generation", language_model_contract_.supports_generation},
+        {"generation_output_contract", language_model_contract_.generation_output_contract},
+        {"supports_greedy_generation", language_model_contract_.compatible},
+        {"supports_bert_encoder", bert_encoder_contract_.supports_bert_encoder},
+        {"bert_encoder_task", bert_encoder_contract_.task},
+        {"bert_encoder_input_kind", bert_encoder_contract_.input_kind},
+        {"bert_encoder_output_contract", bert_encoder_contract_.output_contract},
+        {"supports_bert_text_inference", bert_encoder_contract_.compatible},
+        {"bert_encoder_contract", {
+            {"compatible", bert_encoder_contract_.compatible},
+            {"error", bert_encoder_contract_.error},
+            {"package_path", bert_encoder_contract_.package_path},
+            {"model_family", bert_encoder_contract_.model_family},
+            {"supports_bert_encoder", bert_encoder_contract_.supports_bert_encoder},
+            {"task", bert_encoder_contract_.task},
+            {"input_kind", bert_encoder_contract_.input_kind},
+            {"output_contract", bert_encoder_contract_.output_contract},
+            {"has_attention_mask", bert_encoder_contract_.has_attention_mask},
+            {"requires_token_type_ids", bert_encoder_contract_.requires_token_type_ids},
+            {"has_tokenizer", bert_encoder_contract_.has_tokenizer},
+            {"has_vocabulary", bert_encoder_contract_.has_vocabulary},
+            {"tokenizer_vocabulary_size", bert_encoder_contract_.tokenizer_vocabulary_size},
+            {"max_sequence_length", bert_encoder_contract_.max_sequence_length}
+        }},
+        {"language_model_contract", {
+            {"compatible", language_model_contract_.compatible},
+            {"error", language_model_contract_.error},
+            {"package_path", language_model_contract_.package_path},
+            {"model_family", language_model_contract_.model_family},
+            {"supports_generation", language_model_contract_.supports_generation},
+            {"generation_output_contract", language_model_contract_.generation_output_contract},
+            {"has_tokenizer", language_model_contract_.has_tokenizer},
+            {"has_vocabulary", language_model_contract_.has_vocabulary},
+            {"tokenizer_vocabulary_size", language_model_contract_.tokenizer_vocabulary_size},
+            {"max_sequence_length", language_model_contract_.max_sequence_length},
+            {"eos_token_id", language_model_contract_.eos_token_id}
+        }},
         {"layers", json::array()}
     };
+    if (pair_score_defaults_) {
+        response["pair_score_defaults"] = {
+            {"score_mode", PairScoreModeName(pair_score_defaults_->mode)},
+            {"threshold", pair_score_defaults_->threshold},
+        };
+    }
 
     // Add layer info
     for (size_t i = 0; i < model_->Size(); ++i) {
@@ -268,29 +730,132 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
 
     // Parse input tensor
     Tensor input_tensor;
+    Tensor sequence_pos_tensor;
+    Tensor sequence_attention_tensor;
+    bool is_sequence_input = false;
+    bool has_sequence_pos_input = false;
+    bool has_sequence_attention_input = false;
+    std::vector<int64_t> sequence_lengths;
+    size_t sequence_input_batch_size = 0;
+    size_t sequence_input_length = 0;
     try {
         const auto& input_json = request_body["input"];
 
-        if (!input_json.is_array()) {
-            throw std::runtime_error("input must be an array");
-        }
-
         std::vector<float> input_data;
         std::vector<size_t> shape;
+        std::vector<size_t> word_shape;
+        std::vector<size_t> pos_shape;
+        std::vector<int64_t> word_data;
+        std::vector<int64_t> pos_data;
+        std::vector<int64_t> optional_data;
 
-        if (input_json.empty()) {
+        if (input_json.is_object() && input_json.contains("word_ids")) {
+            is_sequence_input = true;
+            ParseIntIdRows(input_json["word_ids"], "input.word_ids",
+                           word_data, word_shape);
+            if (word_shape.size() != 2) {
+                throw std::runtime_error("input.word_ids must be 2D [batch, seq]");
+            }
+            if (word_shape[0] == 0 || word_shape[1] == 0) {
+                throw std::runtime_error("input.word_ids must not be empty");
+            }
+
+            if (input_json.contains("pos_ids")) {
+                ParseIntIdRows(input_json["pos_ids"], "input.pos_ids",
+                               pos_data, pos_shape);
+                if (pos_shape != word_shape) {
+                    throw std::runtime_error(
+                        "input.pos_ids shape must match input.word_ids");
+                }
+                sequence_pos_tensor =
+                    Tensor(pos_shape, pos_data.data(), DataType::Int64);
+                has_sequence_pos_input = true;
+            }
+            if (input_json.contains("attention_mask")) {
+                ParseIntIdRows(input_json["attention_mask"],
+                               "input.attention_mask",
+                               optional_data, shape);
+                if (shape != word_shape) {
+                    throw std::runtime_error(
+                        "input.attention_mask shape must match input.word_ids");
+                }
+                sequence_attention_tensor =
+                    Tensor(shape, optional_data.data(), DataType::Int64);
+                has_sequence_attention_input = true;
+            }
+            if (input_json.contains("sequence_lengths")) {
+                ParseIntIdVector(input_json["sequence_lengths"],
+                                 "input.sequence_lengths",
+                                 sequence_lengths);
+                const size_t expected =
+                    sequence_batch_first_ ? word_shape[0] : word_shape[1];
+                if (sequence_lengths.size() != expected) {
+                    throw std::runtime_error(
+                        "input.sequence_lengths length does not match batch dimension");
+                }
+            }
+            input_tensor = Tensor(word_shape, word_data.data(), DataType::Int64);
+            sequence_input_batch_size = word_shape[0];
+            sequence_input_length = word_shape[1];
+        } else if (input_json.is_string()) {
+            std::lock_guard<std::mutex> lock(model_mutex_);
+            if (!text_tokenizer_) {
+                throw std::runtime_error(
+                    "raw text input requires packaged tokenizer metadata");
+            }
+            if (!has_text_vocabulary_) {
+                throw std::runtime_error(
+                    "raw text input requires packaged vocabulary or tokenizer model");
+            }
+
+            if (bert_encoder_contract_.supports_bert_encoder) {
+                word_data = EncodeTextTokenIdsForBertEncoder(
+                    *text_tokenizer_, input_json.get<std::string>());
+                const auto text_contract = ValidateBertEncoderTextInputIds(
+                    word_data,
+                    bert_encoder_contract_.max_sequence_length,
+                    bert_encoder_contract_.has_attention_mask);
+                if (!text_contract.compatible) {
+                    throw std::runtime_error(text_contract.error);
+                }
+
+                word_shape = {1, word_data.size()};
+                input_tensor = Tensor(word_shape, word_data.data(), DataType::Int64);
+                is_sequence_input = true;
+                sequence_input_batch_size = 1;
+                sequence_input_length = word_data.size();
+
+                if (bert_encoder_contract_.has_attention_mask) {
+                    optional_data = BuildBertEncoderAttentionMask(
+                        word_data,
+                        static_cast<int64_t>(
+                            text_tokenizer_->GetPadId()));
+                    sequence_attention_tensor =
+                        Tensor(word_shape, optional_data.data(), DataType::Int64);
+                    has_sequence_attention_input = true;
+                    sequence_lengths.push_back(static_cast<int64_t>(std::count(
+                        optional_data.begin(), optional_data.end(), int64_t{1})));
+                } else {
+                    sequence_lengths.push_back(
+                        static_cast<int64_t>(word_data.size()));
+                }
+            } else {
+                input_data = EncodeTextForInference(
+                    *text_tokenizer_, input_json.get<std::string>());
+                shape = {1, input_data.size()};
+            }
+        } else if (!input_json.is_array()) {
+            throw std::runtime_error("input must be an array or string");
+        } else if (input_json.empty()) {
             throw std::runtime_error("input array cannot be empty");
-        }
-
-        // Handle 1D array: [val, val, ...]
-        if (!input_json[0].is_array()) {
+        } else if (!input_json[0].is_array()) {
+            // Handle 1D array: [val, val, ...]
             for (const auto& val : input_json) {
                 input_data.push_back(val.get<float>());
             }
             shape = {1, input_data.size()};  // Batch of 1
-        }
-        // Handle 2D array: [[val, val, ...], ...]
-        else {
+        } else {
+            // Handle 2D array: [[val, val, ...], ...]
             size_t batch_size = input_json.size();
             size_t feature_size = 0;
 
@@ -311,7 +876,9 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
             shape = {batch_size, feature_size};
         }
 
-        input_tensor = Tensor(shape, input_data.data());
+        if (!is_sequence_input) {
+            input_tensor = Tensor(shape, input_data.data());
+        }
 
     } catch (const std::exception& e) {
         json error = {
@@ -333,7 +900,43 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
         if (!model_) {
             throw std::runtime_error("Model unloaded during request");
         }
+        if (is_sequence_input) {
+            SequenceBatch sequence_batch;
+            sequence_batch.word_ids = input_tensor;
+            if (has_sequence_pos_input) {
+                sequence_batch.pos_ids = sequence_pos_tensor;
+            }
+            if (has_sequence_attention_input) {
+                sequence_batch.attention_mask = sequence_attention_tensor;
+            }
+            sequence_batch.size = input_tensor.Shape()[0];
+            sequence_batch.sequence_length = input_tensor.Shape()[1];
+            sequence_input_batch_size = sequence_batch.size;
+            sequence_input_length = sequence_batch.sequence_length;
+
+            TrainingConfiguration sequence_config;
+            sequence_config.sequence_batch.word_pad_id = sequence_word_pad_id_;
+            sequence_config.sequence_batch.pos_pad_id = sequence_pos_pad_id_;
+            if (ModelUsesSequenceFeatureFusion(*model_)) {
+                CompiledLayer fusion_layer;
+                fusion_layer.type = gui::NodeType::Concatenate;
+                fusion_layer.parameters["sequence_feature_fusion"] = "true";
+                sequence_config.layers.push_back(std::move(fusion_layer));
+            }
+            input_tensor =
+                BuildSequenceModelInput(sequence_batch, sequence_config);
+        }
         output_tensor = model_->Forward(input_tensor);
+        if (bert_encoder_contract_.supports_bert_encoder) {
+            const auto output_contract = ValidateBertEncoderRuntimeOutput(
+                output_tensor,
+                BertEncoderTaskFromContract(bert_encoder_contract_.task),
+                sequence_input_batch_size,
+                sequence_input_length);
+            if (!output_contract.compatible) {
+                throw std::runtime_error(output_contract.error);
+            }
+        }
         request_count_++;
 
     } catch (const std::exception& e) {
@@ -355,15 +958,20 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
 
     // Format response
     const auto& output_shape = output_tensor.Shape();
-    size_t total_size = 1;
-    for (size_t dim : output_shape) {
-        total_size *= dim;
-    }
-
-    std::vector<float> output_data(total_size);
-    const float* data_ptr = output_tensor.Data<float>();
-    if (data_ptr) {
-        std::copy(data_ptr, data_ptr + total_size, output_data.begin());
+    std::vector<float> output_data;
+    try {
+        AppendTensorValues(output_tensor, output_data);
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to format output: ") + e.what()},
+                {"type", "server_error"},
+                {"code", "output_format_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+        return;
     }
 
     json response = {
@@ -372,7 +980,466 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
         {"latency_ms", latency_ms}
     };
 
+    if (!sequence_lengths.empty()) {
+        response["sequence_lengths"] = sequence_lengths;
+    }
+
+    if (is_sequence_input && has_sequence_tag_vocabulary_ &&
+        !sequence_tag_vocabulary_.empty() &&
+        output_tensor.GetDataType() == DataType::Float32 &&
+        output_shape.size() == 3) {
+        try {
+            Tensor logits_tensor = output_tensor;
+            if (!sequence_batch_first_) {
+                logits_tensor = TransposeSequenceLogits(output_tensor);
+            }
+            const Tensor predicted_ids = ArgmaxSequenceTagLogits(logits_tensor);
+            const auto decoded = DecodeSequenceTagIdsForInference(
+                predicted_ids, sequence_tag_vocabulary_, sequence_lengths);
+            response["sequence"] = {
+                {"tag_ids", Int64RowsToJson(decoded.tag_ids)},
+                {"tag_labels", StringRowsToJson(decoded.tag_labels)},
+                {"effective_lengths", SizeRowsToJson(decoded.effective_lengths)},
+                {"tag_vocab", sequence_tag_vocabulary_},
+                {"batch_first", sequence_batch_first_},
+                {"ignore_index", sequence_tag_ignore_index_}
+            };
+        } catch (const std::exception& e) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Failed to decode sequence tags: ") +
+                                    e.what()},
+                    {"type", "server_error"},
+                    {"code", "sequence_decode_error"}
+                }}
+            };
+            res.status = 500;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+    }
+
     res.set_content(response.dump(), "application/json");
+}
+
+void LocalInferenceServer::HandleEmbeddings(const httplib::Request& req,
+                                            httplib::Response& res) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    if (!HasModel()) {
+        json error = {
+            {"error", {
+                {"message", "No model loaded"},
+                {"type", "server_error"},
+                {"code", "no_model"}
+            }}
+        };
+        res.status = 503;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    json request_body;
+    try {
+        request_body = json::parse(req.body);
+    } catch (const json::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Invalid JSON: ") + e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "parse_error"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    MetricEmbeddingInferenceInput input;
+    try {
+        input = ParseMetricEmbeddingInferenceInput(request_body);
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to parse embedding input: ") +
+                                e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "invalid_input"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    Tensor embeddings;
+    try {
+        std::lock_guard<std::mutex> lock(model_mutex_);
+        if (!model_) {
+            throw std::runtime_error("Model unloaded during request");
+        }
+        embeddings = model_->Forward(input.input);
+        request_count_++;
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Embedding inference failed: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "inference_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    try {
+        const auto output = BuildEmbeddingOutputResponse(
+            embeddings, input.sample_ids, input.class_ids);
+        json response = EmbeddingOutputResponseToJson(output);
+        auto end_time = std::chrono::high_resolution_clock::now();
+        response["latency_ms"] = std::chrono::duration<double, std::milli>(
+            end_time - start_time).count();
+        res.set_content(response.dump(), "application/json");
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to format embeddings: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "output_format_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+    }
+}
+
+void LocalInferenceServer::HandlePairScore(const httplib::Request& req,
+                                           httplib::Response& res) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    if (!HasModel()) {
+        json error = {
+            {"error", {
+                {"message", "No model loaded"},
+                {"type", "server_error"},
+                {"code", "no_model"}
+            }}
+        };
+        res.status = 503;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    json request_body;
+    try {
+        request_body = json::parse(req.body);
+    } catch (const json::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Invalid JSON: ") + e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "parse_error"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    MetricPairScoreInferenceInput input;
+    try {
+        input = ParseMetricPairScoreInferenceInput(request_body);
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to parse pair-score input: ") +
+                                e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "invalid_input"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    Tensor embedding_a;
+    Tensor embedding_b;
+    try {
+        std::lock_guard<std::mutex> lock(model_mutex_);
+        if (!model_) {
+            throw std::runtime_error("Model unloaded during request");
+        }
+        embedding_a = model_->Forward(input.input_a);
+        embedding_b = model_->Forward(input.input_b);
+        request_count_++;
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Pair-score inference failed: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "inference_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    // The model's Pair Score Output settings: its mode when the request names
+    // none, and same / different when the request's mode is the model's.
+    if (pair_score_defaults_ && !input.has_score_mode) {
+        input.score_mode = pair_score_defaults_->mode;
+    }
+    try {
+        auto output = BuildPairScoreOutputResponse(
+            embedding_a,
+            embedding_b,
+            input.score_mode,
+            input.sample_id_a,
+            input.sample_id_b,
+            input.class_id_a,
+            input.class_id_b);
+        if (pair_score_defaults_ && input.score_mode == pair_score_defaults_->mode) {
+            ApplyPairScoreThreshold(output, pair_score_defaults_->threshold);
+        }
+        json response = PairScoreOutputResponseToJson(output);
+        auto end_time = std::chrono::high_resolution_clock::now();
+        response["latency_ms"] = std::chrono::duration<double, std::milli>(
+            end_time - start_time).count();
+        res.set_content(response.dump(), "application/json");
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to format pair scores: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "output_format_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+    }
+}
+
+void LocalInferenceServer::HandleGenerate(const httplib::Request& req, httplib::Response& res) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    if (!HasModel()) {
+        json error = {
+            {"error", {
+                {"message", "No model loaded"},
+                {"type", "server_error"},
+                {"code", "no_model"}
+            }}
+        };
+        res.status = 503;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    json request_body;
+    try {
+        request_body = json::parse(req.body);
+    } catch (const json::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Invalid JSON: ") + e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "parse_error"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    if (!request_body.contains("input") || !request_body["input"].is_string()) {
+        json error = {
+            {"error", {
+                {"message", "Missing required string field: input"},
+                {"type", "invalid_request_error"},
+                {"code", "missing_field"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    size_t max_new_tokens = 16;
+    if (request_body.contains("max_new_tokens")) {
+        if (!request_body["max_new_tokens"].is_number_unsigned()) {
+            json error = {
+                {"error", {
+                    {"message", "max_new_tokens must be an unsigned integer"},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_parameter"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+        max_new_tokens = request_body["max_new_tokens"].get<size_t>();
+        if (max_new_tokens == 0) {
+            json error = {
+                {"error", {
+                    {"message", "max_new_tokens must be greater than 0"},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_parameter"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+        if (max_new_tokens > 256) {
+            max_new_tokens = 256;
+        }
+    }
+
+    try {
+        std::lock_guard<std::mutex> lock(model_mutex_);
+        if (!model_) {
+            throw std::runtime_error("Model unloaded during request");
+        }
+        if (!language_model_contract_.compatible) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Text generation unavailable: ") +
+                                    language_model_contract_.error},
+                    {"type", "invalid_request_error"},
+                    {"code", "generation_contract_error"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+        if (!text_tokenizer_) {
+            throw std::runtime_error(
+                "text generation requires packaged tokenizer metadata");
+        }
+
+        const std::vector<int64_t> prompt_ids =
+            EncodeTextTokenIdsForGeneration(
+                *text_tokenizer_,
+                request_body["input"].get<std::string>());
+        const auto prompt_contract = ValidateLanguageModelPromptIds(
+            prompt_ids,
+            language_model_contract_.max_sequence_length);
+        if (!prompt_contract.compatible) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Invalid prompt: ") +
+                                    prompt_contract.error},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_prompt"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        int64_t eos_token_id = language_model_contract_.eos_token_id;
+        if (request_body.contains("eos_token_id")) {
+            if (!request_body["eos_token_id"].is_number_integer()) {
+                json error = {
+                    {"error", {
+                        {"message", "eos_token_id must be an integer"},
+                        {"type", "invalid_request_error"},
+                        {"code", "invalid_parameter"}
+                    }}
+                };
+                res.status = 400;
+                res.set_content(error.dump(), "application/json");
+                return;
+            }
+            eos_token_id = request_body["eos_token_id"].get<int64_t>();
+        }
+        if (eos_token_id < -1) {
+            json error = {
+                {"error", {
+                    {"message", "eos_token_id must be -1 or greater"},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_parameter"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        Tensor contract_input({1, prompt_ids.size()},
+                              prompt_ids.data(),
+                              DataType::Int64);
+        const Tensor contract_logits = model_->Forward(contract_input);
+        const auto runtime_contract = ValidateLanguageModelRuntimeOutput(
+            contract_logits,
+            prompt_ids.size(),
+            language_model_contract_.tokenizer_vocabulary_size);
+        if (!runtime_contract.compatible) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Model output contract failed: ") +
+                                    runtime_contract.error},
+                    {"type", "invalid_request_error"},
+                    {"code", "generation_output_contract_error"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        LanguageModelGenerationConfig generation_config;
+        generation_config.max_new_tokens = max_new_tokens;
+        generation_config.eos_token_id = eos_token_id;
+        generation_config.include_prompt = true;
+
+        const std::vector<int64_t> generated_ids =
+            GenerateTokenIdsWithConfig(*model_,
+                                       prompt_ids,
+                                       generation_config);
+        const std::vector<int64_t> new_token_ids(
+            generated_ids.begin() + static_cast<std::ptrdiff_t>(prompt_ids.size()),
+            generated_ids.end());
+
+        request_count_++;
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        double latency_ms = std::chrono::duration<double, std::milli>(
+            end_time - start_time).count();
+
+        json response = {
+            {"text", DecodeGeneratedTokenIds(*text_tokenizer_, generated_ids)},
+            {"prompt_token_ids", prompt_ids},
+            {"generated_token_ids", generated_ids},
+            {"new_token_ids", new_token_ids},
+            {"eos_token_id", eos_token_id},
+            {"max_new_tokens", max_new_tokens},
+            {"latency_ms", latency_ms}
+        };
+
+        res.set_content(response.dump(), "application/json");
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Generation failed: ") + e.what()},
+                {"type", "server_error"},
+                {"code", "generation_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
 }
 
 } // namespace cyxwiz

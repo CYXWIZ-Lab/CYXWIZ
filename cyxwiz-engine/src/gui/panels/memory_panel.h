@@ -89,9 +89,12 @@ private:
         std::string name;
         size_t total_memory = 0;
         size_t free_memory = 0;
+        bool total_memory_known = false;
+        bool free_memory_known = false;
+        bool name_is_fallback = false;
+        int metadata_status = 0;
         std::string backend;  // "CUDA", "OpenCL", "CPU", etc.
         int device_id = -1;
-        float utilization = 0.0f;  // 0-100%
         float temperature = 0.0f;  // Celsius
     };
     GPUInfo gpu_info_;
@@ -113,12 +116,6 @@ private:
     // Layer breakdown options
     int breakdown_mode_ = 0;  // 0=bar chart, 1=pie chart
     int top_n_layers_ = 10;   // Show top N layers by memory
-
-    // Colors
-    ImVec4 cpu_heap_color_ = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);     // Green
-    ImVec4 cpu_tensor_color_ = ImVec4(0.3f, 0.8f, 0.3f, 1.0f);   // Light green
-    ImVec4 gpu_allocated_color_ = ImVec4(0.2f, 0.4f, 0.8f, 1.0f); // Blue
-    ImVec4 gpu_cached_color_ = ImVec4(0.4f, 0.6f, 0.9f, 1.0f);   // Light blue
 
     // Callback
     LayerClickCallback layer_click_callback_;

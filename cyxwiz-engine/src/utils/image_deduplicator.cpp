@@ -2,6 +2,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <algorithm>
 #include <cmath>
 #include <bitset>
@@ -73,7 +74,7 @@ std::vector<ImageHash> ImageDeduplicator::ComputeHashes(
 
         if (progress_callback && (i % 10 == 0 || i == images.size() - 1)) {
             float progress = static_cast<float>(i + 1) / images.size();
-            std::string msg = std::format("Hashed {}/{} images", i + 1, images.size());
+            std::string msg = fmt::format("Hashed {}/{} images", i + 1, images.size());
             progress_callback(progress, msg);
         }
     }
@@ -155,7 +156,8 @@ int ImageDeduplicator::HammingDistance(uint64_t hash1, uint64_t hash2) {
     uint64_t diff = hash1 ^ hash2;
 
     // Count set bits (popcount)
-    return std::bitset<64>(diff).count();
+    // A 64-bit popcount is always representable by the public int distance.
+    return static_cast<int>(std::bitset<64>(diff).count());
 }
 
 float ImageDeduplicator::ComputeSimilarity(uint64_t hash1, uint64_t hash2) {

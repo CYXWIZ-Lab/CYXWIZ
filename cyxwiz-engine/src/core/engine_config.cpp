@@ -15,6 +15,9 @@
 #include <unistd.h>
 #include <limits.h>  // PATH_MAX
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace cyxwiz::core {
 
@@ -47,16 +50,8 @@ std::filesystem::path ResolveVenvRoot(const std::filesystem::path& interpreter_p
     return {};
 }
 
-std::filesystem::path ResolvePythonHomeFromInterpreter(const std::filesystem::path& interpreter_path) {
-    auto venv_root = ResolveVenvRoot(interpreter_path);
-    if (!venv_root.empty()) {
-        return venv_root;
-    }
-    return interpreter_path.parent_path();
-}
-
-std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
 #ifndef _WIN32
+std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
     std::filesystem::path lib_dir = base_root / "lib";
     if (!std::filesystem::exists(lib_dir)) {
         return {};
@@ -75,9 +70,9 @@ std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_ro
             return candidate;
         }
     }
-#endif
     return {};
 }
+#endif
 
 std::filesystem::path ResolveSitePackagesFromInterpreter(const std::filesystem::path& interpreter_path) {
 #ifdef _WIN32
@@ -103,6 +98,17 @@ std::filesystem::path GetExecutableDir() {
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::filesystem::path exe_path(path);
     return exe_path.parent_path();
+#elif defined(__APPLE__)
+    // macOS has no /proc: without this the bundled Python and the
+    // executable-directory config file were never found.
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) != 0) {
+        return {};
+    }
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    return (ec ? std::filesystem::path(path) : canonical).parent_path();
 #else
     char path[PATH_MAX];
     ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
@@ -112,6 +118,8 @@ std::filesystem::path GetExecutableDir() {
 }
 
 }  // namespace
+
+std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
 
 EngineConfig& EngineConfig::Instance() {
     static EngineConfig instance;
@@ -133,6 +141,7 @@ void EngineConfig::SetDefaults() {
     connection_timeout_ = 10;
     request_timeout_ = 30;
     system_python_path_ = "";  // Will be auto-detected on first launch
+    runtime_log_saved_filters_.clear();
 }
 
 std::filesystem::path EngineConfig::GetUserConfigDir() const {
@@ -180,7 +189,7 @@ std::filesystem::path EngineConfig::FindConfigFile() const {
 
     for (const auto& path : search_paths) {
         if (std::filesystem::exists(path)) {
-            spdlog::info("Found config file: {}", path.string());
+            spdlog::debug("Found config file: {}", path.string());
             return path;
         }
     }
@@ -227,6 +236,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 {"system_python_path", system_python_path_},
                 {"auto_create_venv", auto_create_venv_},
                 {"default_venv_packages", default_venv_packages_}
+            };
+            defaults["debug"] = {
+                {"require_debug_before_train", require_debug_before_train_}
             };
             defaults["recent_projects"] = recent_projects_;
 
@@ -287,6 +299,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                     {"system_python_path", system_python_path_},
                     {"auto_create_venv", auto_create_venv_},
                     {"default_venv_packages", default_venv_packages_}
+                };
+                template_config["debug"] = {
+                    {"require_debug_before_train", require_debug_before_train_}
                 };
                 template_config["recent_projects"] = recent_projects_;
 
@@ -370,6 +385,53 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        // Local Debug settings
+        if (config.contains("debug")) {
+            const auto& debug_cfg = config["debug"];
+            if (debug_cfg.contains("require_debug_before_train")) {
+                require_debug_before_train_ =
+                    debug_cfg["require_debug_before_train"].get<bool>();
+            }
+        }
+
+        if (config.contains("appearance") && config["appearance"].is_object()) {
+            const auto& look = config["appearance"];
+            AppearanceConfig loaded;
+            loaded.theme_preset = look.value("theme_preset", loaded.theme_preset);
+            loaded.ui_text_px = look.value("ui_text_px", loaded.ui_text_px);
+            loaded.code_font_scale = look.value("code_font_scale", loaded.code_font_scale);
+            loaded.sidebar_left = look.value("sidebar_left", loaded.sidebar_left);
+            loaded.custom_theme_file = look.value("custom_theme_file", std::string());
+            appearance_ = loaded;
+        }
+
+        data_budget_bytes_ = 0;
+        if (config.contains("data") && config["data"].is_object())
+            data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
+
+        runtime_log_saved_filters_.clear();
+        if (config.contains("observability") &&
+            config["observability"].is_object()) {
+            const auto& observability = config["observability"];
+            record_debug_logs_ = observability.value("record_debug_logs", true);
+            const int version = observability.value("saved_filters_version", 1);
+            if (version == 1 && observability.contains("saved_filters") &&
+                observability["saved_filters"].is_array()) {
+                for (const auto& item : observability["saved_filters"]) {
+                    if (!item.is_object() || !item.contains("name") ||
+                        !item.contains("expression") ||
+                        !item["name"].is_string() ||
+                        !item["expression"].is_string()) {
+                        continue;
+                    }
+                    if (runtime_log_saved_filters_.size() >= 32) break;
+                    runtime_log_saved_filters_.push_back({
+                        item["name"].get<std::string>(),
+                        item["expression"].get<std::string>()});
+                }
+            }
+        }
+
         // Recent projects
         if (config.contains("recent_projects")) {
             recent_projects_ = config["recent_projects"].get<std::vector<std::string>>();
@@ -378,7 +440,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         config_path_ = config_path;
         modified_ = false;
 
-        spdlog::info("Loaded config from: {}", config_path.string());
+        spdlog::debug("Loaded config from: {}", config_path.string());
         spdlog::debug("  Central Server: {}", central_server_address_);
         spdlog::debug("  Auth API: {}", auth_api_url_);
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
@@ -440,6 +502,31 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"system_python_path", system_python_path_},
             {"auto_create_venv", auto_create_venv_},
             {"default_venv_packages", default_venv_packages_}
+        };
+
+        // Local Debug settings
+        config["debug"] = {
+            {"require_debug_before_train", require_debug_before_train_}
+        };
+
+        json saved_runtime_filters = json::array();
+        for (const auto& filter : runtime_log_saved_filters_) {
+            saved_runtime_filters.push_back({
+                {"name", filter.name}, {"expression", filter.expression}});
+        }
+        config["data"] = {{"budget_bytes", data_budget_bytes_}};
+        config["observability"] = {
+            {"record_debug_logs", record_debug_logs_},
+            {"saved_filters_version", 1},
+            {"saved_filters", std::move(saved_runtime_filters)}
+        };
+
+        config["appearance"] = {
+            {"theme_preset", appearance_.theme_preset},
+            {"ui_text_px", appearance_.ui_text_px},
+            {"code_font_scale", appearance_.code_font_scale},
+            {"sidebar_left", appearance_.sidebar_left},
+            {"custom_theme_file", appearance_.custom_theme_file}
         };
 
         // Recent projects
@@ -584,12 +671,12 @@ void EngineConfig::SetDefaultP2PPort(int port) {
 // ===== Python Settings =====
 
 std::string EngineConfig::GetPythonPackagesDir() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (system_python_path_.empty()) {
-        return "";  // No system Python configured
+    const std::string interpreter = GetSystemPythonPath();
+    if (interpreter.empty()) {
+        return "";  // No Python configured or bundled
     }
 
-    std::filesystem::path interp(system_python_path_);
+    std::filesystem::path interp(interpreter);
     auto site_packages = ResolveSitePackagesFromInterpreter(interp);
 
     if (std::filesystem::exists(site_packages)) {
@@ -600,8 +687,55 @@ std::string EngineConfig::GetPythonPackagesDir() const {
 }
 
 std::string EngineConfig::GetSystemPythonPath() const {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::error_code ec;
+        if (!system_python_path_.empty() &&
+            std::filesystem::exists(system_python_path_, ec)) {
+            return system_python_path_;
+        }
+    }
+    // A stale path (for example an older base folder after an upgrade) falls
+    // back to the runtime bundled with this Engine, then to the interpreter
+    // the startup scan found.
+    const std::string bundled = GetBundledPythonPath();
+    if (!bundled.empty()) {
+        return bundled;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
-    return system_python_path_;
+    std::error_code ec;
+    if (!detected_python_path_.empty() && std::filesystem::exists(detected_python_path_, ec)) {
+        return detected_python_path_;
+    }
+    return "";
+}
+
+void EngineConfig::SetDetectedPythonPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    detected_python_path_ = path;
+}
+
+std::string EngineConfig::GetBundledPythonPath() const {
+    const std::filesystem::path exe_dir = GetExecutableDir();
+    if (exe_dir.empty()) {
+        return "";
+    }
+    std::error_code ec;
+#ifdef _WIN32
+    const std::filesystem::path candidate = exe_dir / "python" / "python.exe";
+    return std::filesystem::is_regular_file(candidate, ec) ? candidate.string() : "";
+#else
+    // Packages store regular files only, so the python3 alias of a
+    // standalone tree is not shipped; the versioned interpreter is.
+    const std::filesystem::path bin = exe_dir / "python" / "bin";
+    for (const char* name : {"python3.12", "python3.13", "python3"}) {
+        const std::filesystem::path candidate = bin / name;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            return candidate.string();
+        }
+    }
+    return "";
+#endif
 }
 
 void EngineConfig::SetSystemPythonPath(const std::string& path) {
@@ -613,8 +747,7 @@ void EngineConfig::SetSystemPythonPath(const std::string& path) {
 }
 
 bool EngineConfig::HasSystemPython() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return !system_python_path_.empty() && std::filesystem::exists(system_python_path_);
+    return !GetSystemPythonPath().empty();
 }
 
 bool EngineConfig::GetAutoCreateVenv() const {
@@ -639,6 +772,73 @@ void EngineConfig::SetDefaultVenvPackages(const std::vector<std::string>& packag
     std::lock_guard<std::mutex> lock(mutex_);
     if (default_venv_packages_ != packages) {
         default_venv_packages_ = packages;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::RequireDebugBeforeTrain() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return require_debug_before_train_;
+}
+
+void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (require_debug_before_train_ != require) {
+        require_debug_before_train_ = require;
+        modified_ = true;
+    }
+}
+
+AppearanceConfig EngineConfig::GetAppearance() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return appearance_;
+}
+
+void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(appearance_ == appearance)) {
+        appearance_ = appearance;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::RecordDebugLogs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return record_debug_logs_;
+}
+
+void EngineConfig::SetRecordDebugLogs(bool record) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (record_debug_logs_ != record) {
+        record_debug_logs_ = record;
+        modified_ = true;
+    }
+}
+
+uint64_t EngineConfig::DataBudgetBytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return data_budget_bytes_;
+}
+
+void EngineConfig::SetDataBudgetBytes(uint64_t bytes) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (data_budget_bytes_ != bytes) {
+        data_budget_bytes_ = bytes;
+        modified_ = true;
+    }
+}
+
+std::vector<RuntimeLogSavedFilterConfig>
+EngineConfig::GetRuntimeLogSavedFilters() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return runtime_log_saved_filters_;
+}
+
+void EngineConfig::SetRuntimeLogSavedFilters(
+    const std::vector<RuntimeLogSavedFilterConfig>& filters) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (runtime_log_saved_filters_ != filters) {
+        runtime_log_saved_filters_ = filters;
         modified_ = true;
     }
 }

@@ -1,11 +1,23 @@
 #include "model_importer.h"
+#include "graph_document.h"
+#include "formats/cyxmodel_archive.h"
+#include "node_metadata_registry.h"
+#include "../gui/node_import_guardrails.h"
+#include "error_codes.h"
 #include "graph_compiler.h"
+#include "model_builder.h"
 #include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
 #include <cstring>
 
 namespace cyxwiz {
@@ -13,10 +25,102 @@ namespace cyxwiz {
 // Forward declaration
 static bool IsCyxwBinaryFormat(const std::string& path);
 
-// Helper: Build model architecture from graph JSON
-static bool BuildModelFromGraph(
+struct CyxwHeader {
+    uint32_t version = 0;
+    nlohmann::json metadata;
+    size_t num_modules = 0;
+};
+
+static bool ReadCyxwHeader(std::ifstream& file,
+                           CyxwHeader& header,
+                           std::string& error) {
+    constexpr uint32_t kCyxwMagic = 0x43595857;
+    constexpr uint32_t kSupportedVersion = 2;
+    constexpr uint64_t kMaxMetadataBytes = 100ULL * 1024ULL * 1024ULL;
+
+    uint32_t magic = 0;
+    if (!file.read(reinterpret_cast<char*>(&magic), sizeof(magic))) {
+        error = "Truncated CYXW magic";
+        return false;
+    }
+    if (magic != kCyxwMagic) {
+        error = "Invalid CYXW magic number";
+        return false;
+    }
+
+    if (!file.read(reinterpret_cast<char*>(&header.version),
+                   sizeof(header.version))) {
+        error = "Truncated CYXW version";
+        return false;
+    }
+    if (header.version != kSupportedVersion) {
+        error = "Unsupported CYXW format version: " +
+                std::to_string(header.version);
+        return false;
+    }
+
+    uint64_t json_length = 0;
+    if (!file.read(reinterpret_cast<char*>(&json_length), sizeof(json_length))) {
+        error = "Truncated CYXW metadata length";
+        return false;
+    }
+    if (json_length > kMaxMetadataBytes) {
+        error = "CYXW metadata exceeds the 100 MiB safety limit";
+        return false;
+    }
+
+    const std::streampos metadata_position = file.tellg();
+    file.seekg(0, std::ios::end);
+    const std::streampos file_end = file.tellg();
+    file.seekg(metadata_position);
+    if (metadata_position < 0 || file_end < metadata_position ||
+        static_cast<uint64_t>(file_end - metadata_position) <
+            json_length + sizeof(size_t)) {
+        error = "Truncated CYXW metadata";
+        return false;
+    }
+
+    std::string json_text(static_cast<size_t>(json_length), '\0');
+    if (!file.read(json_text.data(), static_cast<std::streamsize>(json_length))) {
+        error = "Failed to read CYXW metadata";
+        return false;
+    }
+
+    try {
+        header.metadata = nlohmann::json::parse(json_text);
+    } catch (const std::exception& exception) {
+        error = std::string("Invalid CYXW metadata JSON: ") + exception.what();
+        return false;
+    }
+
+    if (!file.read(reinterpret_cast<char*>(&header.num_modules),
+                   sizeof(header.num_modules))) {
+        error = "Truncated CYXW module count";
+        return false;
+    }
+    return true;
+}
+
+static bool IsTrainingOnlyParameter(const std::string& name) {
+    return name.find("grad_") != std::string::npos ||
+           name.find(".grad") != std::string::npos;
+}
+
+// Models saved before TOFIX112 carry an untrained cross-attention and norm3 in
+// every decoder-only block. Those blocks no longer have them; their weights
+// are skipped when the model being loaded lacks the name.
+static bool IsLegacyDecoderCrossAttentionParameter(const std::string& name) {
+    for (const char* component : {"cross_attn.", "norm3."}) {
+        const size_t at = name.find(component);
+        if (at != std::string::npos && (at == 0 || name[at - 1] == '.')) return true;
+    }
+    return false;
+}
+
+// Helper: compile a saved model graph (the editor's graph JSON).
+static bool CompileModelGraph(
     const std::string& graph_json,
-    SequentialModel& model,
+    TrainingConfiguration& config,
     std::string& error_message
 ) {
     if (graph_json.empty()) {
@@ -26,103 +130,58 @@ static bool BuildModelFromGraph(
 
     try {
         using json = nlohmann::json;
-        json j = json::parse(graph_json);
-
-        // Parse nodes
-        std::vector<gui::MLNode> nodes;
-        for (const auto& node_json : j["nodes"]) {
-            gui::MLNode node;
-            node.id = node_json["id"];
-            node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
-            node.name = node_json["name"];
-            if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+        const json j = json::parse(graph_json);
+        // Graphs saved by the editor carry pin indices: load them with the
+        // shared saved-graph loader (factory pins, parameter migrations, links
+        // by pin index). Older exports without indices keep the pinless
+        // reading they were written for.
+        const bool has_port_indices = std::any_of(j["links"].begin(), j["links"].end(),
+            [](const json& link) { return link.contains("from_pin_index") ||
+                                        link.contains("to_pin_index"); });
+        GraphDocument document;
+        if (has_port_indices) {
+            // A link that does not resolve fails the import (the editor skips it).
+            GraphDocumentLoadOptions options;
+            options.strict_links = true;
+            std::string load_error;
+            if (!BuildGraphDocument(j, j, options, document, load_error)) {
+                error_message = (load_error.rfind("invalid link", 0) == 0 ? "Invalid serialized model graph link: "
+                                                                            : "Could not load the model graph: ") +
+                                load_error;
+                return false;
             }
-            nodes.push_back(node);
+        } else {
+            for (const auto& node_json : j["nodes"]) {
+                gui::MLNode node;
+                node.id = node_json["id"];
+                node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
+                node.name = node_json["name"];
+                if (node_json.contains("parameters")) {
+                    node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+                }
+                document.nodes.push_back(node);
+            }
+            for (const auto& link_json : j["links"]) {
+                gui::NodeLink link;
+                link.id = link_json["id"];
+                link.from_node = link_json["from_node"];
+                link.to_node = link_json["to_node"];
+                link.from_pin = link_json.value("from_pin", 0);
+                link.to_pin = link_json.value("to_pin", 0);
+                document.links.push_back(link);
+            }
         }
-
-        // Parse links
-        std::vector<gui::NodeLink> links;
-        for (const auto& link_json : j["links"]) {
-            gui::NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.to_node = link_json["to_node"];
-            links.push_back(link);
-        }
+        const auto& nodes = document.nodes;
+        const auto& links = document.links;
 
         // Compile graph to get layer configuration
         GraphCompiler compiler;
-        TrainingConfiguration config = compiler.Compile(nodes, links);
+        config = compiler.Compile(nodes, links, true, GraphCompiler::Purpose::ModelImport);
 
         if (!config.is_valid) {
             error_message = "Graph compilation failed: " + config.error_message;
             return false;
         }
-
-        spdlog::info("Building model from graph: {} layers, input={}, output={}",
-                     config.layers.size(), config.input_size, config.output_size);
-
-        // Build model layers from configuration
-        size_t current_input_size = config.input_size;
-
-        for (size_t i = 0; i < config.layers.size(); ++i) {
-            const auto& layer_cfg = config.layers[i];
-
-            switch (layer_cfg.type) {
-                case gui::NodeType::Dense: {
-                    size_t out_features = 64;
-                    if (layer_cfg.parameters.count("units")) {
-                        out_features = std::stoul(layer_cfg.parameters.at("units"));
-                    }
-                    model.Add<LinearModule>(current_input_size, out_features, true);
-                    spdlog::debug("  [{}] Linear({} -> {})", i, current_input_size, out_features);
-                    current_input_size = out_features;
-                    break;
-                }
-
-                case gui::NodeType::ReLU:
-                    model.Add<ReLUModule>();
-                    break;
-
-                case gui::NodeType::Sigmoid:
-                    model.Add<SigmoidModule>();
-                    break;
-
-                case gui::NodeType::Tanh:
-                    model.Add<TanhModule>();
-                    break;
-
-                case gui::NodeType::Softmax:
-                    model.Add<SoftmaxModule>();
-                    break;
-
-                case gui::NodeType::Output:
-                    // Output node is just a terminal marker, not an actual layer
-                    // The last Dense layer already outputs the correct features
-                    break;
-
-                case gui::NodeType::Dropout: {
-                    float rate = 0.5f;
-                    if (layer_cfg.parameters.count("rate")) {
-                        rate = std::stof(layer_cfg.parameters.at("rate"));
-                    }
-                    model.Add<DropoutModule>(rate);
-                    break;
-                }
-
-                default:
-                    // Skip non-layer nodes (preprocessing, loss, optimizer, etc.)
-                    break;
-            }
-        }
-
-        if (model.Size() == 0) {
-            error_message = "No layers were created from the graph";
-            return false;
-        }
-
-        spdlog::info("Built model with {} layers from graph", model.Size());
         return true;
 
     } catch (const std::exception& e) {
@@ -131,13 +190,61 @@ static bool BuildModelFromGraph(
     }
 }
 
+// A graph with branches (merges, splits, multi-input layers) runs as a
+// GraphExecutableModel; its layers alone are not the model.
+static bool HasBranches(const TrainingConfiguration& config) {
+    return !config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty();
+}
+
+// The compile's warnings about extension nodes (TOFIX125 P6): an installed
+// extension that is not the one the model was trained with ("is not the one
+// this graph was saved with ..."). The weights still load; the user is told.
+static std::vector<std::string> ExtensionWarnings(const TrainingConfiguration& config) {
+    std::vector<std::string> out;
+    for (const auto& issue : config.issues) {
+        if (issue.level == IssueLevel::Warning && issue.message.rfind("Extension node '", 0) == 0)
+            out.push_back(issue.message);
+    }
+    return out;
+}
+
+// Helper: Build model architecture from graph JSON
+static bool BuildModelFromGraph(
+    const std::string& graph_json,
+    SequentialModel& model,
+    std::string& error_message,
+    std::vector<std::string>& warnings
+) {
+    TrainingConfiguration config;
+    if (!CompileModelGraph(graph_json, config, error_message)) return false;
+    warnings = ExtensionWarnings(config);
+    if (HasBranches(config)) {
+        error_message = "the package holds a graph with branches; it loads as a graph model "
+                        "(ModelImporter::ImportExecutableModel), not as a layer stack";
+        return false;
+    }
+    auto built = BuildSequentialFromConfig(config);
+    if (!built.ok() || !built.model) {
+        // The builder's reason names the node (an extension that cannot
+        // create its module, for example "Python is not running yet").
+        error_message = built.error_message.empty() ? "ModelBuilder could not rebuild model from graph"
+                                                    : built.error_message;
+        return false;
+    }
+    model = std::move(*built.model);
+    spdlog::info("Built model with {} layers from graph", model.Size());
+    return true;
+}
+
 ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
     ProbeResult result;
 
     // Check file exists
     if (!std::filesystem::exists(input_path)) {
         result.valid = false;
-        result.error_message = "File not found: " + input_path;
+        result.error_message = errors::FormatError(
+            errors::File::NotFound,
+            "File not found: " + input_path);
         return result;
     }
 
@@ -146,7 +253,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
 
     if (result.format == ModelFormat::Unknown) {
         result.valid = false;
-        result.error_message = "Unknown model format";
+        result.error_message = errors::FormatError(
+            errors::File::UnsupportedFormat,
+            "Unknown model format");
         return result;
     }
 
@@ -167,6 +276,84 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
     // Format-specific probing
     switch (result.format) {
         case ModelFormat::CyxModel: {
+            if (IsCyxwBinaryFormat(input_path) && !formats::CyxModelArchive::IsV3(input_path)) {
+                std::ifstream file(input_path, std::ios::binary);
+                CyxwHeader header;
+                std::string error;
+                if (!file || !ReadCyxwHeader(file, header, error)) {
+                    result.valid = false;
+                    result.error_message = errors::FormatError(
+                        errors::Serialization::ModelLoadFailed,
+                        "Invalid binary .cyxmodel",
+                        error);
+                    break;
+                }
+
+                result.format = ModelFormat::CyxModel;
+                result.file_size = std::filesystem::file_size(input_path);
+                result.format_version =
+                    "CYXW v" + std::to_string(header.version);
+                result.num_layers = static_cast<int>(std::min<size_t>(
+                    header.num_modules,
+                    static_cast<size_t>(std::numeric_limits<int>::max())));
+
+                try {
+                    if (header.metadata.contains("metadata")) {
+                        const auto& metadata = header.metadata["metadata"];
+                        result.model_name = metadata.value("name", "");
+                        result.author = metadata.value("author", "");
+                        result.description = metadata.value("description", "");
+                    }
+
+                    int64_t parameter_count = 0;
+                    if (header.metadata.contains("modules") &&
+                        header.metadata["modules"].is_array()) {
+                        for (const auto& module : header.metadata["modules"]) {
+                            result.layer_names.push_back(
+                                module.value("name", "Unnamed module"));
+                            if (!module.contains("parameters") ||
+                                !module["parameters"].is_array()) {
+                                continue;
+                            }
+                            for (const auto& parameter : module["parameters"]) {
+                                if (!parameter.contains("shape") ||
+                                    !parameter["shape"].is_array()) {
+                                    continue;
+                                }
+                                int64_t tensor_parameters = 1;
+                                for (const auto& dimension : parameter["shape"]) {
+                                    const int64_t value = dimension.get<int64_t>();
+                                    if (value < 0 ||
+                                        (value != 0 && tensor_parameters >
+                                            std::numeric_limits<int64_t>::max() / value)) {
+                                        tensor_parameters = 0;
+                                        break;
+                                    }
+                                    tensor_parameters *= value;
+                                }
+                                if (parameter_count <=
+                                    std::numeric_limits<int64_t>::max() -
+                                        tensor_parameters) {
+                                    parameter_count += tensor_parameters;
+                                }
+                            }
+                        }
+                    }
+                    result.num_parameters = static_cast<int>(std::min<int64_t>(
+                        parameter_count,
+                        std::numeric_limits<int>::max()));
+                } catch (const std::exception& exception) {
+                    result.valid = false;
+                    result.error_message = errors::FormatError(
+                        errors::Serialization::ModelLoadFailed,
+                        "Invalid binary .cyxmodel metadata",
+                        exception.what());
+                    break;
+                }
+                result.valid = true;
+                break;
+            }
+
             formats::CyxModelFormat cyxmodel;
             result = cyxmodel.Probe(input_path);
             break;
@@ -177,7 +364,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
             std::ifstream file(input_path, std::ios::binary);
             if (!file) {
                 result.valid = false;
-                result.error_message = "Failed to open file";
+                result.error_message = errors::FormatError(
+                    errors::File::ReadFailed,
+                    "Failed to open file");
                 return result;
             }
 
@@ -187,7 +376,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
 
             if (header_size > 100 * 1024 * 1024) {  // Sanity check: 100MB max header
                 result.valid = false;
-                result.error_message = "Invalid header size";
+                result.error_message = errors::FormatError(
+                    errors::Serialization::ModelLoadFailed,
+                    "Invalid header size");
                 return result;
             }
 
@@ -234,7 +425,10 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
 
             } catch (const std::exception& e) {
                 result.valid = false;
-                result.error_message = std::string("Failed to parse header: ") + e.what();
+                result.error_message = errors::FormatError(
+                    errors::Serialization::ModelLoadFailed,
+                    "Failed to parse header",
+                    e.what());
             }
             break;
         }
@@ -242,12 +436,16 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
         case ModelFormat::ONNX:
         case ModelFormat::GGUF:
             result.valid = false;
-            result.error_message = "Probing not yet implemented for this format";
+            result.error_message = errors::FormatError(
+                errors::Serialization::ExportFormatUnavailable,
+                "Probing not yet implemented for this format");
             break;
 
         default:
             result.valid = false;
-            result.error_message = "Unknown format";
+            result.error_message = errors::FormatError(
+                errors::File::UnsupportedFormat,
+                "Unknown format");
             break;
     }
 
@@ -315,32 +513,15 @@ ImportResult ModelImporter::ImportCyxModelBinary(
             return result;
         }
 
-        // Read and verify magic
-        uint32_t magic;
-        file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-        if (magic != 0x43595857) {
-            result.error_message = "Invalid magic number";
-            return result;
-        }
-
-        // Read version
-        uint32_t version;
-        file.read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (version != 2) {
-            result.error_message = "Unsupported format version: " + std::to_string(version);
+        CyxwHeader header;
+        std::string header_error;
+        if (!ReadCyxwHeader(file, header, header_error)) {
+            result.error_message = header_error;
             return result;
         }
 
         if (progress_cb) progress_cb(1, 5, "Reading metadata...");
-
-        // Read JSON metadata
-        uint64_t json_len;
-        file.read(reinterpret_cast<char*>(&json_len), sizeof(json_len));
-
-        std::string json_str(json_len, '\0');
-        file.read(json_str.data(), json_len);
-
-        auto meta = nlohmann::json::parse(json_str);
+        const auto& meta = header.metadata;
 
         // Extract model info
         if (meta.contains("metadata")) {
@@ -348,9 +529,7 @@ ImportResult ModelImporter::ImportCyxModelBinary(
         }
         result.format_version = "CYXW v2";
 
-        // Read number of modules
-        size_t num_modules;
-        file.read(reinterpret_cast<char*>(&num_modules), sizeof(num_modules));
+        const size_t num_modules = header.num_modules;
 
         if (progress_cb) progress_cb(2, 5, "Building model from metadata...");
 
@@ -426,7 +605,7 @@ ImportResult ModelImporter::ImportCyxModelBinary(
                 file.read(reinterpret_cast<char*>(&num_bytes), sizeof(num_bytes));
 
                 Tensor tensor(shape, dtype);
-                file.read(reinterpret_cast<char*>(tensor.Data()), num_bytes);
+                file.read(reinterpret_cast<char*>(tensor.MutableData()), num_bytes);
 
                 params[name] = std::move(tensor);
                 result.layer_names.push_back("layer_" + std::to_string(i) + "." + name);
@@ -466,7 +645,7 @@ ImportResult ModelImporter::ImportCyxModel(
     ProgressCallback progress_cb
 ) {
     // Check if this is binary format
-    if (IsCyxwBinaryFormat(input_path)) {
+    if (IsCyxwBinaryFormat(input_path) && !formats::CyxModelArchive::IsV3(input_path)) {
         spdlog::info("Detected binary CYXW format: {}", input_path);
         return ImportCyxModelBinary(input_path, model, options, progress_cb);
     }
@@ -484,6 +663,7 @@ ImportResult ModelImporter::ImportCyxModel(
         TrainingHistory history;
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
         std::map<std::string, std::vector<uint8_t>> optimizer_state;
 
         TrainingHistory* history_ptr = options.load_training_history ? &history : nullptr;
@@ -499,7 +679,8 @@ ImportResult ModelImporter::ImportCyxModel(
             weights,
             weight_shapes,
             opt_state_ptr,
-            options
+            options,
+            &weight_dtypes
         );
 
         if (!success) {
@@ -515,20 +696,33 @@ ImportResult ModelImporter::ImportCyxModel(
         bool model_built = false;
         if (!graph_json.empty()) {
             std::string build_error;
-            if (!BuildModelFromGraph(graph_json, model, build_error)) {
-                // If graph build fails, log warning but continue
-                // (for backward compatibility with models without graphs)
-                spdlog::warn("Could not build model from graph: {}", build_error);
-                result.warnings.push_back("Could not build model from graph: " + build_error);
+            std::vector<std::string> extension_warnings;
+            if (!BuildModelFromGraph(graph_json, model, build_error, extension_warnings)) {
+                // A saved architecture is authoritative. Shape guessing can replace
+                // a transformer with unrelated Dense layers and obscure the cause.
+                result.success = false;
+                result.error_message = "Could not build model from graph: " + build_error;
+                last_error_ = result.error_message;
+                spdlog::error("{}", result.error_message);
+                return result;
             } else {
                 model_built = true;
+                result.warnings.insert(result.warnings.end(), extension_warnings.begin(),
+                                       extension_warnings.end());
             }
         } else {
             spdlog::warn("No graph.cyxgraph found - model architecture cannot be rebuilt");
             result.warnings.push_back("No graph data - model architecture not available");
         }
 
-        // Fallback: build model from weight shapes if graph compilation failed
+        if (!model_built && formats::CyxModelArchive::IsV3(input_path)) {
+            result.success=false;
+            result.error_message="CYXW v3 model import requires a saved graph; weights-only packages cannot reconstruct architecture";
+            last_error_=result.error_message;
+            return result;
+        }
+
+        // Legacy packages without graphs retain their documented compatibility path.
         if (!model_built && !weight_shapes.empty()) {
             spdlog::info("Building model from weight shapes (graph unavailable)");
 
@@ -638,7 +832,7 @@ ImportResult ModelImporter::ImportCyxModel(
         if (progress_cb) progress_cb(3, 5, "Loading weights...");
 
         // Populate model with weights
-        if (!PopulateModelWeights(model, weights, weight_shapes, options, result.warnings)) {
+        if (!PopulateModelWeights(model, weights, weight_shapes, options, result.warnings, &weight_dtypes)) {
             result.success = false;
             result.error_message = last_error_;
             return result;
@@ -649,7 +843,17 @@ ImportResult ModelImporter::ImportCyxModel(
         // Populate result
         result.success = true;
         result.model_name = manifest.model_name;
+        result.model_family = manifest.model_family;
         result.format_version = manifest.version;
+        result.supports_bert_encoder = manifest.supports_bert_encoder;
+        result.bert_encoder_task = manifest.bert_encoder_task;
+        result.bert_encoder_input_kind = manifest.bert_encoder_input_kind;
+        result.bert_encoder_output_contract =
+            manifest.bert_encoder_output_contract;
+        result.bert_encoder_has_attention_mask =
+            manifest.bert_encoder_has_attention_mask;
+        result.bert_encoder_requires_token_type_ids =
+            manifest.bert_encoder_requires_token_type_ids;
         result.num_parameters = manifest.num_parameters;
         result.num_layers = static_cast<int>(model.Size());  // Use actual model size
 
@@ -670,6 +874,78 @@ ImportResult ModelImporter::ImportCyxModel(
         spdlog::error("Model import failed: {}", e.what());
     }
 
+    return result;
+}
+
+ImportResult ModelImporter::ImportExecutableModel(
+    const std::string& input_path,
+    std::shared_ptr<IExecutableModel>& model,
+    const ImportOptions& options,
+    ProgressCallback progress_cb
+) {
+    ImportResult result;
+    model.reset();
+    const auto fail = [&](const std::string& message) {
+        result.success = false;
+        result.error_message = message;
+        last_error_ = message;
+        spdlog::error("{}", message);
+        return result;
+    };
+    if (progress_cb) progress_cb(0, 4, "Reading .cyxmodel file...");
+    try {
+        if (!formats::CyxModelArchive::IsV3(input_path))
+            return fail("a model with its graph is read from a CyxWiz package (CYXW v3); '" + input_path +
+                        "' is not one");
+        formats::CyxModelFormat cyxmodel;
+        ModelManifest manifest;
+        std::string graph_json;
+        TrainingConfig trained;
+        std::map<std::string, std::vector<uint8_t>> weights;
+        std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
+        if (!cyxmodel.Extract(input_path, manifest, graph_json, trained, nullptr, weights, weight_shapes, nullptr,
+                              options, &weight_dtypes))
+            return fail(cyxmodel.GetLastError());
+        if (graph_json.empty()) return fail("the package has no graph to rebuild the model from");
+
+        if (progress_cb) progress_cb(1, 4, "Building model from its graph...");
+        TrainingConfiguration config;
+        std::string build_error;
+        if (!CompileModelGraph(graph_json, config, build_error))
+            return fail("Could not build model from graph: " + build_error);
+        for (auto& warning : ExtensionWarnings(config)) result.warnings.push_back(std::move(warning));
+        auto built = BuildExecutableFromConfig(config);
+        if (!built.ok() || !built.model)
+            return fail("Could not build model from graph: " + built.error_message);
+
+        if (progress_cb) progress_cb(2, 4, "Loading weights...");
+        if (options.strict_mode) {
+            std::string validation_error;
+            if (!ValidateModelArchitecture(*built.model, weight_shapes, validation_error)) return fail(validation_error);
+        }
+        if (!PopulateModelWeights(*built.model, weights, weight_shapes, options, result.warnings, &weight_dtypes)) {
+            result.success = false;
+            result.error_message = last_error_;
+            return result;
+        }
+
+        result.success = true;
+        result.model_name = manifest.model_name;
+        result.model_family = manifest.model_family;
+        result.format_version = manifest.version;
+        result.num_parameters = manifest.num_parameters;
+        result.num_layers = static_cast<int>(built.model->LayerCount());
+        for (const auto& [name, _] : weights) result.layer_names.push_back(name);
+        model = std::shared_ptr<IExecutableModel>(std::move(built.model));
+        if (progress_cb) progress_cb(4, 4, "Import complete!");
+        spdlog::info("Imported {} from {} ({} parameters, {} layers)",
+                     HasBranches(config) ? "a graph model" : "a layer stack", input_path, result.num_parameters,
+                     result.num_layers);
+    } catch (const std::exception& e) {
+        model.reset();
+        return fail(std::string("Import failed: ") + e.what());
+    }
     return result;
 }
 
@@ -729,6 +1005,7 @@ ImportResult ModelImporter::ImportSafetensors(
         // Parse tensor metadata
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
 
         // Calculate data start position
         size_t data_start = 8 + header_size;
@@ -999,20 +1276,26 @@ Tensor ModelImporter::BytesToTensor(
     return Tensor(tensor_shape, data.data(), data_type);
 }
 
+template <typename Model>
 bool ModelImporter::PopulateModelWeights(
-    SequentialModel& model,
+    Model& model,
     const std::map<std::string, std::vector<uint8_t>>& weights,
     const std::map<std::string, std::vector<int64_t>>& shapes,
     const ImportOptions& options,
-    std::vector<std::string>& warnings
+    std::vector<std::string>& warnings,
+    const std::map<std::string, TensorDType>* dtypes
 ) {
     // Get current model parameters
     auto model_params = model.GetParameters();
 
     // Build weight tensors
     std::map<std::string, Tensor> new_params;
+    size_t legacy_skipped = 0;
 
     for (const auto& [name, data] : weights) {
+        if (IsTrainingOnlyParameter(name)) {
+            continue;
+        }
         auto shape_it = shapes.find(name);
         if (shape_it == shapes.end()) {
             last_error_ = "Missing shape for weight: " + name;
@@ -1021,6 +1304,10 @@ bool ModelImporter::PopulateModelWeights(
 
         // Check if model has this parameter
         auto model_param_it = model_params.find(name);
+        if (model_param_it == model_params.end() && IsLegacyDecoderCrossAttentionParameter(name)) {
+            ++legacy_skipped;
+            continue;
+        }
         if (model_param_it == model_params.end()) {
             if (options.strict_mode) {
                 last_error_ = "Model does not have parameter: " + name;
@@ -1068,8 +1355,13 @@ bool ModelImporter::PopulateModelWeights(
         }
 
         // Create tensor (assume float32 for now)
-        Tensor tensor = BytesToTensor(data, loaded_shape, TensorDType::Float32);
+        Tensor tensor = BytesToTensor(data, loaded_shape, dtypes ? dtypes->at(name) : TensorDType::Float32);
         new_params[name] = std::move(tensor);
+    }
+
+    if (legacy_skipped > 0) {
+        warnings.push_back("Skipped " + std::to_string(legacy_skipped) +
+                           " unused decoder cross-attention weights saved by an older version");
     }
 
     // Apply weights to model
@@ -1078,8 +1370,9 @@ bool ModelImporter::PopulateModelWeights(
     return true;
 }
 
+template <typename Model>
 bool ModelImporter::ValidateModelArchitecture(
-    SequentialModel& model,
+    Model& model,
     const std::map<std::string, std::vector<int64_t>>& weight_shapes,
     std::string& error_message
 ) {
@@ -1087,7 +1380,11 @@ bool ModelImporter::ValidateModelArchitecture(
 
     // Check all weights have corresponding model parameters
     for (const auto& [name, shape] : weight_shapes) {
-        if (model_params.find(name) == model_params.end()) {
+        if (IsTrainingOnlyParameter(name)) {
+            continue;
+        }
+        if (model_params.find(name) == model_params.end() &&
+            !IsLegacyDecoderCrossAttentionParameter(name)) {
             error_message = "Model missing parameter: " + name;
             return false;
         }
@@ -1095,6 +1392,9 @@ bool ModelImporter::ValidateModelArchitecture(
 
     // Check all model parameters have corresponding weights
     for (const auto& [name, tensor] : model_params) {
+        if (IsTrainingOnlyParameter(name)) {
+            continue;
+        }
         if (weight_shapes.find(name) == weight_shapes.end()) {
             error_message = "Weights missing parameter: " + name;
             return false;

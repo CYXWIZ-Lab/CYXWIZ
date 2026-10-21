@@ -1,10 +1,31 @@
 #include "test_manager.h"
 #include <spdlog/spdlog.h>
-#include <fstream>
-#include <iomanip>
-#include <nlohmann/json.hpp>
+#include <exception>
 
 namespace cyxwiz {
+
+namespace {
+
+std::string TestingTaskMetricSummary(const TestingMetrics& metrics) {
+    if (metrics.regression_mode) {
+        return " - MAE: " + std::to_string(metrics.test_mae) +
+               " - RMSE: " + std::to_string(metrics.test_rmse);
+    }
+    return " - Acc: " +
+           std::to_string(static_cast<int>(metrics.test_accuracy * 100)) +
+           "%";
+}
+
+void FinishTestingTrackingTask(LambdaTask& task) {
+    const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
+    if (!final_metrics.is_complete &&
+        final_metrics.status_message.rfind("Testing failed", 0) == 0) {
+        throw std::runtime_error(final_metrics.status_message);
+    }
+    task.MarkCompleted();
+}
+
+} // namespace
 
 TestManager& TestManager::Instance() {
     static TestManager instance;
@@ -13,9 +34,12 @@ TestManager& TestManager::Instance() {
 
 TestManager::~TestManager() {
     StopTesting();
-    if (testing_thread_ && testing_thread_->joinable()) {
-        testing_thread_->join();
-    }
+    WaitForTestingStop();
+}
+
+void TestManager::WaitForTestingStop() {
+    // The worker may need mutex_ to finish. This wait is for owned shutdown only.
+    if (testing_thread_ && testing_thread_->joinable()) testing_thread_->join();
 }
 
 TestingMetrics TestManager::GetCurrentMetrics() const {
@@ -25,10 +49,11 @@ TestingMetrics TestManager::GetCurrentMetrics() const {
 
 bool TestManager::StartTesting(
     TrainingConfiguration config,
-    DatasetHandle dataset,
+    ExternalTestSource source,
     int batch_size,
-    std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    std::shared_ptr<IExecutableModel> model,
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     // Check if already testing
     if (is_testing_.load()) {
@@ -36,7 +61,7 @@ bool TestManager::StartTesting(
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     // Double-check after acquiring lock
     if (is_testing_.load()) {
@@ -44,11 +69,11 @@ bool TestManager::StartTesting(
     }
 
     // Create executor
-    auto executor = std::make_unique<TestExecutor>(std::move(config), dataset);
+    auto executor = std::make_unique<TestExecutor>(std::move(config), std::move(source));
 
     // Set model if provided
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     // Set state
@@ -72,16 +97,17 @@ bool TestManager::StartTesting(
                 task.ReportProgress(progress,
                     "Batch " + std::to_string(metrics.current_batch) + "/" +
                     std::to_string(metrics.total_batches) +
-                    " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
+                    TestingTaskMetricSummary(metrics));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            task.MarkCompleted();
+            FinishTestingTrackingTask(task);
         },
         nullptr,  // progress callback
         nullptr   // completion callback
     ));
 
     // Notify start callback
+    lock.unlock();
     if (on_testing_start_) {
         on_testing_start_("Testing Model");
     }
@@ -101,6 +127,161 @@ bool TestManager::StartTesting(
     return true;
 }
 
+bool TestManager::StartTestingArrow(
+    TrainingConfiguration config,
+    std::shared_ptr<ArrowDataset> dataset,
+    std::string label_column,
+    TestDatasetScope dataset_scope,
+    int batch_size,
+    std::shared_ptr<IExecutableModel> model,
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
+{
+    // Check if already testing
+    if (is_testing_.load()) {
+        spdlog::warn("TestManager: Cannot start testing - already testing");
+        return false;
+    }
+
+    std::unique_lock<std::mutex> lock(mutex_);
+
+    // Double-check after acquiring lock
+    if (is_testing_.load()) {
+        return false;
+    }
+
+    // Create executor
+    auto executor = std::make_unique<TestExecutor>(
+        std::move(config), std::move(dataset), std::move(label_column),
+        dataset_scope);
+
+    // Set model if provided
+    if (model) {
+        executor->SetModel(model, model_device);
+    }
+
+    // Set state
+    is_testing_.store(true);
+    stop_requested_.store(false);
+
+    // Create async task for visibility in Tasks panel
+    std::string task_name = "Testing Model";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            // This task just tracks the testing - actual work is in testing thread
+            while (!task.ShouldStop()) {
+                auto& mgr = TestManager::Instance();
+                if (!mgr.IsTestingActive()) {
+                    break;
+                }
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = metrics.total_batches > 0 ?
+                    static_cast<float>(metrics.current_batch) / metrics.total_batches : 0.0f;
+                task.ReportProgress(progress,
+                    "Batch " + std::to_string(metrics.current_batch) + "/" +
+                    std::to_string(metrics.total_batches) +
+                    TestingTaskMetricSummary(metrics));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            FinishTestingTrackingTask(task);
+        },
+        nullptr,  // progress callback
+        nullptr   // completion callback
+    ));
+
+    // Notify start callback
+    lock.unlock();
+    if (on_testing_start_) {
+        on_testing_start_("Testing Model");
+    }
+
+    // Wait for previous thread if any
+    if (testing_thread_ && testing_thread_->joinable()) {
+        testing_thread_->join();
+    }
+
+    // Start testing thread
+    testing_thread_ = std::make_unique<std::thread>(
+        &TestManager::TestingThreadFunc, this,
+        std::move(executor), batch_size, on_complete
+    );
+
+    spdlog::info("TestManager: Started Arrow testing (batch_size={})", batch_size);
+    return true;
+}
+
+bool TestManager::StartTestingParquet(
+    TrainingConfiguration config,
+    std::shared_ptr<ParquetBackedDataset> dataset,
+    std::string label_column,
+    TestDatasetScope dataset_scope,
+    int batch_size,
+    std::shared_ptr<IExecutableModel> model,
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
+{
+    if (is_testing_.load()) {
+        spdlog::warn("TestManager: Cannot start Parquet testing - already testing");
+        return false;
+    }
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (is_testing_.load()) {
+        return false;
+    }
+
+    auto executor = std::make_unique<TestExecutor>(
+        std::move(config), std::move(dataset), std::move(label_column),
+        dataset_scope);
+    if (model) {
+        executor->SetModel(model, model_device);
+    }
+
+    is_testing_.store(true);
+    stop_requested_.store(false);
+
+    std::string task_name = "Testing Model";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TestManager::Instance();
+                if (!mgr.IsTestingActive()) {
+                    break;
+                }
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = metrics.total_batches > 0 ?
+                    static_cast<float>(metrics.current_batch) / metrics.total_batches : 0.0f;
+                task.ReportProgress(progress,
+                    "Batch " + std::to_string(metrics.current_batch) + "/" +
+                    std::to_string(metrics.total_batches) +
+                    TestingTaskMetricSummary(metrics));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            FinishTestingTrackingTask(task);
+        },
+        nullptr,
+        nullptr
+    ));
+
+    lock.unlock();
+    if (on_testing_start_) {
+        on_testing_start_("Testing Model");
+    }
+
+    if (testing_thread_ && testing_thread_->joinable()) {
+        testing_thread_->join();
+    }
+
+    testing_thread_ = std::make_unique<std::thread>(
+        &TestManager::TestingThreadFunc, this,
+        std::move(executor), batch_size, on_complete
+    );
+
+    spdlog::info("TestManager: Started Parquet testing (batch_size={})", batch_size);
+    return true;
+}
 void TestManager::StopTesting() {
     if (!is_testing_.load()) {
         return;
@@ -131,9 +312,11 @@ void TestManager::TestingThreadFunc(
 {
     spdlog::info("TestManager: Testing thread started");
 
-    // Store executor reference
+    // Store executor reference; apply and clear the one-shot quick-test limit
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        executor->SetBatchLimit(next_run_batch_limit_);
+        next_run_batch_limit_ = 0;
         current_executor_ = std::move(executor);
     }
 
@@ -172,171 +355,77 @@ void TestManager::TestingThreadFunc(
                 }
             };
 
-            exec->Test(
-                batch_size,
-                batch_callback,
-                [this, &final_metrics](const TestingMetrics& metrics) {
-                    final_metrics = metrics;
-                }
-            );
+            try {
+                exec->Test(
+                    batch_size,
+                    batch_callback,
+                    [&final_metrics](const TestingMetrics& metrics) {
+                        final_metrics = metrics;
+                    }
+                );
+            } catch (const std::exception& ex) {
+                spdlog::error("TestManager: Testing failed: {}", ex.what());
+                final_metrics = exec->GetMetrics();
+                final_metrics.is_testing = false;
+                final_metrics.is_complete = false;
+                final_metrics.status_message =
+                    std::string("Testing failed: ") + ex.what();
+            } catch (...) {
+                spdlog::error("TestManager: Testing failed with unknown error");
+                final_metrics = exec->GetMetrics();
+                final_metrics.is_testing = false;
+                final_metrics.is_complete = false;
+                final_metrics.status_message =
+                    "Testing failed with unknown error";
+            }
         }
     }
 
     // Get final metrics
     {
         std::lock_guard<std::mutex> lock(metrics_mutex_);
-        if (final_metrics.is_complete) {
-            cached_metrics_ = final_metrics;
-        }
+        cached_metrics_ = final_metrics;
         cached_metrics_.is_testing = false;
-        cached_metrics_.is_complete = !stop_requested_.load();
+        cached_metrics_.is_complete =
+            final_metrics.is_complete && !stop_requested_.load();
     }
 
-    // Store last results
-    bool success = !stop_requested_.load() && final_metrics.is_complete;
-    if (success) {
-        last_results_ = final_metrics;
-        has_results_ = true;
-    }
-
-    // Cleanup
-    is_testing_.store(false);
-    current_task_id_.store(0);
-
-    // Notify end callback
-    if (on_testing_end_) {
-        on_testing_end_(success, final_metrics);
-    }
-
-    // Notify completion callback
-    if (on_complete && success) {
-        on_complete(final_metrics);
-    }
-
-    // Clear current executor
+    const bool success = !stop_requested_.load() && final_metrics.is_complete;
+    TestingEndCallback end_callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        end_callback = on_testing_end_;
         current_executor_.reset();
     }
 
     if (success) {
-        spdlog::info("TestManager: Testing completed! Accuracy: {:.2f}%",
-                     final_metrics.test_accuracy * 100);
-    } else {
-        spdlog::info("TestManager: Testing stopped");
-    }
-}
-
-bool TestManager::ExportResultsToCSV(const std::string& filepath) {
-    if (!has_results_) {
-        spdlog::warn("TestManager: No results to export");
-        return false;
-    }
-
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        spdlog::error("TestManager: Failed to open file for export: {}", filepath);
-        return false;
-    }
-
-    // Write overview
-    file << "Test Results Summary\n";
-    file << "Metric,Value\n";
-    file << "Accuracy," << std::fixed << std::setprecision(4) << last_results_.test_accuracy << "\n";
-    file << "Loss," << last_results_.test_loss << "\n";
-    file << "Total Samples," << last_results_.total_samples << "\n";
-    file << "Macro Precision," << last_results_.macro_precision << "\n";
-    file << "Macro Recall," << last_results_.macro_recall << "\n";
-    file << "Macro F1," << last_results_.macro_f1 << "\n";
-    file << "Weighted F1," << last_results_.weighted_f1 << "\n";
-    file << "Time (seconds)," << last_results_.total_time_seconds << "\n";
-    file << "Samples/sec," << last_results_.samples_per_second << "\n";
-
-    file << "\nPer-Class Metrics\n";
-    file << "Class,Precision,Recall,F1,Support\n";
-    for (const auto& cm : last_results_.per_class_metrics) {
-        file << cm.class_name << ","
-             << cm.precision << ","
-             << cm.recall << ","
-             << cm.f1_score << ","
-             << cm.support << "\n";
-    }
-
-    file << "\nConfusion Matrix\n";
-    const auto& conf = last_results_.confusion_matrix;
-    file << ",";
-    for (int j = 0; j < conf.num_classes; ++j) {
-        file << "Pred_" << j;
-        if (j < conf.num_classes - 1) file << ",";
-    }
-    file << "\n";
-    for (int i = 0; i < conf.num_classes; ++i) {
-        file << "Actual_" << i << ",";
-        for (int j = 0; j < conf.num_classes; ++j) {
-            file << conf.matrix[i][j];
-            if (j < conf.num_classes - 1) file << ",";
+        if (final_metrics.regression_mode) {
+            spdlog::info(
+                "TestManager: Regression testing completed! "
+                "MAE: {:.4f}, RMSE: {:.4f}",
+                final_metrics.test_mae, final_metrics.test_rmse);
+        } else {
+            spdlog::info("TestManager: Testing completed! Accuracy: {:.2f}%",
+                         final_metrics.test_accuracy * 100);
         }
-        file << "\n";
+    } else {
+        spdlog::error(
+            "TestManager: {}",
+            final_metrics.status_message.empty()
+                ? "Testing stopped"
+                : final_metrics.status_message);
     }
+    current_task_id_.store(0);
+    // No worker cleanup may acquire mutex_ after publishing inactive.
+    is_testing_.store(false);
+    AsyncTaskManager::Instance().PostToMainThread(
+        [this, success, final_metrics = std::move(final_metrics),
+         end_callback = std::move(end_callback), on_complete = std::move(on_complete)] {
+            if (success) { last_results_ = final_metrics; has_results_ = true; }
+            if (end_callback) end_callback(success, final_metrics);
+            if (on_complete && success) on_complete(final_metrics);
+        });
 
-    file.close();
-    spdlog::info("TestManager: Exported results to CSV: {}", filepath);
-    return true;
-}
-
-bool TestManager::ExportResultsToJSON(const std::string& filepath) {
-    if (!has_results_) {
-        spdlog::warn("TestManager: No results to export");
-        return false;
-    }
-
-    nlohmann::json j;
-
-    // Overview
-    j["accuracy"] = last_results_.test_accuracy;
-    j["loss"] = last_results_.test_loss;
-    j["total_samples"] = last_results_.total_samples;
-    j["macro_precision"] = last_results_.macro_precision;
-    j["macro_recall"] = last_results_.macro_recall;
-    j["macro_f1"] = last_results_.macro_f1;
-    j["weighted_f1"] = last_results_.weighted_f1;
-    j["time_seconds"] = last_results_.total_time_seconds;
-    j["samples_per_second"] = last_results_.samples_per_second;
-
-    // Per-class metrics
-    nlohmann::json per_class = nlohmann::json::array();
-    for (const auto& cm : last_results_.per_class_metrics) {
-        nlohmann::json c;
-        c["class_id"] = cm.class_id;
-        c["class_name"] = cm.class_name;
-        c["precision"] = cm.precision;
-        c["recall"] = cm.recall;
-        c["f1_score"] = cm.f1_score;
-        c["support"] = cm.support;
-        c["true_positives"] = cm.true_positives;
-        c["false_positives"] = cm.false_positives;
-        c["false_negatives"] = cm.false_negatives;
-        per_class.push_back(c);
-    }
-    j["per_class_metrics"] = per_class;
-
-    // Confusion matrix
-    nlohmann::json conf = nlohmann::json::array();
-    for (const auto& row : last_results_.confusion_matrix.matrix) {
-        conf.push_back(row);
-    }
-    j["confusion_matrix"] = conf;
-
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        spdlog::error("TestManager: Failed to open file for export: {}", filepath);
-        return false;
-    }
-
-    file << j.dump(2);
-    file.close();
-    spdlog::info("TestManager: Exported results to JSON: {}", filepath);
-    return true;
 }
 
 } // namespace cyxwiz

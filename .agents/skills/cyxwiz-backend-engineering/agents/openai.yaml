@@ -1,0 +1,4 @@
+interface:
+  display_name: "CyxWiz Backend Engineering"
+  short_description: "Build fast, truthful ArrayFire-first backend code"
+  default_prompt: "Use $cyxwiz-backend-engineering to implement and validate this CyxWiz backend computation change."

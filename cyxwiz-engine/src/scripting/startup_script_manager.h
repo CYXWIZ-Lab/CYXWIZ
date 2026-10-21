@@ -5,14 +5,8 @@
 #include <memory>
 
 namespace scripting {
+class IScriptOutputSink;
 class ScriptingEngine;
-}
-
-namespace cyxwiz {
-class CommandWindowPanel;
-}
-
-namespace scripting {
 
 /**
  * StartupScriptManager - Manages and executes startup scripts
@@ -30,8 +24,10 @@ public:
     bool SaveConfig(const std::string& config_file = "startup_scripts.txt");
 
     // Script execution
-    bool ExecuteAll(cyxwiz::CommandWindowPanel* output_window = nullptr);
-    bool ExecuteScript(const std::string& filepath, cyxwiz::CommandWindowPanel* output_window = nullptr);
+    bool ExecuteAll(IScriptOutputSink* output_sink = nullptr);
+    bool ExecuteScript(
+        const std::string& filepath,
+        IScriptOutputSink* output_sink = nullptr);
 
     // Script list management
     void AddScript(const std::string& filepath);

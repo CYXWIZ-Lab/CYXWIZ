@@ -43,7 +43,7 @@ PyCyxWiz is built as a pybind11 module named `pycyxwiz`.
 
 Typical build flags:
 - `CYXWIZ_BUILD_PYTHON=ON`
-- Make sure Python 3.8+ and pybind11 are available.
+- Use Python 3.12 or 3.13 with pybind11, matching the root CMake contract.
 
 After building, the module is placed under:
 - `build/<preset>/python/pycyxwiz.*`
@@ -801,7 +801,7 @@ Notes:
 - If the bundled Python is missing, the engine falls back to system Python.
 - If Python is already initialized by another component, the engine will reuse that interpreter and ignore config.
 
-Quick check from the Engine Command Window:
+Quick check from the Engine Console Python REPL:
 ```python
 import sys
 print(sys.executable)
@@ -1299,7 +1299,7 @@ Environment variables commonly used:
 ## 13. Troubleshooting and Known Issues
 
 ### 13.1 Interpreter Mismatch (Config Says 3.12, Runtime Is 3.14)
-**Symptom:** Engine log says bundled Python 3.12, but in the Command Window `sys.base_prefix`
+**Symptom:** Engine log says bundled Python 3.12, but in the Console Python REPL `sys.base_prefix`
 and `sys.prefix` show Python 3.14.
 
 **Root cause:** Another module initialized Python before `PythonEngine::Initialize()`.  

@@ -18,11 +18,10 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cmath>
 
 // Include ArrayFire header for tests
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 using namespace cyxwiz;
 
@@ -167,11 +166,6 @@ bool Test_DataRegistry_Arrow() {
 bool Test_ArrowToTensor() {
     spdlog::info("\n=== Test 4: Arrow to Tensor Conversion ===");
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::warn("ArrayFire not available - skipping tensor conversion test");
-    return true;
-#endif
-
     std::string csv_path = "test_tensor.csv";
     CreateTestCSV(csv_path);
 
@@ -210,11 +204,6 @@ bool Test_ArrowToTensor() {
 bool Test_TensorToArrow() {
     spdlog::info("\n=== Test 5: Tensor to Arrow Conversion ===");
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::warn("ArrayFire not available - skipping");
-    return true;
-#endif
-
     // Create a simple tensor
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
     ::af::array tensor(3, 2, data.data());  // 3 rows, 2 cols
@@ -232,10 +221,65 @@ bool Test_TensorToArrow() {
 }
 
 /**
- * Test 6: DuckDB SQL Queries
+ * Test 6: Categorical encoding preserves values and nulls
+ */
+bool Test_CategoricalEncoding() {
+    spdlog::info("\n=== Test 6: Categorical Encoding ===");
+
+    arrow::StringBuilder source_builder;
+    TEST_ASSERT(source_builder.Append("red").ok(), "Append first category");
+    TEST_ASSERT(source_builder.AppendNull().ok(), "Append null category");
+    TEST_ASSERT(source_builder.Append("blue").ok(), "Append second category");
+    TEST_ASSERT(source_builder.Append("red").ok(), "Append repeated category");
+
+    std::shared_ptr<arrow::Array> source_array;
+    TEST_ASSERT(source_builder.Finish(&source_array).ok(),
+                "Finish categorical source array");
+
+    auto source_table = arrow::Table::Make(
+        arrow::schema({arrow::field("color", arrow::utf8())}),
+        {source_array});
+
+    std::vector<std::string> vocabulary;
+    auto encoded = arrow_converters::EncodeCategorical(
+        source_table, "color", vocabulary);
+    TEST_ASSERT(encoded != nullptr, "Encode categorical column");
+    TEST_ASSERT(vocabulary == std::vector<std::string>({"red", "blue"}),
+                "Vocabulary preserves first-seen order");
+
+    auto encoded_values = std::static_pointer_cast<arrow::Int32Array>(
+        encoded->GetColumnByName("color_encoded")->chunk(0));
+    TEST_ASSERT(encoded_values->Value(0) == 0, "Encode first category as zero");
+    TEST_ASSERT(encoded_values->IsNull(1), "Preserve null encoded value");
+    TEST_ASSERT(encoded_values->Value(2) == 1, "Encode second category as one");
+    TEST_ASSERT(encoded_values->Value(3) == 0, "Reuse existing category code");
+
+    auto one_hot = arrow_converters::OneHotEncode(source_table, "color");
+    TEST_ASSERT(one_hot != nullptr, "One-hot encode categorical column");
+    TEST_ASSERT(one_hot->GetColumnByName("color_red") != nullptr,
+                "Create first one-hot column");
+    TEST_ASSERT(one_hot->GetColumnByName("color_blue") != nullptr,
+                "Create second one-hot column");
+
+    auto red_values = std::static_pointer_cast<arrow::BooleanArray>(
+        one_hot->GetColumnByName("color_red")->chunk(0));
+    auto blue_values = std::static_pointer_cast<arrow::BooleanArray>(
+        one_hot->GetColumnByName("color_blue")->chunk(0));
+    TEST_ASSERT(red_values->Value(0) && !blue_values->Value(0),
+                "Set first one-hot category");
+    TEST_ASSERT(red_values->IsNull(1) && blue_values->IsNull(1),
+                "Preserve nulls in one-hot columns");
+    TEST_ASSERT(!red_values->Value(2) && blue_values->Value(2),
+                "Set second one-hot category");
+
+    return true;
+}
+
+/**
+ * Test 7: DuckDB SQL Queries
  */
 bool Test_DuckDB_Queries() {
-    spdlog::info("\n=== Test 6: DuckDB SQL Queries ===");
+    spdlog::info("\n=== Test 7: DuckDB SQL Queries ===");
 
     std::string csv_path = "test_duckdb.csv";
     CreateTestCSV(csv_path);
@@ -265,14 +309,79 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(sorted != nullptr, "ORDER BY query");
     TEST_ASSERT(sorted->num_rows() == 3, "Top 3 salaries");
 
-    // Test 4: Convenience methods
-    auto filtered = db.FilterRows("employees", "department = 'Engineering'");
-    TEST_ASSERT(filtered != nullptr, "FilterRows convenience method");
-    TEST_ASSERT(filtered->num_rows() == 3, "Engineering department has 3 employees");
+    // Test 4: Filter and project
+    auto filtered = db.Query("SELECT name, age FROM employees WHERE department = 'Engineering'");
+    TEST_ASSERT(filtered != nullptr, "Filter and project");
+    TEST_ASSERT(filtered->num_rows() == 3 && filtered->num_columns() == 2, "Engineering: 3 employees, 2 columns");
 
-    auto selected = db.SelectColumns("employees", {"name", "age"});
-    TEST_ASSERT(selected != nullptr, "SelectColumns convenience method");
-    TEST_ASSERT(selected->num_columns() == 2, "2 columns selected");
+    // Every connection is restricted: SQL cannot read files (the CSV is on disk right here).
+    TEST_ASSERT(db.Query("SELECT * FROM read_csv('" + csv_path + "')") == nullptr, "no file access from SQL");
+    TEST_ASSERT(!db.Execute("SET enable_external_access = true"), "the configuration is locked");
+
+    // DECIMAL results (DuckDB's type for 0.1) are numbers, not text.
+    auto decimals = db.Query("SELECT 0.1 AS tenth, 1234567.5 AS big, CAST(NULL AS DECIMAL(4,1)) AS none");
+    TEST_ASSERT(decimals != nullptr, "DECIMAL query");
+    TEST_ASSERT(decimals->schema()->field(0)->type()->id() == arrow::Type::DOUBLE &&
+                    decimals->schema()->field(1)->type()->id() == arrow::Type::DOUBLE,
+                "DECIMAL columns are double");
+    auto tenth = decimals->column(0)->GetScalar(0);
+    TEST_ASSERT(tenth.ok() && std::static_pointer_cast<arrow::DoubleScalar>(*tenth)->value == 0.1, "0.1 stays 0.1");
+    TEST_ASSERT(decimals->column(2)->null_count() == 1, "a NULL decimal stays null");
+
+    // The result type table: the per-value path (TINYINT, UINTEGER, DATE) and
+    // the native export give the same Arrow types; the SQL step's exactness
+    // check reads the same table.
+    auto typed = db.Query("SELECT CAST(1 AS TINYINT) AS t, CAST(2 AS UINTEGER) AS u, DATE '2024-01-02' AS d");
+    TEST_ASSERT(typed != nullptr, "typed query");
+    TEST_ASSERT(typed->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
+                    typed->schema()->field(1)->type()->id() == arrow::Type::UINT32 &&
+                    typed->schema()->field(2)->type()->id() == arrow::Type::DATE32,
+                "TINYINT int32, UINTEGER uint32, DATE date32");
+    auto day = typed->column(2)->GetScalar(0);
+    TEST_ASSERT(day.ok() && (*day)->ToString() == "2024-01-02", "the date itself");
+    // Natively exported dates and timestamps; a decimal beside them takes the per-value path.
+    auto when = db.Query("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts");
+    TEST_ASSERT(when != nullptr && when->schema()->field(0)->type()->id() == arrow::Type::DATE32 &&
+                    when->schema()->field(1)->type()->id() == arrow::Type::TIMESTAMP,
+                "native export: DATE date32, TIMESTAMP timestamp");
+    auto when_slow = db.Query("SELECT TIMESTAMP '2024-01-02 03:04:05' AS ts, 0.5 AS w");
+    TEST_ASSERT(when_slow != nullptr && when->column(1)->GetScalar(0).ValueOrDie()->Equals(
+                                            *when_slow->column(0)->GetScalar(0).ValueOrDie()),
+                "a timestamp is the same on both paths");
+    // Dates, timestamps and decimals going in stay dates, timestamps and numbers.
+    {
+        arrow::Date32Builder db32;
+        arrow::TimestampBuilder tsb(arrow::timestamp(arrow::TimeUnit::MILLI), arrow::default_memory_pool());
+        arrow::Decimal128Builder decb(arrow::decimal128(10, 2));
+        TEST_ASSERT(db32.Append(19724).ok() && tsb.Append(1704164645000).ok() && decb.Append(arrow::Decimal128(1234)).ok(),
+                    "typed input builders");
+        std::shared_ptr<arrow::Array> d_arr, t_arr, m_arr;
+        TEST_ASSERT(db32.Finish(&d_arr).ok() && tsb.Finish(&t_arr).ok() && decb.Finish(&m_arr).ok(), "typed input arrays");
+        auto typed_in = arrow::Table::Make(arrow::schema({arrow::field("d", arrow::date32()),
+                                                          arrow::field("t", arrow::timestamp(arrow::TimeUnit::MILLI)),
+                                                          arrow::field("m", arrow::decimal128(10, 2))}),
+                                           {d_arr, t_arr, m_arr});
+        TEST_ASSERT(db.RegisterTable("typed_in", typed_in), "register dates, timestamps, decimals");
+        auto back = db.Query("SELECT d + 1 AS next_day, year(t) AS y, m * 2 AS doubled FROM typed_in");
+        TEST_ASSERT(back != nullptr, "SQL on typed input");
+        TEST_ASSERT(back->column(0)->GetScalar(0).ValueOrDie()->ToString() == "2024-01-03", "date arithmetic");
+        TEST_ASSERT(back->column(1)->GetScalar(0).ValueOrDie()->ToString() == "2024", "timestamp functions");
+        TEST_ASSERT(std::abs(std::static_pointer_cast<arrow::DoubleScalar>(back->column(2)->GetScalar(0).ValueOrDie())->value - 24.68) < 1e-9,
+                    "a decimal input is a number");
+        db.UnregisterTable("typed_in");
+    }
+    auto native = db.Query("SELECT CAST(1 AS INTEGER) AS i, 'x' AS s");
+    TEST_ASSERT(native != nullptr && native->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
+                    native->schema()->field(1)->type()->id() == arrow::Type::STRING,
+                "native export: INTEGER int32, VARCHAR text");
+    TEST_ASSERT(db.UnsupportedResultColumns("SELECT 1 AS a, 'x' AS b").empty(), "exact columns pass the check");
+    TEST_ASSERT(db.UnsupportedResultColumns("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04' AS t, 0.5 AS w").empty(),
+                "DATE, TIMESTAMP and a short DECIMAL pass the check");
+    const std::string why = db.UnsupportedResultColumns(
+        "SELECT CAST(1 AS DECIMAL(18,2)) AS wide, CAST(1 AS HUGEINT) AS h, TIMESTAMPTZ '2024-01-02 03:04+00' AS tz, 1 AS a");
+    TEST_ASSERT(why.find("'wide'") != std::string::npos && why.find("'h'") != std::string::npos &&
+                    why.find("'tz'") != std::string::npos && why.find("'a'") == std::string::npos,
+                "a DECIMAL past 15 digits, HUGEINT and a time-zone timestamp are named as not exact");
 
     // Cleanup
     db.UnregisterTable("employees");
@@ -282,10 +391,10 @@ bool Test_DuckDB_Queries() {
 }
 
 /**
- * Test 7: End-to-End Data Studio Pipeline
+ * Test 8: End-to-End Data Studio Pipeline
  */
 bool Test_EndToEnd_Pipeline() {
-    spdlog::info("\n=== Test 7: End-to-End Pipeline ===");
+    spdlog::info("\n=== Test 8: End-to-End Pipeline ===");
 
     // This simulates a typical Data Studio workflow:
     // 1. Load CSV -> Arrow
@@ -316,7 +425,6 @@ bool Test_EndToEnd_Pipeline() {
     spdlog::info("Cleaned data: {} rows", cleaned->num_rows());
 
     // Step 3: Convert to tensor for training
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     auto tensor = arrow_converters::ArrowToTensor(cleaned);
     TEST_ASSERT(tensor != nullptr, "Convert cleaned data to tensor");
     ::af::dim4 tensor_dims = tensor->dims();
@@ -331,7 +439,6 @@ bool Test_EndToEnd_Pipeline() {
     // Step 5: Register results for export
     auto results_dataset = registry.RegisterArrowTable(results, "predictions");
     TEST_ASSERT(results_dataset != nullptr, "Register prediction results");
-#endif
 
     // Export to Parquet
     std::string parquet_path = "test_results.parquet";
@@ -371,6 +478,7 @@ int main() {
         {"DataRegistry Integration", Test_DataRegistry_Arrow},
         {"Arrow to Tensor Conversion", Test_ArrowToTensor},
         {"Tensor to Arrow Conversion", Test_TensorToArrow},
+        {"Categorical Encoding", Test_CategoricalEncoding},
         {"DuckDB SQL Queries", Test_DuckDB_Queries},
         {"End-to-End Pipeline", Test_EndToEnd_Pipeline},
     };

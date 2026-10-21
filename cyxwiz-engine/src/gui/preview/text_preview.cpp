@@ -1,4 +1,6 @@
 #include "text_preview.h"
+#include "../python_language.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -54,6 +56,7 @@ void TextPreviewRenderer::Render() {
 }
 
 void TextPreviewRenderer::RenderPlainText() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     // Split into lines
     std::vector<std::string> lines;
     std::istringstream stream(current_content_);
@@ -63,12 +66,12 @@ void TextPreviewRenderer::RenderPlainText() {
     }
 
     if (lines.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(empty)");
+        ImGui::TextColored(t.text_dim, "(empty)");
         return;
     }
 
     // Status line
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%zu lines", lines.size());
+    ImGui::TextColored(t.text_dim, "%zu lines", lines.size());
     ImGui::Separator();
 
     ImGui::BeginChild("##PlainTextContent", ImVec2(0, 0), false);
@@ -86,14 +89,14 @@ void TextPreviewRenderer::RenderPlainText() {
     while (clipper.Step()) {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
             // Line number (dimmed)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             ImGui::Text("%*d", digits, i + 1);
             ImGui::PopStyleColor();
 
             ImGui::SameLine(line_num_width);
 
             // Separator line
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_faint);
             ImGui::Text("|");
             ImGui::PopStyleColor();
 
@@ -188,38 +191,7 @@ void TextPreviewRenderer::ApplyLanguage(SyntaxLanguage lang) {
 }
 
 TextEditor::LanguageDefinition TextPreviewRenderer::CreatePythonLanguage() {
-    static TextEditor::LanguageDefinition lang;
-    static bool inited = false;
-    if (!inited) {
-        lang.mName = "Python";
-        lang.mCaseSensitive = true;
-        lang.mAutoIndentation = true;
-        lang.mSingleLineComment = "#";
-        lang.mCommentStart = "\"\"\"";
-        lang.mCommentEnd = "\"\"\"";
-
-        static const char* const keywords[] = {
-            "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
-            "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
-            "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
-            "while", "with", "yield", "async", "await"
-        };
-        for (auto& k : keywords) lang.mKeywords.insert(k);
-
-        static const char* const ids[] = {
-            "abs", "all", "any", "bin", "bool", "dict", "enumerate", "filter", "float",
-            "format", "getattr", "hasattr", "int", "isinstance", "len", "list", "map",
-            "max", "min", "next", "open", "print", "range", "repr", "set", "sorted",
-            "str", "sum", "super", "tuple", "type", "zip"
-        };
-        for (auto& i : ids) {
-            TextEditor::Identifier id;
-            id.mDeclaration = "Built-in";
-            lang.mIdentifiers.insert(std::make_pair(std::string(i), id));
-        }
-        inited = true;
-    }
-    return lang;
+    return ::cyxwiz::PythonLanguage();
 }
 
 TextEditor::LanguageDefinition TextPreviewRenderer::CreateCppLanguage() {

@@ -1,5 +1,8 @@
 #include "fft_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -9,10 +12,7 @@
 
 namespace cyxwiz {
 
-FFTPanel::FFTPanel() {
-    // Generate default signal
-    GenerateSignal();
-}
+FFTPanel::FFTPanel() = default;
 
 FFTPanel::~FFTPanel() {
     if (compute_thread_ && compute_thread_->joinable()) {
@@ -23,6 +23,8 @@ FFTPanel::~FFTPanel() {
 
 void FFTPanel::Render() {
     if (!visible_) return;
+    // The demo signal is made when the panel is first shown, not at startup (TOFIX159 D5).
+    if (signal_.empty()) GenerateSignal();
 
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
@@ -33,17 +35,11 @@ void FFTPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.30f, 0), true);
+            ui::BeginSettingsColumn("fft", ImGui::GetContentRegionAvail().x * 0.30f);
             RenderSignalInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -82,8 +78,7 @@ void FFTPanel::RenderToolbar() {
 }
 
 void FFTPanel::RenderSignalInput() {
-    ImGui::Text(ICON_FA_SIGNAL " Signal Input");
-    ImGui::Separator();
+    ui::SettingsSection("Signal");
 
     // Input mode selection
     if (ImGui::RadioButton("Generate", input_mode_ == InputMode::Generate)) {
@@ -95,8 +90,6 @@ void FFTPanel::RenderSignalInput() {
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     if (input_mode_ == InputMode::Generate) {
         RenderGenerateSignal();
@@ -106,10 +99,9 @@ void FFTPanel::RenderSignalInput() {
 }
 
 void FFTPanel::RenderGenerateSignal() {
-    ImGui::Text("Signal Type:");
     const char* signal_types[] = { "Sine", "Square", "Sawtooth", "White Noise", "Composite" };
     int current_type = static_cast<int>(signal_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Signal type");
     if (ImGui::Combo("##SignalType", &current_type, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(current_type);
     }
@@ -118,42 +110,32 @@ void FFTPanel::RenderGenerateSignal() {
 
     // Parameters based on signal type
     if (signal_type_ != SignalType::WhiteNoise) {
-        ImGui::Text("Frequency 1 (Hz):");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Frequency 1 (Hz)");
         ImGui::InputDouble("##freq1", &frequency1_, 1.0, 10.0, "%.1f");
         frequency1_ = std::clamp(frequency1_, 1.0, sample_rate_ / 2.0);
 
-        ImGui::Text("Amplitude 1:");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Amplitude 1");
         static const double kAmpMin = 0.0, kAmpMax = 2.0;
         ImGui::SliderScalar("##amp1", ImGuiDataType_Double, &amplitude1_, &kAmpMin, &kAmpMax, "%.2f");
     }
 
     if (signal_type_ == SignalType::Composite) {
-        ImGui::Spacing();
-        ImGui::Text("Frequency 2 (Hz):");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Frequency 2 (Hz)");
         ImGui::InputDouble("##freq2", &frequency2_, 1.0, 10.0, "%.1f");
         frequency2_ = std::clamp(frequency2_, 1.0, sample_rate_ / 2.0);
 
-        ImGui::Text("Amplitude 2:");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Amplitude 2");
         static const double kAmp2Min = 0.0, kAmp2Max = 2.0;
         ImGui::SliderScalar("##amp2", ImGuiDataType_Double, &amplitude2_, &kAmp2Min, &kAmp2Max, "%.2f");
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ui::SettingsSection("Sampling");
 
-    ImGui::Text("Sample Rate (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Sample rate (Hz)");
     if (ImGui::InputDouble("##samplerate", &sample_rate_, 100.0, 1000.0, "%.0f")) {
         sample_rate_ = std::clamp(sample_rate_, 100.0, 100000.0);
     }
 
-    ImGui::Text("Number of Samples:");
-    ImGui::SetNextItemWidth(-1);
     const char* sample_sizes[] = { "128", "256", "512", "1024", "2048", "4096" };
     int sample_idx = 3; // Default to 1024
     if (num_samples_ == 128) sample_idx = 0;
@@ -163,6 +145,7 @@ void FFTPanel::RenderGenerateSignal() {
     else if (num_samples_ == 2048) sample_idx = 4;
     else if (num_samples_ == 4096) sample_idx = 5;
 
+    ui::FieldLabel("Number of samples");
     if (ImGui::Combo("##numsamples", &sample_idx, sample_sizes, IM_ARRAYSIZE(sample_sizes))) {
         int sizes[] = { 128, 256, 512, 1024, 2048, 4096 };
         num_samples_ = sizes[sample_idx];
@@ -173,17 +156,14 @@ void FFTPanel::RenderGenerateSignal() {
     // Noise option
     ImGui::Checkbox("Add Noise", &add_noise_);
     if (add_noise_) {
-        ImGui::Text("SNR (dB):");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("SNR (dB)");
         static const double kSnrMin = 0.0, kSnrMax = 40.0;
         ImGui::SliderScalar("##snr", ImGuiDataType_Double, &noise_snr_, &kSnrMin, &kSnrMax, "%.1f");
     }
 
-    ImGui::Spacing();
-
     // Quick presets
-    ImGui::Text("Presets:");
-    if (ImGui::Button("60Hz Hum", ImVec2(-1, 0))) {
+    ui::SettingsSection("Presets");
+    if (ui::SecondaryButton("60Hz Hum", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::Composite;
         frequency1_ = 60.0;
         frequency2_ = 120.0;
@@ -193,7 +173,7 @@ void FFTPanel::RenderGenerateSignal() {
         num_samples_ = 1024;
         GenerateSignal();
     }
-    if (ImGui::Button("A440 Note", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("A440 Note", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::Sine;
         frequency1_ = 440.0;
         amplitude1_ = 1.0;
@@ -201,7 +181,7 @@ void FFTPanel::RenderGenerateSignal() {
         num_samples_ = 2048;
         GenerateSignal();
     }
-    if (ImGui::Button("Square Wave", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Square Wave", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::Square;
         frequency1_ = 100.0;
         amplitude1_ = 1.0;
@@ -212,20 +192,17 @@ void FFTPanel::RenderGenerateSignal() {
 }
 
 void FFTPanel::RenderManualInput() {
-    ImGui::Text("Sample Rate (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Sample rate (Hz)");
     ImGui::InputDouble("##samplerate_manual", &sample_rate_, 100.0, 1000.0, "%.0f");
     sample_rate_ = std::clamp(sample_rate_, 100.0, 100000.0);
 
-    ImGui::Spacing();
-
-    ImGui::Text("Signal Values (one per line):");
+    ui::FieldLabel("Signal values (one per line)");
 
     static char signal_text[8192] = "1.0\n0.707\n0.0\n-0.707\n-1.0\n-0.707\n0.0\n0.707";
     ImGui::InputTextMultiline("##signaltext", signal_text, sizeof(signal_text),
                                ImVec2(-1, 200));
 
-    if (ImGui::Button("Parse Signal", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Parse Signal", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_.clear();
         time_axis_.clear();
 
@@ -251,7 +228,7 @@ void FFTPanel::RenderManualInput() {
         spdlog::info("Parsed {} signal samples", signal_.size());
     }
 
-    ImGui::Text("Samples loaded: %d", static_cast<int>(signal_.size()));
+    ImGui::TextColored(ui::CurrentTokens().text_dim, "Samples loaded: %d", static_cast<int>(signal_.size()));
 }
 
 void FFTPanel::RenderLoadingIndicator() {
@@ -260,18 +237,20 @@ void FFTPanel::RenderLoadingIndicator() {
 }
 
 void FFTPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CHART_LINE " Results");
     ImGui::Separator();
 
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (signal_.empty()) {
-        ImGui::TextDisabled("No signal data. Generate or input a signal first.");
+        ui::EmptyState(ICON_FA_WAVE_SQUARE, "No signal yet",
+                       "Generate or enter a signal, then Compute FFT.");
         return;
     }
 
@@ -416,6 +395,7 @@ void FFTPanel::RenderPhasePlot() {
 }
 
 void FFTPanel::RenderPeaks() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_) {
         ImGui::TextDisabled("Click 'Compute FFT' to detect peaks");
         return;
@@ -494,7 +474,7 @@ void FFTPanel::RenderPeaks() {
         }
 
         if (!peak_freqs.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, ImVec4(1, 0, 0, 1), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2);
             ImPlot::PlotScatter("Peaks", peak_freqs.data(), peak_mags.data(),
                                 static_cast<int>(peak_freqs.size()));
         }
@@ -551,7 +531,7 @@ void FFTPanel::GenerateSignal() {
         signal_ = SignalProcessing::AddNoise(signal_, noise_snr_);
     }
 
-    spdlog::info("Generated {} samples at {} Hz", num_samples_, sample_rate_);
+    spdlog::debug("Generated {} samples at {} Hz", num_samples_, sample_rate_);
 }
 
 void FFTPanel::ComputeAsync() {

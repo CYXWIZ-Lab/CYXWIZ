@@ -13,11 +13,30 @@
 
 // OpenSSL headers if available
 #ifdef CYXWIZ_HAS_OPENSSL
-#include <openssl/md5.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+#ifdef CYXWIZ_HAS_OPENSSL
+std::vector<uint8_t> ComputeOpenSslDigest(
+    const std::vector<uint8_t>& data,
+    const EVP_MD* algorithm) {
+    std::vector<uint8_t> digest(EVP_MAX_MD_SIZE);
+    unsigned int digest_size = 0;
+    if (algorithm == nullptr ||
+        EVP_Digest(data.data(), data.size(), digest.data(), &digest_size,
+                   algorithm, nullptr) != 1) {
+        return {};
+    }
+    digest.resize(digest_size);
+    return digest;
+}
+#endif
+
+}  // namespace
 
 // ============================================================================
 // Constants
@@ -867,24 +886,19 @@ std::string Utilities::BytesToHex(const std::vector<uint8_t>& bytes) {
     return oss.str();
 }
 
-// Simple portable MD5 implementation (RFC 1321)
 std::string Utilities::ComputeMD5(const std::vector<uint8_t>& data) {
 #ifdef CYXWIZ_HAS_OPENSSL
-    unsigned char hash[MD5_DIGEST_LENGTH];
-    MD5(data.data(), data.size(), hash);
-    return BytesToHex(std::vector<uint8_t>(hash, hash + MD5_DIGEST_LENGTH));
+    const auto digest = ComputeOpenSslDigest(data, EVP_md5());
+    return digest.empty() ? "MD5 computation failed" : BytesToHex(digest);
 #else
-    // Simplified portable implementation
-    // For production, consider using a proper library
     return "MD5 requires OpenSSL";
 #endif
 }
 
 std::string Utilities::ComputeSHA1(const std::vector<uint8_t>& data) {
 #ifdef CYXWIZ_HAS_OPENSSL
-    unsigned char hash[SHA_DIGEST_LENGTH];
-    SHA1(data.data(), data.size(), hash);
-    return BytesToHex(std::vector<uint8_t>(hash, hash + SHA_DIGEST_LENGTH));
+    const auto digest = ComputeOpenSslDigest(data, EVP_sha1());
+    return digest.empty() ? "SHA1 computation failed" : BytesToHex(digest);
 #else
     return "SHA1 requires OpenSSL";
 #endif
@@ -892,9 +906,8 @@ std::string Utilities::ComputeSHA1(const std::vector<uint8_t>& data) {
 
 std::string Utilities::ComputeSHA256(const std::vector<uint8_t>& data) {
 #ifdef CYXWIZ_HAS_OPENSSL
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256(data.data(), data.size(), hash);
-    return BytesToHex(std::vector<uint8_t>(hash, hash + SHA256_DIGEST_LENGTH));
+    const auto digest = ComputeOpenSslDigest(data, EVP_sha256());
+    return digest.empty() ? "SHA256 computation failed" : BytesToHex(digest);
 #else
     return "SHA256 requires OpenSSL";
 #endif
@@ -902,9 +915,8 @@ std::string Utilities::ComputeSHA256(const std::vector<uint8_t>& data) {
 
 std::string Utilities::ComputeSHA512(const std::vector<uint8_t>& data) {
 #ifdef CYXWIZ_HAS_OPENSSL
-    unsigned char hash[SHA512_DIGEST_LENGTH];
-    SHA512(data.data(), data.size(), hash);
-    return BytesToHex(std::vector<uint8_t>(hash, hash + SHA512_DIGEST_LENGTH));
+    const auto digest = ComputeOpenSslDigest(data, EVP_sha512());
+    return digest.empty() ? "SHA512 computation failed" : BytesToHex(digest);
 #else
     return "SHA512 requires OpenSSL";
 #endif

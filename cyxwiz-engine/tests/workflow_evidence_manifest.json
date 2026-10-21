@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "workflows": [
+    {
+      "id": "tabular_mnist_mlp",
+      "path": "examples/cyxgraph/mnist_mlp.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Train a dense classifier from tabular MNIST input.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "image_cats_dogs_classifier",
+      "path": "examples/cyxgraph/cats_dogs_classifier_demo.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Train an image classifier for a two-class folder dataset.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "image_cats_dogs_batchnorm_classifier",
+      "path": "examples/cyxgraph/cats_dogs_classifier_v2.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Define an image-classification variant with batch-normalized dense stages.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "image_mnist_cnn_classifier",
+      "path": "examples/cyxgraph/mnist_classifier.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Define a convolution and pooling classifier for digit images.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "text_sentiment_tfidf_mlp",
+      "path": "examples/cyxgraph/Sentiment analysis/sentiment_analysis_tfidf_mlp_classifier.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Train a sentiment classifier from materialized TF-IDF features.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "audio_feature_augmentation",
+      "path": "examples/cyxgraph/audio/test_05_audio_augmentation.cyxgraph",
+      "workflow_lane": "audio",
+      "objective": "Train from augmented waveforms transformed into mel spectrogram features.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "audio_mfcc_features",
+      "path": "examples/cyxgraph/audio/test_03_mfcc.cyxgraph",
+      "workflow_lane": "audio",
+      "objective": "Train from waveform inputs transformed into MFCC features.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "audio_spectrogram_features",
+      "path": "examples/cyxgraph/audio/test_04_spectrogram.cyxgraph",
+      "workflow_lane": "audio",
+      "objective": "Train from waveform inputs transformed into raw spectrogram features.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "audio_speech_command_classifier",
+      "path": "examples/cyxgraph/speech_command_classifier.cyxgraph",
+      "workflow_lane": "audio",
+      "objective": "Train a classifier for labeled speech-command audio.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "time_series_airline_forecast",
+      "path": "examples/cyxgraph/timeseries/airline_passengers_dense_v3.cyxgraph",
+      "workflow_lane": "time_series",
+      "objective": "Train a dense forecaster from transformed multivariate windows.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "text_ner_sequence_tagger",
+      "path": "examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Train a bidirectional sequence tagger for named entities.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "causal_language_generation",
+      "path": "examples/cyxgraph/task50_gpt_generation_controls/causal_lm_decoder_generation_experiment.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Exercise a causal language-model decoder and generation controls.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "bert_sequence_classifier",
+      "path": "examples/cyxgraph/task51_bert_encoder_contracts/bert_sequence_classifier_contract.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Define a BERT-style encoder workflow for sequence classification.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "bert_token_classifier",
+      "path": "examples/cyxgraph/task51_bert_encoder_contracts/bert_token_classifier_contract.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Define a BERT-style encoder workflow with per-token classification logits.",
+      "validation_level": "authored_graph_only"
+    },
+    {
+      "id": "code_feedback_language_classifier",
+      "path": "examples/data/codefeedback_demo_smoke/codefeedback_lang_classifier_multi.cyxgraph",
+      "workflow_lane": "deep_learning",
+      "objective": "Train a multi-class source-language classifier from code feedback text.",
+      "validation_level": "authored_graph_only"
+    }
+  ]
+}

@@ -1,14 +1,149 @@
 #include "node_browser_panel.h"
+#include "../python_bundle_ui.h"
 #include "../node_editor.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/node_palette.h"
+#include "../../core/extension_node_registry.h"
+#include "../../plugin/plugin_manager.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../patterns/pattern_library.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <map>
 #include <cmath>
 
 namespace gui {
+
+namespace ui = cyxwiz::ui;
+
+namespace {
+
+bool HasSupportedAxis(const cyxwiz::NodeMetadata* metadata,
+                      const char* axis_name) {
+    if (!metadata) return false;
+    return std::any_of(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name && axis.supported;
+        });
+}
+
+bool HasAxis(const cyxwiz::NodeMetadata* metadata, const char* axis_name) {
+    if (!metadata) return false;
+    return std::any_of(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name;
+        });
+}
+
+const cyxwiz::SupportAxisDefinition* FindAxis(
+    const cyxwiz::NodeMetadata* metadata,
+    const char* axis_name) {
+    if (!metadata) return nullptr;
+    auto it = std::find_if(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name;
+        });
+    return it != metadata->support_axes.end() ? &*it : nullptr;
+}
+
+const cyxwiz::SupportAxisDefinition* FindSupportState(
+    const cyxwiz::NodeMetadata* metadata) {
+    return FindAxis(metadata, "Support State");
+}
+
+std::string FirstUnsupportedSupportReason(
+    const cyxwiz::NodeMetadata* metadata) {
+    if (!metadata) return {};
+
+    if (const auto* support_state = FindSupportState(metadata)) {
+        if (!support_state->reason.empty() &&
+            (!support_state->supported || support_state->value == "blocked")) {
+            return support_state->reason;
+        }
+    }
+
+    for (const auto& axis : metadata->support_axes) {
+        if (!axis.supported && !axis.reason.empty()) {
+            return axis.name + ": " + axis.reason;
+        }
+    }
+
+    return {};
+}
+
+ImVec4 SupportStateBadgeColor(const std::string& state) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float alpha = 235.0f / 255.0f;
+    if (state == "real") return ui::WithAlpha(t.success, alpha);
+    if (state == "partial") return ui::WithAlpha(t.warning, alpha);
+    if (state == "blocked") return ui::WithAlpha(t.error, alpha);
+    return ui::WithAlpha(t.pending, alpha);
+}
+
+std::string SupportStateLabel(const std::string& state) {
+    if (state == "real") return "Real";
+    if (state == "partial") return "Partial";
+    if (state == "blocked") return "Blocked";
+    return state.empty() ? "Unknown" : state;
+}
+
+std::string SupportAxisValueLabel(const std::string& value) {
+    if (value == "real") return "Real";
+    if (value == "partial") return "Partial";
+    if (value == "blocked") return "Blocked";
+    if (value == "none") return "None";
+    if (value == "training_backend") return "Training backend";
+    if (value == "pipeline_executor") return "Pipeline executor";
+    if (value == "pipeline_operator_factory") return "Pipeline operator factory";
+    if (value == "ui_only") return "UI-only";
+    if (value == "recipe_lowering") return "Recipe lowering";
+    if (value == "classic_ml") return "Classic ML";
+    if (value == "deep_learning") return "Deep learning";
+    if (value == "model_layer") return "Model layer";
+    if (value == "activation") return "Activation";
+    if (value == "loss") return "Loss";
+    if (value == "optimizer") return "Optimizer";
+    if (value == "regression") return "Regression";
+    if (value == "multiclass_classification") return "Multiclass classification";
+    if (value == "binary_classification") return "Binary classification";
+    if (value == "supported") return "Supported";
+    if (value == "unsupported") return "Unsupported";
+    if (value == "fail_closed") return "Fail closed";
+    if (value == "hard_fail") return "Hard fail";
+
+    std::string label = value.empty() ? std::string("Unknown") : value;
+    std::replace(label.begin(), label.end(), '_', ' ');
+    return label;
+}
+
+bool IsTrainingCategory(cyxwiz::NodeCategory category) {
+    switch (category) {
+    case cyxwiz::NodeCategory::Layers:
+    case cyxwiz::NodeCategory::Activation:
+    case cyxwiz::NodeCategory::Pooling:
+    case cyxwiz::NodeCategory::Normalization:
+    case cyxwiz::NodeCategory::Attention:
+    case cyxwiz::NodeCategory::Recurrent:
+    case cyxwiz::NodeCategory::ShapeOps:
+    case cyxwiz::NodeCategory::MergeOps:
+    case cyxwiz::NodeCategory::Training:
+    case cyxwiz::NodeCategory::Regularization:
+        return true;
+    default:
+        return false;
+    }
+}
+
+} // namespace
 
 NodeBrowserPanel::NodeBrowserPanel() {
     // Initialize category show_all state to false (collapsed)
@@ -31,14 +166,15 @@ void NodeBrowserPanel::Render() {
 
     ImGui::SetNextWindowSizeConstraints(ImVec2(PANEL_MIN_WIDTH, 300), ImVec2(450, FLT_MAX));
 
+    if (focus_window_next_frame_) {
+        ImGui::SetNextWindowFocus();
+        focus_window_next_frame_ = false;
+    }
     if (ImGui::Begin("Nodes", &visible_)) {
         RenderHeader();
         RenderSearchBar();
 
-        // Show filter tags when in a category view
-        if (showing_all_in_category_) {
-            RenderFilterTags();
-        }
+        RenderFilterTags();
 
         ImGui::Separator();
 
@@ -54,20 +190,64 @@ void NodeBrowserPanel::Render() {
         if (!search_query_.empty()) {
             // Search results mode - show as grid
             auto results = registry.Search(search_query_, true);
-            if (results.empty()) {
+            results = ApplySupportFilter(results);
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                const auto rank = [](const cyxwiz::NodeMetadata* m) {
+                    switch (cyxwiz::palette::PlaceNode(*m).place) {
+                    case cyxwiz::palette::Place::Category: return 0;
+                    case cyxwiz::palette::Place::Advanced: return 1;
+                    case cyxwiz::palette::Place::CantRun: return 2;
+                    case cyxwiz::palette::Place::Hidden: return 3;
+                    }
+                    return 3;
+                };
+                results.erase(std::remove_if(results.begin(), results.end(),
+                                             [&](const cyxwiz::NodeMetadata* m) { return rank(m) == 3; }),
+                              results.end());
+                std::stable_sort(results.begin(), results.end(),
+                                 [&](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return rank(a) < rank(b); });
+            }
+            results.erase(std::remove_if(results.begin(), results.end(),
+                                         [](const cyxwiz::NodeMetadata* m) {
+                                             return m->type == cyxwiz::NodeType::PluginCustom;
+                                         }),
+                          results.end());
+            std::vector<cyxwiz::ExtensionPaletteEntry> extension_results;
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                for (auto& entry : cyxwiz::BuildExtensionPalette(
+                         cyxwiz::ExtensionNodeRegistry::Instance().All())) {
+                    if (cyxwiz::ExtensionPaletteEntryMatches(entry, search_query_)) {
+                        extension_results.push_back(std::move(entry));
+                    }
+                }
+            }
+            if (results.empty() && extension_results.empty()) {
                 ImGui::TextDisabled("No nodes found matching '%s'", search_query_.c_str());
             } else {
                 RenderNodeGrid(results);
+                RenderExtensionGrid(extension_results);
             }
+        } else if (showing_all_in_category_ &&
+                   current_category_ == cyxwiz::NodeCategory::Plugin) {
+            RenderExtensionSection(true);
         } else if (showing_all_in_category_) {
             // Showing all nodes in a specific category
-            auto nodes = registry.GetByCategory(current_category_, true);
+            auto nodes = Curated(registry.GetByCategory(current_category_, true));
+            nodes = ApplySupportFilter(nodes);
             RenderNodeGrid(nodes);
         } else {
             // Normal category view
             auto categories = registry.GetCategories();
             for (auto category : categories) {
-                RenderCategorySection(category);
+                if (category == cyxwiz::NodeCategory::Plugin) {
+                    RenderExtensionSection(false);
+                } else {
+                    RenderCategorySection(category);
+                }
+            }
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                RenderAdvancedSection();
+                RenderCantRunSection();
             }
         }
 
@@ -78,7 +258,7 @@ void NodeBrowserPanel::Render() {
 
 void NodeBrowserPanel::RenderHeader() {
     // Breadcrumb navigation: "Nodes" or "Nodes > CategoryName"
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
 
     if (showing_all_in_category_) {
         // Clickable "Nodes" to go back
@@ -148,6 +328,16 @@ void NodeBrowserPanel::ClearSearch() {
     search_query_.clear();
     showing_all_in_category_ = false;
     current_category_ = cyxwiz::NodeCategory::Unknown;
+    provider_filter_.clear();
+}
+
+void NodeBrowserPanel::ShowPluginNodes(const std::string& provider_id) {
+    ClearSearch();
+    support_filter_mode_ = SupportFilterMode::All;
+    NavigateToCategory(cyxwiz::NodeCategory::Plugin);
+    provider_filter_ = provider_id;
+    visible_ = true;
+    focus_window_next_frame_ = true;
 }
 
 bool NodeBrowserPanel::HandleKeyboardShortcuts() {
@@ -181,8 +371,9 @@ bool NodeBrowserPanel::HandleKeyboardShortcuts() {
 }
 
 void NodeBrowserPanel::RenderStudioSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // CyxWiz Studio section header (same style as category headers)
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     ImGui::TextUnformatted("Studio Tools");
 
     // Horizontal separator line
@@ -191,7 +382,7 @@ void NodeBrowserPanel::RenderStudioSection() {
     float text_width = ImGui::CalcTextSize("Studio Tools").x + 8;
     ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
     line_start.x += text_width;
-    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, IM_COL32(100, 100, 100, 128), 1.0f);
+    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, ui::ToU32(t.border_soft), 1.0f);
     ImGui::PopStyleColor();
 
     // Calculate card dimensions (same as node cards)
@@ -226,7 +417,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         // Tooltip
         if (hovered) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_COMMENT " Annotation");
+            ImGui::TextColored(ui::CurrentTokens().text_bright, ICON_FA_COMMENT " Annotation");
             ImGui::TextWrapped("Add a sticky note to the canvas for documentation");
             ImGui::Separator();
             ImGui::TextDisabled("Drag to canvas or double-click to add");
@@ -241,9 +432,9 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_pos(icon_x, icon_y);
         ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
 
-        // Yellow background for note
-        ImU32 bg_color = IM_COL32(200, 180, 100, 255);
-        ImU32 border_color = IM_COL32(150, 130, 70, 255);
+        // The canvas note colour
+        ImU32 bg_color = DefaultAnnotationColour();
+        ImU32 border_color = ui::ToU32(ui::Mix(ImGui::ColorConvertU32ToFloat4(bg_color), t.bg_window, 0.3f));
         draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
         draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
 
@@ -254,20 +445,20 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
         ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
                             icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
         // Label
         const char* label = "Note";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
         float text_y = icon_y + NODE_ICON_SIZE + 4;
-        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+        draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(t.text), label);
 
         // Hover highlight
         if (hovered) {
             draw_list->AddRect(cursor_start,
                 ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                IM_COL32(100, 150, 255, 100), 4.0f);
+                ui::ToU32(ui::WithAlpha(t.accent_text, 100.0f / 255.0f)), 4.0f);
         }
         ImGui::PopID();
     }
@@ -293,7 +484,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         // Tooltip
         if (hovered) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_OBJECT_GROUP " Group");
+            ImGui::TextColored(ui::CurrentTokens().text_bright, ICON_FA_OBJECT_GROUP " Group");
             ImGui::TextWrapped("Group selected nodes together for organization");
             ImGui::Separator();
             ImGui::TextDisabled("Select nodes first, then double-click");
@@ -308,9 +499,9 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_pos(icon_x, icon_y);
         ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
 
-        // Blue background for group
-        ImU32 bg_color = IM_COL32(100, 140, 180, 255);
-        ImU32 border_color = IM_COL32(70, 100, 140, 255);
+        // Group card: a series colour of the theme
+        ImU32 bg_color = ui::ToU32(t.series[1]);
+        ImU32 border_color = ui::ToU32(ui::Mix(t.series[1], t.bg_window, 0.3f));
         draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
         draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
 
@@ -321,20 +512,20 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
         ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
                             icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
         // Label
         const char* label = "Group";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
         float text_y = icon_y + NODE_ICON_SIZE + 4;
-        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+        draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(t.text), label);
 
         // Hover highlight
         if (hovered) {
             draw_list->AddRect(cursor_start,
                 ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                IM_COL32(100, 150, 255, 100), 4.0f);
+                ui::ToU32(ui::WithAlpha(t.accent_text, 100.0f / 255.0f)), 4.0f);
         }
         ImGui::PopID();
     }
@@ -359,7 +550,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         // Tooltip
         if (hovered && !ImGui::GetDragDropPayload()) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_SQUARE " Frame");
+            ImGui::TextColored(ui::CurrentTokens().text_bright, ICON_FA_SQUARE " Frame");
             ImGui::TextWrapped("Visual organization box for arranging nodes");
             ImGui::Separator();
             ImGui::TextDisabled("Drag to canvas to create");
@@ -373,9 +564,9 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_pos(icon_x, icon_y);
         ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
 
-        // Teal background for frame
-        ImU32 bg_color = IM_COL32(70, 140, 130, 255);
-        ImU32 border_color = IM_COL32(50, 100, 95, 255);
+        // Frame card: a series colour of the theme
+        ImU32 bg_color = ui::ToU32(t.series[3]);
+        ImU32 border_color = ui::ToU32(ui::Mix(t.series[3], t.bg_window, 0.3f));
         draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
         draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
 
@@ -386,20 +577,20 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
         ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
                             icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
         // Label
         const char* label = "Frame";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
         float text_y = icon_y + NODE_ICON_SIZE + 4;
-        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+        draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(t.text), label);
 
         // Hover highlight
         if (hovered) {
             draw_list->AddRect(cursor_start,
                 ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                IM_COL32(100, 150, 255, 100), 4.0f);
+                ui::ToU32(ui::WithAlpha(t.accent_text, 100.0f / 255.0f)), 4.0f);
         }
         ImGui::PopID();
     }
@@ -408,7 +599,7 @@ void NodeBrowserPanel::RenderStudioSection() {
     ImGui::Spacing();
 
     // === Examples Section ===
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     ImGui::TextUnformatted("Examples");
 
     // Horizontal separator line
@@ -417,7 +608,7 @@ void NodeBrowserPanel::RenderStudioSection() {
     float examples_text_width = ImGui::CalcTextSize("Examples").x + 8;
     ImVec2 examples_line_end = ImVec2(examples_line_start.x + ImGui::GetContentRegionAvail().x, examples_line_start.y);
     examples_line_start.x += examples_text_width;
-    ImGui::GetWindowDrawList()->AddLine(examples_line_start, examples_line_end, IM_COL32(100, 100, 100, 128), 1.0f);
+    ImGui::GetWindowDrawList()->AddLine(examples_line_start, examples_line_end, ui::ToU32(t.border_soft), 1.0f);
     ImGui::PopStyleColor();
 
     // Get pattern library
@@ -428,15 +619,13 @@ void NodeBrowserPanel::RenderStudioSection() {
 
     auto pattern_categories = pattern_lib.GetAvailableCategories();
     for (auto cat : pattern_categories) {
-        auto cat_patterns = pattern_lib.GetByCategory(cat);
-        if (cat_patterns.empty()) continue;
-
         // Category tree node
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
         const char* cat_icon = patterns::GetPatternCategoryIcon(cat);
         std::string cat_label = std::string(cat_icon) + " " + patterns::PatternCategoryToString(cat);
 
         if (ImGui::TreeNodeEx(cat_label.c_str(), flags)) {
+            const auto cat_patterns = pattern_lib.GetByCategory(cat);
             for (const auto& pattern : cat_patterns) {
                 ImGui::PushID(pattern.id.c_str());
 
@@ -470,7 +659,7 @@ void NodeBrowserPanel::RenderStudioSection() {
                 // Tooltip
                 if (ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
-                    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", pattern.name.c_str());
+                    ImGui::TextColored(ui::CurrentTokens().text_bright, "%s", pattern.name.c_str());
                     if (!pattern.description.empty()) {
                         ImGui::TextWrapped("%s", pattern.description.c_str());
                     }
@@ -496,40 +685,147 @@ void NodeBrowserPanel::RenderStudioSection() {
 void NodeBrowserPanel::RenderFilterTags() {
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
 
-    // Category dropdown
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 3));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
 
-    std::string cat_name = cyxwiz::GetCategoryDisplayName(current_category_);
-    if (ImGui::BeginCombo("##CatFilter", cat_name.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        for (auto category : registry.GetCategories()) {
-            bool selected = (category == current_category_);
-            if (ImGui::Selectable(cyxwiz::GetCategoryDisplayName(category).c_str(), selected)) {
-                NavigateToCategory(category);
+    bool rendered_filter = false;
+    if (showing_all_in_category_) {
+        std::string cat_name = cyxwiz::GetCategoryDisplayName(current_category_);
+        if (ImGui::BeginCombo("##CatFilter", cat_name.c_str(), ImGuiComboFlags_NoArrowButton)) {
+            for (auto category : registry.GetCategories()) {
+                bool selected = (category == current_category_);
+                if (ImGui::Selectable(cyxwiz::GetCategoryDisplayName(category).c_str(), selected)) {
+                    NavigateToCategory(category);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Filter by node category");
+        }
+        rendered_filter = true;
+    }
+
+    if (rendered_filter) {
+        ImGui::SameLine();
+    }
+
+    if (ImGui::BeginCombo("##SupportFilter", GetSupportFilterLabel(support_filter_mode_),
+                          ImGuiComboFlags_NoArrowButton)) {
+        const SupportFilterMode modes[] = {
+            SupportFilterMode::All,
+            SupportFilterMode::Pipeline,
+            SupportFilterMode::Training,
+            SupportFilterMode::UiOnly,
+            SupportFilterMode::Blocked,
+        };
+        for (SupportFilterMode mode : modes) {
+            const bool selected = support_filter_mode_ == mode;
+            if (ImGui::Selectable(GetSupportFilterLabel(mode), selected)) {
+                support_filter_mode_ = mode;
             }
         }
         ImGui::EndCombo();
     }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Filter using structured support axes");
+    }
 
-    // Additional filter tags could be added here based on keywords
-    // For now, show count of remaining filters
-    auto nodes = registry.GetByCategory(current_category_, true);
-    if (nodes.size() > 9) {
+    std::vector<const cyxwiz::NodeMetadata*> nodes;
+    if (!search_query_.empty()) {
+        nodes = registry.Search(search_query_, true);
+    } else if (showing_all_in_category_) {
+        nodes = registry.GetByCategory(current_category_, true);
+    }
+
+    if (!nodes.empty() && support_filter_mode_ != SupportFilterMode::All) {
+        const auto filtered_nodes = ApplySupportFilter(nodes);
         ImGui::SameLine();
-        ImGui::TextDisabled("+%zu more", nodes.size() - 9);
+        ImGui::TextDisabled("%zu/%zu", filtered_nodes.size(), nodes.size());
     }
 
     ImGui::PopStyleVar(2);
 }
 
+std::vector<const cyxwiz::NodeMetadata*> NodeBrowserPanel::Curated(std::vector<const cyxwiz::NodeMetadata*> nodes) const {
+    if (support_filter_mode_ != SupportFilterMode::All) return nodes;
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
+                               [](const cyxwiz::NodeMetadata* m) {
+                                   return !m || cyxwiz::palette::PlaceNode(*m).place != cyxwiz::palette::Place::Category;
+                               }),
+                nodes.end());
+    return nodes;
+}
+
+void NodeBrowserPanel::RenderAdvancedSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    std::map<std::string, std::vector<const cyxwiz::NodeMetadata*>> by_group;
+    size_t count = 0;
+    for (const auto* m : cyxwiz::NodeMetadataRegistry::Instance().GetAllMetadata()) {
+        if (!m) continue;
+        const auto placed = cyxwiz::palette::PlaceNode(*m);
+        if (placed.place != cyxwiz::palette::Place::Advanced) continue;
+        by_group[placed.advanced_group].push_back(m);
+        ++count;
+    }
+    if (count == 0) return;
+    const std::string label = std::string(cyxwiz::palette::kAdvancedOperations) + "  " + std::to_string(count) + "###advanced_operations";
+    if (!ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
+        ImGui::Spacing();
+        return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "Table steps a Preparation Recipe holds. Data Studio > Prepare adds them for you; "
+                                   "add one here for a graph built step by step.");
+    ImGui::PopTextWrapPos();
+    for (const auto& group : cyxwiz::palette::AdvancedGroups()) {
+        auto& nodes = by_group[group];
+        if (nodes.empty()) continue;
+        std::sort(nodes.begin(), nodes.end(),
+                  [](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return a->name < b->name; });
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "%s", group.c_str());
+        RenderNodeGrid(nodes);
+    }
+    ImGui::TreePop();
+    ImGui::Spacing();
+}
+
+void NodeBrowserPanel::RenderCantRunSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    std::vector<const cyxwiz::NodeMetadata*> nodes;
+    for (const auto* m : cyxwiz::NodeMetadataRegistry::Instance().GetAllMetadata())
+        if (m && cyxwiz::palette::PlaceNode(*m).place == cyxwiz::palette::Place::CantRun) nodes.push_back(m);
+    if (nodes.empty()) return;
+    // By category, then name: what is missing where.
+    std::sort(nodes.begin(), nodes.end(), [](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) {
+        const std::string ca = cyxwiz::GetCategoryDisplayName(a->category), cb = cyxwiz::GetCategoryDisplayName(b->category);
+        return ca != cb ? ca < cb : a->name < b->name;
+    });
+    const std::string label = std::string(cyxwiz::palette::kCantRunYet) + "  " + std::to_string(nodes.size()) + "###cant_run_yet";
+    if (!ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
+        ImGui::Spacing();
+        return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "What the Engine cannot run yet; each leaves this list when it runs. A saved graph that "
+                                   "has one still opens and says why it cannot run. Hover a node for the reason.");
+    ImGui::PopTextWrapPos();
+    RenderNodeGrid(nodes);
+    ImGui::TreePop();
+    ImGui::Spacing();
+}
+
 void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
-    auto nodes = registry.GetByCategory(category, true);
+    auto nodes = Curated(registry.GetByCategory(category, true));
+    nodes = ApplySupportFilter(nodes);
 
     if (nodes.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     // Category header with horizontal line
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
 
     std::string cat_name = cyxwiz::GetCategoryDisplayName(category);
     ImGui::TextUnformatted(cat_name.c_str());
@@ -541,7 +837,7 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
     line_start.x += text_width;
     ImGui::GetWindowDrawList()->AddLine(line_start, line_end,
-                                        IM_COL32(100, 100, 100, 128), 1.0f);
+                                        ui::ToU32(t.border_soft), 1.0f);
 
     ImGui::PopStyleColor();
 
@@ -557,7 +853,7 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
 
         if (ImGui::SmallButton(("Show all##" + cat_name).c_str())) {
             NavigateToCategory(category);
@@ -595,12 +891,141 @@ void NodeBrowserPanel::RenderNodeGrid(const std::vector<const cyxwiz::NodeMetada
     }
 }
 
-void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width) {
+void NodeBrowserPanel::RenderExtensionGrid(const std::vector<cyxwiz::ExtensionPaletteEntry>& entries) {
+    if (entries.empty()) return;
+    auto& registry = cyxwiz::ExtensionNodeRegistry::Instance();
+
+    // Card data: the descriptor's metadata, copied (a plugin may unload).
+    std::vector<cyxwiz::NodeMetadata> metadata;
+    std::vector<const cyxwiz::ExtensionPaletteEntry*> shown;
+    metadata.reserve(entries.size());
+    for (const auto& entry : entries) {
+        const auto descriptor = registry.Find(entry.type_id);
+        if (!descriptor) continue;
+        metadata.push_back(descriptor->metadata);
+        // The engine's plug icon, as the catalog uses for plugin nodes.
+        if (metadata.back().icon.empty()) metadata.back().icon = ICON_FA_PLUG;
+        shown.push_back(&entry);
+    }
+
+    float available_width = ImGui::GetContentRegionAvail().x;
+    float card_width = (available_width - (GRID_COLUMNS - 1) * GRID_SPACING) / GRID_COLUMNS;
+    card_width = std::max(card_width, 70.0f);
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        if (i % GRID_COLUMNS != 0) {
+            ImGui::SameLine(0, GRID_SPACING);
+        }
+        RenderNodeCard(&metadata[i], card_width, shown[i]);
+    }
+}
+
+void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
+    // Only the All filter lists extension nodes: the other filters sort
+    // built-in nodes by their support facts, which extension nodes lack.
+    if (support_filter_mode_ != SupportFilterMode::All) return;
+
+    auto entries = cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All());
+    // Narrowed to one plugin (Apps > a loaded plugin).
+    if (show_all && !provider_filter_.empty()) {
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                     [&](const cyxwiz::ExtensionPaletteEntry& entry) {
+                                         std::string provider_id;
+                                         std::string type_name;
+                                         return !cyxwiz::SplitExtensionTypeId(entry.type_id, provider_id, type_name) ||
+                                                provider_id != provider_filter_;
+                                     }),
+                      entries.end());
+    }
+    std::vector<std::pair<std::string, std::string>> provider_names;
+    for (const auto& entry : entries) {
+        std::string provider_id;
+        std::string type_name;
+        if (!cyxwiz::SplitExtensionTypeId(entry.type_id, provider_id, type_name)) continue;
+        if (const auto* plugin = cyxwiz::plugin::PluginManager::Instance().GetLoadedPlugin(provider_id)) {
+            provider_names.emplace_back(provider_id, plugin->manifest.name);
+        }
+    }
+    for (auto& name : cyxwiz::python_ui::BundleNames()) provider_names.push_back(std::move(name));
+
+    // Section header, as other categories draw it, with the summary.
+    const std::string cat_name = cyxwiz::GetCategoryDisplayName(cyxwiz::NodeCategory::Plugin);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
+    ImGui::TextUnformatted(cat_name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", cyxwiz::ExtensionPaletteSummary(entries, provider_names).c_str());
+    ImGui::PopStyleColor();
+    if (show_all && !provider_filter_.empty()) {
+        if (cyxwiz::ui::LinkButton("Show all plugins##provider_filter")) provider_filter_.clear();
+    }
+
+    if (entries.empty()) {
+        ImGui::PushID("no_extension_nodes");
+        if (ImGui::BeginChild("##empty", ImVec2(0.0f, 0.0f),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                                  ImGuiChildFlags_AlwaysUseWindowPadding)) {
+            ImGui::TextUnformatted("No extension nodes are loaded");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("Load a plugin that provides nodes and they appear here.");
+            ImGui::PopTextWrapPos();
+            if (cyxwiz::ui::SecondaryButton("Open Plugin Manager", node_editor_ != nullptr,
+                                            "The node editor is not available")) {
+                node_editor_->OpenPluginManager();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        return;
+    }
+
+    // One grid per plugin category ("RL / Simulation", ...).
+    size_t shown = 0;
+    const size_t limit = show_all ? entries.size() : static_cast<size_t>(GRID_COLUMNS * VISIBLE_ROWS_COLLAPSED);
+    for (size_t i = 0; i < entries.size() && shown < limit;) {
+        const std::string& group = entries[i].group;
+        std::vector<cyxwiz::ExtensionPaletteEntry> group_entries;
+        for (; i < entries.size() && entries[i].group == group && shown < limit; ++i, ++shown) {
+            group_entries.push_back(entries[i]);
+        }
+        ImGui::TextDisabled("%s", group.c_str());
+        RenderExtensionGrid(group_entries);
+    }
+
+    if (!show_all && entries.size() > limit) {
+        if (cyxwiz::ui::LinkButton("Show all##plugins")) {
+            NavigateToCategory(cyxwiz::NodeCategory::Plugin);
+        }
+    }
+    ImGui::Spacing();
+    ImGui::Spacing();
+}
+
+void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width,
+                                      const cyxwiz::ExtensionPaletteEntry* extension) {
     if (!metadata) return;
 
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
 
-    ImGui::PushID(static_cast<int>(metadata->type));
+    // Extension nodes share one NodeType: they are keyed by type id.
+    if (extension) {
+        ImGui::PushID(extension->type_id.c_str());
+    } else {
+        ImGui::PushID(static_cast<int>(metadata->type));
+    }
+    const bool pinned = extension ? extension->type_id == pinned_extension_id_
+                                  : (pinned_extension_id_.empty() && metadata->type == pinned_node_type_);
+    const auto select = [&]() {
+        if (extension) {
+            pinned_extension_id_ = extension->type_id;
+            pinned_node_type_ = cyxwiz::NodeType::Unknown;
+            if (on_extension_select_) on_extension_select_(extension->type_id);
+        } else {
+            pinned_extension_id_.clear();
+            pinned_node_type_ = metadata->type;
+            if (on_node_select_) on_node_select_(metadata->type);
+        }
+    };
 
     ImVec2 card_size(card_width, NODE_CARD_HEIGHT);
     ImVec2 cursor_start = ImGui::GetCursorScreenPos();
@@ -608,20 +1033,36 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     // Invisible button for interaction
     ImGui::InvisibleButton("##card", card_size);
 
-    bool hovered = ImGui::IsItemHovered();
-    bool clicked = ImGui::IsItemClicked();
-
-    // Handle double-click to create node
-    if (hovered && ImGui::IsMouseDoubleClicked(0)) {
-        if (!metadata->IsTemplate()) {
-            CreateNodeAtMouse(metadata);
-            registry.RecordUsage(metadata->type);
-        }
+    // Preserve the full layout while avoiding formatting and draw-list work
+    // for cards clipped outside the NodeGrid child window.
+    if (!ImGui::IsItemVisible()) {
+        ImGui::PopID();
+        return;
     }
 
-    // Handle drag-drop source (only for implemented nodes)
-    if (!metadata->IsTemplate() && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-        ImGui::SetDragDropPayload("NODE_TYPE", &metadata->type, sizeof(cyxwiz::NodeType));
+    bool hovered = ImGui::IsItemHovered();
+    const bool support_blocked = IsSupportBlocked(metadata);
+    const bool can_add_to_graph = !metadata->IsTemplate() && !support_blocked && metadata->made_by.empty();
+
+    // Single click pins the node in the Info Panel.
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        select();
+    }
+
+    // Handle double-click to create node
+    if (hovered && ImGui::IsMouseDoubleClicked(0) && can_add_to_graph) {
+        CreateNodeAtMouse(metadata, extension);
+        if (!extension) registry.RecordUsage(metadata->type);
+    }
+
+    // Handle drag-drop source (only for graph-addable nodes)
+    if (can_add_to_graph && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        if (extension) {
+            ImGui::SetDragDropPayload("EXTENSION_NODE", extension->type_id.data(),
+                                      extension->type_id.size());
+        } else {
+            ImGui::SetDragDropPayload("NODE_TYPE", &metadata->type, sizeof(cyxwiz::NodeType));
+        }
         ImGui::Text("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         dragging_node_ = metadata;
         ImGui::EndDragDropSource();
@@ -632,29 +1073,38 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         ImGui::TextDisabled("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         ImGui::Separator();
 
-        if (!metadata->IsTemplate()) {
+        if (can_add_to_graph) {
             if (ImGui::MenuItem(ICON_FA_PLUS " Add to Canvas", "Double-click")) {
-                CreateNodeAtMouse(metadata);
-                registry.RecordUsage(metadata->type);
+                CreateNodeAtMouse(metadata, extension);
+                if (!extension) registry.RecordUsage(metadata->type);
             }
 
-            if (ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
+            // Favourites are kept per NodeType; extension nodes share one.
+            if (!extension && ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
                 registry.ToggleFavorite(metadata->type);
             }
-        } else {
+        } else if (!metadata->made_by.empty()) {
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+            ImGui::TextUnformatted(metadata->made_by.c_str());
+            ImGui::PopTextWrapPos();
+        } else if (metadata->IsTemplate()) {
             ImGui::TextDisabled(ICON_FA_CLOCK " Coming Soon");
             if (ImGui::MenuItem(ICON_FA_THUMBS_UP " Vote for this feature")) {
                 // TODO: Increment user_votes and save preferences
+            }
+        } else {
+            ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " Blocked");
+            const std::string reason = FirstUnsupportedSupportReason(metadata);
+            if (!reason.empty()) {
+                ImGui::TextWrapped("%s", reason.c_str());
             }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " View Documentation")) {
-            // Trigger info panel to show this node
-            if (on_node_hover_) {
-                on_node_hover_(metadata->type);
-            }
+            // Pin this node in the Info Panel
+            select();
         }
 
         if (ImGui::MenuItem(ICON_FA_COPY " Copy Node Name")) {
@@ -670,6 +1120,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     }
 
     // Draw the card
+    const ui::Tokens& t = ui::CurrentTokens();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     // Icon position (centered horizontally)
@@ -679,7 +1130,28 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImVec2 icon_size(NODE_ICON_SIZE, NODE_ICON_SIZE);
 
     // Draw node icon with color
-    RenderNodeIcon(metadata, icon_pos, icon_size);
+    RenderNodeIcon(metadata, icon_pos, icon_size, extension);
+
+    if (const auto* support_state = FindSupportState(metadata)) {
+        const std::string state_label = SupportStateLabel(support_state->value);
+        const float badge_padding = 3.0f;
+        const ImVec2 badge_text_size = ImGui::CalcTextSize(state_label.c_str());
+        const float badge_width = badge_text_size.x + badge_padding * 2.0f;
+        const float badge_height = badge_text_size.y + badge_padding;
+        const float badge_x = cursor_start.x + 2.0f;
+        const float badge_y = cursor_start.y + 2.0f;
+
+        const ImVec4 badge_fill = SupportStateBadgeColor(support_state->value);
+        draw_list->AddRectFilled(
+            ImVec2(badge_x, badge_y),
+            ImVec2(badge_x + badge_width, badge_y + badge_height),
+            ui::ToU32(badge_fill),
+            3.0f);
+        draw_list->AddText(
+            ImVec2(badge_x + badge_padding, badge_y + badge_padding * 0.5f),
+            ui::ToU32(ui::ReadableOn(t, badge_fill)),
+            state_label.c_str());
+    }
 
     // Draw port indicators
     RenderPortIndicators(metadata, icon_pos, icon_size);
@@ -694,9 +1166,9 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
     float text_y = icon_y + NODE_ICON_SIZE + 4;
 
-    // Dim text for template nodes
-    ImU32 text_color = metadata->IsTemplate() ?
-        IM_COL32(150, 150, 150, 255) : IM_COL32(220, 220, 220, 255);
+    // Dim text for nodes that cannot currently be added.
+    ImU32 text_color = !can_add_to_graph ?
+        ui::ToU32(t.text_faint) : ui::ToU32(t.text);
 
     draw_list->AddText(ImVec2(text_x, text_y), text_color, display_name.c_str());
 
@@ -718,29 +1190,36 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         float badge_x = cursor_start.x + card_width - badge_width - 2;
         float badge_y = cursor_start.y + 2;
 
-        // Badge background (amber/yellow for "Coming Soon")
+        // Badge background (pending: "Coming Soon")
         draw_list->AddRectFilled(
             ImVec2(badge_x, badge_y),
             ImVec2(badge_x + badge_width, badge_y + badge_height),
-            IM_COL32(180, 140, 40, 230),
+            ui::ToU32(ui::WithAlpha(t.pending, 230.0f / 255.0f)),
             3.0f
         );
 
         // Badge text
         draw_list->AddText(
             ImVec2(badge_x + badge_padding, badge_y + badge_padding * 0.5f),
-            IM_COL32(255, 255, 255, 255),
+            ui::ToU32(ui::ReadableOn(t, t.pending)),
             badge_display.c_str()
         );
     }
 
-    // Highlight on hover
+    // Pinned card: accent outline. Hover: light outline and a preview in the
+    // Info Panel (it returns to the pinned node when the hover ends).
+    if (pinned) {
+        draw_list->AddRect(cursor_start,
+                          ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
+                          ui::ToU32(t.accent), 4.0f, 0, 2.0f);
+    }
     if (hovered) {
         draw_list->AddRect(cursor_start,
                           ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                          IM_COL32(100, 150, 255, 100), 4.0f);
-        // Notify info panel of hover
-        if (on_node_hover_) {
+                          ui::ToU32(ui::WithAlpha(t.accent_text, 110.0f / 255.0f)), 4.0f);
+        if (extension) {
+            if (on_extension_hover_) on_extension_hover_(extension->type_id);
+        } else if (on_node_hover_) {
             on_node_hover_(metadata->type);
         }
     }
@@ -748,21 +1227,27 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImGui::PopID();
 }
 
-void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size) {
+void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size,
+                                      const cyxwiz::ExtensionPaletteEntry* extension) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     // Use the passed icon position (calculated in RenderNodeCard)
     ImVec2 p_min = icon_pos;
     ImVec2 p_max(icon_pos.x + size.x, icon_pos.y + size.y);
 
+    const ui::Tokens& t = ui::CurrentTokens();
     // Get category color
     ImU32 bg_color = GetNodeColor(metadata->category);
     ImU32 border_color = GetNodeColorDark(metadata->category);
 
+    if (extension && (extension->color >> 24) != 0) {
+        bg_color = extension->color;
+    }
+
     // Template nodes are grayed out
     if (metadata->IsTemplate()) {
-        bg_color = IM_COL32(120, 120, 120, 255);
-        border_color = IM_COL32(80, 80, 80, 255);
+        bg_color = ui::ToU32(t.bg_raised);
+        border_color = ui::ToU32(t.border);
     }
 
     // Draw rounded rectangle background
@@ -779,7 +1264,7 @@ void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVe
             p_min.x + (size.x - icon_text_size.x) * 0.5f,
             p_min.y + (size.y - icon_text_size.y) * 0.5f
         );
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), metadata->icon.c_str());
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), metadata->icon.c_str());
     }
 }
 
@@ -797,7 +1282,7 @@ void NodeBrowserPanel::RenderPortIndicators(const cyxwiz::NodeMetadata* metadata
         ImVec2 p2(icon_pos.x + tri_size - 1, y_center - tri_size);
         ImVec2 p3(icon_pos.x + tri_size - 1, y_center + tri_size);
 
-        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(80, 80, 80, 255));
+        draw_list->AddTriangleFilled(p1, p2, p3, ui::ToU32(ui::CurrentTokens().text_faint));
     }
 
     // Output ports (right side triangles pointing RIGHT - out of the node)
@@ -811,15 +1296,16 @@ void NodeBrowserPanel::RenderPortIndicators(const cyxwiz::NodeMetadata* metadata
         ImVec2 p2(x_right - tri_size + 1, y_center + tri_size);
         ImVec2 p3(x_right + 1, y_center);  // tip points right
 
-        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(80, 80, 80, 255));
+        draw_list->AddTriangleFilled(p1, p2, p3, ui::ToU32(ui::CurrentTokens().text_faint));
     }
 }
 
 void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::BeginTooltip();
 
     // Header with icon and name
-    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s %s",
+    ImGui::TextColored(ui::CurrentTokens().text_bright, "%s %s",
                        metadata->icon.c_str(), metadata->name.c_str());
 
     // Brief description
@@ -831,23 +1317,67 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 
     // Inputs/Outputs
     if (!metadata->inputs.empty()) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Inputs:");
+        ImGui::TextColored(t.series[3], "Inputs:");
         for (const auto& input : metadata->inputs) {
             ImGui::BulletText("%s", input.name.c_str());
         }
     }
 
     if (!metadata->outputs.empty()) {
-        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Outputs:");
+        ImGui::TextColored(t.series[4], "Outputs:");
         for (const auto& output : metadata->outputs) {
             ImGui::BulletText("%s", output.name.c_str());
+        }
+    }
+
+    if (!metadata->support_axes.empty()) {
+        ImGui::Separator();
+        if (const auto* support_state = FindSupportState(metadata)) {
+            const ImVec4 state_color = support_state->supported
+                ? t.success
+                : t.error;
+            ImGui::TextColored(
+                state_color,
+                "Support state: %s",
+                SupportStateLabel(support_state->value).c_str());
+            if (!support_state->reason.empty()) {
+                ImGui::TextWrapped("%s", support_state->reason.c_str());
+            }
+        }
+        ImGui::TextColored(t.text_bright, "Support details:");
+        for (const auto& axis : metadata->support_axes) {
+            const ImVec4 axis_color = axis.supported
+                ? t.success
+                : t.error;
+            const char* icon = axis.supported
+                ? ICON_FA_CIRCLE_CHECK
+                : ICON_FA_TRIANGLE_EXCLAMATION;
+
+            ImGui::TextColored(axis_color, "%s", icon);
+            ImGui::SameLine();
+            ImGui::Text("%s:", axis.name.c_str());
+            ImGui::SameLine();
+            const std::string axis_value = SupportAxisValueLabel(axis.value);
+            ImGui::TextDisabled("%s", axis_value.c_str());
+
+            const bool show_supported_reason =
+                axis.name == "Task Type" ||
+                axis.name == "Training Role" ||
+                axis.name == "Workflow Lane" ||
+                axis.name == "Implementation Owner";
+            if (!axis.reason.empty() &&
+                (!axis.supported || show_supported_reason)) {
+                ImGui::Indent(16.0f);
+                ImGui::TextWrapped("%s", axis.reason.c_str());
+                ImGui::Unindent(16.0f);
+            }
         }
     }
 
     // Status info for template nodes
     if (metadata->IsTemplate()) {
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f),
+        ImGui::TextColored(t.pending,
                           ICON_FA_CLOCK " Coming Soon");
         if (metadata->user_votes > 0) {
             ImGui::SameLine();
@@ -857,18 +1387,31 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 
     // Usage hint
     ImGui::Separator();
-    ImGui::TextDisabled("Double-click or drag to add");
+    if (metadata->IsTemplate()) {
+        ImGui::TextDisabled("Template node: not addable yet");
+    } else if (IsSupportBlocked(metadata)) {
+        const std::string reason = FirstUnsupportedSupportReason(metadata);
+        ImGui::TextColored(t.error,
+                           ICON_FA_TRIANGLE_EXCLAMATION " Blocked from graph add");
+        if (!reason.empty()) {
+            ImGui::TextWrapped("%s", reason.c_str());
+        }
+    } else {
+        ImGui::TextDisabled("Double-click or drag to add");
+    }
 
     ImGui::EndTooltip();
 }
 
 void NodeBrowserPanel::NavigateToCategory(cyxwiz::NodeCategory category) {
+    provider_filter_.clear();
     showing_all_in_category_ = true;
     current_category_ = category;
     category_show_all_[category] = true;
 }
 
 void NodeBrowserPanel::NavigateBack() {
+    provider_filter_.clear();
     showing_all_in_category_ = false;
     current_category_ = cyxwiz::NodeCategory::Unknown;
     // Reset all category show_all states
@@ -877,81 +1420,120 @@ void NodeBrowserPanel::NavigateBack() {
     }
 }
 
-void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata) {
+void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata,
+                                         const cyxwiz::ExtensionPaletteEntry* extension) {
     if (!node_editor_ || !metadata) return;
 
-    // Only create implemented nodes
-    if (metadata->IsTemplate()) {
+    // Only create nodes that central support metadata says are graph-addable.
+    if (metadata->IsTemplate() || IsSupportBlocked(metadata) || !metadata->made_by.empty()) {
         return;
     }
 
-    // TODO: Implement direct node creation
-    // node_editor_->CreateNode(metadata->type, mouse_pos);
-}
-
-ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
-    switch (category) {
-        case cyxwiz::NodeCategory::DataSources:
-            return IM_COL32(100, 181, 246, 255);  // Light Blue
-        case cyxwiz::NodeCategory::DataTransform:
-            return IM_COL32(38, 166, 154, 255);   // Teal
-        case cyxwiz::NodeCategory::Analytics:
-            return IM_COL32(156, 39, 176, 255);   // Purple
-        case cyxwiz::NodeCategory::Preprocessing:
-            return IM_COL32(129, 199, 132, 255);  // Light Green
-        case cyxwiz::NodeCategory::Layers:
-            return IM_COL32(39, 174, 96, 255);    // Green
-        case cyxwiz::NodeCategory::Activation:
-            return IM_COL32(243, 156, 18, 255);   // Orange
-        case cyxwiz::NodeCategory::Pooling:
-            return IM_COL32(155, 89, 182, 255);   // Light Purple
-        case cyxwiz::NodeCategory::Normalization:
-            return IM_COL32(236, 112, 99, 255);   // Coral
-        case cyxwiz::NodeCategory::Attention:
-            return IM_COL32(103, 58, 183, 255);   // Deep Purple
-        case cyxwiz::NodeCategory::Recurrent:
-            return IM_COL32(63, 81, 181, 255);    // Indigo
-        case cyxwiz::NodeCategory::ShapeOps:
-            return IM_COL32(26, 188, 156, 255);   // Turquoise
-        case cyxwiz::NodeCategory::MergeOps:
-            return IM_COL32(139, 195, 74, 255);   // Lime Green
-        case cyxwiz::NodeCategory::Training:
-            return IM_COL32(52, 73, 94, 255);     // Dark Blue Gray
-        case cyxwiz::NodeCategory::Regularization:
-            return IM_COL32(233, 30, 99, 255);    // Pink
-        case cyxwiz::NodeCategory::Utility:
-            return IM_COL32(96, 125, 139, 255);   // Blue Gray
-        case cyxwiz::NodeCategory::Signal:
-            return IM_COL32(0, 150, 136, 255);    // Teal
-        case cyxwiz::NodeCategory::DataPipeline:
-            return IM_COL32(0, 188, 212, 255);    // Cyan
-        case cyxwiz::NodeCategory::DNN:
-            return IM_COL32(41, 98, 255, 255);    // Deep Blue
-        case cyxwiz::NodeCategory::TextProcessing:
-            return IM_COL32(0, 121, 107, 255);    // Dark Teal
-        case cyxwiz::NodeCategory::Upsampling:
-            return IM_COL32(92, 107, 192, 255);   // Indigo
-        case cyxwiz::NodeCategory::TimeSeries:
-            return IM_COL32(255, 160, 0, 255);    // Amber
-        case cyxwiz::NodeCategory::Audio:
-            return IM_COL32(126, 87, 194, 255);   // Purple
-        case cyxwiz::NodeCategory::RL:
-            return IM_COL32(229, 57, 53, 255);    // Red
-        case cyxwiz::NodeCategory::Plugin:
-            return IM_COL32(68, 136, 170, 255);   // Steel Blue
-        case cyxwiz::NodeCategory::Unknown:
-        default:
-            return IM_COL32(127, 140, 141, 255);  // Gray
+    // Added at the centre of the canvas view, like the toolbar's menus.
+    if (extension) {
+        node_editor_->AddNodeFromMenu(cyxwiz::NodeType::PluginCustom, extension->type_id);
+    } else {
+        node_editor_->AddNodeFromMenu(metadata->type, metadata->name);
     }
 }
 
+ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
+    return ui::ToU32(NodeCategoryColour(category));
+}
+
+std::vector<const cyxwiz::NodeMetadata*> NodeBrowserPanel::ApplySupportFilter(
+    const std::vector<const cyxwiz::NodeMetadata*>& nodes) const {
+    if (support_filter_mode_ == SupportFilterMode::All) {
+        return nodes;
+    }
+
+    std::vector<const cyxwiz::NodeMetadata*> filtered;
+    filtered.reserve(nodes.size());
+    for (const auto* node : nodes) {
+        if (NodeMatchesSupportFilter(node)) {
+            filtered.push_back(node);
+        }
+    }
+    return filtered;
+}
+
+bool NodeBrowserPanel::NodeMatchesSupportFilter(
+    const cyxwiz::NodeMetadata* metadata) const {
+    if (!metadata) return false;
+
+    const bool blocked = IsSupportBlocked(metadata);
+    switch (support_filter_mode_) {
+    case SupportFilterMode::Pipeline:
+        return HasPipelineSupport(metadata);
+    case SupportFilterMode::Training:
+        return HasTrainingSupport(metadata);
+    case SupportFilterMode::UiOnly:
+        return IsUiOnly(metadata);
+    case SupportFilterMode::Blocked:
+        return blocked;
+    case SupportFilterMode::All:
+        return true;
+    }
+    return true;
+}
+
+bool NodeBrowserPanel::IsSupportBlocked(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr && cyxwiz::IsNodeSupportBlocked(*metadata);
+}
+
+bool NodeBrowserPanel::HasPipelineSupport(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr &&
+           metadata->IsImplemented() &&
+           !IsSupportBlocked(metadata) &&
+           HasSupportedAxis(metadata, "Runtime") &&
+           HasSupportedAxis(metadata, "Pipeline Executor");
+}
+
+bool NodeBrowserPanel::HasTrainingSupport(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr &&
+           metadata->IsImplemented() &&
+           !IsSupportBlocked(metadata) &&
+           HasSupportedAxis(metadata, "Training Backend") &&
+           HasSupportedAxis(metadata, "Compile") &&
+           HasSupportedAxis(metadata, "Training");
+}
+
+bool NodeBrowserPanel::IsUiOnly(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr &&
+           metadata->IsImplemented() &&
+           !IsSupportBlocked(metadata) &&
+           !IsTrainingCategory(metadata->category) &&
+           !HasAxis(metadata, "Runtime") &&
+           !HasAxis(metadata, "Pipeline Executor") &&
+           !HasAxis(metadata, "Training Backend") &&
+           !HasAxis(metadata, "Compile") &&
+           !HasAxis(metadata, "Training");
+}
+
+const char* NodeBrowserPanel::GetSupportFilterLabel(
+    SupportFilterMode mode) const {
+    switch (mode) {
+    case SupportFilterMode::Pipeline:
+        return "Pipeline";
+    case SupportFilterMode::Training:
+        return "Training";
+    case SupportFilterMode::UiOnly:
+        return "UI-only";
+    case SupportFilterMode::Blocked:
+        return "Blocked";
+    case SupportFilterMode::All:
+        return "All";
+    }
+    return "All";
+}
+
 ImU32 NodeBrowserPanel::GetNodeColorDark(cyxwiz::NodeCategory category) const {
-    // Darken the node color for borders
-    ImU32 color = GetNodeColor(category);
-    int r = (color >> 0) & 0xFF;
-    int g = (color >> 8) & 0xFF;
-    int b = (color >> 16) & 0xFF;
-    return IM_COL32(r * 0.7f, g * 0.7f, b * 0.7f, 255);
+    // The category colour a step toward the window, for borders
+    return ui::ToU32(ui::Mix(NodeCategoryColour(category), ui::CurrentTokens().bg_window, 0.3f));
 }
 
 } // namespace gui

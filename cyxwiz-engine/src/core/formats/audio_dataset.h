@@ -30,9 +30,37 @@ struct AudioDatasetConfig {
     // MFCC params
     int n_mfcc = 13;
 
-    // Dataset structure
-    bool labeled_subdirs = true;  // Subdirectories = class labels
+    // Dataset structure. Three modes:
+    //  - labeled_subdirs=true, csv_path empty: each subdir = class
+    //  - labeled_subdirs=false, csv_path empty: flat dir, no labels (all 0)
+    //  - csv_path non-empty: flat dir, labels read from CSV (FlatWithCSV)
+    bool labeled_subdirs = true;
     float max_duration = 5.0f;    // Max audio duration in seconds (pad/truncate)
+
+    // FlatWithCSV mode: when csv_path is set, AudioDataset reads label
+    // assignments from a CSV file instead of folder structure. The CSV
+    // must have a column with audio filenames and a column with labels.
+    // Both columns can be auto-detected by name; pass empty strings to
+    // let auto-detect pick (priorities: filename/file/path/id for the
+    // filename column; label/class/category/target for the label column).
+    // Delimiter is auto-detected (comma, semicolon, or tab).
+    std::string csv_path;
+    std::string filename_col;     // empty = auto-detect
+    std::string label_col;        // empty = auto-detect
+
+    // Augmentation applied to the raw waveform before feature
+    // extraction. Populated by the AudioAugmentation graph node via
+    // AudioDatasetBatcher. Zero / false means "disabled".
+    //  - noise_level: amplitude of additive Gaussian noise (0 = off)
+    //  - time_stretch: enable random ±10% time stretch per sample (v1)
+    //  - pitch_shift:  enable random ±2 semitone pitch shift per sample (v1)
+    float noise_level = 0.0f;
+    bool time_stretch = false;
+    bool pitch_shift = false;
+
+    // false = scan files and labels only, no feature-shape probe; GetInfo()
+    // then reports shape {0, 0}. The Data Input load check uses this.
+    bool probe_feature_shape = true;
 };
 
 /**
@@ -65,6 +93,9 @@ public:
     const std::vector<std::string>& GetClassNames() const { return class_names_; }
     int GetNumClasses() const { return static_cast<int>(class_names_.size()); }
 
+    // Debug: file path for a given sample index
+    const std::string& GetFilePath(size_t index) const { return file_paths_.at(index); }
+
 private:
     AudioDatasetConfig config_;
     std::vector<std::string> file_paths_;
@@ -74,6 +105,7 @@ private:
     int feature_cols_ = 0;       // Cols in feature map (time frames)
 
     void ScanDirectory(const std::string& directory);
+    void LoadFromCSV(const std::string& directory);  // FlatWithCSV mode
     AudioFeatures ExtractFeatures(const std::string& filepath) const;
 };
 

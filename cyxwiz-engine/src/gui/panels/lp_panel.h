@@ -57,7 +57,6 @@ private:
     bool maximize_ = true;
 
     // Number of variables (for 2D visualization, typically 2)
-    int num_variables_ = 2;
 
     // Objective function coefficients c
     std::vector<double> objective_coeffs_;

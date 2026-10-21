@@ -74,7 +74,6 @@ private:
     // UI state
     bool show_examples_ = false;
     bool show_history_ = false;
-    bool auto_execute_ = false;
     int selected_row_ = -1;
 
     // Example queries

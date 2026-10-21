@@ -82,8 +82,10 @@ struct DockTabStyle {
 struct PanelVisibility {
     std::string name;
     std::string icon;           // Icon character or empty
-    bool* visible_ptr;          // Pointer to panel's visibility flag
+    bool* visible_ptr;          // Pointer to the visibility flag; null = action (Command Palette)
     std::function<void()> on_toggle;  // Optional callback
+    std::string group;          // Workspace, Data, Training, Network, Extensions (sidebar and View > Panels)
+    std::string shortcut;       // printed in the tooltip and View > Panels when set
 };
 
 /**
@@ -113,7 +115,8 @@ public:
 
     // Register panels for sidebar toggles
     void RegisterPanel(const std::string& name, const std::string& icon, bool* visible_ptr,
-                       std::function<void()> on_toggle = nullptr);
+                       std::function<void()> on_toggle = nullptr, const std::string& group = "",
+                       const std::string& shortcut = "");
     void UnregisterPanel(const std::string& name);
     void ClearPanels();
 
@@ -125,10 +128,19 @@ public:
     SidebarPosition GetSidebarPosition() const { return sidebar_position_; }
     void SetSidebarAutoHide(bool auto_hide) { sidebar_auto_hide_ = auto_hide; }
     bool GetSidebarAutoHide() const { return sidebar_auto_hide_; }
+    // Width of the panel-toggle sidebar.
+    static constexpr float kSidebarWidth = 40.0f;
+    // Horizontal space the dock space leaves for a pinned (not auto-hiding)
+    // sidebar, so it never covers a docked panel; 0 when it hides or is off.
+    float PinnedSidebarReserve() const {
+        return (sidebar_auto_hide_ || sidebar_position_ == SidebarPosition::Hidden || panels_.empty())
+            ? 0.0f : kSidebarWidth;
+    }
 
     // Render sidebar panel toggles (call this in your main render loop)
     // Returns true if any panel visibility changed
-    bool RenderSidebarToggles();
+    // bottom_inset: height kept free at the bottom of the work area (status bar).
+    bool RenderSidebarToggles(float bottom_inset);
 
     // Custom dock node rendering hooks
     // Call these to customize dock node appearance

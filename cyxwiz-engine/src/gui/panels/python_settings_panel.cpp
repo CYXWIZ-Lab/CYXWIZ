@@ -3,17 +3,13 @@
 #include "../../core/python_detector.h"
 #include "../../core/file_dialogs.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <cstring>
 #include <sstream>
 #include <algorithm>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 namespace gui {
 
@@ -45,14 +41,16 @@ void PythonSettingsPanel::LoadSettings() {
     if (!python_path.empty()) {
         auto detector = cyxwiz::core::PythonDetector();
         auto installation = detector.ValidatePythonInstallation(python_path);
-        if (installation) {
+        if (installation && cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
             python_valid_ = true;
             python_version_ = installation->version;
             python_error_.clear();
         } else {
             python_valid_ = false;
             python_version_.clear();
-            python_error_ = "Invalid or inaccessible Python installation";
+            python_error_ = installation
+                ? cyxwiz::core::PythonDetector::GetRequirementError(*installation)
+                : "Invalid or inaccessible Python installation";
         }
     } else {
         python_valid_ = false;
@@ -65,6 +63,25 @@ void PythonSettingsPanel::LoadSettings() {
 
 void PythonSettingsPanel::ApplySettings() {
     auto& config = cyxwiz::core::EngineConfig::Instance();
+
+    auto installation = cyxwiz::core::PythonDetector::ValidatePythonInstallation(system_python_path_);
+    if (!installation) {
+        python_valid_ = false;
+        python_version_.clear();
+        python_error_ = "Invalid or inaccessible Python installation";
+        spdlog::error("Cannot save Python settings: {}", python_error_);
+        return;
+    }
+    if (!cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
+        python_valid_ = false;
+        python_version_.clear();
+        python_error_ = cyxwiz::core::PythonDetector::GetRequirementError(*installation);
+        spdlog::error("Cannot save Python settings: {}", python_error_);
+        return;
+    }
+    python_valid_ = true;
+    python_version_ = installation->version;
+    python_error_.clear();
 
     // Save system Python path
     config.SetSystemPythonPath(std::string(system_python_path_));
@@ -108,7 +125,7 @@ void PythonSettingsPanel::Render() {
     ImGui::Spacing();
 
     // ========== System Python Path ==========
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_CODE " System Python");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, ICON_FA_CODE " System Python");
     ImGui::Spacing();
 
     ImGui::Text("Python Executable:");
@@ -129,7 +146,7 @@ void PythonSettingsPanel::Render() {
         RunAutoDetection();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Scan system for Python 3.12+ installations");
+        ImGui::SetTooltip("Scan system for supported Python 3.12-3.13 installations");
     }
 
     ImGui::Spacing();
@@ -137,11 +154,11 @@ void PythonSettingsPanel::Render() {
     // Python status
     if (!std::string(system_python_path_).empty()) {
         if (python_valid_) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CHECK " Python %s", python_version_.c_str());
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, ICON_FA_CHECK " Python %s", python_version_.c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("(Valid)");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_XMARK " %s", python_error_.c_str());
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, ICON_FA_XMARK " %s", python_error_.c_str());
         }
     } else {
         ImGui::TextDisabled("No Python configured");
@@ -150,7 +167,7 @@ void PythonSettingsPanel::Render() {
     // Auto-detection results
     if (show_detection_results_ && !detected_pythons_.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Detected Python Installations:");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, "Detected Python Installations:");
         ImGui::Spacing();
 
         if (ImGui::BeginChild("DetectedPythons", ImVec2(0, 150), true)) {
@@ -196,7 +213,7 @@ void PythonSettingsPanel::Render() {
     ImGui::Spacing();
 
     // ========== Virtual Environment Settings ==========
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_CUBE " Virtual Environment");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, ICON_FA_CUBE " Virtual Environment");
     ImGui::Spacing();
 
     if (ImGui::Checkbox("Auto-create virtual environment for new projects", &auto_create_venv_)) {
@@ -239,7 +256,7 @@ void PythonSettingsPanel::Render() {
 
     if (is_modified_) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Unsaved changes");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION " Unsaved changes");
     }
 }
 
@@ -252,6 +269,9 @@ void PythonSettingsPanel::RunAutoDetection() {
     auto installations = detector.FindAllPythonInstallations();
 
     for (const auto& installation : installations) {
+        if (!cyxwiz::core::PythonDetector::MeetsRequirements(installation)) {
+            continue;
+        }
         DetectedPython python;
         python.path = installation.executable_path;
         python.version = installation.version;
@@ -261,7 +281,7 @@ void PythonSettingsPanel::RunAutoDetection() {
     }
 
     if (detected_pythons_.empty()) {
-        spdlog::warn("No Python 3.12+ installations found");
+        spdlog::warn("No supported Python 3.12-3.13 installations found");
     } else {
         spdlog::info("Found {} Python installation(s)", detected_pythons_.size());
         show_detection_results_ = true;
@@ -269,42 +289,31 @@ void PythonSettingsPanel::RunAutoDetection() {
 }
 
 void PythonSettingsPanel::BrowsePythonExecutable() {
-#ifdef _WIN32
-    // Use Windows native file dialog
-    char filename[MAX_PATH] = "";
-
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "Python Executable (python.exe)\\0python.exe\\0All Files (*.*)\\0*.*\\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "Select Python Executable";
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        strncpy(system_python_path_, filename, sizeof(system_python_path_) - 1);
+    if (auto selected = cyxwiz::FileDialogs::OpenFile(
+            "Select Python Executable",
+            {{"Python Executables", "python,python3,python.exe"}, {"All Files", "*"}},
+            system_python_path_[0] == '\0' ? nullptr : system_python_path_)) {
+        strncpy(system_python_path_, selected->c_str(), sizeof(system_python_path_) - 1);
+        system_python_path_[sizeof(system_python_path_) - 1] = '\0';
         is_modified_ = true;
 
         // Validate the selected Python
         auto detector = cyxwiz::core::PythonDetector();
-        auto installation = detector.ValidatePythonInstallation(filename);
-        if (installation) {
+        auto installation = detector.ValidatePythonInstallation(*selected);
+        if (installation && cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
             python_valid_ = true;
             python_version_ = installation->version;
             python_error_.clear();
-            spdlog::info("Selected Python: {} ({})", filename, python_version_);
+            spdlog::info("Selected Python: {} ({})", *selected, python_version_);
         } else {
             python_valid_ = false;
             python_version_.clear();
-            python_error_ = "Invalid Python installation";
-            spdlog::error("Selected file is not a valid Python 3.12+ installation: {}", filename);
+            python_error_ = installation
+                ? cyxwiz::core::PythonDetector::GetRequirementError(*installation)
+                : "Invalid Python installation";
+            spdlog::error("Selected file is not a supported Python installation: {} ({})", *selected, python_error_);
         }
     }
-#else
-    // TODO: Implement for Linux/macOS (use zenity/kdialog or ImGui file browser)
-    spdlog::warn("File dialog not yet implemented for this platform");
-#endif
 }
 
 } // namespace gui

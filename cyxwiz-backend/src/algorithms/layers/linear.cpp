@@ -1,51 +1,77 @@
 #include "cyxwiz/layers/linear.h"
+#include "../arrayfire_backend_utils.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
+#include <string>
+#include <vector>
 #include <spdlog/spdlog.h>
+#include <cyxwiz/error_codes.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
+namespace {
 
-// Flag to track if GPU is available and should be used
-static bool s_use_gpu = false;
-static bool s_gpu_checked = false;
-
-static bool CheckGPUAvailable() {
-    if (s_gpu_checked) return s_use_gpu;
-    s_gpu_checked = true;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::Backend backend = af::getActiveBackend();
-        s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        if (s_use_gpu) {
-#ifdef __APPLE__
-            // On macOS, af::deviceInfo() crashes in background threads with OpenCL backend
-            // This is a thread-safety issue specific to OpenCL context on macOS
-            spdlog::info("LinearLayer: GPU acceleration enabled");
-#else
-            // On other platforms (Windows/Linux), query device name normally
-            char name[256];
-            af::deviceInfo(name, nullptr, nullptr, nullptr);
-            spdlog::info("LinearLayer: GPU acceleration enabled using {}", name);
-#endif
-        }
-    } catch (const af::exception& e) {
-        spdlog::warn("LinearLayer: GPU check failed: {}, using CPU", e.what());
-        s_use_gpu = false;
-    } catch (...) {
-        spdlog::warn("LinearLayer: GPU check failed with unknown error, using CPU");
-        s_use_gpu = false;
+void ValidateLinearSparseCsrBatchView(
+    const LinearSparseCsrBatchView& input,
+    size_t expected_columns) {
+    if (input.rows == 0 || input.columns == 0) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR input must have positive dimensions");
     }
-#endif
-
-    return s_use_gpu;
+    if (input.columns != expected_columns) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR input features mismatch. Expected " +
+            std::to_string(expected_columns) + ", got " +
+            std::to_string(input.columns));
+    }
+    if (input.rows > static_cast<size_t>(
+            (std::numeric_limits<int32_t>::max)()) ||
+        input.columns > static_cast<size_t>(
+            (std::numeric_limits<int32_t>::max)()) ||
+        input.nnz > static_cast<size_t>(
+            (std::numeric_limits<int32_t>::max)())) {
+        throw std::length_error(
+            "LinearLayer sparse CSR dimensions exceed the int32 boundary");
+    }
+    if (input.row_offsets == nullptr) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR row offsets are null");
+    }
+    if (input.nnz > 0 &&
+        (input.column_indices == nullptr || input.values == nullptr)) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR values or column indices are null");
+    }
+    if (input.row_offsets[0] != 0 ||
+        input.row_offsets[input.rows] != static_cast<int32_t>(input.nnz)) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR row offsets do not bound nnz");
+    }
+    int32_t previous = 0;
+    for (size_t row = 0; row <= input.rows; ++row) {
+        const int32_t offset = input.row_offsets[row];
+        if (offset < previous || offset < 0 ||
+            static_cast<size_t>(offset) > input.nnz) {
+            throw std::invalid_argument(
+                "LinearLayer sparse CSR row offsets are not canonical");
+        }
+        previous = offset;
+    }
+    for (size_t index = 0; index < input.nnz; ++index) {
+        const int32_t column = input.column_indices[index];
+        if (column < 0 || static_cast<size_t>(column) >= input.columns) {
+            throw std::invalid_argument(
+                "LinearLayer sparse CSR column index is out of range");
+        }
+    }
 }
+
+
+} // namespace
 
 LinearLayer::LinearLayer(size_t in_features, size_t out_features, bool use_bias)
     : in_features_(in_features)
@@ -59,9 +85,6 @@ LinearLayer::LinearLayer(size_t in_features, size_t out_features, bool use_bias)
         bias_grad_ = Tensor({out_features}, DataType::Float32);
     }
 
-    // Check GPU availability
-    CheckGPUAvailable();
-
     // Initialize weights
     InitializeWeights();
 }
@@ -70,48 +93,24 @@ void LinearLayer::InitializeWeights() {
     // Xavier/Glorot initialization: weights ~ U(-sqrt(6/(in+out)), sqrt(6/(in+out)))
     double limit = std::sqrt(6.0 / (in_features_ + out_features_));
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (s_use_gpu) {
-        try {
-            // GPU-accelerated random initialization
-            // Generate random [in_features, out_features] in AF column-major
-            // which will be read as [out_features, in_features] row-major
-            af::array w_gpu = af::randu(static_cast<dim_t>(in_features_),
-                                         static_cast<dim_t>(out_features_), f32);
-            // Scale to [-limit, limit]
-            w_gpu = (w_gpu * 2.0f - 1.0f) * static_cast<float>(limit);
+    try {
+        af::array w_gpu = af::randu(static_cast<dim_t>(out_features_),
+                                     static_cast<dim_t>(in_features_), f32);
+        // Scale to [-limit, limit]
+        w_gpu = (w_gpu * 2.0f - 1.0f) * static_cast<float>(limit);
+        w_gpu.eval();
 
-            // Copy back to CPU tensor
-            // AF column-major [in_features, out_features] = row-major [out_features, in_features]
-            w_gpu.host(weight_.Data());
+        weight_ = Tensor::FromArrayRowMajor2D(w_gpu);
 
-            if (use_bias_) {
-                bias_ = Tensor::Zeros({out_features_}, DataType::Float32);
-            }
-
-            spdlog::info("LinearLayer({}, {}) initialized with Xavier (GPU)", in_features_, out_features_);
-            return;
-        } catch (const af::exception& e) {
-            spdlog::warn("GPU initialization failed: {}, falling back to CPU", e.what());
+        if (use_bias_) {
+            bias_ = Tensor::Zeros({out_features_}, DataType::Float32);
         }
+
+        spdlog::debug("LinearLayer({}, {}) initialized with Xavier (ArrayFire)", in_features_, out_features_);
+        return;
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::InitializeWeights failed on the ArrayFire device: ") + e.what());
     }
-#endif
-
-    // CPU fallback
-    weight_ = Tensor::Random({out_features_, in_features_}, DataType::Float32);
-
-    // Scale to [-limit, limit]
-    float* weight_data = static_cast<float*>(weight_.Data());
-    size_t num_weights = out_features_ * in_features_;
-    for (size_t i = 0; i < num_weights; i++) {
-        weight_data[i] = (weight_data[i] * 2.0f - 1.0f) * static_cast<float>(limit);
-    }
-
-    if (use_bias_) {
-        bias_ = Tensor::Zeros({out_features_}, DataType::Float32);
-    }
-
-    spdlog::debug("LinearLayer({}, {}) initialized with Xavier (CPU)", in_features_, out_features_);
 }
 
 Tensor LinearLayer::Forward(const Tensor& input) {
@@ -134,109 +133,154 @@ Tensor LinearLayer::Forward(const Tensor& input) {
                                std::to_string(in_features));
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (s_use_gpu) {
+    try {
+        af::array input_gpu;
+        if (is_batched) {
+            input_gpu = input.GetArrayRowMajor2D().as(af::dtype::f32);
+        } else {
+            input_gpu = af::moddims(
+                input.GetArray(),
+                1,
+                static_cast<dim_t>(in_features)).as(af::dtype::f32);
+        }
+
+        af::array weight_gpu =
+            weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+        af::array output_gpu =
+            af::matmul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
+        output_gpu.eval();
+
+        if (use_bias_) {
+            af::array bias_gpu = af::moddims(
+                bias_.GetArray(),
+                1,
+                static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+            output_gpu = output_gpu + af::tile(
+                bias_gpu,
+                static_cast<unsigned int>(batch_size),
+                1);
+            output_gpu.eval();
+        }
+
+        if (is_batched) {
+            return Tensor::FromArrayRowMajor2D(output_gpu);
+        }
+
+        return Tensor(af::flat(output_gpu));
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::Forward failed on the ArrayFire device: ") + e.what());
+    }
+}
+
+Tensor LinearLayer::ForwardSparseCsr(
+    const LinearSparseCsrBatchView& input) {
+    ValidateLinearSparseCsrBatchView(input, in_features_);
+
+    try {
+        af::array output_gpu;
+        if (input.nnz == 0) {
+            output_gpu = af::constant(
+                0.0f,
+                static_cast<dim_t>(input.rows),
+                static_cast<dim_t>(out_features_),
+                f32);
+        } else {
+            af::array sparse_input = af::sparse(
+                static_cast<dim_t>(input.rows),
+                static_cast<dim_t>(input.columns),
+                static_cast<dim_t>(input.nnz),
+                input.values,
+                input.row_offsets,
+                input.column_indices,
+                f32,
+                AF_STORAGE_CSR,
+                afHost);
+            af::array weight_transposed = af::transpose(
+                weight_.GetArrayRowMajor2D().as(af::dtype::f32));
+            output_gpu = af::matmul(
+                sparse_input,
+                weight_transposed,
+                AF_MAT_NONE,
+                AF_MAT_NONE);
+        }
+        if (use_bias_) {
+            af::array bias_gpu = af::moddims(
+                bias_.GetArray(),
+                1,
+                static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+            output_gpu = output_gpu + af::tile(
+                bias_gpu,
+                static_cast<unsigned int>(input.rows),
+                1);
+        }
+        output_gpu.eval();
+        return Tensor::FromArrayRowMajor2D(output_gpu);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::ForwardSparseCsr failed on the ArrayFire device: ") + e.what());
+    }
+}
+
+Tensor LinearLayer::ForwardSequence(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 3 || shape[2] != in_features_) {
+        throw std::runtime_error("LinearLayer::ForwardSequence: input must be [batch, seq, in_features]");
+    }
+    const size_t positions = shape[0] * shape[1];
+    try {
+        const af::array x = af::moddims(input.GetSemanticArray().as(af::dtype::f32),
+                                        static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
+        const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+        af::array y = af::matmul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
+        if (use_bias_) {
+            const af::array b = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+            y = y + af::tile(b, static_cast<unsigned int>(positions), 1);
+        }
+        y = af::moddims(y, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
+                        static_cast<dim_t>(out_features_));
+        y.eval();
+        input_cache_ = input;
+        return Tensor::FromSemanticArray(y, {shape[0], shape[1], out_features_});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::ForwardSequence failed on the ArrayFire device: ") + e.what());
+    }
+}
+
+Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
+    const auto& shape = grad_output.Shape();
+    if (shape.size() != 3 || shape[2] != out_features_) {
+        throw std::runtime_error("LinearLayer::BackwardSequence: grad must be [batch, seq, out_features]");
+    }
+    const size_t positions = shape[0] * shape[1];
+    if (input_cache_.Shape().size() == 3) {
         try {
-            // GPU-accelerated forward pass
-            // Note: ArrayFire uses column-major, our Tensor uses row-major
-            // For row-major input [batch, in_features], when loaded as column-major
-            // ArrayFire sees it as [in_features, batch] (transposed)
-            // So we can directly use it for: output = input @ weight^T
-            // Which gives us [batch, out_features] in column-major = [out_features, batch] AF
-
-            af::array input_gpu;
-            if (is_batched) {
-                // Row-major [batch, in_features] -> AF sees [in_features, batch]
-                input_gpu = af::array(static_cast<dim_t>(in_features),
-                                      static_cast<dim_t>(batch_size),
-                                      static_cast<const float*>(input.Data()));
-            } else {
-                input_gpu = af::array(static_cast<dim_t>(in_features), 1,
-                                      static_cast<const float*>(input.Data()));
+            const af::array dy = af::moddims(grad_output.GetSemanticArray().as(af::dtype::f32),
+                                             static_cast<dim_t>(positions), static_cast<dim_t>(out_features_));
+            const af::array x = af::moddims(input_cache_.GetSemanticArray().as(af::dtype::f32),
+                                            static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
+            const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+            {
+                ScopedProfileSpan span("Linear.sequence_backward.dw");
+                af::array dw = af::matmul(dy, x, AF_MAT_TRANS, AF_MAT_NONE);
+                dw.eval();
+                weight_grad_ = Tensor::FromArrayRowMajor2D(dw);
             }
-
-            // Row-major weight [out_features, in_features] -> AF sees [in_features, out_features]
-            af::array weight_gpu(static_cast<dim_t>(in_features_),
-                                 static_cast<dim_t>(out_features_),
-                                 static_cast<const float*>(weight_.Data()));
-
-            // Matrix multiplication:
-            // weight_gpu (AF layout): [in_features, out_features]
-            // input_gpu (AF layout): [in_features, batch]
-            // We want: output = input @ weight (row-major) = weight^T @ input (AF layout)
-            // Result: [out_features, batch] in AF = [batch, out_features] row-major
-            af::array output_gpu = af::matmul(weight_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
-
-            // Add bias if present
             if (use_bias_) {
-                af::array bias_gpu(static_cast<dim_t>(out_features_), 1,
-                                   static_cast<const float*>(bias_.Data()));
-                output_gpu = output_gpu + af::tile(bias_gpu, 1, static_cast<unsigned int>(batch_size));
+                ScopedProfileSpan span("Linear.sequence_backward.db");
+                af::array db = af::flat(af::sum(dy, 0));
+                db.eval();
+                bias_grad_ = Tensor(db);
             }
-
-            // Create output tensor and copy back
-            // AF [out_features, batch] -> row-major [batch, out_features]
-            Tensor output;
-            if (is_batched) {
-                output = Tensor({batch_size, out_features_}, DataType::Float32);
-                // Copy directly - AF's column-major [out_features, batch] = row-major [batch, out_features]
-                output_gpu.host(output.Data());
-            } else {
-                output = Tensor({out_features_}, DataType::Float32);
-                output_gpu.host(output.Data());
-            }
-
-            return output;
+            ScopedProfileSpan span("Linear.sequence_backward.dx");
+            af::array dx = af::moddims(af::matmul(dy, w), static_cast<dim_t>(shape[0]),
+                                       static_cast<dim_t>(shape[1]), static_cast<dim_t>(in_features_));
+            dx.eval();
+            return Tensor::FromSemanticArray(dx, {shape[0], shape[1], in_features_});
         } catch (const af::exception& e) {
-            spdlog::warn("GPU forward pass failed: {}, falling back to CPU", e.what());
+            throw std::runtime_error(std::string("LinearLayer::BackwardSequence failed on the ArrayFire device: ") + e.what());
         }
     }
-#endif
-
-    // CPU fallback implementation
-    if (is_batched) {
-        Tensor output({batch_size, out_features_}, DataType::Float32);
-        const float* input_data = static_cast<const float*>(input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
-        const float* bias_data = use_bias_ ? static_cast<const float*>(bias_.Data()) : nullptr;
-        float* output_data = static_cast<float*>(output.Data());
-
-        // Matrix multiplication: C = A @ B^T
-        for (size_t b = 0; b < batch_size; b++) {
-            for (size_t o = 0; o < out_features_; o++) {
-                float sum = 0.0f;
-                for (size_t i = 0; i < in_features_; i++) {
-                    sum += input_data[b * in_features_ + i] * weight_data[o * in_features_ + i];
-                }
-                if (use_bias_) {
-                    sum += bias_data[o];
-                }
-                output_data[b * out_features_ + o] = sum;
-            }
-        }
-
-        return output;
-    } else {
-        // Single sample (no batch dimension)
-        Tensor output({out_features_}, DataType::Float32);
-        const float* input_data = static_cast<const float*>(input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
-        const float* bias_data = use_bias_ ? static_cast<const float*>(bias_.Data()) : nullptr;
-        float* output_data = static_cast<float*>(output.Data());
-
-        for (size_t o = 0; o < out_features_; o++) {
-            float sum = 0.0f;
-            for (size_t i = 0; i < in_features_; i++) {
-                sum += input_data[i] * weight_data[o * in_features_ + i];
-            }
-            if (use_bias_) {
-                sum += bias_data[o];
-            }
-            output_data[o] = sum;
-        }
-
-        return output;
-    }
+    Tensor flat = Backward(grad_output.Reshape({positions, out_features_}));
+    return flat.Reshape({shape[0], shape[1], in_features_});
 }
 
 Tensor LinearLayer::Backward(const Tensor& grad_output) {
@@ -245,162 +289,104 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
     (void)input_shape;  // Suppress unused variable warning
     bool is_batched = grad_shape.size() == 2;
 
-    size_t batch_size = is_batched ? grad_shape[0] : 1;
+    try {
+        af::array grad_gpu;
+        af::array input_gpu;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (s_use_gpu) {
-        try {
-            // GPU-accelerated backward pass
-            // Using same row-major to column-major trick as forward pass
-
-            // Row-major grad [batch, out_features] -> AF sees [out_features, batch]
-            af::array grad_gpu;
-            af::array input_gpu;
-
-            if (is_batched) {
-                grad_gpu = af::array(static_cast<dim_t>(out_features_),
-                                     static_cast<dim_t>(batch_size),
-                                     static_cast<const float*>(grad_output.Data()));
-                input_gpu = af::array(static_cast<dim_t>(in_features_),
-                                      static_cast<dim_t>(batch_size),
-                                      static_cast<const float*>(input_cache_.Data()));
-            } else {
-                grad_gpu = af::array(static_cast<dim_t>(out_features_), 1,
-                                     static_cast<const float*>(grad_output.Data()));
-                input_gpu = af::array(static_cast<dim_t>(in_features_), 1,
-                                      static_cast<const float*>(input_cache_.Data()));
-            }
-
-            // Row-major weight [out_features, in_features] -> AF sees [in_features, out_features]
-            af::array weight_gpu(static_cast<dim_t>(in_features_),
-                                 static_cast<dim_t>(out_features_),
-                                 static_cast<const float*>(weight_.Data()));
-
-            // Gradient w.r.t. weight:
-            // In row-major: grad_weight = grad_output^T @ input / batch
-            // With our layout: grad (AF) = [out_features, batch], input (AF) = [in_features, batch]
-            // grad_weight = grad @ input^T -> [out_features, in_features]
-            // Store in row-major weight_grad_ [out_features, in_features] -> AF copies to [in_features, out_features]
-            af::array weight_grad_gpu = af::matmul(grad_gpu, input_gpu, AF_MAT_NONE, AF_MAT_TRANS);
-            weight_grad_gpu = weight_grad_gpu / static_cast<float>(batch_size);
-            // Output is [out_features, in_features] in AF, row-major sees [in_features, out_features]
-            // Need to transpose to get correct row-major layout
-            af::array weight_grad_transposed = af::transpose(weight_grad_gpu);
-            weight_grad_transposed.host(weight_grad_.Data());
-
-            // Gradient w.r.t. bias: sum over batch dimension
-            if (use_bias_) {
-                af::array bias_grad_gpu = af::sum(grad_gpu, 1) / static_cast<float>(batch_size);
-                bias_grad_gpu.host(bias_grad_.Data());
-            }
-
-            // Gradient w.r.t. input: grad_input = grad_output @ weight
-            // grad (AF): [out_features, batch]
-            // weight (AF): [in_features, out_features] (row-major [out_features, in_features])
-            // We want: grad_input [batch, in_features] row-major = [in_features, batch] AF
-            // grad_input = weight @ grad = [in_features, out_features] @ [out_features, batch] = [in_features, batch]
-            af::array grad_input_gpu = af::matmul(weight_gpu, grad_gpu);
-
-            // Create output tensor and copy back
-            // AF [in_features, batch] -> row-major [batch, in_features]
-            Tensor grad_input;
-            if (is_batched) {
-                grad_input = Tensor({batch_size, in_features_}, DataType::Float32);
-                // AF column-major [in_features, batch] = row-major [batch, in_features]
-                grad_input_gpu.host(grad_input.Data());
-            } else {
-                grad_input = Tensor({in_features_}, DataType::Float32);
-                grad_input_gpu.host(grad_input.Data());
-            }
-
-            return grad_input;
-        } catch (const af::exception& e) {
-            spdlog::warn("GPU backward pass failed: {}, falling back to CPU", e.what());
+        if (is_batched) {
+            grad_gpu =
+                grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
+            input_gpu =
+                input_cache_.GetArrayRowMajor2D().as(af::dtype::f32);
+        } else {
+            grad_gpu = af::moddims(
+                grad_output.GetArray(),
+                1,
+                static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+            input_gpu = af::moddims(
+                input_cache_.GetArray(),
+                1,
+                static_cast<dim_t>(in_features_)).as(af::dtype::f32);
         }
+
+        af::array weight_gpu =
+            weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+
+        af::array weight_grad_gpu =
+            af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
+        weight_grad_gpu.eval();
+        weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
+
+        if (use_bias_) {
+            af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0));
+            bias_grad_gpu.eval();
+            bias_grad_ = Tensor(bias_grad_gpu);
+        }
+
+        af::array grad_input_gpu = af::matmul(grad_gpu, weight_gpu);
+        grad_input_gpu.eval();
+
+        if (is_batched) {
+            return Tensor::FromArrayRowMajor2D(grad_input_gpu);
+        }
+
+        return Tensor(af::flat(grad_input_gpu));
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::Backward failed on the ArrayFire device: ") + e.what());
     }
-#endif
+}
 
-    // CPU fallback implementation
-    if (is_batched) {
-        const float* grad_output_data = static_cast<const float*>(grad_output.Data());
-        const float* input_data = static_cast<const float*>(input_cache_.Data());
-        float* weight_grad_data = static_cast<float*>(weight_grad_.Data());
+void LinearLayer::BackwardSparseCsr(
+    const LinearSparseCsrBatchView& input,
+    const Tensor& grad_output) {
+    ValidateLinearSparseCsrBatchView(input, in_features_);
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape != std::vector<size_t>{input.rows, out_features_}) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR grad_output must have shape [" +
+            std::to_string(input.rows) + ", " +
+            std::to_string(out_features_) + "]");
+    }
 
-        // Initialize gradients to zero
-        std::memset(weight_grad_data, 0, sizeof(float) * out_features_ * in_features_);
-
-        for (size_t o = 0; o < out_features_; o++) {
-            for (size_t i = 0; i < in_features_; i++) {
-                float grad_sum = 0.0f;
-                for (size_t b = 0; b < batch_size; b++) {
-                    grad_sum += grad_output_data[b * out_features_ + o] *
-                              input_data[b * in_features_ + i];
-                }
-                weight_grad_data[o * in_features_ + i] = grad_sum / static_cast<float>(batch_size);
-            }
+    try {
+        af::array grad_gpu =
+            grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
+        af::array weight_grad_gpu;
+        if (input.nnz == 0) {
+            weight_grad_gpu = af::constant(
+                0.0f,
+                static_cast<dim_t>(out_features_),
+                static_cast<dim_t>(in_features_),
+                f32);
+        } else {
+            af::array sparse_input = af::sparse(
+                static_cast<dim_t>(input.rows),
+                static_cast<dim_t>(input.columns),
+                static_cast<dim_t>(input.nnz),
+                input.values,
+                input.row_offsets,
+                input.column_indices,
+                f32,
+                AF_STORAGE_CSR,
+                afHost);
+            af::array feature_by_output = af::matmul(
+                sparse_input,
+                grad_gpu,
+                AF_MAT_TRANS,
+                AF_MAT_NONE);
+            weight_grad_gpu = af::transpose(feature_by_output);
         }
+        weight_grad_gpu.eval();
+        weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
 
         if (use_bias_) {
-            float* bias_grad_data = static_cast<float*>(bias_grad_.Data());
-            std::memset(bias_grad_data, 0, sizeof(float) * out_features_);
-
-            for (size_t b = 0; b < batch_size; b++) {
-                for (size_t o = 0; o < out_features_; o++) {
-                    bias_grad_data[o] += grad_output_data[b * out_features_ + o];
-                }
-            }
-
-            for (size_t o = 0; o < out_features_; o++) {
-                bias_grad_data[o] /= static_cast<float>(batch_size);
-            }
+            af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0));
+            bias_grad_gpu.eval();
+            bias_grad_ = Tensor(bias_grad_gpu);
         }
-
-        // Gradient w.r.t. input
-        Tensor grad_input({batch_size, in_features_}, DataType::Float32);
-        float* grad_input_data = static_cast<float*>(grad_input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
-
-        for (size_t b = 0; b < batch_size; b++) {
-            for (size_t i = 0; i < in_features_; i++) {
-                float sum = 0.0f;
-                for (size_t o = 0; o < out_features_; o++) {
-                    sum += grad_output_data[b * out_features_ + o] *
-                          weight_data[o * in_features_ + i];
-                }
-                grad_input_data[b * in_features_ + i] = sum;
-            }
-        }
-
-        return grad_input;
-    } else {
-        // Single sample (1D tensors)
-        const float* grad_output_data = static_cast<const float*>(grad_output.Data());
-        const float* input_data = static_cast<const float*>(input_cache_.Data());
-        float* weight_grad_data = static_cast<float*>(weight_grad_.Data());
-
-        for (size_t o = 0; o < out_features_; o++) {
-            for (size_t i = 0; i < in_features_; i++) {
-                weight_grad_data[o * in_features_ + i] = grad_output_data[o] * input_data[i];
-            }
-        }
-
-        if (use_bias_) {
-            std::memcpy(bias_grad_.Data(), grad_output.Data(), sizeof(float) * out_features_);
-        }
-
-        Tensor grad_input({in_features_}, DataType::Float32);
-        float* grad_input_data = static_cast<float*>(grad_input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
-
-        for (size_t i = 0; i < in_features_; i++) {
-            float sum = 0.0f;
-            for (size_t o = 0; o < out_features_; o++) {
-                sum += weight_data[o * in_features_ + i] * grad_output_data[o];
-            }
-            grad_input_data[i] = sum;
-        }
-
-        return grad_input;
+        return;
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::BackwardSparseCsr failed on the ArrayFire device: ") + e.what());
     }
 }
 

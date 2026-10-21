@@ -5,10 +5,21 @@
 // - Code export functionality (PyTorch, TensorFlow, Keras, PyCyxWiz)
 
 #include "node_editor.h"
+#include "../core/graph_document.h"
+#include "../core/graph_node_factory.h"
+#include "subgraph_document.h"
+#include "node_type_import_registry.h"
+#include "../core/data_input_parameters.h"
+#include "../core/pipeline_runtime_capabilities.h"
+#include "node_import_guardrails.h"
 #include "../core/file_dialogs.h"
+#include "../core/project_manager.h"
+#include "../core/project_data_path.h"
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
+#include <stdexcept>
 #include <unordered_map>
 #include <spdlog/spdlog.h>
 
@@ -16,126 +27,30 @@ namespace gui {
 
 // ========== Pattern to Graph Conversion ==========
 
-// Helper: Convert string type name to NodeType enum
+// Resolve legacy pattern/import names through one shared authority.
 static NodeType StringToNodeType(const std::string& type_str) {
-    static const std::unordered_map<std::string, NodeType> type_map = {
-        // Data pipeline
-        {"Input", NodeType::DatasetInput},      // Pattern uses "Input" for data input
-        {"DataInput", NodeType::DatasetInput},
-        {"DatasetInput", NodeType::DatasetInput},
-        {"Output", NodeType::Output},
-
-        // Core layers
-        {"Dense", NodeType::Dense},
-        {"Conv1D", NodeType::Conv1D},
-        {"Conv2D", NodeType::Conv2D},
-        {"Conv3D", NodeType::Conv3D},
-        {"DepthwiseConv2D", NodeType::DepthwiseConv2D},
-
-        // Pooling
-        {"MaxPool2D", NodeType::MaxPool2D},
-        {"AvgPool2D", NodeType::AvgPool2D},
-        {"GlobalMaxPool", NodeType::GlobalMaxPool},
-        {"GlobalAvgPool", NodeType::GlobalAvgPool},
-        {"GlobalAvgPool2D", NodeType::GlobalAvgPool},  // Alias
-        {"AdaptiveAvgPool", NodeType::AdaptiveAvgPool},
-
-        // Normalization
-        {"BatchNorm", NodeType::BatchNorm},
-        {"BatchNorm2D", NodeType::BatchNorm},  // Alias
-        {"LayerNorm", NodeType::LayerNorm},
-        {"GroupNorm", NodeType::GroupNorm},
-        {"InstanceNorm", NodeType::InstanceNorm},
-
-        // Regularization
-        {"Dropout", NodeType::Dropout},
-        {"Flatten", NodeType::Flatten},
-
-        // Recurrent
-        {"RNN", NodeType::RNN},
-        {"LSTM", NodeType::LSTM},
-        {"GRU", NodeType::GRU},
-        {"Bidirectional", NodeType::Bidirectional},
-        {"Embedding", NodeType::Embedding},
-
-        // Attention & Transformer
-        {"MultiHeadAttention", NodeType::MultiHeadAttention},
-        {"SelfAttention", NodeType::SelfAttention},
-        {"CrossAttention", NodeType::CrossAttention},
-        {"LinearAttention", NodeType::LinearAttention},
-        {"TransformerEncoder", NodeType::TransformerEncoder},
-        {"TransformerDecoder", NodeType::TransformerDecoder},
-        {"PositionalEncoding", NodeType::PositionalEncoding},
-
-        // Activations
-        {"ReLU", NodeType::ReLU},
-        {"LeakyReLU", NodeType::LeakyReLU},
-        {"PReLU", NodeType::PReLU},
-        {"ELU", NodeType::ELU},
-        {"SELU", NodeType::SELU},
-        {"GELU", NodeType::GELU},
-        {"Swish", NodeType::Swish},
-        {"Mish", NodeType::Mish},
-        {"Sigmoid", NodeType::Sigmoid},
-        {"Tanh", NodeType::Tanh},
-        {"Softmax", NodeType::Softmax},
-
-        // Shape operations
-        {"Reshape", NodeType::Reshape},
-        {"Permute", NodeType::Permute},
-        {"Squeeze", NodeType::Squeeze},
-        {"Unsqueeze", NodeType::Unsqueeze},
-        {"View", NodeType::View},
-        {"Split", NodeType::Split},
-
-        // Merge operations
-        {"Concatenate", NodeType::Concatenate},
-        {"Concat", NodeType::Concatenate},  // Alias
-        {"Add", NodeType::Add},
-        {"Multiply", NodeType::Multiply},
-        {"Average", NodeType::Average},
-
-        // Loss functions
-        {"MSELoss", NodeType::MSELoss},
-        {"CrossEntropyLoss", NodeType::CrossEntropyLoss},
-        {"CrossEntropy", NodeType::CrossEntropyLoss},  // Alias
-        {"BCELoss", NodeType::BCELoss},
-        {"BCEWithLogits", NodeType::BCEWithLogits},
-        {"L1Loss", NodeType::L1Loss},
-        {"SmoothL1Loss", NodeType::SmoothL1Loss},
-        {"HuberLoss", NodeType::HuberLoss},
-        {"NLLLoss", NodeType::NLLLoss},
-
-        // Optimizers
-        {"SGD", NodeType::SGD},
-        {"Adam", NodeType::Adam},
-        {"AdamW", NodeType::AdamW},
-        {"RMSprop", NodeType::RMSprop},
-        {"Adagrad", NodeType::Adagrad},
-        {"NAdam", NodeType::NAdam},
-
-        // Data Pipeline / Preprocessing
-        {"Normalize", NodeType::Normalize},
-        {"OneHotEncode", NodeType::OneHotEncode},
-        {"DataLoader", NodeType::DataLoader},
-        {"DataSplit", NodeType::DataSplit},
-        {"Augmentation", NodeType::Augmentation},
-        {"TensorReshape", NodeType::TensorReshape}
-    };
-
-    auto it = type_map.find(type_str);
-    if (it != type_map.end()) {
-        return it->second;
+    const auto resolved = ResolveNodeTypeImportName(type_str);
+    if (resolved.has_value()) {
+        return *resolved;
     }
-    spdlog::warn("Unknown node type '{}', defaulting to Dense", type_str);
-    return NodeType::Dense;
+
+    spdlog::warn("Unknown node type '{}'", type_str);
+    return NodeType::Unknown;
+}
+
+void NodeEditor::DetachFromFile() {
+    current_file_path_.clear();
+    saved_fingerprint_ = 0;
+    fingerprint_baseline_frames_ = 0;
+    unsaved_ = true;
 }
 
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
-    using json = nlohmann::json;
-
+    if (!CanReplaceGraph("load a graph")) return false;
     // Clear existing graph
     ClearGraph();
+    // A template is a new graph, not the file it came from.
+    DetachFromFile();
 
     const auto& tmpl = j["template"];
 
@@ -152,6 +67,20 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
 
             // Convert string type to NodeType enum
             NodeType node_type = StringToNodeType(type_str);
+            if (node_type == NodeType::Unknown) {
+                spdlog::error("Cannot load pattern node '{}' with unknown type '{}'",
+                              name,
+                              type_str);
+                ClearGraph();
+                return false;
+            }
+            MLNode early_node;
+            early_node.type = node_type;
+            early_node.name = name;
+            if (RejectDenseEncodedSequencePlaceholder(early_node, "Pattern")) {
+                ClearGraph();
+                return false;
+            }
 
             // Create node with proper pins
             MLNode node = CreateNode(node_type, name);
@@ -197,6 +126,11 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
                     node.parameters[key] = param_value;
                 }
             }
+            MigrateLegacyNodeParameters(node.type, node.parameters, true);
+            if (RejectDenseEncodedSequencePlaceholder(node, "Pattern")) {
+                ClearGraph();
+                return false;
+            }
 
             nodes_.push_back(node);
 
@@ -237,28 +171,34 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
             int from_pin_idx = link_json.value("from_pin", 0);
             int to_pin_idx = link_json.value("to_pin", 0);
 
+            if (from_pin_idx < 0 ||
+                from_pin_idx >= static_cast<int>(from_node->outputs.size())) {
+                spdlog::warn(
+                    "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
+                    from_str,
+                    to_str,
+                    from_pin_idx,
+                    from_node->name,
+                    from_node->outputs.size());
+                continue;
+            }
+            if (to_pin_idx < 0 ||
+                to_pin_idx >= static_cast<int>(to_node->inputs.size())) {
+                spdlog::warn(
+                    "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
+                    from_str,
+                    to_str,
+                    to_pin_idx,
+                    to_node->name,
+                    to_node->inputs.size());
+                continue;
+            }
+
             // Create link using actual pin IDs
             NodeLink link;
             link.id = link_id++;
-
-            if (from_pin_idx < static_cast<int>(from_node->outputs.size())) {
-                link.from_pin = from_node->outputs[from_pin_idx].id;
-            } else if (!from_node->outputs.empty()) {
-                link.from_pin = from_node->outputs[0].id;
-            } else {
-                spdlog::warn("Node {} has no output pins", from_str);
-                continue;
-            }
-
-            if (to_pin_idx < static_cast<int>(to_node->inputs.size())) {
-                link.to_pin = to_node->inputs[to_pin_idx].id;
-            } else if (!to_node->inputs.empty()) {
-                link.to_pin = to_node->inputs[0].id;
-            } else {
-                spdlog::warn("Node {} has no input pins", to_str);
-                continue;
-            }
-
+            link.from_pin = from_node->outputs[from_pin_idx].id;
+            link.to_pin = to_node->inputs[to_pin_idx].id;
             link.from_node = from_node_id;
             link.to_node = to_node_id;
             link.type = LinkType::TensorFlow;
@@ -280,121 +220,302 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
 
 // ========== Graph Save/Load Implementation ==========
 
+void NodeEditor::RebuildDataBoundaryPins(
+    MLNode& node,
+    bool legacy_contract) {
+    gui::RebuildDataBoundaryPins(node, legacy_contract, next_pin_id_);
+}
+
+bool NodeEditor::HasLegacyDataBoundary() const {
+    for (const auto& data : subgraphs_) for (const auto& node : data.internal_nodes) {
+        const auto it = node.parameters.find("data_boundary_pin_contract");
+        if (it != node.parameters.end() && it->second == "legacy.v1") return true;
+    }
+    for (const auto& node : nodes_) {
+        auto it = node.parameters.find("data_boundary_pin_contract");
+        if (it != node.parameters.end() && it->second == "legacy.v1") {
+            return true;
+        }
+    }
+    return false;
+}
+
+DataBoundaryMigrationResult NodeEditor::MigrateLegacyDataBoundary() {
+    DataBoundaryMigrationResult result;
+    if (!subgraphs_.empty()) {
+        result.message = "Migrate data boundaries before encapsulating nodes in subgraphs.";
+        return result;
+    }
+    if (!HasLegacyDataBoundary()) {
+        result.message = "The graph already uses the Dataset v2 boundary.";
+        return result;
+    }
+
+    const auto pin_index = [](const std::vector<NodePin>& pins, int pin_id) {
+        for (size_t i = 0; i < pins.size(); ++i) {
+            if (pins[i].id == pin_id) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const auto is_legacy = [](const MLNode* node) {
+        if (!node) return false;
+        auto it = node->parameters.find("data_boundary_pin_contract");
+        return it != node->parameters.end() && it->second == "legacy.v1";
+    };
+
+    std::unordered_map<int, int> split_to_loader;
+    for (const auto& link : links_) {
+        const auto* from = FindNodeById(link.from_node);
+        const auto* to = FindNodeById(link.to_node);
+        if (!from || !to || from->type != NodeType::DataSplit ||
+            to->type != NodeType::DataLoader || !is_legacy(from) ||
+            !is_legacy(to)) {
+            continue;
+        }
+        if (pin_index(from->outputs, link.from_pin) == 0 &&
+            pin_index(to->inputs, link.to_pin) == 0) {
+            if (split_to_loader.count(from->id) > 0 &&
+                split_to_loader[from->id] != to->id) {
+                result.message = "Migration is blocked: legacy Data Split '" +
+                    from->name + "' feeds more than one Data Loader.";
+                return result;
+            }
+            split_to_loader[from->id] = to->id;
+        }
+    }
+
+    std::unordered_map<int, int> input_to_loader;
+    for (const auto& link : links_) {
+        const auto* from = FindNodeById(link.from_node);
+        const auto* to = FindNodeById(link.to_node);
+        if (!from || !to || from->type != NodeType::DataInput ||
+            to->type != NodeType::DataSplit || !is_legacy(from) ||
+            !is_legacy(to)) {
+            continue;
+        }
+        if (pin_index(from->outputs, link.from_pin) == 0 &&
+            pin_index(to->inputs, link.to_pin) == 0 &&
+            split_to_loader.count(to->id) > 0) {
+            input_to_loader[from->id] = split_to_loader[to->id];
+        }
+    }
+
+    enum class LinkAction { Keep, RemoveDuplicate, RerouteToLoaderLabels };
+    struct PlannedLink {
+        NodeLink link;
+        int from_index = -1;
+        int to_index = -1;
+        LinkAction action = LinkAction::Keep;
+        int reroute_loader_id = -1;
+    };
+    std::vector<PlannedLink> plan;
+    plan.reserve(links_.size());
+
+    for (const auto& link : links_) {
+        const auto* from = FindNodeById(link.from_node);
+        const auto* to = FindNodeById(link.to_node);
+        if (!from || !to) {
+            result.message = "Migration is blocked: a graph link references a missing node.";
+            return result;
+        }
+        PlannedLink item;
+        item.link = link;
+        item.from_index = pin_index(from->outputs, link.from_pin);
+        item.to_index = pin_index(to->inputs, link.to_pin);
+        if (item.from_index < 0 || item.to_index < 0) {
+            result.message = "Migration is blocked: link " +
+                std::to_string(link.id) + " references an unknown pin.";
+            return result;
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataInput &&
+            item.from_index == 0 &&
+            !(is_legacy(to) && to->type == NodeType::DataSplit &&
+              item.to_index == 0)) {
+            result.message = "Migration is blocked: legacy Data Input features from '" +
+                from->name + "' bypass Data Split. Insert/preserve an explicit Split + Loader boundary before migration.";
+            return result;
+        }
+        if (is_legacy(from) && from->type == NodeType::DataSplit &&
+            item.from_index == 0 &&
+            !(is_legacy(to) && to->type == NodeType::DataLoader &&
+              item.to_index == 0)) {
+            result.message = "Migration is blocked: legacy Training Data from Data Split '" +
+                from->name + "' bypasses the Data Loader.";
+            return result;
+        }
+        if (is_legacy(to) && to->type == NodeType::DataSplit &&
+            item.to_index == 0 &&
+            !(is_legacy(from) && from->type == NodeType::DataInput &&
+              item.from_index == 0)) {
+            result.message = "Migration is blocked: legacy Data Split '" +
+                to->name + "' has a non-standard Data source.";
+            return result;
+        }
+        if (is_legacy(to) && to->type == NodeType::DataLoader &&
+            item.to_index == 0 &&
+            !(is_legacy(from) && from->type == NodeType::DataSplit &&
+              item.from_index == 0)) {
+            result.message = "Migration is blocked: legacy Data Loader '" +
+                to->name + "' does not receive Training Data from a legacy Data Split.";
+            return result;
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataSplit &&
+            item.from_index >= 2) {
+            result.message = "Migration is blocked: legacy Data Split '" +
+                from->name + "' has a connected Val/Test canvas branch. "
+                "Disconnect or preserve that graph until the branch is redesigned around runtime partitions.";
+            return result;
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataInput &&
+            item.from_index == 1) {
+            if (is_legacy(to) && to->type == NodeType::DataSplit &&
+                item.to_index == 1) {
+                item.action = LinkAction::RemoveDuplicate;
+            } else if (input_to_loader.count(from->id) > 0) {
+                item.action = LinkAction::RerouteToLoaderLabels;
+                item.reroute_loader_id = input_to_loader[from->id];
+            } else {
+                result.message = "Migration is blocked: legacy label output from Data Input '" +
+                    from->name + "' cannot be mapped to a unique Data Loader Labels output.";
+                return result;
+            }
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataSplit &&
+            item.from_index == 1) {
+            auto loader_it = split_to_loader.find(from->id);
+            if (loader_it == split_to_loader.end()) {
+                result.message = "Migration is blocked: legacy Data Split '" +
+                    from->name + "' has no unique downstream Data Loader.";
+                return result;
+            }
+            if (is_legacy(to) && to->type == NodeType::DataLoader &&
+                to->id == loader_it->second && item.to_index == 1) {
+                item.action = LinkAction::RemoveDuplicate;
+            } else {
+                item.action = LinkAction::RerouteToLoaderLabels;
+                item.reroute_loader_id = loader_it->second;
+            }
+        }
+
+        if (is_legacy(to) && to->type == NodeType::DataSplit &&
+            item.to_index == 1 && item.action != LinkAction::RemoveDuplicate) {
+            result.message = "Migration is blocked: legacy Data Split Labels input has a non-standard source.";
+            return result;
+        }
+        if (is_legacy(to) && to->type == NodeType::DataLoader &&
+            item.to_index == 1 && item.action != LinkAction::RemoveDuplicate) {
+            result.message = "Migration is blocked: legacy Data Loader Labels input has a non-standard source.";
+            return result;
+        }
+        plan.push_back(std::move(item));
+    }
+
+    SaveUndoState();
+    for (auto& node : nodes_) {
+        if (is_legacy(&node)) {
+            RebuildDataBoundaryPins(node, false);
+            ++result.nodes_migrated;
+        }
+    }
+
+    std::vector<NodeLink> migrated_links;
+    migrated_links.reserve(plan.size());
+    for (auto& item : plan) {
+        if (item.action == LinkAction::RemoveDuplicate) {
+            ++result.links_removed;
+            continue;
+        }
+        auto* from = FindNodeById(item.link.from_node);
+        auto* to = FindNodeById(item.link.to_node);
+        if (item.action == LinkAction::RerouteToLoaderLabels) {
+            from = FindNodeById(item.reroute_loader_id);
+            item.link.from_node = item.reroute_loader_id;
+            item.from_index = 1;
+            ++result.links_rerouted;
+        }
+        if (!from || !to || item.from_index < 0 || item.to_index < 0 ||
+            item.from_index >= static_cast<int>(from->outputs.size()) ||
+            item.to_index >= static_cast<int>(to->inputs.size())) {
+            result.message = "Migration failed while applying the validated link plan.";
+            Undo();
+            return result;
+        }
+        item.link.from_pin = from->outputs[item.from_index].id;
+        item.link.to_pin = to->inputs[item.to_index].id;
+        migrated_links.push_back(item.link);
+    }
+    links_ = std::move(migrated_links);
+    RebuildPinLookup();
+    ClearValidationState();
+
+    result.success = true;
+    result.message = "Migrated " + std::to_string(result.nodes_migrated) +
+        " data-boundary nodes; removed " +
+        std::to_string(result.links_removed) +
+        " duplicate legacy label links and rerouted " +
+        std::to_string(result.links_rerouted) + " label targets.";
+    spdlog::info("Track70 data-boundary migration: {}", result.message);
+    return result;
+}
+
+// The graph as it is saved (also the unsaved-changes fingerprint).
+nlohmann::json NodeEditor::GraphDocumentJson() {
+    using json = nlohmann::json;
+    json j = detail::CreateSerializedGraphDocument("2.1", HasLegacyDataBoundary());
+    j["framework"] = static_cast<int>(selected_framework_);
+    j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
+
+    // CyxWiz Studio: Save workflow description
+    j["workflow_description"] = std::string(workflow_description_);
+
+    // CyxWiz Studio: Save canvas annotations
+    json annotations_array = json::array();
+    for (const auto& annotation : annotations_) {
+        json ann_json;
+        ann_json["id"] = annotation.id;
+        ann_json["title"] = annotation.title;
+        ann_json["content"] = annotation.content;
+        ann_json["pos_x"] = annotation.position.x;
+        ann_json["pos_y"] = annotation.position.y;
+        ann_json["width"] = annotation.size.x;
+        ann_json["height"] = annotation.size.y;
+        ann_json["color"] = annotation.color;
+        ann_json["minimized"] = annotation.is_minimized;
+        annotations_array.push_back(ann_json);
+    }
+    j["annotations"] = annotations_array;
+
+    // CyxWiz Studio: Save node groups
+    json groups_array = json::array();
+    for (const auto& group : groups_) {
+        json group_json;
+        group_json["id"] = group.id;
+        group_json["name"] = group.name;
+        group_json["description"] = group.description;
+        group_json["node_ids"] = group.node_ids;
+        group_json["color_r"] = group.color.x;
+        group_json["color_g"] = group.color.y;
+        group_json["color_b"] = group.color.z;
+        group_json["color_a"] = group.color.w;
+        group_json["collapsed"] = group.collapsed;
+        group_json["padding"] = group.padding;
+        groups_array.push_back(group_json);
+    }
+    j["groups"] = groups_array;
+
+    detail::WriteEditorGraphContent(j, nodes_, links_, subgraphs_, cached_node_positions_);
+    return j;
+}
+
 bool NodeEditor::SaveGraph(const std::string& filepath) {
     using json = nlohmann::json;
 
     try {
-        json j;
-        // CyxWiz Studio: Update to v2.1 format with annotations
-        j["version"] = "2.1";
-        j["framework"] = static_cast<int>(selected_framework_);
-        j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
-
-        // CyxWiz Studio: Save workflow description
-        j["workflow_description"] = std::string(workflow_description_);
-
-        // CyxWiz Studio: Save canvas annotations
-        json annotations_array = json::array();
-        for (const auto& annotation : annotations_) {
-            json ann_json;
-            ann_json["id"] = annotation.id;
-            ann_json["title"] = annotation.title;
-            ann_json["content"] = annotation.content;
-            ann_json["pos_x"] = annotation.position.x;
-            ann_json["pos_y"] = annotation.position.y;
-            ann_json["width"] = annotation.size.x;
-            ann_json["height"] = annotation.size.y;
-            ann_json["color"] = annotation.color;
-            ann_json["minimized"] = annotation.is_minimized;
-            annotations_array.push_back(ann_json);
-        }
-        j["annotations"] = annotations_array;
-
-        // CyxWiz Studio: Save node groups
-        json groups_array = json::array();
-        for (const auto& group : groups_) {
-            json group_json;
-            group_json["id"] = group.id;
-            group_json["name"] = group.name;
-            group_json["description"] = group.description;
-            group_json["node_ids"] = group.node_ids;
-            group_json["color_r"] = group.color.x;
-            group_json["color_g"] = group.color.y;
-            group_json["color_b"] = group.color.z;
-            group_json["color_a"] = group.color.w;
-            group_json["collapsed"] = group.collapsed;
-            group_json["padding"] = group.padding;
-            groups_array.push_back(group_json);
-        }
-        j["groups"] = groups_array;
-
-        // Serialize nodes
-        json nodes_array = json::array();
-        for (const auto& node : nodes_) {
-            json node_json;
-            node_json["id"] = node.id;
-            node_json["type"] = static_cast<int>(node.type);
-            node_json["name"] = node.name;
-            node_json["description"] = node.description;
-            node_json["parameters"] = node.parameters;
-
-            // Unified Canvas Phase 7: Save node category for better organization
-            NodeCategory category = GetCategoryForNodeType(node.type);
-            node_json["category"] = static_cast<int>(category);
-
-            // Save node position
-            auto it = cached_node_positions_.find(node.id);
-            ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-            node_json["pos_x"] = pos.x;
-            node_json["pos_y"] = pos.y;
-
-            nodes_array.push_back(node_json);
-        }
-        j["nodes"] = nodes_array;
-
-        // Serialize links with pin indices for multi-pin support
-        json links_array = json::array();
-        for (const auto& link : links_) {
-            json link_json;
-            link_json["id"] = link.id;
-            link_json["from_node"] = link.from_node;
-            link_json["from_pin"] = link.from_pin;
-            link_json["to_node"] = link.to_node;
-            link_json["to_pin"] = link.to_pin;
-
-            // Save pin indices for proper multi-pin node support
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            int from_pin_index = 0;
-            if (from_node) {
-                for (size_t i = 0; i < from_node->outputs.size(); ++i) {
-                    if (from_node->outputs[i].id == link.from_pin) {
-                        from_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            int to_pin_index = 0;
-            if (to_node) {
-                for (size_t i = 0; i < to_node->inputs.size(); ++i) {
-                    if (to_node->inputs[i].id == link.to_pin) {
-                        to_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            link_json["from_pin_index"] = from_pin_index;
-            link_json["to_pin_index"] = to_pin_index;
-
-            // Save link type for skip connection visualization
-            link_json["link_type"] = static_cast<int>(link.type);
-
-            links_array.push_back(link_json);
-        }
-        j["links"] = links_array;
+        json j = GraphDocumentJson();
 
         // Write to file
         std::ofstream file(filepath);
@@ -405,6 +526,9 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 
         file << j.dump(4);  // Pretty print with 4-space indent
         current_file_path_ = filepath;
+        saved_fingerprint_ = FingerprintOf(j);
+        unsaved_ = false;
+        cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
         spdlog::info("Graph saved to: {}", filepath);
         return true;
 
@@ -414,95 +538,100 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
     }
 }
 
-bool NodeEditor::LoadGraph(const std::string& filepath) {
-    using json = nlohmann::json;
+bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
+                               const std::string& source_description) {
+    if (!CanReplaceGraph("replace the graph")) return false;
+    if (!graph_json.is_object() ||
+        !graph_json.contains("nodes") || !graph_json["nodes"].is_array() ||
+        !graph_json.contains("links") || !graph_json["links"].is_array()) {
+        spdlog::error("Cannot load graph from {}: expected nodes and links arrays",
+                      source_description);
+        return false;
+    }
+
+    struct CounterRollback {
+        int& node_id;
+        int& pin_id;
+        int saved_node_id;
+        int saved_pin_id;
+        bool active = true;
+
+        CounterRollback(int& node_id_ref, int& pin_id_ref)
+            : node_id(node_id_ref),
+              pin_id(pin_id_ref),
+              saved_node_id(node_id_ref),
+              saved_pin_id(pin_id_ref) {}
+
+        void Restore() {
+            if (!active) return;
+            node_id = saved_node_id;
+            pin_id = saved_pin_id;
+            active = false;
+        }
+
+        ~CounterRollback() { Restore(); }
+    } counters(next_node_id_, next_pin_id_);
 
     try {
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            spdlog::error("Failed to open file for reading: {}", filepath);
-            return false;
+        const auto flat_graph = detail::FlattenSubgraphDocument(graph_json);
+        // CreateNode owns the pin contract, so use it to build a complete
+        // replacement graph without touching the live node/link containers.
+        next_node_id_ = 1;
+        next_pin_id_ = 1;
+
+        std::map<int, ImVec2> loaded_positions;
+        std::vector<NodeGroup> loaded_groups;
+        std::vector<CanvasAnnotation> loaded_annotations;
+        int loaded_next_group_id = 1;
+        int loaded_next_annotation_id = 1;
+
+        CodeFramework loaded_framework = selected_framework_;
+        if (graph_json.contains("framework")) {
+            loaded_framework = static_cast<CodeFramework>(
+                graph_json["framework"].get<int>());
         }
 
-        json j;
-        file >> j;
-
-        // Check if this is a pattern template format (has "template" key with nodes inside)
-        if (j.contains("template") && j["template"].is_object() &&
-            j["template"].contains("nodes")) {
-            spdlog::info("Detected pattern template format, converting to graph format");
-            return LoadPatternAsGraph(j);
+        ExecutionMode loaded_execution_mode = ExecutionMode::CodeGeneration;
+        if (graph_json.contains("execution_mode")) {
+            loaded_execution_mode = static_cast<ExecutionMode>(
+                graph_json["execution_mode"].get<int>());
         }
+        const std::string loaded_workflow_description =
+            graph_json.value("workflow_description", std::string{});
 
-        // Clear existing graph
-        ClearGraph();
-
-        // Unified Canvas Phase 7: Check version and load execution_mode
-        std::string version = "1.0";
-        if (j.contains("version")) {
-            version = j["version"].get<std::string>();
-        }
-
-        // Update next IDs to avoid conflicts
-        int max_node_id = 0;
-        int max_link_id = 0;
-
-        // Load framework
-        if (j.contains("framework")) {
-            selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
-        }
-
-        // Unified Canvas Phase 7: Load execution_mode (v2.0+)
-        if (j.contains("execution_mode")) {
-            execution_mode_ = static_cast<ExecutionMode>(j["execution_mode"].get<int>());
-            spdlog::info("Loaded execution mode: {}", static_cast<int>(execution_mode_));
-        } else {
-            // Backward compatibility: v1.0 files default to CodeGeneration
-            execution_mode_ = ExecutionMode::CodeGeneration;
-            spdlog::info("Legacy v1.0 format - defaulting to CodeGeneration mode");
-        }
-
-        // CyxWiz Studio: Load workflow description (v2.1+)
-        if (j.contains("workflow_description")) {
-            std::string desc = j["workflow_description"].get<std::string>();
-            SetWorkflowDescription(desc);
-            spdlog::info("Loaded workflow description ({} chars)", desc.length());
-        } else {
-            SetWorkflowDescription("");
-        }
-
-        // CyxWiz Studio: Load canvas annotations (v2.1+)
-        annotations_.clear();
-        next_annotation_id_ = 1;
-        if (j.contains("annotations") && j["annotations"].is_array()) {
-            for (const auto& ann_json : j["annotations"]) {
-                CanvasAnnotation annotation;
-                annotation.id = ann_json.value("id", next_annotation_id_);
-                annotation.title = ann_json.value("title", "");
-                annotation.content = ann_json.value("content", "");
-                annotation.position.x = ann_json.value("pos_x", 0.0f);
-                annotation.position.y = ann_json.value("pos_y", 0.0f);
-                annotation.size.x = ann_json.value("width", 200.0f);
-                annotation.size.y = ann_json.value("height", 100.0f);
-                annotation.color = ann_json.value("color", (ImU32)IM_COL32(255, 255, 200, 255));
-                annotation.is_minimized = ann_json.value("minimized", false);
-
-                annotations_.push_back(annotation);
-                next_annotation_id_ = std::max(next_annotation_id_, annotation.id + 1);
+        if (graph_json.contains("annotations")) {
+            if (!graph_json["annotations"].is_array()) {
+                throw std::runtime_error("annotations must be an array");
             }
-            spdlog::info("Loaded {} canvas annotations", annotations_.size());
+            for (const auto& annotation_json : graph_json["annotations"]) {
+                CanvasAnnotation annotation;
+                annotation.id = annotation_json.value("id", loaded_next_annotation_id);
+                annotation.title = annotation_json.value("title", "");
+                annotation.content = annotation_json.value("content", "");
+                annotation.position.x = annotation_json.value("pos_x", 0.0f);
+                annotation.position.y = annotation_json.value("pos_y", 0.0f);
+                annotation.size.x = annotation_json.value("width", 200.0f);
+                annotation.size.y = annotation_json.value("height", 100.0f);
+                annotation.color = annotation_json.value(
+                    "color", DefaultAnnotationColour());
+                annotation.is_minimized = annotation_json.value("minimized", false);
+                loaded_annotations.push_back(std::move(annotation));
+                loaded_next_annotation_id = std::max(
+                    loaded_next_annotation_id,
+                    loaded_annotations.back().id + 1);
+            }
         }
 
-        // CyxWiz Studio: Load node groups (v2.1+)
-        groups_.clear();
-        next_group_id_ = 1;
-        if (j.contains("groups") && j["groups"].is_array()) {
-            for (const auto& group_json : j["groups"]) {
+        if (graph_json.contains("groups")) {
+            if (!graph_json["groups"].is_array()) {
+                throw std::runtime_error("groups must be an array");
+            }
+            for (const auto& group_json : graph_json["groups"]) {
                 NodeGroup group;
-                group.id = group_json.value("id", next_group_id_);
+                group.id = group_json.value("id", loaded_next_group_id);
                 group.name = group_json.value("name", "Group");
                 group.description = group_json.value("description", "");
-                if (group_json.contains("node_ids") && group_json["node_ids"].is_array()) {
+                if (group_json.contains("node_ids")) {
                     group.node_ids = group_json["node_ids"].get<std::vector<int>>();
                 }
                 group.color.x = group_json.value("color_r", 0.2f);
@@ -511,138 +640,118 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
                 group.color.w = group_json.value("color_a", 0.3f);
                 group.collapsed = group_json.value("collapsed", false);
                 group.padding = group_json.value("padding", 20.0f);
-
-                groups_.push_back(group);
-                next_group_id_ = std::max(next_group_id_, group.id + 1);
-            }
-            spdlog::info("Loaded {} node groups", groups_.size());
-        }
-
-        // Load nodes
-        for (const auto& node_json : j["nodes"]) {
-            MLNode node;
-            node.id = node_json["id"];
-            node.type = static_cast<NodeType>(node_json["type"].get<int>());
-            node.name = node_json["name"];
-            if (node_json.contains("description")) {
-                node.description = node_json["description"];
-            }
-
-            if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
-            }
-
-            // Recreate pins based on node type using fresh pin IDs
-            // Create node with fresh pin IDs
-            MLNode template_node = CreateNode(node.type, node.name);
-            node.inputs = template_node.inputs;
-            node.outputs = template_node.outputs;
-
-            // Update max IDs
-            max_node_id = std::max(max_node_id, node.id);
-
-            nodes_.push_back(node);
-
-            // Queue position restore for next render frame (must be inside ImNodes scope)
-            if (node_json.contains("pos_x") && node_json.contains("pos_y")) {
-                float pos_x = node_json["pos_x"];
-                float pos_y = node_json["pos_y"];
-                pending_positions_[node.id] = ImVec2(pos_x, pos_y);
+                loaded_groups.push_back(std::move(group));
+                loaded_next_group_id = std::max(
+                    loaded_next_group_id,
+                    loaded_groups.back().id + 1);
             }
         }
 
-        // Need to apply positions for multiple frames because ImNodes needs the node
-        // to exist before SetNodeGridSpacePos takes effect
-        pending_positions_frames_ = 3;  // Apply for 3 frames to ensure positions stick
-
-        // Build helper to find actual pin ID from file pin ID
-        // File format: pins are assigned sequentially per node in order
-        // Node 0: input pin 0, output pin 1
-        // Node 1: input pin 2, output pin 3
-        // etc.
-        auto findActualPinId = [this](int file_pin_id, int node_id, bool is_from_pin) -> int {
-            // Find the node
-            const MLNode* node = FindNodeById(node_id);
-            if (!node) return file_pin_id;  // Fallback
-
-            // For from_pin, it's an output pin; for to_pin, it's an input pin
-            const auto& pins = is_from_pin ? node->outputs : node->inputs;
-
-            // Calculate expected pin offset: each node before this one contributes pins
-            // But since we can't know the original pin assignment, use a simple heuristic:
-            // Just use the first pin of the appropriate type
-            if (!pins.empty()) {
-                // If file_pin_id matches what we'd expect for this node's first output/input, use it
-                return pins[0].id;
-            }
-            return file_pin_id;
+        cyxwiz::GraphDocumentLoadOptions load_options;
+        load_options.restore_extra_pins = [&graph_json](std::vector<MLNode>& nodes, int& next_pin_id) {
+            detail::RestoreSubgraphPins(graph_json, nodes, next_pin_id);
         };
-
-        // Load links with pin index support for multi-pin nodes
-        for (const auto& link_json : j["links"]) {
-            NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.to_node = link_json["to_node"];
-
-            // Find actual pin IDs from loaded nodes using pin indices
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            // Use pin indices if available (new format), otherwise fall back to first pin
-            int from_pin_index = 0;
-            int to_pin_index = 0;
-
-            if (link_json.contains("from_pin_index")) {
-                from_pin_index = link_json["from_pin_index"].get<int>();
-            }
-            if (link_json.contains("to_pin_index")) {
-                to_pin_index = link_json["to_pin_index"].get<int>();
-            }
-
-            // Get the actual pin ID using the index
-            if (from_node && from_pin_index < static_cast<int>(from_node->outputs.size())) {
-                link.from_pin = from_node->outputs[from_pin_index].id;
-            } else if (from_node && !from_node->outputs.empty()) {
-                link.from_pin = from_node->outputs[0].id;  // Fallback to first
-            } else {
-                link.from_pin = link_json["from_pin"];  // Legacy fallback
-            }
-
-            if (to_node && to_pin_index < static_cast<int>(to_node->inputs.size())) {
-                link.to_pin = to_node->inputs[to_pin_index].id;
-            } else if (to_node && !to_node->inputs.empty()) {
-                link.to_pin = to_node->inputs[0].id;  // Fallback to first
-            } else {
-                link.to_pin = link_json["to_pin"];  // Legacy fallback
-            }
-
-            // Load link type for skip connection visualization
-            if (link_json.contains("link_type")) {
-                link.type = static_cast<LinkType>(link_json["link_type"].get<int>());
-            } else {
-                link.type = LinkType::TensorFlow;  // Default for legacy files
-            }
-
-            links_.push_back(link);
-            max_link_id = std::max(max_link_id, link.id);
+        load_options.strict_links = graph_json.contains("subgraphs");
+        cyxwiz::GraphDocument document;
+        std::string load_error;
+        if (!cyxwiz::BuildGraphDocument(graph_json, flat_graph, load_options, document, load_error)) {
+            spdlog::error("Cannot load graph from {}: {}", source_description, load_error);
+            return false;
+        }
+        std::vector<MLNode> loaded_nodes = std::move(document.nodes);
+        std::vector<NodeLink> loaded_links = std::move(document.links);
+        next_pin_id_ = document.next_pin_id;
+        const int max_node_id = document.next_node_id - 1;
+        const int max_link_id = document.next_link_id - 1;
+        for (const auto& node_json : flat_graph["nodes"]) {
+            if (!node_json.contains("pos_x") || !node_json.contains("pos_y")) continue;
+            const int node_id = node_json.at("id").get<int>();
+            loaded_positions[node_id] = ImVec2(
+                node_json["pos_x"].get<float>(),
+                node_json["pos_y"].get<float>());
+        }
+        for (auto& node : loaded_nodes) {
+            const auto pos = loaded_positions.find(node.id);
+            if (pos == loaded_positions.end()) continue;
+            node.initial_pos_x = pos->second.x;
+            node.initial_pos_y = pos->second.y;
+            node.has_initial_position = true;
         }
 
-        // Update next IDs
+        auto loaded_subgraphs = detail::RestoreSubgraphContents(graph_json, loaded_nodes, loaded_links);
+
+        const int loaded_next_pin_id = next_pin_id_;
+        counters.Restore();
+
+        // Commit only after the complete replacement graph has been built.
+        if (!CanReplaceGraph("replace the graph")) return false;
+        ClearGraph();
+        nodes_ = std::move(loaded_nodes);
+        subgraphs_ = std::move(loaded_subgraphs);
+        links_ = std::move(loaded_links);
+        groups_ = std::move(loaded_groups);
+        annotations_ = std::move(loaded_annotations);
+        pending_positions_ = std::move(loaded_positions);
+        pending_positions_frames_ = pending_positions_.empty() ? 0 : 3;
+        cached_node_positions_.clear();
         next_node_id_ = max_node_id + 1;
+        next_pin_id_ = loaded_next_pin_id;
         next_link_id_ = max_link_id + 1;
-
-        current_file_path_ = filepath;
-
-        // Rebuild pin lookup after loading graph
+        next_group_id_ = loaded_next_group_id;
+        next_annotation_id_ = loaded_next_annotation_id;
+        selected_framework_ = loaded_framework;
+        execution_mode_ = loaded_execution_mode;
+        SetWorkflowDescription(loaded_workflow_description);
         RebuildPinLookup();
 
-        spdlog::info("Graph loaded from: {} ({} nodes, {} links)",
-                     filepath, nodes_.size(), links_.size());
+        spdlog::info(
+            "Graph loaded from {} ({} nodes, {} links, execution mode {})",
+            source_description,
+            nodes_.size(),
+            links_.size(),
+            static_cast<int>(execution_mode_));
         return true;
+    } catch (const std::exception& error) {
+        spdlog::error("Error loading graph from {}: {}",
+                      source_description,
+                      error.what());
+        return false;
+    }
+}
 
-    } catch (const std::exception& e) {
-        spdlog::error("Error loading graph: {}", e.what());
+bool NodeEditor::LoadGraph(const std::string& filepath) {
+    if (!CanReplaceGraph("load a graph")) return false;
+    using json = nlohmann::json;
+
+    spdlog::info("Loading graph from: {}", filepath);
+    try {
+        std::ifstream file(filepath);
+        if (!file.is_open()) {
+            spdlog::error("Failed to open file for reading: {}", filepath);
+            return false;
+        }
+
+        json graph_json;
+        file >> graph_json;
+
+        if (graph_json.contains("template") &&
+            graph_json["template"].is_object() &&
+            graph_json["template"].contains("nodes")) {
+            spdlog::info("Detected pattern template format, converting to graph format");
+            return LoadPatternAsGraph(graph_json);
+        }
+
+        // Before the nodes load: their data inputs resolve relative paths
+        // against this graph's folder when no project holds them.
+        cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
+        if (!LoadGraphJson(graph_json, filepath)) {
+            return false;
+        }
+        fingerprint_baseline_frames_ = 3;
+        current_file_path_ = filepath;
+        return true;
+    } catch (const std::exception& error) {
+        spdlog::error("Error loading graph from {}: {}", filepath, error.what());
         return false;
     }
 }
@@ -651,73 +760,11 @@ std::string NodeEditor::GetGraphJson() const {
     using json = nlohmann::json;
 
     try {
-        json j;
-        j["version"] = "1.0";
+        json j = detail::CreateSerializedGraphDocument("1.0", HasLegacyDataBoundary());
         j["framework"] = static_cast<int>(selected_framework_);
+        j["execution_mode"] = static_cast<int>(execution_mode_);
 
-        // Serialize nodes
-        json nodes_array = json::array();
-        for (const auto& node : nodes_) {
-            json node_json;
-            node_json["id"] = node.id;
-            node_json["type"] = static_cast<int>(node.type);
-            node_json["name"] = node.name;
-            node_json["description"] = node.description;
-            node_json["parameters"] = node.parameters;
-
-            // Save node position
-            auto it = cached_node_positions_.find(node.id);
-            ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-            node_json["pos_x"] = pos.x;
-            node_json["pos_y"] = pos.y;
-
-            nodes_array.push_back(node_json);
-        }
-        j["nodes"] = nodes_array;
-
-        // Serialize links with pin indices for multi-pin support
-        json links_array = json::array();
-        for (const auto& link : links_) {
-            json link_json;
-            link_json["id"] = link.id;
-            link_json["from_node"] = link.from_node;
-            link_json["from_pin"] = link.from_pin;
-            link_json["to_node"] = link.to_node;
-            link_json["to_pin"] = link.to_pin;
-
-            // Save pin indices for proper multi-pin node support
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            int from_pin_index = 0;
-            if (from_node) {
-                for (size_t i = 0; i < from_node->outputs.size(); ++i) {
-                    if (from_node->outputs[i].id == link.from_pin) {
-                        from_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            int to_pin_index = 0;
-            if (to_node) {
-                for (size_t i = 0; i < to_node->inputs.size(); ++i) {
-                    if (to_node->inputs[i].id == link.to_pin) {
-                        to_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            link_json["from_pin_index"] = from_pin_index;
-            link_json["to_pin_index"] = to_pin_index;
-
-            // Save link type for skip connection visualization
-            link_json["link_type"] = static_cast<int>(link.type);
-
-            links_array.push_back(link_json);
-        }
-        j["links"] = links_array;
+        detail::WriteEditorGraphContent(j, nodes_, links_, subgraphs_, cached_node_positions_);
 
         return j.dump(4);  // Pretty print with 4-space indent
 
@@ -728,6 +775,7 @@ std::string NodeEditor::GetGraphJson() const {
 }
 
 bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
+    if (!CanReplaceGraph("load a graph")) return false;
     using json = nlohmann::json;
 
     if (json_string.empty()) {
@@ -736,118 +784,12 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
     }
 
     try {
-        json j = json::parse(json_string);
-
-        // Clear existing graph
-        ClearGraph();
-
-        // Update next IDs to avoid conflicts
-        int max_node_id = 0;
-        int max_link_id = 0;
-
-        // Load framework
-        if (j.contains("framework")) {
-            selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
-        }
-
-        // Load nodes
-        for (const auto& node_json : j["nodes"]) {
-            MLNode node;
-            node.id = node_json["id"];
-            node.type = static_cast<NodeType>(node_json["type"].get<int>());
-            node.name = node_json["name"];
-            if (node_json.contains("description")) {
-                node.description = node_json["description"];
-            }
-
-            if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
-            }
-
-            // Recreate pins based on node type using fresh pin IDs
-            MLNode template_node = CreateNode(node.type, node.name);
-            node.inputs = template_node.inputs;
-            node.outputs = template_node.outputs;
-
-            // Update max IDs
-            max_node_id = std::max(max_node_id, node.id);
-
-            nodes_.push_back(node);
-
-            // Queue position restore for next render frame
-            if (node_json.contains("pos_x") && node_json.contains("pos_y")) {
-                float pos_x = node_json["pos_x"];
-                float pos_y = node_json["pos_y"];
-                pending_positions_[node.id] = ImVec2(pos_x, pos_y);
-            }
-        }
-
-        // Need to apply positions for multiple frames
-        pending_positions_frames_ = 3;
-
-        // Load links with pin index support
-        for (const auto& link_json : j["links"]) {
-            NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.to_node = link_json["to_node"];
-
-            // Find actual pin IDs from loaded nodes using pin indices
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            // Use pin indices if available
-            int from_pin_index = 0;
-            int to_pin_index = 0;
-
-            if (link_json.contains("from_pin_index")) {
-                from_pin_index = link_json["from_pin_index"].get<int>();
-            }
-            if (link_json.contains("to_pin_index")) {
-                to_pin_index = link_json["to_pin_index"].get<int>();
-            }
-
-            // Get the actual pin ID using the index
-            if (from_node && from_pin_index < static_cast<int>(from_node->outputs.size())) {
-                link.from_pin = from_node->outputs[from_pin_index].id;
-            } else if (from_node && !from_node->outputs.empty()) {
-                link.from_pin = from_node->outputs[0].id;
-            } else {
-                link.from_pin = link_json["from_pin"];
-            }
-
-            if (to_node && to_pin_index < static_cast<int>(to_node->inputs.size())) {
-                link.to_pin = to_node->inputs[to_pin_index].id;
-            } else if (to_node && !to_node->inputs.empty()) {
-                link.to_pin = to_node->inputs[0].id;
-            } else {
-                link.to_pin = link_json["to_pin"];
-            }
-
-            // Load link type
-            if (link_json.contains("link_type")) {
-                link.type = static_cast<LinkType>(link_json["link_type"].get<int>());
-            } else {
-                link.type = LinkType::TensorFlow;
-            }
-
-            links_.push_back(link);
-            max_link_id = std::max(max_link_id, link.id);
-        }
-
-        // Update next IDs
-        next_node_id_ = max_node_id + 1;
-        next_link_id_ = max_link_id + 1;
-
-        // Rebuild pin lookup after loading graph
-        RebuildPinLookup();
-
-        spdlog::info("Graph loaded from JSON string ({} nodes, {} links)",
-                     nodes_.size(), links_.size());
-        return true;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Error loading graph from JSON string: {}", e.what());
+        // An imported graph is new: Save asks for a file name.
+        const bool loaded = LoadGraphJson(json::parse(json_string), "JSON string");
+        if (loaded) DetachFromFile();
+        return loaded;
+    } catch (const std::exception& error) {
+        spdlog::error("Error parsing graph JSON string: {}", error.what());
         return false;
     }
 }
@@ -855,7 +797,11 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
 // ========== Cross-Platform File Dialogs ==========
 
 void NodeEditor::ShowSaveDialog() {
-    auto result = cyxwiz::FileDialogs::SaveGraph();
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string default_path =
+        project.HasActiveProject() ? project.GetCyxGraphsPath() : std::string();
+    auto result = cyxwiz::FileDialogs::SaveGraph(
+        default_path.empty() ? nullptr : default_path.c_str());
     if (result) {
         if (SaveGraph(*result)) {
             spdlog::info("Graph successfully saved");
@@ -863,8 +809,22 @@ void NodeEditor::ShowSaveDialog() {
     }
 }
 
+bool NodeEditor::SaveCurrentGraph() {
+    if (nodes_.empty()) return true;
+    if (current_file_path_.empty()) {
+        ShowSaveDialog();
+        return !current_file_path_.empty();
+    }
+    return SaveGraph(current_file_path_);
+}
+
 void NodeEditor::ShowLoadDialog() {
-    auto result = cyxwiz::FileDialogs::OpenGraph();
+    if (!CanReplaceGraph("load a graph")) return;
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string default_path =
+        project.HasActiveProject() ? project.GetCyxGraphsPath() : std::string();
+    auto result = cyxwiz::FileDialogs::OpenGraph(
+        default_path.empty() ? nullptr : default_path.c_str());
     if (result) {
         if (LoadGraph(*result)) {
             spdlog::info("Graph successfully loaded");

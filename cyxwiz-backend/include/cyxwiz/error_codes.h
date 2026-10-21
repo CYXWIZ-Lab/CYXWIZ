@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
+#pragma once
+
+#include <array>
+#include <string>
+#include <string_view>
+
+namespace cyxwiz::errors {
+
+namespace Compiler {
+inline constexpr const char* GenericIssue = "CW-C-0001";
+inline constexpr const char* MissingTrainingPathNode = "CW-C-0101";
+inline constexpr const char* UnsupportedTrainingNode = "CW-C-0102";
+inline constexpr const char* InvalidConnectivity = "CW-C-0103";
+inline constexpr const char* DataNotLoaded = "CW-C-0201";
+inline constexpr const char* DataCheckSuggested = "CW-C-0202";
+inline constexpr const char* TextNotTokenized = "CW-C-0203";
+inline constexpr const char* ImageNotResized = "CW-C-0204";
+inline constexpr const char* AudioFeaturesMissing = "CW-C-0205";
+inline constexpr const char* TensorShapeMismatch = "CW-C-0301";
+inline constexpr const char* LabelOutputShapeMismatch = "CW-C-0302";
+inline constexpr const char* InvalidParameter = "CW-C-0401";
+inline constexpr const char* InvariantViolation = "CW-C-0901";
+} // namespace Compiler
+
+namespace Runtime {
+inline constexpr const char* PipelineMalformed = "CW-R-0101";
+inline constexpr const char* InvalidState = "CW-R-0102";
+inline constexpr const char* UnsupportedNode = "CW-R-0201";
+inline constexpr const char* OperatorMissing = "CW-R-0202";
+inline constexpr const char* InputDatasetMissing = "CW-R-0301";
+inline constexpr const char* InvalidParameter = "CW-R-0401";
+inline constexpr const char* ExecutionFailed = "CW-R-0501";
+inline constexpr const char* InvariantViolation = "CW-R-0901";
+} // namespace Runtime
+
+namespace Gpu {
+inline constexpr const char* BackendUnavailable = "CW-G-0101";
+inline constexpr const char* PathDisabledByPolicy = "CW-G-0201";
+inline constexpr const char* UnsupportedShape = "CW-G-0301";
+inline constexpr const char* KernelExecutionFailed = "CW-G-0501";
+inline constexpr const char* DependencyFailure = "CW-G-0601";
+inline constexpr const char* MemoryExhausted = "CW-G-0701";
+} // namespace Gpu
+
+namespace Cpu {
+inline constexpr const char* BackendUnavailable = "CW-P-0101";
+inline constexpr const char* UnsupportedShape = "CW-P-0301";
+inline constexpr const char* OperationFailed = "CW-P-0501";
+inline constexpr const char* MemoryExhausted = "CW-P-0701";
+} // namespace Cpu
+
+namespace Data {
+inline constexpr const char* RequiredColumnMissing = "CW-D-0101";
+inline constexpr const char* RequiredLabelColumnMissing = "CW-D-0102";
+inline constexpr const char* ColumnTypeMismatch = "CW-D-0301";
+inline constexpr const char* RowCountMismatch = "CW-D-0302";
+inline constexpr const char* ClassLabelMismatch = "CW-D-0303";
+inline constexpr const char* VocabularyCoverageWarning = "CW-D-0304";
+inline constexpr const char* InvalidSplit = "CW-D-0401";
+inline constexpr const char* MaterializationFailed = "CW-D-0501";
+} // namespace Data
+
+namespace File {
+inline constexpr const char* PathMissing = "CW-F-0101";
+inline constexpr const char* NotFound = "CW-F-0102";
+inline constexpr const char* UnsupportedFormat = "CW-F-0201";
+inline constexpr const char* InvalidOption = "CW-F-0401";
+inline constexpr const char* ReadFailed = "CW-F-0501";
+inline constexpr const char* WriteFailed = "CW-F-0502";
+inline constexpr const char* PermissionDenied = "CW-F-0601";
+} // namespace File
+
+namespace Memory {
+inline constexpr const char* ResourceCheckFailed = "CW-M-0101";
+inline constexpr const char* HostExhausted = "CW-M-0701";
+inline constexpr const char* GpuExhausted = "CW-M-0702";
+inline constexpr const char* BatchTooLarge = "CW-M-0703";
+} // namespace Memory
+
+namespace Ui {
+inline constexpr const char* InvalidWorkflowState = "CW-U-0101";
+inline constexpr const char* MissingSelection = "CW-U-0102";
+inline constexpr const char* RuntimeOnlyNode = "CW-U-0201";
+inline constexpr const char* InvalidParameter = "CW-U-0401";
+inline constexpr const char* StateInvariantViolation = "CW-U-0901";
+} // namespace Ui
+
+namespace Serialization {
+inline constexpr const char* ArtifactPathMissing = "CW-S-0101";
+inline constexpr const char* ExportFormatUnavailable = "CW-S-0201";
+inline constexpr const char* ExportFormatNotCompiled = "CW-S-0202";
+inline constexpr const char* ModelSaveFailed = "CW-S-0501";
+inline constexpr const char* ModelLoadFailed = "CW-S-0502";
+inline constexpr const char* CheckpointSerializationFailed = "CW-S-0801";
+} // namespace Serialization
+
+namespace Training {
+inline constexpr const char* InvalidTrainingSetup = "CW-T-0101";
+inline constexpr const char* ModelBuildFailed = "CW-T-0102";
+inline constexpr const char* LossSetupFailed = "CW-T-0401";
+inline constexpr const char* OptimizerSetupFailed = "CW-T-0402";
+inline constexpr const char* TrainingExecutionFailed = "CW-T-0501";
+} // namespace Training
+
+namespace External {
+inline constexpr const char* OptionalIntegrationUnavailable = "CW-X-0201";
+inline constexpr const char* ThirdPartyCallFailed = "CW-X-0501";
+inline constexpr const char* PluginDependencyFailure = "CW-X-0601";
+inline constexpr const char* PythonBridgeFailure = "CW-X-0602";
+inline constexpr const char* RemoteServiceUnavailable = "CW-X-0701";
+} // namespace External
+
+struct DiagnosticCodeDescriptor {
+    const char* code;
+    const char* symbolic_name;
+};
+
+inline constexpr std::array<DiagnosticCodeDescriptor, 71> DiagnosticCodeCatalog{{
+    {Compiler::GenericIssue, "Compiler.GenericIssue"},
+    {Compiler::MissingTrainingPathNode, "Compiler.MissingTrainingPathNode"},
+    {Compiler::UnsupportedTrainingNode, "Compiler.UnsupportedTrainingNode"},
+    {Compiler::InvalidConnectivity, "Compiler.InvalidConnectivity"},
+    {Compiler::DataNotLoaded, "Compiler.DataNotLoaded"},
+    {Compiler::DataCheckSuggested, "Compiler.DataCheckSuggested"},
+    {Compiler::TextNotTokenized, "Compiler.TextNotTokenized"},
+    {Compiler::ImageNotResized, "Compiler.ImageNotResized"},
+    {Compiler::AudioFeaturesMissing, "Compiler.AudioFeaturesMissing"},
+    {Compiler::TensorShapeMismatch, "Compiler.TensorShapeMismatch"},
+    {Compiler::LabelOutputShapeMismatch, "Compiler.LabelOutputShapeMismatch"},
+    {Compiler::InvalidParameter, "Compiler.InvalidParameter"},
+    {Compiler::InvariantViolation, "Compiler.InvariantViolation"},
+    {Runtime::PipelineMalformed, "Runtime.PipelineMalformed"},
+    {Runtime::InvalidState, "Runtime.InvalidState"},
+    {Runtime::UnsupportedNode, "Runtime.UnsupportedNode"},
+    {Runtime::OperatorMissing, "Runtime.OperatorMissing"},
+    {Runtime::InputDatasetMissing, "Runtime.InputDatasetMissing"},
+    {Runtime::InvalidParameter, "Runtime.InvalidParameter"},
+    {Runtime::ExecutionFailed, "Runtime.ExecutionFailed"},
+    {Runtime::InvariantViolation, "Runtime.InvariantViolation"},
+    {Gpu::BackendUnavailable, "Gpu.BackendUnavailable"},
+    {Gpu::PathDisabledByPolicy, "Gpu.PathDisabledByPolicy"},
+    {Gpu::UnsupportedShape, "Gpu.UnsupportedShape"},
+    {Gpu::KernelExecutionFailed, "Gpu.KernelExecutionFailed"},
+    {Gpu::DependencyFailure, "Gpu.DependencyFailure"},
+    {Gpu::MemoryExhausted, "Gpu.MemoryExhausted"},
+    {Cpu::BackendUnavailable, "Cpu.BackendUnavailable"},
+    {Cpu::UnsupportedShape, "Cpu.UnsupportedShape"},
+    {Cpu::OperationFailed, "Cpu.OperationFailed"},
+    {Cpu::MemoryExhausted, "Cpu.MemoryExhausted"},
+    {Data::RequiredColumnMissing, "Data.RequiredColumnMissing"},
+    {Data::RequiredLabelColumnMissing, "Data.RequiredLabelColumnMissing"},
+    {Data::ColumnTypeMismatch, "Data.ColumnTypeMismatch"},
+    {Data::RowCountMismatch, "Data.RowCountMismatch"},
+    {Data::ClassLabelMismatch, "Data.ClassLabelMismatch"},
+    {Data::VocabularyCoverageWarning, "Data.VocabularyCoverageWarning"},
+    {Data::InvalidSplit, "Data.InvalidSplit"},
+    {Data::MaterializationFailed, "Data.MaterializationFailed"},
+    {File::PathMissing, "File.PathMissing"},
+    {File::NotFound, "File.NotFound"},
+    {File::UnsupportedFormat, "File.UnsupportedFormat"},
+    {File::InvalidOption, "File.InvalidOption"},
+    {File::ReadFailed, "File.ReadFailed"},
+    {File::WriteFailed, "File.WriteFailed"},
+    {File::PermissionDenied, "File.PermissionDenied"},
+    {Memory::ResourceCheckFailed, "Memory.ResourceCheckFailed"},
+    {Memory::HostExhausted, "Memory.HostExhausted"},
+    {Memory::GpuExhausted, "Memory.GpuExhausted"},
+    {Memory::BatchTooLarge, "Memory.BatchTooLarge"},
+    {Ui::InvalidWorkflowState, "Ui.InvalidWorkflowState"},
+    {Ui::MissingSelection, "Ui.MissingSelection"},
+    {Ui::RuntimeOnlyNode, "Ui.RuntimeOnlyNode"},
+    {Ui::InvalidParameter, "Ui.InvalidParameter"},
+    {Ui::StateInvariantViolation, "Ui.StateInvariantViolation"},
+    {Serialization::ArtifactPathMissing, "Serialization.ArtifactPathMissing"},
+    {Serialization::ExportFormatUnavailable, "Serialization.ExportFormatUnavailable"},
+    {Serialization::ExportFormatNotCompiled, "Serialization.ExportFormatNotCompiled"},
+    {Serialization::ModelSaveFailed, "Serialization.ModelSaveFailed"},
+    {Serialization::ModelLoadFailed, "Serialization.ModelLoadFailed"},
+    {Serialization::CheckpointSerializationFailed,
+     "Serialization.CheckpointSerializationFailed"},
+    {Training::InvalidTrainingSetup, "Training.InvalidTrainingSetup"},
+    {Training::ModelBuildFailed, "Training.ModelBuildFailed"},
+    {Training::LossSetupFailed, "Training.LossSetupFailed"},
+    {Training::OptimizerSetupFailed, "Training.OptimizerSetupFailed"},
+    {Training::TrainingExecutionFailed, "Training.TrainingExecutionFailed"},
+    {External::OptionalIntegrationUnavailable,
+     "External.OptionalIntegrationUnavailable"},
+    {External::ThirdPartyCallFailed, "External.ThirdPartyCallFailed"},
+    {External::PluginDependencyFailure, "External.PluginDependencyFailure"},
+    {External::PythonBridgeFailure, "External.PythonBridgeFailure"},
+    {External::RemoteServiceUnavailable, "External.RemoteServiceUnavailable"},
+}};
+
+inline constexpr const DiagnosticCodeDescriptor* FindDiagnosticCode(
+    std::string_view code) {
+    for (const auto& descriptor : DiagnosticCodeCatalog) {
+        if (code == descriptor.code) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+inline constexpr std::string_view DiagnosticFamilyName(char family) {
+    switch (family) {
+        case 'C': return "compiler";
+        case 'R': return "runtime";
+        case 'G': return "gpu_backend";
+        case 'P': return "native_cpu_backend";
+        case 'D': return "data";
+        case 'F': return "file_io";
+        case 'M': return "memory";
+        case 'U': return "ui_workflow";
+        case 'S': return "serialization";
+        case 'T': return "training";
+        case 'X': return "external";
+        default: return "unknown";
+    }
+}
+
+inline bool HasCodePrefix(const std::string& message) {
+    return message.size() >= 12 &&
+           message[0] == '[' &&
+           message[1] == 'C' &&
+           message[2] == 'W' &&
+           message[3] == '-' &&
+           message[5] == '-' &&
+           message[10] == ']';
+}
+
+inline std::string FormatMessage(const char* code,
+                                 const std::string& message,
+                                 const std::string& detail = {},
+                                 const std::string& hint = {}) {
+    if (HasCodePrefix(message)) {
+        return message;
+    }
+
+    std::string formatted = "[";
+    formatted += code;
+    formatted += "] ";
+    formatted += message;
+    if (!detail.empty()) {
+        formatted += ". Detail: ";
+        formatted += detail;
+    }
+    if (!hint.empty()) {
+        formatted += ". Hint: ";
+        formatted += hint;
+    }
+    return formatted;
+}
+
+inline std::string FormatError(const char* code,
+                               const std::string& message,
+                               const std::string& detail = {},
+                               const std::string& hint = {}) {
+    return FormatMessage(code, message, detail, hint);
+}
+
+inline std::string FormatWarning(const char* code,
+                                 const std::string& message,
+                                 const std::string& detail = {},
+                                 const std::string& hint = {}) {
+    return FormatMessage(code, message, detail, hint);
+}
+
+} // namespace cyxwiz::errors

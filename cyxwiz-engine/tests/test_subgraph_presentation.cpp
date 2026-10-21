@@ -1,0 +1,110 @@
+#include "gui/subgraph_presentation.h"
+#include <imgui.h>
+#include <imnodes.h>
+#include <iostream>
+#include <stdexcept>
+using namespace gui;
+using namespace gui::detail;
+namespace {
+int checks = 0;
+void Check(bool value, const char* message) { ++checks; if (!value) throw std::runtime_error(message); }
+MLNode Node(int id, int in, int out, NodeType type = NodeType::TextCleanNode) {
+    MLNode node{}; node.id=id; node.type=type; node.name="Member "+std::to_string(id);
+    if (in) { NodePin pin{}; pin.id=in; pin.type=PinType::Dataset; pin.is_input=true; node.inputs.push_back(pin); }
+    if (out) { NodePin pin{}; pin.id=out; pin.type=PinType::Dataset; node.outputs.push_back(pin); }
+    return node;
+}
+struct Fixture {
+    std::vector<MLNode> nodes{Node(1,0,11),Node(2,21,22),Node(3,31,32),Node(4,41,0),Node(5,51,52,NodeType::Subgraph)};
+    std::vector<SubgraphData> groups{{5,{nodes[1],nodes[2]},{{2,2,22,3,31}},{21},{32},true}};
+};
+ImVec2 button_center;
+SubgraphFrameActions Frame(Fixture& f, bool busy, float zoom=1.0f, int selected=-1) {
+    auto& io=ImGui::GetIO(); io.DisplaySize=ImVec2(1000,700); io.DeltaTime=1.0f/60.0f;
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0,0)); ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("Canvas",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove);
+    ImNodes::BeginNodeEditor();
+    for (const auto& n:f.nodes) {
+        if (IsExpandedSubgraph(n.id,f.groups)) continue;
+        ImNodes::SetNodeGridSpacePos(n.id,ImVec2(80.0f+static_cast<float>(n.id)*130.0f,240.0f));
+        ImNodes::BeginNode(n.id); ImGui::Dummy(ImVec2(64,64)); ImNodes::EndNode();
+    }
+    const auto cursor=ImGui::GetCursorScreenPos();
+    const int channel=ImGui::GetWindowDrawList()->_Splitter._Current;
+    const auto result=DrawExpandedSubgraphFrames(f.nodes,f.groups,zoom,busy ? "Training is active" : "",selected);
+    const auto a=ImGui::GetItemRectMin(), b=ImGui::GetItemRectMax();
+    button_center=ImVec2((a.x+b.x)*0.5f,(a.y+b.y)*0.5f);
+    Check(ImGui::GetWindowDrawList()->_Splitter._Current==channel,"draw channel restored");
+    Check(ImGui::GetCursorScreenPos().x==cursor.x && ImGui::GetCursorScreenPos().y==cursor.y,"cursor restored");
+    ImNodes::EndNodeEditor(); ImGui::End(); ImGui::Render();
+    Check(ImGui::GetDrawData()->TotalVtxCount>0,"frame produced draw data");
+    return result;
+}
+}
+int main() {
+    try {
+        Fixture f;
+        Check(IsExpandedSubgraph(5,f.groups),"expanded wrapper is hidden");
+        Check(!IsExpandedSubgraph(2,f.groups),"member remains visible");
+        NodeLink input{10,1,11,5,51}, output{11,5,52,4,41}, internal{12,2,22,3,31};
+        auto in=DisplaySubgraphLink(input,f.nodes,f.groups), out=DisplaySubgraphLink(output,f.nodes,f.groups);
+        Check(in && in->to_node==2 && in->to_pin==21 && in->id==10,"input renders at member pin with canonical ID");
+        Check(out && out->from_node==3 && out->from_pin==32 && out->to_node==4,"output renders at member pin");
+        Check(input.to_node==5 && output.from_node==5,"projection does not mutate canonical links");
+        Check(DisplaySubgraphLink(internal,f.nodes,f.groups)->from_pin==22,"internal connection unchanged");
+        Check(CrossesExpandedSubgraphBoundary(1,2,f.groups),"external rewiring while expanded is blocked");
+        Check(!CrossesExpandedSubgraphBoundary(2,3,f.groups),"internal rewiring allowed");
+        Check(!CrossesExpandedSubgraphBoundary(1,4,f.groups),"ordinary rewiring allowed");
+        f.groups[0].expanded=false;
+        Check(!IsExpandedSubgraph(5,f.groups),"collapsed wrapper visible");
+        Check(DisplaySubgraphLink(input,f.nodes,f.groups)->to_pin==51,"collapsed edge uses wrapper pin");
+        Check(!CrossesExpandedSubgraphBoundary(1,5,f.groups),"collapsed boundary editable");
+        f.groups[0].expanded=true;
+        f.groups[0].input_pin_mappings[0]=999;
+        Check(!DisplaySubgraphLink(input,f.nodes,f.groups),"invalid mapping fails without dereferencing missing pin");
+        f.groups[0].input_pin_mappings[0]=21;
+        auto second=Node(6,61,62,NodeType::Subgraph); f.nodes.push_back(second);
+        auto child=Node(7,71,72); f.nodes.push_back(child);
+        f.groups.push_back({6,{child},{},{71},{72},true});
+        auto cross=DisplaySubgraphLink({20,5,52,6,61},f.nodes,f.groups);
+        Check(cross && cross->from_pin==32 && cross->to_pin==71,"two expanded groups project both endpoints");
+        Check(CrossesExpandedSubgraphBoundary(3,7,f.groups),"cross-group edits blocked");
+        // Expanding makes room (TOFIX148): the tier1 recipe expanding over the
+        // Export beside it and a Data Validator below it.
+        { const ImVec4 frame=EstimateExpandedFrame({ImVec2(640,430),ImVec2(800,430),ImVec2(1280,430)});
+          Check(frame.x<640 && frame.z>1280+64 && frame.y<430-30 && frame.w>430+64,"frame covers the steps and their labels");
+          std::vector<PlacedNode> outside{{157,ImVec2(320,190),ImVec2(64,80)},   // the Data Input, up-left: stays
+                                          {198,ImVec2(900,330),ImVec2(64,80)},   // the Export, inside the frame
+                                          {300,ImVec2(1700,420),ImVec2(64,80)},  // right, in the band: keeps its place after the Export
+                                          {301,ImVec2(1700,900),ImVec2(64,80)}}; // far below: stays
+          auto moved=MakeRoomForFrame(frame,outside);
+          Check(!moved.count(157) && !moved.count(301),"nodes outside the frame and its band stay");
+          Check(moved.count(198) && moved[198].x>=frame.z+60 && moved[198].y==330,"a covered node moves right of the frame");
+          Check(moved.count(300) && moved[300].x-moved[198].x==800,"nodes right of it keep their spacing");
+          Check(MakeRoomForFrame(frame,{{157,ImVec2(320,190),ImVec2(64,80)}}).empty(),"nothing covered, nothing moves"); }
+        f=Fixture{};
+        ImGui::CreateContext(); ImNodes::CreateContext();
+        auto& io=ImGui::GetIO(); io.IniFilename=nullptr;
+        unsigned char* pixels; int width,height; io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+        Check(Frame(f,false).collapse==-1,"no action without click");
+        const ImVec2 button=button_center;
+        io.AddMousePosEvent(button.x,button.y); Frame(f,false);
+        io.AddMouseButtonEvent(0,true); Check(Frame(f,false).collapse==-1,"button press defers mutation");
+        { const auto released=Frame((io.AddMouseButtonEvent(0,false),f),false);
+          Check(released.collapse==5 && released.select==-1,"button release requests collapse for correct wrapper, not select"); }
+        io.AddMouseButtonEvent(0,true); Frame(f,true);
+        io.AddMouseButtonEvent(0,false); Check(Frame(f,true).collapse==-1,"busy frame cannot request collapse");
+        // The header left of the button selects the subgraph (TOFIX147).
+        const ImVec2 header(button.x-200.0f,button.y);
+        io.AddMousePosEvent(header.x,header.y); Check(Frame(f,false).header_hovered,"header is hoverable");
+        io.AddMouseButtonEvent(0,true); Frame(f,false);
+        { io.AddMouseButtonEvent(0,false); const auto picked=Frame(f,false);
+          Check(picked.select==5 && picked.collapse==-1,"header click selects the wrapper, does not collapse"); }
+        Check(Frame(f,false,1.0f,5).select==-1,"a selected frame renders and asks nothing without a click");
+        Check(Frame(f,false,0.5f).collapse==-1,"zoomed frame renders");
+        Check(Frame(f,false,1.5f).collapse==-1,"larger frame renders");
+        ImNodes::DestroyContext(); ImGui::DestroyContext();
+        std::cout<<"PASS: "<<checks<<" subgraph presentation checks\n";
+    } catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
+}

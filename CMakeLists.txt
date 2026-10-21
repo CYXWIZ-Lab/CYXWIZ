@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(CyxWiz
     VERSION 0.1.0
-    DESCRIPTION "CyxWiz - Decentralized ML Compute Platform"
+    DESCRIPTION "CyxWiz visual machine-learning and data workflow platform"
     LANGUAGES CXX C
 )
 
@@ -20,15 +20,31 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Build options
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
 option(CYXWIZ_BUILD_SERVER_NODE "Build CyxWiz Server Node" ON)
-option(CYXWIZ_BUILD_CENTRAL_SERVER "Build CyxWiz Central Server" ON)
+option(CYXWIZ_BUILD_INSTALLER_ONLY "Build only the standalone installer and backend manager" OFF)
+set(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR "" CACHE PATH
+    "Release-signed trust, catalog, and manifest bundle staged below runtime/")
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
+# Before any add_subdirectory: add_test() in a directory processed before
+# enable_testing() is dropped, which hid every contract test registered
+# from cyxwiz-engine (cmake/CyxWizInstallerTargets.cmake) from ctest.
+if(CYXWIZ_BUILD_TESTS)
+    enable_testing()
+endif()
+option(CYXWIZ_ENABLE_SENTENCEPIECE "Enable optional SentencePiece tokenizer provider" OFF)
+if(CYXWIZ_ENABLE_SENTENCEPIECE)
+    message(STATUS
+        "SentencePiece tokenizer provider requested. Configure vcpkg with "
+        "--x-feature=sentencepiece or set SentencePiece_DIR to the official C++ package.")
+endif()
 option(CYXWIZ_BUILD_DOCS "Build documentation" OFF)
 option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_OPENCL "Enable OpenCL support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_ONNX "Enable ONNX Runtime support" ON)
 option(CYXWIZ_ENABLE_GGUF "Enable GGUF/llama.cpp support for LLMs" ON)
-option(CYXWIZ_ENABLE_PYTORCH "Enable PyTorch/LibTorch support" ON)
-option(CYXWIZ_ANDROID_BUILD "Build for Android" OFF)
+option(CYXWIZ_ENABLE_PYTORCH "Enable LibTorch for the PyTorch parity oracle tests and the server node's optional TorchScript model import; never an engine compute dependency (docs/architecture/backend-compute-frameworks.md)" ON)
+option(CYXWIZ_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
+option(CYXWIZ_BUILD_ASSISTANT_PLUGIN "Build the experimental CyxWiz assistant plugin" OFF)
+option(CYXWIZ_BUILD_MUJOCO_PLUGIN "Build the optional MuJoCo simulation plugin" OFF)
 
 # Platform detection
 if(WIN32)
@@ -37,10 +53,6 @@ if(WIN32)
 elseif(APPLE)
     set(CYXWIZ_PLATFORM "macOS")
     add_compile_definitions(CYXWIZ_PLATFORM_MACOS)
-elseif(ANDROID)
-    set(CYXWIZ_PLATFORM "Android")
-    add_compile_definitions(CYXWIZ_PLATFORM_ANDROID)
-    set(CYXWIZ_ANDROID_BUILD ON)
 elseif(UNIX)
     set(CYXWIZ_PLATFORM "Linux")
     add_compile_definitions(CYXWIZ_PLATFORM_LINUX)
@@ -73,6 +85,79 @@ else()
     endif()
 endif()
 
+# AddressSanitizer support
+# MSVC ASan requires all linked libraries to be built with ASan.
+# Since vcpkg binaries aren't ASan-enabled, we can only use ASan for:
+#   1. Standalone tests that don't link vcpkg (test_asan_memory)
+#   2. Linux/macOS builds with Clang (better mixed-binary support)
+#   3. Full rebuild with custom vcpkg ASan triplet
+if(CYXWIZ_ENABLE_ASAN)
+    message(STATUS "AddressSanitizer enabled")
+
+    # Helper function to enable ASan on specific targets
+    function(target_enable_asan target_name)
+        if(MSVC)
+            target_compile_options(${target_name} PRIVATE /fsanitize=address /Zi)
+            target_link_options(${target_name} PRIVATE /DEBUG)
+        else()
+            target_compile_options(${target_name} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+            target_link_options(${target_name} PRIVATE -fsanitize=address)
+            if(NOT APPLE)
+                target_compile_options(${target_name} PRIVATE -fsanitize=leak)
+                target_link_options(${target_name} PRIVATE -fsanitize=leak)
+            endif()
+        endif()
+    endfunction()
+
+    # On non-MSVC (Clang/GCC), enable ASan globally - better mixed-binary support
+    if(NOT MSVC)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address)
+        if(NOT APPLE)
+            add_compile_options(-fsanitize=leak)
+            add_link_options(-fsanitize=leak)
+        endif()
+        message(STATUS "  Global ASan enabled (Clang/GCC)")
+    else()
+        message(STATUS "  MSVC: ASan available for standalone tests only (test_asan_memory)")
+        message(STATUS "  For full ASan, use Clang or rebuild vcpkg with ASan triplet")
+    endif()
+endif()
+
+# Keep the standalone installer independent from the Engine dependency graph.
+if(CYXWIZ_BUILD_INSTALLER_ONLY)
+    set(CYXWIZ_BUILD_ENGINE OFF CACHE BOOL "Build CyxWiz Engine" FORCE)
+    set(CYXWIZ_BUILD_SERVER_NODE OFF CACHE BOOL "Build CyxWiz Server Node" FORCE)
+
+    find_package(nlohmann_json CONFIG REQUIRED)
+    find_package(OpenSSL REQUIRED)
+    find_package(imgui CONFIG REQUIRED)
+    find_package(glfw3 CONFIG REQUIRED)
+    find_package(glad CONFIG REQUIRED)
+
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+    add_subdirectory(redist/bootstrapper)
+    include(CyxWizInstallerTargets)
+
+    if(CYXWIZ_BUILD_TESTS)
+        enable_testing()
+        add_test(
+            NAME backend_pack_manager_model_contract
+            COMMAND test_backend_pack_manager_model
+        )
+        add_test(
+            NAME installer_verification_summary_contract
+            COMMAND test_installer_verification_summary
+        )
+    endif()
+
+    message(STATUS "Configured standalone CyxWiz installer targets")
+    return()
+endif()
+
 # Find vcpkg packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -81,13 +166,21 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+if(CYXWIZ_BUILD_ENGINE)
+    find_package(libvterm CONFIG REQUIRED)
+endif()
 
 # Python/pybind11 (optional)
 option(CYXWIZ_ENABLE_PYTHON "Enable Python scripting support" ON)
+# Release builds bundle Python 3.12 and must not silently drop scripting.
+option(CYXWIZ_REQUIRE_PYTHON "Fail configuration unless Python 3.12 scripting is available" OFF)
+if(CYXWIZ_REQUIRE_PYTHON AND NOT CYXWIZ_ENABLE_PYTHON)
+    message(FATAL_ERROR "CYXWIZ_REQUIRE_PYTHON needs CYXWIZ_ENABLE_PYTHON=ON")
+endif()
 if(CYXWIZ_ENABLE_PYTHON)
     # Find Python 3.12 specifically (avoid 3.14+)
     find_package(Python3 3.12 EXACT COMPONENTS Interpreter Development QUIET)
-    if(NOT Python3_FOUND)
+    if(NOT Python3_FOUND AND NOT CYXWIZ_REQUIRE_PYTHON)
         # Fallback to Python 3.12-3.13 range
         find_package(Python3 3.12...3.13 COMPONENTS Interpreter Development QUIET)
     endif()
@@ -98,12 +191,30 @@ if(CYXWIZ_ENABLE_PYTHON)
         set(PYBIND11_FINDPYTHON ON)
     endif()
 
-    find_package(pybind11 CONFIG QUIET)
-    if(pybind11_FOUND)
+    if(APPLE AND TARGET Iconv::Iconv AND Iconv_INCLUDE_DIR MATCHES "/[^/]+\\.sdk/usr/include/?$")
+        get_target_property(_cyxwiz_iconv_include_dirs Iconv::Iconv INTERFACE_INCLUDE_DIRECTORIES)
+        if(_cyxwiz_iconv_include_dirs)
+            list(REMOVE_ITEM _cyxwiz_iconv_include_dirs "${Iconv_INCLUDE_DIR}")
+            set_property(TARGET Iconv::Iconv PROPERTY
+                INTERFACE_INCLUDE_DIRECTORIES "${_cyxwiz_iconv_include_dirs}")
+        endif()
+        unset(_cyxwiz_iconv_include_dirs)
+    endif()
+
+    if(Python3_FOUND)
+        unset(PYTHON_MODULE_EXTENSION CACHE)
+        unset(PYTHON_MODULE_DEBUG_POSTFIX CACHE)
+        unset(PYTHON_IS_DEBUG CACHE)
+        find_package(pybind11 CONFIG QUIET)
+    endif()
+
+    if(Python3_FOUND AND pybind11_FOUND)
         message(STATUS "pybind11 found - Python scripting enabled")
         set(CYXWIZ_HAS_PYTHON ON CACHE BOOL "Python available" FORCE)
+    elseif(CYXWIZ_REQUIRE_PYTHON)
+        message(FATAL_ERROR "Python 3.12 development files and pybind11 are required (CYXWIZ_REQUIRE_PYTHON=ON)")
     else()
-        message(WARNING "pybind11 not found - Python scripting disabled")
+        message(WARNING "Python 3.12-3.13 development files and pybind11 are required - Python scripting disabled")
         set(CYXWIZ_HAS_PYTHON OFF CACHE BOOL "Python available" FORCE)
     endif()
 else()
@@ -251,7 +362,14 @@ else()
     set(CYXWIZ_HAS_GGUF OFF CACHE BOOL "llama.cpp available" FORCE)
 endif()
 
-# LibTorch for PyTorch/TorchScript model support
+# LibTorch: PyTorch parity ORACLE for tests, plus the server node's optional
+# TorchScript model import (cyxwiz-server-node/src/model_loader.cpp).
+# Ruling 2026-09-24 (tofix114, docs/architecture/backend-compute-frameworks.md):
+# LibTorch is not a backend compute framework of the engine. No engine
+# compute target (cyxwiz-backend, cyxwiz-engine, pycyxwiz) may link
+# ${TORCH_LIBRARIES}; GPU execution of CyxWiz graphs belongs to ArrayFire
+# plus the native neural providers. Allowed linkers: test targets guarded by
+# CYXWIZ_HAS_PYTORCH and the server node's external-model loader.
 # Cross-platform support:
 #   Windows: Download from pytorch.org, set TORCH_DIR environment variable
 #   Linux:   Download from pytorch.org or conda install pytorch
@@ -309,14 +427,14 @@ add_subdirectory(cyxwiz-backend)
 # CUDA test programs
 if(CYXWIZ_ENABLE_CUDA)
     # Full backend test
-    add_executable(test_cuda_backend test_cuda_backend.cpp)
+    add_executable(test_cuda_backend tests/smoke/test_cuda_backend.cpp)
     target_link_libraries(test_cuda_backend PRIVATE cyxwiz-backend)
     target_include_directories(test_cuda_backend PRIVATE cyxwiz-backend/include)
 
     # Simple direct CUDA test
     find_package(CUDAToolkit QUIET)
     if(CUDAToolkit_FOUND)
-        add_executable(test_cuda_simple test_cuda_simple.cpp)
+        add_executable(test_cuda_simple tests/smoke/test_cuda_simple.cpp)
         target_link_libraries(test_cuda_simple PRIVATE CUDA::cudart)
     else()
         message(STATUS "CUDA Toolkit not found - skipping test_cuda_simple")
@@ -326,7 +444,7 @@ endif()
 # MNIST ONNX test program
 # Cross-platform: Windows, Linux, macOS
 if(CYXWIZ_HAS_ONNX)
-    add_executable(test_mnist_onnx test_mnist_onnx.cpp)
+    add_executable(test_mnist_onnx tests/smoke/test_mnist_onnx.cpp)
     target_link_libraries(test_mnist_onnx PRIVATE onnxruntime::onnxruntime)
     target_compile_definitions(test_mnist_onnx PRIVATE CYXWIZ_HAS_ONNX)
 
@@ -365,34 +483,54 @@ if(CYXWIZ_HAS_ONNX)
     message(STATUS "MNIST ONNX test enabled")
 endif()
 
-# Platform-specific builds
-if(NOT CYXWIZ_ANDROID_BUILD)
-    if(CYXWIZ_BUILD_ENGINE)
-        add_subdirectory(cyxwiz-engine)
-    endif()
+# Applications
+if(CYXWIZ_BUILD_ENGINE)
+    add_subdirectory(redist/bootstrapper)
+    add_subdirectory(cyxwiz-engine)
+    target_link_libraries(cyxwiz-engine PRIVATE
+        cyxwiz-backend-pack-maintenance
+        cyxwiz-backend-pack-service
+        cyxwiz-runtime-bootstrap
+    )
+    include(CyxWizReleasePackaging)
+    cyxwiz_add_release_packaging_targets()
+endif()
 
-    if(CYXWIZ_BUILD_SERVER_NODE)
-        add_subdirectory(cyxwiz-server-node)
-    endif()
+if(CYXWIZ_BUILD_SERVER_NODE)
+    add_subdirectory(cyxwiz-server-node)
 endif()
 
 # Example plugins (shared libraries)
-if(CYXWIZ_BUILD_ENGINE AND NOT CYXWIZ_ANDROID_BUILD)
+if(CYXWIZ_BUILD_ENGINE)
     add_subdirectory(plugins/examples/mlflow_logger)
     add_subdirectory(plugins/examples/image_nodes)
-    add_subdirectory(plugins/simulation/mujoco)
-endif()
-
-# Central server is built with Rust (see cyxwiz-central-server/Cargo.toml)
-if(CYXWIZ_BUILD_CENTRAL_SERVER AND NOT CYXWIZ_ANDROID_BUILD)
-    message(STATUS "Central Server will be built using Cargo (Rust)")
-    message(STATUS "Run: cd cyxwiz-central-server && cargo build --release")
+    add_subdirectory(plugins/examples/activation_nodes)
+    # The SDK's template plugin, built here so it always compiles.
+    add_subdirectory(plugins/template)
+    if(CYXWIZ_BUILD_MUJOCO_PLUGIN)
+        add_subdirectory(plugins/simulation/mujoco)
+    endif()
+    if(CYXWIZ_BUILD_ASSISTANT_PLUGIN)
+        add_subdirectory(plugins/assistant/cyxwiz_assistant)
+    endif()
 endif()
 
 # Testing
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
     find_package(Catch2 CONFIG REQUIRED)
+    if(TARGET test_backend_pack_manager_model)
+        add_test(
+            NAME backend_pack_manager_model_contract
+            COMMAND test_backend_pack_manager_model
+        )
+    endif()
+    if(TARGET test_installer_verification_summary)
+        add_test(
+            NAME installer_verification_summary_contract
+            COMMAND test_installer_verification_summary
+        )
+    endif()
     add_subdirectory(tests)
 endif()
 
@@ -414,7 +552,8 @@ message(STATUS "")
 message(STATUS "Components:")
 message(STATUS "  Engine (Desktop Client): ${CYXWIZ_BUILD_ENGINE}")
 message(STATUS "  Server Node: ${CYXWIZ_BUILD_SERVER_NODE}")
-message(STATUS "  Central Server: ${CYXWIZ_BUILD_CENTRAL_SERVER}")
+message(STATUS "  MuJoCo Plugin: ${CYXWIZ_BUILD_MUJOCO_PLUGIN}")
+message(STATUS "  Assistant Plugin: ${CYXWIZ_BUILD_ASSISTANT_PLUGIN}")
 message(STATUS "  Tests: ${CYXWIZ_BUILD_TESTS}")
 message(STATUS "")
 message(STATUS "Compute Backends:")
@@ -424,6 +563,5 @@ message(STATUS "  ONNX Runtime: ${CYXWIZ_HAS_ONNX}")
 message(STATUS "  ONNX Export: ${CYXWIZ_HAS_ONNX_EXPORT}")
 message(STATUS "  GGUF/llama.cpp: ${CYXWIZ_HAS_GGUF}")
 message(STATUS "  PyTorch/LibTorch: ${CYXWIZ_HAS_PYTORCH}")
-message(STATUS "  Android Build: ${CYXWIZ_ANDROID_BUILD}")
 message(STATUS "==========================================")
 message(STATUS "")

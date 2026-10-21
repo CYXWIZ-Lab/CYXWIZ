@@ -583,6 +583,7 @@ QueryResult Executor::executeReturn(const ASTNodePtr& clause, const std::vector<
 }
 
 void Executor::executeCreate(const ASTNodePtr& clause, QueryResult& result) {
+    (void)clause;
     // For now, just log that we would create nodes
     // Actual implementation would modify the graph
     spdlog::info("CREATE clause execution (not fully implemented)");
@@ -590,11 +591,15 @@ void Executor::executeCreate(const ASTNodePtr& clause, QueryResult& result) {
 }
 
 void Executor::executeDelete(const ASTNodePtr& clause, const std::vector<BindingContext>& contexts, QueryResult& result) {
+    (void)clause;
+    (void)contexts;
     spdlog::info("DELETE clause execution (not fully implemented)");
     result.nodesDeleted = 0;
 }
 
 void Executor::executeSet(const ASTNodePtr& clause, std::vector<BindingContext>& contexts, QueryResult& result) {
+    (void)clause;
+    (void)contexts;
     spdlog::info("SET clause execution (not fully implemented)");
     result.propertiesSet = 0;
 }
@@ -644,6 +649,8 @@ void Executor::executeSkip(const ASTNodePtr& clause, std::vector<BindingContext>
 }
 
 void Executor::executeWith(const ASTNodePtr& clause, std::vector<BindingContext>& contexts) {
+    (void)clause;
+    (void)contexts;
     // WITH acts like RETURN but continues the query
     // For now, we'll keep all bindings
     spdlog::info("WITH clause - passing through bindings");
@@ -991,11 +998,9 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::RNN, "RNN"},
         {gui::NodeType::LSTM, "LSTM"},
         {gui::NodeType::GRU, "GRU"},
-        {gui::NodeType::Bidirectional, "Bidirectional"},
         {gui::NodeType::TimeDistributed, "TimeDistributed"},
         {gui::NodeType::Embedding, "Embedding"},
         {gui::NodeType::MultiHeadAttention, "MultiHeadAttention"},
-        {gui::NodeType::SelfAttention, "SelfAttention"},
         {gui::NodeType::CrossAttention, "CrossAttention"},
         {gui::NodeType::LinearAttention, "LinearAttention"},
         {gui::NodeType::TransformerEncoder, "TransformerEncoder"},
@@ -1022,7 +1027,38 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::Add, "Add"},
         {gui::NodeType::Multiply, "Multiply"},
         {gui::NodeType::Average, "Average"},
+        {gui::NodeType::TensorSum, "TensorSum"},
+        {gui::NodeType::TensorMean, "TensorMean"},
+        {gui::NodeType::TensorMax, "TensorMax"},
+        {gui::NodeType::TensorMin, "TensorMin"},
+        {gui::NodeType::TensorProd, "TensorProd"},
+        {gui::NodeType::TensorVar, "TensorVar"},
+        {gui::NodeType::TensorStd, "TensorStd"},
+        {gui::NodeType::TensorBroadcastTo, "TensorBroadcastTo"},
+        {gui::NodeType::TensorExpand, "TensorExpand"},
+        {gui::NodeType::TensorIndexSelect, "TensorIndexSelect"},
+        {gui::NodeType::TensorPow, "TensorPow"},
+        {gui::NodeType::TensorSqrt, "TensorSqrt"},
+        {gui::NodeType::TensorExp, "TensorExp"},
+        {gui::NodeType::TensorLog, "TensorLog"},
+        {gui::NodeType::TensorAbs, "TensorAbs"},
+        {gui::NodeType::TensorSign, "TensorSign"},
+        {gui::NodeType::TensorClip, "TensorClip"},
+        {gui::NodeType::TensorDot, "TensorDot"},
+        {gui::NodeType::TensorBatchMatMul, "TensorBatchMatMul"},
+        {gui::NodeType::TensorCompare, "TensorCompare"},
+        {gui::NodeType::TensorLogicalMask, "TensorLogicalMask"},
         {gui::NodeType::Output, "Output"},
+        {gui::NodeType::SequenceTagOutput, "SequenceTagOutput"},
+        {gui::NodeType::PairDatasetBuilder, "PairDatasetBuilder"},
+        {gui::NodeType::TripletDatasetBuilder, "TripletDatasetBuilder"},
+        {gui::NodeType::ContrastiveLoss, "ContrastiveLoss"},
+        {gui::NodeType::CosineEmbeddingLoss, "CosineEmbeddingLoss"},
+        {gui::NodeType::TripletLoss, "TripletLoss"},
+        {gui::NodeType::PairMetrics, "PairMetrics"},
+        {gui::NodeType::RetrievalMetrics, "RetrievalMetrics"},
+        {gui::NodeType::EmbeddingOutput, "EmbeddingOutput"},
+        {gui::NodeType::PairScoreOutput, "PairScoreOutput"},
         {gui::NodeType::MSELoss, "MSELoss"},
         {gui::NodeType::CrossEntropyLoss, "CrossEntropyLoss"},
         {gui::NodeType::BCELoss, "BCELoss"},
@@ -1031,6 +1067,11 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::SmoothL1Loss, "SmoothL1Loss"},
         {gui::NodeType::HuberLoss, "HuberLoss"},
         {gui::NodeType::NLLLoss, "NLLLoss"},
+        {gui::NodeType::SoftDiceLoss, "SoftDiceLoss"},
+        {gui::NodeType::TverskyLoss, "TverskyLoss"},
+        {gui::NodeType::JaccardLoss, "JaccardLoss"},
+        {gui::NodeType::ClassificationMetricsNode, "ClassificationMetricsNode"},
+        {gui::NodeType::TestEvaluationNode, "TestEvaluationNode"},
         {gui::NodeType::SGD, "SGD"},
         {gui::NodeType::Adam, "Adam"},
         {gui::NodeType::AdamW, "AdamW"},
@@ -1051,11 +1092,22 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::Parameter, "Parameter"},
         {gui::NodeType::DatasetInput, "DatasetInput"},
         {gui::NodeType::DataLoader, "DataLoader"},
-        {gui::NodeType::Augmentation, "Augmentation"},
         {gui::NodeType::DataSplit, "DataSplit"},
-        {gui::NodeType::TensorReshape, "TensorReshape"},
         {gui::NodeType::Normalize, "Normalize"},
         {gui::NodeType::OneHotEncode, "OneHotEncode"},
+        {gui::NodeType::TimeSeriesWindow, "TimeSeriesWindow"},
+        {gui::NodeType::TimeSeriesFeatures, "TimeSeriesFeatures"},
+        {gui::NodeType::TimeSeriesSplit, "TimeSeriesSplit"},
+        {gui::NodeType::TimeSeriesCSV, "TimeSeriesCSV"},
+        {gui::NodeType::LogTransform, "LogTransform"},
+        {gui::NodeType::Differencing, "Differencing"},
+        {gui::NodeType::TimeSeriesDecomposition, "TimeSeriesDecomposition"},
+        {gui::NodeType::ACFNode, "ACFNode"},
+        {gui::NodeType::PACFNode, "PACFNode"},
+        {gui::NodeType::StationarityTest, "StationarityTest"},
+        {gui::NodeType::SeasonalityDetector, "SeasonalityDetector"},
+        {gui::NodeType::ARIMAForecaster, "ARIMAForecaster"},
+        {gui::NodeType::ExponentialSmoothing, "ExponentialSmoothing"},
     };
 
     auto it = typeNames.find(type);
@@ -1075,6 +1127,23 @@ gui::NodeType Executor::stringToNodeType(const std::string& str) const {
         {"MultiHeadAttention", gui::NodeType::MultiHeadAttention},
         {"DatasetInput", gui::NodeType::DatasetInput},
         {"Output", gui::NodeType::Output},
+        {"SequenceTagOutput", gui::NodeType::SequenceTagOutput},
+        {"PairDatasetBuilder", gui::NodeType::PairDatasetBuilder},
+        {"TripletDatasetBuilder", gui::NodeType::TripletDatasetBuilder},
+        {"ContrastiveLoss", gui::NodeType::ContrastiveLoss},
+        {"CosineEmbeddingLoss", gui::NodeType::CosineEmbeddingLoss},
+        {"TripletLoss", gui::NodeType::TripletLoss},
+        {"PairMetrics", gui::NodeType::PairMetrics},
+        {"RetrievalMetrics", gui::NodeType::RetrievalMetrics},
+        {"EmbeddingOutput", gui::NodeType::EmbeddingOutput},
+        {"PairScoreOutput", gui::NodeType::PairScoreOutput},
+        {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
+        {"ACFNode", gui::NodeType::ACFNode},
+        {"PACFNode", gui::NodeType::PACFNode},
+        {"StationarityTest", gui::NodeType::StationarityTest},
+        {"SeasonalityDetector", gui::NodeType::SeasonalityDetector},
+        {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
+        {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
         // Add more as needed
     };
 

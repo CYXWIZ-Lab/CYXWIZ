@@ -55,7 +55,6 @@ private:
     bool visible_ = false;
 
     // Number of variables
-    int num_variables_ = 2;
 
     // Quadratic term Q (must be symmetric positive semi-definite)
     std::vector<std::vector<double>> Q_matrix_;

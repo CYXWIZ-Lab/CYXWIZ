@@ -3,6 +3,7 @@
 #include "../../core/engine_config.h"
 #include <spdlog/spdlog.h>
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cstring>
@@ -12,19 +13,20 @@ namespace gui {
 
 // Trust level colors
 static ImVec4 GetTrustLevelColor(network::TrustLevel level) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     switch (level) {
         case network::TrustLevel::Self:
-            return ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
+            return t.success;  // Green
         case network::TrustLevel::Signed:
-            return ImVec4(0.2f, 0.6f, 0.9f, 1.0f);  // Blue
+            return t.info;  // Blue
         case network::TrustLevel::Verified:
-            return ImVec4(0.4f, 0.8f, 0.4f, 1.0f);  // Light green
+            return t.success;  // Light green
         case network::TrustLevel::Attested:
-            return ImVec4(0.9f, 0.7f, 0.2f, 1.0f);  // Gold
+            return t.accent_text;  // Gold
         case network::TrustLevel::Untrusted:
-            return ImVec4(0.9f, 0.3f, 0.3f, 1.0f);  // Red
+            return t.error;  // Red
         default:
-            return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);  // Gray
+            return t.pending;  // Gray
     }
 }
 
@@ -52,6 +54,7 @@ CloudBrowserPanel::~CloudBrowserPanel() {
 }
 
 void CloudBrowserPanel::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (!visible_) return;
     
     // Try auto-connect on first render
@@ -64,7 +67,7 @@ void CloudBrowserPanel::Render() {
 
         // Check connection
         if (!datastream_client_ || !datastream_client_->IsConnected()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+            ImGui::TextColored(t.warning,
                 ICON_FA_TRIANGLE_EXCLAMATION " Not connected to CyxCloud Gateway");
 
             if (ImGui::Button(ICON_FA_PLUG " Connect")) {
@@ -90,7 +93,7 @@ void CloudBrowserPanel::Render() {
         // Show error if any
         if (!last_error_.empty() && error_time_ > 0) {
             error_time_ -= ImGui::GetIO().DeltaTime;
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+            ImGui::TextColored(t.error,
                 ICON_FA_CIRCLE_EXCLAMATION " %s", last_error_.c_str());
         }
     }
@@ -98,6 +101,7 @@ void CloudBrowserPanel::Render() {
 }
 
 void CloudBrowserPanel::RenderToolbar() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     // Refresh button
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh")) {
         RefreshDatasets();
@@ -145,7 +149,7 @@ void CloudBrowserPanel::RenderToolbar() {
     // Loading indicator
     if (is_loading_.load()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.running,
             ICON_FA_SPINNER " %s", loading_message_.c_str());
     }
 }
@@ -169,12 +173,13 @@ void CloudBrowserPanel::RenderTabs() {
 }
 
 void CloudBrowserPanel::RenderMyDatasetsTab() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (filtered_datasets_.empty() && !is_loading_.load()) {
         if (my_datasets_.empty()) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            ImGui::TextColored(t.text_dim,
                 "No datasets found. Click 'Upload' to add a dataset.");
         } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            ImGui::TextColored(t.text_dim,
                 "No datasets match your filter.");
         }
         return;
@@ -184,6 +189,7 @@ void CloudBrowserPanel::RenderMyDatasetsTab() {
 }
 
 void CloudBrowserPanel::RenderPublicDatasetsTab() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     // Auto-fetch on first view
     static bool first_view = true;
     if (first_view && public_datasets_.empty()) {
@@ -193,10 +199,10 @@ void CloudBrowserPanel::RenderPublicDatasetsTab() {
 
     if (filtered_public_datasets_.empty() && !is_loading_.load()) {
         if (public_datasets_.empty()) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            ImGui::TextColored(t.text_dim,
                 "Loading public datasets...");
         } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            ImGui::TextColored(t.text_dim,
                 "No public datasets match your filter.");
         }
         return;
@@ -205,7 +211,7 @@ void CloudBrowserPanel::RenderPublicDatasetsTab() {
     RenderPublicDatasetTable(filtered_public_datasets_);
 }
 
-void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatasetInfo>& datasets, bool is_public) {
+void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatasetInfo>& datasets) {
     ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable |
                             ImGuiTableFlags_ScrollY;
@@ -239,7 +245,7 @@ void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatas
             if (ImGui::Selectable(ds.name.c_str(), is_selected,
                                    ImGuiSelectableFlags_SpanAllColumns)) {
                 selected_index_ = static_cast<int>(i);
-                selected_dataset_ = const_cast<network::CloudDatasetInfo*>(&filtered_datasets_[i]);
+                selected_dataset_ = &datasets[i];
 
                 // Double-click to use dataset
                 if (ImGui::IsMouseDoubleClicked(0)) {
@@ -252,7 +258,7 @@ void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatas
             // Context menu
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 selected_index_ = static_cast<int>(i);
-                selected_dataset_ = const_cast<network::CloudDatasetInfo*>(&filtered_datasets_[i]);
+                selected_dataset_ = &datasets[i];
                 ImGui::OpenPopup("DatasetContextMenu");
             }
 
@@ -286,6 +292,7 @@ void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatas
 }
 
 void CloudBrowserPanel::RenderPublicDatasetTable(const std::vector<network::PublicDatasetInfo>& datasets) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
@@ -309,13 +316,13 @@ void CloudBrowserPanel::RenderPublicDatasetTable(const std::vector<network::Publ
             if (ImGui::Selectable(ds.name.c_str(), is_selected,
                                    ImGuiSelectableFlags_SpanAllColumns)) {
                 selected_public_index_ = static_cast<int>(i);
-                selected_public_dataset_ = const_cast<network::PublicDatasetInfo*>(&filtered_public_datasets_[i]);
+                selected_public_dataset_ = &datasets[i];
             }
 
             // Context menu
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 selected_public_index_ = static_cast<int>(i);
-                selected_public_dataset_ = const_cast<network::PublicDatasetInfo*>(&filtered_public_datasets_[i]);
+                selected_public_dataset_ = &datasets[i];
                 ImGui::OpenPopup("PublicDatasetContextMenu");
             }
 
@@ -335,19 +342,19 @@ void CloudBrowserPanel::RenderPublicDatasetTable(const std::vector<network::Publ
                     if (j > 0) verifiers += ", ";
                     verifiers += ds.verified_by[j];
                 }
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                ImGui::TextColored(t.success,
                     ICON_FA_CIRCLE_CHECK " %s", verifiers.c_str());
             } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "-");
+                ImGui::TextColored(t.text_faint, "-");
             }
 
             // Status column
             ImGui::TableSetColumnIndex(4);
             if (ds.cached) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                ImGui::TextColored(t.success,
                     ICON_FA_CHECK " Cached");
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f),
+                ImGui::TextColored(t.info,
                     ICON_FA_DOWNLOAD " Download");
             }
         }
@@ -535,6 +542,7 @@ void CloudBrowserPanel::RenderDatasetInfoPopup() {
 }
 
 void CloudBrowserPanel::RenderVerificationPopup() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (!show_verify_popup_) return;
 
     ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
@@ -546,10 +554,10 @@ void CloudBrowserPanel::RenderVerificationPopup() {
 
             // Status header
             if (r.manifest_valid && r.all_files_valid) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                ImGui::TextColored(t.success,
                     ICON_FA_CIRCLE_CHECK " Dataset verified successfully");
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f),
+                ImGui::TextColored(t.error,
                     ICON_FA_CIRCLE_XMARK " Verification failed");
             }
 
@@ -563,7 +571,7 @@ void CloudBrowserPanel::RenderVerificationPopup() {
 
             if (!r.public_match_name.empty()) {
                 ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                ImGui::TextColored(t.success,
                     ICON_FA_CHECK " Matches public dataset: %s (%.0f%% confidence)",
                     r.public_match_name.c_str(), r.public_match_confidence * 100);
             }

@@ -176,10 +176,6 @@ private:
     std::pair<std::map<std::string, float>, std::map<std::string, std::string>>
         SampleBayesian();
 
-    // Helper to convert sampled parameters to training config
-    void ApplyParameters(const std::map<std::string, float>& params,
-                        const std::map<std::string, std::string>& categorical_params);
-
     SearchConfig config_;
 
     std::atomic<bool> is_running_{false};

@@ -1,7 +1,11 @@
 #pragma once
 
+#include "../../core/extension_node_presentation.h"
+#include <optional>
+#include <string>
 #include "../panel.h"
 #include "../../core/node_metadata.h"
+#include <imgui.h>
 #include <functional>
 
 namespace cyxwiz {
@@ -36,6 +40,19 @@ public:
     void SetSelectedNode(NodeType type);
 
     /**
+     * Hover preview: shown only while the pointer stays on a node (call it
+     * every frame while hovering). Without it the pinned node is shown.
+     */
+    void PreviewNode(NodeType type);
+
+    /**
+     * Extension nodes (TOFIX125) share one NodeType; they are identified by
+     * their type id "<provider_id>:<TypeName>".
+     */
+    void SetSelectedExtension(const std::string& type_id);
+    void PreviewExtension(const std::string& type_id);
+
+    /**
      * Clear the current selection (show placeholder)
      */
     void ClearSelection();
@@ -54,6 +71,7 @@ private:
     // Render sections
     void RenderHeader();
     void RenderDescription();
+    void RenderSupport();
     void RenderPorts();
     void RenderParameters();
     void RenderExamples();
@@ -63,9 +81,28 @@ private:
     ImU32 GetPinTypeColor(PinType type) const;
     const char* GetPinTypeName(PinType type) const;
 
-    // Current selection
+    // Pinned node (clicked) and the node being displayed this frame.
     NodeType selected_type_ = NodeType::Unknown;
+    const NodeMetadata* pinned_metadata_ = nullptr;
     const NodeMetadata* metadata_ = nullptr;
+    // Hover preview, valid while PreviewNode is called each frame.
+    NodeType preview_type_ = NodeType::Unknown;
+    const NodeMetadata* preview_metadata_ = nullptr;
+    int preview_frame_ = -10;
+
+    // Extension nodes: copies taken when selected, so an unloaded plugin
+    // leaves nothing dangling.
+    struct ExtensionView {
+        std::string type_id;
+        NodeMetadata metadata;
+        ExtensionInfoFacts facts;
+    };
+    static std::optional<ExtensionView> BuildExtensionView(const std::string& type_id);
+    void RenderProvidedBy();
+    std::optional<ExtensionView> pinned_extension_;
+    std::optional<ExtensionView> preview_extension_;
+    int preview_extension_frame_ = -10;
+    const ExtensionInfoFacts* facts_ = nullptr;  // this frame's, when an extension node is shown
 };
 
 } // namespace cyxwiz

@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
+#pragma once
+
+#include "cyxwiz/api_export.h"
+#include "cyxwiz/layers/layer_base.h"
+#include "cyxwiz/tensor.h"
+
+#include <map>
+#include <string>
+#include <vector>
+
+namespace cyxwiz {
+
+class CYXWIZ_API BatchNorm2DLayer : public Layer {
+public:
+    BatchNorm2DLayer(int num_features, float eps = 1e-5f, float momentum = 0.1f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "BatchNorm2D"; }
+
+private:
+    int num_features_;
+    float eps_;
+    float momentum_;
+
+    Tensor gamma_;
+    Tensor beta_;
+    Tensor running_mean_;
+    Tensor running_var_;
+    Tensor normalized_;
+    Tensor std_inv_;
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+};
+
+class CYXWIZ_API LayerNormLayer : public Layer {
+public:
+    LayerNormLayer(const std::vector<int>& normalized_shape,
+                   float eps = 1e-5f, bool elementwise_affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "LayerNorm"; }
+
+private:
+    std::vector<int> normalized_shape_;
+    float eps_;
+    bool elementwise_affine_;
+
+    Tensor gamma_;
+    Tensor beta_;
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+    Tensor normalized_;
+    Tensor std_inv_;
+    Tensor ForwardArrayFire(const Tensor& input, size_t norm_size);
+    Tensor BackwardArrayFire(const Tensor& gradient, size_t norm_size);
+};
+
+// RMSNorm (Zhang and Sennrich, arXiv:1910.07467): y = x / sqrt(mean(x^2) + eps) * gamma
+// over the last normalized_size features. No mean centring and no shift; the
+// learned scale is optional (elementwise_affine). Matches torch.nn.RMSNorm.
+class CYXWIZ_API RMSNormLayer : public Layer {
+public:
+    explicit RMSNormLayer(int normalized_size, float eps = 1e-5f, bool elementwise_affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "RMSNorm"; }
+
+private:
+    size_t normalized_size_;
+    float eps_;
+    bool elementwise_affine_;
+
+    Tensor gamma_;
+    Tensor grad_gamma_;
+    Tensor normalized_;   // x * inv_rms, cached for backward
+    Tensor inv_rms_;      // [rows]
+    Tensor ForwardArrayFire(const Tensor& input, size_t rows);
+    Tensor BackwardArrayFire(const Tensor& gradient, size_t rows);
+};
+
+class CYXWIZ_API InstanceNorm2DLayer : public Layer {
+public:
+    InstanceNorm2DLayer(int num_features, float eps = 1e-5f, bool affine = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "InstanceNorm2D"; }
+
+private:
+    int num_features_;
+    float eps_;
+    bool affine_;
+
+    Tensor gamma_;
+    Tensor beta_;
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+    Tensor normalized_;
+    Tensor std_inv_;
+};
+
+class CYXWIZ_API GroupNormLayer : public Layer {
+public:
+    GroupNormLayer(int num_groups, int num_channels,
+                   float eps = 1e-5f, bool affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "GroupNorm"; }
+
+private:
+    int num_groups_;
+    int num_channels_;
+    float eps_;
+    bool affine_;
+
+    Tensor gamma_;
+    Tensor beta_;
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+    Tensor normalized_;
+    Tensor std_inv_;
+};
+
+} // namespace cyxwiz

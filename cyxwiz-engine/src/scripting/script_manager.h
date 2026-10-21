@@ -60,15 +60,11 @@ public:
 
     /**
      * Get completions for current cursor position
-     * @param code Full code text
-     * @param cursor_pos Cursor position in code
      * @param line Current line text
      * @param column Cursor column in line
      * @return List of completion items sorted by relevance
      */
     std::vector<CompletionItem> GetCompletions(
-        const std::string& code,
-        size_t cursor_pos,
         const std::string& line,
         int column
     );
@@ -139,10 +135,5 @@ private:
  * Get icon character for completion kind (for UI display)
  */
 const char* GetCompletionKindIcon(CompletionItem::Kind kind);
-
-/**
- * Get color for completion kind (ImGui ImU32 color)
- */
-unsigned int GetCompletionKindColor(CompletionItem::Kind kind);
 
 } // namespace scripting

@@ -119,7 +119,7 @@ void FeatureImportanceAnalyzer::ShuffleColumn(
 }
 
 double FeatureImportanceAnalyzer::EvaluateModel(
-    SequentialModel& model,
+    const ModelForward& forward,
     const std::vector<std::vector<double>>& X,
     const std::vector<double>& y,
     const std::string& scoring)
@@ -127,8 +127,7 @@ double FeatureImportanceAnalyzer::EvaluateModel(
     if (X.empty() || y.empty()) return 0.0;
 
     Tensor input = CreateInputTensor(X);
-    model.SetTraining(false);
-    Tensor output = model.Forward(input);
+    Tensor output = forward(input);
 
     const float* output_data = output.Data<float>();
     if (!output_data) return 0.0;
@@ -173,7 +172,7 @@ double FeatureImportanceAnalyzer::EvaluateModel(
 
     } else {
         // Default to accuracy
-        return EvaluateModel(model, X, y, "accuracy");
+        return EvaluateModel(forward, X, y, "accuracy");
     }
 }
 
@@ -182,7 +181,7 @@ double FeatureImportanceAnalyzer::EvaluateModel(
 // ============================================================================
 
 FeatureImportanceResult FeatureImportanceAnalyzer::ComputePermutationImportance(
-    SequentialModel& model,
+    const ModelForward& forward,
     const std::vector<std::vector<double>>& X,
     const std::vector<double>& y,
     const std::vector<std::string>& feature_names,
@@ -215,7 +214,7 @@ FeatureImportanceResult FeatureImportanceAnalyzer::ComputePermutationImportance(
                  n_features, n_repeats);
 
     // Compute baseline score
-    result.baseline_score = EvaluateModel(model, X, y, scoring);
+    result.baseline_score = EvaluateModel(forward, X, y, scoring);
     spdlog::info("Baseline {} = {:.4f}", scoring, result.baseline_score);
 
     result.importances.resize(n_features, 0.0);
@@ -231,7 +230,7 @@ FeatureImportanceResult FeatureImportanceAnalyzer::ComputePermutationImportance(
             ShuffleColumn(X_shuffled, feat, static_cast<unsigned int>(feat * n_repeats + rep));
 
             // Evaluate on shuffled data
-            double shuffled_score = EvaluateModel(model, X_shuffled, y, scoring);
+            double shuffled_score = EvaluateModel(forward, X_shuffled, y, scoring);
 
             // Importance = baseline - shuffled (drop in performance)
             double importance = result.baseline_score - shuffled_score;
@@ -281,7 +280,7 @@ FeatureImportanceResult FeatureImportanceAnalyzer::ComputePermutationImportance(
 // ============================================================================
 
 FeatureImportanceResult FeatureImportanceAnalyzer::ComputeDropColumnImportance(
-    SequentialModel& model,
+    const ModelForward& forward,
     const std::vector<std::vector<double>>& X,
     const std::vector<double>& y,
     const std::vector<std::string>& feature_names,
@@ -308,7 +307,7 @@ FeatureImportanceResult FeatureImportanceAnalyzer::ComputeDropColumnImportance(
     spdlog::info("Computing drop-column importance for {} features", n_features);
 
     // Compute baseline score
-    result.baseline_score = EvaluateModel(model, X, y, scoring);
+    result.baseline_score = EvaluateModel(forward, X, y, scoring);
 
     result.importances.resize(n_features, 0.0);
     result.importances_std.resize(n_features, 0.0);
@@ -324,7 +323,7 @@ FeatureImportanceResult FeatureImportanceAnalyzer::ComputeDropColumnImportance(
         }
 
         // Evaluate on dropped data
-        double dropped_score = EvaluateModel(model, X_dropped, y, scoring);
+        double dropped_score = EvaluateModel(forward, X_dropped, y, scoring);
 
         // Importance = baseline - dropped
         result.importances[feat] = result.baseline_score - dropped_score;

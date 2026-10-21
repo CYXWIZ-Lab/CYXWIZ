@@ -369,12 +369,42 @@ LPResult Optimization::SolveLP(
         result.error_message = "Empty input";
         return result;
     }
+    if (A.size() != b.size() || A.size() != constraint_types.size()) {
+        result.error_message =
+            "Constraint matrix, right-hand side, and constraint type counts must match";
+        return result;
+    }
+    if (c.size() > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        A.size() > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        c.size() + A.size() >
+            static_cast<size_t>(std::numeric_limits<int>::max())) {
+        result.error_message = "Linear program is too large for the simplex solver";
+        return result;
+    }
+    for (size_t row_index = 0; row_index < A.size(); ++row_index) {
+        if (A[row_index].size() != c.size()) {
+            result.error_message =
+                "Every constraint row must contain one coefficient per variable";
+            return result;
+        }
+        if (constraint_types[row_index] != "<=") {
+            result.error_message =
+                "The simplex solver currently supports only <= constraints";
+            return result;
+        }
+        if (b[row_index] < 0.0) {
+            result.error_message =
+                "The simplex solver requires non-negative right-hand sides";
+            return result;
+        }
+    }
 
     int num_vars = static_cast<int>(c.size());
     int num_constraints = static_cast<int>(A.size());
 
-    // Convert to standard form with slack variables
-    // For simplicity, assume all constraints are <=
+    // Convert the validated <= constraints to standard form with slack
+    // variables. Supporting >= or = requires a Phase I basis with artificial
+    // variables and must not be approximated by changing the row sign.
     int num_slack = num_constraints;
     int total_vars = num_vars + num_slack;
 
@@ -403,6 +433,7 @@ LPResult Optimization::SolveLP(
 
     // Simplex iterations
     const int max_iters = 1000;
+    bool found_optimum = false;
     for (int iter = 0; iter < max_iters; iter++) {
         result.iterations = iter;
 
@@ -419,6 +450,7 @@ LPResult Optimization::SolveLP(
         if (entering == -1) {
             // Optimal solution found
             result.status = "Optimal";
+            found_optimum = true;
             break;
         }
 
@@ -459,6 +491,13 @@ LPResult Optimization::SolveLP(
         basic[leaving] = entering;
     }
 
+    if (!found_optimum) {
+        result.status = "IterationLimit";
+        result.error_message =
+            "Simplex iteration limit reached before finding an optimum";
+        return result;
+    }
+
     // Extract solution
     result.solution.resize(num_vars, 0.0);
     for (int i = 0; i < num_constraints; i++) {
@@ -467,10 +506,8 @@ LPResult Optimization::SolveLP(
         }
     }
 
-    result.objective_value = -tableau[num_constraints][total_vars];
-    if (!maximize) {
-        result.objective_value = -result.objective_value;
-    }
+    const double tableau_objective = tableau[num_constraints][total_vars];
+    result.objective_value = maximize ? tableau_objective : -tableau_objective;
 
     // Dual variables (shadow prices)
     result.dual_variables.resize(num_constraints);
@@ -479,8 +516,6 @@ LPResult Optimization::SolveLP(
     }
 
     result.success = true;
-    if (result.status.empty()) result.status = "Optimal";
-
     return result;
 }
 

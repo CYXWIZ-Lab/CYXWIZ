@@ -89,6 +89,27 @@ bool WindowManager::RestartEngine(const std::string& project_path) {
     return LaunchWindow(project_path);
 }
 
+bool WindowManager::LaunchExecutable(
+    const std::string& executable_path,
+    const std::vector<std::string>& args) {
+    const std::filesystem::path executable(executable_path);
+    std::error_code filesystem_error;
+    if (!executable.is_absolute() ||
+        !std::filesystem::is_regular_file(executable, filesystem_error) ||
+        filesystem_error) {
+        spdlog::error(
+            "WindowManager::LaunchExecutable - executable is unavailable: {}",
+            executable_path);
+        return false;
+    }
+    std::vector<std::string> process_arguments;
+    process_arguments.reserve(args.size() + 1);
+    process_arguments.push_back(executable.string());
+    process_arguments.insert(
+        process_arguments.end(), args.begin(), args.end());
+    return LaunchProcess(executable.string(), process_arguments);
+}
+
 void WindowManager::SwitchProject(const std::string& new_project_path) {
     // TODO: This will be implemented in the Application class
     // For now, just launch a new window and let the user close the current one

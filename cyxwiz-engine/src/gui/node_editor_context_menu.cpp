@@ -4,15 +4,47 @@
  */
 
 #include "node_editor.h"
+#include "../core/node_palette.h"
 #include "icons.h"
 #include "properties.h"
+#include "../core/node_metadata.h"
+#include "../core/node_metadata_registry.h"
 #include "../core/project_manager.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cstring>
 
 namespace gui {
+
+void NodeEditor::ConfigureNode(int node_id) {
+    MLNode* node = FindNodeById(node_id);
+    if (!node) {
+        return;
+    }
+
+    selected_node_id_ = node_id;
+    selected_node_ids_.clear();
+    selected_node_ids_.push_back(node_id);
+    // The canvas comes forward and shows the node; the dialog opened below
+    // asks for the front after it, so it ends up in front of the canvas.
+    pending_focus_node_id_ = node_id;
+    Raise();
+
+    // A Plot node opens its Plot window (TOFIX134 P2).
+    if (node->type == NodeType::Plot) {
+        OpenPlotNode(node_id);
+        return;
+    }
+    if (node->type == NodeType::Dashboard) {
+        OpenDashboardNode(node_id);
+        return;
+    }
+
+    if (properties_panel_) {
+        properties_panel_->ConfigureNode(node);
+    }
+}
 
 void NodeEditor::ShowSingleNodeContextMenu() {
     MLNode* node = FindNodeById(right_clicked_node_id_);
@@ -60,12 +92,24 @@ void NodeEditor::ShowSingleNodeContextMenu() {
 
     // Configure (open properties)
     if (ImGui::MenuItem(ICON_FA_GEAR " Configure...")) {
-        selected_node_id_ = right_clicked_node_id_;
-        selected_node_ids_.clear();
-        selected_node_ids_.push_back(right_clicked_node_id_);
-        if (properties_panel_) {
-            properties_panel_->SetSelectedNode(node);
+        ConfigureNode(right_clicked_node_id_);
+        ImGui::CloseCurrentPopup();
+    }
+
+    if (node->type == NodeType::SQLQuery) {
+        if (ImGui::MenuItem(ICON_FA_PLUS " Add a guided step after")) {
+            RequestGuidedStepAfter(right_clicked_node_id_);
+            ImGui::CloseCurrentPopup();
         }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("A new step built from operations (no SQL) that reads this step's result; whatever "
+                              "read this step now reads the new one.");
+        }
+    }
+
+    if (explain_node_callback_ &&
+        ImGui::MenuItem(ICON_FA_BUG " Explain in Studio Debugger")) {
+        explain_node_callback_(right_clicked_node_id_);
         ImGui::CloseCurrentPopup();
     }
 
@@ -142,8 +186,12 @@ void NodeEditor::ShowContextMenu() {
     std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
     const bool is_searching = !search_lower.empty();
 
-    // Group nodes by category label (from searchable list)
+    // Group nodes by category label (from searchable list). Palette curation
+    // (TOFIX157, core/node_palette): table steps go under Advanced operations
+    // by their group, nodes that cannot run yet under Can't run yet.
     std::map<std::string, std::vector<SearchableNode*>> grouped;
+    std::map<std::string, std::vector<SearchableNode*>> advanced;
+    std::vector<SearchableNode*> cant_run;
     for (auto& node : all_searchable_nodes_) {
         if (node.status == NodeImplementationStatus::Deprecated) {
             continue;
@@ -161,58 +209,79 @@ void NodeEditor::ShowContextMenu() {
                 continue;
             }
         }
-        grouped[node.category].push_back(&node);
+        if (node.cant_run) cant_run.push_back(&node);
+        else if (!node.advanced_group.empty()) advanced[node.advanced_group].push_back(&node);
+        else grouped[node.category].push_back(&node);
     }
 
-    if (grouped.empty()) {
-        ImGui::TextDisabled("No matches");
-    } else {
-        // When searching, show flat list; otherwise use submenus
-        if (is_searching) {
-            for (auto& [category, nodes] : grouped) {
-                ImGui::TextDisabled("%s", category.c_str());
-                for (auto* node : nodes) {
-                    const bool is_template = (node->status == NodeImplementationStatus::Template);
-                    if (is_template) ImGui::BeginDisabled();
-                    if (ImGui::MenuItem(node->name.c_str())) {
-                        if (!is_template && node->type != NodeType::Unknown) {
-                            AddNode(node->type, node->name);
-                            context_menu_search_[0] = '\0';
-                            ImGui::CloseCurrentPopup();
-                        }
-                    }
-                    if (is_template) {
-                        if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
-                            ImGui::SetTooltip("%s", node->tooltip.c_str());
-                        }
-                        ImGui::EndDisabled();
-                    }
-                }
+    // One node as a menu item: added on click, or disabled with its reason.
+    const auto item = [&](SearchableNode* node, const std::string& label) {
+        const bool is_unavailable =
+            node->status == NodeImplementationStatus::Template || node->support_blocked || node->cant_run;
+        if (is_unavailable) ImGui::BeginDisabled();
+        if (ImGui::MenuItem(label.c_str())) {
+            if (!is_unavailable && node->type != NodeType::Unknown) {
+                AddNode(node->type, node->type == NodeType::PluginCustom ? node->extension_type_id : node->name);
+                context_menu_search_[0] = '\0';
+                ImGui::CloseCurrentPopup();
             }
-        } else {
-            // Use submenus with > indicator for categories
-            for (auto& [category, nodes] : grouped) {
-                if (ImGui::BeginMenu(category.c_str())) {
-                    for (auto* node : nodes) {
-                        const bool is_template = (node->status == NodeImplementationStatus::Template);
-                        if (is_template) ImGui::BeginDisabled();
-                        if (ImGui::MenuItem(node->name.c_str())) {
-                            if (!is_template && node->type != NodeType::Unknown) {
-                                AddNode(node->type, node->name);
-                                context_menu_search_[0] = '\0';
-                                ImGui::CloseCurrentPopup();
-                            }
-                        }
-                        if (is_template) {
-                            if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
-                                ImGui::SetTooltip("%s", node->tooltip.c_str());
-                            }
-                            ImGui::EndDisabled();
-                        }
-                    }
+        }
+        if (is_unavailable) {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !node->tooltip.empty()) {
+                ImGui::SetTooltip("%s", node->tooltip.c_str());
+            }
+            ImGui::EndDisabled();
+        }
+    };
+
+    if (grouped.empty() && advanced.empty() && cant_run.empty()) {
+        ImGui::TextDisabled("No matches");
+    } else if (is_searching) {
+        // When searching, show a flat list.
+        for (auto& [category, nodes] : grouped) {
+            ImGui::TextDisabled("%s", category.c_str());
+            for (auto* node : nodes) item(node, node->name);
+        }
+        for (const auto& group : cyxwiz::palette::AdvancedGroups()) {
+            const auto found = advanced.find(group);
+            if (found == advanced.end()) continue;
+            ImGui::TextDisabled("Advanced operation \xC2\xB7 %s", group.c_str());
+            for (auto* node : found->second) item(node, node->name);
+        }
+        if (!cant_run.empty()) {
+            ImGui::TextDisabled("%s", cyxwiz::palette::kCantRunYet);
+            for (auto* node : cant_run) item(node, node->name + "  (" + node->category + ")");
+        }
+    } else {
+        // Use submenus with > indicator for categories
+        for (auto& [category, nodes] : grouped) {
+            if (ImGui::BeginMenu(category.c_str())) {
+                for (auto* node : nodes) item(node, node->name);
+                ImGui::EndMenu();
+            }
+        }
+        if (!advanced.empty() || !cant_run.empty()) ImGui::Separator();
+        if (!advanced.empty() && ImGui::BeginMenu(cyxwiz::palette::kAdvancedOperations)) {
+            for (const auto& group : cyxwiz::palette::AdvancedGroups()) {
+                const auto found = advanced.find(group);
+                if (found == advanced.end()) continue;
+                if (ImGui::BeginMenu(group.c_str())) {
+                    for (auto* node : found->second) item(node, node->name);
                     ImGui::EndMenu();
                 }
             }
+            ImGui::EndMenu();
+        }
+        if (!cant_run.empty() && ImGui::BeginMenu(cyxwiz::palette::kCantRunYet)) {
+            std::map<std::string, std::vector<SearchableNode*>> by_category;
+            for (auto* node : cant_run) by_category[node->category].push_back(node);
+            for (auto& [category, nodes] : by_category) {
+                if (ImGui::BeginMenu(category.c_str())) {
+                    for (auto* node : nodes) item(node, node->name);
+                    ImGui::EndMenu();
+                }
+            }
+            ImGui::EndMenu();
         }
     }
 
@@ -281,7 +350,7 @@ void NodeEditor::ShowContextMenu() {
             ImGui::CloseCurrentPopup();
         }
 
-        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+S", false, selected_node_ids_.size() >= 2)) {
+        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+U", false, selected_node_ids_.size() >= 2)) {
             CreateSubgraphFromSelection("");
             ImGui::CloseCurrentPopup();
         }
@@ -300,242 +369,46 @@ void NodeEditor::ShowContextMenu() {
                         ImGui::CloseCurrentPopup();
                     }
                 }
-            }
-        }
-
-        ImGui::EndMenu();
-    }
-}
-
-// ============================================================================
-// Unified Canvas Phase 3: Categorized Node Palette
-// ============================================================================
-
-const char* NodeEditor::GetCategoryIcon(NodeCategory category) {
-    switch (category) {
-        case NodeCategory::DataSources:      return ICON_FA_DATABASE;
-        case NodeCategory::DataTransform:    return ICON_FA_FILTER;
-        case NodeCategory::Analytics:        return ICON_FA_CHART_LINE;
-        case NodeCategory::Preprocessing:    return ICON_FA_WAND_MAGIC_SPARKLES;
-        case NodeCategory::Layers:           return ICON_FA_LAYER_GROUP;
-        case NodeCategory::Activation:       return ICON_FA_BOLT;
-        case NodeCategory::Pooling:          return ICON_FA_COMPRESS;
-        case NodeCategory::Normalization:    return ICON_FA_SCALE_BALANCED;
-        case NodeCategory::Attention:        return ICON_FA_EYE;
-        case NodeCategory::Recurrent:        return ICON_FA_ROTATE;
-        case NodeCategory::ShapeOps:         return ICON_FA_OBJECT_GROUP;  // was ICON_FA_SHAPES
-        case NodeCategory::MergeOps:         return ICON_FA_RIGHT_LEFT;    // was ICON_FA_CODE_MERGE
-        case NodeCategory::Training:         return ICON_FA_GRADUATION_CAP;
-        case NodeCategory::Regularization:   return ICON_FA_SCALE_BALANCED;  // was ICON_FA_SHIELD_HALVED
-        case NodeCategory::Utility:          return ICON_FA_COG;            // was ICON_FA_SCREWDRIVER_WRENCH
-        case NodeCategory::Signal:           return ICON_FA_ARROWS_ROTATE; // was ICON_FA_WAVE_SQUARE
-        case NodeCategory::DataPipeline:     return ICON_FA_DIAGRAM_PROJECT;
-        case NodeCategory::DNN:              return ICON_FA_LIGHTBULB;      // was ICON_FA_BRAIN
-        case NodeCategory::TextProcessing:   return ICON_FA_FILE_LINES;
-        case NodeCategory::Upsampling:       return ICON_FA_EXPAND;         // was ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER
-        case NodeCategory::TimeSeries:       return ICON_FA_ARROW_TREND_UP; // was ICON_FA_CHART_AREA
-        case NodeCategory::Audio:            return ICON_FA_STETHOSCOPE;    // was ICON_FA_VOLUME_HIGH
-        case NodeCategory::RL:               return ICON_FA_GRADUATION_CAP; // was ICON_FA_ROBOT
-        case NodeCategory::Plugin:           return ICON_FA_DIAGRAM_PROJECT; // was ICON_FA_PUZZLE_PIECE
-        default:                             return ICON_FA_CUBE;
-    }
-}
-
-const char* NodeEditor::GetCategoryName(NodeCategory category) {
-    switch (category) {
-        case NodeCategory::DataSources:      return "Data Sources";
-        case NodeCategory::DataTransform:    return "Data Transform";
-        case NodeCategory::Analytics:        return "Analytics";
-        case NodeCategory::Preprocessing:    return "Preprocessing";
-        case NodeCategory::Layers:           return "Layers";
-        case NodeCategory::Activation:       return "Activation";
-        case NodeCategory::Pooling:          return "Pooling";
-        case NodeCategory::Normalization:    return "Normalization";
-        case NodeCategory::Attention:        return "Attention";
-        case NodeCategory::Recurrent:        return "Recurrent";
-        case NodeCategory::ShapeOps:         return "Shape Operations";
-        case NodeCategory::MergeOps:         return "Merge Operations";
-        case NodeCategory::Training:         return "Training";
-        case NodeCategory::Regularization:   return "Regularization";
-        case NodeCategory::Utility:          return "Utility";
-        case NodeCategory::Signal:           return "Signal / Control";
-        case NodeCategory::DataPipeline:     return "Data Pipeline";
-        case NodeCategory::DNN:              return "DNN / Pre-trained";
-        case NodeCategory::TextProcessing:   return "Text Processing";
-        case NodeCategory::Upsampling:       return "Upsampling";
-        case NodeCategory::TimeSeries:       return "Time Series";
-        case NodeCategory::Audio:            return "Audio";
-        case NodeCategory::RL:               return "Reinforcement Learning";
-        case NodeCategory::Plugin:           return "Plugin Nodes";
-        default:                             return "Unknown";
-    }
-}
-
-void NodeEditor::ShowCategorizedNodeMenu() {
-    // Initialize nodes_by_category_ on first call
-    if (!nodes_by_category_initialized_) {
-        // Group all node types by category
-        // Data I/O (Smart unified nodes)
-        nodes_by_category_[NodeCategory::DataSources] = {
-            {NodeType::DataInput, "Data Input"},
-            {NodeType::DataOutput, "Data Output"}
-        };
-
-        // Data Transforms
-        nodes_by_category_[NodeCategory::DataTransform] = {
-            {NodeType::FilterRows, "Filter Rows"},
-            {NodeType::SelectColumns, "Select Columns"},
-            {NodeType::JoinTables, "Join Tables"},
-            {NodeType::GroupByAggregate, "Group By"},
-            {NodeType::SortRows, "Sort Rows"},
-            {NodeType::FillMissingValues, "Fill Missing"},
-            {NodeType::RemoveDuplicateRows, "Remove Duplicates"},
-            {NodeType::PivotTable, "Pivot Table"},
-            {NodeType::UnionTables, "Union Tables"},
-            {NodeType::RenameColumns, "Rename Columns"}
-        };
-
-        // Analytics (Clustering, Statistics, Visualization)
-        nodes_by_category_[NodeCategory::Analytics] = {
-            {NodeType::KMeansCluster, "K-Means Clustering"},
-            {NodeType::DescribeStats, "Describe Stats"},
-            {NodeType::VisualizeData, "Visualize Data"},
-            {NodeType::SampleRows, "Sample Rows"},
-            {NodeType::CorrelationMatrix, "Correlation Matrix"},
-            {NodeType::ValueCounts, "Value Counts"},
-            {NodeType::CrossTabulation, "Cross Tabulation"}
-        };
-
-        // Data Export (consolidated into DataOutput node above)
-        // Legacy export nodes removed - use DataOutput instead
-
-        // Layers (Dense, Conv, etc.)
-        nodes_by_category_[NodeCategory::Layers] = {
-            {NodeType::Dense, "Dense (128)"},
-            {NodeType::Conv1D, "Conv1D"},
-            {NodeType::Conv2D, "Conv2D"},
-            {NodeType::Conv3D, "Conv3D"},
-            {NodeType::DepthwiseConv2D, "DepthwiseConv2D"}
-        };
-
-        // Activation
-        nodes_by_category_[NodeCategory::Activation] = {
-            {NodeType::ReLU, "ReLU"},
-            {NodeType::LeakyReLU, "LeakyReLU"},
-            {NodeType::GELU, "GELU"},
-            {NodeType::Swish, "Swish"},
-            {NodeType::Sigmoid, "Sigmoid"},
-            {NodeType::Tanh, "Tanh"},
-            {NodeType::Softmax, "Softmax"}
-        };
-
-        // Preprocessing (Phase 8: UI Consolidation)
-        nodes_by_category_[NodeCategory::Preprocessing] = {
-            {NodeType::Normalize, "Normalize"},
-            {NodeType::OneHotEncode, "One-Hot Encode"},
-            {NodeType::OutlierDetector, "Outlier Detector"},
-            {NodeType::ImagePreprocessor, "Image Preprocessor"},
-            {NodeType::QualityAnalyzer, "Quality Analyzer"},
-            {NodeType::DataValidator, "Data Validator"}
-        };
-
-        // Visualization (Phase 8: Plot Types)
-        nodes_by_category_[NodeCategory::Visualization] = {
-            // Basic 2D Plots
-            {NodeType::LinePlot, "Line Plot"},
-            {NodeType::ScatterPlot, "Scatter Plot"},
-            {NodeType::BarChart, "Bar Chart"},
-            {NodeType::Histogram, "Histogram"},
-            {NodeType::PieChart, "Pie Chart"},
-            {NodeType::AreaPlot, "Area Plot"},
-            // Advanced 2D Plots
-            {NodeType::BoxPlot, "Box Plot"},
-            {NodeType::ViolinPlot, "Violin Plot"},
-            {NodeType::ErrorBarPlot, "Error Bar Plot"},
-            {NodeType::StepPlot, "Step Plot"},
-            {NodeType::HexbinPlot, "Hexbin Plot"},
-            // Heatmaps & Matrices
-            {NodeType::Heatmap, "Heatmap"},
-            {NodeType::ContourPlot, "Contour Plot"},
-            {NodeType::Imshow, "Image Display"},
-            // 3D Plots
-            {NodeType::Plot3D, "3D Line Plot"},
-            {NodeType::Scatter3D, "3D Scatter Plot"},
-            {NodeType::SurfacePlot, "Surface Plot"},
-            {NodeType::WireframePlot, "Wireframe Plot"},
-            // Specialized Plots
-            {NodeType::PolarPlot, "Polar Plot"},
-            {NodeType::QuiverPlot, "Vector Field"},
-            {NodeType::StreamPlot, "Stream Plot"},
-            {NodeType::SpectrogramPlot, "Spectrogram"},
-            {NodeType::NetworkGraph, "Network Graph"}
-        };
-
-        nodes_by_category_initialized_ = true;
-    }
-
-    // Search filter
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS " Search nodes...", context_menu_search_, sizeof(context_menu_search_));
-    ImGui::Separator();
-
-    // Filter nodes based on search
-    std::string search_lower = context_menu_search_;
-    std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
-    bool is_searching = strlen(context_menu_search_) > 0;
-
-    // Render categories
-    for (auto& [category, nodes] : nodes_by_category_) {
-        // Skip empty categories
-        if (nodes.empty()) continue;
-
-        // If searching, filter nodes
-        std::vector<std::pair<NodeType, std::string>> filtered_nodes;
-        if (is_searching) {
-            for (auto& [type, name] : nodes) {
-                std::string name_lower = name;
-                std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
-                if (name_lower.find(search_lower) != std::string::npos) {
-                    filtered_nodes.push_back({type, name});
+                if (IsPreparationRecipeNode(selected_node_ids_[0])) {
+                    if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Make Visual Group")) {
+                        SetSubgraphPreparationRecipe(selected_node_ids_[0], false);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                        ImGui::TextUnformatted(
+                            "Turn this Preparation Recipe back into a plain visual group.\n\n"
+                            "A visual group only tidies the canvas: it does not run. To run "
+                            "its steps again, expand it or make it a Preparation Recipe again.");
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    }
+                } else {
+                    if (ImGui::MenuItem(ICON_FA_GEARS " Make Preparation Recipe")) {
+                        SetSubgraphPreparationRecipe(selected_node_ids_[0], true);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                        ImGui::TextUnformatted(
+                            "Turn this subgraph into one runnable preparation stage.\n\n"
+                            "When the pipeline runs, the recipe's steps run in order: one "
+                            "dataset goes in, one prepared dataset comes out, and the result "
+                            "is the same as running those steps as separate nodes.\n\n"
+                            "Allowed steps: row and column operations, text cleaning, "
+                            "group-by, joins, SQL steps and checks. Sources, exports, splits, "
+                            "tokenizers and models stay outside the recipe.\n\n"
+                            "The subgraph is checked first; if it does not qualify, you are "
+                            "told why and nothing changes.");
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    }
                 }
             }
-            // Skip category if no matches
-            if (filtered_nodes.empty()) continue;
-        } else {
-            filtered_nodes = nodes;
         }
 
-        RenderNodeCategory(category, GetCategoryName(category), GetCategoryIcon(category));
-    }
-}
-
-void NodeEditor::RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon) {
-    auto it = nodes_by_category_.find(category);
-    if (it == nodes_by_category_.end()) return;
-
-    // Build menu label with icon
-    std::string menu_label = std::string(icon) + " " + category_name;
-
-    // Use submenu with > indicator
-    if (ImGui::BeginMenu(menu_label.c_str())) {
-        for (auto& [type, name] : it->second) {
-            // Filter by search
-            if (strlen(context_menu_search_) > 0) {
-                std::string name_lower = name;
-                std::string search_lower = context_menu_search_;
-                std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
-                std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
-                if (name_lower.find(search_lower) == std::string::npos) {
-                    continue;
-                }
-            }
-
-            if (ImGui::MenuItem(name.c_str())) {
-                AddNode(type, name);
-                context_menu_search_[0] = '\0';  // Clear search on selection
-                ImGui::CloseCurrentPopup();
-            }
-        }
         ImGui::EndMenu();
     }
 }

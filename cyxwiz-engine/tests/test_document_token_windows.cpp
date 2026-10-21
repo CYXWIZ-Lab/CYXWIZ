@@ -1,0 +1,367 @@
+#include <iostream>
+#include <algorithm>
+#include <stdexcept>
+static int checks=0;
+static void Require(bool value,const char* expression) { ++checks; if(!value) throw std::runtime_error(expression); }
+#define REQUIRE(...) Require((__VA_ARGS__), #__VA_ARGS__)
+#define REQUIRE_FALSE(...) REQUIRE(!(__VA_ARGS__))
+#define INFO(message) std::cout << message << '\n'
+#include "core/node_executors/text_tokenizer_operator.h"
+#include "core/sequence_arrow_batcher.h"
+#include "core/arrow_dataset.h"
+#include <arrow/api.h>
+#include <arrow/util/key_value_metadata.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
+#include <filesystem>
+#include <map>
+
+using namespace cyxwiz;
+static std::shared_ptr<arrow::Array> Strings(const std::vector<std::string>& values) {
+    arrow::StringBuilder builder;
+    for(const auto& value:values) REQUIRE(builder.Append(value).ok());
+    return builder.Finish().ValueOrDie();
+}
+static std::shared_ptr<arrow::Table> Input() {
+    return arrow::Table::Make(arrow::schema({arrow::field("document_id",arrow::utf8()),
+        arrow::field("split",arrow::utf8()),arrow::field("text",arrow::utf8()),arrow::field("reference",arrow::utf8())}),
+        {Strings({"A","B","empty"}),Strings({"train","train","train"}),Strings({"abcdefg","XY",""}),Strings({"source:1","source:2","source:3"})});
+}
+static std::map<std::string,std::string> Params() {
+    return {{"text_col","text"},{"document_id_col","document_id"},{"split_col","split"},
+        {"output_mode","causal_windows"},{"tokenizer_type","3"},{"lowercase","false"},
+        {"max_length","3"},{"min_word_freq","1"},{"max_vocab_size","260"}};
+}
+static std::shared_ptr<arrow::Table> Windows() {
+    TextTokenizerOperator op; std::string error;
+    REQUIRE(op.Configure(Params(),error));
+    auto result=op.Apply(Input()); INFO(result.status().ToString()); REQUIRE(result.ok()); return *result;
+}
+static TrainingConfiguration Config() {
+    TrainingConfiguration cfg;
+    cfg.sequence_batch.enabled=true; cfg.sequence_batch.create_causal_lm_targets=true;
+    cfg.sequence_batch.create_attention_mask=true; cfg.sequence_batch.max_sequence_length=3;
+    cfg.sequence_batch.token_column="token_ids"; cfg.shuffle=false;
+    return cfg;
+}
+
+void CheckCoverage() {
+    auto table=Windows(); REQUIRE(table->num_rows()==4); REQUIRE(table->GetColumnByName("text")==nullptr);
+    auto tokens=std::static_pointer_cast<arrow::ListArray>(table->GetColumnByName("token_ids")->chunk(0));
+    REQUIRE(tokens->value_type()->id()==arrow::Type::INT64);
+    REQUIRE(tokens->value_length(0)==4); REQUIRE(tokens->value_length(1)==4);
+    REQUIRE(tokens->value_length(2)==2); REQUIRE(tokens->value_length(3)==3);
+    auto ids=std::static_pointer_cast<arrow::Int64Array>(tokens->values());
+    REQUIRE(ids->Value(0)==101); REQUIRE(ids->Value(3)==104);
+    REQUIRE(ids->Value(4)==104); REQUIRE(ids->Value(7)==107);
+    REQUIRE(ids->Value(8)==107); REQUIRE(ids->Value(9)==3);
+    REQUIRE(ids->Value(10)==92); REQUIRE(ids->Value(12)==3);
+    REQUIRE(table->GetColumnByName("document_id")->GetScalar(2).ValueOrDie()->ToString()=="A");
+    REQUIRE(table->GetColumnByName("reference")->GetScalar(3).ValueOrDie()->ToString()=="source:2");
+    REQUIRE(table->GetColumnByName("__valid_targets")->GetScalar(2).ValueOrDie()->ToString()=="1");
+}
+
+void CheckReloadAndTargets() {
+    auto table=Windows(); ArrowDataset data(table,"windows");
+    auto path=std::filesystem::temp_directory_path()/"cyxwiz_document_windows_test.parquet";
+    REQUIRE(data.ExportParquet(path.string(),true));
+    auto loaded=ArrowDataset::FromParquet(path.string(),"reloaded"); REQUIRE(loaded!=nullptr);
+    INFO(table->schema()->ToString()); INFO(loaded->GetArrowTable()->schema()->ToString());
+    REQUIRE(table->Equals(*loaded->GetArrowTable(),true));
+    auto cfg=Config(); auto result=BuildSequenceBatcherFromArrowDataset(loaded,cfg,4);
+    INFO(result.error_message); REQUIRE(result.success()); REQUIRE(result.token_vocabulary_size==260);
+    auto batch=result.batcher->GetNextSequenceBatch(); REQUIRE(batch.size==4);
+    REQUIRE(batch.word_ids.GetDataType()==DataType::Int64); REQUIRE(batch.target_ids.GetDataType()==DataType::Int64);
+    const auto* target=static_cast<const Tensor&>(batch.target_ids).Data<int64_t>();
+    REQUIRE(target[0]==102); REQUIRE(target[2]==104); REQUIRE(target[3]==105);
+    REQUIRE(target[5]==107); REQUIRE(target[6]==3);
+    REQUIRE(target[7]==-100); REQUIRE(target[9]==93); REQUIRE(target[10]==3); REQUIRE(target[11]==-100);
+    const auto* mask=static_cast<const Tensor&>(batch.attention_mask).Data<int64_t>();
+    REQUIRE(mask[8]==0); REQUIRE(mask[11]==1);
+    cfg.sequence_batch.max_sequence_length=2;
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(loaded,cfg,4).success());
+    cfg=Config(); cfg.sequence_batch.expected_token_vocabulary={"different"};
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(loaded,cfg,4).success());
+    auto no_metadata=std::make_shared<ArrowDataset>(table->ReplaceSchemaMetadata(nullptr),"bad");
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(no_metadata,Config(),4).success());
+    cfg=Config(); cfg.has_data_split=true; cfg.train_ratio=0.5f; cfg.val_ratio=0.0f;
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(loaded,cfg,4).success());
+    cfg.sequence_batch.sentence_id_column="document_id";
+    auto grouped=BuildSequenceBatcherFromArrowDataset(loaded,cfg,4);
+    REQUIRE(grouped.success()); REQUIRE(grouped.batcher->GetNumSamples()==3);
+    grouped.batcher->SetPhase(BatcherPhase::Test); grouped.batcher->Reset();
+    REQUIRE(grouped.batcher->GetNumSamples()==1);
+    auto value_builder=std::make_shared<arrow::Int64Builder>();
+    arrow::ListBuilder invalid_ids(arrow::default_memory_pool(),value_builder,
+        arrow::list(arrow::field("element",arrow::int64())));
+    for(int64_t row=0;row<table->num_rows();++row) {
+        auto scalar=std::static_pointer_cast<arrow::ListScalar>(table->GetColumnByName("token_ids")->GetScalar(row).ValueOrDie());
+        auto original=std::static_pointer_cast<arrow::Int64Array>(scalar->value);
+        REQUIRE(invalid_ids.Append().ok());
+        for(int64_t i=0;i<original->length();++i)
+            REQUIRE(value_builder->Append(row==0 && i==0 ? 260 : original->Value(i)).ok());
+    }
+    auto invalid_table=table->SetColumn(table->schema()->GetFieldIndex("token_ids"),
+        table->schema()->GetFieldByName("token_ids"),
+        std::make_shared<arrow::ChunkedArray>(invalid_ids.Finish().ValueOrDie())).ValueOrDie();
+    auto invalid_data=std::make_shared<ArrowDataset>(invalid_table,"out_of_range");
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(invalid_data,Config(),4).success());
+
+    auto legacy_table=arrow::Table::Make(arrow::schema({arrow::field("tokens",arrow::utf8())}),
+        {Strings({"alpha beta","beta gamma"})});
+    auto legacy_data=std::make_shared<ArrowDataset>(legacy_table,"legacy_strings");
+    auto legacy_cfg=Config(); legacy_cfg.sequence_batch.token_column="tokens";
+    auto legacy=BuildSequenceBatcherFromArrowDataset(legacy_data,legacy_cfg,2);
+    REQUIRE(legacy.success());
+    auto beta=std::find(legacy.id_to_label.begin(),legacy.id_to_label.end(),"beta");
+    auto gamma=std::find(legacy.id_to_label.begin(),legacy.id_to_label.end(),"gamma");
+    REQUIRE(beta!=legacy.id_to_label.end()); REQUIRE(gamma!=legacy.id_to_label.end());
+    auto legacy_batch=legacy.batcher->GetNextSequenceBatch(); REQUIRE(legacy_batch.size==2);
+    const auto* legacy_targets=static_cast<const Tensor&>(legacy_batch.target_ids).Data<int64_t>();
+    REQUIRE(legacy_targets[0]==std::distance(legacy.id_to_label.begin(),beta));
+    REQUIRE(legacy_targets[3]==std::distance(legacy.id_to_label.begin(),gamma));
+    std::filesystem::remove(path);
+}
+
+void CheckInvalidInput() {
+    auto p=Params(); TextTokenizerOperator op; std::string error;
+    p["document_id_col"]=""; REQUIRE_FALSE(op.Configure(p,error));
+    p=Params(); REQUIRE(op.Configure(p,error));
+    auto duplicate=Input()->SetColumn(0,arrow::field("document_id",arrow::utf8()),
+        std::make_shared<arrow::ChunkedArray>(Strings({"same","same","empty"}))).ValueOrDie();
+    REQUIRE_FALSE(op.Apply(duplicate).ok());
+    auto mixed=Input()->SetColumn(1,arrow::field("split",arrow::utf8()),
+        std::make_shared<arrow::ChunkedArray>(Strings({"train","test","train"}))).ValueOrDie();
+    REQUIRE_FALSE(op.Apply(mixed).ok());
+    auto vocabulary=std::filesystem::temp_directory_path()/"cyxwiz_document_window_vocab.txt";
+    p["vocab_file"]=vocabulary.string(); p["vocab_build_if_missing"]="true";
+    TextTokenizerOperator fit; REQUIRE(fit.Configure(p,error)); REQUIRE(fit.Apply(Input()).ok());
+    p["vocab_build_if_missing"]="false";
+    TextTokenizerOperator load; REQUIRE(load.Configure(p,error));
+    auto validation=load.Apply(mixed); REQUIRE(validation.ok());
+    REQUIRE((*validation)->GetColumnByName("split")->GetScalar(3).ValueOrDie()->ToString()=="test");
+    std::filesystem::remove(vocabulary);
+    // A named vocabulary that is missing must fail as missing, not fall back to
+    // fitting and then reject the non-train rows with a misleading message.
+    TextTokenizerOperator missing; REQUIRE(missing.Configure(p,error));
+    auto missing_result=missing.Apply(mixed); REQUIRE_FALSE(missing_result.ok());
+    REQUIRE(missing_result.status().ToString().find("does not exist")!=std::string::npos);
+    REQUIRE(missing_result.status().ToString().find("Fit vocabulary")==std::string::npos);
+    auto null_text=Input()->SetColumn(2,arrow::field("text",arrow::utf8()),
+        std::make_shared<arrow::ChunkedArray>(arrow::MakeArrayOfNull(arrow::utf8(),3).ValueOrDie())).ValueOrDie();
+    REQUIRE_FALSE(op.Apply(null_text).ok());
+    PipelineOperatorExecutionContext context;
+    context.cancellation_requested=[] { return true; }; op.SetExecutionContext(context);
+    REQUIRE(op.Apply(Input()).status().IsCancelled());
+    context.cancellation_requested={}; context.memory.policy.hard_limit_bytes=1;
+    op.SetExecutionContext(context); REQUIRE(op.Apply(Input()).status().IsCapacityError());
+}
+
+
+void CheckExternalRolesAndMetadata() {
+    auto all = Windows();
+    auto train = std::make_shared<ArrowDataset>(all->Slice(0,3), "train");
+    auto dev = std::make_shared<ArrowDataset>(all->Slice(3,1), "dev");
+    auto test_table = all->Slice(3,1)->SetColumn(0, all->field(0),
+        std::make_shared<arrow::ChunkedArray>(Strings({"C"}))).ValueOrDie();
+    auto test = std::make_shared<ArrowDataset>(test_table, "test");
+    auto cfg = Config(); cfg.has_data_split=true; cfg.sequence_batch.sentence_id_column="document_id";
+    cfg.train_ratio=1; cfg.val_ratio=0; cfg.test_ratio=0; cfg.shuffle=true; cfg.drop_last=true;
+    auto built = BuildSequenceBatcherFromArrowDataset(train,cfg,2,dev,test);
+    INFO(built.error_message); REQUIRE(built.success()); REQUIRE(built.sample_count==5);
+    REQUIRE(built.batcher->GetNumSamples()==3); REQUIRE(built.batcher->GetNumBatches()==1);
+    ApplySequenceBatcherBuildResultToTrainingConfig(built,cfg);
+    REQUIRE(cfg.sequence_batch.tokenizer_vocabulary_artifact==*all->schema()->metadata()->Get("cyxwiz.token_windows.vocabulary"));
+    REQUIRE(!cfg.sequence_batch.tokenizer_config_json.empty());
+    for(auto phase : {BatcherPhase::Val, BatcherPhase::Test}) {
+        built.batcher->SetPhase(phase); built.batcher->Reset();
+        REQUIRE(built.batcher->GetNumSamples()==1); REQUIRE(built.batcher->GetNumBatches()==1);
+        auto batch=built.batcher->GetNextSequenceBatch(); REQUIRE(batch.size==1);
+        const auto* target=static_cast<const Tensor&>(batch.target_ids).Data<int64_t>();
+        REQUIRE(target[0]==93 && target[1]==3 && target[2]==-100);
+        REQUIRE(built.batcher->IsEpochComplete());
+    }
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(train,cfg,2,train,test).success());
+    auto missing=std::make_shared<ArrowDataset>(test_table->ReplaceSchemaMetadata(nullptr),"missing");
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(train,cfg,2,missing).success());
+    auto metadata=test_table->schema()->metadata()->Copy(); REQUIRE(metadata->Set("cyxwiz.token_windows.context","99").ok());
+    auto mismatch=std::make_shared<ArrowDataset>(test_table->ReplaceSchemaMetadata(metadata),"mismatch");
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(train,cfg,2,nullptr,mismatch).success());
+    // An external Test does not suppress a configured, derived Dev role from Train.
+    cfg=Config();cfg.has_data_split=true;cfg.sequence_batch.sentence_id_column="document_id";
+    cfg.train_ratio=.5f;cfg.val_ratio=.5f;cfg.test_ratio=0;
+    auto both_train=std::make_shared<ArrowDataset>(all,"two_groups");
+    auto external_test=BuildSequenceBatcherFromArrowDataset(both_train,cfg,2,nullptr,test);
+    REQUIRE(external_test.success());
+    REQUIRE(external_test.batcher->GetNumSamples()==3);
+    external_test.batcher->SetPhase(BatcherPhase::Val);REQUIRE(external_test.batcher->GetNumSamples()==1);
+    external_test.batcher->SetPhase(BatcherPhase::Test);REQUIRE(external_test.batcher->GetNumSamples()==1);
+}
+
+// Token windows kept on disk (TOFIX154 step 6): read a row group at a time,
+// they give the samples the in-memory path gives.
+static std::vector<std::vector<int64_t>> AllRows(ISequenceBatcher& batcher) {
+    std::vector<std::vector<int64_t>> rows;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextSequenceBatch();
+        if (batch.size == 0) break;
+        const auto* ids = static_cast<const Tensor&>(batch.word_ids).Data<int64_t>();
+        for (size_t r = 0; r < batch.size; ++r)
+            rows.emplace_back(ids + r * batch.sequence_length, ids + (r + 1) * batch.sequence_length);
+    }
+    return rows;
+}
+
+void CheckWindowsOnDisk() {
+    auto all = Windows();
+    auto path = std::filesystem::temp_directory_path() / "cyxwiz_windows_on_disk.parquet";
+    {
+        auto out = arrow::io::FileOutputStream::Open(path.string()).ValueOrDie();
+        auto arrow_props = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+        REQUIRE(parquet::arrow::WriteTable(*all, arrow::default_memory_pool(), out, 1,
+                                           parquet::default_writer_properties(), arrow_props).ok());
+        REQUIRE(out->Close().ok());
+    }
+    auto file = ParquetBackedDataset::Open(path.string(), "windows_on_disk");
+    REQUIRE(file != nullptr); REQUIRE(file->GetNumRowGroups() == 4);
+    SequenceWindowSource train; train.file = file;
+    auto cfg = Config();
+    auto streamed = BuildSequenceBatcherFromWindowSources(train, cfg, 2);
+    INFO(streamed.error_message); REQUIRE(streamed.success());
+    auto memory = BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(all, "windows"), cfg, 2);
+    REQUIRE(memory.success());
+    REQUIRE(streamed.sample_count == memory.sample_count); REQUIRE(streamed.batcher->GetNumSamples() == 4);
+    REQUIRE(streamed.token_vocabulary_size == memory.token_vocabulary_size);
+    REQUIRE(streamed.id_to_label == memory.id_to_label);
+    REQUIRE(streamed.tokenizer_vocabulary_artifact == memory.tokenizer_vocabulary_artifact);
+    const auto memory_rows = AllRows(*memory.batcher);
+    REQUIRE(AllRows(*streamed.batcher) == memory_rows);  // in order without shuffle
+    cfg.shuffle = true;
+    auto shuffled = BuildSequenceBatcherFromWindowSources(train, cfg, 2);
+    REQUIRE(shuffled.success());
+    auto rows = AllRows(*shuffled.batcher), expected = memory_rows;
+    std::sort(rows.begin(), rows.end()); std::sort(expected.begin(), expected.end());
+    REQUIRE(rows == expected);  // the same windows, another order
+    // Validation from a table in memory beside a training set on disk.
+    cfg = Config(); cfg.has_data_split = true; cfg.test_ratio = 0.0f;
+    SequenceWindowSource dev; dev.table = all->Slice(3, 1);
+    auto with_dev = BuildSequenceBatcherFromWindowSources(train, cfg, 2, dev);
+    INFO(with_dev.error_message); REQUIRE(with_dev.success());
+    REQUIRE(with_dev.batcher->HasPhase(BatcherPhase::Val)); REQUIRE_FALSE(with_dev.batcher->HasPhase(BatcherPhase::Test));
+    with_dev.batcher->SetPhase(BatcherPhase::Val); REQUIRE(AllRows(*with_dev.batcher).size() == 1);
+    // A ratio split of a file is refused (also a test share left to cut from
+    // Train beside a supplied validation set); a role with other metadata too.
+    REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2).success());
+    auto test_share = cfg; test_share.test_ratio = 0.1f;
+    const auto refused_share = BuildSequenceBatcherFromWindowSources(train, test_share, 2, dev);
+    REQUIRE_FALSE(refused_share.success());
+    REQUIRE(refused_share.error_message.find("test windows") != std::string::npos);
+    SequenceWindowSource bare; bare.table = all->Slice(3, 1)->ReplaceSchemaMetadata(nullptr);
+    REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2, bare).success());
+    std::error_code ignored;  // the batchers above still map the file
+    std::filesystem::remove(path, ignored);
+}
+
+// Supervised windows (TOFIX143): prompt + response + EOS in one window; only the
+// response targets are supervised. Byte BPE ids here are byte + 4; EOS is 3.
+void CheckSupervisedWindows() {
+    auto vocabulary=std::filesystem::temp_directory_path()/"cyxwiz_supervised_window_vocab.txt";
+    std::filesystem::remove(vocabulary);
+    auto p=Params(); p["vocab_file"]=vocabulary.string(); p["vocab_build_if_missing"]="true";
+    std::string error;
+    { TextTokenizerOperator fit; REQUIRE(fit.Configure(p,error)); REQUIRE(fit.Apply(Input()).ok()); }
+    auto input=arrow::Table::Make(arrow::schema({arrow::field("document_id",arrow::utf8()),
+        arrow::field("split",arrow::utf8()),arrow::field("prompt",arrow::utf8()),arrow::field("response",arrow::utf8()),
+        arrow::field("family",arrow::utf8())}),
+        {Strings({"S1","S2"}),Strings({"train","train"}),Strings({"ab",""}),Strings({"cd","x"}),Strings({"f1","f2"})});
+    p["vocab_build_if_missing"]="false"; p["text_col"]="prompt"; p["target_text_col"]="response"; p["max_length"]="8";
+    TextTokenizerOperator op; REQUIRE(op.Configure(p,error));
+    auto result=op.Apply(input); INFO(result.status().ToString()); REQUIRE(result.ok());
+    auto table=*result;
+    REQUIRE(table->num_rows()==2);
+    REQUIRE(table->GetColumnByName("prompt")==nullptr); REQUIRE(table->GetColumnByName("response")==nullptr);
+    REQUIRE(table->GetColumnByName("family")->GetScalar(1).ValueOrDie()->ToString()=="f2");
+    REQUIRE(*table->schema()->metadata()->Get("cyxwiz.token_windows.supervision")=="response_only");
+    auto tokens=std::static_pointer_cast<arrow::ListArray>(table->GetColumnByName("token_ids")->chunk(0));
+    REQUIRE(tokens->value_length(0)==5); REQUIRE(tokens->value_length(1)==2);
+    auto ids=std::static_pointer_cast<arrow::Int64Array>(tokens->values());
+    const int64_t expected_ids[]={101,102,103,104,3,124,3};
+    for(int i=0;i<7;++i) REQUIRE(ids->Value(i)==expected_ids[i]);
+    auto masks=std::static_pointer_cast<arrow::ListArray>(table->GetColumnByName("__target_mask")->chunk(0));
+    REQUIRE(masks->value_type()->id()==arrow::Type::INT8);
+    REQUIRE(masks->value_length(0)==4); REQUIRE(masks->value_length(1)==1);
+    auto bits=std::static_pointer_cast<arrow::Int8Array>(masks->values());
+    const int8_t expected_bits[]={0,1,1,1,1};
+    for(int i=0;i<5;++i) REQUIRE(bits->Value(i)==expected_bits[i]);
+    REQUIRE(table->GetColumnByName("__valid_targets")->GetScalar(0).ValueOrDie()->ToString()=="3");
+    REQUIRE(table->GetColumnByName("__valid_targets")->GetScalar(1).ValueOrDie()->ToString()=="1");
+
+    // Parquet round trip keeps the mask and metadata; the batcher masks prompt targets.
+    ArrowDataset data(table,"supervised");
+    auto path=std::filesystem::temp_directory_path()/"cyxwiz_supervised_windows_test.parquet";
+    REQUIRE(data.ExportParquet(path.string(),true));
+    auto loaded=ArrowDataset::FromParquet(path.string(),"supervised_reloaded"); REQUIRE(loaded!=nullptr);
+    REQUIRE(table->Equals(*loaded->GetArrowTable(),true));
+    auto cfg=Config(); cfg.sequence_batch.max_sequence_length=8;
+    auto built=BuildSequenceBatcherFromArrowDataset(loaded,cfg,2);
+    INFO(built.error_message); REQUIRE(built.success());
+    auto batch=built.batcher->GetNextSequenceBatch(); REQUIRE(batch.size==2);
+    REQUIRE(batch.sequence_length==8);
+    const auto* target=static_cast<const Tensor&>(batch.target_ids).Data<int64_t>();
+    const int64_t expected_targets[]={-100,103,104,3,-100,-100,-100,-100, 3,-100,-100,-100,-100,-100,-100,-100};
+    for(int i=0;i<16;++i) REQUIRE(target[i]==expected_targets[i]);
+    const auto* word=static_cast<const Tensor&>(batch.word_ids).Data<int64_t>();
+    REQUIRE(word[0]==101); REQUIRE(word[4]==3); REQUIRE(word[8]==124);
+    const auto* attention=static_cast<const Tensor&>(batch.attention_mask).Data<int64_t>();
+    REQUIRE(attention[0]==1); REQUIRE(attention[4]==1); REQUIRE(attention[5]==0);
+
+    // Reader: column without metadata, metadata without column, and a wrong count all fail.
+    auto no_key=table->schema()->metadata()->Copy(); REQUIRE(no_key->Delete("cyxwiz.token_windows.supervision").ok());
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(
+        std::make_shared<ArrowDataset>(table->ReplaceSchemaMetadata(no_key),"no_key"),cfg,2).success());
+    auto no_mask=table->RemoveColumn(table->schema()->GetFieldIndex("__target_mask")).ValueOrDie();
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(no_mask,"no_mask"),cfg,2).success());
+    arrow::Int64Builder wrong; REQUIRE(wrong.AppendValues(std::vector<int64_t>{4,1}).ok());
+    auto wrong_count=table->SetColumn(table->schema()->GetFieldIndex("__valid_targets"),
+        table->schema()->GetFieldByName("__valid_targets"),
+        std::make_shared<arrow::ChunkedArray>(wrong.Finish().ValueOrDie())).ValueOrDie();
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(wrong_count,"wrong"),cfg,2).success());
+    // Train and an external role must agree on supervision.
+    // Same windows as an ordinary (all-target) table: counts 4 and 1, no mask, no key.
+    auto plain_table=wrong_count->RemoveColumn(wrong_count->schema()->GetFieldIndex("__target_mask")).ValueOrDie();
+    auto plain=std::make_shared<ArrowDataset>(plain_table->ReplaceSchemaMetadata(no_key),"plain");
+    REQUIRE(BuildSequenceBatcherFromArrowDataset(plain,cfg,2).success());
+    auto mixed_roles=BuildSequenceBatcherFromArrowDataset(loaded,cfg,2,plain);
+    REQUIRE_FALSE(mixed_roles.success());
+    REQUIRE(mixed_roles.error_message.find("supervision")!=std::string::npos);
+
+    // A record longer than one window fails with its id instead of being split.
+    p["max_length"]="3"; TextTokenizerOperator small; REQUIRE(small.Configure(p,error));
+    auto overflow=small.Apply(input); REQUIRE_FALSE(overflow.ok());
+    REQUIRE(overflow.status().ToString().find("'S1'")!=std::string::npos);
+    // Empty responses, fitting a vocabulary and misuse of the parameter are rejected.
+    auto empty_response=input->SetColumn(3,arrow::field("response",arrow::utf8()),
+        std::make_shared<arrow::ChunkedArray>(Strings({"cd",""}))).ValueOrDie();
+    p["max_length"]="8"; TextTokenizerOperator strict; REQUIRE(strict.Configure(p,error));
+    REQUIRE_FALSE(strict.Apply(empty_response).ok());
+    std::filesystem::remove(vocabulary);
+    auto fit_params=p; fit_params["vocab_build_if_missing"]="true";
+    TextTokenizerOperator fitting; REQUIRE(fitting.Configure(fit_params,error));
+    auto fitted=fitting.Apply(input); REQUIRE_FALSE(fitted.ok());
+    REQUIRE(fitted.status().ToString().find("require an existing vocab_file")!=std::string::npos);
+    auto bad=p; bad["target_text_col"]="prompt"; TextTokenizerOperator same; REQUIRE_FALSE(same.Configure(bad,error));
+    bad=p; bad["output_mode"]="wide"; TextTokenizerOperator wide; REQUIRE_FALSE(wide.Configure(bad,error));
+    std::filesystem::remove(path);
+}
+
+int main() {
+    try {
+        CheckCoverage(); CheckReloadAndTargets(); CheckInvalidInput(); CheckExternalRolesAndMetadata(); CheckSupervisedWindows();
+        CheckWindowsOnDisk();
+        std::cout << "Document token windows passed: " << checks << " checks\n";
+        return 0;
+    } catch(const std::exception& e) {
+        std::cerr << "FAIL: " << e.what() << "\n"; return 1;
+    }
+}

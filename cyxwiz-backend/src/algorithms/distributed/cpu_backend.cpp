@@ -395,7 +395,7 @@ bool CPUProcessGroup::SendTensor(int peer_rank, const Tensor& tensor) {
     }
 
     // Send data
-    return SendAll(sock, tensor.Data<float>(), size * sizeof(float));
+    return SendAll(sock, tensor.ReadData<float>(), size * sizeof(float));
 }
 
 bool CPUProcessGroup::RecvTensor(int peer_rank, Tensor& tensor) {
@@ -417,7 +417,7 @@ bool CPUProcessGroup::RecvTensor(int peer_rank, Tensor& tensor) {
     // Allocate and receive data
     std::vector<size_t> shape = {size};
     tensor = Tensor(shape);
-    return RecvAll(sock, tensor.Data<float>(), size * sizeof(float));
+    return RecvAll(sock, tensor.MutableData<float>(), size * sizeof(float));
 }
 
 // ========== Reduction Operations ==========
@@ -555,7 +555,7 @@ void CPUProcessGroup::AllReduce(Tensor& tensor, ReduceOp op) {
         return;
     }
 
-    float* data = tensor.Data<float>();
+    float* data = tensor.MutableData<float>();
     size_t count = tensor.NumElements();
 
     RingAllReduce(data, count, op);
@@ -579,7 +579,7 @@ void CPUProcessGroup::Broadcast(Tensor& tensor, int src_rank) {
         return;
     }
 
-    float* data = tensor.Data<float>();
+    float* data = tensor.MutableData<float>();
     size_t count = tensor.NumElements();
 
     RingBroadcast(data, count, src_rank);
@@ -665,7 +665,7 @@ std::vector<Tensor> CPUProcessGroup::AllGather(const Tensor& input) {
     size_t input_count = input.NumElements();
     std::vector<float> gathered_data(input_count * world_size_);
 
-    RingAllGather(input.Data<float>(), input_count, gathered_data);
+    RingAllGather(input.ReadData<float>(), input_count, gathered_data);
 
     // Split into separate tensors
     std::vector<Tensor> result;

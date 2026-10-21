@@ -1,0 +1,21 @@
+{
+  "csv_file": "D:\\demo\\mrcj\\datasets\\sentiment analysis\\sentiment_mental_health.csv",
+  "vocab_file": "D:\\Dev\\CyxWiz_Claude\\examples\\data\\sentiment_analysis_demo\\sentiment_analysis_vocab.txt",
+  "text_column": "statement",
+  "label_column": "status",
+  "label_order": [
+    "Anxiety",
+    "Normal",
+    "Depression",
+    "Suicidal",
+    "Stress",
+    "Bipolar",
+    "Personality disorder"
+  ],
+  "num_classes": 7,
+  "tokenizer_type": "word",
+  "lowercase": true,
+  "min_word_freq": 5,
+  "max_vocab_size": 10000,
+  "max_length": 128
+}

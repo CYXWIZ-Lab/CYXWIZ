@@ -2,17 +2,36 @@
 // Extracted from data_registry.cpp to reduce file size
 // Contains: Versioning, Preprocessing, Augmentation, Annotation, Arrow integration
 
+#include "graph_compiler_dataset_hooks.h"
 #include "data_registry.h"
+#include "dataset_catalog.h"
 #include "arrow_dataset.h"
+#include "parquet_backed_dataset.h"
 #include "annotation_manager.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <sstream>
 
 namespace cyxwiz {
+
+std::string DataRegistry::NormalizeTabularSourcePath(const std::string& path) {
+    if (path.empty()) return {};
+    try {
+        return std::filesystem::weakly_canonical(std::filesystem::absolute(path))
+            .lexically_normal()
+            .string();
+    } catch (...) {
+        try {
+            return std::filesystem::absolute(path).lexically_normal().string();
+        } catch (...) {
+            return path;
+        }
+    }
+}
 
 // =============================================================================
 // Dataset Versioning
@@ -178,7 +197,11 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadArrowTable(
     }
 
     // Store in registry
+    InvalidateTabularPublicationUnlocked(dataset_name);
     arrow_datasets_[dataset_name] = dataset;
+    parquet_backed_datasets_.erase(dataset_name);
+    sparse_feature_datasets_.erase(dataset_name);
+    ForgetTabularSourcePathUnlocked(dataset_name);
     last_access_times_[dataset_name] = std::chrono::steady_clock::now();
 
     spdlog::info("Loaded Arrow dataset '{}': {} rows, {} columns, {} bytes",
@@ -209,19 +232,22 @@ std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
     // Generate unique name if not provided
     std::string dataset_name = name.empty() ? GenerateUniqueName("arrow_data") : name;
 
-    // Check if already exists
-    if (arrow_datasets_.find(dataset_name) != arrow_datasets_.end()) {
-        spdlog::warn("Arrow dataset '{}' already exists, overwriting", dataset_name);
-    }
+    // A re-run or re-load replaces its own table under the same name (not an error).
+    const bool replaced = arrow_datasets_.find(dataset_name) != arrow_datasets_.end();
 
     // Create ArrowDataset wrapper
     auto dataset = std::make_shared<ArrowDataset>(table, dataset_name);
 
     // Store in registry
+    InvalidateTabularPublicationUnlocked(dataset_name);
     arrow_datasets_[dataset_name] = dataset;
+    parquet_backed_datasets_.erase(dataset_name);
+    sparse_feature_datasets_.erase(dataset_name);
+    ForgetTabularSourcePathUnlocked(dataset_name);
     last_access_times_[dataset_name] = std::chrono::steady_clock::now();
 
-    spdlog::info("Registered Arrow dataset '{}': {} rows, {} columns, {} bytes",
+    spdlog::debug("{} Arrow dataset '{}': {} rows, {} columns, {} bytes",
+                 replaced ? "Replaced" : "Registered",
                  dataset_name,
                  dataset->GetNumRows(),
                  dataset->GetNumColumns(),
@@ -245,7 +271,11 @@ std::shared_ptr<ArrowDataset> DataRegistry::GetArrowDataset(const std::string& n
 
     auto it = arrow_datasets_.find(name);
     if (it == arrow_datasets_.end()) {
-        spdlog::warn("Arrow dataset '{}' not found in registry", name);
+        // Lookup-miss is a normal probe pattern (Properties panel and the
+        // compile gate both call this every frame). Caller is expected to
+        // handle the null and either fall through or surface its own
+        // user-facing error. Logging warn here was producing thousands of
+        // entries per second when no dataset was loaded.
         return nullptr;
     }
 
@@ -260,4 +290,474 @@ bool DataRegistry::IsArrowDataset(const std::string& name) const {
     return arrow_datasets_.find(name) != arrow_datasets_.end();
 }
 
+bool DataRegistry::MatchesResidentMaterialization(
+    const std::string& name, const std::shared_ptr<arrow::Table>& source,
+    const std::string& identity) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto entry = materialization_provenance_.find(name);
+    if (!source || identity.empty() || entry == materialization_provenance_.end() ||
+        entry->second.identity != identity || entry->second.source.lock() != source) {
+        return false;
+    }
+    const auto table = entry->second.table.lock();
+    const auto dense = arrow_datasets_.find(name);
+    if (table && dense != arrow_datasets_.end() &&
+        dense->second->GetArrowTable() == table) {
+        return true;
+    }
+    const auto sparse = entry->second.sparse.lock();
+    const auto registered = sparse_feature_datasets_.find(name);
+    return sparse && registered != sparse_feature_datasets_.end() &&
+           registered->second == sparse;
+}
+
+void DataRegistry::RecordMaterialization(
+    const std::string& name, MaterializationProvenance provenance) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Bound metadata to live registry entries; weak references never keep an
+    // unloaded dataset alive, including snapshots retained by another reader.
+    for (auto it = materialization_provenance_.begin();
+         it != materialization_provenance_.end();) {
+        if (it->second.source.expired() ||
+            (arrow_datasets_.count(it->first) == 0 &&
+             sparse_feature_datasets_.count(it->first) == 0)) {
+            it = materialization_provenance_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!provenance.identity.empty()) {
+        materialization_provenance_[name] = std::move(provenance);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Parquet-backed dataset accessors (disk-backed lazy tabular data)
+// -----------------------------------------------------------------------------
+
+std::shared_ptr<ParquetBackedDataset> DataRegistry::GetParquetBackedDataset(
+    const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = parquet_backed_datasets_.find(name);
+    if (it == parquet_backed_datasets_.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
+
+bool DataRegistry::IsParquetBackedDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return parquet_backed_datasets_.find(name) != parquet_backed_datasets_.end();
+}
+
+std::optional<std::string> DataRegistry::FindTabularDatasetBySourcePath(
+    const std::string& path) const {
+    const std::string normalized = NormalizeTabularSourcePath(path);
+    if (normalized.empty()) return std::nullopt;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tabular_dataset_by_source_path_.find(normalized);
+    if (it == tabular_dataset_by_source_path_.end()) {
+        return std::nullopt;
+    }
+    const std::string& name = it->second;
+    if (arrow_datasets_.find(name) == arrow_datasets_.end() &&
+        parquet_backed_datasets_.find(name) == parquet_backed_datasets_.end()) {
+        return std::nullopt;
+    }
+    return name;
+}
+
+std::optional<std::string> DataRegistry::GetTabularSourcePath(
+    const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tabular_source_paths_by_name_.find(name);
+    if (it == tabular_source_paths_by_name_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void DataRegistry::RememberTabularSourcePathUnlocked(
+    const std::string& name, const std::string& path) {
+    const std::string normalized = NormalizeTabularSourcePath(path);
+    if (name.empty() || normalized.empty()) return;
+
+    InvalidateTabularPublicationUnlocked(name);
+    if (auto old_name = tabular_dataset_by_source_path_.find(normalized);
+        old_name != tabular_dataset_by_source_path_.end() && old_name->second != name) {
+        InvalidateTabularPublicationUnlocked(old_name->second);
+        tabular_source_paths_by_name_.erase(old_name->second);
+    }
+
+    if (auto old_path = tabular_source_paths_by_name_.find(name);
+        old_path != tabular_source_paths_by_name_.end() && old_path->second != normalized) {
+        auto reverse = tabular_dataset_by_source_path_.find(old_path->second);
+        if (reverse != tabular_dataset_by_source_path_.end() && reverse->second == name) {
+            tabular_dataset_by_source_path_.erase(reverse);
+        }
+    }
+
+    tabular_source_paths_by_name_[name] = normalized;
+    tabular_dataset_by_source_path_[normalized] = name;
+}
+
+void DataRegistry::RegisterParquetBacked(
+    const std::string& name,
+    std::shared_ptr<ParquetBackedDataset> dataset) {
+    if (!dataset) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (parquet_backed_datasets_.find(name) != parquet_backed_datasets_.end()) {
+        spdlog::warn("RegisterParquetBacked: overwriting existing dataset '{}'", name);
+    }
+    InvalidateTabularPublicationUnlocked(name);
+    parquet_backed_datasets_[name] = dataset;
+    arrow_datasets_.erase(name);
+    sparse_feature_datasets_.erase(name);
+    RememberTabularSourcePathUnlocked(name, dataset->GetFilePath());
+    spdlog::info("Registered ParquetBackedDataset '{}': {} rows, {} columns, {:.1f} MB on disk",
+                 name,
+                 dataset->GetNumRows(),
+                 dataset->GetNumColumns(),
+                 dataset->GetFileSizeBytes() / (1024.0 * 1024.0));
+}
+
+std::string DataRegistry::TabularLoadKey(const std::string& path, const std::string& options) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return {};
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (ec) return {};
+    return NormalizeTabularSourcePath(path) + "|size=" + std::to_string(size) +
+           "|time=" + std::to_string(static_cast<long long>(time.time_since_epoch().count())) + "|" + options;
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::ShareLoadedTableUnlocked(const std::string& key, const std::string& name,
+                                                                     const std::string& source_path,
+                                                                     std::string* shared_from) {
+    if (key.empty()) return nullptr;
+    for (const auto& [other, load] : tabular_loads_) {
+        if (load.key != key) continue;
+        const auto dataset = load.dataset.lock();
+        const auto it = arrow_datasets_.find(other);
+        if (!dataset || it == arrow_datasets_.end() || it->second != dataset) continue;  // replaced since
+        if (shared_from) *shared_from = other;
+        if (other == name) return dataset;
+        auto shared = std::make_shared<ArrowDataset>(dataset->GetArrowTable(), name);
+        InvalidateTabularPublicationUnlocked(name);
+        arrow_datasets_[name] = shared;
+        parquet_backed_datasets_.erase(name);
+        sparse_feature_datasets_.erase(name);
+        materialization_provenance_.erase(name);
+        RememberTabularSourcePathUnlocked(name, source_path);
+        last_access_times_[name] = std::chrono::steady_clock::now();
+        tabular_loads_[name] = {key, shared};
+        return shared;
+    }
+    return nullptr;
+}
+
+void DataRegistry::RecordTabularLoadUnlocked(const std::string& name, const std::string& key,
+                                             const std::shared_ptr<ArrowDataset>& dataset) {
+    if (key.empty() || !dataset) tabular_loads_.erase(name);
+    else tabular_loads_[name] = {key, dataset};
+}
+
+void DataRegistry::UnregisterTabularDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
+    bool removed_arrow = false;
+    bool removed_parquet = false;
+    bool removed_sparse = false;
+    materialization_provenance_.erase(name);
+    tabular_loads_.erase(name);
+
+    auto arrow_it = arrow_datasets_.find(name);
+    if (arrow_it != arrow_datasets_.end()) {
+        arrow_datasets_.erase(arrow_it);
+        removed_arrow = true;
+    }
+
+    auto parquet_it = parquet_backed_datasets_.find(name);
+    if (parquet_it != parquet_backed_datasets_.end()) {
+        parquet_backed_datasets_.erase(parquet_it);
+        removed_parquet = true;
+    }
+
+    auto sparse_it = sparse_feature_datasets_.find(name);
+    if (sparse_it != sparse_feature_datasets_.end()) {
+        sparse_feature_datasets_.erase(sparse_it);
+        removed_sparse = true;
+    }
+
+    ForgetTabularSourcePathUnlocked(name);
+    if (removed_arrow || removed_parquet || removed_sparse) {
+        spdlog::debug(
+            "UnregisterTabularDataset '{}': removed arrow={} parquet={} sparse={}",
+            name, removed_arrow, removed_parquet, removed_sparse);
+    }
+
+    // Cascade: also drop the PipelineMaterializer-produced "__materialized"
+    // variant of this dataset, if one exists. Without this, re-loading a CSV
+    // under a different name leaks the previous run's materialized variant
+    // into the registry until project close. The cascade is inlined under
+    // the same lock to avoid recursive lock acquisition. The suffix matches
+    // PipelineMaterializer::kMaterializedSuffix; keep them in sync.
+    static const std::string kMaterializedSuffix = "__materialized";
+    const bool already_materialized =
+        name.size() >= kMaterializedSuffix.size() &&
+        name.compare(name.size() - kMaterializedSuffix.size(),
+                     kMaterializedSuffix.size(),
+                     kMaterializedSuffix) == 0;
+    if (!already_materialized) {
+        const std::string mat_name = name + kMaterializedSuffix;
+        InvalidateTabularPublicationUnlocked(mat_name);
+        materialization_provenance_.erase(mat_name);
+        bool mat_arrow = false;
+        bool mat_parquet = false;
+        bool mat_sparse = false;
+        if (auto it = arrow_datasets_.find(mat_name); it != arrow_datasets_.end()) {
+            arrow_datasets_.erase(it);
+            mat_arrow = true;
+        }
+        if (auto it = parquet_backed_datasets_.find(mat_name);
+            it != parquet_backed_datasets_.end()) {
+            parquet_backed_datasets_.erase(it);
+            mat_parquet = true;
+        }
+        if (auto it = sparse_feature_datasets_.find(mat_name);
+            it != sparse_feature_datasets_.end()) {
+            sparse_feature_datasets_.erase(it);
+            mat_sparse = true;
+        }
+        ForgetTabularSourcePathUnlocked(mat_name);
+        if (mat_arrow || mat_parquet || mat_sparse) {
+            spdlog::debug("UnregisterTabularDataset '{}' cascade: dropped materialized variant '{}'",
+                          name, mat_name);
+        }
+    }
+}
+
+// --- Image dataset registry (Phase 1) ---
+
+void DataRegistry::RegisterImageDataset(const std::string& name,
+                                          const ImageDatasetEntry& entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
+    image_dataset_entries_[name] = entry;
+    spdlog::info("RegisterImageDataset '{}': {} images, {} classes, layout={}",
+                 name, entry.num_images, entry.num_classes, entry.layout);
+}
+
+bool DataRegistry::IsImageDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return image_dataset_entries_.find(name) != image_dataset_entries_.end();
+}
+
+const DataRegistry::ImageDatasetEntry*
+DataRegistry::GetImageDatasetEntry(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = image_dataset_entries_.find(name);
+    if (it == image_dataset_entries_.end()) return nullptr;
+    return &it->second;
+}
+
+void DataRegistry::UnregisterImageDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool removed_any = false;
+
+    auto it = image_dataset_entries_.find(name);
+    if (it != image_dataset_entries_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
+        image_dataset_entries_.erase(it);
+        removed_any = true;
+    }
+
+    // Image Apply currently probes via LoadImageFolder / LoadImageCSV,
+    // which also parks a concrete Dataset instance in datasets_ under
+    // the same name. If we only drop the lightweight image sidecar,
+    // GenerateUniqueName() still sees the old datasets_ entry and the
+    // next re-Apply on the same node drifts to "<name>_1", leaving the
+    // node's persisted dataset_name out of sync with the registry.
+    auto ds_it = datasets_.find(name);
+    if (ds_it != datasets_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
+        datasets_.erase(ds_it);
+        removed_any = true;
+    }
+
+    if (removed_any) {
+        spdlog::debug("UnregisterImageDataset '{}'", name);
+    }
+}
+
+// --- Audio dataset registry (Phase 2) ---
+
+void DataRegistry::RegisterAudioDataset(const std::string& name,
+                                          const AudioDatasetEntry& entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
+    audio_dataset_entries_[name] = entry;
+    spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, sr={}",
+                 name, entry.num_samples, entry.num_classes, entry.target_sr);
+}
+
+bool DataRegistry::IsAudioDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return audio_dataset_entries_.find(name) != audio_dataset_entries_.end();
+}
+
+const DataRegistry::AudioDatasetEntry*
+DataRegistry::GetAudioDatasetEntry(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = audio_dataset_entries_.find(name);
+    if (it == audio_dataset_entries_.end()) return nullptr;
+    return &it->second;
+}
+
+void DataRegistry::UnregisterAudioDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = audio_dataset_entries_.find(name);
+    if (it != audio_dataset_entries_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
+        audio_dataset_entries_.erase(it);
+        spdlog::debug("UnregisterAudioDataset '{}'", name);
+    }
+}
+
+// --- Text dataset registry (Phase 3) ---
+
+void DataRegistry::RegisterTextDataset(const std::string& name,
+                                         const TextDatasetEntry& entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
+    text_dataset_entries_[name] = entry;
+    spdlog::info("RegisterTextDataset '{}': {} samples, {} classes",
+                 name, entry.num_samples, entry.num_classes);
+}
+
+bool DataRegistry::IsTextDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return text_dataset_entries_.find(name) != text_dataset_entries_.end();
+}
+
+const DataRegistry::TextDatasetEntry*
+DataRegistry::GetTextDatasetEntry(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = text_dataset_entries_.find(name);
+    if (it == text_dataset_entries_.end()) return nullptr;
+    return &it->second;
+}
+
+void DataRegistry::UnregisterTextDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = text_dataset_entries_.find(name);
+    if (it != text_dataset_entries_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
+        text_dataset_entries_.erase(it);
+        spdlog::debug("UnregisterTextDataset '{}'", name);
+    }
+}
+
+void DataRegistry::RestoreTabularDataset(
+    const std::string& name,
+    std::shared_ptr<ArrowDataset> arrow_dataset,
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+    const std::string& source_path) {
+    if (name.empty() || (!arrow_dataset && !parquet_dataset)) return;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
+    arrow_datasets_.erase(name);
+    parquet_backed_datasets_.erase(name);
+    sparse_feature_datasets_.erase(name);
+    if (arrow_dataset) {
+        arrow_datasets_[name] = std::move(arrow_dataset);
+    } else {
+        parquet_backed_datasets_[name] = std::move(parquet_dataset);
+    }
+    RememberTabularSourcePathUnlocked(name, source_path);
+    spdlog::info(
+        "RestoreTabularDataset: restored prior valid registration '{}'",
+        name);
+}
+
+void DataRegistry::ClearAllTabularDatasets() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tabular_publication_tokens_.clear();
+
+    size_t arrow_count = arrow_datasets_.size();
+    size_t parquet_count = parquet_backed_datasets_.size();
+    size_t sparse_count = sparse_feature_datasets_.size();
+    size_t image_count = image_dataset_entries_.size();
+    size_t audio_count = audio_dataset_entries_.size();
+    size_t text_count = text_dataset_entries_.size();
+
+    arrow_datasets_.clear();
+    materialization_provenance_.clear();
+    tabular_loads_.clear();
+    parquet_backed_datasets_.clear();
+    sparse_feature_datasets_.clear();
+    tabular_source_paths_by_name_.clear();
+    tabular_dataset_by_source_path_.clear();
+    image_dataset_entries_.clear();
+    audio_dataset_entries_.clear();
+    text_dataset_entries_.clear();
+
+    if (arrow_count > 0 || parquet_count > 0 || sparse_count > 0 ||
+        image_count > 0 ||
+        audio_count > 0 || text_count > 0) {
+        spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + "
+                     "{} Sparse + {} Image + {} Audio + {} Text entries",
+                     arrow_count, parquet_count, sparse_count, image_count,
+                     audio_count, text_count);
+    }
+}
+
 } // namespace cyxwiz
+
+namespace cyxwiz {
+namespace {
+
+// The graph compiler (training core) reads datasets through this catalog;
+// any binary that links the registry installs it before main.
+const bool kGraphDatasetCatalogInstalled = [] {
+    // Sparse lookups are installed by data_registry_sparse.cpp (either may run
+    // first, so each keeps what the other installed).
+    GraphDatasetCatalog catalog = GetGraphDatasetCatalog();
+    catalog.arrow_dataset = [](const std::string& name) { return DataRegistry::Instance().GetArrowDataset(name); };
+    catalog.parquet_dataset = [](const std::string& name) {
+        return DataRegistry::Instance().GetParquetBackedDataset(name);
+    };
+    // Kinds and storage come from the dataset catalog (the one routing authority).
+    catalog.is_kind = [](const std::string& name, GraphDatasetKind kind) {
+        const auto entry = DatasetCatalog::Instance().Resolve(name);
+        if (!entry) return false;
+        switch (kind) {
+        case GraphDatasetKind::Sparse: return entry->Has(kBackingSparse);
+        case GraphDatasetKind::Image: return entry->Has(kBackingImage);
+        case GraphDatasetKind::Audio: return entry->Has(kBackingAudio);
+        case GraphDatasetKind::Text: return entry->Has(kBackingText);
+        }
+        return false;
+    };
+    catalog.storage_kind = [](const std::string& name) {
+        const auto entry = DatasetCatalog::Instance().Resolve(name);
+        return entry ? entry->storage : DatasetStorageKind::Unknown;
+    };
+    catalog.text_info = [](const std::string& name) -> std::optional<GraphTextDatasetInfo> {
+        const auto* entry = DataRegistry::Instance().GetTextDatasetEntry(name);
+        if (!entry) return std::nullopt;
+        GraphTextDatasetInfo info;
+        info.num_samples = entry->num_samples;
+        return info;
+    };
+    catalog.source_path = [](const std::string& name) {
+        return DataRegistry::Instance().GetTabularSourcePath(name);
+    };
+    SetGraphDatasetCatalog(std::move(catalog));
+    return true;
+}();
+
+}  // namespace
+}  // namespace cyxwiz

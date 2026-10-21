@@ -1,5 +1,8 @@
 #include "pattern_library.h"
 #include "../node_editor.h"
+#include "../node_import_guardrails.h"
+#include "../node_type_import_registry.h"
+#include "../../core/node_metadata_registry.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -20,6 +23,50 @@ namespace gui::patterns {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+namespace {
+
+bool IsInstantiablePatternNode(NodeType type, const std::string& resolved_type) {
+    if (type == NodeType::Unknown) {
+        spdlog::error("Pattern node type '{}' is not registered", resolved_type);
+        return false;
+    }
+
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) {
+        registry.Initialize();
+    }
+
+    const auto* metadata = registry.GetMetadata(type);
+    if (metadata == nullptr) {
+        spdlog::error("Pattern node type '{}' has no metadata contract", resolved_type);
+        return false;
+    }
+    if (metadata->IsTemplate()) {
+        spdlog::error("Pattern node type '{}' is a template node and cannot be instantiated", resolved_type);
+        return false;
+    }
+
+    return true;
+}
+
+bool RejectDenseEncodedSequencePlaceholder(const MLNode& node,
+                                           const std::string& pattern_name) {
+    std::string matched_marker;
+    if (!detail::IsDenseEncodedSequencePlaceholder(node, matched_marker)) {
+        return false;
+    }
+
+    spdlog::error("Pattern '{}' node '{}' is encoded as Dense but matches "
+                  "sequence/NER placeholder marker '{}'; instantiate a "
+                  "first-class supported node type instead",
+                  pattern_name,
+                  node.name,
+                  matched_marker);
+    return true;
+}
+
+} // namespace
+
 // Singleton instance
 PatternLibrary& PatternLibrary::Instance() {
     static PatternLibrary instance;
@@ -35,13 +82,13 @@ PatternLibrary::PatternLibrary() {
 void PatternLibrary::Initialize() {
     if (initialized_) return;
 
-    spdlog::info("Initializing Pattern Library...");
+    spdlog::debug("Initializing Pattern Library...");
 
     LoadBuiltinPatterns();
     LoadUserPatterns(user_patterns_dir_);
 
     initialized_ = true;
-    spdlog::info("Pattern Library initialized with {} patterns", patterns_.size());
+    spdlog::debug("Pattern Library initialized with {} patterns", patterns_.size());
 }
 
 void PatternLibrary::LoadBuiltinPatterns() {
@@ -69,7 +116,7 @@ void PatternLibrary::LoadBuiltinPatterns() {
 
     for (const auto& path : search_paths) {
         if (fs::exists(path) && fs::is_directory(path)) {
-            spdlog::info("Loading builtin patterns from: {}", path);
+            spdlog::debug("Loading builtin patterns from: {}", path);
             for (const auto& entry : fs::directory_iterator(path)) {
                 if (entry.path().extension() == ".cyxgraph") {
                     LoadPatternFromFile(entry.path().string());
@@ -329,132 +376,13 @@ std::string PatternLibrary::SubstituteParams(
 }
 
 NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
-    // Map string to NodeType enum
-    static const std::map<std::string, NodeType> type_map = {
-        // Core Layers
-        {"Dense", NodeType::Dense},
-        {"Conv1D", NodeType::Conv1D},
-        {"Conv2D", NodeType::Conv2D},
-        {"Conv3D", NodeType::Conv3D},
-        {"DepthwiseConv2D", NodeType::DepthwiseConv2D},
-
-        // Pooling
-        {"MaxPool2D", NodeType::MaxPool2D},
-        {"AvgPool2D", NodeType::AvgPool2D},
-        {"GlobalMaxPool", NodeType::GlobalMaxPool},
-        {"GlobalAvgPool", NodeType::GlobalAvgPool},
-        {"AdaptiveAvgPool", NodeType::AdaptiveAvgPool},
-
-        // Normalization
-        {"BatchNorm", NodeType::BatchNorm},
-        {"LayerNorm", NodeType::LayerNorm},
-        {"GroupNorm", NodeType::GroupNorm},
-        {"InstanceNorm", NodeType::InstanceNorm},
-
-        // Regularization
-        {"Dropout", NodeType::Dropout},
-        {"Flatten", NodeType::Flatten},
-
-        // Recurrent
-        {"RNN", NodeType::RNN},
-        {"LSTM", NodeType::LSTM},
-        {"GRU", NodeType::GRU},
-        {"Bidirectional", NodeType::Bidirectional},
-        {"TimeDistributed", NodeType::TimeDistributed},
-        {"Embedding", NodeType::Embedding},
-
-        // Attention & Transformer
-        {"MultiHeadAttention", NodeType::MultiHeadAttention},
-        {"SelfAttention", NodeType::SelfAttention},
-        {"CrossAttention", NodeType::CrossAttention},
-        {"LinearAttention", NodeType::LinearAttention},
-        {"TransformerEncoder", NodeType::TransformerEncoder},
-        {"TransformerDecoder", NodeType::TransformerDecoder},
-        {"PositionalEncoding", NodeType::PositionalEncoding},
-
-        // Activations
-        {"ReLU", NodeType::ReLU},
-        {"LeakyReLU", NodeType::LeakyReLU},
-        {"PReLU", NodeType::PReLU},
-        {"ELU", NodeType::ELU},
-        {"SELU", NodeType::SELU},
-        {"GELU", NodeType::GELU},
-        {"Swish", NodeType::Swish},
-        {"Mish", NodeType::Mish},
-        {"Sigmoid", NodeType::Sigmoid},
-        {"Tanh", NodeType::Tanh},
-        {"Softmax", NodeType::Softmax},
-
-        // Shape Operations
-        {"Reshape", NodeType::Reshape},
-        {"Permute", NodeType::Permute},
-        {"Squeeze", NodeType::Squeeze},
-        {"Unsqueeze", NodeType::Unsqueeze},
-        {"View", NodeType::View},
-        {"Split", NodeType::Split},
-
-        // Merge Operations
-        {"Concatenate", NodeType::Concatenate},
-        {"Add", NodeType::Add},
-        {"Multiply", NodeType::Multiply},
-        {"Average", NodeType::Average},
-
-        // Output
-        {"Output", NodeType::Output},
-
-        // Loss Functions
-        {"MSELoss", NodeType::MSELoss},
-        {"CrossEntropyLoss", NodeType::CrossEntropyLoss},
-        {"BCELoss", NodeType::BCELoss},
-        {"BCEWithLogits", NodeType::BCEWithLogits},
-        {"L1Loss", NodeType::L1Loss},
-        {"SmoothL1Loss", NodeType::SmoothL1Loss},
-        {"HuberLoss", NodeType::HuberLoss},
-        {"NLLLoss", NodeType::NLLLoss},
-
-        // Optimizers
-        {"SGD", NodeType::SGD},
-        {"Adam", NodeType::Adam},
-        {"AdamW", NodeType::AdamW},
-        {"RMSprop", NodeType::RMSprop},
-        {"Adagrad", NodeType::Adagrad},
-        {"NAdam", NodeType::NAdam},
-
-        // Schedulers
-        {"StepLR", NodeType::StepLR},
-        {"CosineAnnealing", NodeType::CosineAnnealing},
-        {"ReduceOnPlateau", NodeType::ReduceOnPlateau},
-        {"ExponentialLR", NodeType::ExponentialLR},
-        {"WarmupScheduler", NodeType::WarmupScheduler},
-
-        // Regularization Nodes
-        {"L1Regularization", NodeType::L1Regularization},
-        {"L2Regularization", NodeType::L2Regularization},
-        {"ElasticNet", NodeType::ElasticNet},
-
-        // Utility
-        {"Lambda", NodeType::Lambda},
-        {"Identity", NodeType::Identity},
-        {"Constant", NodeType::Constant},
-        {"Parameter", NodeType::Parameter},
-
-        // Data Pipeline
-        {"DatasetInput", NodeType::DatasetInput},
-        {"DataLoader", NodeType::DataLoader},
-        {"Augmentation", NodeType::Augmentation},
-        {"DataSplit", NodeType::DataSplit},
-        {"TensorReshape", NodeType::TensorReshape},
-        {"Normalize", NodeType::Normalize},
-        {"OneHotEncode", NodeType::OneHotEncode}
-    };
-
-    auto it = type_map.find(type_str);
-    if (it != type_map.end()) {
-        return it->second;
+    const auto resolved = ResolveNodeTypeImportName(type_str);
+    if (resolved.has_value()) {
+        return *resolved;
     }
 
-    spdlog::warn("Unknown node type: {}, defaulting to Dense", type_str);
-    return NodeType::Dense;
+    spdlog::warn("Unknown node type: {}", type_str);
+    return NodeType::Unknown;
 }
 
 bool PatternLibrary::InstantiatePattern(
@@ -490,6 +418,11 @@ bool PatternLibrary::InstantiatePattern(
         // Substitute parameters in type (for dynamic types like $activation)
         std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
         NodeType node_type = StringToNodeType(resolved_type);
+        if (!IsInstantiablePatternNode(node_type, resolved_type)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
 
         // Create the node using NodeEditor's CreateNode logic
         MLNode node;
@@ -505,26 +438,59 @@ bool PatternLibrary::InstantiatePattern(
         node.initial_pos_y = base_position.y + pattern_node.pos_y;
         node.has_initial_position = true;
 
-        // Create pins based on node type (simplified - NodeEditor has more complex logic)
-        // Input pin
-        NodePin input_pin;
-        input_pin.id = next_pin_id++;
-        input_pin.type = PinType::Tensor;
-        input_pin.name = "Input";
-        input_pin.is_input = true;
-        node.inputs.push_back(input_pin);
+        // Create fallback pins for legacy/no-editor pattern insertion. The
+        // normal UI path uses NodeEditor::CreateNode via
+        // InstantiatePatternWithCreator; keep this fallback small but truthful
+        // for the Data Studio role-aware data boundary.
+        auto add_input = [&](PinType type, const std::string& pin_name,
+                             bool required = true) {
+            NodePin pin;
+            pin.id = next_pin_id++;
+            pin.type = type;
+            pin.name = pin_name;
+            pin.is_input = true;
+            pin.is_required = required;
+            node.inputs.push_back(pin);
+        };
+        auto add_output = [&](PinType type, const std::string& pin_name,
+                              bool required = true) {
+            NodePin pin;
+            pin.id = next_pin_id++;
+            pin.type = type;
+            pin.name = pin_name;
+            pin.is_input = false;
+            pin.is_required = required;
+            node.outputs.push_back(pin);
+        };
 
-        // Output pin
-        NodePin output_pin;
-        output_pin.id = next_pin_id++;
-        output_pin.type = PinType::Tensor;
-        output_pin.name = "Output";
-        output_pin.is_input = false;
-        node.outputs.push_back(output_pin);
-
+        switch (node_type) {
+        case NodeType::DataInput:
+            add_output(PinType::Dataset, "Dataset");
+            break;
+        case NodeType::DataSplit:
+            add_input(PinType::Dataset, "Training Dataset");
+            add_input(PinType::Dataset, "Validation Dataset", false);
+            add_input(PinType::Dataset, "Test Dataset", false);
+            add_output(PinType::Dataset, "Partitions");
+            break;
+        case NodeType::DataLoader:
+            add_input(PinType::Dataset, "Partitions");
+            add_output(PinType::Tensor, "Data");
+            add_output(PinType::Labels, "Labels", false);
+            break;
+        default:
+            add_input(PinType::Tensor, "Input");
+            add_output(PinType::Tensor, "Output");
+            break;
+        }
         // Copy parameters with substitution
         for (const auto& [key, value] : pattern_node.params) {
             node.parameters[key] = SubstituteParams(value, merged_params);
+        }
+        if (RejectDenseEncodedSequencePlaceholder(node, pattern->name)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
         }
 
         out_nodes.push_back(node);
@@ -548,13 +514,33 @@ bool PatternLibrary::InstantiatePattern(
         int to_pin_id = -1;
 
         for (const auto& node : out_nodes) {
-            if (node.id == from_node_id && !node.outputs.empty()) {
-                int pin_idx = std::min(pattern_link.from_pin, (int)node.outputs.size() - 1);
-                from_pin_id = node.outputs[pin_idx].id;
+            if (node.id == from_node_id) {
+                if (pattern_link.from_pin >= 0 &&
+                    pattern_link.from_pin < static_cast<int>(node.outputs.size())) {
+                    from_pin_id = node.outputs[pattern_link.from_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.from_pin,
+                        node.name,
+                        node.outputs.size());
+                }
             }
-            if (node.id == to_node_id && !node.inputs.empty()) {
-                int pin_idx = std::min(pattern_link.to_pin, (int)node.inputs.size() - 1);
-                to_pin_id = node.inputs[pin_idx].id;
+            if (node.id == to_node_id) {
+                if (pattern_link.to_pin >= 0 &&
+                    pattern_link.to_pin < static_cast<int>(node.inputs.size())) {
+                    to_pin_id = node.inputs[pattern_link.to_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.to_pin,
+                        node.name,
+                        node.inputs.size());
+                }
             }
         }
 
@@ -614,6 +600,20 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
         NodeType node_type = StringToNodeType(resolved_type);
         std::string resolved_name = SubstituteParams(pattern_node.name, merged_params);
+        if (!IsInstantiablePatternNode(node_type, resolved_type)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
+        if (detail::IsDenseEncodedSequencePlaceholder(node_type, resolved_name)) {
+            MLNode rejected_node;
+            rejected_node.type = node_type;
+            rejected_node.name = resolved_name;
+            RejectDenseEncodedSequencePlaceholder(rejected_node, pattern->name);
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
 
         // Use the callback to create the node with proper pins
         MLNode node = node_creator(node_type, resolved_name);
@@ -632,6 +632,11 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         // Copy parameters with substitution
         for (const auto& [key, value] : pattern_node.params) {
             node.parameters[key] = SubstituteParams(value, merged_params);
+        }
+        if (RejectDenseEncodedSequencePlaceholder(node, pattern->name)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
         }
 
         out_nodes.push_back(node);
@@ -655,13 +660,33 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         int to_pin_id = -1;
 
         for (const auto& node : out_nodes) {
-            if (node.id == from_node_id && !node.outputs.empty()) {
-                int pin_idx = std::min(pattern_link.from_pin, (int)node.outputs.size() - 1);
-                from_pin_id = node.outputs[pin_idx].id;
+            if (node.id == from_node_id) {
+                if (pattern_link.from_pin >= 0 &&
+                    pattern_link.from_pin < static_cast<int>(node.outputs.size())) {
+                    from_pin_id = node.outputs[pattern_link.from_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.from_pin,
+                        node.name,
+                        node.outputs.size());
+                }
             }
-            if (node.id == to_node_id && !node.inputs.empty()) {
-                int pin_idx = std::min(pattern_link.to_pin, (int)node.inputs.size() - 1);
-                to_pin_id = node.inputs[pin_idx].id;
+            if (node.id == to_node_id) {
+                if (pattern_link.to_pin >= 0 &&
+                    pattern_link.to_pin < static_cast<int>(node.inputs.size())) {
+                    to_pin_id = node.inputs[pattern_link.to_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.to_pin,
+                        node.name,
+                        node.inputs.size());
+                }
             }
         }
 

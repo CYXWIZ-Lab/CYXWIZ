@@ -1,8 +1,16 @@
 #pragma once
 
+#include "executable_model.h"
 #include "graph_compiler.h"
-#include "dataset_batcher.h"
+#include "metric_learning_metrics.h"
+#include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
+#include "parquet_arrow_batcher.h"
+#include "parquet_backed_dataset.h"
 #include "data_registry.h"
+#include "arrow_dataset.h"
+#include "training_scheduler_controller.h"
+#include "training_randomness.h"
+#include "training_resume_checkpoint.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -13,26 +21,88 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <utility>
 
 namespace cyxwiz {
+
+class CheckpointManager;
+class TrainingGenerationPreview;
+struct GenerationPreviewPoint;
+
+inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
+    return UsesContinuousTargetMetrics(config);
+}
 
 /**
  * Training metrics updated during training
  */
 struct TrainingMetrics {
+    TrainingRandomness randomness;
     // Current progress
     int current_epoch = 0;
+    // Run-history truth. This is never rewritten when an earlier checkpoint
+    // is restored into the active model after training.
+    int last_executed_epoch = 0;
     int total_epochs = 0;
     int current_batch = 0;
     int total_batches = 0;
+    int optimizer_step_count = 0;
+    int scheduler_step_count = 0;
+    double learning_rate = 0.0;
+    float grad_norm = 0.0f;  // global gradient norm before clipping (grad_clip_norm > 0)
+    size_t train_sample_count = 0;
+    size_t val_sample_count = 0;
+    size_t test_sample_count = 0;
 
     // Training metrics
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
+    float train_mae = 0.0f;
+    float train_rmse = 0.0f;
 
     // Validation metrics
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
+    float val_mae = 0.0f;
+    float val_rmse = 0.0f;
+    bool has_validation_metrics = false;
+
+    // Held-out test metrics, populated after training when a test split exists.
+    float test_loss = 0.0f;
+    float test_accuracy = 0.0f;
+    float test_mae = 0.0f;
+    float test_rmse = 0.0f;
+    bool has_test_metrics = false;
+
+    // Pair / Retrieval Metrics nodes (TOFIX140 A5): the latest validated
+    // epoch's, and the held-out test rows' after training.
+    std::optional<PairMetricResult> val_pair_metrics;
+    std::optional<RetrievalMetricResult> val_retrieval_metrics;
+    std::optional<PairMetricResult> test_pair_metrics;
+    std::optional<RetrievalMetricResult> test_retrieval_metrics;
+    // Embedding Output: the file written after training and its row count.
+    std::string embedding_output_file;
+    size_t embedding_output_rows = 0;
+
+    // Active-model provenance after training. Run-history fields above remain
+    // about executed work; restored checkpoint state is reported separately.
+    std::string checkpoint_used;
+    int restored_checkpoint_epoch = 0;
+    int restored_checkpoint_step = 0;
+    std::string active_model_provenance;
+
+    // Token-level sequence tagging metrics. For sequence training,
+    // train_accuracy/val_accuracy also mirror token accuracy so existing
+    // dashboards and callbacks keep working.
+    float train_token_accuracy = 0.0f;
+    float val_token_accuracy = 0.0f;
+    float train_entity_f1 = 0.0f;
+    float val_entity_f1 = 0.0f;
+    float test_token_accuracy = 0.0f;
+    float test_entity_f1 = 0.0f;
+    size_t train_token_count = 0;
+    size_t val_token_count = 0;
+    size_t test_token_count = 0;
 
     // Timing
     float epoch_time_seconds = 0.0f;
@@ -43,21 +113,65 @@ struct TrainingMetrics {
     bool is_paused = false;
     bool is_complete = false;
     std::string status_message;
+    std::string terminal_status;
+    std::string terminal_reason;
 
     // History (for plotting)
     std::vector<float> loss_history;
     std::vector<float> accuracy_history;
+    std::vector<float> mae_history;
+    std::vector<float> rmse_history;
     std::vector<float> val_loss_history;
     std::vector<float> val_accuracy_history;
+    std::vector<float> val_mae_history;
+    std::vector<float> val_rmse_history;
+    // Post-step learning rates, one entry per scheduler advance. The initial
+    // rate is reported separately by learning_rate before the first advance.
+    std::vector<double> learning_rate_history;
+
+    // Resume checkpoints (TOFIX118 P4e).
+    std::string last_resume_checkpoint;  // newest complete one written by this run
+    std::string initialized_from;        // warm-start checkpoint (model weights only)
+    int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
+    bool resume_exact = false;           // seeds and data order replay exactly
+};
+
+struct ObjectiveEvaluationMetrics {
+    float loss = 0.0f;
+    float accuracy = 0.0f;
+    float mae = 0.0f;
+    float rmse = 0.0f;
 };
 
 /**
  * Callback types for training progress
  */
-using BatchCallback = std::function<void(int epoch, int batch, float loss, float accuracy)>;
+using BatchCallback = std::function<void(int epoch, int batch, int total_batches,
+                                           float loss, float accuracy)>;
 using EpochCallback = std::function<void(int epoch, float train_loss, float train_acc,
                                           float val_loss, float val_acc, float epoch_time)>;
 using TrainingCompleteCallback = std::function<void(const TrainingMetrics& final_metrics)>;
+
+/**
+ * Batchers resolved to semantic Train/Dev/Test roles before execution.
+ * A role carries its iteration phase because a supplied Dev/Test dataset is
+ * consumed in full, while one source can expose derived partitions by
+ * switching the same batcher between phases.
+ */
+struct ResolvedExternalBatchers {
+    std::shared_ptr<IBatcher> train;
+    std::shared_ptr<IBatcher> dev;
+    std::shared_ptr<IBatcher> test;
+    BatcherPhase train_phase = BatcherPhase::Train;
+    BatcherPhase dev_phase = BatcherPhase::Val;
+    BatcherPhase test_phase = BatcherPhase::Test;
+};
+
+// Builds a run's role batchers on the training thread once the batch size is
+// known. Hosts adapt their own dataset types with it (the Engine's DataRegistry
+// datasets: legacy_dataset_batchers.h).
+using ExternalBatcherFactory =
+    std::function<ResolvedExternalBatchers(const TrainingConfiguration& config, int batch_size)>;
 
 /**
  * TrainingExecutor - Executes ML training based on compiled graph configuration
@@ -73,11 +187,39 @@ using TrainingCompleteCallback = std::function<void(const TrainingMetrics& final
 class TrainingExecutor {
 public:
     /**
-     * Create a training executor
-     * @param config Compiled training configuration from GraphCompiler
-     * @param dataset Dataset handle from DataRegistry
+     * Create a training executor whose batchers the host builds on the
+     * training thread (External mode), e.g. for DataRegistry datasets.
      */
-    TrainingExecutor(TrainingConfiguration config, DatasetHandle dataset);
+    TrainingExecutor(TrainingConfiguration config, ExternalBatcherFactory batcher_factory);
+
+    /**
+     * Create a training executor with Arrow dataset (modern API)
+     * @param config Compiled training configuration from GraphCompiler
+     * @param arrow_dataset Arrow dataset with features and labels
+     * @param label_column Name of the label column
+     */
+    TrainingExecutor(TrainingConfiguration config,
+                     std::shared_ptr<ArrowDataset> arrow_dataset,
+                     const std::string& label_column);
+
+    /**
+     * Create a training executor for a disk-backed Parquet dataset.
+     * Used when DataRegistry::LoadTabularCSV picked the disk-backed path
+     * because the CSV was too big to fit in RAM.
+     */
+    TrainingExecutor(TrainingConfiguration config,
+                     std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+                     const std::string& label_column);
+
+    TrainingExecutor(TrainingConfiguration config,
+                     std::unique_ptr<IBatcher> external_batcher);
+
+    TrainingExecutor(TrainingConfiguration config,
+                     ResolvedExternalBatchers external_batchers);
+
+    TrainingExecutor(TrainingConfiguration config,
+                     std::unique_ptr<ISequenceBatcher> sequence_batcher,
+                     std::vector<std::string> id_to_label);
 
     ~TrainingExecutor();
 
@@ -101,6 +243,29 @@ public:
      * Stop training (thread-safe, cooperative cancellation)
      */
     void Stop();
+    // Stop, first writing a resume checkpoint at the batch it stops on where
+    // the loop supports mid-epoch resume (sequence batches); the other loops
+    // keep their epoch-end checkpoint. Needs EnableResumeCheckpoints. Used
+    // when a node's reservation ends (TOFIX118 gap 6).
+    void StopWithCheckpoint();
+
+    // Resume checkpoints (TOFIX118 P4e). Enable before Train: a checkpoint is
+    // written under `root` at every epoch end (the newest `keep` are kept).
+    // With `every_optimizer_steps` > 0, sequence (language-model) epochs are
+    // also checkpointed every that many optimizer steps (P4e-2).
+    void EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity, int keep = 2,
+                                 int every_optimizer_steps = 0);
+    // Continue from a checkpoint: Train restores it after building the model
+    // and starts at the epoch after it (refused for a different graph).
+    void SetResumeFrom(std::filesystem::path checkpoint);
+    // Called after each resume checkpoint is written: its folder, the epoch it
+    // belongs to (the completed epoch at an epoch end, the epoch in progress
+    // inside one) and the batches of that epoch it covers (0 at an epoch end).
+    using ResumeCheckpointCallback =
+        std::function<void(const std::filesystem::path& checkpoint, int epoch, int next_batch)>;
+    void SetResumeCheckpointCallback(ResumeCheckpointCallback callback) {
+        resume_checkpoint_callback_ = std::move(callback);
+    }
 
     /**
      * Pause training (thread-safe)
@@ -131,11 +296,18 @@ public:
      * Get the training configuration
      */
     const TrainingConfiguration& GetConfig() const { return config_; }
+    // The run's generation_previews folder while Train runs with previews on;
+    // empty otherwise. Read from the training thread (the batch callback).
+    std::filesystem::path GenerationPreviewDir() const {
+        return generation_preview_ ? generation_preview_dir_ : std::filesystem::path();
+    }
 
     /**
      * Get the trained model (for export)
      */
-    SequentialModel* GetModel() { return model_.get(); }
+    SequentialModel* GetModel() {
+        return model_ ? model_->AsSequentialModel() : nullptr;
+    }
 
     /**
      * Get the optimizer (for export)
@@ -143,31 +315,118 @@ public:
     Optimizer* GetOptimizer() { return optimizer_.get(); }
 
     /**
-     * Release ownership of the model (transfers ownership to caller)
+     * Release ownership of the trained model (transfers ownership to caller):
+     * a sequential model or a graph with branches (TOFIX157), for Test and,
+     * when sequential (AsSequentialModel), Save / Export.
      */
-    std::unique_ptr<SequentialModel> ReleaseModel() { return std::move(model_); }
+    std::unique_ptr<IExecutableModel> ReleaseModel() { return std::move(model_); }
 
     /**
      * Release ownership of the optimizer (transfers ownership to caller)
      */
     std::unique_ptr<Optimizer> ReleaseOptimizer() { return std::move(optimizer_); }
 
+    /**
+     * Configure a fresh scheduler before Train(). Graph/node compilation may
+     * call this boundary without taking ownership of runtime cadence.
+     */
+    bool ConfigureScheduler(
+        TrainingSchedulerSpec specification,
+        std::string& error);
+
+    /** Configure a scheduler and restore exact scheduler lifecycle state. */
+    bool ConfigureScheduler(
+        TrainingSchedulerSpec specification,
+        TrainingSchedulerResumeState resume_state,
+        std::string& error);
+
+    std::optional<TrainingSchedulerResumeState>
+    ExportSchedulerResumeState(std::string& error) const;
+
+    const LRScheduler* GetScheduler() const {
+        return scheduler_controller_
+            ? scheduler_controller_->GetScheduler()
+            : nullptr;
+    }
+
 private:
+    struct SequenceEvaluationMetrics {
+        float loss = 0.0f;
+        float accuracy = 0.0f;
+        float entity_f1 = 0.0f;
+        size_t token_count = 0;
+    };
+
+    // Dataset backing chosen by the constructor; mode_ is the tag Train()
+    // uses to pick the batcher implementation. Every mode runs through the
+    // IBatcher (or ISequenceBatcher) loops.
+    enum class DatasetMode {
+        Arrow,    // ArrowDataset + ArrowDatasetBatcher
+        External, // IBatchers from the host (image/audio/text, DataRegistry datasets)
+        SequenceExternal, // Token-tagging ISequenceBatcher constructed upstream
+        Parquet   // ParquetBackedDataset + ParquetArrowBatcher (disk-backed)
+    };
+
     TrainingConfiguration config_;
-    DatasetHandle dataset_;
+    std::shared_ptr<ArrowDataset> arrow_dataset_;
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
+    std::string label_column_;
+    DatasetMode mode_ = DatasetMode::External;
+    ResolvedExternalBatchers external_batchers_;
+    ExternalBatcherFactory external_batcher_factory_;
+    std::unique_ptr<ISequenceBatcher> sequence_batcher_;
+    std::vector<std::string> sequence_id_to_label_;
 
     // Thread safety
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
+    std::atomic<bool> checkpoint_on_stop_{false};
     std::atomic<bool> is_paused_{false};
 
     mutable std::mutex metrics_mutex_;
     TrainingMetrics metrics_;
 
     // Training components - DYNAMIC MODEL
-    std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Optimizer> optimizer_;
     std::unique_ptr<Loss> loss_;  // Unified loss function (MSE, CrossEntropy, BCE, etc.)
+    std::optional<TrainingSchedulerSpec> scheduler_specification_;
+    std::optional<TrainingSchedulerResumeState> scheduler_resume_state_;
+    std::unique_ptr<TrainingSchedulerController> scheduler_controller_;
+    // Graph lr_schedule (optimizer node): attached when the first epoch knows
+    // its batch count, because the schedule is defined over optimizer updates.
+    bool graph_schedule_pending_ = false;
+    // Resume checkpoints (TOFIX118 P4e).
+    std::filesystem::path resume_root_;
+    TrainingResumeIdentity resume_identity_;
+    int resume_keep_ = 2;
+    std::filesystem::path resume_from_;
+    std::optional<TrainingSchedulerResumeState> graph_schedule_resume_;
+    bool data_order_exact_ = true;
+    int resume_every_steps_ = 0;
+    ResumeCheckpointCallback resume_checkpoint_callback_;
+    int last_mid_epoch_checkpoint_step_ = -1;
+    std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    // Generation previews (TOFIX159): bound for the duration of Train.
+    std::unique_ptr<TrainingGenerationPreview> generation_preview_;
+    std::filesystem::path generation_preview_dir_;
+    std::string generation_preview_run_id_;
+    CheckpointManager* generation_preview_checkpoints_ = nullptr;
+    long long last_generation_preview_step_ = -1;
+    // Runs one pass, with the best checkpoint's weights swapped in when asked
+    // and available; returns false when cancelled.
+    bool RunGenerationPreview(GenerationPreviewPoint point);
+    // Run state a checkpoint records, kept current by Train.
+    int resume_total_epochs_ = 0;
+    int resume_model_seed_ = -1;
+    float resume_best_val_loss_ = 0.0f;
+    int resume_epochs_without_improvement_ = 0;
+    // Writes resume-<epoch>-<batch> under resume_root_; false = not saved.
+    bool SaveResumeCheckpoint(int completed_epoch, const std::optional<TrainingEpochProgress>& in_epoch);
+    bool empty_validation_reported_ = false;  // warned once per run
+    int training_epochs_ = 1;
+    void AttachGraphScheduleIfPending(size_t batches_per_epoch);
+    void ConfigureWeightDecayExclusions();
 
     // Internal training methods
 
@@ -177,24 +436,40 @@ private:
     bool Initialize(int batch_size);
 
     /**
-     * Build the model dynamically from TrainingConfiguration
-     * Reads config.layers and creates corresponding modules
+     * Run a single training epoch through any IBatcher implementation.
+     * Used for both ArrowDatasetBatcher (in-memory) and ParquetArrowBatcher
+     * (disk-backed) — polymorphism via IBatcher lets the same loop drive
+     * either one. Name kept as *Arrow for backwards compat with callers
+     * that haven't been renamed yet; the implementation is batcher-agnostic.
      */
-    bool BuildModelFromConfig();
-
-    /**
-     * Run a single training epoch
-     */
-    void RunTrainingEpoch(
-        DatasetBatcher& batcher,
+    void RunTrainingEpochArrow(
+        IBatcher& batcher,
         int epoch,
         BatchCallback batch_cb
     );
 
     /**
-     * Run validation
+     * Run validation through any IBatcher implementation.
      */
-    void RunValidation(DatasetBatcher& batcher);
+    void RunValidationArrow(IBatcher& batcher);
+    ObjectiveEvaluationMetrics EvaluateArrowBatcher(IBatcher& batcher);
+
+    /**
+     * Run a single token-tagging epoch through an ISequenceBatcher.
+     */
+    void RunTrainingEpochSequence(
+        ISequenceBatcher& batcher,
+        int epoch,
+        BatchCallback batch_cb
+    );
+
+    /**
+     * Run validation for token-tagging batches.
+     */
+    // False when the validation partition is empty (nothing was evaluated).
+    bool RunValidationSequence(ISequenceBatcher& batcher);
+    SequenceEvaluationMetrics EvaluateSequenceBatcher(
+        ISequenceBatcher& batcher);
 
     /**
      * Forward pass through the model
@@ -202,10 +477,12 @@ private:
      * @return Output tensor [batch_size, num_classes]
      */
     Tensor Forward(const Tensor& input);
+    Tensor ForwardBatch(const Batch& batch);
 
     /**
      * Compute loss between predictions and targets
      */
+    Tensor ComputeLossTensor(const Tensor& predictions, const Tensor& targets);
     float ComputeLoss(const Tensor& predictions, const Tensor& targets);
 
     /**
@@ -217,6 +494,28 @@ private:
      * Backward pass through the model
      */
     void Backward(const Tensor& predictions, const Tensor& targets);
+    void BackwardBatch(const Tensor& predictions,
+                       const Tensor& targets,
+                       const Batch& batch);
+
+    /**
+     * Accumulate current model gradients and step optimizer at the configured
+     * grad_accum_steps boundary, or when force_step is true for a final partial
+     * accumulation window.
+     */
+    bool AccumulateGradientsAndMaybeStep(
+        int epoch,
+        int batch_num,
+        int total_batches,
+        float batch_loss,
+        float current_acc,
+        float gradient_weight,
+        const Tensor* device_gradient_weight,
+        bool force_step
+    );
+
+    void ApplySchedulerAdvance(
+        const TrainingSchedulerAdvanceResult& result);
 
     /**
      * Apply preprocessing to batch data
@@ -234,13 +533,18 @@ private:
     bool ShouldStop() const { return stop_requested_.load(); }
 
     /**
-     * Wait while paused
+     * Wait while paused and report whether execution may continue.
      */
-    void WaitWhilePaused();
+    bool WaitWhilePaused();
 
     // Cached tensors for backward pass
     Tensor last_predictions_;
     Tensor loss_gradient_;
+    std::map<std::string, Tensor> gradient_accumulator_;
+    int gradient_accumulated_batches_ = 0;
+    float gradient_accumulation_weight_ = 0.0f;
+    Tensor gradient_accumulation_device_weight_;
+    bool gradient_accumulation_device_weight_initialized_ = false;
 };
 
 } // namespace cyxwiz

@@ -1,10 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
-// This header is for internal engine implementation
-// Public API is declared in cyxwiz.h
+// Compatibility header for backend lifecycle internals.
+//
+// Public lifecycle functions are declared in cyxwiz.h:
+//   - cyxwiz::Initialize()
+//   - cyxwiz::Shutdown()
+//   - cyxwiz::GetVersionString()
+//
+// Keep this header intentionally small until there is a real engine
+// subsystem contract to expose.
 
 namespace cyxwiz {
-
-// Internal engine functions (implementation only, declarations in cyxwiz.h)
 
 } // namespace cyxwiz

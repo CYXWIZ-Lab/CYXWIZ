@@ -35,7 +35,7 @@ private:
     void RenderImNodesColorsTab();
     void RenderStyleTab();
     void RenderSaveLoadTab();
-    void RenderGalleryTab();
+    void LoadThemeFromFileDialog();
 
     // Color group rendering
     void RenderColorGroup(const char* group_name, const std::vector<std::pair<ImGuiCol_, const char*>>& colors);
@@ -58,9 +58,9 @@ private:
     int current_tab_ = 0;
     bool has_unsaved_changes_ = false;
     bool show_save_dialog_ = false;
-    bool show_load_dialog_ = false;
+    std::string status_message_;
+    bool status_error_ = false;
     char theme_name_buffer_[256] = "";
-    char theme_path_buffer_[512] = "";
 
     // Backup of original style
     ImGuiStyle backup_style_;

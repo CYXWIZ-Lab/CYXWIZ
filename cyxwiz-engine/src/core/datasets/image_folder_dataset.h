@@ -27,6 +27,9 @@ public:
     }
 
     size_t Size() const override { return image_paths_.size(); }
+    std::string GetItemSource(size_t index) const override {
+        return index < image_paths_.size() ? image_paths_[index] : std::string();
+    }
 
     std::pair<std::vector<float>, int> GetItem(size_t index) const override {
         if (index >= image_paths_.size()) return {{}, -1};

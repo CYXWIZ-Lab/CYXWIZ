@@ -13,6 +13,9 @@
 
 namespace cyxwiz {
 
+class ArrowDataset;
+class ParquetBackedDataset;
+
 /**
  * TestManager - Centralized manager for model testing sessions
  *
@@ -40,6 +43,9 @@ public:
     // Check if we have results from a completed test
     bool HasResults() const { return has_results_; }
 
+    // Quick test (TOFIX129 G3): the next test stops after this many batches.
+    void SetNextRunBatchLimit(int batches) { next_run_batch_limit_ = batches; }
+
     /**
      * Start testing with compiled graph configuration
      * @param config Compiled training configuration from GraphCompiler
@@ -49,32 +55,44 @@ public:
      * @param on_complete Callback when testing completes
      * @return true if testing started, false if already testing
      */
+    // Host-built test batcher (DataRegistry and text datasets: see
+    // legacy_dataset_batchers.h).
     bool StartTesting(
         TrainingConfiguration config,
-        DatasetHandle dataset,
+        ExternalTestSource source,
         int batch_size,
-        std::shared_ptr<SequentialModel> model = nullptr,
-        TestCompleteCallback on_complete = nullptr
+        std::shared_ptr<IExecutableModel> model = nullptr,
+        TestCompleteCallback on_complete = nullptr,
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
+    );
+
+    bool StartTestingArrow(
+        TrainingConfiguration config,
+        std::shared_ptr<ArrowDataset> dataset,
+        std::string label_column,
+        TestDatasetScope dataset_scope,
+        int batch_size,
+        std::shared_ptr<IExecutableModel> model = nullptr,
+        TestCompleteCallback on_complete = nullptr,
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
+    );
+    bool StartTestingParquet(
+        TrainingConfiguration config,
+        std::shared_ptr<ParquetBackedDataset> dataset,
+        std::string label_column,
+        TestDatasetScope dataset_scope,
+        int batch_size,
+        std::shared_ptr<IExecutableModel> model = nullptr,
+        TestCompleteCallback on_complete = nullptr,
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
 
     /**
      * Stop the current testing session
      */
     void StopTesting();
-
-    /**
-     * Export results to CSV file
-     * @param filepath Path to output file
-     * @return true on success
-     */
-    bool ExportResultsToCSV(const std::string& filepath);
-
-    /**
-     * Export results to JSON file
-     * @param filepath Path to output file
-     * @return true on success
-     */
-    bool ExportResultsToJSON(const std::string& filepath);
+    // Shutdown only: never wait while holding the worker cleanup mutex.
+    void WaitForTestingStop();
 
     // Callbacks for testing events
     using TestingStartCallback = std::function<void(const std::string& description)>;
@@ -82,7 +100,9 @@ public:
     using ProgressCallback = std::function<void(int batch, int total, float accuracy)>;
 
     void SetOnTestingStart(TestingStartCallback callback) { on_testing_start_ = callback; }
-    void SetOnTestingEnd(TestingEndCallback callback) { on_testing_end_ = callback; }
+    void SetOnTestingEnd(TestingEndCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_); on_testing_end_ = std::move(callback);
+    }
     void SetOnProgress(ProgressCallback callback) { on_progress_ = callback; }
 
 private:
@@ -104,6 +124,7 @@ private:
 
     mutable std::mutex mutex_;
     std::unique_ptr<TestExecutor> current_executor_;
+    int next_run_batch_limit_ = 0;  // consumed by the next Start*; 0 = full test
     std::unique_ptr<std::thread> testing_thread_;
 
     // Cached metrics for thread-safe access

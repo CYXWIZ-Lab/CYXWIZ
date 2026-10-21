@@ -7,11 +7,14 @@
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <stdexcept>
 #include "cyxwiz/sequential.h"
 #include "cyxwiz/tokenizer.h"
 #include "cyxwiz/audio_processing.h"
 #include "cyxwiz/rl_interface.h"
 #include "cyxwiz/data_loader.h"
+#include "bindings_tensor.h"
+#include "bindings_module.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
 #include "cyxwiz/distributed/cpu_backend.h"
@@ -132,7 +135,7 @@ std::vector<double> matrix_single_column_to_vector(
 
 py::array_t<double> matrix_to_numpy(const std::vector<std::vector<double>>& mat) {
     if (mat.empty()) {
-        return py::array_t<double>({0, 0});
+        return py::array_t<double>(std::vector<py::ssize_t>{0, 0});
     }
 
     const py::ssize_t rows = static_cast<py::ssize_t>(mat.size());
@@ -179,7 +182,7 @@ py::array_t<std::complex<double>> complex_vector_to_numpy(const std::vector<std:
 py::array_t<std::complex<double>> complex_matrix_to_numpy(
     const std::vector<std::vector<std::complex<double>>>& mat) {
     if (mat.empty()) {
-        return py::array_t<std::complex<double>>({0, 0});
+        return py::array_t<std::complex<double>>(std::vector<py::ssize_t>{0, 0});
     }
 
     const py::ssize_t rows = static_cast<py::ssize_t>(mat.size());
@@ -213,9 +216,51 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("CPU", cyxwiz::DeviceType::CPU)
         .value("CUDA", cyxwiz::DeviceType::CUDA)
         .value("OPENCL", cyxwiz::DeviceType::OPENCL)
+        .value("ONEAPI", cyxwiz::DeviceType::ONEAPI)
         .value("METAL", cyxwiz::DeviceType::METAL)
         .value("VULKAN", cyxwiz::DeviceType::VULKAN)
         .export_values();
+
+    py::enum_<cyxwiz::DeviceMetadataStatus>(m, "DeviceMetadataStatus")
+        .value("NotQueried", cyxwiz::DeviceMetadataStatus::NotQueried)
+        .value("Available", cyxwiz::DeviceMetadataStatus::Available)
+        .value("Unsupported", cyxwiz::DeviceMetadataStatus::Unsupported)
+        .value("Failed", cyxwiz::DeviceMetadataStatus::Failed);
+
+    py::enum_<cyxwiz::DeviceKind>(m, "DeviceKind")
+        .value("Unknown", cyxwiz::DeviceKind::Unknown)
+        .value("CPU", cyxwiz::DeviceKind::CPU)
+        .value("GPU", cyxwiz::DeviceKind::GPU)
+        .value("Accelerator", cyxwiz::DeviceKind::Accelerator);
+
+    py::enum_<cyxwiz::DeviceIdentityConfidence>(m,
+                                                "DeviceIdentityConfidence")
+        .value("Unknown", cyxwiz::DeviceIdentityConfidence::Unknown)
+        .value("BackendLocal",
+               cyxwiz::DeviceIdentityConfidence::BackendLocal)
+        .value("ProviderReported",
+               cyxwiz::DeviceIdentityConfidence::ProviderReported)
+        .value("StableHardware",
+               cyxwiz::DeviceIdentityConfidence::StableHardware);
+
+    py::enum_<cyxwiz::DeviceActivationStage>(m, "DeviceActivationStage")
+        .value("NotStarted", cyxwiz::DeviceActivationStage::NotStarted)
+        .value("BackendSelection", cyxwiz::DeviceActivationStage::BackendSelection)
+        .value("DeviceSelection", cyxwiz::DeviceActivationStage::DeviceSelection)
+        .value("ExecutionValidation", cyxwiz::DeviceActivationStage::ExecutionValidation)
+        .value("EffectiveStateQuery", cyxwiz::DeviceActivationStage::EffectiveStateQuery)
+        .value("Complete", cyxwiz::DeviceActivationStage::Complete);
+
+    py::class_<cyxwiz::DeviceActivationResult>(m, "DeviceActivationResult")
+        .def_readonly("requested_type", &cyxwiz::DeviceActivationResult::requested_type)
+        .def_readonly("requested_device_id", &cyxwiz::DeviceActivationResult::requested_device_id)
+        .def_readonly("effective_type", &cyxwiz::DeviceActivationResult::effective_type)
+        .def_readonly("effective_device_id", &cyxwiz::DeviceActivationResult::effective_device_id)
+        .def_readonly("stage", &cyxwiz::DeviceActivationResult::stage)
+        .def_readonly("success", &cyxwiz::DeviceActivationResult::success)
+        .def_readonly("execution_validated", &cyxwiz::DeviceActivationResult::execution_validated)
+        .def_readonly("error_code", &cyxwiz::DeviceActivationResult::error_code)
+        .def_readonly("message", &cyxwiz::DeviceActivationResult::message);
 
     // DataType enum
     py::enum_<cyxwiz::DataType>(m, "DataType")
@@ -235,7 +280,52 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_readonly("memory_available", &cyxwiz::DeviceInfo::memory_available)
         .def_readonly("compute_units", &cyxwiz::DeviceInfo::compute_units)
         .def_readonly("supports_fp64", &cyxwiz::DeviceInfo::supports_fp64)
-        .def_readonly("supports_fp16", &cyxwiz::DeviceInfo::supports_fp16);
+        .def_readonly("supports_fp16", &cyxwiz::DeviceInfo::supports_fp16)
+        .def_readonly("backend_available", &cyxwiz::DeviceInfo::backend_available)
+        .def_readonly("device_selectable", &cyxwiz::DeviceInfo::device_selectable)
+        .def_readonly("execution_validated", &cyxwiz::DeviceInfo::execution_validated)
+        .def_readonly("kind", &cyxwiz::DeviceInfo::kind)
+        .def_readonly("identity_confidence",
+                      &cyxwiz::DeviceInfo::identity_confidence)
+        .def_readonly("provider", &cyxwiz::DeviceInfo::provider)
+        .def_readonly("driver_version", &cyxwiz::DeviceInfo::driver_version)
+        .def_readonly("hardware_vendor_id",
+                      &cyxwiz::DeviceInfo::hardware_vendor_id)
+        .def_readonly("hardware_device_id",
+                      &cyxwiz::DeviceInfo::hardware_device_id)
+        .def_readonly("pci_domain", &cyxwiz::DeviceInfo::pci_domain)
+        .def_readonly("pci_bus", &cyxwiz::DeviceInfo::pci_bus)
+        .def_readonly("pci_device", &cyxwiz::DeviceInfo::pci_device)
+        .def_readonly("pci_function", &cyxwiz::DeviceInfo::pci_function)
+        .def_readonly("hardware_uuid", &cyxwiz::DeviceInfo::hardware_uuid)
+        .def_readonly("hardware_luid", &cyxwiz::DeviceInfo::hardware_luid)
+        .def_readonly("physical_fingerprint",
+                      &cyxwiz::DeviceInfo::physical_fingerprint)
+        .def_readonly("provider_known", &cyxwiz::DeviceInfo::provider_known)
+        .def_readonly("driver_version_known",
+                      &cyxwiz::DeviceInfo::driver_version_known)
+        .def_readonly("hardware_vendor_id_known",
+                      &cyxwiz::DeviceInfo::hardware_vendor_id_known)
+        .def_readonly("hardware_device_id_known",
+                      &cyxwiz::DeviceInfo::hardware_device_id_known)
+        .def_readonly("pci_location_known",
+                      &cyxwiz::DeviceInfo::pci_location_known)
+        .def_readonly("hardware_uuid_known",
+                      &cyxwiz::DeviceInfo::hardware_uuid_known)
+        .def_readonly("hardware_luid_known",
+                      &cyxwiz::DeviceInfo::hardware_luid_known)
+        .def_readonly("physical_fingerprint_known",
+                      &cyxwiz::DeviceInfo::physical_fingerprint_known)
+        .def_readonly("metadata_status", &cyxwiz::DeviceInfo::metadata_status)
+        .def_readonly("metadata_error_code", &cyxwiz::DeviceInfo::metadata_error_code)
+        .def_readonly("metadata_message", &cyxwiz::DeviceInfo::metadata_message)
+        .def_readonly("name_known", &cyxwiz::DeviceInfo::name_known)
+        .def_readonly("name_is_fallback", &cyxwiz::DeviceInfo::name_is_fallback)
+        .def_readonly("memory_total_known", &cyxwiz::DeviceInfo::memory_total_known)
+        .def_readonly("memory_available_known", &cyxwiz::DeviceInfo::memory_available_known)
+        .def_readonly("compute_units_known", &cyxwiz::DeviceInfo::compute_units_known)
+        .def_readonly("supports_fp64_known", &cyxwiz::DeviceInfo::supports_fp64_known)
+        .def_readonly("supports_fp16_known", &cyxwiz::DeviceInfo::supports_fp16_known);
 
     // Device
     py::class_<cyxwiz::Device>(m, "Device")
@@ -244,140 +334,15 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("get_type", &cyxwiz::Device::GetType)
         .def("get_device_id", &cyxwiz::Device::GetDeviceId)
         .def("get_info", &cyxwiz::Device::GetInfo)
+        .def("activate_exact", &cyxwiz::Device::ActivateExact,
+             py::arg("validate_execution") = false)
         .def("set_active", &cyxwiz::Device::SetActive)
         .def("is_active", &cyxwiz::Device::IsActive)
         .def_static("get_available_devices", &cyxwiz::Device::GetAvailableDevices)
         .def_static("get_current_device", &cyxwiz::Device::GetCurrentDevice,
                    py::return_value_policy::reference);
 
-    // Tensor
-    py::class_<cyxwiz::Tensor>(m, "Tensor",
-        "Multi-dimensional array with GPU/CPU acceleration support")
-        .def(py::init<>(), "Create an empty tensor")
-        .def(py::init<const std::vector<size_t>&, cyxwiz::DataType>(),
-             py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
-             "Create a tensor with given shape and data type")
-
-        // Shape and metadata
-        .def("shape", &cyxwiz::Tensor::Shape,
-             "Get the shape of the tensor")
-        .def("num_elements", &cyxwiz::Tensor::NumElements,
-             "Get total number of elements")
-        .def("num_bytes", &cyxwiz::Tensor::NumBytes,
-             "Get total size in bytes")
-        .def("get_data_type", &cyxwiz::Tensor::GetDataType,
-             "Get the data type")
-        .def("num_dimensions", &cyxwiz::Tensor::NumDimensions,
-             "Get number of dimensions")
-
-        // Arithmetic operators
-        .def("__add__", &cyxwiz::Tensor::operator+,
-             py::arg("other"),
-             "Element-wise addition")
-        .def("__sub__", &cyxwiz::Tensor::operator-,
-             py::arg("other"),
-             "Element-wise subtraction")
-        .def("__mul__", &cyxwiz::Tensor::operator*,
-             py::arg("other"),
-             "Element-wise multiplication")
-        .def("__truediv__", &cyxwiz::Tensor::operator/,
-             py::arg("other"),
-             "Element-wise division")
-
-        // Device management
-        .def("get_device", &cyxwiz::Tensor::GetDevice,
-             py::return_value_policy::reference,
-             "Get the device this tensor is on")
-
-        // String representation
-        .def("__repr__", [](const cyxwiz::Tensor &t) {
-            std::string shape_str = "[";
-            const auto& shape = t.Shape();
-            for (size_t i = 0; i < shape.size(); i++) {
-                if (i > 0) shape_str += ", ";
-                shape_str += std::to_string(shape[i]);
-            }
-            shape_str += "]";
-
-            std::string dtype_str;
-            switch(t.GetDataType()) {
-                case cyxwiz::DataType::Float32: dtype_str = "float32"; break;
-                case cyxwiz::DataType::Float64: dtype_str = "float64"; break;
-                case cyxwiz::DataType::Int32:   dtype_str = "int32"; break;
-                case cyxwiz::DataType::Int64:   dtype_str = "int64"; break;
-                case cyxwiz::DataType::UInt8:   dtype_str = "uint8"; break;
-            }
-
-            return "<Tensor shape=" + shape_str + " dtype=" + dtype_str + ">";
-        })
-
-        // Static factory methods
-        .def_static("zeros", &cyxwiz::Tensor::Zeros,
-                   py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
-                   "Create a tensor filled with zeros")
-        .def_static("ones", &cyxwiz::Tensor::Ones,
-                   py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
-                   "Create a tensor filled with ones")
-        .def_static("random", &cyxwiz::Tensor::Random,
-                   py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
-                   "Create a tensor with random values [0, 1)")
-
-        // NumPy conversion
-        .def_static("from_numpy", [](py::array arr) {
-            // Get shape
-            std::vector<size_t> shape;
-            for (py::ssize_t i = 0; i < arr.ndim(); i++) {
-                shape.push_back(arr.shape(i));
-            }
-
-            // Get data type
-            cyxwiz::DataType dtype = numpy_dtype_to_cyxwiz(arr.dtype());
-
-            // Create tensor and copy data
-            cyxwiz::Tensor tensor(shape, dtype);
-
-            // Ensure NumPy array is contiguous
-            py::array arr_c = py::array::ensure(arr, py::array::c_style);
-
-            // Copy data from NumPy to Tensor
-            std::memcpy(tensor.Data(), arr_c.data(), tensor.NumBytes());
-
-            return tensor;
-        }, py::arg("array"), "Create a Tensor from a NumPy array")
-
-        .def("to_numpy", [](cyxwiz::Tensor& self) {
-            // Get shape
-            const auto& shape = self.Shape();
-            std::vector<py::ssize_t> np_shape(shape.begin(), shape.end());
-
-            // Determine NumPy dtype
-            py::dtype np_dtype;
-            switch (self.GetDataType()) {
-                case cyxwiz::DataType::Float32:
-                    np_dtype = py::dtype::of<float>();
-                    break;
-                case cyxwiz::DataType::Float64:
-                    np_dtype = py::dtype::of<double>();
-                    break;
-                case cyxwiz::DataType::Int32:
-                    np_dtype = py::dtype::of<int32_t>();
-                    break;
-                case cyxwiz::DataType::Int64:
-                    np_dtype = py::dtype::of<int64_t>();
-                    break;
-                case cyxwiz::DataType::UInt8:
-                    np_dtype = py::dtype::of<uint8_t>();
-                    break;
-                default:
-                    throw std::runtime_error("Unsupported data type for NumPy conversion");
-            }
-
-            // Create NumPy array and copy data
-            py::array result(np_dtype, np_shape);
-            std::memcpy(result.mutable_data(), self.Data(), self.NumBytes());
-
-            return result;
-        }, "Convert Tensor to NumPy array (Note: data must be on CPU)");
+    BindTensor(m);
 
     // OptimizerType enum
     // Note: Not using .export_values() to avoid conflicts with class names like SGD, Adam
@@ -683,6 +648,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // BatchNorm alias (code generator uses cx.BatchNorm)
     m.attr("BatchNorm") = m.attr("BatchNorm2D");
     // LayerNorm Layer
+    py::class_<cyxwiz::RMSNormLayer, cyxwiz::Layer>(m, "RMSNorm")
+        .def(py::init<int, float, bool>(), py::arg("normalized_size"), py::arg("eps") = 1e-5f,
+             py::arg("elementwise_affine") = true, "RMSNorm over the last dimension (matches torch.nn.RMSNorm)")
+        .def("forward", &cyxwiz::RMSNormLayer::Forward, py::arg("input"))
+        .def("backward", &cyxwiz::RMSNormLayer::Backward, py::arg("grad_output"))
+        .def("get_parameters", &cyxwiz::RMSNormLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::RMSNormLayer::SetParameters, py::arg("params"));
+
     py::class_<cyxwiz::LayerNormLayer, cyxwiz::Layer>(m, "LayerNorm")
         .def(py::init<const std::vector<int>&, float, bool>(),
              py::arg("normalized_shape"),
@@ -783,6 +756,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("backward", &cyxwiz::EmbeddingLayer::Backward,
              py::arg("grad_output"),
              "Backward pass: accumulate gradients for used embeddings")
+        .def("get_gradients", &cyxwiz::EmbeddingLayer::GetGradients,
+             "Get the weight gradient from the last backward pass")
         .def("get_parameters", &cyxwiz::EmbeddingLayer::GetParameters,
              "Get parameters {'weight': Tensor}")
         .def("set_parameters", &cyxwiz::EmbeddingLayer::SetParameters,
@@ -877,6 +852,36 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_property_readonly("batch_first", &cyxwiz::GRULayer::IsBatchFirst)
         .def_property_readonly("bidirectional", &cyxwiz::GRULayer::IsBidirectional);
 
+    // Simple RNN Layer (tofix68 phase 3 reference; Studio RNN wiring)
+    py::class_<cyxwiz::RNNLayer, cyxwiz::Layer>(m, "RNN")
+        .def(py::init<int, int, int, bool, bool, const std::string&>(),
+             py::arg("input_size"),
+             py::arg("hidden_size"),
+             py::arg("num_layers") = 1,
+             py::arg("batch_first") = true,
+             py::arg("bidirectional") = false,
+             py::arg("nonlinearity") = "tanh",
+             "Create a simple (Elman) RNN layer; tanh or relu nonlinearity, "
+             "batch_first=True and bidirectional=False only")
+        .def("forward", &cyxwiz::RNNLayer::Forward,
+             py::arg("input"),
+             "Forward pass: process sequence through the RNN")
+        .def("backward", &cyxwiz::RNNLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: backpropagation through time")
+        .def("get_parameters", &cyxwiz::RNNLayer::GetParameters,
+             "Get RNN parameters")
+        .def("set_parameters", &cyxwiz::RNNLayer::SetParameters,
+             py::arg("params"),
+             "Set RNN parameters")
+        .def("reset_state", &cyxwiz::RNNLayer::ResetState,
+             "Reset hidden state")
+        .def("get_hidden_state", &cyxwiz::RNNLayer::GetHiddenState,
+             "Get current hidden state")
+        .def_property_readonly("input_size", &cyxwiz::RNNLayer::GetInputSize)
+        .def_property_readonly("hidden_size", &cyxwiz::RNNLayer::GetHiddenSize)
+        .def_property_readonly("num_layers", &cyxwiz::RNNLayer::GetNumLayers);
+
     // MultiHeadAttention Layer
     py::class_<cyxwiz::MultiHeadAttentionLayer, cyxwiz::Layer>(m, "MultiHeadAttention")
         .def(py::init<int, int, float, bool>(),
@@ -914,12 +919,13 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // TransformerEncoderLayer
     py::class_<cyxwiz::TransformerEncoderLayer, cyxwiz::Layer>(m, "TransformerEncoderLayer")
-        .def(py::init<int, int, int, float, bool>(),
+        .def(py::init<int, int, int, float, bool, float>(),
              py::arg("d_model"),
              py::arg("nhead"),
              py::arg("dim_feedforward") = 2048,
              py::arg("dropout") = 0.1f,
              py::arg("norm_first") = false,
+             py::arg("ffn_dropout") = 0.0f,
              "Create a Transformer Encoder layer")
         .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerEncoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerEncoderLayer::Forward),
              py::arg("input"),
@@ -945,13 +951,61 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // TransformerDecoderLayer
     py::class_<cyxwiz::TransformerDecoderLayer, cyxwiz::Layer>(m, "TransformerDecoderLayer")
-        .def(py::init<int, int, int, float, bool>(),
+        .def(py::init<int, int, int, float, bool, float>(),
              py::arg("d_model"),
              py::arg("nhead"),
              py::arg("dim_feedforward") = 2048,
              py::arg("dropout") = 0.1f,
              py::arg("norm_first") = false,
+             py::arg("ffn_dropout") = 0.0f,
              "Create a Transformer Decoder layer")
+        .def(py::init([](int d_model, int nhead, int dim_feedforward, float dropout, bool norm_first,
+                         float ffn_dropout, const std::string& norm_type, float norm_eps,
+                         const std::string& ffn_type, const std::string& ffn_activation, bool ffn_bias,
+                         const std::string& position_encoding, float rope_base,
+                         bool attention_bias, bool qk_norm, float rope_fraction,
+                         const std::string& block_layout, bool sandwich_norm, float residual_init_scale,
+                         float attn_logit_softcap, int sliding_window, int num_kv_heads) {
+                 cyxwiz::TransformerBlockOptions options;
+                 if (norm_type == "rms_norm") options.norm_type = cyxwiz::TransformerNormType::RMSNorm;
+                 else if (norm_type != "layer_norm") throw std::invalid_argument("norm_type must be layer_norm or rms_norm");
+                 if (ffn_type == "gated") options.ffn_type = cyxwiz::TransformerFeedForwardType::Gated;
+                 else if (ffn_type != "mlp") throw std::invalid_argument("ffn_type must be mlp or gated");
+                 if (!cyxwiz::TransformerFfnActivationFromName(ffn_activation, options.ffn_activation))
+                     throw std::invalid_argument("unknown ffn_activation: " + ffn_activation);
+                 options.norm_eps = norm_eps;
+                 options.ffn_bias = ffn_bias;
+                 if (position_encoding == "rope") options.position_encoding = cyxwiz::TransformerPositionEncoding::Rope;
+                 else if (position_encoding == "alibi") options.position_encoding = cyxwiz::TransformerPositionEncoding::Alibi;
+                 else if (position_encoding != "external") throw std::invalid_argument("position_encoding must be external, rope or alibi");
+                 if (block_layout == "parallel") options.block_layout = cyxwiz::TransformerBlockLayout::Parallel;
+                 else if (block_layout != "sequential") throw std::invalid_argument("block_layout must be sequential or parallel");
+                 options.rope_fraction = rope_fraction;
+                 options.sandwich_norm = sandwich_norm;
+                 options.residual_init_scale = residual_init_scale;
+                 options.attn_logit_softcap = attn_logit_softcap;
+                 options.sliding_window = sliding_window;
+                 options.num_kv_heads = num_kv_heads;
+                 options.rope_base = rope_base;
+                 options.attention_bias = attention_bias;
+                 options.qk_norm = qk_norm;
+                 return std::make_unique<cyxwiz::TransformerDecoderLayer>(
+                     d_model, nhead, dim_feedforward, dropout, norm_first, ffn_dropout, options);
+             }),
+             py::arg("d_model"), py::arg("nhead"), py::arg("dim_feedforward"), py::arg("dropout"),
+             py::arg("norm_first"), py::arg("ffn_dropout"), py::kw_only(),
+             py::arg("norm_type") = "layer_norm", py::arg("norm_eps") = 1e-5f,
+             py::arg("ffn_type") = "mlp", py::arg("ffn_activation") = "relu", py::arg("ffn_bias") = true,
+             py::arg("position_encoding") = "external", py::arg("rope_base") = 10000.0f,
+             py::arg("attention_bias") = true, py::arg("qk_norm") = false, py::arg("rope_fraction") = 1.0f,
+             py::arg("block_layout") = "sequential", py::arg("sandwich_norm") = false,
+             py::arg("residual_init_scale") = 1.0f, py::arg("attn_logit_softcap") = 0.0f,
+             py::arg("sliding_window") = 0, py::arg("num_kv_heads") = 0,
+             "Create a configurable decoder block (tofix112): norm_type layer_norm|rms_norm, "
+             "ffn_type mlp|gated, ffn_activation (gelu = tanh approximation, gelu_exact = erf), "
+             "ffn_bias, position_encoding external|rope|alibi, rope_fraction, attention_bias, qk_norm, "
+             "block_layout sequential|parallel, sandwich_norm, residual_init_scale, attn_logit_softcap, "
+             "sliding_window, num_kv_heads")
         .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerDecoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerDecoderLayer::Forward),
              py::arg("input"),
              "Self-attention only forward pass")
@@ -968,6 +1022,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("backward", &cyxwiz::TransformerDecoderLayer::Backward,
              py::arg("grad_output"),
              "Backward pass")
+        .def("get_last_memory_gradient", &cyxwiz::TransformerDecoderLayer::GetLastMemoryGradient,
+             "Get gradient with respect to encoder memory after backward")
         .def("get_parameters", &cyxwiz::TransformerDecoderLayer::GetParameters,
              "Get all layer parameters")
         .def("set_parameters", &cyxwiz::TransformerDecoderLayer::SetParameters,
@@ -976,9 +1032,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("set_training", &cyxwiz::TransformerDecoderLayer::SetTraining,
              py::arg("training"),
              "Set training mode (affects dropout)")
-        .def_static("generate_causal_mask", &cyxwiz::TransformerDecoderLayer::GenerateCausalMask,
+        .def_static("generate_causal_mask",
+             static_cast<cyxwiz::Tensor (*)(int)>(&cyxwiz::TransformerDecoderLayer::GenerateCausalMask),
              py::arg("size"),
-             "Generate causal mask for autoregressive decoding");
+             "Generate causal mask for autoregressive decoding")
+        .def_static("generate_causal_mask",
+             static_cast<cyxwiz::Tensor (*)(int, int)>(&cyxwiz::TransformerDecoderLayer::GenerateCausalMask),
+             py::arg("size"), py::arg("window"),
+             "Causal mask that also hides keys `window` or more positions back (sliding window)");
 
     // Flatten Layer
     py::class_<cyxwiz::FlattenLayer, cyxwiz::Layer>(m, "Flatten")
@@ -1056,6 +1117,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("set_parameters", &cyxwiz::PixelShuffleLayer::SetParameters, py::arg("params"))
         .def_property_readonly("upscale_factor", &cyxwiz::PixelShuffleLayer::GetUpscaleFactor);
 
+    // Register Reduction before any loss constructor uses it as a pybind
+    // default argument; otherwise the entire extension fails during import.
+    py::enum_<cyxwiz::Reduction>(m, "Reduction")
+        .value("None", cyxwiz::Reduction::None)
+        .value("Mean", cyxwiz::Reduction::Mean)
+        .value("Sum", cyxwiz::Reduction::Sum)
+        .export_values();
+
     // Base Loss class (abstract - for type hierarchy)
     py::class_<cyxwiz::Loss>(m, "Loss")
         .def("forward", &cyxwiz::Loss::Forward,
@@ -1080,8 +1149,12 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // CrossEntropy Loss (concrete implementation)
     py::class_<cyxwiz::CrossEntropyLoss, cyxwiz::Loss>(m, "CrossEntropyLoss")
-        .def(py::init<>(),
-             "Create CrossEntropy Loss with softmax for classification")
+        .def(py::init<cyxwiz::Reduction, int, std::vector<float>, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("ignore_index") = -100,
+             py::arg("class_weights") = std::vector<float>{},
+             py::arg("label_smoothing") = 0.0f,
+             "Create CrossEntropy Loss with optional per-class weights and label smoothing")
         .def("forward", &cyxwiz::CrossEntropyLoss::Forward,
              py::arg("predictions"),
              py::arg("targets"),
@@ -1089,7 +1162,91 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("backward", &cyxwiz::CrossEntropyLoss::Backward,
              py::arg("predictions"),
              py::arg("targets"),
-             "Backward: gradient w.r.t logits");
+             "Backward: gradient w.r.t logits")
+        .def_property_readonly("class_weights",
+             &cyxwiz::CrossEntropyLoss::GetClassWeights,
+             "Per-class loss weights")
+        .def_property_readonly("label_smoothing",
+             &cyxwiz::CrossEntropyLoss::GetLabelSmoothing,
+             "Label smoothing factor");
+
+    // BCEWithLogits Loss (for binary / multi-label classification)
+    py::class_<cyxwiz::BCEWithLogitsLoss, cyxwiz::Loss>(m, "BCEWithLogitsLoss")
+        .def(py::init<cyxwiz::Reduction, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("pos_weight") = 1.0f,
+             "Create BCEWithLogits Loss with optional positive-class weight")
+        .def("forward", &cyxwiz::BCEWithLogitsLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute binary cross entropy from logits")
+        .def("backward", &cyxwiz::BCEWithLogitsLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t logits")
+        .def_property("pos_weight",
+             &cyxwiz::BCEWithLogitsLoss::GetPosWeight,
+             &cyxwiz::BCEWithLogitsLoss::SetPosWeight,
+             "Positive-class weighting factor");
+
+    py::class_<cyxwiz::SoftDiceLoss, cyxwiz::Loss>(m, "SoftDiceLoss")
+        .def(py::init<cyxwiz::Reduction, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("smooth") = 1.0f,
+             "Create Soft Dice loss for probability masks")
+        .def("forward", &cyxwiz::SoftDiceLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute Soft Dice loss")
+        .def("backward", &cyxwiz::SoftDiceLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t predictions")
+        .def_property_readonly("smooth",
+             &cyxwiz::SoftDiceLoss::GetSmooth,
+             "Smoothing constant");
+
+    py::class_<cyxwiz::TverskyLoss, cyxwiz::Loss>(m, "TverskyLoss")
+        .def(py::init<cyxwiz::Reduction, float, float, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("alpha") = 0.5f,
+             py::arg("beta") = 0.5f,
+             py::arg("smooth") = 1.0f,
+             "Create Tversky loss for probability masks")
+        .def("forward", &cyxwiz::TverskyLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute Tversky loss")
+        .def("backward", &cyxwiz::TverskyLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t predictions")
+        .def_property_readonly("alpha",
+             &cyxwiz::TverskyLoss::GetAlpha,
+             "False-positive penalty")
+        .def_property_readonly("beta",
+             &cyxwiz::TverskyLoss::GetBeta,
+             "False-negative penalty")
+        .def_property_readonly("smooth",
+             &cyxwiz::TverskyLoss::GetSmooth,
+             "Smoothing constant");
+
+    py::class_<cyxwiz::JaccardLoss, cyxwiz::Loss>(m, "JaccardLoss")
+        .def(py::init<cyxwiz::Reduction, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("smooth") = 1.0f,
+             "Create Jaccard/IoU loss for probability masks")
+        .def("forward", &cyxwiz::JaccardLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute Jaccard loss")
+        .def("backward", &cyxwiz::JaccardLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t predictions")
+        .def_property_readonly("smooth",
+             &cyxwiz::JaccardLoss::GetSmooth,
+             "Smoothing constant");
 
     // Focal Loss (for class imbalance)
     py::class_<cyxwiz::FocalLoss, cyxwiz::Loss>(m, "FocalLoss")
@@ -1240,6 +1397,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         }
         return false;
     }, "Check if OpenCL is available");
+
+    m.def("oneapi_available", []() {
+        auto devices = cyxwiz::Device::GetAvailableDevices();
+        for (const auto& d : devices) {
+            if (d.type == cyxwiz::DeviceType::ONEAPI) return true;
+        }
+        return false;
+    }, "Check if oneAPI is available");
 
     m.def("metal_available", []() {
         auto devices = cyxwiz::Device::GetAvailableDevices();
@@ -1713,6 +1878,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     stats.def("confusion_matrix", [](const std::vector<int>& y_true, const std::vector<int>& y_pred) {
         auto result = cyxwiz::ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred);
+        if (!result.success) throw std::invalid_argument(result.error_message);
         return py::dict(
             "matrix"_a = result.matrix,
             "accuracy"_a = result.accuracy,
@@ -1724,6 +1890,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     stats.def("roc", [](const std::vector<int>& y_true, const std::vector<double>& y_scores) {
         auto result = cyxwiz::ModelEvaluation::ComputeROC(y_true, y_scores);
+        if (!result.success) throw std::invalid_argument(result.error_message);
         return py::dict(
             "fpr"_a = result.fpr,
             "tpr"_a = result.tpr,
@@ -1925,7 +2092,9 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Mish", cyxwiz::ActivationType::Mish)
         .value("Hardswish", cyxwiz::ActivationType::Hardswish)
         .value("SELU", cyxwiz::ActivationType::SELU)
-        .value("PReLU", cyxwiz::ActivationType::PReLU);
+        .value("PReLU", cyxwiz::ActivationType::PReLU)
+        .value("SquaredReLU", cyxwiz::ActivationType::SquaredReLU)
+        .value("GELUExact", cyxwiz::ActivationType::GELUExact);
 
     // Activation base class
     py::class_<cyxwiz::Activation>(m, "Activation")
@@ -2056,36 +2225,9 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Mish", cyxwiz::ModuleType::Mish)
         .export_values();
 
-    // Module base class
-    py::class_<cyxwiz::Module>(m, "Module")
-        .def("forward", &cyxwiz::Module::Forward,
-             py::arg("input"),
-             "Forward pass through the module")
-        .def("backward", &cyxwiz::Module::Backward,
-             py::arg("grad_output"),
-             "Backward pass")
-        .def("get_parameters", &cyxwiz::Module::GetParameters,
-             "Get module parameters")
-        .def("set_parameters", &cyxwiz::Module::SetParameters,
-             py::arg("params"),
-             "Set module parameters")
-        .def("get_gradients", &cyxwiz::Module::GetGradients,
-             "Get parameter gradients")
-        .def("has_parameters", &cyxwiz::Module::HasParameters,
-             "Check if module has trainable parameters")
-        .def("get_name", &cyxwiz::Module::GetName,
-             "Get module name")
-        .def("set_training", &cyxwiz::Module::SetTraining,
-             py::arg("training"),
-             "Set training mode")
-        .def("is_training", &cyxwiz::Module::IsTraining,
-             "Check if in training mode")
-        .def("freeze", &cyxwiz::Module::Freeze,
-             "Freeze module (disable parameter updates)")
-        .def("unfreeze", &cyxwiz::Module::Unfreeze,
-             "Unfreeze module (enable parameter updates)")
-        .def("is_trainable", &cyxwiz::Module::IsTrainable,
-             "Check if module is trainable");
+    // Module base class; Python subclasses become real modules (TOFIX125 P3).
+    pycyxwiz_bindings::BindModuleBase(m);
+    pycyxwiz_bindings::BindGradientCheck(m);
 
     // LinearModule
     py::class_<cyxwiz::LinearModule, cyxwiz::Module>(m, "LinearModule")
@@ -2144,10 +2286,55 @@ PYBIND11_MODULE(pycyxwiz, m) {
     py::class_<cyxwiz::MishModule, cyxwiz::Module>(m, "MishModule")
         .def(py::init<>(), "Create a Mish module");
 
+    // Deterministic sinusoidal positional encoding used by Studio Transformer graphs.
+    py::class_<cyxwiz::PositionalEncodingModule, cyxwiz::Module>(
+        m, "PositionalEncoding")
+        .def(py::init<size_t, size_t>(),
+             py::arg("d_model"),
+             py::arg("max_sequence_length") = 5000,
+             "Create a CPU-backed sinusoidal positional encoding module");
+
+    // Self-attention module with the tofix112 attention options (MultiHeadAttention node).
+    py::class_<cyxwiz::MultiHeadAttentionModule, cyxwiz::Module>(m, "AttentionModule")
+        .def(py::init([](size_t embed_dim, size_t num_heads, float dropout, bool use_bias, bool causal,
+                         bool qk_norm, float qk_norm_eps, const std::string& position_encoding, float rope_base,
+                         float rope_fraction, int num_kv_heads, int sliding_window, float logit_softcap) {
+                 cyxwiz::MultiHeadAttentionOptions options;
+                 options.causal = causal;
+                 options.qk_norm = qk_norm;
+                 options.qk_norm_eps = qk_norm_eps;
+                 if (position_encoding == "rope") options.rope = true;
+                 else if (position_encoding == "alibi") options.alibi = true;
+                 else if (position_encoding != "none") throw std::invalid_argument("position_encoding must be none, rope or alibi");
+                 options.rope_base = rope_base;
+                 options.rope_fraction = rope_fraction;
+                 options.num_kv_heads = num_kv_heads;
+                 options.sliding_window = sliding_window;
+                 options.logit_softcap = logit_softcap;
+                 return std::make_unique<cyxwiz::MultiHeadAttentionModule>(embed_dim, num_heads, dropout, use_bias, options);
+             }),
+             py::arg("embed_dim"), py::arg("num_heads"), py::arg("dropout") = 0.0f, py::arg("use_bias") = true,
+             py::kw_only(), py::arg("causal") = false, py::arg("qk_norm") = false, py::arg("qk_norm_eps") = 1e-5f,
+             py::arg("position_encoding") = "none", py::arg("rope_base") = 10000.0f, py::arg("rope_fraction") = 1.0f,
+             py::arg("num_kv_heads") = 0, py::arg("sliding_window") = 0, py::arg("logit_softcap") = 0.0f,
+             "Self-attention module: causal mask, QK-norm, RoPE/ALiBi, grouped-query heads, sliding window, soft-cap");
+
+    // Learned absolute position embeddings (GPT-2); tofix112 group 2.
+    py::class_<cyxwiz::LearnedPositionalEmbeddingModule, cyxwiz::Module>(
+        m, "LearnedPositionalEmbedding")
+        .def(py::init<size_t, size_t>(),
+             py::arg("d_model"),
+             py::arg("max_sequence_length") = 512,
+             "Create a learned position embedding table [max_sequence_length, d_model]");
+
     // SequentialModel - the main model class
     py::class_<cyxwiz::SequentialModel>(m, "Sequential",
         "Sequential model container for building neural networks")
         .def(py::init<>(), "Create an empty Sequential model")
+
+        .def("add", &pycyxwiz_bindings::AddModuleToSequential, py::arg("module"),
+             "Append a module: a built-in one or a subclass of pycyxwiz.Module. "
+             "The model keeps the Python object alive")
 
         // Layer addition methods (since templates can't be directly exposed)
         .def("add_linear", [](cyxwiz::SequentialModel& self, size_t in_features, size_t out_features, bool use_bias) {
@@ -2744,7 +2931,19 @@ Example queries:
         .value("Whitespace", cyxwiz::TokenizerType::Whitespace)
         .value("Word", cyxwiz::TokenizerType::Word)
         .value("Character", cyxwiz::TokenizerType::Character)
+        .value("ByteBPE", cyxwiz::TokenizerType::ByteBPE)
+        .value("WordPiece", cyxwiz::TokenizerType::WordPiece)
+        .value("SentencePieceBPE", cyxwiz::TokenizerType::SentencePieceBPE)
+        .value("SentencePieceUnigram", cyxwiz::TokenizerType::SentencePieceUnigram)
         .export_values();
+
+    py::enum_<cyxwiz::BPEInitialUnit>(m, "BPEInitialUnit")
+        .value("Byte", cyxwiz::BPEInitialUnit::Byte)
+        .value("UnicodeCharacter", cyxwiz::BPEInitialUnit::UnicodeCharacter);
+
+    py::enum_<cyxwiz::ByteBPEPiecePolicy>(m, "ByteBPEPiecePolicy")
+        .value("WhitespaceV1", cyxwiz::ByteBPEPiecePolicy::WhitespaceV1)
+        .value("LeadingSpaceV2", cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
 
     py::class_<cyxwiz::Vocabulary>(m, "Vocabulary")
         .def(py::init<>())
@@ -2765,6 +2964,9 @@ Example queries:
         .def("has_word", &cyxwiz::Vocabulary::HasWord,
             py::arg("word"), "Check if word is in vocabulary")
         .def("size", &cyxwiz::Vocabulary::Size, "Get vocabulary size")
+        .def_property_readonly("bpe_initial_unit", &cyxwiz::Vocabulary::GetBPEInitialUnit)
+        .def_property_readonly("bpe_alphabet_size", &cyxwiz::Vocabulary::GetBPEAlphabetSize)
+        .def_property_readonly("bpe_piece_policy", &cyxwiz::Vocabulary::GetBPEPiecePolicy)
         .def("save_to_file", &cyxwiz::Vocabulary::SaveToFile,
             py::arg("filepath"), "Save vocabulary to file")
         .def("load_from_file", &cyxwiz::Vocabulary::LoadFromFile,
@@ -2773,6 +2975,11 @@ Example queries:
         .def_property_readonly("unk_index", &cyxwiz::Vocabulary::UnkIndex)
         .def_property_readonly("bos_index", &cyxwiz::Vocabulary::BosIndex)
         .def_property_readonly("eos_index", &cyxwiz::Vocabulary::EosIndex);
+
+    m.def("is_sentencepiece_tokenizer_available", &cyxwiz::IsSentencePieceTokenizerAvailable,
+          "Return true when the optional SentencePiece tokenizer provider adapter is available");
+    m.def("sentencepiece_tokenizer_unavailable_message", &cyxwiz::SentencePieceTokenizerUnavailableMessage,
+          "Return the canonical explanation for unavailable SentencePiece tokenizer support");
 
     py::class_<cyxwiz::Tokenizer>(m, "Tokenizer")
         .def(py::init<cyxwiz::TokenizerType>(),
@@ -2799,6 +3006,10 @@ Example queries:
         .def("get_vocabulary", static_cast<cyxwiz::Vocabulary& (cyxwiz::Tokenizer::*)()>(&cyxwiz::Tokenizer::GetVocabulary),
             py::return_value_policy::reference_internal,
             "Get the vocabulary")
+        .def("set_bpe_fit_initial_unit", &cyxwiz::Tokenizer::SetBPEFitInitialUnit,
+            py::arg("unit"), "Select BPE fit starting units; encoding follows the saved vocabulary")
+        .def("set_bpe_fit_piece_policy", &cyxwiz::Tokenizer::SetBPEFitPiecePolicy,
+            py::arg("policy"), "Select ByteBPE fitting policy; encoding follows the saved vocabulary")
         .def("set_lowercase", &cyxwiz::Tokenizer::SetLowercase,
             py::arg("value"), "Enable/disable lowercase normalization")
         .def("set_max_length", &cyxwiz::Tokenizer::SetMaxLength,
@@ -2892,15 +3103,21 @@ Example queries:
     // These functions allow Python RL training scripts (SB3) to stream metrics
     // back to the C++ TrainingDashboardPanel and check pause/stop state.
 
-    static std::function<void(const std::string&, float)> s_rl_metric_callback;
+    // The callback holds a Python object, so it is never destroyed by a static
+    // destructor: at process exit the module's statics go after the embedding
+    // Engine's thread state, and releasing a Python object then crashed the
+    // Engine on close (access violation in python312.dll). Read and written
+    // under the GIL; a call works on its own copy.
+    using RLMetricCallback = std::function<void(const std::string&, float)>;
+    static auto* s_rl_metric_callback = new RLMetricCallback();
     static std::atomic<bool> s_rl_stop_requested{false};
     static std::atomic<bool> s_rl_paused{false};
 
     m.def("rl_set_metric_callback", [](py::object callback) {
         if (callback.is_none()) {
-            s_rl_metric_callback = nullptr;
+            *s_rl_metric_callback = nullptr;
         } else {
-            s_rl_metric_callback = [callback](const std::string& name, float value) {
+            *s_rl_metric_callback = [callback](const std::string& name, float value) {
                 py::gil_scoped_acquire acquire;
                 callback(name, value);
             };
@@ -2909,9 +3126,10 @@ Example queries:
        "Set a callback function(name: str, value: float) for RL metric updates");
 
     m.def("rl_update_metric", [](const std::string& name, float value) {
-        if (s_rl_metric_callback) {
+        const RLMetricCallback callback = *s_rl_metric_callback;
+        if (callback) {
             py::gil_scoped_release release;
-            s_rl_metric_callback(name, value);
+            callback(name, value);
         }
     }, py::arg("name"), py::arg("value"),
        "Update an RL metric on the dashboard (thread-safe)");
@@ -2932,4 +3150,6 @@ Example queries:
         s_rl_paused.store(val);
     }, py::arg("value"), "Set RL training pause flag");
 
+    // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
+    pycyxwiz_bindings::InstallNodesSubmodule(m);
 }

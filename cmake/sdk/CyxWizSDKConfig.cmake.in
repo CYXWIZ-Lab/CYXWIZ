@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
+# CyxWiz plugin SDK @CYXWIZ_SDK_VERSION@ (TOFIX125 P5 step 5.3).
+#
+#   find_package(CyxWizSDK @CYXWIZ_SDK_VERSION_MAJOR@.@CYXWIZ_SDK_VERSION_MINOR@ REQUIRED)
+#   add_library(my_nodes SHARED my_nodes_plugin.cpp)
+#   target_link_libraries(my_nodes PRIVATE CyxWiz::PluginSDK)
+#   cyxwiz_plugin_folder(my_nodes)
+#
+# CyxWiz::PluginSDK gives the plugin headers, the backend headers (Tensor,
+# Module) and the backend's import library. The headers need only the C++
+# standard library. The backend library itself is part of the Engine; the
+# plugin uses the Engine's copy when it is loaded.
+#
+# Built with: @CYXWIZ_SDK_BUILT_WITH@
+
+get_filename_component(_cyxwiz_sdk_root "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+
+if(NOT TARGET CyxWiz::Backend)
+    find_library(CYXWIZ_SDK_BACKEND_LIBRARY NAMES cyxwiz-backend
+                 PATHS "${_cyxwiz_sdk_root}/lib" NO_DEFAULT_PATH REQUIRED)
+    add_library(CyxWiz::Backend UNKNOWN IMPORTED)
+    set_target_properties(CyxWiz::Backend PROPERTIES
+        IMPORTED_LOCATION "${CYXWIZ_SDK_BACKEND_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_cyxwiz_sdk_root}/include")
+endif()
+
+if(NOT TARGET CyxWiz::PluginSDK)
+    add_library(CyxWiz::PluginSDK INTERFACE IMPORTED)
+    set_target_properties(CyxWiz::PluginSDK PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_cyxwiz_sdk_root}/include"
+        INTERFACE_LINK_LIBRARIES CyxWiz::Backend
+        INTERFACE_COMPILE_FEATURES cxx_std_20)
+endif()
+
+set(CyxWizSDK_PLUGIN_API_VERSION "@CYXWIZ_SDK_PLUGIN_API@")
+set(CyxWizSDK_TEMPLATE_DIR "${_cyxwiz_sdk_root}/template")
+
+include("${CMAKE_CURRENT_LIST_DIR}/CyxWizPluginHelpers.cmake")
+unset(_cyxwiz_sdk_root)

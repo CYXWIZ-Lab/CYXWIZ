@@ -4,7 +4,6 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <numeric>
-#include <unordered_map>
 #include <spdlog/spdlog.h>
 
 #ifndef M_PI
@@ -13,59 +12,12 @@
 
 namespace cyxwiz {
 
-// ========== DataProfile Methods ==========
-
-const ColumnProfile* DataProfile::GetColumn(const std::string& name) const {
-    for (const auto& col : columns) {
-        if (col.name == name) {
-            return &col;
-        }
-    }
-    return nullptr;
-}
-
-ColumnProfile* DataProfile::GetColumn(const std::string& name) {
-    for (auto& col : columns) {
-        if (col.name == name) {
-            return &col;
-        }
-    }
-    return nullptr;
-}
-
-// ========== CorrelationMatrix Methods ==========
-
-double CorrelationMatrix::Get(const std::string& col1, const std::string& col2) const {
-    size_t i = 0, j = 0;
-    bool found_i = false, found_j = false;
-
-    for (size_t k = 0; k < column_names.size(); k++) {
-        if (column_names[k] == col1) { i = k; found_i = true; }
-        if (column_names[k] == col2) { j = k; found_j = true; }
-    }
-
-    if (found_i && found_j) {
-        return Get(i, j);
-    }
-    return 0.0;
-}
-
 // ========== Statistical Functions ==========
 
 double DataAnalyzer::Mean(const std::vector<double>& values) {
     if (values.empty()) return 0.0;
     double sum = std::accumulate(values.begin(), values.end(), 0.0);
     return sum / static_cast<double>(values.size());
-}
-
-double DataAnalyzer::Median(std::vector<double> values) {
-    if (values.empty()) return 0.0;
-    std::sort(values.begin(), values.end());
-    size_t n = values.size();
-    if (n % 2 == 0) {
-        return (values[n / 2 - 1] + values[n / 2]) / 2.0;
-    }
-    return values[n / 2];
 }
 
 double DataAnalyzer::StdDev(const std::vector<double>& values, double mean) {
@@ -98,72 +50,6 @@ double DataAnalyzer::Percentile(std::vector<double> values, double p) {
 
     double fraction = index - static_cast<double>(lower);
     return values[lower] + fraction * (values[upper] - values[lower]);
-}
-
-double DataAnalyzer::Skewness(const std::vector<double>& values, double mean, double std_dev) {
-    if (values.size() < 3 || std_dev == 0.0) return 0.0;
-
-    double n = static_cast<double>(values.size());
-    double sum_cubed = 0.0;
-    for (double v : values) {
-        double diff = (v - mean) / std_dev;
-        sum_cubed += diff * diff * diff;
-    }
-
-    // Adjusted Fisher-Pearson standardized moment coefficient
-    double skew = (n / ((n - 1.0) * (n - 2.0))) * sum_cubed;
-    return skew;
-}
-
-double DataAnalyzer::Kurtosis(const std::vector<double>& values, double mean, double std_dev) {
-    if (values.size() < 4 || std_dev == 0.0) return 0.0;
-
-    double n = static_cast<double>(values.size());
-    double sum_fourth = 0.0;
-    for (double v : values) {
-        double diff = (v - mean) / std_dev;
-        double sq = diff * diff;
-        sum_fourth += sq * sq;
-    }
-
-    // Excess kurtosis (Fisher's definition)
-    double kurt = ((n * (n + 1.0)) / ((n - 1.0) * (n - 2.0) * (n - 3.0))) * sum_fourth
-                  - (3.0 * (n - 1.0) * (n - 1.0)) / ((n - 2.0) * (n - 3.0));
-    return kurt;
-}
-
-double DataAnalyzer::MAD(std::vector<double> values, double median) {
-    if (values.empty()) return 0.0;
-
-    std::vector<double> deviations;
-    deviations.reserve(values.size());
-    for (double v : values) {
-        deviations.push_back(std::abs(v - median));
-    }
-
-    return Median(deviations);
-}
-
-double DataAnalyzer::PearsonCorrelation(const std::vector<double>& x, const std::vector<double>& y) {
-    if (x.size() != y.size() || x.empty()) return 0.0;
-
-    double n = static_cast<double>(x.size());
-    double sum_x = 0.0, sum_y = 0.0, sum_xy = 0.0;
-    double sum_x2 = 0.0, sum_y2 = 0.0;
-
-    for (size_t i = 0; i < x.size(); i++) {
-        sum_x += x[i];
-        sum_y += y[i];
-        sum_xy += x[i] * y[i];
-        sum_x2 += x[i] * x[i];
-        sum_y2 += y[i] * y[i];
-    }
-
-    double numerator = n * sum_xy - sum_x * sum_y;
-    double denominator = std::sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y));
-
-    if (denominator == 0.0) return 0.0;
-    return numerator / denominator;
 }
 
 // ========== Utility Functions ==========
@@ -283,597 +169,57 @@ ColumnDataType DataAnalyzer::DetectColumnType(const DataTable& table, size_t col
     return ColumnDataType::Unknown;
 }
 
-// ========== Histogram and Top Values ==========
-
-std::vector<HistogramBin> DataAnalyzer::BuildHistogram(const std::vector<double>& values,
-                                                        double min_val, double max_val,
-                                                        int num_bins) {
-    std::vector<HistogramBin> histogram(num_bins);
-
-    if (values.empty() || min_val >= max_val) {
-        return histogram;
-    }
-
-    double bin_width = (max_val - min_val) / num_bins;
-
-    // Initialize bins
-    for (int i = 0; i < num_bins; i++) {
-        histogram[i].low = min_val + i * bin_width;
-        histogram[i].high = min_val + (i + 1) * bin_width;
-        histogram[i].count = 0;
-    }
-
-    // Count values in each bin
-    for (double v : values) {
-        int bin_index = static_cast<int>((v - min_val) / bin_width);
-        if (bin_index < 0) bin_index = 0;
-        if (bin_index >= num_bins) bin_index = num_bins - 1;
-        histogram[bin_index].count++;
-    }
-
-    // Calculate percentages
-    double total = static_cast<double>(values.size());
-    for (auto& bin : histogram) {
-        bin.percentage = static_cast<float>(bin.count) / static_cast<float>(total) * 100.0f;
-    }
-
-    return histogram;
-}
-
-std::vector<TopValue> DataAnalyzer::GetTopValues(const std::vector<std::string>& values, int top_n) {
-    std::unordered_map<std::string, size_t> counts;
-    for (const auto& v : values) {
-        counts[v]++;
-    }
-
-    std::vector<std::pair<std::string, size_t>> sorted_counts(counts.begin(), counts.end());
-    std::sort(sorted_counts.begin(), sorted_counts.end(),
-              [](const auto& a, const auto& b) { return a.second > b.second; });
-
-    std::vector<TopValue> result;
-    double total = static_cast<double>(values.size());
-
-    for (int i = 0; i < std::min(static_cast<int>(sorted_counts.size()), top_n); i++) {
-        TopValue tv;
-        tv.value = sorted_counts[i].first;
-        tv.count = sorted_counts[i].second;
-        tv.percentage = static_cast<float>(tv.count) / static_cast<float>(total) * 100.0f;
-        result.push_back(tv);
-    }
-
-    return result;
-}
-
-// ========== Column Profiling ==========
-
-ColumnProfile DataAnalyzer::ProfileColumn(const DataTable& table, size_t column_index,
-                                           int histogram_bins, int top_n) {
-    ColumnProfile profile;
-
-    if (column_index >= table.GetColumnCount()) {
-        return profile;
-    }
-
-    const auto& headers = table.GetHeaders();
-    profile.name = column_index < headers.size() ? headers[column_index] : "Column " + std::to_string(column_index);
-    profile.total_count = table.GetRowCount();
-
-    // Detect type
-    profile.dtype = DetectColumnType(table, column_index);
-
-    // Collect values
-    std::vector<double> numeric_values;
-    std::vector<std::string> string_values;
-    std::unordered_map<std::string, size_t> unique_values;
-
-    for (size_t i = 0; i < table.GetRowCount(); i++) {
-        auto cell = table.GetCell(i, column_index);
-
-        if (IsNull(cell)) {
-            profile.null_count++;
-            continue;
-        }
-
-        profile.non_null_count++;
-
-        // Track unique values
-        std::string str_val = table.GetCellAsString(i, column_index);
-        unique_values[str_val]++;
-
-        // Collect numeric values
-        auto opt = ToDouble(cell);
-        if (opt.has_value()) {
-            numeric_values.push_back(opt.value());
-        }
-
-        // Collect string values for categorical
-        if (profile.dtype == ColumnDataType::Categorical) {
-            string_values.push_back(str_val);
-        }
-    }
-
-    profile.unique_count = unique_values.size();
-    profile.null_percentage = profile.total_count > 0 ?
-        static_cast<float>(profile.null_count) / profile.total_count * 100.0f : 0.0f;
-
-    // Compute numeric statistics
-    if (!numeric_values.empty() && profile.IsNumeric()) {
-        profile.min = *std::min_element(numeric_values.begin(), numeric_values.end());
-        profile.max = *std::max_element(numeric_values.begin(), numeric_values.end());
-        profile.sum = std::accumulate(numeric_values.begin(), numeric_values.end(), 0.0);
-        profile.mean = Mean(numeric_values);
-        profile.median = Median(numeric_values);
-        profile.std_dev = StdDev(numeric_values, profile.mean);
-        profile.variance = Variance(numeric_values, profile.mean);
-        profile.q1 = Percentile(numeric_values, 25.0);
-        profile.q3 = Percentile(numeric_values, 75.0);
-        profile.iqr = profile.q3 - profile.q1;
-
-        if (profile.std_dev > 0) {
-            profile.skewness = Skewness(numeric_values, profile.mean, profile.std_dev);
-            profile.kurtosis = Kurtosis(numeric_values, profile.mean, profile.std_dev);
-        }
-
-        // Build histogram
-        profile.histogram = BuildHistogram(numeric_values, profile.min, profile.max, histogram_bins);
-    }
-
-    // Get top values for categorical
-    if (profile.dtype == ColumnDataType::Categorical && !string_values.empty()) {
-        profile.top_values = GetTopValues(string_values, top_n);
-    }
-
-    // Estimate memory usage
-    profile.memory_estimate = profile.non_null_count * sizeof(double);  // Rough estimate
-
-    return profile;
-}
-
-ColumnProfile DataAnalyzer::ProfileColumn(const DataTable& table, const std::string& column_name,
-                                           int histogram_bins, int top_n) {
-    const auto& headers = table.GetHeaders();
-    for (size_t i = 0; i < headers.size(); i++) {
-        if (headers[i] == column_name) {
-            return ProfileColumn(table, i, histogram_bins, top_n);
-        }
-    }
-    return ColumnProfile();
-}
-
-// ========== Table Profiling ==========
-
-DataProfile DataAnalyzer::ProfileTable(const DataTable& table, int histogram_bins, int top_n) {
-    DataProfile profile;
-    profile.source_name = table.GetName();
-    profile.row_count = table.GetRowCount();
-    profile.column_count = table.GetColumnCount();
-
-    spdlog::debug("Profiling table '{}' with {} rows and {} columns",
-                  profile.source_name, profile.row_count, profile.column_count);
-
-    // Profile each column
-    for (size_t i = 0; i < table.GetColumnCount(); i++) {
-        auto col_profile = ProfileColumn(table, i, histogram_bins, top_n);
-        profile.total_nulls += col_profile.null_count;
-        profile.memory_estimate += col_profile.memory_estimate;
-        profile.columns.push_back(std::move(col_profile));
-    }
-
-    // Calculate overall null percentage
-    size_t total_cells = profile.row_count * profile.column_count;
-    profile.null_percentage = total_cells > 0 ?
-        static_cast<float>(profile.total_nulls) / total_cells * 100.0f : 0.0f;
-
-    return profile;
-}
-
-// ========== Correlation Analysis ==========
-
-CorrelationMatrix DataAnalyzer::ComputeCorrelationMatrix(const DataTable& table) {
-    CorrelationMatrix result;
-    result.row_count = table.GetRowCount();
-
-    // Find numeric columns
-    std::vector<size_t> numeric_cols;
-    const auto& headers = table.GetHeaders();
-
-    for (size_t i = 0; i < table.GetColumnCount(); i++) {
-        auto dtype = DetectColumnType(table, i);
-        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-            numeric_cols.push_back(i);
-            result.column_names.push_back(i < headers.size() ? headers[i] : "Col" + std::to_string(i));
-        }
-    }
-
-    if (numeric_cols.empty()) {
-        spdlog::warn("No numeric columns found for correlation matrix");
-        return result;
-    }
-
-    // Get numeric values for each column
-    std::vector<std::vector<double>> column_values;
-    for (size_t col : numeric_cols) {
-        column_values.push_back(GetNumericValues(table, col));
-    }
-
-    // Compute correlation matrix
-    size_t n = numeric_cols.size();
-    result.matrix.resize(n, std::vector<double>(n, 0.0));
-
-    for (size_t i = 0; i < n; i++) {
-        result.matrix[i][i] = 1.0;  // Diagonal is always 1
-
-        for (size_t j = i + 1; j < n; j++) {
-            // Align values (only use rows where both have values)
-            std::vector<double> x, y;
-            const auto& vals_i = column_values[i];
-            const auto& vals_j = column_values[j];
-
-            // Get paired values (assumes same row indices)
-            size_t min_len = std::min(vals_i.size(), vals_j.size());
-            for (size_t k = 0; k < min_len; k++) {
-                x.push_back(vals_i[k]);
-                y.push_back(vals_j[k]);
-            }
-
-            double corr = PearsonCorrelation(x, y);
-            result.matrix[i][j] = corr;
-            result.matrix[j][i] = corr;  // Symmetric
-        }
-    }
-
-    return result;
-}
-
-CorrelationResult DataAnalyzer::ComputeCorrelation(const DataTable& table,
-                                                    const std::string& col1,
-                                                    const std::string& col2) {
-    CorrelationResult result;
-    result.col1 = col1;
-    result.col2 = col2;
-
-    const auto& headers = table.GetHeaders();
-    size_t idx1 = SIZE_MAX, idx2 = SIZE_MAX;
-
-    for (size_t i = 0; i < headers.size(); i++) {
-        if (headers[i] == col1) idx1 = i;
-        if (headers[i] == col2) idx2 = i;
-    }
-
-    if (idx1 == SIZE_MAX || idx2 == SIZE_MAX) {
-        spdlog::warn("Column not found for correlation: {} or {}", col1, col2);
-        return result;
-    }
-
-    auto vals1 = GetNumericValues(table, idx1);
-    auto vals2 = GetNumericValues(table, idx2);
-
-    // Align by using paired indices
-    std::vector<double> x, y;
-    size_t min_len = std::min(vals1.size(), vals2.size());
-    for (size_t i = 0; i < min_len; i++) {
-        x.push_back(vals1[i]);
-        y.push_back(vals2[i]);
-    }
-
-    result.sample_count = x.size();
-    result.pearson = PearsonCorrelation(x, y);
-
-    return result;
-}
-
-// ========== Missing Value Analysis ==========
-
-MissingValueAnalysis DataAnalyzer::AnalyzeMissingValues(const DataTable& table,
-                                                         size_t max_indices_per_column) {
-    MissingValueAnalysis result;
-    result.source_name = table.GetName();
-    result.total_cells = table.GetRowCount() * table.GetColumnCount();
-
-    const auto& headers = table.GetHeaders();
-
-    // Analyze each column
-    for (size_t col = 0; col < table.GetColumnCount(); col++) {
-        MissingValueAnalysis::ColumnMissing cm;
-        cm.name = col < headers.size() ? headers[col] : "Column " + std::to_string(col);
-
-        for (size_t row = 0; row < table.GetRowCount(); row++) {
-            if (IsNull(table.GetCell(row, col))) {
-                cm.missing_count++;
-                if (cm.missing_indices.size() < max_indices_per_column) {
-                    cm.missing_indices.push_back(row);
-                }
-            }
-        }
-
-        cm.missing_percentage = table.GetRowCount() > 0 ?
-            static_cast<float>(cm.missing_count) / table.GetRowCount() * 100.0f : 0.0f;
-
-        result.total_missing += cm.missing_count;
-        result.columns.push_back(std::move(cm));
-    }
-
-    // Count rows with any missing values
-    for (size_t row = 0; row < table.GetRowCount(); row++) {
-        bool has_missing = false;
-        for (size_t col = 0; col < table.GetColumnCount(); col++) {
-            if (IsNull(table.GetCell(row, col))) {
-                has_missing = true;
-                break;
-            }
-        }
-        if (has_missing) {
-            result.rows_with_missing++;
-        }
-    }
-
-    result.complete_rows = table.GetRowCount() - result.rows_with_missing;
-    result.missing_percentage = result.total_cells > 0 ?
-        static_cast<float>(result.total_missing) / result.total_cells * 100.0f : 0.0f;
-    result.rows_with_missing_percentage = table.GetRowCount() > 0 ?
-        static_cast<float>(result.rows_with_missing) / table.GetRowCount() * 100.0f : 0.0f;
-
-    return result;
-}
-
-// ========== Outlier Detection ==========
-
-OutlierResult DataAnalyzer::DetectOutliers(const DataTable& table, size_t column_index,
-                                            OutlierMethod method, double parameter) {
-    OutlierResult result;
-
-    if (column_index >= table.GetColumnCount()) {
-        return result;
-    }
-
-    const auto& headers = table.GetHeaders();
-    result.column_name = column_index < headers.size() ?
-        headers[column_index] : "Column " + std::to_string(column_index);
-    result.method = method;
-
-    // Get numeric values with their original indices
-    std::vector<std::pair<size_t, double>> indexed_values;
-    for (size_t i = 0; i < table.GetRowCount(); i++) {
-        auto opt = ToDouble(table.GetCell(i, column_index));
-        if (opt.has_value()) {
-            indexed_values.push_back({i, opt.value()});
-        }
-    }
-
-    if (indexed_values.empty()) {
-        return result;
-    }
-
-    result.total_valid = indexed_values.size();
-
-    // Extract just values for statistics
-    std::vector<double> values;
-    values.reserve(indexed_values.size());
-    for (const auto& iv : indexed_values) {
-        values.push_back(iv.second);
-    }
-
-    // Compute base statistics
-    result.mean = Mean(values);
-    result.std_dev = StdDev(values, result.mean);
-    result.median = Median(values);
-    result.mad = MAD(values, result.median);
-    result.q1 = Percentile(values, 25.0);
-    result.q3 = Percentile(values, 75.0);
-
-    double iqr = result.q3 - result.q1;
-
-    // Set default parameters and compute bounds
-    switch (method) {
-        case OutlierMethod::IQR: {
-            result.parameter = (parameter <= 0) ? 1.5 : parameter;
-            result.lower_bound = result.q1 - result.parameter * iqr;
-            result.upper_bound = result.q3 + result.parameter * iqr;
-            break;
-        }
-        case OutlierMethod::ZScore: {
-            result.parameter = (parameter <= 0) ? 3.0 : parameter;
-            result.lower_bound = result.mean - result.parameter * result.std_dev;
-            result.upper_bound = result.mean + result.parameter * result.std_dev;
-            break;
-        }
-        case OutlierMethod::ModifiedZScore: {
-            result.parameter = (parameter <= 0) ? 3.5 : parameter;
-            // Modified Z-score uses MAD
-            double k = 0.6745;  // Constant for normal distribution
-            if (result.mad > 0) {
-                double scaled_mad = result.mad / k;
-                result.lower_bound = result.median - result.parameter * scaled_mad;
-                result.upper_bound = result.median + result.parameter * scaled_mad;
-            } else {
-                result.lower_bound = result.median;
-                result.upper_bound = result.median;
-            }
-            break;
-        }
-    }
-
-    // Find outliers
-    for (const auto& iv : indexed_values) {
-        double value = iv.second;
-        bool is_outlier = false;
-        double score = 0.0;
-        bool is_low = false;
-
-        if (value < result.lower_bound) {
-            is_outlier = true;
-            is_low = true;
-            if (method == OutlierMethod::ZScore) {
-                score = std::abs((value - result.mean) / result.std_dev);
-            } else if (method == OutlierMethod::ModifiedZScore && result.mad > 0) {
-                score = std::abs((value - result.median) / (result.mad / 0.6745));
-            } else {
-                score = (result.q1 - value) / (iqr > 0 ? iqr : 1.0);
-            }
-        } else if (value > result.upper_bound) {
-            is_outlier = true;
-            if (method == OutlierMethod::ZScore) {
-                score = std::abs((value - result.mean) / result.std_dev);
-            } else if (method == OutlierMethod::ModifiedZScore && result.mad > 0) {
-                score = std::abs((value - result.median) / (result.mad / 0.6745));
-            } else {
-                score = (value - result.q3) / (iqr > 0 ? iqr : 1.0);
-            }
-        }
-
-        if (is_outlier) {
-            OutlierEntry entry;
-            entry.row_index = iv.first;
-            entry.value = value;
-            entry.score = score;
-            entry.is_low = is_low;
-            result.outliers.push_back(entry);
-        }
-    }
-
-    result.outlier_count = result.outliers.size();
-    result.outlier_percentage = result.total_valid > 0 ?
-        static_cast<float>(result.outlier_count) / result.total_valid * 100.0f : 0.0f;
-
-    // Sort outliers by score (highest first)
-    std::sort(result.outliers.begin(), result.outliers.end(),
-              [](const OutlierEntry& a, const OutlierEntry& b) {
-                  return a.score > b.score;
-              });
-
-    return result;
-}
-
-OutlierResult DataAnalyzer::DetectOutliers(const DataTable& table, const std::string& column_name,
-                                            OutlierMethod method, double parameter) {
-    const auto& headers = table.GetHeaders();
-    for (size_t i = 0; i < headers.size(); i++) {
-        if (headers[i] == column_name) {
-            return DetectOutliers(table, i, method, parameter);
-        }
-    }
-    return OutlierResult();
-}
-
-// ========== Phase 4: Statistical Methods ==========
-
-double DataAnalyzer::Mode(const std::vector<double>& data) {
-    if (data.empty()) return 0.0;
-
-    // Round to 6 decimal places for grouping
-    std::unordered_map<int64_t, size_t> counts;
-    for (double v : data) {
-        int64_t key = static_cast<int64_t>(v * 1000000.0);
-        counts[key]++;
-    }
-
-    int64_t mode_key = 0;
-    size_t max_count = 0;
-    for (const auto& pair : counts) {
-        if (pair.second > max_count) {
-            max_count = pair.second;
-            mode_key = pair.first;
-        }
-    }
-
-    return static_cast<double>(mode_key) / 1000000.0;
-}
-
-double DataAnalyzer::SEM(const std::vector<double>& data) {
-    if (data.size() < 2) return 0.0;
-    double mean = Mean(data);
-    double sd = StdDev(data, mean);
-    return sd / std::sqrt(static_cast<double>(data.size()));
-}
-
-DescriptiveStats DataAnalyzer::ComputeDescriptiveStats(const std::vector<double>& data) {
-    DescriptiveStats stats;
-
-    if (data.empty()) return stats;
-
-    stats.count = static_cast<double>(data.size());
-    stats.sum = std::accumulate(data.begin(), data.end(), 0.0);
-    stats.mean = stats.sum / stats.count;
-    stats.median = Median(std::vector<double>(data));
-    stats.mode = Mode(data);
-    stats.min = *std::min_element(data.begin(), data.end());
-    stats.max = *std::max_element(data.begin(), data.end());
-    stats.range = stats.max - stats.min;
-    stats.variance = Variance(data, stats.mean);
-    stats.std_dev = std::sqrt(stats.variance);
-    stats.q1 = Percentile(std::vector<double>(data), 25.0);
-    stats.q3 = Percentile(std::vector<double>(data), 75.0);
-    stats.iqr = stats.q3 - stats.q1;
-    stats.skewness = Skewness(data, stats.mean, stats.std_dev);
-    stats.kurtosis = Kurtosis(data, stats.mean, stats.std_dev);
-    stats.sem = SEM(data);
-    stats.cv = stats.mean != 0 ? (stats.std_dev / std::abs(stats.mean)) * 100.0 : 0.0;
-
-    // Calculate multiple percentiles
-    stats.percentiles = {
-        Percentile(std::vector<double>(data), 5.0),
-        Percentile(std::vector<double>(data), 10.0),
-        Percentile(std::vector<double>(data), 25.0),
-        Percentile(std::vector<double>(data), 50.0),
-        Percentile(std::vector<double>(data), 75.0),
-        Percentile(std::vector<double>(data), 90.0),
-        Percentile(std::vector<double>(data), 95.0)
-    };
-
-    return stats;
-}
-
 // ========== Hypothesis Testing Implementations ==========
-
-// Approximation of the error function
-static double erf_approx(double x) {
-    // Horner form coefficients for erf
-    double a1 =  0.254829592;
-    double a2 = -0.284496736;
-    double a3 =  1.421413741;
-    double a4 = -1.453152027;
-    double a5 =  1.061405429;
-    double p  =  0.3275911;
-
-    int sign = (x < 0) ? -1 : 1;
-    x = std::abs(x);
-
-    double t = 1.0 / (1.0 + p * x);
-    double y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * std::exp(-x * x);
-
-    return sign * y;
-}
 
 double DataAnalyzer::NormalCDF(double x, double mu, double sigma) {
     if (sigma <= 0) return 0.0;
     double z = (x - mu) / sigma;
-    return 0.5 * (1.0 + erf_approx(z / std::sqrt(2.0)));
+    return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
 }
 
-// Regularized incomplete beta function approximation
+// Continued fraction of the regularized incomplete beta function, evaluated
+// with the modified Lentz method (converges fast for x < (a + 1) / (a + b + 2)).
+static double BetaContinuedFraction(double a, double b, double x) {
+    constexpr double kTiny = 1e-300;
+    constexpr double kEps = 1e-15;
+    const double qab = a + b, qap = a + 1.0, qam = a - 1.0;
+    double c = 1.0;
+    double d = 1.0 - qab * x / qap;
+    if (std::abs(d) < kTiny) d = kTiny;
+    d = 1.0 / d;
+    double h = d;
+    for (int m = 1; m <= 300; ++m) {
+        const double m2 = 2.0 * m;
+        double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if (std::abs(d) < kTiny) d = kTiny;
+        c = 1.0 + aa / c;
+        if (std::abs(c) < kTiny) c = kTiny;
+        d = 1.0 / d;
+        h *= d * c;
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if (std::abs(d) < kTiny) d = kTiny;
+        c = 1.0 + aa / c;
+        if (std::abs(c) < kTiny) c = kTiny;
+        d = 1.0 / d;
+        const double step = d * c;
+        h *= step;
+        if (std::abs(step - 1.0) < kEps) break;
+    }
+    return h;
+}
+
+// Regularized incomplete beta function I_x(a, b).
 static double betaInc(double a, double b, double x) {
     if (x <= 0) return 0.0;
     if (x >= 1) return 1.0;
-
-    // Simple continued fraction approximation
-    double bt = std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) +
-                         a * std::log(x) + b * std::log(1.0 - x));
-
+    const double front = std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) +
+                                  a * std::log(x) + b * std::log1p(-x));
     if (x < (a + 1.0) / (a + b + 2.0)) {
-        // Use forward recursion
-        double sum = 1.0;
-        double term = 1.0;
-        for (int n = 1; n <= 100; n++) {
-            double an = (a + n) * (a + b + n) * x / ((a + 2.0 * n) * (a + 2.0 * n + 1.0));
-            term *= -an;
-            sum += term;
-            if (std::abs(term) < 1e-10) break;
-        }
-        return bt * sum / a;
-    } else {
-        // Use backward recursion
-        return 1.0 - betaInc(b, a, 1.0 - x);
+        return front * BetaContinuedFraction(a, b, x) / a;
     }
+    return 1.0 - front * BetaContinuedFraction(b, a, 1.0 - x) / b;
 }
 
 double DataAnalyzer::StudentTCDF(double t, double df) {
@@ -895,45 +241,61 @@ double DataAnalyzer::FCDF(double f, double df1, double df2) {
 double DataAnalyzer::ChiSquareCDF(double x, double df) {
     if (x <= 0 || df <= 0) return 0.0;
 
-    // Chi-square is a special case of Gamma distribution
-    // Using incomplete gamma function approximation
-    double a = df / 2.0;
-    double z = x / 2.0;
+    // Regularized lower incomplete gamma P(df / 2, x / 2).
+    const double a = df / 2.0;
+    const double z = x / 2.0;
+    const double front = std::exp(-z + a * std::log(z) - std::lgamma(a));
 
-    // Simple series approximation for lower incomplete gamma
-    double sum = 0.0;
-    double term = 1.0 / a;
-    sum = term;
-
-    for (int n = 1; n <= 200; n++) {
-        term *= z / (a + n);
-        sum += term;
-        if (std::abs(term) < 1e-10) break;
+    if (z < a + 1.0) {
+        // Series: converges quickly below a + 1.
+        double term = 1.0 / a;
+        double sum = term;
+        for (int n = 1; n <= 1000; ++n) {
+            term *= z / (a + n);
+            sum += term;
+            if (std::abs(term) < std::abs(sum) * 1e-16) break;
+        }
+        return std::min(1.0, sum * front);
     }
 
-    return std::min(1.0, sum * std::exp(-z + a * std::log(z) - std::lgamma(a)));
+    // Continued fraction for the upper tail Q (modified Lentz).
+    constexpr double kTiny = 1e-300;
+    double b = z + 1.0 - a;
+    double c = 1.0 / kTiny;
+    double d = 1.0 / b;
+    double h = d;
+    for (int i = 1; i <= 1000; ++i) {
+        const double an = -i * (i - a);
+        b += 2.0;
+        d = an * d + b;
+        if (std::abs(d) < kTiny) d = kTiny;
+        c = b + an / c;
+        if (std::abs(c) < kTiny) c = kTiny;
+        d = 1.0 / d;
+        const double step = d * c;
+        h *= step;
+        if (std::abs(step - 1.0) < 1e-16) break;
+    }
+    return std::max(0.0, 1.0 - front * h);
 }
 
 double DataAnalyzer::TInv(double alpha, double df) {
-    // Newton-Raphson to find t such that P(T < t) = 1 - alpha/2
-    // For two-tailed test
-    double target = 1.0 - alpha / 2.0;
-    double t = 1.96;  // Initial guess (normal approx)
-
-    for (int i = 0; i < 50; i++) {
-        double p = StudentTCDF(t, df);
-        double error = p - target;
-
-        if (std::abs(error) < 1e-8) break;
-
-        // Derivative approximation
-        double dp = (StudentTCDF(t + 0.001, df) - p) / 0.001;
-        if (std::abs(dp) < 1e-10) break;
-
-        t -= error / dp;
+    // Two-tailed critical value: t with P(T < t) = 1 - alpha / 2. The CDF is
+    // monotone, so bracket the root and bisect (Newton from 1.96 could step
+    // past the flat tail and never come back).
+    const double target = 1.0 - alpha / 2.0;
+    double lo = 0.0;
+    double hi = 2.0;
+    while (StudentTCDF(hi, df) < target && hi < 1e8) hi *= 2.0;
+    for (int i = 0; i < 200 && hi - lo > 1e-13 * hi; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        if (StudentTCDF(mid, df) < target) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
     }
-
-    return t;
+    return 0.5 * (lo + hi);
 }
 
 HypothesisTestResult DataAnalyzer::OneSampleTTest(const std::vector<double>& sample, double mu0, double alpha) {
@@ -1216,7 +578,8 @@ HypothesisTestResult DataAnalyzer::ChiSquareTest(const std::vector<std::vector<d
     result.p_value = 1.0 - ChiSquareCDF(chi2, result.df);
 
     // Effect size: Cramér's V
-    double min_dim = std::min(rows - 1, cols - 1);
+    const size_t min_dimension = std::min(rows - 1, cols - 1);
+    const double min_dim = static_cast<double>(min_dimension);
     if (min_dim > 0 && grand_total > 0) {
         result.effect_size = std::sqrt(chi2 / (grand_total * min_dim));
     }
@@ -1237,6 +600,14 @@ HypothesisTestResult DataAnalyzer::ChiSquareTest(const std::vector<std::vector<d
 
 // ========== Distribution Fitting ==========
 
+// Maximum-likelihood standard deviation: the root mean squared deviation
+// (divides by n, not n - 1).
+static double MaximumLikelihoodSigma(const std::vector<double>& values, double mean) {
+    double sum_sq = 0.0;
+    for (double v : values) sum_sq += (v - mean) * (v - mean);
+    return std::sqrt(sum_sq / static_cast<double>(values.size()));
+}
+
 DistributionFitResult DataAnalyzer::FitNormal(const std::vector<double>& data) {
     DistributionFitResult result;
     result.type = DistributionType::Normal;
@@ -1244,8 +615,9 @@ DistributionFitResult DataAnalyzer::FitNormal(const std::vector<double>& data) {
 
     if (data.size() < 3) return result;
 
+    // Maximum-likelihood estimates (scipy.stats.norm.fit): sigma divides by n.
     double mu = Mean(data);
-    double sigma = StdDev(data, mu);
+    double sigma = MaximumLikelihoodSigma(data, mu);
 
     result.parameters["mu"] = mu;
     result.parameters["sigma"] = sigma;
@@ -1354,8 +726,9 @@ DistributionFitResult DataAnalyzer::FitLogNormal(const std::vector<double>& data
         log_data.push_back(std::log(x));
     }
 
+    // Maximum-likelihood estimates (scipy.stats.lognorm.fit, floc=0).
     double mu = Mean(log_data);
-    double sigma = StdDev(log_data, mu);
+    double sigma = MaximumLikelihoodSigma(log_data, mu);
 
     result.parameters["mu"] = mu;
     result.parameters["sigma"] = sigma;
@@ -1454,57 +827,25 @@ std::pair<double, double> DataAnalyzer::KolmogorovSmirnovTest(const std::vector<
         D = std::max(D, std::max(d1, d2));
     }
 
-    // Approximate p-value using Kolmogorov distribution
-    // Using asymptotic formula
+    // p-value from the asymptotic Kolmogorov distribution with Stephens'
+    // small-sample correction: Q(l) = 2 sum_k (-1)^(k-1) exp(-2 k^2 l^2)
+    // (scipy.stats.kstwobign.sf). Summing the whole series, not only its
+    // first term, keeps large p-values right; near l = 0 the series stops
+    // converging and Q is 1 to double precision.
     double sqrt_n = std::sqrt(n);
     double lambda_ks = (sqrt_n + 0.12 + 0.11 / sqrt_n) * D;
-    double p_value = 2.0 * std::exp(-2.0 * lambda_ks * lambda_ks);
-    p_value = std::max(0.0, std::min(1.0, p_value));
-
-    return {D, p_value};
-}
-
-std::vector<double> DataAnalyzer::TheoreticalQuantiles(size_t n, DistributionType type,
-                                                        const std::map<std::string, double>& params) {
-    std::vector<double> quantiles;
-    quantiles.reserve(n);
-
-    for (size_t i = 1; i <= n; i++) {
-        double p = (static_cast<double>(i) - 0.5) / static_cast<double>(n);
-
-        double q = 0.0;
-        switch (type) {
-            case DistributionType::Normal: {
-                double mu = params.count("mu") ? params.at("mu") : 0.0;
-                double sigma = params.count("sigma") ? params.at("sigma") : 1.0;
-                // Inverse normal approximation (Abramowitz and Stegun)
-                double t = std::sqrt(-2.0 * std::log(p < 0.5 ? p : 1.0 - p));
-                double c0 = 2.515517, c1 = 0.802853, c2 = 0.010328;
-                double d1 = 1.432788, d2 = 0.189269, d3 = 0.001308;
-                double z = t - (c0 + c1 * t + c2 * t * t) / (1.0 + d1 * t + d2 * t * t + d3 * t * t * t);
-                if (p < 0.5) z = -z;
-                q = mu + sigma * z;
-                break;
-            }
-            case DistributionType::Uniform: {
-                double a = params.count("a") ? params.at("a") : 0.0;
-                double b = params.count("b") ? params.at("b") : 1.0;
-                q = a + p * (b - a);
-                break;
-            }
-            case DistributionType::Exponential: {
-                double lambda = params.count("lambda") ? params.at("lambda") : 1.0;
-                q = -std::log(1.0 - p) / lambda;
-                break;
-            }
-            default:
-                q = p;
+    double p_value = 1.0;
+    if (lambda_ks > 0.2) {
+        double sum = 0.0;
+        for (int k = 1; k <= 100; ++k) {
+            const double term = std::exp(-2.0 * k * k * lambda_ks * lambda_ks);
+            sum += (k % 2 == 1) ? term : -term;
+            if (term < 1e-17) break;
         }
-
-        quantiles.push_back(q);
+        p_value = std::max(0.0, std::min(1.0, 2.0 * sum));
     }
 
-    return quantiles;
+    return {D, p_value};
 }
 
 // ========== Regression Analysis ==========
@@ -1557,27 +898,34 @@ RegressionResult DataAnalyzer::LinearRegression(const std::vector<double>& x,
 
     result.r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0;
     result.adjusted_r_squared = 1.0 - (1.0 - result.r_squared) * (n - 1) / (n - 2);
-    result.mse = ss_res / (n - 2);
+    result.mse = ss_res / n;
     result.rmse = std::sqrt(result.mse);
     result.mae = mae / n;
+    result.residual_variance = ss_res / result.df_resid;
+    result.residual_standard_error = std::sqrt(result.residual_variance);
 
     // Standard errors
-    double se_b1 = std::sqrt(result.mse / ss_xx);
-    double se_b0 = std::sqrt(result.mse * (1.0 / n + mean_x * mean_x / ss_xx));
+    double se_b1 = std::sqrt(result.residual_variance / ss_xx);
+    double se_b0 = std::sqrt(
+        result.residual_variance *
+        (1.0 / n + mean_x * mean_x / ss_xx));
 
     result.std_errors = {se_b0, se_b1};
 
     // t-values and p-values
     result.t_values = {b0 / se_b0, b1 / se_b1};
+    const double residual_df = static_cast<double>(result.df_resid);
     result.p_values = {
-        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[0]), n - 2)),
-        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[1]), n - 2))
+        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[0]), residual_df)),
+        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[1]), residual_df))
     };
 
     // F-statistic
     double ss_reg = ss_tot - ss_res;
-    result.f_statistic = result.mse > 0 ? (ss_reg / 1) / result.mse : 0;
-    result.f_p_value = 1.0 - FCDF(result.f_statistic, 1, n - 2);
+    result.f_statistic = result.residual_variance > 0
+        ? (ss_reg / 1) / result.residual_variance
+        : 0;
+    result.f_p_value = 1.0 - FCDF(result.f_statistic, 1.0, residual_df);
 
     return result;
 }
@@ -1724,9 +1072,11 @@ RegressionResult DataAnalyzer::MultipleLinearRegression(const std::vector<std::v
 
     result.r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0;
     result.adjusted_r_squared = 1.0 - (1.0 - result.r_squared) * (n - 1) / (n - p);
-    result.mse = ss_res / (n - p);
+    result.mse = ss_res / n;
     result.rmse = std::sqrt(result.mse);
     result.mae = mae / n;
+    result.residual_variance = ss_res / result.df_resid;
+    result.residual_standard_error = std::sqrt(result.residual_variance);
 
     // Compute (X'X)^-1 for standard errors
     // We already have the result of Gauss-Jordan, extract diagonal
@@ -1777,19 +1127,26 @@ RegressionResult DataAnalyzer::MultipleLinearRegression(const std::vector<std::v
     result.t_values.resize(p);
     result.p_values.resize(p);
 
+    const double residual_df = static_cast<double>(result.df_resid);
+
     for (size_t i = 0; i < p; i++) {
-        result.std_errors[i] = std::sqrt(result.mse * XtX_inv[i][i]);
+        result.std_errors[i] =
+            std::sqrt(result.residual_variance * XtX_inv[i][i]);
         if (result.std_errors[i] > 0) {
             result.t_values[i] = result.coefficients[i] / result.std_errors[i];
-            result.p_values[i] = 2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[i]), n - p));
+            result.p_values[i] =
+                2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[i]), residual_df));
         }
     }
 
     // F-statistic
     double ss_reg = ss_tot - ss_res;
-    double ms_reg = ss_reg / (p - 1);
-    result.f_statistic = result.mse > 0 ? ms_reg / result.mse : 0;
-    result.f_p_value = 1.0 - FCDF(result.f_statistic, p - 1, n - p);
+    const double model_df = static_cast<double>(result.df_model);
+    double ms_reg = ss_reg / model_df;
+    result.f_statistic = result.residual_variance > 0
+        ? ms_reg / result.residual_variance
+        : 0;
+    result.f_p_value = 1.0 - FCDF(result.f_statistic, model_df, residual_df);
 
     return result;
 }

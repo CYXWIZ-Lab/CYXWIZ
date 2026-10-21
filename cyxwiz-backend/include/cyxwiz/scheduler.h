@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 #include "api_export.h"
 #include "tensor.h"  // Required before optimizer.h (uses Tensor in std::map)
 #include "optimizer.h"
+#include <map>
 #include <memory>
 #include <string>
 #include <functional>
@@ -15,10 +18,26 @@ namespace cyxwiz {
 enum class SchedulerType {
     StepLR,          // Decay by gamma every step_size epochs
     ExponentialLR,   // Decay by gamma every epoch
-    CosineAnnealing, // Cosine annealing with warm restarts
+    CosineAnnealing, // Cosine annealing without warm restarts
     ReduceLROnPlateau, // Reduce when metric stops improving
     LinearWarmup,    // Linear warmup followed by decay
     OneCycleLR       // 1cycle policy
+};
+
+/**
+ * Typed, backend-owned scheduler state required to reproduce the next LR.
+ * Checkpoint code serializes this envelope without inspecting concrete
+ * scheduler internals.
+ */
+struct SchedulerState {
+    int schema_version = 1;
+    std::string scheduler_type;
+    double base_learning_rate = 0.0;
+    double current_learning_rate = 0.0;
+    int last_step = 0;
+    std::map<std::string, double> hyperparameters;
+    std::map<std::string, std::string> string_hyperparameters;
+    std::map<std::string, double> values;
 };
 
 /**
@@ -50,6 +69,20 @@ public:
      */
     virtual void Reset() = 0;
 
+    /** Export complete state required for the next scheduler step. */
+    virtual bool ExportState(SchedulerState& state, std::string& error) const {
+        state = SchedulerState{};
+        error = "This scheduler does not implement exact state export.";
+        return false;
+    }
+
+    /** Import state transactionally; failure must not mutate the scheduler. */
+    virtual bool ImportState(const SchedulerState& state, std::string& error) {
+        (void)state;
+        error = "This scheduler does not implement exact state import.";
+        return false;
+    }
+
 protected:
     double base_lr_ = 0.001;
     double current_lr_ = 0.001;
@@ -73,6 +106,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "StepLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -98,6 +133,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "ExponentialLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -123,6 +160,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "CosineAnnealingLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -157,6 +196,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "ReduceLROnPlateau"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
     /**
      * Check if improvement was detected
@@ -186,8 +227,9 @@ private:
 /**
  * LinearWarmupLR - Linear warmup followed by constant or decay
  *
- * During warmup: lr = base_lr * epoch / warmup_epochs
- * After warmup: lr = base_lr (or with decay if specified)
+ * During warmup, linearly interpolate from start_lr at construction/step 0 to
+ * base_lr at warmup_epochs. After warmup, maintain base_lr. This matches a
+ * PyTorch LambdaLR linear-warmup schedule.
  */
 class CYXWIZ_API LinearWarmupLR : public LRScheduler {
 public:
@@ -208,6 +250,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "LinearWarmupLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
     bool IsWarmupComplete() const { return last_epoch_ >= warmup_epochs_; }
 
@@ -221,8 +265,8 @@ private:
 /**
  * OneCycleLR - 1cycle learning rate policy
  *
- * The 1cycle policy anneals the learning rate from initial_lr to max_lr
- * to min_lr (final_lr) over total_steps, with linear warmup and cosine decay.
+ * The default PyTorch-compatible two-phase policy cosine-anneals the learning
+ * rate from initial_lr to max_lr, then from max_lr to final_lr.
  */
 class CYXWIZ_API OneCycleLR : public LRScheduler {
 public:
@@ -232,7 +276,7 @@ public:
      * @param total_steps Total number of steps (epochs * steps_per_epoch)
      * @param pct_start Percentage of cycle spent increasing LR (default: 0.3)
      * @param div_factor Initial LR = max_lr / div_factor (default: 25)
-     * @param final_div_factor Final LR = max_lr / final_div_factor (default: 1e4)
+     * @param final_div_factor Final LR = initial_lr / final_div_factor (default: 1e4)
      */
     OneCycleLR(
         Optimizer* optimizer,
@@ -247,6 +291,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "OneCycleLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -259,6 +305,41 @@ private:
     double final_lr_;
 
     int current_step_ = 0;
+};
+
+/**
+ * Per-optimizer-update warmup then decay (the usual LLM schedule):
+ * update u (1-based) of total_steps uses
+ *   warmup (u <= warmup_steps):  peak * u / warmup_steps
+ *   then progress p = (u - warmup_steps) / (total_steps - warmup_steps):
+ *     cosine:   floor + (peak - floor) * (1 + cos(pi * p)) / 2
+ *     linear:   floor + (peak - floor) * (1 - p)
+ *     constant: peak
+ * with floor = peak * min_lr_ratio. Step(n) is called after update n and
+ * sets the rate for update n + 1.
+ */
+class CYXWIZ_API WarmupDecayLR : public LRScheduler {
+public:
+    WarmupDecayLR(Optimizer* optimizer, double peak_lr, int warmup_steps, int total_steps,
+                  std::string decay = "cosine", double min_lr_ratio = 0.1);
+
+    void Step(int completed_updates, float metric = 0.0f) override;
+    double GetLR() const override { return current_lr_; }
+    std::string GetName() const override { return "WarmupDecayLR"; }
+    void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
+    // Rate for 1-based update `update` (pure; used by Step and tests).
+    double RateForUpdate(int update) const;
+
+private:
+    Optimizer* optimizer_;
+    double peak_lr_;
+    int warmup_steps_;
+    int total_steps_;
+    std::string decay_;
+    double min_lr_ratio_;
+    int completed_ = 0;
 };
 
 /**

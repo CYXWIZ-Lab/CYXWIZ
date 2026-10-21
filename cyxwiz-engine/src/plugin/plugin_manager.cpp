@@ -3,22 +3,91 @@
 #include <imgui.h>
 #include "security/safe_execute.h"
 #include "security/permission_store.h"
-#include "registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
 #include "interfaces/i_panel_provider.h"
 #include "interfaces/i_node_provider.h"
+#include "interfaces/i_tensor_node_provider.h"
+#include <cyxwiz/sequential.h>
 #include "interfaces/i_training_hook.h"
 #include "interfaces/i_data_provider.h"
 #include "interfaces/i_analytics_provider.h"
+#include "interfaces/i_assistant_provider.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <queue>
 #include <set>
 
 namespace cyxwiz::plugin {
+
+// Owns an unloaded plugin's library while modules made by it are alive.
+struct PluginManager::ExtensionLease {
+    std::unique_ptr<LoadedPlugin> parked;
+};
+
+namespace {
+
+// Adapts a plugin's ITensorNodeProvider to the engine's factory for one
+// node type. Every call into the plugin goes through crash isolation, and
+// a fault becomes an error on the node instead of ending the Engine.
+class PluginTensorNodeFactory : public ITensorNodeFactory {
+public:
+    PluginTensorNodeFactory(std::string plugin_id, std::string type_name, ITensorNodeProvider* provider)
+        : plugin_id_(std::move(plugin_id)), type_name_(std::move(type_name)), provider_(provider) {}
+
+    ExtensionShapeResult InferOutputShape(
+        const std::vector<size_t>& input_shape,
+        const std::map<std::string, std::string>& parameters) const override {
+        ExtensionShapeResult result;
+        const auto call = security::SafeExecute(plugin_id_, "InferOutputShape", [&]() {
+            result = provider_->InferOutputShape(type_name_, input_shape, parameters);
+        });
+        if (!call.success) {
+            return {false, {}, call.error_message.empty() ? "the plugin failed" : call.error_message};
+        }
+        return result;
+    }
+
+    std::unique_ptr<Module> CreateModule(
+        const std::vector<size_t>& input_shape,
+        const std::map<std::string, std::string>& parameters,
+        std::string& error) const override {
+        std::unique_ptr<Module> module;
+        const auto call = security::SafeExecute(plugin_id_, "CreateModule", [&]() {
+            module = provider_->CreateModule(type_name_, input_shape, parameters, error);
+        });
+        if (!call.success) {
+            error = call.error_message.empty() ? "the plugin failed" : call.error_message;
+            return nullptr;
+        }
+        return module;
+    }
+
+private:
+    std::string plugin_id_;
+    std::string type_name_;
+    ITensorNodeProvider* provider_;
+};
+
+std::vector<std::string> SplitChoices(const char* text) {
+    std::vector<std::string> choices;
+    std::string current;
+    for (const char* c = text ? text : ""; *c; ++c) {
+        if (*c == ',') {
+            if (!current.empty()) choices.push_back(current);
+            current.clear();
+        } else {
+            current += *c;
+        }
+    }
+    if (!current.empty()) choices.push_back(current);
+    return choices;
+}
+
+}  // namespace
 
 // ============================================================================
 // Singleton
@@ -41,7 +110,7 @@ PluginManager::~PluginManager() {
 void PluginManager::SetSearchPaths(const std::vector<std::filesystem::path>& paths) {
     std::lock_guard lock(mutex_);
     search_paths_ = paths;
-    spdlog::info("PluginManager: {} search paths configured", search_paths_.size());
+    spdlog::debug("PluginManager: {} search paths configured", search_paths_.size());
     for (const auto& p : search_paths_) {
         spdlog::debug("  Plugin search path: {}", p.string());
     }
@@ -89,7 +158,8 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
         if (PluginLoader::ParseManifest(plugin_dir, manifest, manifest_error)) {
             std::lock_guard lock(mutex_);
             if (plugins_.count(manifest.id)) {
-                return false;  // Already loaded, skip silently
+                spdlog::debug("PluginManager: Plugin {} is already loaded", manifest.id);
+                return true;
             }
         }
     }
@@ -112,7 +182,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
         return false;
     }
 
-    spdlog::info("PluginManager: Loaded plugin {} ({})", loaded->manifest.name, id);
+    spdlog::debug("PluginManager: Loaded plugin {} ({})", loaded->manifest.name, id);
     plugins_[id] = std::move(loaded);
     return true;
 }
@@ -139,6 +209,11 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     }
 
     auto& plugin = it->second;
+
+    if (plugin->state == PluginState::Initialized ||
+        plugin->state == PluginState::Active) {
+        return true;
+    }
 
     if (plugin->state != PluginState::Loaded) {
         spdlog::warn("PluginManager: Plugin {} is in state {}, expected Loaded",
@@ -183,7 +258,8 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     }
 
     // Create PluginContext for this plugin
-    auto ctx = std::make_unique<PluginContext>(plugin_id, plugin->instance);
+    auto ctx = std::make_unique<EnginePluginContext>(plugin_id, plugin->manifest.version.ToString(),
+                                                     plugin->instance, plugin->plugin_dir);
 
     // Share engine's ImGui context with the DLL so plugin UI rendering works
     plugin->instance->SetImGuiContext(ImGui::GetCurrentContext());
@@ -256,12 +332,14 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             struct EnumState {
                 std::string plugin_id;
                 INodeProvider* provider;
+                std::string source_path;
                 PluginNodeTypeInfo current;
                 size_t count = 0;
             };
             EnumState state;
             state.plugin_id = plugin_id;
             state.provider = p;
+            state.source_path = plugin->plugin_dir.string();
 
             NodeTypeCallback cb{};
             cb.user_data = &state;
@@ -292,9 +370,16 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             };
             cb.on_node_done = [](void* ud) {
                 auto* s = static_cast<EnumState*>(ud);
-                PluginNodeRegistry::Instance().RegisterDirect(
-                    s->plugin_id, std::move(s->current), s->provider);
-                s->count++;
+                ExtensionNodeRegistry::Registration registration;
+                registration.descriptor = DescribeSignalNode(s->plugin_id, s->current);
+                registration.descriptor.source_path = s->source_path;
+                registration.signal_provider = s->provider;
+                std::string error;
+                if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
+                    s->count++;
+                } else {
+                    spdlog::warn("PluginManager: node not registered: {}", error);
+                }
             };
 
             auto reg_result = security::SafeExecute(plugin_id, "RegisterNodes", [&]() {
@@ -306,6 +391,88 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 return false;
             }
             spdlog::info("PluginManager: Registered {} nodes for '{}'", state.count, plugin_id);
+        }
+
+        // Register trainable nodes (TOFIX125, API 1.1), with crash isolation
+        if (auto* p = static_cast<ITensorNodeProvider*>(instance->QueryInterface("ITensorNodeProvider"))) {
+            struct TensorEnumState {
+                std::string plugin_id;
+                std::string source_path;
+                ITensorNodeProvider* provider = nullptr;
+                std::shared_ptr<void> lease;
+                ExtensionNodeDescriptor current;
+                size_t count = 0;
+            };
+            TensorEnumState tstate;
+            tstate.plugin_id = plugin_id;
+            tstate.source_path = plugin->plugin_dir.string();
+            tstate.provider = p;
+            auto& lease = extension_leases_[plugin_id];
+            if (!lease) lease = std::make_shared<ExtensionLease>();
+            tstate.lease = lease;
+
+            TensorNodeCallback cb{};
+            cb.user_data = &tstate;
+            cb.on_node = [](void* ud, const char* type_name, const char* display_name,
+                            const char* category, const char* description, const char* version,
+                            uint32_t color, const char* icon, bool is_activation) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                s->current = ExtensionNodeDescriptor{};
+                auto& d = s->current;
+                d.provider_id = s->plugin_id;
+                d.type_name = type_name ? type_name : "";
+                d.version = version ? version : "";
+                d.source = ExtensionSource::NativePlugin;
+                d.source_path = s->source_path;
+                d.kind = ExtensionNodeKind::TensorLayer;
+                d.role = is_activation ? ExtensionLayerRole::Activation : ExtensionLayerRole::Layer;
+                d.menu_category = category ? category : "";
+                d.color = color;
+                d.metadata.name = (display_name && *display_name) ? display_name : d.type_name;
+                d.metadata.brief_description = description ? description : "";
+                d.metadata.icon = icon ? icon : "";
+            };
+            cb.on_pin = [](void* ud, const char* name, bool is_input) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                PortDefinition port(name ? name : "", PinType::Tensor);
+                (is_input ? s->current.metadata.inputs : s->current.metadata.outputs).push_back(std::move(port));
+            };
+            cb.on_parameter = [](void* ud, const char* name, const char* type, const char* default_value,
+                                 const char* description, const char* choices) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                s->current.metadata.parameters.emplace_back(
+                    name ? name : "", type ? type : "string", default_value ? default_value : "",
+                    description ? description : "", SplitChoices(choices));
+            };
+            cb.on_node_done = [](void* ud) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                ExtensionNodeRegistry::Registration registration;
+                registration.descriptor = std::move(s->current);
+                registration.tensor_factory = std::make_shared<PluginTensorNodeFactory>(
+                    s->plugin_id, registration.descriptor.type_name, s->provider);
+                registration.provider_lease = s->lease;
+                std::string error;
+                if (registration.descriptor.metadata.inputs.size() != 1 ||
+                    registration.descriptor.metadata.outputs.size() != 1) {
+                    spdlog::warn("PluginManager: trainable node {}:{} not registered: it needs exactly "
+                                 "one input and one output pin", s->plugin_id,
+                                 registration.descriptor.type_name);
+                } else if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
+                    s->count++;
+                } else {
+                    spdlog::warn("PluginManager: trainable node not registered: {}", error);
+                }
+            };
+
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterTensorNodes", [&]() {
+                p->EnumerateTensorNodes(cb);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+            spdlog::info("PluginManager: Registered {} trainable nodes for '{}'", tstate.count, plugin_id);
         }
 
         // Register training hook (with crash isolation)
@@ -340,17 +507,39 @@ void PluginManager::InitializeAll() {
     // Get load order from dependency resolution
     auto order = ResolveLoadOrder();
 
-    size_t success_count = 0;
+    size_t ready_count = 0;
+    size_t initialized_count = 0;
     for (const auto& id : order) {
+        const auto state = GetPluginState(id);
+        if (state == PluginState::Initialized || state == PluginState::Active) {
+            ready_count++;
+            continue;
+        }
+        if (state != PluginState::Loaded) {
+            continue;
+        }
         if (InitializePlugin(id)) {
-            success_count++;
+            ready_count++;
+            initialized_count++;
         }
     }
 
-    spdlog::info("PluginManager: Initialized {}/{} plugins", success_count, order.size());
+    spdlog::info("PluginManager: {}/{} plugins ready ({} initialized)",
+                 ready_count, order.size(), initialized_count);
+}
+
+// Everything a plugin registered points into its library: remove it all
+// before the library can be freed.
+void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
+    ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
+    PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
+    PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
 }
 
 void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
+    std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 
     auto it = plugins_.find(plugin_id);
@@ -367,12 +556,7 @@ void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     security::SafeExecute(plugin_id, "OnShutdown",
         [&]() { plugin->instance->OnShutdown(*ctx_it->second); });
 
-    // Cleanup all registry registrations for this plugin
-    PluginNodeRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
-    PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
+    RemoveRegistrations(plugin_id);
 
     plugin->state = PluginState::Loaded;
     contexts_.erase(ctx_it);
@@ -391,6 +575,7 @@ void PluginManager::ShutdownAll() {
 }
 
 void PluginManager::UnloadPlugin(const std::string& plugin_id) {
+    std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 
     // Clear any pending permission requests for this plugin
@@ -410,6 +595,9 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
         }
         plugin->state = PluginState::Loaded;
     }
+    // Before OnUnload and before the library is freed: its nodes, panels,
+    // loaders and hooks point into it (Unload used to skip this).
+    RemoveRegistrations(plugin_id);
 
     // Call OnUnload while context still exists (with crash isolation)
     if (plugin->instance && ctx_it != contexts_.end()) {
@@ -419,6 +607,19 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
 
     spdlog::info("PluginManager: Unloading plugin {}", plugin_id);
     contexts_.erase(plugin_id);
+
+    // Modules of its trainable nodes may still live in a model (a training
+    // run, a trained model kept for export). Their code is in this library:
+    // hand it to the lease, which frees it with the last such module.
+    const auto lease_it = extension_leases_.find(plugin_id);
+    if (lease_it != extension_leases_.end()) {
+        if (lease_it->second.use_count() > 1) {
+            spdlog::info("PluginManager: {} stays loaded until the {} module(s) made by it are released",
+                         plugin_id, lease_it->second.use_count() - 1);
+        }
+        lease_it->second->parked = std::move(it->second);
+        extension_leases_.erase(lease_it);  // frees the library now when nothing holds it
+    }
     plugins_.erase(it);
 }
 
@@ -520,6 +721,52 @@ PluginContext* PluginManager::GetContext(const std::string& plugin_id) const {
     auto it = contexts_.find(plugin_id);
     if (it == contexts_.end()) return nullptr;
     return it->second.get();
+}
+
+void PluginManager::SetAssistantContextSnapshotForAll(
+    const AssistantContextSnapshot& snapshot) {
+    std::lock_guard lock(mutex_);
+    for (auto& [id, context] : contexts_) {
+        if (context) {
+            context->SetAssistantContextSnapshot(snapshot);
+        }
+    }
+}
+
+AssistantCommandResponse PluginManager::RunAssistantCommand(
+    const AssistantCommandRequest& request) {
+    std::lock_guard assistant_lock(assistant_command_mutex_);
+
+    IAssistantProvider* provider = nullptr;
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& [plugin_id, plugin] : plugins_) {
+            if (!plugin || !plugin->instance) {
+                continue;
+            }
+            if (plugin->state != PluginState::Initialized &&
+                plugin->state != PluginState::Active) {
+                continue;
+            }
+            provider = static_cast<IAssistantProvider*>(
+                plugin->instance->QueryInterface("IAssistantProvider"));
+            if (provider) {
+                break;
+            }
+        }
+    }
+
+    if (!provider) {
+        AssistantCommandResponse response;
+        response.handled = false;
+        response.success = false;
+        response.error = "No assistant provider plugin is loaded.";
+        return response;
+    }
+
+    auto response = provider->RunAssistantCommand(request);
+    response.handled = true;
+    return response;
 }
 
 // ============================================================================

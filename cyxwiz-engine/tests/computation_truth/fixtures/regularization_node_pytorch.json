@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "torch_version": "2.10.0+cpu",
+  "learning_rate": 0.0625,
+  "batch_size": 4,
+  "epochs": 3,
+  "tolerance": 1e-06,
+  "x0": [
+    0.0,
+    0.1,
+    0.9,
+    1.0,
+    0.2,
+    0.8,
+    0.4,
+    0.6
+  ],
+  "x1": [
+    0.0,
+    0.2,
+    0.8,
+    1.0,
+    0.1,
+    0.9,
+    0.5,
+    0.3
+  ],
+  "label": [
+    0.0,
+    0.3,
+    1.7,
+    2.0,
+    0.3,
+    1.7,
+    0.9,
+    0.9
+  ],
+  "initial_parameters": {
+    "layer0.weight": [
+      -0.941265523,
+      0.647087157
+    ],
+    "layer0.bias": [
+      0.0
+    ]
+  },
+  "cases": [
+    {
+      "name": "none",
+      "parameters_after": {
+        "layer0.weight": [
+          -0.5123610496520996,
+          1.0554258823394775
+        ],
+        "layer0.bias": [
+          0.4944581687450409
+        ]
+      }
+    },
+    {
+      "name": "l1",
+      "node": "L1Regularization",
+      "parameters": {
+        "lambda": "0.05"
+      },
+      "parameters_after": {
+        "layer0.weight": [
+          -0.49212560057640076,
+          1.0381797552108765
+        ],
+        "layer0.bias": [
+          0.4819420278072357
+        ]
+      }
+    },
+    {
+      "name": "l2",
+      "node": "L2Regularization",
+      "parameters": {
+        "lambda": "0.05"
+      },
+      "parameters_after": {
+        "layer0.weight": [
+          -0.4853626787662506,
+          1.024303674697876
+        ],
+        "layer0.bias": [
+          0.4859568476676941
+        ]
+      }
+    },
+    {
+      "name": "elastic_net",
+      "node": "ElasticNet",
+      "parameters": {
+        "lambda": "0.1",
+        "l1_ratio": "0.25"
+      },
+      "parameters_after": {
+        "layer0.weight": [
+          -0.4623229205608368,
+          1.000654697418213
+        ],
+        "layer0.bias": [
+          0.4756295084953308
+        ]
+      }
+    }
+  ]
+}

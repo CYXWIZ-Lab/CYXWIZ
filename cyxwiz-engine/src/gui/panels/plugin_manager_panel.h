@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/plugin_presentation.h"
 #include <string>
 #include <vector>
 
@@ -31,9 +32,19 @@ private:
     char search_buf_[256] = {};
     char install_path_buf_[512] = {};
     bool show_install_popup_ = false;
+    bool close_install_popup_ = false;
+    bool is_installing_plugin_ = false;
+    uint64_t install_task_id_ = 0;
+    std::string install_status_;
 
     // Deferred actions (applied after iteration to avoid use-after-free)
     std::vector<std::string> deferred_unloads_;
+
+    // Which plugins load when the Engine starts (TOFIX125 step 2.9), read
+    // once and again after each change.
+    cyxwiz::PluginStartupList startup_list_;
+    bool startup_list_read_ = false;
+    void ReloadStartupList();
 
     // Install error feedback
     std::string install_error_;

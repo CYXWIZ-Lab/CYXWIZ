@@ -56,6 +56,36 @@ may be available:
 # First check for pre-built GPU version in external/onnxruntime-gpu
 set(_PREBUILT_ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/external/onnxruntime-gpu")
 
+if(WIN32 AND EXISTS "${_PREBUILT_ONNXRUNTIME_DIR}/lib/onnxruntime.lib")
+    set(ONNXRUNTIME_INCLUDE_DIR
+        "${_PREBUILT_ONNXRUNTIME_DIR}/include"
+        CACHE PATH "The directory containing ONNX Runtime headers" FORCE)
+    set(ONNXRUNTIME_LIBRARY
+        "${_PREBUILT_ONNXRUNTIME_DIR}/lib/onnxruntime.lib"
+        CACHE FILEPATH "The ONNX Runtime import library" FORCE)
+    set(ONNXRUNTIME_DLL
+        "${_PREBUILT_ONNXRUNTIME_DIR}/bin/onnxruntime.dll"
+        CACHE FILEPATH "The ONNX Runtime runtime DLL" FORCE)
+
+    if(EXISTS "${_PREBUILT_ONNXRUNTIME_DIR}/lib/onnxruntime_providers_cuda.lib")
+        set(ONNXRUNTIME_PROVIDERS_CUDA_LIBRARY
+            "${_PREBUILT_ONNXRUNTIME_DIR}/lib/onnxruntime_providers_cuda.lib"
+            CACHE FILEPATH "The ONNX Runtime CUDA provider import library" FORCE)
+        set(ONNXRUNTIME_PROVIDERS_CUDA_DLL
+            "${_PREBUILT_ONNXRUNTIME_DIR}/bin/onnxruntime_providers_cuda.dll"
+            CACHE FILEPATH "The ONNX Runtime CUDA provider DLL" FORCE)
+    endif()
+
+    if(EXISTS "${_PREBUILT_ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib")
+        set(ONNXRUNTIME_PROVIDERS_SHARED_LIBRARY
+            "${_PREBUILT_ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib"
+            CACHE FILEPATH "The ONNX Runtime shared provider import library" FORCE)
+        set(ONNXRUNTIME_PROVIDERS_SHARED_DLL
+            "${_PREBUILT_ONNXRUNTIME_DIR}/bin/onnxruntime_providers_shared.dll"
+            CACHE FILEPATH "The ONNX Runtime shared provider DLL" FORCE)
+    endif()
+endif()
+
 # Look for the header file
 find_path(ONNXRUNTIME_INCLUDE_DIR
     NAMES onnxruntime_cxx_api.h

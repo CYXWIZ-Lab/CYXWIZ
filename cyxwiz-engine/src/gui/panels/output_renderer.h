@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../scripting/cell.h"
+#include "../ui_tokens.h"
 #include <string>
 #include <vector>
 #include <functional>
@@ -128,12 +129,12 @@ private:
     static bool IsListItem(const std::string& line, std::string& content);
     static bool IsCodeBlock(const std::string& line);
 
-    // Style helpers
-    static ImVec4 GetErrorColor() { return ImVec4(1.0f, 0.4f, 0.4f, 1.0f); }
-    static ImVec4 GetStdoutColor() { return ImVec4(0.9f, 0.9f, 0.9f, 1.0f); }
-    static ImVec4 GetStderrColor() { return ImVec4(1.0f, 0.6f, 0.4f, 1.0f); }
-    static ImVec4 GetHeaderColor() { return ImVec4(0.4f, 0.8f, 1.0f, 1.0f); }
-    static ImVec4 GetCodeColor() { return ImVec4(0.6f, 0.9f, 0.6f, 1.0f); }
+    // Style helpers (theme tokens, read every call)
+    static ImVec4 GetErrorColor() { return ui::CurrentTokens().error; }
+    static ImVec4 GetStdoutColor() { return ui::CurrentTokens().text; }
+    static ImVec4 GetStderrColor() { return ui::CurrentTokens().caution; }
+    static ImVec4 GetHeaderColor() { return ui::CurrentTokens().accent_text; }
+    static ImVec4 GetCodeColor() { return ui::CurrentTokens().success; }
 
     // Callback for opening plots in new window
     static OpenPlotWindowCallback open_plot_window_callback_;

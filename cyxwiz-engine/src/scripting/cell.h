@@ -1,16 +1,22 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 #include <functional>
 #include <chrono>
 #include <random>
-#include <TextEditor.h>
+#include "../gui/code_editor.h"
+#include "../core/language_results.h"
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
 
 namespace cyxwiz {
+
+namespace html {
+struct Table;
+}
 
 /**
  * Cell type enumeration
@@ -29,7 +35,19 @@ enum class CellState {
     Queued,     // Waiting to run
     Running,    // Currently executing
     Success,    // Completed successfully
-    Error       // Completed with error
+    Error,      // Completed with error
+    NotRun      // Was queued; not run because a cell before it failed or was interrupted
+};
+
+/**
+ * One frame of a cell's traceback, innermost last (TOFIX133 P4).
+ */
+struct TraceFrame {
+    std::string file;       // a path, or the cell's name ("Cell In[3]")
+    int line = 0;
+    std::string function;
+    std::string code;
+    std::string cause;      // first frame of a chained exception: "URLError: ..." ("Caused by")
 };
 
 /**
@@ -60,6 +78,24 @@ struct CellOutput {
     int width = 0;                  // Image width
     int height = 0;                 // Image height
     std::vector<unsigned char> image_data;  // Raw PNG data (alternative to base64 in data)
+
+    // A cell's value (Jupyter's execute_result), not printed text.
+    bool is_result = false;
+    std::string html;       // text/html of a result (pandas tables), with `data` as its plain text
+
+    // View state: a long text or traceback shown in full; a result's table
+    // parsed from `html` once.
+    bool expanded = false;
+    std::shared_ptr<html::Table> table_cache;
+
+    // Error outputs: exception name, message and frames (TOFIX133 P4).
+    std::string ename;
+    std::string evalue;
+    std::vector<TraceFrame> frames;
+
+    // The output's JSON as read from an .ipynb file, written back unchanged
+    // (keeps MIME types this Engine does not draw). Empty for new outputs.
+    std::string ipynb_raw;
 
     CellOutput() = default;
 
@@ -102,6 +138,7 @@ struct Cell {
     std::vector<CellOutput> outputs;        // Execution outputs
     int execution_count = 0;                // In [ ] number (0 = not run yet)
     CellState state = CellState::Idle;      // Current execution state
+    double duration_seconds = -1.0;         // last run's time (-1 = not timed)
 
     // UI state
     bool collapsed = false;                 // Cell input collapsed
@@ -110,11 +147,19 @@ struct Cell {
     bool is_selected = false;               // Currently selected
     bool is_editing = false;                // Currently in edit mode
 
-    // Editor instance (for code cells)
-    TextEditor editor;
+    // Code view of the cell (TOFIX133 P1: the Script Editor's own editor)
+    CodeEditor editor;
 
     // Breakpoints (line numbers)
-    std::vector<int> breakpoints;
+    std::vector<scripting::DebugBreakpoint> breakpoints;  // move with their lines (TOFIX133 P6)
+
+    // Other keys of an .ipynb cell (id, metadata, attachments) as JSON.
+    std::string ipynb_extra;
+
+    // pyflakes problems of the last check (TOFIX133 P3), and the text
+    // version it was for (+1; 0 = not checked).
+    std::vector<lang::Problem> problems;
+    std::uint64_t problems_version = 0;
 
     Cell() {
         id = GenerateId();
@@ -144,29 +189,8 @@ struct Cell {
 
     // Setup code editor with Python syntax
     void SetupCodeEditor() {
-        auto lang = TextEditor::LanguageDefinition::CPlusPlus();
-        lang.mKeywords.clear();
-
-        static const char* const py_keywords[] = {
-            "and", "as", "assert", "break", "class", "continue", "def", "del",
-            "elif", "else", "except", "False", "finally", "for", "from", "global",
-            "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or",
-            "pass", "raise", "return", "True", "try", "while", "with", "yield",
-            "async", "await", "print", "len", "range", "str", "int", "float",
-            "list", "dict", "set", "tuple", "bool", "type", "self", "cls"
-        };
-
-        for (const auto& k : py_keywords) {
-            lang.mKeywords.insert(k);
-        }
-
-        lang.mSingleLineComment = "#";
-        lang.mCommentStart = "\"\"\"";
-        lang.mCommentEnd = "\"\"\"";
-        lang.mName = "Python";
-
-        editor.SetLanguageDefinition(lang);
-        editor.SetShowWhitespaces(false);
+        editor.SetLanguage(type == CellType::Code ? cyxwiz::editor::Language::Python : cyxwiz::editor::Language::Plain);
+        editor.SetShowWhitespace(false);
         editor.SetTabSize(4);
         editor.SetText(source);
     }
@@ -181,6 +205,7 @@ struct Cell {
     // Sync editor from source
     void SyncEditorFromSource() {
         if (type == CellType::Code || type == CellType::Markdown) {
+            editor.SetLanguage(type == CellType::Code ? cyxwiz::editor::Language::Python : cyxwiz::editor::Language::Plain);
             editor.SetText(source);
         }
     }

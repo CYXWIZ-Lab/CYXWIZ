@@ -1,0 +1,530 @@
+# CyxWiz Backend Pack Contract
+
+## Status
+
+Schema 1 is the frozen desktop release boundary for Ticket 88.
+The implementation is dependency-free and lives in
+`scripts/backend_pack_contract.py`. A schema change requires a new
+`schema_version`; readers must fail closed on unknown versions or fields.
+
+## Runtime Layout
+
+CyxWiz owns one application-local runtime root selected by an app-level native
+bootstrapper:
+
+```text
+cyxwiz-runtime-bootstrapper[.exe]     # app-level launcher
+cyxwiz-product-removal-finalizer[.exe] # copied out for deferred removal
+cyxwiz-installer[.exe]
+cyxwiz-backend-pack-installer[.exe]
+runtime/
+  trust/
+    trusted-keys.json
+  catalogs/
+    current.json
+    manifests/
+      <pack-id>.json
+  base/
+    <base-pack-id>/
+  packs/
+    cuda/<pack-id>/
+    opencl/<pack-id>/
+    oneapi/<pack-id>/
+  staging/
+    <transaction-id>/
+  rollback/
+    <runtime-set-id>/
+  active-runtime.json
+```
+
+The stable bootstrapper is installed beside `runtime/` and retained inside the
+signed versioned base as its verified publication source. Fresh base delivery
+rechecks its signed size/hash and atomically publishes it before activating
+`active-runtime.json`. It resolves the selected Engine from that state; a base
+archive does not contain an independently launchable PATH-mutating script.
+The bootstrapper resolves installer/repair executables from the active base so
+the full GUI and helper dependency closure stays versioned instead of being
+duplicated at the product root. The helper remains a separate process that
+does not link the backend or ArrayFire runtime, so it can replace an inactive
+pack without keeping any pack DLL loaded.
+
+Windows and POSIX launchers enforce the same state and child-process contract.
+Linux and macOS resolve the active base through the shared runtime validator,
+replace inherited loader paths with only the active package directories,
+remove ArrayFire, Python, and loader-injection overrides, and use exact
+`fork`/`exec` argument vectors for Engine, Installer, and deferred Repair.
+They do not invoke a shell or restore the legacy PATH-mutating launch script.
+
+Product integration is published only after the CPU base and stable launcher
+pass signed delivery and qualification. Windows registers Start Menu links and
+an Apps & Features maintenance entry in the selected user or machine scope;
+Linux publishes `.desktop` entries in the matching applications directory;
+macOS publishes Engine and Installer `.app` bundles in the product root. These
+entries always target the stable bootstrapper, with maintenance using
+`--installer`, and never modify global loader variables. Registration failure
+does not invalidate an already qualified runtime, but it is surfaced as a
+warning so repair can retry it. Full product removal is not implied by this
+registration boundary.
+
+Unregistration is a separate idempotent OS-adapter operation. It removes only
+the selected-scope CyxWiz registration entries and rejects altered Linux or
+macOS integration instead of recursively deleting unknown content. It does not
+remove `runtime/`, immutable bases, backend packs, or the product root; those
+belong to the later full-product removal transaction.
+
+Registration atomically publishes `.cyxwiz-installation.json` in the normalized
+product root before OS integration. Schema 1 contains only the receipt kind, a
+32-character lowercase hexadecimal installation ID, the exact UTF-8 product
+root, and the current-user or all-users scope. The document is bounded to
+16 KiB, must be a regular non-symlink file, rejects unknown fields, and is not
+silently replaced when invalid. Re-registration preserves the existing ID and
+locks the scope. Unregistration and full-product removal fail closed unless the
+receipt still belongs to the requested root and scope. A later removal
+finalizer must independently pin and revalidate the active runtime set and
+generation; the receipt alone never authorizes recursive deletion.
+
+Removal authorization is a separate non-destructive boundary. Capture requires
+the product root to be an exact direct directory rather than a symlinked or
+lexically redirected path, and requires an exact regular stable launcher plus
+a fully resolvable active runtime. It pins the receipt ID, scope, runtime set,
+generation, base pack, and sorted optional-pack inventory. Revalidation repeats
+all path, receipt, launcher, and runtime resolution and rejects any difference.
+Only a deferred finalizer may consume that typed authorization to quarantine a
+product root after the installer and stable bootstrapper have exited.
+
+The cross-process handoff is `.cyxwiz-removal-request.json` in the product root.
+It is a regular non-symlink file bounded to 64 KiB and atomically published only
+after fresh removal authorization succeeds. Schema 1 contains exactly the
+request kind, normalized install root, scope, receipt ID, and complete pinned
+runtime identity. Loading rejects unknown fields, malformed values, copied
+roots, and any request made stale by receipt, launcher, or runtime changes. The
+request is intent plus pinned state, not ownership evidence and not independent
+deletion authority. A fresh explicit confirmation may replace it; the receipt
+remains immutable across that operation.
+
+The signed CPU base includes a small
+`cyxwiz-product-removal-finalizer[.exe]`. It accepts only the exact install root
+and an inherited native pipe token. The read token is owned by the finalizer;
+the stable bootstrapper owns the sole write token until process exit. The
+finalizer treats only EOF as the lifetime boundary, rejects pipe data or wait
+errors, closes its token, and then reloads the durable request so authorization
+cannot be carried across the wait unchecked. On Windows it is built with the
+static CRT and has no product-local runtime DLL dependency. This boundary is
+non-destructive. The detached scheduler bounds the source to 16 MiB and copies
+it without following a
+reparse point or symlink into a newly created temporary directory, passes only
+the pipe read token, and retains the write token under explicit parent-process
+ownership. Windows restricts inheritance with
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`; POSIX uses a double fork plus exact
+`execv`. The scheduler is not invoked by the stable bootstrapper until the
+cleanup transaction is complete.
+
+Product deactivation is one atomic sibling rename from the exact install root
+to `.cyxwiz-removing-<install-id>`. The transaction revalidates authorization
+immediately before the rename, refuses any pre-existing destination, and never
+merges or overwrites content. After rename it validates the relocated regular
+receipt against the original root, pinned installation ID, and scope; failure
+attempts rollback. The quarantine module performs no recursive cleanup. A
+separate platform adapter must remove entries without following symlinks,
+junctions, reparse points, or mounted filesystems and must preserve recovery
+evidence until all other owned content is gone.
+
+Cleanup performs a complete bounded preflight before mutation: at most 256
+directory levels and one million entries. POSIX uses directory-relative
+`openat`, `fstatat(AT_SYMLINK_NOFOLLOW)`, inode/device comparison, and
+`unlinkat`; a different filesystem device is rejected and symbolic links are
+unlinked without traversal. Windows pins direct directory handles without
+delete sharing, rejects reparse traversal, and deletes exact opened entries so
+junctions and reparse points are removed as links. Payload failure retains both
+`.cyxwiz-removal-request.json` and `.cyxwiz-installation.json`. After payload is
+empty, cleanup removes the request, then the receipt, then the verified empty
+quarantine root. A retry may complete if request evidence was already removed,
+but never proceeds without the relocated ownership receipt.
+
+The graphical `cyxwiz-installer` component manager remains in the signed
+versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
+It owns Recommended, CPU-only, and Custom package consent and launches the
+same-base signed delivery helper with an exact pack ID.
+It uses a portable ImGui/GLFW shell and a narrow desktop adapter; it must not
+link the CyxWiz compute backend or ArrayFire. Windows uses WinHTTP and
+`CreateProcessW`; Linux and macOS use the same certificate-verifying HTTPS
+client and an exact `fork`/`exec` helper invocation. All three preserve the
+same signed catalog, immutable staging, isolated qualification, atomic
+activation, and no-global-environment contract. Recommendation is deliberately
+conservative: an OS with no trusted hardware classification defaults to the
+CPU-only choice instead of guessing an accelerator pack.
+
+A fresh setup may keep its app-bundled trust store and signed catalog under a
+separate absolute metadata root while the customer selects an empty runtime
+destination. The exact helper verifies that source, publishes the parsed trust
+store and verified manifest files into the destination cache with the signed
+catalog published last, and only then stages and qualifies the CPU base.
+Maintenance reads metadata from the installed runtime cache. Current-user
+installation is the least-privilege default; an all-users scope is an explicit
+choice and requires platform authorization. Neither scope changes the global
+loader environment.
+
+Installer packaging accepts that app-bundled source through
+`CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR`. Its contents are installed below
+`runtime/` and must contain `trust/trusted-keys.json`,
+`catalogs/current.json`, and one cached manifest for every catalog entry. A
+staged installer without a verified CPU base and at least one optional pack is
+not a production-capable component manager and must fail package verification.
+Release jobs provide release-signed metadata; native CI uses ephemeral keys and
+`packages.invalid` URLs only to exercise parsing, signatures, and UI discovery.
+
+The CPU backend is part of the required base and cannot be represented as an
+optional pack. A process resolves exactly one base and at most one pack per
+optional backend. Activation replaces `active-runtime.json` atomically only
+after all staged files, notices, manifests, and compatibility gates pass.
+
+No normal workflow modifies the machine-wide `PATH`, `LD_LIBRARY_PATH`, or
+equivalent. The launcher supplies a bounded child-only loader environment.
+Hardware drivers and vendor providers remain host prerequisites.
+
+`trusted-keys.json` is an app-bundled schema-1 document with exactly
+`schema_version` and `keys`. Each key entry contains exactly `key_id`,
+`algorithm=ed25519`, the 32-byte raw public key as 43-character unpadded
+base64url, one or more unique roles (`catalog`, `pack`, `installer`), and a
+boolean `revoked`. The installer role authorizes only the first-stage setup
+descriptor; it does not authorize a catalog or backend-pack manifest. Key IDs
+are unique, private keys are never present, and unknown fields or roles fail
+closed. Application updates may revoke a bundled key; catalog policy
+independently blocks or revokes individual packs.
+
+## Signed Envelope
+
+Pack manifests and catalogs use the same envelope:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "cyxwiz-backend-pack-manifest",
+  "signed": {},
+  "signatures": [
+    {
+      "key_id": "release-2026",
+      "algorithm": "ed25519",
+      "value": "<unpadded-base64url-signature>"
+    }
+  ]
+}
+```
+
+The signature input is the UTF-8 result of `canonical_json_bytes(signed)`.
+Schema 1 permits no floating-point values, sorts object keys, removes
+insignificant whitespace, and preserves array order. The signature and hash
+implementations are release-tool concerns; runtime code consumes only a
+reviewed verifier and never private signing keys.
+
+HTTPS protects transport but is not package authenticity. A pack is trusted
+only when its manifest signature chains to the app-bundled trust root, its
+catalog entry is current and signed, and its archive and component hashes
+match.
+
+Schema 1 resolves a pack archive beside its signed manifest. For an online
+entry, replace the final path segment of the catalog-authorized HTTPS manifest
+URL with the manifest's signed `archive.file_name`; credentials, queries,
+fragments, directory-valued manifest URLs, and nested archive names are
+rejected. Offline media places that same archive file beside its copied signed
+manifest. This deterministic rule is the only implicit artifact-source
+mapping and introduces no unsigned mirror authority. Redirect authority is
+code-owned and limited to the one canonical GitHub Release case below; signed
+metadata cannot expand it.
+
+Online and offline artifacts enter one acquisition transaction. The service
+writes only to a sibling `.part` file, resumes from its retained byte length,
+requires the signed final byte size and SHA-256, flushes the completed file,
+and atomically publishes it without replacing an existing destination. HTTPS
+requests reject credentials and fragments, disable automatic redirects, use
+bounded timeouts, and require exact `Content-Length` plus exact
+`Content-Range` for a resume. A canonical immutable
+`https://github.com/OWNER/REPOSITORY/releases/download/TAG/ASSET` request may
+manually follow one `302` only to
+`https://release-assets.githubusercontent.com/github-production-release-asset/...`.
+The destination query is request-local and is never persisted or logged.
+Every other redirect, status, source shape, destination authority, and second
+hop fails before body consumption. The destination request forwards no origin
+credentials or cookies and replays only the exact Range header when resuming.
+A changed remote object is rejected by the final signed hash.
+
+ZIP extraction accepts only regular, non-link entries whose canonical UTF-8
+paths, sizes, and case-folded uniqueness exactly match the signed component
+inventory. Directory, traversal, drive/ADS, sparse, hard-link, symbolic-link,
+duplicate, missing, and unexpected entries fail closed. Extracted bytes and
+free-space/caller budgets are bounded before activation, every component is
+rehashed, and any failed or cancelled extraction removes its private staging
+directory.
+
+## Pack Manifest
+
+The signed pack body contains exactly:
+
+- `pack_id`, `pack_kind`, `backend`, and `package_version`;
+- `platform`, `architecture`, and `runtime_set_id`;
+- compatible CyxWiz release minimum/maximum;
+- exact ArrayFire version and ABI identity;
+- companion base ID and conflicting pack IDs;
+- compatibility requirements and release support state;
+- every component path, byte size, SHA-256, source, and executable flag;
+- license/notice entries that reference packaged component paths;
+- archive file name, byte size, and SHA-256;
+- generation time in UTC.
+
+`pack_kind=base` requires `backend=cpu` and a null companion base. Every
+`backend_pack` requires a distinct companion base. Component paths are
+canonical relative POSIX paths. Absolute paths, drive prefixes, backslashes,
+`.`/`..`, and case-insensitive duplicates are rejected before extraction.
+Installer-supplied scripts are not an extension mechanism and unknown fields
+fail closed.
+
+The compatibility object contains:
+
+- required device kinds and CPU features;
+- provider types;
+- minimum and tested driver ranges;
+- minimum physical-identity confidence required for cross-backend matching;
+- eligible recommendation-target backends (never automatic substitution);
+- Ticket 91 operation-matrix ID;
+- training-certification scope;
+- `supported`, `diagnostic`, `blocked`, or `revoked` support status.
+
+Physical identity and confidence are measured locally by Ticket 89/91. They
+are not copied from a catalog as authorization. A catalog can constrain
+device kind, provider, driver, runtime, and matrix requirements; the local
+qualification cache proves the exact machine route.
+
+## Compatibility Decision Boundary
+
+`BackendPackCompatibilityDecision` is the shared immutable-value vocabulary
+for catalog-to-machine decisions. It keeps these axes independent:
+
+- signed catalog support;
+- machine eligibility (`unknown`, `compatible`, or `incompatible`);
+- install recommendation;
+- local package state and integrity;
+- exact-route verification requirement and outcome;
+- Ticket 91 training authorization;
+- Ticket 89 measured-performance status; and
+- the compatibility rule and bounded remediation category.
+
+The default decision has unknown eligibility, is not offered or measured, has
+not been verified or authorized, and requires verification. No field implies
+another: compatibility does not authorize execution, installation does not
+prove compatibility, passed verification does not claim fastest performance,
+and diagnostic override is not certified or recommended. The matched physical
+fingerprint is internal evidence for route reconciliation and invalidation; UI
+and support serializers must not expose it. The compatibility layer returns a
+value only. It does not select, download, stage, activate, or switch a route.
+
+Evaluation is deterministic and fail-closed. Signed support, target platform,
+and architecture are checked before runtime-set, companion-base, ArrayFire ABI,
+device kind, provider type, CPU feature, physical-identity confidence, and
+minimum-driver constraints. A required CPU base can be compatible from its
+signed platform identity without a preinstalled runtime. An optional pack
+requires the active base or the base selected in the same installer plan.
+
+Missing machine facts produce `unknown`, never a fabricated incompatibility.
+A known mismatch produces `incompatible`; blocked or revoked catalog policy is
+never overridden locally. Falling outside a declared tested-driver range keeps
+an otherwise compatible pack available for isolated verification, while a
+proven minimum-driver failure requires driver remediation. Ambiguous equally
+confident physical-device matches remain unknown instead of binding a pack to
+an arbitrary route.
+
+The evaluator does not consume route-verification, training-authorization, or
+benchmark outcomes. Consequently, an isolated oneAPI crash can mark that exact
+local route as crashed and unauthorized without rewriting signed oneAPI support
+or the compatibility result for other machines. A preferred recommendation is
+assigned only after comparable verified benchmark evidence exists.
+
+The component-manager catalog adapter attaches one compatibility decision to
+every verified manifest record. A proven-incompatible or `not_offered` pack is
+not selectable and cannot enter an install plan. A supported pack with missing
+machine facts remains visible in Custom so the user can explicitly install and
+verify it; unknown is not silently converted into incompatible. Recommended is
+derived only from the decision's typed recommendation. Display-adapter vendor
+names, provider presence, and catalog availability alone never create a
+recommendation. Comparable benchmark evidence may promote a verified pack only
+when its signed `recommendation_targets` explicitly includes that backend.
+The graphical component list renders only bounded customer-facing status,
+reason, and remediation text derived from these typed fields. It never displays
+matrix IDs, internal ticket labels, raw counters, or physical fingerprints.
+
+## Catalog
+
+The signed catalog body contains exactly:
+
+- catalog ID, creation time, and expiry time;
+- minimum supported CyxWiz client version;
+- pack ID, HTTPS manifest URL, manifest SHA-256, signing-key ID, and support
+  status for each published pack.
+
+Duplicate pack IDs, insecure URLs, unknown states, expired catalogs, revoked
+keys, and unsupported client versions fail closed. Offline installation uses
+the same signed catalog and manifests copied onto trusted media; it does not
+introduce an unsigned metadata format.
+
+The application-local catalog cache has one deterministic read boundary:
+`catalogs/current.json` is the complete current signed catalog envelope and
+`catalogs/manifests/<pack-id>.json` is the cached signed manifest authorized by
+that catalog entry. Metadata publication replaces complete files atomically;
+the runtime never follows a mutable unsigned pointer or derives a manifest path
+from its HTTPS host. A valid catalog remains browsable when an individual
+manifest is absent or invalid, but delivery for that entry stays disabled.
+
+Release assembly emits two views from the same verified bytes. The hosted view
+places each signed archive beside its catalog-authorized manifest under
+`catalogs/manifests/`. The bootstrap view contains the app-bundled trust root,
+the identical signed catalog, and the identical signed manifests but excludes
+archives. The small installer consumes the bootstrap view and downloads
+archives only after explicit selection. Repository publication is atomic and
+must reject an untrusted signature, archive hash/size mismatch, missing
+companion base, runtime-set/ABI mismatch, ambiguous signing key, or catalog
+private key that does not match the bundled public trust root.
+
+## Enterprise, Offline, and Proxy Policy
+
+Runtime inspection is local-only. `show backend packs`,
+`show backend compatibility`, and `show backend support-bundle [1-100]` read
+the active runtime, local signed catalog cache, retained device inventory, and
+qualification snapshot without opening a network connection or starting a
+probe. The bounded support output is shareable text: it omits filesystem
+paths, catalog URLs, proxy values, credentials, tokens, and internal ticket
+keys, and it never uploads automatically.
+
+An enterprise administrator can install without network access by placing the
+unchanged signed catalog at `catalogs/current.json`, each unchanged signed
+manifest at `catalogs/manifests/<pack-id>.json`, and the signed archive beside
+its manifest. The exact packaged helper is then invoked with an absolute
+runtime root, one catalog-authorized pack ID, and `--offline`. Offline mode
+uses the same signature, release-policy, byte-size, SHA-256, extraction,
+qualification, and atomic-activation checks as HTTPS delivery. It does not
+accept an unsigned catalog, a rewritten URL, or a local trust override.
+
+Online acquisition begins only after explicit installer consent. On Windows,
+WinHTTP uses the operating system's automatic proxy configuration. On Linux
+and macOS, schema 1 uses direct certificate-verified HTTPS and has no explicit
+proxy-credential input; proxy-only deployments must use the offline workflow.
+Proxy URLs and credentials are never catalog or manifest fields and must not
+be copied into support output. Automatic redirects remain disabled on every
+platform; only the code-owned one-hop GitHub Release policy above is eligible.
+Failure to reach the network leaves the verified local catalog and installed
+runtime inspectable and does not downgrade to unsigned metadata.
+
+The graphical installer's explicit Refresh action may fetch a configured
+HTTPS catalog and its referenced manifests. Each document is bounded to 16
+MiB. The packaged trust store verifies the catalog signature, catalog policy,
+manifest digest, manifest signature, client version, platform, and
+architecture before publication. Verified manifests are atomically published
+first and the catalog last under the selected runtime root, never beside the
+installer executable; any source, verification, or publication failure leaves
+the previous verified catalog authoritative. The catalog endpoint must be
+direct HTTPS or an exact immutable canonical GitHub Release asset URL accepted
+by the one-hop policy. Production builds configure it with
+`CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with
+`--catalog-url`.
+
+## Active Runtime
+
+`active-runtime.json` is local transaction state, not signed publication
+metadata. It records schema version, runtime-set ID, monotonic generation,
+base-pack ID, and at most one pack ID for each optional backend. It never
+stores mutable device ordinals or qualification verdicts.
+
+Pack activation supplies pack/runtime identity to Ticket 91 and invalidates
+only affected route evidence. Ticket 91 remains the sole owner of isolated
+verification, route diagnostics, training authorization, and selected-route
+configuration.
+
+The non-GUI lifecycle service is the composition boundary for catalog read,
+exact user-selected pack delivery, extraction, staging, qualification policy,
+activation, rollback, repair, and removal. It exposes the verified catalog to
+hardware-aware recommendation consumers but never silently selects a pack.
+Before qualification it constructs the exact prospective runtime identity and
+passes that identity to the shared qualification adapter. It activates only a
+`supported` pack with a qualified result, and only if the active runtime state
+is unchanged when qualification completes. Diagnostic, missing-adapter,
+failed, cancelled, and stale-evidence results leave a complete pack inactive.
+
+## Customer Verification Summary
+
+The consolidated installer reads the shared machine-local qualification
+snapshot; it does not run a second probe registry. It presents route outcomes
+from typed status and count fields and never renders internal matrix IDs,
+evidence IDs, benchmark IDs, ticket names, or raw probe messages as customer
+text. Crashes, timeouts, failed operations, unavailable operations, stale
+evidence, and incomplete evidence remain distinct results with bounded next
+actions.
+
+A route may be labeled `Best measured` only when at least two active routes
+passed the complete operation contract and contain finite positive samples
+from the same fixed CyxWiz performance benchmark. One measured route is shown
+as evidence without a comparative claim. Failed, inactive, unmatched, stale,
+or differently benchmarked routes are never performance recommendations.
+
+## Repair and Removal
+
+Versioned pack directories are immutable while active. Repair first verifies
+and stages the complete signed payload, deactivates the affected route,
+rewrites any rollback reference to a complete retained runtime, quarantines
+the corrupt directory, publishes the repaired directory, and only then may
+reactivate it. It never overwrites an active directory in place.
+
+The Engine queues Repair against the exact active backend and pack identity.
+After that Engine process exits, the minimal bootstrapper validates the queued
+identity and launches the platform's `cyxwiz-backend-pack-installer` executable.
+The helper reuses
+the signed catalog, manifest, extraction, lifecycle, and qualification
+contracts. Qualification runs in the isolated route-probe child process; the
+helper activates the repaired pack only when that exact candidate passes.
+Failure leaves the complete pack inactive and retains the queued request for a
+later retry.
+
+Removal accepts optional backend packs only. It holds the shared runtime
+mutation lease, deactivates an exact active pack, removes any rollback
+reference to that pack, and atomically moves the directory into a private
+per-pack quarantine before deletion. A process interruption may leave only an
+inactive quarantine; repeating removal validates active and rollback state
+before finishing that cleanup. The CPU base, active packs, rollback-protected
+packs, links, and paths resolving outside the runtime root are never deleted.
+
+## Trust and Rotation Policy
+
+- Production pack and catalog signatures use Ed25519 detached signatures.
+- Private keys remain outside source, build trees, packages, and application
+  installations.
+- The application ships a small versioned public-key trust root.
+- A catalog may reference only an already trusted signing key.
+- Key rotation overlaps old and new public keys for one release window; the
+  new key is trusted before it becomes the sole signer.
+- Pack revocation is distributed in a catalog signed by a still-trusted
+  catalog key. Signing-key revocation is delivered only through a trusted
+  application update that replaces the app-bundled trust root.
+- Offline media includes the current app-bundled trust root and signed catalog
+  needed to evaluate key/pack revocation and expiry at publication time.
+- Downgrades require explicit policy and cannot select a revoked pack, key,
+  runtime set, or unsupported CyxWiz release.
+- Clock or expiry uncertainty fails closed for connected updates and requires
+  an explicit offline-administrator workflow.
+
+## Redistribution Policy
+
+Every component records its source and has a corresponding packaged notice.
+Release engineering must review redistribution rights for the exact versions
+being shipped. The base may include CyxWiz, Python 3.12, ArrayFire unified/CPU,
+MKL/TBB, and required VC++ application runtimes. Optional packs may include
+legally redistributable ArrayFire plugins and their user-mode runtime closure.
+Hardware-vendor display, kernel, or compute drivers are never bundled.
+
+Missing or incomplete notices fail packaging. A new runtime component cannot
+be accepted by adding an undocumented wildcard; its source, closure, notice,
+and compatibility requirements must be reviewed and represented explicitly.
+
+## Validation Ownership
+
+`backend_pack_contract.py` validates schema shape and semantic invariants
+without executing package code. Native services own archive extraction,
+signature verification, transaction staging, rollback, repair, and removal.
+Runtime probing remains owned by Ticket 91. All consumers must use these
+contracts rather than widen them inside GUI code.

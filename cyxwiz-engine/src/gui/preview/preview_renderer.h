@@ -1,10 +1,7 @@
 #pragma once
 
 #include <string>
-#include <vector>
-#include <chrono>
 #include <memory>
-#include "../../core/data_registry.h"
 
 namespace gui {
 
@@ -19,13 +16,7 @@ enum class PreviewContentType {
     SyntaxText,     // .py, .cpp, .xml, .yaml - syntax highlighted
     Markdown,       // .md - rendered formatted
     HexDump,        // Binary/unknown files
-    HDF5,           // HDF5 files (.h5, .hdf5) - tree view
-    // Dataset types
-    DatasetImage,   // Loaded image dataset
-    DatasetTabular, // Loaded tabular dataset
-    DatasetJSON,    // Loaded JSON dataset
-    DatasetText,    // Loaded text dataset
-    DatasetHDF5     // Loaded HDF5 dataset (tree view)
+    HDF5            // HDF5 files (.h5, .hdf5) - tree view
 };
 
 // Forward declarations for sub-renderers
@@ -49,16 +40,8 @@ public:
     // For raw files (from Asset Browser)
     void RenderFilePreview(const std::string& filepath);
 
-    // For loaded datasets (from Dataset Panel)
-    void RenderDatasetPreview(const cyxwiz::DatasetHandle& handle,
-                               const cyxwiz::DatasetInfo& info,
-                               int sample_idx, int view_mode, float zoom,
-                               int grid_cols, int grid_rows,
-                               const std::vector<std::string>& class_names);
-
     // Content type detection
     static PreviewContentType DetectFileType(const std::string& filepath);
-    static PreviewContentType DetectDatasetType(const cyxwiz::DatasetInfo& info);
 
     // Get human-readable type name
     static const char* GetTypeName(PreviewContentType type);

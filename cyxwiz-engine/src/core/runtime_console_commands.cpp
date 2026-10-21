@@ -1,0 +1,2187 @@
+#include "runtime_console_commands.h"
+
+#include "error_codes.h"
+#include "route_recommendation.h"
+
+#include <algorithm>
+#include <charconv>
+#include <chrono>
+#include <cctype>
+#include <ctime>
+#include <iomanip>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <utility>
+
+namespace cyxwiz {
+namespace {
+
+struct CommandToken {
+    std::string text;
+    size_t position = 0;
+    size_t end = 0;
+};
+
+struct CommandTokens {
+    std::vector<CommandToken> values;
+    std::optional<RuntimeLogFilterParseError> error;
+};
+
+std::string_view Trim(std::string_view value) {
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.front()))) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+std::string LowerAscii(std::string_view value) {
+    std::string lowered(value);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lowered;
+}
+
+CommandTokens TokenizeCommand(std::string_view input) {
+    CommandTokens result;
+    size_t position = 0;
+    while (position < input.size()) {
+        while (position < input.size() &&
+               std::isspace(static_cast<unsigned char>(input[position]))) {
+            ++position;
+        }
+        if (position == input.size()) break;
+
+        CommandToken token;
+        token.position = position;
+        if (input[position] == '"') {
+            ++position;
+            bool closed = false;
+            while (position < input.size()) {
+                const char current = input[position++];
+                if (current == '"') {
+                    closed = true;
+                    break;
+                }
+                if (current != '\\') {
+                    token.text.push_back(current);
+                    continue;
+                }
+                if (position == input.size()) {
+                    result.error = RuntimeLogFilterParseError{
+                        token.position, "unterminated escape sequence"};
+                    return result;
+                }
+                const char escaped = input[position++];
+                switch (escaped) {
+                    case '"': token.text.push_back('"'); break;
+                    case '\\': token.text.push_back('\\'); break;
+                    case 'n': token.text.push_back('\n'); break;
+                    case 't': token.text.push_back('\t'); break;
+                    default:
+                        token.text.push_back('\\');
+                        token.text.push_back(escaped);
+                        break;
+                }
+            }
+            if (!closed) {
+                result.error = RuntimeLogFilterParseError{
+                    token.position, "unterminated quoted argument"};
+                return result;
+            }
+            if (position < input.size() &&
+                !std::isspace(static_cast<unsigned char>(input[position]))) {
+                result.error = RuntimeLogFilterParseError{
+                    position, "expected whitespace after quoted argument"};
+                return result;
+            }
+        } else {
+            const size_t start = position;
+            while (position < input.size() &&
+                   !std::isspace(static_cast<unsigned char>(input[position]))) {
+                ++position;
+            }
+            token.text.assign(input.substr(start, position - start));
+        }
+        token.end = position;
+        result.values.push_back(std::move(token));
+    }
+    return result;
+}
+
+std::string_view SliceFrom(std::string_view input, const CommandToken& token) {
+    return Trim(input.substr(token.position));
+}
+
+RuntimeConsoleCommandResult ErrorResult(std::string message) {
+    RuntimeConsoleCommandResult result;
+    result.success = false;
+    result.lines.push_back(
+        {RuntimeConsoleOutputLevel::Error, std::move(message)});
+    return result;
+}
+
+void AddLine(RuntimeConsoleCommandResult& result,
+             RuntimeConsoleOutputLevel level, std::string text) {
+    result.lines.push_back({level, std::move(text)});
+}
+
+void AddHelpLines(RuntimeConsoleCommandResult& result,
+                  std::string_view text) {
+    while (!text.empty()) {
+        const size_t newline = text.find('\n');
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                std::string(text.substr(0, newline)));
+        if (newline == std::string_view::npos) break;
+        text.remove_prefix(newline + 1);
+    }
+}
+
+std::string_view HelpTasksText() {
+    return "=== Help: common tasks ===\n"
+           "Training failed or behaved oddly:\n"
+           "  show errors last 20 - the newest errors, the first place to look\n"
+           "  show training last - how the last run ended, its backend and policy\n"
+           "  show code <CW-X-NNNN> - meaning and next step for a code you saw\n"
+           "  show run <run_id> codes CW-* - every diagnostic code of one run\n"
+           "Training is slower than expected:\n"
+           "  show device active - confirm training runs on the GPU you expect\n"
+           "  show training host-sync - device-to-host copies that stall the GPU\n"
+           "  show training placement - where tensors lived during the run\n"
+           "Choosing or checking a GPU:\n"
+           "  show device available - every detected device and backend\n"
+           "  show device qualification - verification evidence per device\n"
+           "  show device recommendations cuda:0 - recommended use of one device\n"
+           "  show backend packs - installed GPU packs\n"
+           "  show backend compatibility - backends this machine can run\n"
+           "Searching the logs:\n"
+           "  show logs grep \"timed out\" - text search in messages (help grep)\n"
+           "  show logs where category=training and level>=warn - structured search\n"
+           "  filter set backend=arrayfire_cuda, then show logs last 50 - focus on one backend\n"
+           "Python packages:\n"
+           "  pip list / pip show numpy - what is installed\n"
+           "  pip install pandas - install; runs in the background, Cancel pip stops it\n"
+           "Reporting a problem:\n"
+           "  show backend support-bundle 32 - diagnostics to attach to a report\n"
+           "  Logs tab > Actions > Export... - the full log with redaction";
+}
+
+std::string_view HelpGrepText() {
+    return "=== Help: grep (search log messages) ===\n"
+           "show logs grep <text> finds runtime events whose message contains the\n"
+           "text anywhere, ignoring letter case, and shows the newest 100 matches in\n"
+           "sequence order (a \"Result limit omitted N older\" line says when older\n"
+           "matches were left out).\n"
+           "How it reads the text:\n"
+           "  Every word after grep is joined with single spaces, so quotes are\n"
+           "  optional: show logs grep timed out == show logs grep \"timed out\".\n"
+           "  Use quotes to keep several spaces or special characters exactly.\n"
+           "  It searches the message only; use show logs where for other fields.\n"
+           "  The session filter (filter set) still applies.\n"
+           "Examples:\n"
+           "  show logs grep \"host sync\" - device-to-host copies\n"
+           "  show logs grep timed out - connection and task timeouts\n"
+           "  show logs grep cuda - anything mentioning CUDA (any case)\n"
+           "  show logs grep \"Python execution error\" - failed scripts and REPL code\n"
+           "  show logs grep checkpoint - checkpoint saves and loads\n"
+           "Going further:\n"
+           "  Text plus other fields: show logs where message contains \"host sync\"\n"
+           "    and category=training and level>=warn\n"
+           "  Only errors with the text: show logs where message contains cuda and\n"
+           "    level>=error\n"
+           "  Search one backend repeatedly: filter set backend=arrayfire_cuda,\n"
+           "    then show logs grep \"host sync\"\n"
+           "  More than 100 rows or every field: the Logs tab search box and Export.";
+}
+
+std::string_view HelpSyntaxText() {
+    return "=== Help: syntax ===\n"
+           "Arguments are separated by spaces. Quote text that contains spaces:\n"
+           "  show logs grep \"host sync\"\n"
+           "Inside quotes write \\\" for a quote and \\\\ for a backslash.\n"
+           "Counts: <n> is 1-1000 (show logs last 50, show errors last 20).\n"
+           "Device routes: <backend>:<id> such as cpu:0, cuda:0, opencl:0, oneapi:0\n"
+           "  (show device available lists the ids on this machine).\n"
+           "Diagnostic codes: CW-<family>-<number> such as CW-C-0101; a family\n"
+           "  pattern ends in * such as CW-G-*.\n"
+           "Run ids: shown by show training current/last and in the Logs Run column.\n"
+           "Filter expressions (show logs where, show codes where, filter set):";
+}
+
+std::optional<size_t> ParseLimit(std::string_view value) {
+    size_t parsed = 0;
+    const auto conversion = std::from_chars(
+        value.data(), value.data() + value.size(), parsed, 10);
+    if (conversion.ec != std::errc{} ||
+        conversion.ptr != value.data() + value.size() || parsed == 0 ||
+        parsed > RuntimeConsoleCommandService::kMaximumResultLimit) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+bool IsValidFilterName(std::string_view name) {
+    return !name.empty() && name.size() <= 64 &&
+           std::all_of(name.begin(), name.end(), [](unsigned char c) {
+               return std::isalnum(c) != 0 || c == '_' || c == '-';
+           });
+}
+
+std::string EscapeFilterString(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const char current : value) {
+        switch (current) {
+            case '"': escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '\n': escaped += "\\n"; break;
+            case '\t': escaped += "\\t"; break;
+            default: escaped.push_back(current); break;
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string CombineFilters(std::string_view active,
+                           std::string_view requested) {
+    active = Trim(active);
+    requested = Trim(requested);
+    if (active.empty()) return std::string(requested);
+    if (requested.empty()) return std::string(active);
+    return "(" + std::string(active) + ") and (" +
+           std::string(requested) + ")";
+}
+
+std::string FormatUtc(
+    const std::chrono::system_clock::time_point& timestamp) {
+    const auto time = std::chrono::system_clock::to_time_t(timestamp);
+    std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &time);
+#else
+    gmtime_r(&time, &utc);
+#endif
+    const auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            timestamp.time_since_epoch()) % 1000;
+    std::ostringstream output;
+    output << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S") << '.'
+           << std::setfill('0') << std::setw(3) << milliseconds.count() << 'Z';
+    return output.str();
+}
+
+std::string JoinedCodes(const RuntimeLogEvent& event) {
+    std::ostringstream output;
+    bool has_code = false;
+    if (!event.primary_error_code.empty()) {
+        output << event.primary_error_code;
+        has_code = true;
+    }
+    for (const auto& code : event.issue_codes) {
+        if (has_code) output << ',';
+        output << code;
+        has_code = true;
+    }
+    return output.str();
+}
+
+bool HasDiagnosticCode(const RuntimeLogEvent& event) {
+    return !event.primary_error_code.empty() || !event.issue_codes.empty();
+}
+
+std::string FormatEvent(const RuntimeLogEvent& event) {
+    std::ostringstream output;
+    output << '#' << event.sequence << ' ' << FormatUtc(event.timestamp_utc)
+           << " level=" << RuntimeLogLevelName(event.level)
+           << " category=" << event.category;
+    if (!event.source.empty()) output << " source=" << event.source;
+    const auto codes = JoinedCodes(event);
+    if (!codes.empty()) output << " code=" << codes;
+    if (!event.run_id.empty()) output << " run=" << event.run_id;
+    if (event.task_id != 0) output << " task=" << event.task_id;
+    if (event.node_id >= 0) output << " node=" << event.node_id;
+    if (!event.backend.empty()) output << " backend=" << event.backend;
+    if (event.device_id >= 0) output << " device_id=" << event.device_id;
+    if (!event.message.empty()) output << " | " << event.message;
+    return output.str();
+}
+
+RuntimeConsoleCommandResult QueryEvents(
+    const RuntimeLogStore& store, std::string_view active_filter,
+    std::string_view requested_filter, size_t limit, bool require_code) {
+    const auto expression = CombineFilters(active_filter, requested_filter);
+    std::optional<RuntimeLogFilter> filter;
+    if (!expression.empty()) {
+        auto parsed = ParseRuntimeLogFilter(expression);
+        if (!parsed.Ok()) {
+            const auto& error = *parsed.error;
+            return ErrorResult("Filter error at " +
+                               std::to_string(error.position) + ": " +
+                               error.message);
+        }
+        filter.emplace(std::move(*parsed.filter));
+    }
+
+    RuntimeLogQueryRequest request;
+    request.filter = filter ? &*filter : nullptr;
+    request.limit = store.GetStats().capacity;
+    const RuntimeLogQueryService service(store);
+    auto query = service.Query(request);
+
+    std::vector<const RuntimeLogEvent*> matches;
+    matches.reserve(query.events.size());
+    for (const auto& event : query.events) {
+        if (!require_code || HasDiagnosticCode(event)) {
+            matches.push_back(&event);
+        }
+    }
+
+    const size_t first = matches.size() > limit ? matches.size() - limit : 0;
+    RuntimeConsoleCommandResult result;
+    std::ostringstream summary;
+    summary << "Logs: matched=" << matches.size()
+            << " showing=" << (matches.size() - first)
+            << " scanned=" << query.scanned_count
+            << " retained=" << query.store_stats.size
+            << " evicted=" << query.store_stats.evicted_count;
+    AddLine(result, RuntimeConsoleOutputLevel::Info, summary.str());
+    if (first > 0) {
+        AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                "Result limit omitted " + std::to_string(first) +
+                    " older matching event(s)");
+    }
+    for (size_t index = first; index < matches.size(); ++index) {
+        RuntimeConsoleOutputLine line;
+        line.text = FormatEvent(*matches[index]);
+        line.event = std::make_shared<RuntimeLogEvent>(*matches[index]);
+        result.lines.push_back(std::move(line));
+    }
+    result.logs_filter = expression;
+    return result;
+}
+
+std::string FormatByteCount(uint64_t bytes) {
+    std::ostringstream output;
+    output << bytes << " B";
+    if (bytes >= 1024) {
+        output << " (" << std::fixed << std::setprecision(2)
+               << static_cast<double>(bytes) / (1024.0 * 1024.0) << " MiB)";
+    }
+    return output.str();
+}
+
+std::string RecordedOr(std::string_view value) {
+    return value.empty() ? "not_recorded" : std::string(value);
+}
+
+const char* MatrixStatus(bool evidence_available, bool passed) {
+    if (!evidence_available) return "no_evidence";
+    return passed ? "passed" : "failed";
+}
+
+std::optional<DeviceType> ParseDeviceBackend(std::string_view backend) {
+    const auto normalized = LowerAscii(backend);
+    if (normalized == "cpu" || normalized == "arrayfire_cpu") {
+        return DeviceType::CPU;
+    }
+    if (normalized == "cuda" || normalized == "arrayfire_cuda") {
+        return DeviceType::CUDA;
+    }
+    if (normalized == "opencl" || normalized == "arrayfire_opencl") {
+        return DeviceType::OPENCL;
+    }
+    if (normalized == "oneapi" || normalized == "arrayfire_oneapi") {
+        return DeviceType::ONEAPI;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::pair<DeviceType, int>> ParseDeviceRoute(
+    std::string_view route) {
+    const auto separator = route.rfind(':');
+    if (separator == std::string_view::npos || separator == 0 ||
+        separator + 1 >= route.size()) {
+        return std::nullopt;
+    }
+    const auto backend = ParseDeviceBackend(route.substr(0, separator));
+    if (!backend.has_value()) return std::nullopt;
+    int device_id = -1;
+    const auto id = route.substr(separator + 1);
+    const auto parsed = std::from_chars(
+        id.data(), id.data() + id.size(), device_id);
+    if (parsed.ec != std::errc{} || parsed.ptr != id.data() + id.size() ||
+        device_id < 0) {
+        return std::nullopt;
+    }
+    return std::pair{*backend, device_id};
+}
+
+DeviceKind ParseDeviceKind(std::string_view kind) {
+    const auto normalized = LowerAscii(kind);
+    if (normalized == "cpu") return DeviceKind::CPU;
+    if (normalized == "gpu") return DeviceKind::GPU;
+    if (normalized == "accelerator") return DeviceKind::Accelerator;
+    return DeviceKind::Unknown;
+}
+
+DeviceIdentityConfidence ParseIdentityConfidence(
+    std::string_view confidence) {
+    const auto normalized = LowerAscii(confidence);
+    if (normalized == "stable_hardware") {
+        return DeviceIdentityConfidence::StableHardware;
+    }
+    if (normalized == "provider_reported") {
+        return DeviceIdentityConfidence::ProviderReported;
+    }
+    if (normalized == "backend_local") {
+        return DeviceIdentityConfidence::BackendLocal;
+    }
+    return DeviceIdentityConfidence::Unknown;
+}
+
+std::optional<DeviceInfo> ToDeviceInfo(
+    const RuntimeDeviceEntryTruth& entry) {
+    const auto type = ParseDeviceBackend(entry.backend);
+    if (!type.has_value()) return std::nullopt;
+    DeviceInfo info;
+    info.type = *type;
+    info.device_id = entry.device_id;
+    info.name = entry.name;
+    info.name_is_fallback = entry.name_is_fallback;
+    info.kind = ParseDeviceKind(entry.device_kind);
+    info.identity_confidence =
+        ParseIdentityConfidence(entry.identity_confidence);
+    info.provider = entry.provider;
+    info.driver_version = entry.driver_version;
+    info.hardware_vendor_id = entry.hardware_vendor_id;
+    info.hardware_device_id = entry.hardware_device_id;
+    info.physical_fingerprint = entry.physical_fingerprint;
+    info.provider_known = entry.provider_known;
+    info.driver_version_known = entry.driver_version_known;
+    info.hardware_vendor_id_known = entry.hardware_vendor_id_known;
+    info.hardware_device_id_known = entry.hardware_device_id_known;
+    info.physical_fingerprint_known = entry.physical_fingerprint_known;
+    return info;
+}
+
+std::string DeviceRouteLabel(const DeviceInfo& route) {
+    std::string backend;
+    switch (route.type) {
+        case DeviceType::CPU: backend = "arrayfire_cpu"; break;
+        case DeviceType::CUDA: backend = "arrayfire_cuda"; break;
+        case DeviceType::OPENCL: backend = "arrayfire_opencl"; break;
+        case DeviceType::ONEAPI: backend = "arrayfire_oneapi"; break;
+        default: backend = "arrayfire_unknown"; break;
+    }
+    return backend + ':' + std::to_string(route.device_id);
+}
+
+const char* DevicePackBackendId(DeviceType type) {
+    switch (type) {
+        case DeviceType::CPU: return "cpu";
+        case DeviceType::CUDA: return "cuda";
+        case DeviceType::OPENCL: return "opencl";
+        case DeviceType::ONEAPI: return "oneapi";
+        default: return "unknown";
+    }
+}
+
+const RuntimeBackendPackEntryTruth* FindActivePack(
+    const RuntimeBackendPackTruth& truth,
+    DeviceType type) {
+    const std::string_view backend = DevicePackBackendId(type);
+    const auto match = std::find_if(
+        truth.packs.begin(), truth.packs.end(), [&](const auto& pack) {
+            return pack.backend == backend && pack.installed && pack.active;
+        });
+    return match == truth.packs.end() ? nullptr : &*match;
+}
+
+std::string PackCompatibilityStatus(
+    const RuntimeBackendPackEntryTruth& pack) {
+    if (!pack.installed) return "missing_pack";
+    if (pack.layout_status == "invalid") return "corrupt_pack";
+    if (pack.catalog_support == "blocked" ||
+        pack.catalog_support == "revoked" ||
+        pack.catalog_support == "diagnostic") {
+        return "policy_block";
+    }
+    if (!pack.qualification_evidence_available) return "not_verified";
+    return pack.training_authorized ? "ready" : "failed_matrix";
+}
+
+bool IsIncompatibleDeviceFailure(RouteFailureCategory category) {
+    switch (category) {
+        case RouteFailureCategory::AbiMismatch:
+        case RouteFailureCategory::DependencyMissing:
+        case RouteFailureCategory::BackendLoadFailed:
+        case RouteFailureCategory::DeviceNotEnumerated:
+        case RouteFailureCategory::IdentityMismatch:
+        case RouteFailureCategory::ActivationFailed:
+        case RouteFailureCategory::BackendSubstitution:
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::string RouteCompatibilityStatus(
+    const RuntimeBackendPackEntryTruth* pack,
+    const RouteQualificationDecision& qualification,
+    const RouteTrainingAuthorizationDecision& authorization) {
+    if (!pack || !pack->installed) return "missing_pack";
+    if (pack->layout_status == "invalid") return "corrupt_pack";
+    if (pack->catalog_support == "blocked" ||
+        pack->catalog_support == "revoked" ||
+        pack->catalog_support == "diagnostic" ||
+        qualification.failure.category ==
+            RouteFailureCategory::PolicyBlocked) {
+        return "policy_block";
+    }
+    if (qualification.failure.category ==
+        RouteFailureCategory::ProviderMissing) {
+        return "missing_provider";
+    }
+    if (IsIncompatibleDeviceFailure(qualification.failure.category)) {
+        return "incompatible_device";
+    }
+    if (qualification.failure.stage == RouteFailureStage::StrictTraining ||
+        qualification.failure.category ==
+            RouteFailureCategory::NativeFallback ||
+        qualification.failure.category ==
+            RouteFailureCategory::ResidencyViolation) {
+        return "failed_training_probe";
+    }
+    if (!qualification.evidence_available) return "not_verified";
+    if (!qualification.qualified) return "failed_matrix";
+    return authorization.authorized ? "ready" : "policy_block";
+}
+
+std::string SupportValue(std::string_view value) {
+    constexpr size_t kMaximumSupportValueBytes = 160;
+    std::string output;
+    output.reserve(std::min(value.size(), kMaximumSupportValueBytes));
+    for (const unsigned char character : value) {
+        if (output.size() == kMaximumSupportValueBytes) break;
+        if (character < 0x20 || character >= 0x7f || character == '\'' ||
+            character == '"') {
+            output.push_back('_');
+        } else {
+            output.push_back(static_cast<char>(character));
+        }
+    }
+    return output.empty() ? "not_recorded" : output;
+}
+
+std::string JoinSupportValues(const std::vector<std::string>& values) {
+    constexpr size_t kMaximumJoinedSupportBytes = 320;
+    if (values.empty()) return "none";
+    std::string output;
+    for (const auto& value : values) {
+        const std::string sanitized = SupportValue(value);
+        const size_t separator = output.empty() ? 0 : 1;
+        if (output.size() + separator + sanitized.size() >
+            kMaximumJoinedSupportBytes) {
+            if (output.size() + 4 <= kMaximumJoinedSupportBytes) {
+                output += ",...";
+            }
+            break;
+        }
+        if (separator != 0) output.push_back(',');
+        output += sanitized;
+    }
+    return output;
+}
+
+void AddTrainingSummary(RuntimeConsoleCommandResult& result,
+                        const RuntimeTrainingTruth& truth) {
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Training: source=" + RecordedOr(truth.source) +
+                " active=" + (truth.active ? "true" : "false") +
+                " run=" + RecordedOr(truth.run_id) +
+                " status=" + RecordedOr(truth.status));
+
+    std::ostringstream progress;
+    progress << "Progress: epoch=" << truth.epoch;
+    if (truth.total_epochs > 0) progress << '/' << truth.total_epochs;
+    progress << " batch=" << truth.batch;
+    if (truth.total_batches > 0) progress << '/' << truth.total_batches;
+    progress << " stage=" << RecordedOr(truth.latest_stage);
+    AddLine(result, RuntimeConsoleOutputLevel::Info, progress.str());
+
+    std::ostringstream metrics;
+    metrics << std::fixed << std::setprecision(6)
+            << "Metrics: loss=" << truth.loss
+            << " accuracy=" << truth.accuracy;
+    AddLine(result, RuntimeConsoleOutputLevel::Info, metrics.str());
+
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Execution: requested=" + RecordedOr(truth.requested_backend) +
+                ':' + std::to_string(truth.requested_device_id) +
+                " effective=" + RecordedOr(truth.effective_backend) + ':' +
+                std::to_string(truth.effective_device_id) + " device='" +
+                RecordedOr(truth.effective_device_name) + "' context=" +
+                RecordedOr(truth.execution_context_id) + " preflight=" +
+                RecordedOr(truth.preflight_stage) + " execution=" +
+                (truth.execution_validated ? "validated" : "not_validated") +
+                " selection_fallback=" +
+                (truth.selection_fallback_applied ? "true" : "false"));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Qualification: requested=" +
+                std::string(MatrixStatus(
+                    !truth.requested_qualification_matrix_id.empty(),
+                    truth.requested_route_qualified)) +
+                " evidence='" +
+                RouteQualificationEvidenceLabel(
+                    truth.requested_qualification_matrix_id) + "'" +
+                " effective=" +
+                MatrixStatus(
+                    !truth.effective_qualification_matrix_id.empty(),
+                    truth.effective_route_qualified) +
+                " evidence='" +
+                RouteQualificationEvidenceLabel(
+                    truth.effective_qualification_matrix_id) + "'");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Identity: confidence=" +
+                RecordedOr(truth.identity_confidence) +
+                " fingerprint=" +
+                RecordedOr(truth.physical_fingerprint));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Policy: " + RecordedOr(truth.execution_policy) +
+                " residency=" + RecordedOr(truth.residency_verdict) +
+                " reason=" + RecordedOr(truth.residency_reason));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Evidence: host_sync=" + std::to_string(truth.host_sync_count) +
+                " host_sync_bytes=" + std::to_string(truth.host_sync_bytes) +
+                " transfer=" + std::to_string(truth.transfer_event_count) +
+                " synchronization=" +
+                std::to_string(truth.synchronization_event_count));
+}
+
+std::string FormatTrainingEvent(const RuntimeTrainingEventTruth& event) {
+    std::ostringstream output;
+    output << RecordedOr(event.timestamp)
+           << " stage=" << RecordedOr(event.stage)
+           << " status=" << RecordedOr(event.status)
+           << " epoch=" << event.epoch << " batch=" << event.batch;
+    if (event.total_batches > 0) output << '/' << event.total_batches;
+    if (event.host_sync_bytes > 0 || !event.host_sync_reason.empty()) {
+        output << " host_sync_bytes=" << event.host_sync_bytes
+               << " host_sync_category="
+               << RecordedOr(event.host_sync_category)
+               << " host_sync_reason=" << RecordedOr(event.host_sync_reason)
+               << " host_sync_operation="
+               << RecordedOr(event.host_sync_operation);
+    }
+    if (event.task_id != 0) {
+        output << " task=" << event.task_id
+               << " task_stage=" << RecordedOr(event.task_stage)
+               << " progress=" << std::fixed << std::setprecision(3)
+               << event.task_progress;
+    }
+    if (event.node_id >= 0) output << " node=" << event.node_id;
+    if (!event.message.empty()) output << " | " << event.message;
+    return output.str();
+}
+
+std::string FormatRunEvent(const RuntimeRunEventTruth& event) {
+    std::ostringstream output;
+    output << "source=" << RecordedOr(event.source)
+           << " timestamp=" << RecordedOr(event.timestamp)
+           << " stage=" << RecordedOr(event.stage)
+           << " status=" << RecordedOr(event.status);
+    if (event.node_id >= 0) output << " node=" << event.node_id;
+    if (!event.message.empty()) output << " | " << event.message;
+    return output.str();
+}
+
+std::string FormatRunIssue(const RuntimeRunIssueTruth& issue,
+                           std::string_view run_id) {
+    std::ostringstream output;
+    output << "source=" << RecordedOr(issue.source)
+           << " level=" << RecordedOr(issue.level)
+           << " code=" << RecordedOr(issue.code)
+           << " run=" << RecordedOr(run_id);
+    if (issue.node_id >= 0) output << " node=" << issue.node_id;
+    if (!issue.node_name.empty()) output << " node_name='" << issue.node_name << "'";
+    if (!issue.message.empty()) output << " | " << issue.message;
+    return output.str();
+}
+
+void AddRunSummary(RuntimeConsoleCommandResult& result,
+                   const RuntimeRunTruth& run) {
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Run: source=" + RecordedOr(run.source) +
+                " run=" + RecordedOr(run.run_id) +
+                " status=" + RecordedOr(run.status));
+    if (!run.debug_run_id.empty() || !run.training_run_id.empty()) {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Identity: debug_run=" + RecordedOr(run.debug_run_id) +
+                    " training_run=" + RecordedOr(run.training_run_id));
+    }
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Execution: requested=" + RecordedOr(run.requested_backend) +
+                ':' + std::to_string(run.requested_device_id) +
+                " effective=" + RecordedOr(run.effective_backend) + ':' +
+                std::to_string(run.effective_device_id) + " device='" +
+                RecordedOr(run.effective_device_name) + "' context=" +
+                RecordedOr(run.execution_context_id));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Evidence: issues=" + std::to_string(run.issue_count) +
+                " traces=" + std::to_string(run.trace_count) +
+                " events=" + std::to_string(run.event_count) +
+                " transfer=" + std::to_string(run.transfer_event_count) +
+                " synchronization=" +
+                std::to_string(run.synchronization_event_count));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Placement: fingerprint=" +
+                RecordedOr(run.placement_fingerprint) + " residency=" +
+                RecordedOr(run.residency_verdict));
+    if (!run.summary.empty()) {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Summary: " + run.summary);
+    }
+}
+
+RuntimeConsoleCommandResult Usage(std::string_view usage) {
+    return ErrorResult("Usage: " + std::string(usage));
+}
+
+} // namespace
+
+const std::vector<RuntimeConsoleCommandDescriptor>&
+RuntimeConsoleCommandService::Descriptors() {
+    static const std::vector<RuntimeConsoleCommandDescriptor> descriptors = [] {
+        std::vector<RuntimeConsoleCommandDescriptor> visible;
+        for (const auto& registration : Registry()) {
+            if (registration.visible_in_help) {
+                visible.push_back(registration.descriptor);
+            }
+        }
+        return visible;
+    }();
+    return descriptors;
+}
+
+const std::vector<RuntimeConsoleCommandService::CommandRegistration>&
+RuntimeConsoleCommandService::Registry() {
+    static const std::vector<CommandRegistration> registrations{
+        {{"help", "help [command|topic]", "Show command help",
+          "Lists commands, explains one command in full, or opens a topic.\n"
+          "Usage:\n"
+          "  help  Overview, every command and the help topics\n"
+          "  help <command>  Forms, options, behaviour and examples of one command\n"
+          "  help tasks  Common questions and the commands that answer them\n"
+          "  help syntax  Quoting, numbers, device ids, codes and filter expressions\n"
+          "  help grep  Searching log messages for text\n"
+          "Examples:\n"
+          "  help show        every show form and what it reads\n"
+          "  help filter      session filters and the expression language\n"
+          "  help tasks       where to start when training fails or is slow"},
+         &RuntimeConsoleCommandService::ExecuteHelp, true},
+        {{"clear", "clear", "Clear this Console view",
+          "Clears only the visible Console transcript. Runtime event "
+          "ingestion continues from a new view watermark; the Logs tab, the "
+          "runtime log and engine_log.txt keep every event.\n"
+          "Usage:\n"
+          "  clear  Empty the Commands transcript (same as Ctrl+L)\n"
+          "Example:\n"
+          "  clear"},
+         &RuntimeConsoleCommandService::ExecuteClear, true},
+        {{"test", "test", "Emit one line at each Console severity",
+          "Emits info, warning, error, and success lines to verify Console "
+          "presentation (colours and copy).\n"
+          "Usage:\n"
+          "  test  Print one line per severity\n"
+          "Example:\n"
+          "  test"},
+         &RuntimeConsoleCommandService::ExecuteTest, true},
+        {{"pip", "pip <arguments>",
+          "Run project-environment pip asynchronously",
+          "Runs pip only from the active project's virtual environment "
+          "(<project>/python), never the system Python. Output streams to the "
+          "Console while the Engine stays responsive, and the task can be "
+          "cancelled from the header (Cancel pip) or the Task View. Needs an "
+          "open project whose environment has finished setting up.\n"
+          "Usage:\n"
+          "  pip list  Packages installed in the project environment\n"
+          "  pip show <package>  Version, location and dependencies of one package\n"
+          "  pip install <package ...>  Install packages into the project environment\n"
+          "  pip install --upgrade <package>  Upgrade a package\n"
+          "  pip uninstall -y <package>  Remove a package without prompting\n"
+          "  pip freeze  Pinned list, suitable for requirements.txt\n"
+          "Every other pip argument is passed through unchanged.\n"
+          "Examples:\n"
+          "  pip list\n"
+          "  pip show numpy\n"
+          "  pip install numpy pandas\n"
+          "  pip install --upgrade polars\n"
+          "Use case: the Python REPL reports ModuleNotFoundError -> run the "
+          "suggested pip install here, then run the code again."},
+         &RuntimeConsoleCommandService::ExecutePip, true},
+        {{"pip3", "pip3 <arguments>", "Alias for pip",
+          "Alias for the project-environment pip command.\n"
+          "Example:\n"
+          "  pip3 list"},
+         &RuntimeConsoleCommandService::ExecutePip, false},
+        {{"show", "show logs|errors|code|codes|training|device|backend|run|materialization ...",
+          "Query bounded runtime diagnostics",
+          "How show works: every form only reads state and never changes "
+          "anything. Log forms search the retained in-memory runtime log (the "
+          "newest events the Logs tab holds), are bounded to 1-1000 displayed "
+          "rows, and show the newest matching events in sequence order; a "
+          "\"Result limit omitted N older\" line says when older matches were "
+          "left out. The session filter (filter set) is combined with every "
+          "log form. Training, device, backend, run and materialization forms "
+          "read the Engine's live runtime state and the last recorded run.\n"
+          "Forms:\n"
+          "  show logs last <n>  Newest n events (1-1000)\n"
+          "  show logs errors  Errors and critical events\n"
+          "  show logs warnings  Warnings and worse\n"
+          "  show logs where <filter>  Events matching a filter expression (help syntax)\n"
+          "  show logs grep <text>  Events whose message contains the text\n"
+          "  show logs code <CW-X-NNNN>  Events carrying one diagnostic code\n"
+          "  show logs codes <CW-X-*>  Events carrying a code family\n"
+          "  show errors last <n>  Newest n errors and critical events\n"
+          "  show code <CW-X-NNNN>  What a diagnostic code means and what to do\n"
+          "  show codes family <CW-X-*>  Every known code in a family\n"
+          "  show codes last <n>  Newest n events that carry any code\n"
+          "  show codes where <filter>  Coded events matching a filter\n"
+          "  show training current|last|trace|host-sync|placement|materialization\n"
+          "  show device active|available|queued|backends|oneapi|qualification\n"
+          "  show device route <backend>:<id>  Verification result of one device route\n"
+          "  show device recommendations <backend>:<id>  Recommended use of one device\n"
+          "  show backend packs  Installed GPU packs and their state\n"
+          "  show backend compatibility  Which backends this machine can run\n"
+          "  show backend support-bundle [1-100]  Diagnostics to share when reporting a problem\n"
+          "  show run current  The run in progress\n"
+          "  show run <run_id> summary|events|codes|host-sync\n"
+          "  show run <run_id> code <CW-X-NNNN>  One code within a run\n"
+          "  show run <run_id> codes <CW-X-*>  A code family within a run\n"
+          "  show materialization last  Last data materialization (dataset to tensors)\n"
+          "Subjects:\n"
+          "  training: current = the running job, last = the previous run; trace = "
+          "recent training events; host-sync = device-to-host copies that stall the GPU; "
+          "placement = where tensors lived; materialization = how the dataset "
+          "was turned into tensors.\n"
+          "  device: active = device in use now, available = every detected "
+          "device, queued = device the next run will use, backends = backend "
+          "providers, oneapi = Intel oneAPI details, qualification = "
+          "verification evidence.\n"
+          "  logs grep: text search in messages, any letter case, quotes optional; "
+          "help grep has the details.\n"
+          "  run: <run_id> is the id shown by show training current/last or in "
+          "the Logs Run column (for example train-1786337176120).\n"
+          "Examples:\n"
+          "  show logs last 50\n"
+          "  show logs where category=training and level>=warn\n"
+          "  show logs grep \"host sync\"\n"
+          "  show code CW-C-0101\n"
+          "  show codes family CW-G-*\n"
+          "  show training current\n"
+          "  show device active\n"
+          "  show device qualification\n"
+          "  show device recommendations cuda:0\n"
+          "  show backend compatibility\n"
+          "  show backend support-bundle 32\n"
+          "  show run train-1786337176120 host-sync\n"
+          "  show materialization last"},
+         &RuntimeConsoleCommandService::ExecuteShow, true},
+        {{"filter", "filter set|clear|save|use ...",
+          "Manage the session runtime-log filter",
+          "The active session filter is combined with subsequent show-log "
+          "queries until it is cleared; the header shows it. Saved filters "
+          "remain in memory for this Console session (Logs tab saved views are "
+          "separate and persist).\n"
+          "Forms:\n"
+          "  filter set <expression>  Narrow every later show logs query\n"
+          "  filter clear  Remove the session filter\n"
+          "  filter save <name> <expression>  Remember an expression by name\n"
+          "  filter use <name>  Make a saved expression the session filter\n"
+          "Examples:\n"
+          "  filter set category=training and level>=info\n"
+          "  filter set error_code matches CW-G-*\n"
+          "  filter save cuda_errors backend=arrayfire_cuda and level>=error\n"
+          "  filter use cuda_errors\n"
+          "Use case: while chasing one backend, set its filter once, then use "
+          "short queries such as show logs last 50 and show logs errors."},
+         &RuntimeConsoleCommandService::ExecuteFilter, true},
+    };
+    return registrations;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::Execute(
+    std::string_view command) {
+    command = Trim(command);
+    if (command.empty()) return ErrorResult("Command is empty");
+    RecordCommand(command);
+
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error) {
+        return ErrorResult("Command error at " +
+                           std::to_string(tokens.error->position) + ": " +
+                           tokens.error->message);
+    }
+    const auto name = LowerAscii(tokens.values.front().text);
+    for (const auto& registration : Registry()) {
+        if (name == registration.descriptor.name) {
+            return (this->*registration.handler)(command);
+        }
+    }
+
+    auto result = ErrorResult("Unknown command: " + tokens.values.front().text);
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Type 'help' for available commands");
+    return result;
+}
+
+void RuntimeConsoleCommandService::RecordCommand(std::string_view command) {
+    if (command_history_.empty() || command_history_.back() != command) {
+        command_history_.emplace_back(command);
+        if (command_history_.size() > kCommandHistoryCapacity) {
+            command_history_.pop_front();
+        }
+    }
+    command_history_cursor_ = command_history_.size();
+}
+
+std::optional<std::string>
+RuntimeConsoleCommandService::PreviousCommand() {
+    if (command_history_.empty()) return std::nullopt;
+    if (command_history_cursor_ > 0) --command_history_cursor_;
+    return command_history_[command_history_cursor_];
+}
+
+std::optional<std::string> RuntimeConsoleCommandService::NextCommand() {
+    if (command_history_.empty()) return std::nullopt;
+    if (command_history_cursor_ + 1 < command_history_.size()) {
+        ++command_history_cursor_;
+        return command_history_[command_history_cursor_];
+    }
+    command_history_cursor_ = command_history_.size();
+    return std::string{};
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteHelp(
+    std::string_view command) {
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error || tokens.values.size() > 2) {
+        return Usage("help [command]");
+    }
+
+    if (tokens.values.size() == 2) {
+        const auto topic = LowerAscii(tokens.values[1].text);
+        for (const auto& registration : Registry()) {
+            if (topic != registration.descriptor.name) continue;
+            RuntimeConsoleCommandResult result;
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "=== Help: " + std::string(registration.descriptor.name) +
+                        " ===");
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "Usage: " +
+                        std::string(registration.descriptor.usage));
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    std::string(registration.descriptor.description));
+            AddHelpLines(result, registration.descriptor.detailed_help);
+            if (topic == "filter") {
+                AddLine(result, RuntimeConsoleOutputLevel::Info,
+                        "Expression syntax:");
+                AddHelpLines(result, RuntimeLogFilterHelpText());
+            }
+            return result;
+        }
+        if (topic == "tasks" || topic == "syntax" || topic == "grep") {
+            RuntimeConsoleCommandResult result;
+            AddHelpLines(result, topic == "tasks"    ? HelpTasksText()
+                                 : topic == "grep" ? HelpGrepText()
+                                                   : HelpSyntaxText());
+            if (topic == "syntax") AddHelpLines(result, RuntimeLogFilterHelpText());
+            return result;
+        }
+        auto result = ErrorResult("Unknown help topic: " +
+                                  tokens.values[1].text);
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Use 'help' to list available commands");
+        return result;
+    }
+
+    RuntimeConsoleCommandResult result;
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "=== CyxWiz Console Help ===");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Commands ask the Engine what is happening: runtime logs, "
+            "diagnostic codes, the device and backend in use, training runs "
+            "and the project's Python packages. Everything except pip and "
+            "filter only reads state, so commands are safe at any time.");
+    AddLine(result, RuntimeConsoleOutputLevel::Info, "Commands:");
+    for (const auto& descriptor : Descriptors()) {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "  " + std::string(descriptor.usage) + " - " +
+                    std::string(descriptor.description));
+    }
+    AddHelpLines(result,
+                 "Topics:\n"
+                 "  help tasks - common questions and the commands that answer them\n"
+                 "  help syntax - quoting, numbers, device ids, codes, filter expressions\n"
+                 "  help grep - search log messages for text\n"
+                 "Quick start:\n"
+                 "  show logs errors - recent errors and critical events\n"
+                 "  show device active - the device training is using\n"
+                 "  show training current - progress and health of the running job\n"
+                 "  show code CW-C-0101 - what a diagnostic code means\n"
+                 "  pip list - packages in the project environment\n"
+                 "Keys: Enter run, Up/Down history, Tab complete a form, "
+                 "Ctrl+L clear, Esc close suggestions.");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Use 'help <command>' for forms, behavior, and examples");
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteClear(
+    std::string_view command) {
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error || tokens.values.size() != 1) return Usage("clear");
+    RuntimeConsoleCommandResult result;
+    result.action = RuntimeConsoleAction::Clear;
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteTest(
+    std::string_view command) {
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error || tokens.values.size() != 1) return Usage("test");
+    RuntimeConsoleCommandResult result;
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "This is an info message");
+    AddLine(result, RuntimeConsoleOutputLevel::Warning,
+            "This is a warning message");
+    AddLine(result, RuntimeConsoleOutputLevel::Error,
+            "This is an error message");
+    AddLine(result, RuntimeConsoleOutputLevel::Success,
+            "This is a success message");
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecutePip(
+    std::string_view command) {
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error || tokens.values.empty()) return Usage("pip <arguments>");
+    RuntimeConsoleCommandResult result;
+    result.action = RuntimeConsoleAction::ExecutePip;
+    for (size_t index = 1; index < tokens.values.size(); ++index) {
+        result.action_arguments.push_back(tokens.values[index].text);
+    }
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteShow(
+    std::string_view command) {
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error || tokens.values.size() < 2) {
+        return Usage("show logs|errors|code|codes|training|device|backend|run|materialization ...");
+    }
+    const auto subject = LowerAscii(tokens.values[1].text);
+    const auto arguments = tokens.values.size() > 2
+                               ? SliceFrom(command, tokens.values[2])
+                               : std::string_view{};
+    if (subject == "logs") return ShowLogs(arguments);
+    if (subject == "code") return ShowCode(arguments);
+    if (subject == "codes") return ShowCodes(arguments);
+    if (subject == "training") return ShowTraining(arguments);
+    if (subject == "device") return ShowDevice(arguments);
+    if (subject == "backend") return ShowBackend(arguments);
+    if (subject == "run") return ShowRun(arguments);
+    if (subject == "materialization") {
+        return ShowMaterialization(arguments);
+    }
+    if (subject == "errors") {
+        size_t limit = kDefaultResultLimit;
+        if (!arguments.empty()) {
+            const auto parsed = TokenizeCommand(arguments);
+            if (parsed.error || parsed.values.size() != 2 ||
+                LowerAscii(parsed.values[0].text) != "last") {
+                return Usage("show errors last <1-1000>");
+            }
+            const auto requested = ParseLimit(parsed.values[1].text);
+            if (!requested) return Usage("show errors last <1-1000>");
+            limit = *requested;
+        }
+        return QueryEvents(store_, active_filter_expression_,
+                           "level>=error", limit, false);
+    }
+    return ErrorResult("Unknown show subject: " + tokens.values[1].text);
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowLogs(
+    std::string_view arguments) {
+    arguments = Trim(arguments);
+    if (arguments.empty()) {
+        return QueryEvents(store_, active_filter_expression_, {},
+                           kDefaultResultLimit, false);
+    }
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error) {
+        return ErrorResult("Command error at " +
+                           std::to_string(tokens.error->position) + ": " +
+                           tokens.error->message);
+    }
+    const auto mode = LowerAscii(tokens.values[0].text);
+    if (mode == "last") {
+        if (tokens.values.size() != 2) return Usage("show logs last <1-1000>");
+        const auto limit = ParseLimit(tokens.values[1].text);
+        if (!limit) return Usage("show logs last <1-1000>");
+        return QueryEvents(store_, active_filter_expression_, {}, *limit,
+                           false);
+    }
+    if (mode == "errors" || mode == "warnings") {
+        if (tokens.values.size() != 1) {
+            return Usage(mode == "errors" ? "show logs errors"
+                                           : "show logs warnings");
+        }
+        return QueryEvents(store_, active_filter_expression_,
+                           mode == "errors" ? "level>=error" : "level=warn",
+                           kDefaultResultLimit, false);
+    }
+    if (mode == "where") {
+        if (tokens.values.size() < 2) return Usage("show logs where <filter>");
+        return QueryEvents(store_, active_filter_expression_,
+                           SliceFrom(arguments, tokens.values[1]),
+                           kDefaultResultLimit, false);
+    }
+    if (mode == "grep") {
+        if (tokens.values.size() < 2) return Usage("show logs grep <text>");
+        std::string text;
+        for (size_t index = 1; index < tokens.values.size(); ++index) {
+            if (!text.empty()) text.push_back(' ');
+            text += tokens.values[index].text;
+        }
+        return QueryEvents(store_, active_filter_expression_,
+                           "message contains " + EscapeFilterString(text),
+                           kDefaultResultLimit, false);
+    }
+    if (mode == "code" || mode == "codes") {
+        if (tokens.values.size() != 2) {
+            return Usage(mode == "code" ? "show logs code <CW-X-NNNN>"
+                                         : "show logs codes <CW-X-*>");
+        }
+        const auto normalized = mode == "code"
+                                    ? NormalizeDiagnosticCode(tokens.values[1].text)
+                                    : NormalizeDiagnosticFamily(tokens.values[1].text);
+        if (!normalized) {
+            return ErrorResult(mode == "code"
+                                   ? "Invalid code; expected CW-C-0101"
+                                   : "Invalid family; expected CW-C-*");
+        }
+        return QueryEvents(
+            store_, active_filter_expression_,
+            "error_code " + std::string(mode == "code" ? "= " : "matches ") +
+                *normalized,
+            kDefaultResultLimit, false);
+    }
+    return Usage("show logs last|errors|warnings|where|grep|code|codes ...");
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowCode(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.size() != 1) {
+        return Usage("show code <CW-X-NNNN>");
+    }
+    const auto code = NormalizeDiagnosticCode(tokens.values[0].text);
+    if (!code) return ErrorResult("Invalid code; expected CW-C-0101");
+
+    RuntimeConsoleCommandResult result;
+    AddLine(result, RuntimeConsoleOutputLevel::Info, "Code: " + *code);
+    const auto family_name = errors::DiagnosticFamilyName((*code)[3]);
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Family: " + std::string(family_name) + " (CW-" + (*code)[3] +
+                "-*)");
+    if (const auto* descriptor = errors::FindDiagnosticCode(*code)) {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Symbolic name: " + std::string(descriptor->symbolic_name));
+    } else {
+        AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                "Symbolic name: unregistered");
+    }
+
+    auto recent = QueryEvents(store_, active_filter_expression_,
+                              "error_code=" + *code, 20, false);
+    result.success = recent.success;
+    for (auto& line : recent.lines) {
+        result.lines.push_back(std::move(line));
+    }
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowCodes(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.empty()) {
+        return Usage("show codes family|last|where ...");
+    }
+    const auto mode = LowerAscii(tokens.values[0].text);
+    if (mode == "family") {
+        if (tokens.values.size() != 2) {
+            return Usage("show codes family <CW-X-*>");
+        }
+        const auto family = NormalizeDiagnosticFamily(tokens.values[1].text);
+        if (!family) return ErrorResult("Invalid family; expected CW-C-*");
+
+        RuntimeConsoleCommandResult result;
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Registered codes in " + *family + ":");
+        size_t count = 0;
+        for (const auto& descriptor : errors::DiagnosticCodeCatalog) {
+            if (std::string_view(descriptor.code).substr(0, 5) ==
+                std::string_view(*family).substr(0, 5)) {
+                AddLine(result, RuntimeConsoleOutputLevel::Info,
+                        "  " + std::string(descriptor.code) + " " +
+                            descriptor.symbolic_name);
+                ++count;
+            }
+        }
+        if (count == 0) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "No registered symbolic codes in this family");
+        }
+        return result;
+    }
+    if (mode == "last") {
+        if (tokens.values.size() != 2) return Usage("show codes last <1-1000>");
+        const auto limit = ParseLimit(tokens.values[1].text);
+        if (!limit) return Usage("show codes last <1-1000>");
+        return QueryEvents(store_, active_filter_expression_, {}, *limit, true);
+    }
+    if (mode == "where") {
+        if (tokens.values.size() < 2) return Usage("show codes where <filter>");
+        return QueryEvents(store_, active_filter_expression_,
+                           SliceFrom(arguments, tokens.values[1]),
+                           kDefaultResultLimit, true);
+    }
+    return Usage("show codes family|last|where ...");
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowTraining(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.size() != 1) {
+        return Usage(
+            "show training current|last|trace|host-sync|placement|materialization");
+    }
+    if (!truth_provider_) {
+        return ErrorResult("Runtime training truth provider is unavailable");
+    }
+
+    const auto mode = LowerAscii(tokens.values[0].text);
+    RuntimeTrainingTruth truth;
+    if (mode == "current") {
+        truth = truth_provider_->GetCurrentTraining();
+        if (!truth.available || !truth.active) {
+            RuntimeConsoleCommandResult result;
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "No active training run; use 'show training last' for "
+                    "the latest retained trace");
+            return result;
+        }
+    } else if (mode == "last" || mode == "trace" ||
+               mode == "host-sync" || mode == "placement" ||
+               mode == "materialization") {
+        truth = truth_provider_->GetCurrentTraining();
+        if (!truth.available || !truth.active) {
+            truth = truth_provider_->GetLastTraining();
+        }
+        if (!truth.available) {
+            RuntimeConsoleCommandResult result;
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "No training trace is available");
+            return result;
+        }
+    } else {
+        return Usage(
+            "show training current|last|trace|host-sync|placement|materialization");
+    }
+
+    RuntimeConsoleCommandResult result;
+    if (mode == "current" || mode == "last") {
+        AddTrainingSummary(result, truth);
+        return result;
+    }
+    if (mode == "trace") {
+        AddTrainingSummary(result, truth);
+        const size_t first = truth.recent_events.size() > 20
+            ? truth.recent_events.size() - 20
+            : 0;
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Recent trace events: showing=" +
+                    std::to_string(truth.recent_events.size() - first) +
+                    " retained=" +
+                    std::to_string(truth.recent_events.size()));
+        for (size_t index = first; index < truth.recent_events.size(); ++index) {
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    FormatTrainingEvent(truth.recent_events[index]));
+        }
+        return result;
+    }
+    if (mode == "host-sync") {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "ArrayFire host sync: run=" + RecordedOr(truth.run_id) +
+                    " count=" + std::to_string(truth.host_sync_count) +
+                    " bytes=" + FormatByteCount(truth.host_sync_bytes));
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Summary: " + RecordedOr(truth.host_sync_summary));
+        for (const auto& event : truth.recent_events) {
+            if (event.host_sync_bytes == 0 && event.host_sync_reason.empty()) {
+                continue;
+            }
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    FormatTrainingEvent(event));
+        }
+        return result;
+    }
+    if (mode == "placement") {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Placement: run=" + RecordedOr(truth.run_id) +
+                    " fingerprint=" +
+                    RecordedOr(truth.placement_fingerprint) + " entries=" +
+                    std::to_string(truth.placement_entry_count));
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Summary: " + RecordedOr(truth.placement_summary));
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Residency: verdict=" +
+                    RecordedOr(truth.residency_verdict) + " reason=" +
+                    RecordedOr(truth.residency_reason));
+        return result;
+    }
+
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Materialization: run=" + RecordedOr(truth.run_id) +
+                " retained=" +
+                std::to_string(truth.materialization_events.size()));
+    for (const auto& event : truth.materialization_events) {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                FormatTrainingEvent(event));
+    }
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowDevice(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.empty() || tokens.values.size() > 2) {
+        return Usage(
+            "show device active|available|queued|backends|oneapi|qualification | show device route|recommendations <backend>:<id>");
+    }
+    if (!truth_provider_) {
+        return ErrorResult("Runtime device truth provider is unavailable");
+    }
+    const auto mode = LowerAscii(tokens.values[0].text);
+    const bool include_inventory =
+        mode == "available" || mode == "backends" || mode == "oneapi" ||
+        mode == "qualification" || mode == "route" ||
+        mode == "recommendations";
+    const bool requires_route = mode == "route" || mode == "recommendations";
+    if ((requires_route && tokens.values.size() != 2) ||
+        (!requires_route && tokens.values.size() != 1) ||
+        (mode != "active" && mode != "queued" && !include_inventory)) {
+        return Usage(
+            "show device active|available|queued|backends|oneapi|qualification | show device route|recommendations <backend>:<id>");
+    }
+    const auto truth = truth_provider_->GetDeviceTruth(include_inventory);
+    RuntimeConsoleCommandResult result;
+    if (mode == "active") {
+        if (!truth.active_available) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "Active device unavailable; source=" +
+                        RecordedOr(truth.active_source));
+            return result;
+        }
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Active device: source=" +
+                    RecordedOr(truth.active_source) + " backend=" +
+                    RecordedOr(truth.active_backend) + " device_id=" +
+                    std::to_string(truth.active_device_id) + " name='" +
+                    RecordedOr(truth.active_device_name) + "' preflight=" +
+                    RecordedOr(truth.active_preflight_stage) + " execution=" +
+                    (truth.active_execution_validated ? "validated" :
+                                                        "not_validated"));
+        if (!truth.active_run_id.empty()) {
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "Active run: " + truth.active_run_id);
+        }
+        return result;
+    }
+    if (mode == "queued") {
+        if (truth.queued_available) {
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "Queued device: source=next_run_selection backend=" +
+                        truth.queued_backend + " device_id=" +
+                        std::to_string(truth.queued_device_id));
+        } else {
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "Queued device: none");
+        }
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Next-run policy: source=" + truth.next_run_policy_source +
+                    " value=" + truth.next_run_policy);
+        return result;
+    }
+
+    std::vector<DeviceInfo> inventory;
+    inventory.reserve(truth.available_devices.size());
+    for (const auto& entry : truth.available_devices) {
+        if (auto route = ToDeviceInfo(entry)) {
+            inventory.push_back(std::move(*route));
+        }
+    }
+    if (mode == "qualification") {
+        const auto snapshot = GetRouteQualificationSnapshot();
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Qualification: evidence='" +
+                    std::string(RouteQualificationEvidenceLabel(
+                        snapshot ? snapshot->matrix_id : std::string{})) + "'" +
+                    " routes=" + std::to_string(inventory.size()));
+        for (const auto& route : inventory) {
+            const auto decision =
+                EvaluateRouteQualification(route, snapshot);
+            const auto authorization =
+                EvaluateRouteTrainingAuthorization(route, decision);
+            const std::string display_name =
+                decision.display_name_available ? decision.display_name
+                                                : route.name;
+            AddLine(result,
+                    decision.qualified
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    "  route=" + DeviceRouteLabel(route) + " name='" +
+                        RecordedOr(display_name) + "' matrix_status=" +
+                        MatrixStatus(decision.evidence_available,
+                                     decision.qualified) +
+                        " authorization=" +
+                        RouteTrainingAuthorizationStatusName(
+                            authorization.status) +
+                        " failure_category=" +
+                        RouteFailureCategoryName(
+                            authorization.failure.category) +
+                        (authorization.failure.operation.empty()
+                             ? ""
+                             : " failed_operation=" +
+                                   authorization.failure.operation) +
+                        " reason=" + authorization.message +
+                        (authorization.failure.observed_fact.empty()
+                             ? ""
+                             : " observed='" +
+                                   authorization.failure.observed_fact + "'"));
+        }
+        return result;
+    }
+    if (requires_route) {
+        const auto requested = ParseDeviceRoute(tokens.values[1].text);
+        if (!requested.has_value()) {
+            return ErrorResult(
+                "Invalid route; expected cpu:0, cuda:0, opencl:0, or oneapi:0");
+        }
+        const auto failed = std::find_if(
+            inventory.begin(), inventory.end(), [&](const DeviceInfo& route) {
+                return route.type == requested->first &&
+                       route.device_id == requested->second;
+            });
+        if (failed == inventory.end()) {
+            return ErrorResult("Route is not present in retained inventory: " +
+                               tokens.values[1].text);
+        }
+        if (mode == "route") {
+            const auto decision = EvaluateRouteQualification(
+                *failed, GetRouteQualificationSnapshot());
+            const auto authorization =
+                EvaluateRouteTrainingAuthorization(*failed, decision);
+            const std::string display_name =
+                decision.display_name_available ? decision.display_name
+                                                : failed->name;
+            const DeviceKind display_kind = decision.device_kind_known
+                ? decision.device_kind
+                : failed->kind;
+            const std::string identity_source =
+                decision.display_name_available
+                    ? RecordedOr(decision.identity_source)
+                    : (failed->name_is_fallback ? "fallback" : "provider");
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "Route: " + DeviceRouteLabel(*failed) + " name='" +
+                        RecordedOr(display_name) + "' name_source=" +
+                        identity_source + " kind=" +
+                        DeviceKindName(display_kind) + " identity=" +
+                        DeviceIdentityConfidenceName(
+                            failed->identity_confidence) +
+                        " fingerprint=" +
+                        (failed->physical_fingerprint_known
+                             ? failed->physical_fingerprint
+                             : "unknown"));
+            AddLine(result,
+                    decision.qualified
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    std::string("Qualification: matrix_status=") +
+                        MatrixStatus(decision.evidence_available,
+                                     decision.qualified) +
+                        " evidence='" +
+                        RouteQualificationEvidenceLabel(decision.matrix_id) +
+                        "'" +
+                        " authorization=" +
+                        RouteTrainingAuthorizationStatusName(
+                            authorization.status) +
+                        " failure_category=" +
+                        RouteFailureCategoryName(
+                            authorization.failure.category) +
+                        (authorization.failure.operation.empty()
+                             ? ""
+                             : " failed_operation=" +
+                                   authorization.failure.operation) +
+                        " reason=" + authorization.message +
+                        (authorization.failure.recommended_action.empty()
+                             ? ""
+                             : " action='" +
+                                   authorization.failure.recommended_action +
+                                   "'"));
+            return result;
+        }
+
+        const auto recommendations = RecommendExecutionRoutes(
+            *failed, inventory, GetRouteQualificationSnapshot());
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Recommendations: failed=" + DeviceRouteLabel(*failed) +
+                    " eligible=" +
+                    std::to_string(recommendations.recommendations.size()) +
+                    " rejected=" +
+                    std::to_string(recommendations.rejections.size()));
+        for (const auto& recommendation :
+             recommendations.recommendations) {
+            AddLine(result, RuntimeConsoleOutputLevel::Success,
+                    "  route=" + DeviceRouteLabel(recommendation.route) +
+                        " class=" +
+                        (recommendation.remediation ==
+                                 RouteRecommendationClass::SamePhysicalDevice
+                             ? "same_physical_device"
+                             : "arrayfire_cpu_recovery") +
+                        " reason=" + recommendation.reason);
+        }
+        for (const auto& rejection : recommendations.rejections) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "  rejected=" + DeviceRouteLabel(rejection.route) +
+                        " reason=" + rejection.reason);
+        }
+        return result;
+    }
+
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Device inventory: source=" +
+                RecordedOr(truth.inventory_source) + " status=" +
+                RecordedOr(truth.inventory_status) + " count=" +
+                std::to_string(truth.available_devices.size()));
+    if (mode == "backends") {
+        std::set<std::string> backends;
+        for (const auto& device : truth.available_devices) {
+            backends.insert(device.backend);
+        }
+        for (const auto& backend : backends) {
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "  " + backend);
+        }
+        return result;
+    }
+    size_t shown = 0;
+    const auto snapshot = GetRouteQualificationSnapshot();
+    for (const auto& device : truth.available_devices) {
+        if (mode == "oneapi" && device.backend != "arrayfire_oneapi") {
+            continue;
+        }
+        const auto route = ToDeviceInfo(device);
+        const auto qualification = route.has_value()
+            ? EvaluateRouteQualification(*route, snapshot)
+            : RouteQualificationDecision{};
+        const auto authorization = route.has_value()
+            ? EvaluateRouteTrainingAuthorization(*route, qualification)
+            : RouteTrainingAuthorizationDecision{};
+        const std::string display_name =
+            qualification.display_name_available
+                ? qualification.display_name
+                : device.name;
+        const std::string display_kind = qualification.device_kind_known
+            ? DeviceKindName(qualification.device_kind)
+            : RecordedOr(device.device_kind);
+        const std::string name_source = qualification.display_name_available
+            ? RecordedOr(qualification.identity_source)
+            : (device.name_is_fallback ? "fallback" : "provider");
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "  backend=" + device.backend + " device_id=" +
+                    std::to_string(device.device_id) + " name='" +
+                    RecordedOr(display_name) + "' name_source=" +
+                    name_source +
+                    " selectable=" +
+                    (device.device_selectable ? "true" : "false") +
+                    " kind=" + display_kind +
+                    " identity=" +
+                    RecordedOr(device.identity_confidence) +
+                    " provider='" +
+                    (device.provider_known ? device.provider : "unknown") +
+                    "' driver='" +
+                    (device.driver_version_known
+                         ? device.driver_version
+                         : "unknown") +
+                    "' fingerprint=" +
+                    (device.physical_fingerprint_known
+                         ? device.physical_fingerprint
+                         : "unknown") +
+                    " metadata=" + RecordedOr(device.metadata_status) +
+                    " execution=" +
+                    (device.execution_validated ? "validated" : "not_validated") +
+                    " matrix_status=" +
+                    MatrixStatus(qualification.evidence_available,
+                                 qualification.qualified) +
+                    " authorization=" +
+                    RouteTrainingAuthorizationStatusName(
+                        authorization.status) +
+                    " failure_category=" +
+                    RouteFailureCategoryName(
+                        authorization.failure.category) +
+                    " memory=" +
+                    (device.memory_total_known
+                         ? FormatByteCount(device.memory_total)
+                         : "unknown") +
+                    (device.metadata_error_code != 0
+                         ? " arrayfire_error=" +
+                               std::to_string(device.metadata_error_code)
+                         : ""));
+        ++shown;
+    }
+    if (mode == "oneapi" && shown == 0) {
+        AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                "No ArrayFire oneAPI device was reported by the retained "
+                "inventory");
+    }
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowBackend(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.empty() || tokens.values.size() > 2) {
+        return Usage(
+            "show backend packs|compatibility|support-bundle [1-100]");
+    }
+    if (!truth_provider_) {
+        return ErrorResult("Runtime backend truth provider is unavailable");
+    }
+
+    const auto mode = LowerAscii(tokens.values[0].text);
+    size_t support_limit = kDefaultBackendSupportLimit;
+    if (mode == "support-bundle") {
+        if (tokens.values.size() == 2) {
+            const auto parsed = ParseLimit(tokens.values[1].text);
+            if (!parsed || *parsed > kMaximumBackendSupportLimit) {
+                return Usage("show backend support-bundle [1-100]");
+            }
+            support_limit = *parsed;
+        }
+    } else if (tokens.values.size() != 1 ||
+               (mode != "packs" && mode != "compatibility")) {
+        return Usage(
+            "show backend packs|compatibility|support-bundle [1-100]");
+    }
+
+    const auto packs = truth_provider_->GetBackendPackTruth();
+    RuntimeConsoleCommandResult result;
+    const auto add_runtime_summary = [&] {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Backend runtime: packaged=" +
+                    std::string(packs.packaged_runtime ? "true" : "false") +
+                    " status=" + RecordedOr(packs.runtime_status) +
+                    " runtime_set=" + RecordedOr(packs.runtime_set_id) +
+                    " generation=" +
+                    std::to_string(packs.runtime_generation) +
+                    " base_pack=" + RecordedOr(packs.base_pack_id));
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Backend catalog: source=" +
+                    RecordedOr(packs.catalog_source) + " status=" +
+                    RecordedOr(packs.catalog_status) + " catalog=" +
+                    RecordedOr(packs.catalog_id) + " network=" +
+                    RecordedOr(packs.network_policy) + " proxy=" +
+                    RecordedOr(packs.proxy_policy));
+    };
+
+    if (mode == "packs") {
+        add_runtime_summary();
+        if (packs.packs.empty()) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    packs.packaged_runtime
+                        ? "No validated backend-pack records are available"
+                        : "Backend packs are not used by this development runtime");
+            return result;
+        }
+        for (const auto& pack : packs.packs) {
+            const auto compatibility = PackCompatibilityStatus(pack);
+            AddLine(result,
+                    compatibility == "ready"
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    "  backend=" + SupportValue(pack.backend) +
+                        " pack=" + SupportValue(pack.pack_id) +
+                        " installed_pack=" +
+                        SupportValue(pack.installed_pack_id) +
+                        " version=" + SupportValue(pack.package_version) +
+                        " state=" + RecordedOr(pack.state) +
+                        " layout=" + RecordedOr(pack.layout_status) +
+                        " catalog_support=" +
+                        RecordedOr(pack.catalog_support) +
+                        " qualification=" +
+                        MatrixStatus(
+                            pack.qualification_evidence_available,
+                            pack.training_authorized) +
+                        " compatibility=" + compatibility +
+                        " download=" +
+                        FormatByteCount(pack.download_size_bytes) +
+                        " providers=" +
+                        JoinSupportValues(pack.provider_requirements));
+        }
+        return result;
+    }
+
+    const auto devices = truth_provider_->GetDeviceTruth(true);
+    const auto snapshot = GetRouteQualificationSnapshot();
+    struct RouteReport {
+        DeviceInfo route;
+        RuntimeDeviceEntryTruth device;
+        const RuntimeBackendPackEntryTruth* pack = nullptr;
+        RouteQualificationDecision qualification;
+        RouteTrainingAuthorizationDecision authorization;
+        std::string compatibility;
+    };
+    std::vector<RouteReport> routes;
+    routes.reserve(devices.available_devices.size());
+    for (const auto& device : devices.available_devices) {
+        const auto route = ToDeviceInfo(device);
+        if (!route) continue;
+        RouteReport report;
+        report.route = *route;
+        report.device = device;
+        report.pack = FindActivePack(packs, route->type);
+        report.qualification = EvaluateRouteQualification(*route, snapshot);
+        report.authorization = EvaluateRouteTrainingAuthorization(
+            *route, report.qualification);
+        report.compatibility = !packs.packaged_runtime
+            ? "development_runtime"
+            : RouteCompatibilityStatus(
+                  report.pack, report.qualification,
+                  report.authorization);
+        routes.push_back(std::move(report));
+    }
+
+    if (mode == "compatibility") {
+        add_runtime_summary();
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Backend compatibility: inventory_source=" +
+                    RecordedOr(devices.inventory_source) + " status=" +
+                    RecordedOr(devices.inventory_status) + " packs=" +
+                    std::to_string(packs.packs.size()) + " routes=" +
+                    std::to_string(routes.size()));
+        for (const auto& pack : packs.packs) {
+            AddLine(result,
+                    PackCompatibilityStatus(pack) == "ready"
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    "  pack backend=" + SupportValue(pack.backend) +
+                        " pack=" + SupportValue(pack.pack_id) +
+                        " compatibility=" +
+                        PackCompatibilityStatus(pack) + " state=" +
+                        RecordedOr(pack.state) + " layout=" +
+                        RecordedOr(pack.layout_status) + " policy=" +
+                        RecordedOr(pack.catalog_support));
+        }
+        for (const auto& route : routes) {
+            AddLine(result,
+                    route.compatibility == "ready"
+                        ? RuntimeConsoleOutputLevel::Success
+                        : (route.compatibility == "development_runtime"
+                               ? RuntimeConsoleOutputLevel::Info
+                               : RuntimeConsoleOutputLevel::Warning),
+                    "  route=" + DeviceRouteLabel(route.route) +
+                        " pack=" +
+                        (route.pack
+                             ? SupportValue(route.pack->installed_pack_id)
+                             : "not_installed") +
+                        " compatibility=" + route.compatibility +
+                        " authorization=" +
+                        RouteTrainingAuthorizationStatusName(
+                            route.authorization.status) +
+                        " failure_stage=" +
+                        RouteFailureStageName(
+                            route.qualification.failure.stage) +
+                        " failure_category=" +
+                        RouteFailureCategoryName(
+                            route.qualification.failure.category) +
+                        " operation=" +
+                        SupportValue(
+                            route.qualification.failure.operation) +
+                        " provider=" +
+                        SupportValue(route.device.provider_known
+                                         ? route.device.provider
+                                         : "unknown") +
+                        " driver=" +
+                        SupportValue(route.device.driver_version_known
+                                         ? route.device.driver_version
+                                         : "unknown"));
+        }
+        return result;
+    }
+
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Backend support bundle: schema=cyxwiz.backend.support.v1 "
+            "redaction=shareable upload=not_requested");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Runtime: packaged=" +
+                std::string(packs.packaged_runtime ? "true" : "false") +
+                " status=" + SupportValue(packs.runtime_status) +
+                " runtime_set=" + SupportValue(packs.runtime_set_id) +
+                " generation=" +
+                std::to_string(packs.runtime_generation) + " base_pack=" +
+                SupportValue(packs.base_pack_id));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Catalog: source=" + SupportValue(packs.catalog_source) +
+                " status=" + SupportValue(packs.catalog_status) +
+                " catalog=" + SupportValue(packs.catalog_id) +
+                " network=" + SupportValue(packs.network_policy) +
+                " proxy=" + SupportValue(packs.proxy_policy));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            std::string("Contracts: compute=") +
+                kCyxWizComputeContractId + " operations=" +
+                kRouteQualificationOperationManifestId + " matrix=" +
+                kRouteQualificationMatrixId);
+
+    const size_t total_entries = packs.packs.size() + routes.size();
+    size_t shown = 0;
+    for (const auto& pack : packs.packs) {
+        if (shown == support_limit) break;
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "pack backend=" + SupportValue(pack.backend) +
+                    " pack=" + SupportValue(pack.pack_id) +
+                    " installed_pack=" +
+                    SupportValue(pack.installed_pack_id) + " version=" +
+                    SupportValue(pack.package_version) + " state=" +
+                    SupportValue(pack.state) + " layout=" +
+                    SupportValue(pack.layout_status) + " catalog_support=" +
+                    SupportValue(pack.catalog_support) + " compatibility=" +
+                    PackCompatibilityStatus(pack) + " providers=" +
+                    JoinSupportValues(pack.provider_requirements) +
+                    " bytes=" +
+                    std::to_string(pack.download_size_bytes));
+        ++shown;
+    }
+    for (const auto& route : routes) {
+        if (shown == support_limit) break;
+        int passed = 0;
+        int unavailable = 0;
+        int failed = 0;
+        int timeout = 0;
+        int crash = 0;
+        double benchmark_ms = 0.0;
+        if (snapshot) {
+            const auto evidence = std::find_if(
+                snapshot->routes.begin(), snapshot->routes.end(),
+                [&](const auto& record) {
+                    return record.type == route.route.type &&
+                           record.device_id == route.route.device_id;
+                });
+            if (evidence != snapshot->routes.end()) {
+                passed = evidence->pass_count;
+                unavailable = evidence->unavailable_count;
+                failed = evidence->failure_count;
+                timeout = evidence->timeout_count;
+                crash = evidence->crash_count;
+                benchmark_ms = evidence->benchmark_median_iteration_ms;
+            }
+        }
+        std::ostringstream line;
+        line << "route route=" << DeviceRouteLabel(route.route)
+             << " name=" << SupportValue(route.device.name)
+             << " provider="
+             << SupportValue(route.device.provider_known
+                                 ? route.device.provider
+                                 : "unknown")
+             << " driver="
+             << SupportValue(route.device.driver_version_known
+                                 ? route.device.driver_version
+                                 : "unknown")
+             << " pack="
+             << (route.pack
+                     ? SupportValue(route.pack->installed_pack_id)
+                     : "not_installed")
+             << " compatibility=" << route.compatibility
+             << " authorization="
+             << RouteTrainingAuthorizationStatusName(
+                    route.authorization.status)
+             << " failure_stage="
+             << RouteFailureStageName(route.qualification.failure.stage)
+             << " failure_category="
+             << RouteFailureCategoryName(
+                    route.qualification.failure.category)
+             << " operation="
+             << SupportValue(route.qualification.failure.operation)
+             << " passed=" << passed
+             << " unavailable=" << unavailable
+             << " failed=" << failed
+             << " timeout=" << timeout
+             << " crash=" << crash
+             << " benchmark_median_ms=" << std::fixed
+             << std::setprecision(3) << benchmark_ms;
+        AddLine(result, RuntimeConsoleOutputLevel::Info, line.str());
+        ++shown;
+    }
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Entries: total=" + std::to_string(total_entries) +
+                " shown=" + std::to_string(shown) + " omitted=" +
+                std::to_string(total_entries - shown) + " limit=" +
+                std::to_string(support_limit));
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowRun(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.empty() || tokens.values.size() > 3) {
+        return Usage(
+            "show run current | show run <run_id> summary|events|codes|host-sync | show run <run_id> code <CW-X-NNNN> | show run <run_id> codes <CW-X-*>");
+    }
+    if (!truth_provider_) {
+        return ErrorResult("Runtime run truth provider is unavailable");
+    }
+
+    if (tokens.values.size() == 1 &&
+        LowerAscii(tokens.values[0].text) == "current") {
+        const auto run = truth_provider_->GetCurrentRun();
+        if (!run.available) {
+            RuntimeConsoleCommandResult result;
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "No active training run is available");
+            return result;
+        }
+        RuntimeConsoleCommandResult result;
+        AddRunSummary(result, run);
+        return result;
+    }
+    if (tokens.values.size() < 2) {
+        return Usage("show run current | show run <run_id> summary|events|codes|host-sync");
+    }
+
+    const std::string& requested_run_id = tokens.values[0].text;
+    const auto mode = LowerAscii(tokens.values[1].text);
+    const bool valid_two_token_mode =
+        mode == "summary" || mode == "events" || mode == "codes" ||
+        mode == "host-sync";
+    const bool valid_three_token_mode =
+        mode == "code" || mode == "codes";
+    if ((tokens.values.size() == 2 && !valid_two_token_mode) ||
+        (tokens.values.size() == 3 && !valid_three_token_mode)) {
+        return Usage(
+            "show run <run_id> summary|events|codes|host-sync | show run <run_id> code <CW-X-NNNN> | show run <run_id> codes <CW-X-*>");
+    }
+
+    const auto run = truth_provider_->GetRun(requested_run_id);
+    if (!run.available) {
+        return ErrorResult("Run not found: " + requested_run_id);
+    }
+    if (mode == "summary") {
+        RuntimeConsoleCommandResult result;
+        AddRunSummary(result, run);
+        return result;
+    }
+
+    const auto run_filter =
+        "run_id=" + EscapeFilterString(requested_run_id);
+    if (mode == "events") {
+        auto result = QueryEvents(store_, active_filter_expression_, run_filter,
+                                  kDefaultResultLimit, false);
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Retained run-adapter events: " +
+                    std::to_string(run.events.size()));
+        for (const auto& event : run.events) {
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    FormatRunEvent(event));
+        }
+        return result;
+    }
+
+    if (mode == "host-sync") {
+        RuntimeConsoleCommandResult result;
+        if (!run.training_evidence_available) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "Host-sync evidence was not retained for run=" +
+                        requested_run_id);
+            return result;
+        }
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "ArrayFire host sync: run=" + requested_run_id +
+                    " count=" +
+                    std::to_string(run.training.host_sync_count) +
+                    " bytes=" +
+                    FormatByteCount(run.training.host_sync_bytes));
+        for (const auto& event : run.training.recent_events) {
+            if (event.host_sync_bytes == 0 && event.host_sync_reason.empty()) {
+                continue;
+            }
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    FormatTrainingEvent(event));
+        }
+        return result;
+    }
+
+    std::optional<std::string> exact_code;
+    std::optional<std::string> code_family;
+    if (tokens.values.size() == 3) {
+        if (mode == "code") {
+            exact_code = NormalizeDiagnosticCode(tokens.values[2].text);
+            if (!exact_code) return Usage("show run <run_id> code <CW-X-NNNN>");
+        } else {
+            code_family = NormalizeDiagnosticFamily(tokens.values[2].text);
+            if (!code_family) return Usage("show run <run_id> codes <CW-X-*>");
+        }
+    }
+
+    std::string log_filter = run_filter;
+    if (exact_code) {
+        log_filter += " and error_code=" + *exact_code;
+    } else if (code_family) {
+        log_filter += " and error_code matches " + *code_family;
+    }
+    auto result = QueryEvents(store_, active_filter_expression_, log_filter,
+                              kDefaultResultLimit, true);
+    size_t persisted_matches = 0;
+    for (const auto& issue : run.issues) {
+        if (issue.code.empty()) continue;
+        if (exact_code && issue.code != *exact_code) continue;
+        if (code_family &&
+            (issue.code.size() < 5 || issue.code.compare(
+                 0, 5, *code_family, 0, 5) != 0)) {
+            continue;
+        }
+        AddLine(result, issue.level == "error"
+                            ? RuntimeConsoleOutputLevel::Error
+                            : RuntimeConsoleOutputLevel::Warning,
+                FormatRunIssue(issue, requested_run_id));
+        ++persisted_matches;
+    }
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Persisted run diagnostics: matched=" +
+                std::to_string(persisted_matches) + " retained=" +
+                std::to_string(run.issues.size()));
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowMaterialization(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.size() != 1 ||
+        LowerAscii(tokens.values[0].text) != "last") {
+        return Usage("show materialization last");
+    }
+    if (!truth_provider_) {
+        return ErrorResult("Runtime materialization truth provider is unavailable");
+    }
+
+    auto truth = truth_provider_->GetCurrentTraining();
+    if (!truth.available || truth.materialization_events.empty()) {
+        truth = truth_provider_->GetLastTraining();
+    }
+    RuntimeConsoleCommandResult result;
+    if (!truth.available || truth.materialization_events.empty()) {
+        AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                "No retained materialization evidence is available");
+        return result;
+    }
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Last materialization evidence: source=" +
+                RecordedOr(truth.source) + " run=" +
+                RecordedOr(truth.run_id) + " retained=" +
+                std::to_string(truth.materialization_events.size()));
+    for (const auto& event : truth.materialization_events) {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                FormatTrainingEvent(event));
+    }
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteFilter(
+    std::string_view command) {
+    const auto tokens = TokenizeCommand(command);
+    if (tokens.error || tokens.values.size() < 2) {
+        return Usage("filter set|clear|save|use ...");
+    }
+    const auto mode = LowerAscii(tokens.values[1].text);
+    if (mode == "clear") {
+        if (tokens.values.size() != 2) return Usage("filter clear");
+        active_filter_expression_.clear();
+        RuntimeConsoleCommandResult result;
+        AddLine(result, RuntimeConsoleOutputLevel::Success,
+                "Session log filter cleared");
+        return result;
+    }
+    if (mode == "set") {
+        if (tokens.values.size() < 3) return Usage("filter set <expression>");
+        const auto expression = std::string(SliceFrom(command, tokens.values[2]));
+        auto parsed = ParseRuntimeLogFilter(expression);
+        if (!parsed.Ok()) {
+            return ErrorResult("Filter error at " +
+                               std::to_string(parsed.error->position) + ": " +
+                               parsed.error->message);
+        }
+        active_filter_expression_ = expression;
+        RuntimeConsoleCommandResult result;
+        AddLine(result, RuntimeConsoleOutputLevel::Success,
+                "Session log filter set: " + expression);
+        return result;
+    }
+    if (mode == "save") {
+        if (tokens.values.size() < 4) {
+            return Usage("filter save <name> <expression>");
+        }
+        const auto& name = tokens.values[2].text;
+        if (!IsValidFilterName(name)) {
+            return ErrorResult(
+                "Filter name must use 1-64 letters, digits, '_' or '-'");
+        }
+        const auto expression = std::string(SliceFrom(command, tokens.values[3]));
+        auto parsed = ParseRuntimeLogFilter(expression);
+        if (!parsed.Ok()) {
+            return ErrorResult("Filter error at " +
+                               std::to_string(parsed.error->position) + ": " +
+                               parsed.error->message);
+        }
+        saved_filters_[name] = expression;
+        RuntimeConsoleCommandResult result;
+        AddLine(result, RuntimeConsoleOutputLevel::Success,
+                "Saved session filter '" + name + "'");
+        return result;
+    }
+    if (mode == "use") {
+        if (tokens.values.size() != 3) return Usage("filter use <name>");
+        const auto found = saved_filters_.find(tokens.values[2].text);
+        if (found == saved_filters_.end()) {
+            return ErrorResult("Unknown saved filter: " + tokens.values[2].text);
+        }
+        active_filter_expression_ = found->second;
+        RuntimeConsoleCommandResult result;
+        AddLine(result, RuntimeConsoleOutputLevel::Success,
+                "Using session filter '" + found->first + "': " +
+                    found->second);
+        return result;
+    }
+    return Usage("filter set|clear|save|use ...");
+}
+
+} // namespace cyxwiz

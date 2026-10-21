@@ -105,7 +105,7 @@ private:
     bool is_active_ = false;
     Tutorial* current_tutorial_ = nullptr;
     int current_step_index_ = 0;
-    float step_start_time_ = 0.0f;
+    double step_start_time_ = 0.0;
 
     // Progress tracking
     std::vector<std::string> completed_tutorials_;
@@ -117,11 +117,6 @@ private:
 
     // Callbacks
     WindowRectCallback window_rect_callback_;
-
-    // Colors - solid opaque for clear visibility
-    ImVec4 overlay_color_ = ImVec4(0.0f, 0.0f, 0.0f, 0.75f);
-    ImVec4 highlight_color_ = ImVec4(0.3f, 0.7f, 1.0f, 1.0f);
-    ImVec4 tooltip_bg_color_ = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);  // Fully opaque
 };
 
 } // namespace cyxwiz

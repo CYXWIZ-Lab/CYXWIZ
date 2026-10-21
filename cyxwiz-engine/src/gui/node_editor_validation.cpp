@@ -5,8 +5,8 @@
 // Includes cycle detection, reachability analysis, and graph integrity checks.
 
 #include "node_editor.h"
-#include "node_editor_shape_inference.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/pipeline_runtime_capabilities.h"
+#include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <set>
 #include <queue>
@@ -14,6 +14,14 @@
 #include <map>
 
 namespace gui {
+
+namespace {
+
+bool IsGraphInputNode(NodeType type) {
+    return type == NodeType::DataInput || type == NodeType::DatasetInput;
+}
+
+} // namespace
 
 bool NodeEditor::ValidateGraph(std::string& error_message) {
     if (nodes_.empty()) {
@@ -47,6 +55,14 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
 
     // Check variadic pin requirements
     for (const auto& node : nodes_) {
+        if (const char* reason =
+                cyxwiz::ResolvePipelineUnsupportedSequentialModelLayerReason(
+                    node.type)) {
+            error_message = "Cannot generate code for blocked node '" +
+                node.name + "': " + reason;
+            return false;
+        }
+
         for (const auto& pin : node.inputs) {
             int conn_count = GetConnectionCount(pin.id);
 
@@ -75,14 +91,6 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
 
 std::vector<ValidationWarning> NodeEditor::ValidateShapes() {
     std::vector<ValidationWarning> warnings;
-
-    // First, compute shapes for all nodes
-    if (shape_inference_) {
-        shape_inference_->ComputeAllShapes(nodes_, links_);
-    } else {
-        spdlog::error("ValidateShapes: shape_inference_ is null");
-        return warnings;
-    }
 
     // Check each link for shape mismatches
     for (const auto& link : links_) {
@@ -158,22 +166,7 @@ bool NodeEditor::Expects2DInput(NodeType type) const {
 }
 
 bool NodeEditor::IsGraphValid() const {
-    // Quick check for training readiness
-    // Need: DatasetInput node, at least one model layer, and a loss node
-    if (nodes_.empty()) return false;
-
-    bool has_dataset_input = false;
-    bool has_loss = false;
-    bool has_model_layer = false;
-
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) has_dataset_input = true;
-        if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss) has_loss = true;
-        if (node.type == NodeType::Dense || node.type == NodeType::Conv2D) has_model_layer = true;
-    }
-
-    // For training we need: dataset input, model layers, and loss
-    return has_dataset_input && has_model_layer && has_loss;
+    return cyxwiz::HasTrainingGraphStructure(nodes_);
 }
 
 void NodeEditor::ResolveDynamicPins(int node_id) {
@@ -182,7 +175,7 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     for (auto& n : nodes_) {
         if (n.id == node_id) { node = &n; break; }
     }
-    if (!node || !node->has_dynamic_pins || node->plugin_qualified_name.empty()) return;
+    if (!node || !node->has_dynamic_pins || node->extension_type_id.empty()) return;
 
     // Check if trigger value actually changed
     const std::string& trigger = node->dynamic_pin_trigger;
@@ -199,11 +192,11 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     SaveUndoState();
 
     // Call plugin to resolve new pins
-    auto result = cyxwiz::plugin::PluginNodeRegistry::Instance().ResolveDynamicPins(
-        node->plugin_qualified_name, node->parameters);
+    auto result = cyxwiz::ExtensionNodeRegistry::Instance().ResolveDynamicPins(
+        node->extension_type_id, node->parameters);
 
     if (result.pins.empty()) {
-        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->plugin_qualified_name);
+        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
         return;
     }
 
@@ -367,10 +360,10 @@ bool NodeEditor::HasCycle() {
 bool NodeEditor::AllNodesReachable() {
     if (nodes_.empty()) return true;
 
-    // Find all DatasetInput nodes
+    // Find all graph input nodes
     std::vector<int> input_nodes;
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) {
+        if (IsGraphInputNode(node.type)) {
             input_nodes.push_back(node.id);
         }
     }
@@ -426,8 +419,7 @@ bool NodeEditor::AllNodesReachable() {
 
 bool NodeEditor::HasInputNode() {
     for (const auto& node : nodes_) {
-        // DatasetInput is the valid input source for the graph
-        if (node.type == NodeType::DatasetInput) {
+        if (IsGraphInputNode(node.type)) {
             return true;
         }
     }
@@ -436,7 +428,8 @@ bool NodeEditor::HasInputNode() {
 
 bool NodeEditor::HasOutputNode() {
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::Output) {
+        if (node.type == NodeType::Output ||
+            node.type == NodeType::SequenceTagOutput) {
             return true;
         }
     }

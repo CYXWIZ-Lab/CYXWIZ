@@ -1,6 +1,7 @@
 #pragma once
 
 #include "training_executor.h"
+#include "checkpoint_manager.h"
 #include "graph_compiler.h"
 #include "data_registry.h"
 #include "async_task_manager.h"
@@ -10,10 +11,61 @@
 #include <functional>
 #include <string>
 #include <thread>
+#include <optional>
+#include <cyxwiz/device.h>
 
 namespace cyxwiz {
 
 class TrainingPlotPanel;
+
+enum class ActiveModelOrigin {
+    None,
+    TrainedInSession,
+    LoadedCheckpoint
+};
+
+struct ActiveModelInfo {
+    std::optional<TrainingConfiguration> evaluation_config;
+    ActiveModelOrigin origin = ActiveModelOrigin::None;
+    std::string checkpoint_path;
+    std::string graph_fingerprint;
+    // The prepared dataset actually consumed by training. This can differ
+    // from the raw DataInput registry name when graph preprocessing was
+    // materialized (windowing, partitioning, scaling, encoding, ...).
+    std::string effective_dataset_name;
+    std::string effective_label_column;
+    CheckpointMetadata checkpoint_metadata;
+    // Backend and device that hold the model's weights. ArrayFire arrays
+    // belong to the backend that created them and the active backend is
+    // per thread, so work on another thread (export) must switch to this
+    // first. Empty when unknown.
+    std::optional<ProcessDeviceSelection> model_device;
+};
+
+struct CheckpointEvaluationLoadResult {
+    bool success = false;
+    std::string error_message;
+    std::string resolved_checkpoint_path;
+    CheckpointMetadata metadata;
+};
+
+// The graph's model with a checkpoint's weights, built on the selected device
+// (on the calling thread) and touching nothing else: the session's active
+// model stays as it is. A training-run folder means its best/ checkpoint.
+// Used by LoadCheckpointForEvaluation and by the Data Loader's "Try now".
+struct CheckpointModel {
+    std::unique_ptr<IExecutableModel> model;
+    TrainingConfiguration prepared;  // The config with the frozen sequence vocabulary.
+    std::string resolved_checkpoint_path;
+    CheckpointMetadata metadata;
+    std::string error_message;       // Empty when the model is ready.
+    // The tokenizer came from the checkpoint (TOFIX159), not the training data.
+    bool tokenizer_from_checkpoint = false;
+};
+CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
+                                         std::shared_ptr<ArrowDataset> dataset,
+                                         const std::string& checkpoint_path,
+                                         const std::function<bool()>& cancel_requested);
 
 /**
  * TrainingManager - Centralized manager for ML training sessions
@@ -48,10 +100,80 @@ public:
      */
     bool StartTraining(
         TrainingConfiguration config,
-        DatasetHandle dataset,
+        ExternalBatcherFactory batcher_factory,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+    /**
+     * Start training from role-resolved external batchers. The caller owns
+     * modality-specific construction; TrainingManager owns the common loop.
+     */
+    bool StartTrainingExternal(
+        TrainingConfiguration config,
+        ResolvedExternalBatchers batchers,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    /**
+     * Start training with Arrow dataset (modern API)
+     */
+    bool StartTrainingArrow(
+        TrainingConfiguration config,
+        std::shared_ptr<ArrowDataset> arrow_dataset,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    /**
+     * Start training with a disk-backed Parquet dataset. Used when
+     * DataRegistry::LoadTabularCSV picked the disk-backed path because
+     * the CSV was larger than available RAM. Mirrors StartTrainingArrow
+     * exactly; differs only in the dataset type carried through to the
+     * TrainingExecutor, which picks its Parquet batcher accordingly.
+     */
+    bool StartTrainingParquet(
+        TrainingConfiguration config,
+        std::shared_ptr<class ParquetBackedDataset> parquet_dataset,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    bool StartTrainingSequence(
+        TrainingConfiguration config,
+        std::unique_ptr<ISequenceBatcher> sequence_batcher,
+        std::vector<std::string> id_to_label,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    bool StartTrainingImage(
+        TrainingConfiguration config,
+        const DataRegistry::ImageDatasetEntry& image_entry,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    bool StartTrainingAudio(
+        TrainingConfiguration config,
+        const DataRegistry::AudioDatasetEntry& audio_entry,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -59,6 +181,13 @@ public:
      * Stop the current training session
      */
     void StopTraining();
+
+    /**
+     * Wait for the training worker to exit after StopTraining().
+     * Intended for shutdown/lifetime-sensitive paths before UI objects owned by
+     * the worker callbacks are destroyed.
+     */
+    void WaitForTrainingStop();
 
     /**
      * Pause the current training session
@@ -88,7 +217,19 @@ public:
      * Get the last trained model (preserved after training completes)
      * @return Pointer to the trained model, or nullptr if no training has completed
      */
-    SequentialModel* GetLastTrainedModel() { return last_trained_model_.get(); }
+    // The layer stack of the last trained model, for Save / Export; nullptr
+    // when none or when it is a graph with branches (TOFIX157).
+    SequentialModel* GetLastTrainedModel() {
+        return last_trained_model_ ? last_trained_model_->AsSequentialModel() : nullptr;
+    }
+
+    /** Shared ownership for asynchronous test consumers: sequential or a graph. */
+    std::shared_ptr<IExecutableModel> GetActiveModel() const;
+    // The active model as a layer stack (language-model generation),
+    // sharing its ownership; nullptr for a graph with branches.
+    std::shared_ptr<SequentialModel> GetActiveSequentialModel() const;
+
+    ActiveModelInfo GetActiveModelInfo() const;
 
     /**
      * Get the last optimizer (preserved after training completes)
@@ -103,18 +244,20 @@ public:
     /**
      * Check if there is a trained model available
      */
-    bool HasTrainedModel() const { return last_trained_model_ != nullptr; }
+    bool HasTrainedModel() const;
 
     /**
-     * Save the trained model to file
-     * @param path Base path (will create .json and .bin files)
-     * @param name Optional model name
-     * @param description Optional model description
-     * @return true if successful
+     * Build the active graph model, validate a local checkpoint against it,
+     * and atomically install the loaded model for Test/Export use.
+     * @param dataset The graph's prepared training dataset (the caller resolves
+     *        it; causal-LM graphs take their frozen vocabulary from it).
      */
-    bool SaveModel(const std::string& path,
-                   const std::string& name = "",
-                   const std::string& description = "");
+    CheckpointEvaluationLoadResult LoadCheckpointForEvaluation(
+        const TrainingConfiguration& config,
+        std::shared_ptr<ArrowDataset> dataset,
+        const std::string& checkpoint_path,
+        const std::string& graph_fingerprint = "",
+        std::function<bool()> cancel_requested = {});
 
     /**
      * Clear the preserved model (e.g., when starting a new project)
@@ -132,8 +275,43 @@ private:
         std::unique_ptr<TrainingExecutor> executor,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel,
+        std::weak_ptr<TrainingPlotPanel> plot_panel,
         std::function<void(bool)> node_editor_callback
+    );
+
+    /**
+     * Shared tail of all StartTraining* methods. Takes a fully-built
+     * TrainingExecutor (the per-category methods handle dataset-specific
+     * setup: null-checks, config.input_size computation, batcher
+     * construction, zero-sample guards) and runs the common plumbing:
+     * is_training_ + stop_requested_ state, node-editor animation,
+     * plot-panel reset, async task registration (Tasks panel progress),
+     * on_training_start_ callback, and spawning the training thread.
+     *
+     * Caller contract:
+     *  - Must have already checked !is_training_.load() + acquired mutex_.
+     *    StartTrainingCommon assumes both are true.
+     *  - The `executor` carries the already-configured TrainingExecutor
+     *    with the right dataset / batcher under the hood. Uses the
+     *    existing 4 TrainingExecutor constructors — this commit does NOT
+     *    consolidate them; the per-category methods still choose which
+     *    constructor to call.
+     *  - `task_name` labels the AsyncTaskManager entry shown in the
+     *    Tasks panel (e.g. "Training Model (Arrow)").
+     *  - `start_msg` is the one-line string handed to on_training_start_.
+     *
+     * Returns true — the dispatched thread has been started. A false
+     * return requires rolling back is_training_; the per-category
+     * methods handle that before calling in.
+     */
+    bool StartTrainingCommon(
+        std::unique_ptr<TrainingExecutor> executor,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel,
+        std::function<void(bool)> node_editor_callback,
+        const std::string& task_name,
+        const std::string& start_msg
     );
 
     std::atomic<bool> is_training_{false};
@@ -153,10 +331,11 @@ private:
     TrainingEndCallback on_training_end_;
     ProgressCallback on_progress_;
 
-    // Preserved model after training (for export)
-    std::unique_ptr<SequentialModel> last_trained_model_;
+    // Preserved model after training (Test; Save / Export when sequential)
+    std::shared_ptr<IExecutableModel> last_trained_model_;
     std::unique_ptr<Optimizer> last_optimizer_;
     TrainingMetrics last_metrics_;
+    ActiveModelInfo active_model_info_;
 };
 
 } // namespace cyxwiz

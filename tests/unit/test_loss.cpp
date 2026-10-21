@@ -1,0 +1,1236 @@
+#include "algorithms/arrayfire_backend_utils.h"
+#include <algorithm>
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cyxwiz/device.h>
+#include <cyxwiz/loss.h>
+#include <cyxwiz/tensor.h>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <arrayfire.h>
+
+namespace {
+
+std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_loss_host_sync_events = nullptr;
+
+void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (g_loss_host_sync_events != nullptr) {
+        g_loss_host_sync_events->push_back(event);
+    }
+}
+
+class ScopedLossEventCapture {
+public:
+    explicit ScopedLossEventCapture(
+        std::vector<cyxwiz::ArrayFireHostSyncEvent>& host_sync_events) {
+        g_loss_host_sync_events = &host_sync_events;
+    }
+
+    ~ScopedLossEventCapture() {
+        g_loss_host_sync_events = nullptr;
+    }
+};
+
+#ifndef NDEBUG
+using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
+#endif
+
+} // namespace
+
+TEST_CASE("Core losses compute CPU forward reductions", "[loss]") {
+    float pred_values[] = {1.0f, 3.0f, -2.0f};
+    float target_values[] = {0.0f, 1.0f, 1.0f};
+    cyxwiz::Tensor predictions({3}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({3}, target_values, cyxwiz::DataType::Float32);
+
+    auto mse = cyxwiz::CreateLoss(cyxwiz::LossType::MSE, cyxwiz::Reduction::Mean);
+    auto l1 = cyxwiz::CreateLoss(cyxwiz::LossType::L1, cyxwiz::Reduction::Sum);
+    auto smooth_l1 = cyxwiz::CreateLoss(cyxwiz::LossType::SmoothL1, cyxwiz::Reduction::None, 1.0f);
+
+    cyxwiz::Tensor mse_loss = mse->Forward(predictions, targets);
+    cyxwiz::Tensor l1_loss = l1->Forward(predictions, targets);
+    cyxwiz::Tensor smooth_l1_loss = smooth_l1->Forward(predictions, targets);
+
+    REQUIRE(mse_loss.Data<float>()[0] == Catch::Approx((1.0f + 4.0f + 9.0f) / 3.0f));
+    REQUIRE(l1_loss.Data<float>()[0] == Catch::Approx(6.0f));
+
+    REQUIRE(smooth_l1_loss.Shape() == std::vector<size_t>{3});
+    REQUIRE(smooth_l1_loss.Data<float>()[0] == Catch::Approx(0.5f));
+    REQUIRE(smooth_l1_loss.Data<float>()[1] == Catch::Approx(1.5f));
+    REQUIRE(smooth_l1_loss.Data<float>()[2] == Catch::Approx(2.5f));
+}
+
+TEST_CASE("Mean loss globally reduces multi-output tensors", "[loss]") {
+    float pred_values[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    float target_values[] = {
+        0.0f, 2.0f, 4.0f,
+        2.0f, 5.0f, 8.0f
+    };
+    cyxwiz::Tensor predictions({2, 3}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2, 3}, target_values, cyxwiz::DataType::Float32);
+
+    auto mse = cyxwiz::CreateLoss(cyxwiz::LossType::MSE, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor loss = mse->Forward(predictions, targets);
+    cyxwiz::Tensor grad = mse->Backward(predictions, targets);
+
+    REQUIRE(loss.NumElements() == 1);
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(10.0f / 6.0f));
+    REQUIRE(grad.Shape() == predictions.Shape());
+}
+
+TEST_CASE("Regression losses keep a single-output column's shape", "[loss]") {
+    // [batch, 1] predictions (one regression output). The gradient fed to the
+    // last layer's Backward must have this shape, not [batch]; the
+    // unreduced loss keeps it too. Found from pycyxwiz (TOFIX125 P3).
+    float pred_values[] = {1.0f, 3.0f, -2.0f, 0.5f};
+    float target_values[] = {0.0f, 1.0f, 1.0f, 0.5f};
+    cyxwiz::Tensor predictions({4, 1}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({4, 1}, target_values, cyxwiz::DataType::Float32);
+
+    for (const auto type : {cyxwiz::LossType::MSE, cyxwiz::LossType::L1, cyxwiz::LossType::SmoothL1,
+                            cyxwiz::LossType::Huber}) {
+        auto mean_loss = cyxwiz::CreateLoss(type, cyxwiz::Reduction::Mean);
+        REQUIRE(mean_loss->Backward(predictions, targets).Shape() == predictions.Shape());
+        REQUIRE(mean_loss->Forward(predictions, targets).NumElements() == 1);
+        auto per_element = cyxwiz::CreateLoss(type, cyxwiz::Reduction::None);
+        REQUIRE(per_element->Forward(predictions, targets).Shape() == predictions.Shape());
+    }
+}
+
+TEST_CASE("Core losses compute CPU backward values", "[loss]") {
+    float pred_values[] = {1.0f, 3.0f, -2.0f};
+    float target_values[] = {0.0f, 1.0f, 1.0f};
+    cyxwiz::Tensor predictions({3}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({3}, target_values, cyxwiz::DataType::Float32);
+
+    auto mse = cyxwiz::CreateLoss(cyxwiz::LossType::MSE, cyxwiz::Reduction::Mean);
+    auto l1 = cyxwiz::CreateLoss(cyxwiz::LossType::L1, cyxwiz::Reduction::Mean);
+    auto huber = cyxwiz::CreateLoss(cyxwiz::LossType::Huber, cyxwiz::Reduction::Mean, 2.0f);
+
+    cyxwiz::Tensor mse_grad = mse->Backward(predictions, targets);
+    cyxwiz::Tensor l1_grad = l1->Backward(predictions, targets);
+    cyxwiz::Tensor huber_grad = huber->Backward(predictions, targets);
+
+    REQUIRE(mse_grad.Data<float>()[0] == Catch::Approx(2.0f / 3.0f));
+    REQUIRE(mse_grad.Data<float>()[1] == Catch::Approx(4.0f / 3.0f));
+    REQUIRE(mse_grad.Data<float>()[2] == Catch::Approx(-2.0f));
+
+    REQUIRE(l1_grad.Data<float>()[0] == Catch::Approx(1.0f / 3.0f));
+    REQUIRE(l1_grad.Data<float>()[1] == Catch::Approx(1.0f / 3.0f));
+    REQUIRE(l1_grad.Data<float>()[2] == Catch::Approx(-1.0f / 3.0f));
+
+    REQUIRE(huber_grad.Data<float>()[0] == Catch::Approx(1.0f / 3.0f));
+    REQUIRE(huber_grad.Data<float>()[1] == Catch::Approx(2.0f / 3.0f));
+    REQUIRE(huber_grad.Data<float>()[2] == Catch::Approx(-2.0f / 3.0f));
+}
+
+TEST_CASE("Regression loss parameters follow PyTorch domains", "[loss][regression]") {
+    REQUIRE_NOTHROW(cyxwiz::SmoothL1Loss(0.0f, cyxwiz::Reduction::Mean));
+    REQUIRE_THROWS_AS(
+        cyxwiz::SmoothL1Loss(-0.1f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::SmoothL1Loss(
+            std::numeric_limits<float>::infinity(), cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::HuberLoss(0.0f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::HuberLoss(-1.0f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::HuberLoss(
+            std::numeric_limits<float>::quiet_NaN(), cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+}
+
+TEST_CASE("SmoothL1 beta zero is exactly L1", "[loss][regression]") {
+    const float prediction_values[] = {-2.0f, 0.0f, 3.0f};
+    const float target_values[] = {-1.0f, 0.0f, 1.0f};
+    const cyxwiz::Tensor predictions(
+        {3}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {3}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::SmoothL1Loss smooth(0.0f, cyxwiz::Reduction::None);
+    cyxwiz::L1Loss l1(cyxwiz::Reduction::None);
+    const auto smooth_forward = smooth.Forward(predictions, targets);
+    const auto l1_forward = l1.Forward(predictions, targets);
+    const auto smooth_backward = smooth.Backward(predictions, targets);
+    const auto l1_backward = l1.Backward(predictions, targets);
+    for (size_t index = 0; index < predictions.NumElements(); ++index) {
+        REQUIRE(smooth_forward.ReadData<float>()[index] ==
+                Catch::Approx(l1_forward.ReadData<float>()[index]));
+        REQUIRE(smooth_backward.ReadData<float>()[index] ==
+                Catch::Approx(l1_backward.ReadData<float>()[index]));
+    }
+}
+
+
+TEST_CASE("Binary losses compute forward reductions", "[loss]") {
+    float probability_values[] = {0.8f, 0.2f};
+    float label_values[] = {1.0f, 0.0f};
+    cyxwiz::Tensor probabilities({2}, probability_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    auto bce = cyxwiz::CreateLoss(cyxwiz::LossType::BinaryCrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor bce_loss = bce->Forward(probabilities, labels);
+    REQUIRE(bce_loss.Data<float>()[0] == Catch::Approx(-std::log(0.8f)));
+
+    float logit_values[] = {0.0f, 2.0f};
+    cyxwiz::Tensor logits({2}, logit_values, cyxwiz::DataType::Float32);
+    auto bce_logits = cyxwiz::CreateLoss(cyxwiz::LossType::BCEWithLogits, cyxwiz::Reduction::Sum);
+    cyxwiz::Tensor logits_loss = bce_logits->Forward(logits, labels);
+    REQUIRE(logits_loss.Data<float>()[0] ==
+            Catch::Approx(std::log(2.0f) + 2.0f + std::log1p(std::exp(-2.0f))));
+}
+
+TEST_CASE("Binary losses compute backward values", "[loss]") {
+    float probability_values[] = {0.8f, 0.2f};
+    float label_values[] = {1.0f, 0.0f};
+    cyxwiz::Tensor probabilities({2}, probability_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    auto bce = cyxwiz::CreateLoss(cyxwiz::LossType::BinaryCrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor bce_grad = bce->Backward(probabilities, labels);
+    REQUIRE(bce_grad.Data<float>()[0] == Catch::Approx(-0.625f));
+    REQUIRE(bce_grad.Data<float>()[1] == Catch::Approx(0.625f));
+
+    float logit_values[] = {0.0f, 2.0f};
+    cyxwiz::Tensor logits({2}, logit_values, cyxwiz::DataType::Float32);
+    auto bce_logits = cyxwiz::CreateLoss(cyxwiz::LossType::BCEWithLogits, cyxwiz::Reduction::None);
+    cyxwiz::Tensor logits_grad = bce_logits->Backward(logits, labels);
+    REQUIRE(logits_grad.Data<float>()[0] == Catch::Approx(0.5f - 1.0f));
+    REQUIRE(logits_grad.Data<float>()[1] ==
+            Catch::Approx(1.0f / (1.0f + std::exp(-2.0f))));
+}
+
+TEST_CASE("Probability loss parameters reject invalid domains",
+          "[loss][probability]") {
+    REQUIRE_NOTHROW(cyxwiz::BCELoss(
+        cyxwiz::Reduction::Mean, 1.0e-12f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCELoss(cyxwiz::Reduction::Mean, 0.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCELoss(
+            cyxwiz::Reduction::Mean,
+            std::numeric_limits<float>::infinity()),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCEWithLogitsLoss(cyxwiz::Reduction::Mean, 0.0f),
+        std::invalid_argument);
+
+    cyxwiz::BCEWithLogitsLoss weighted;
+    REQUIRE_THROWS_AS(
+        weighted.SetPosWeight(-1.0f), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        weighted.SetPosWeight(
+            std::numeric_limits<float>::quiet_NaN()),
+        std::invalid_argument);
+    weighted.SetPosWeight(3.5f);
+    REQUIRE(weighted.GetPosWeight() == Catch::Approx(3.5f));
+}
+
+TEST_CASE("Probability losses validate shape and dtype before compute",
+          "[loss][probability]") {
+    const float prediction_values[] = {0.25f, 0.75f};
+    const float short_target_values[] = {1.0f};
+    const int32_t integer_target_values[] = {1, 0};
+    const cyxwiz::Tensor predictions(
+        {2}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor short_targets(
+        {1}, short_target_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor integer_targets(
+        {2}, integer_target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::BCELoss bce;
+    cyxwiz::BCEWithLogitsLoss bce_logits;
+    cyxwiz::KLDivLoss kl_div;
+    REQUIRE_THROWS_AS(
+        bce.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        bce.Backward(predictions, integer_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        bce_logits.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        bce_logits.Backward(predictions, integer_targets),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        kl_div.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        kl_div.Backward(predictions, integer_targets), std::runtime_error);
+}
+
+
+TEST_CASE("BCE follows PyTorch boundary loss and gradient bounds",
+          "[loss][probability]") {
+    const float probability_values[] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const cyxwiz::Tensor probabilities(
+        {4}, probability_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {4}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::BCELoss bce(cyxwiz::Reduction::Mean);
+
+    const cyxwiz::Tensor loss = bce.Forward(probabilities, targets);
+    const cyxwiz::Tensor gradient = bce.Backward(probabilities, targets);
+    REQUIRE(loss.ReadData<float>()[0] ==
+            Catch::Approx(50.0f).margin(1.0e-5f));
+    REQUIRE(gradient.ReadData<float>()[0] ==
+            Catch::Approx(-2.5e11f).epsilon(1.0e-6f));
+    REQUIRE(gradient.ReadData<float>()[1] ==
+            Catch::Approx(2.5e11f).epsilon(1.0e-6f));
+    REQUIRE(gradient.ReadData<float>()[2] == Catch::Approx(0.0f));
+    REQUIRE(gradient.ReadData<float>()[3] == Catch::Approx(0.0f));
+
+    cyxwiz::BCELoss custom_bound(cyxwiz::Reduction::Mean, 0.1f);
+    const cyxwiz::Tensor custom_gradient =
+        custom_bound.Backward(probabilities, targets);
+    REQUIRE(custom_gradient.ReadData<float>()[0] == Catch::Approx(-2.5f));
+    REQUIRE(custom_gradient.ReadData<float>()[1] == Catch::Approx(2.5f));
+}
+
+TEST_CASE("KLDiv log targets preserve negative log probabilities",
+          "[loss][probability]") {
+    const float prediction_values[] = {-1.5f, -0.25f};
+    const float target_values[] = {-1.6094379f, -0.22314355f};
+    const cyxwiz::Tensor predictions(
+        {2}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {2}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::KLDivLoss kl_div(cyxwiz::Reduction::None, true);
+
+    const cyxwiz::Tensor loss = kl_div.Forward(predictions, targets);
+    const cyxwiz::Tensor gradient = kl_div.Backward(predictions, targets);
+    for (size_t index = 0; index < 2; ++index) {
+        const float probability = std::exp(target_values[index]);
+        REQUIRE(loss.ReadData<float>()[index] == Catch::Approx(
+            probability * (target_values[index] - prediction_values[index])
+        ).margin(1.0e-6f));
+        REQUIRE(gradient.ReadData<float>()[index] ==
+                Catch::Approx(-probability).margin(1.0e-6f));
+    }
+}
+
+TEST_CASE("Weighted BCEWithLogits matches the reference on every available backend",
+          "[loss][arrayfire][device_switch][weighted_bce]") {
+    const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();
+    REQUIRE(current != nullptr);
+    const cyxwiz::DeviceType original_type = current->GetType();
+    const int original_id = current->GetDeviceId();
+
+    struct RestoreDevice {
+        cyxwiz::DeviceType type;
+        int id;
+        ~RestoreDevice() {
+            cyxwiz::Device(type, id).SetActive();
+        }
+    } restore{original_type, original_id};
+
+    const float logit_values[] = {0.0f, 0.0f};
+    const float target_values[] = {1.0f, 0.0f};
+    const float expected_loss = 2.5f * std::log(2.0f);
+
+    for (const auto& info : cyxwiz::Device::GetAvailableDevices()) {
+        if (info.type == cyxwiz::DeviceType::ONEAPI &&
+            std::getenv("CYXWIZ_TEST_ONEAPI_LOSS") == nullptr) {
+            continue;
+        }
+        DYNAMIC_SECTION("backend type " << static_cast<int>(info.type)
+                        << " device " << info.device_id) {
+            cyxwiz::Device device(info.type, info.device_id);
+            device.SetActive();
+            REQUIRE(device.GetType() == info.type);
+            REQUIRE(device.IsActive());
+
+            cyxwiz::Tensor logits(
+                {2}, logit_values, cyxwiz::DataType::Float32);
+            cyxwiz::Tensor targets(
+                {2}, target_values, cyxwiz::DataType::Float32);
+            cyxwiz::BCEWithLogitsLoss loss(cyxwiz::Reduction::Mean, 4.0f);
+
+            const cyxwiz::Tensor value = loss.Forward(logits, targets);
+            const cyxwiz::Tensor grad = loss.Backward(logits, targets);
+
+            REQUIRE(value.Data<float>()[0] ==
+                    Catch::Approx(expected_loss).margin(1e-5f));
+            REQUIRE(grad.Shape() == std::vector<size_t>{2});
+            REQUIRE(grad.Data<float>()[0] ==
+                    Catch::Approx(-1.0f).margin(1e-6f));
+            REQUIRE(grad.Data<float>()[1] ==
+                    Catch::Approx(0.25f).margin(1e-6f));
+        }
+    }
+}
+
+TEST_CASE("Class-index losses compute forward reductions", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    auto cross_entropy = cyxwiz::CreateLoss(cyxwiz::LossType::CrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor ce_loss = cross_entropy->Forward(logits, targets);
+
+    const float row0_loss = std::log(std::exp(-1.0f) + 1.0f + std::exp(-2.0f));
+    const float row1_loss = std::log(1.0f + std::exp(-3.0f) + std::exp(-2.0f));
+    REQUIRE(ce_loss.Data<float>()[0] == Catch::Approx((row0_loss + row1_loss) / 2.0f));
+
+    float log_prob_values[] = {
+        std::log(0.1f), std::log(0.7f), std::log(0.2f),
+        std::log(0.6f), std::log(0.3f), std::log(0.1f)
+    };
+    cyxwiz::Tensor log_probs({2, 3}, log_prob_values, cyxwiz::DataType::Float32);
+
+    auto nll = cyxwiz::CreateLoss(cyxwiz::LossType::NLLLoss, cyxwiz::Reduction::Sum);
+    cyxwiz::Tensor nll_loss = nll->Forward(log_probs, targets);
+    REQUIRE(nll_loss.Data<float>()[0] == Catch::Approx(-std::log(0.7f) - std::log(0.6f)));
+}
+
+TEST_CASE("Class-index losses compute backward values", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    auto cross_entropy = cyxwiz::CreateLoss(cyxwiz::LossType::CrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor ce_grad = cross_entropy->Backward(logits, targets);
+    const float* grad = ce_grad.Data<float>();
+
+    const float row0_denom = std::exp(-1.0f) + 1.0f + std::exp(-2.0f);
+    REQUIRE(grad[0] == Catch::Approx((std::exp(-1.0f) / row0_denom) / 2.0f));
+    REQUIRE(grad[1] == Catch::Approx((1.0f / row0_denom - 1.0f) / 2.0f));
+    REQUIRE(grad[2] == Catch::Approx((std::exp(-2.0f) / row0_denom) / 2.0f));
+
+    const float row1_denom = 1.0f + std::exp(-3.0f) + std::exp(-2.0f);
+    REQUIRE(grad[3] == Catch::Approx((1.0f / row1_denom - 1.0f) / 2.0f));
+    REQUIRE(grad[4] == Catch::Approx((std::exp(-3.0f) / row1_denom) / 2.0f));
+    REQUIRE(grad[5] == Catch::Approx((std::exp(-2.0f) / row1_denom) / 2.0f));
+
+    float log_prob_values[] = {
+        std::log(0.1f), std::log(0.7f), std::log(0.2f),
+        std::log(0.6f), std::log(0.3f), std::log(0.1f)
+    };
+    cyxwiz::Tensor log_probs({2, 3}, log_prob_values, cyxwiz::DataType::Float32);
+
+    auto nll = cyxwiz::CreateLoss(cyxwiz::LossType::NLLLoss, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor nll_grad = nll->Backward(log_probs, targets);
+    const float* nll_data = nll_grad.Data<float>();
+    REQUIRE(nll_data[0] == Catch::Approx(0.0f));
+    REQUIRE(nll_data[1] == Catch::Approx(-0.5f));
+    REQUIRE(nll_data[2] == Catch::Approx(0.0f));
+    REQUIRE(nll_data[3] == Catch::Approx(-0.5f));
+    REQUIRE(nll_data[4] == Catch::Approx(0.0f));
+    REQUIRE(nll_data[5] == Catch::Approx(0.0f));
+}
+
+TEST_CASE("CrossEntropyLoss supports token-level logits and ignored targets", "[loss][language_model]") {
+    float logit_values[] = {
+        2.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 2.0f
+    };
+    int64_t target_values[] = {0, -100};
+    cyxwiz::Tensor logits({1, 2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 2}, target_values, cyxwiz::DataType::Int64);
+
+    cyxwiz::CrossEntropyLoss cross_entropy(cyxwiz::Reduction::Mean, -100);
+    cyxwiz::Tensor loss = cross_entropy.Forward(logits, targets);
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(0.40760595f).margin(1e-6f));
+
+    cyxwiz::Tensor grad = cross_entropy.Backward(logits, targets);
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 2, 3});
+    const float* grad_data = grad.Data<float>();
+    REQUIRE(grad_data[0] == Catch::Approx(-0.3347590f).margin(1e-5f));
+    REQUIRE(grad_data[1] == Catch::Approx(0.2447285f).margin(1e-5f));
+    REQUIRE(grad_data[2] == Catch::Approx(0.0900306f).margin(1e-5f));
+    REQUIRE(grad_data[3] == Catch::Approx(0.0f));
+    REQUIRE(grad_data[4] == Catch::Approx(0.0f));
+    REQUIRE(grad_data[5] == Catch::Approx(0.0f));
+}
+
+TEST_CASE("CrossEntropy backward recomputes unless given Forward's own tensors",
+          "[loss][language_model][arrayfire][device_switch]") {
+    const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();
+    REQUIRE(current != nullptr);
+    struct RestoreDevice {
+        cyxwiz::DeviceType type;
+        int id;
+        ~RestoreDevice() {
+            cyxwiz::Device(type, id).SetActive();
+        }
+    } restore{current->GetType(), current->GetDeviceId()};
+
+    const float first_values[] = {
+        2.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 2.0f,
+    };
+    const float second_values[] = {
+        -1.0f, 3.0f, 0.5f,
+        1.5f, -2.0f, 0.0f,
+    };
+    const int64_t first_target_values[] = {0, 2};
+    const int64_t second_target_values[] = {1, -100};
+    const cyxwiz::Tensor first({1, 2, 3}, first_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second({1, 2, 3}, second_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor first_targets({1, 2}, first_target_values, cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor second_targets({1, 2}, second_target_values, cyxwiz::DataType::Int64);
+
+    const auto require_matches_fresh = [](const cyxwiz::Tensor& actual, const cyxwiz::Tensor& logits,
+                                          const cyxwiz::Tensor& targets) {
+        cyxwiz::CrossEntropyLoss fresh(cyxwiz::Reduction::Mean, -100);
+        const cyxwiz::Tensor expected = fresh.Backward(logits, targets);
+        REQUIRE(actual.Shape() == expected.Shape());
+        const float* actual_values = actual.ReadData<float>();
+        const float* expected_values = expected.ReadData<float>();
+        for (size_t index = 0; index < actual.NumElements(); ++index) {
+            REQUIRE(actual_values[index] == Catch::Approx(expected_values[index]).margin(1.0e-6f));
+        }
+    };
+
+    for (const auto& info : cyxwiz::Device::GetAvailableDevices()) {
+        if (info.type == cyxwiz::DeviceType::ONEAPI &&
+            std::getenv("CYXWIZ_TEST_ONEAPI_LOSS") == nullptr) {
+            continue;
+        }
+        DYNAMIC_SECTION("backend type " << static_cast<int>(info.type) << " device " << info.device_id) {
+            cyxwiz::Device(info.type, info.device_id).SetActive();
+            cyxwiz::CrossEntropyLoss loss(cyxwiz::Reduction::Mean, -100);
+            // Same tensors as Forward: reuses Forward's log-sum-exp.
+            static_cast<void>(loss.Forward(first, first_targets));
+            require_matches_fresh(loss.Backward(first, first_targets), first, first_targets);
+            // Other logits, then other targets: recomputed from what Backward is given.
+            static_cast<void>(loss.Forward(first, first_targets));
+            require_matches_fresh(loss.Backward(second, first_targets), second, first_targets);
+            static_cast<void>(loss.Forward(first, first_targets));
+            require_matches_fresh(loss.Backward(first, second_targets), first, second_targets);
+            // A second Backward after one Forward still recomputes correctly.
+            require_matches_fresh(loss.Backward(second, second_targets), second, second_targets);
+        }
+    }
+}
+
+TEST_CASE("CrossEntropyLoss supports label smoothing", "[loss]") {
+    float logit_values[] = {2.0f, 0.0f, -1.0f};
+    int32_t target_values[] = {0};
+    cyxwiz::Tensor logits({1, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::CrossEntropyLoss cross_entropy(
+        cyxwiz::Reduction::Mean, -100, {}, 0.2f);
+    cyxwiz::Tensor loss = cross_entropy.Forward(logits, targets);
+    cyxwiz::Tensor grad = cross_entropy.Backward(logits, targets);
+
+    const float denom = 1.0f + std::exp(-2.0f) + std::exp(-3.0f);
+    const float probs[] = {
+        1.0f / denom,
+        std::exp(-2.0f) / denom,
+        std::exp(-3.0f) / denom,
+    };
+    const float targets_smoothed[] = {
+        1.0f - 0.2f + 0.2f / 3.0f,
+        0.2f / 3.0f,
+        0.2f / 3.0f,
+    };
+    const float expected_loss =
+        -(targets_smoothed[0] * std::log(probs[0]) +
+          targets_smoothed[1] * std::log(probs[1]) +
+          targets_smoothed[2] * std::log(probs[2]));
+
+    REQUIRE(cross_entropy.GetLabelSmoothing() == Catch::Approx(0.2f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss).margin(1e-6f));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 3});
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(probs[0] - targets_smoothed[0]).margin(1e-6f));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(probs[1] - targets_smoothed[1]).margin(1e-6f));
+    REQUIRE(grad.Data<float>()[2] ==
+            Catch::Approx(probs[2] - targets_smoothed[2]).margin(1e-6f));
+}
+
+TEST_CASE("CrossEntropyLoss weights and smooths one-hot targets", "[loss]") {
+    float logit_values[] = {
+        2.0f, 0.0f, -1.0f,
+        0.0f, 1.0f, 2.0f,
+    };
+    float target_values[] = {
+        1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f,
+    };
+    const float weights[] = {1.0f, 2.0f, 4.0f};
+    constexpr float smoothing = 0.1f;
+    cyxwiz::Tensor logits(
+        {2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets(
+        {2, 3}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::CrossEntropyLoss cross_entropy(
+        cyxwiz::Reduction::Mean,
+        -100,
+        {weights[0], weights[1], weights[2]},
+        smoothing);
+
+    cyxwiz::Tensor loss = cross_entropy.Forward(logits, targets);
+    cyxwiz::Tensor grad = cross_entropy.Backward(logits, targets);
+
+    float expected_loss = 0.0f;
+    float expected_grad[6] = {};
+    constexpr float mean_denominator = 2.0f;
+    for (size_t row = 0; row < 2; ++row) {
+        const size_t base = row * 3;
+        float max_logit = logit_values[base];
+        for (size_t column = 1; column < 3; ++column) {
+            if (logit_values[base + column] > max_logit) {
+                max_logit = logit_values[base + column];
+            }
+        }
+        float exp_values[3];
+        float exp_sum = 0.0f;
+        for (size_t column = 0; column < 3; ++column) {
+            exp_values[column] =
+                std::exp(logit_values[base + column] - max_logit);
+            exp_sum += exp_values[column];
+        }
+
+        float row_weight = 0.0f;
+        float weighted_targets[3];
+        for (size_t column = 0; column < 3; ++column) {
+            const float smoothed_target =
+                target_values[base + column] * (1.0f - smoothing) +
+                smoothing / 3.0f;
+            weighted_targets[column] =
+                weights[column] * smoothed_target;
+            row_weight += weighted_targets[column];
+            expected_loss -= weighted_targets[column] *
+                std::log(exp_values[column] / exp_sum);
+        }
+        for (size_t column = 0; column < 3; ++column) {
+            const float probability = exp_values[column] / exp_sum;
+            expected_grad[base + column] =
+                probability * row_weight - weighted_targets[column];
+        }
+    }
+    expected_loss /= mean_denominator;
+    for (float& value : expected_grad) {
+        value /= mean_denominator;
+    }
+
+    REQUIRE(loss.ReadData<float>()[0] ==
+            Catch::Approx(expected_loss).margin(1e-6f));
+    const float* actual_grad = grad.ReadData<float>();
+    for (size_t index = 0; index < 6; ++index) {
+        REQUIRE(actual_grad[index] ==
+                Catch::Approx(expected_grad[index]).margin(1e-6f));
+    }
+}
+
+TEST_CASE("KL divergence computes forward reductions", "[loss]") {
+    float log_pred_values[] = {std::log(0.2f), std::log(0.5f), std::log(0.3f)};
+    float target_values[] = {0.1f, 0.7f, 0.2f};
+    cyxwiz::Tensor log_predictions({3}, log_pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({3}, target_values, cyxwiz::DataType::Float32);
+
+    auto kl_sum = cyxwiz::CreateLoss(cyxwiz::LossType::KLDivergence, cyxwiz::Reduction::Sum);
+    cyxwiz::Tensor loss = kl_sum->Forward(log_predictions, targets);
+
+    const float expected =
+        0.1f * (std::log(0.1f) - std::log(0.2f)) +
+        0.7f * (std::log(0.7f) - std::log(0.5f)) +
+        0.2f * (std::log(0.2f) - std::log(0.3f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected));
+}
+
+TEST_CASE("KL divergence computes backward values", "[loss]") {
+    float log_pred_values[] = {std::log(0.2f), std::log(0.5f), std::log(0.3f)};
+    float target_values[] = {0.1f, 0.7f, 0.0f};
+    cyxwiz::Tensor log_predictions({3}, log_pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({3}, target_values, cyxwiz::DataType::Float32);
+
+    auto kl_mean = cyxwiz::CreateLoss(cyxwiz::LossType::KLDivergence, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor grad = kl_mean->Backward(log_predictions, targets);
+
+    REQUIRE(grad.Data<float>()[0] == Catch::Approx(-0.1f / 3.0f));
+    REQUIRE(grad.Data<float>()[1] == Catch::Approx(-0.7f / 3.0f));
+    REQUIRE(grad.Data<float>()[2] == Catch::Approx(0.0f));
+}
+
+TEST_CASE("Overlap loss parameters reject invalid domains",
+          "[loss][overlap]") {
+    REQUIRE_NOTHROW(cyxwiz::SoftDiceLoss(
+        cyxwiz::Reduction::Mean, 0.0f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::SoftDiceLoss(cyxwiz::Reduction::Mean, -1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::SoftDiceLoss(
+            cyxwiz::Reduction::Mean,
+            std::numeric_limits<float>::infinity()),
+        std::invalid_argument);
+
+    REQUIRE_NOTHROW(cyxwiz::TverskyLoss(
+        cyxwiz::Reduction::Mean, 0.0f, 0.0f, 0.0f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::TverskyLoss(
+            cyxwiz::Reduction::Mean, -0.1f, 0.5f, 1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::TverskyLoss(
+            cyxwiz::Reduction::Mean,
+            0.5f,
+            std::numeric_limits<float>::quiet_NaN(),
+            1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::TverskyLoss(
+            cyxwiz::Reduction::Mean, 0.5f, 0.5f, -1.0f),
+        std::invalid_argument);
+
+    REQUIRE_NOTHROW(cyxwiz::JaccardLoss(
+        cyxwiz::Reduction::Mean, 0.0f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::JaccardLoss(cyxwiz::Reduction::Mean, -1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::JaccardLoss(
+            cyxwiz::Reduction::Mean,
+            std::numeric_limits<float>::quiet_NaN()),
+        std::invalid_argument);
+}
+
+TEST_CASE("Overlap losses validate shape dtype and emptiness before compute",
+          "[loss][overlap]") {
+    const float prediction_values[] = {0.25f, 0.75f};
+    const float short_target_values[] = {1.0f};
+    const int32_t integer_target_values[] = {1, 0};
+    const cyxwiz::Tensor predictions(
+        {2}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor short_targets(
+        {1}, short_target_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor integer_targets(
+        {2}, integer_target_values, cyxwiz::DataType::Int32);
+    const cyxwiz::Tensor empty_predictions(
+        {0}, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor empty_targets(
+        {0}, cyxwiz::DataType::Float32);
+
+    cyxwiz::SoftDiceLoss dice;
+    cyxwiz::TverskyLoss tversky;
+    cyxwiz::JaccardLoss jaccard;
+    REQUIRE_THROWS_AS(
+        dice.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        dice.Backward(predictions, integer_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        tversky.Forward(empty_predictions, empty_targets),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        tversky.Backward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        jaccard.Forward(predictions, integer_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        jaccard.Backward(empty_predictions, empty_targets),
+        std::runtime_error);
+}
+
+
+TEST_CASE("SoftDiceLoss computes forward and backward values",
+          "[loss][overlap]") {
+    float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
+    float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 4}, target_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::SoftDiceLoss dice(cyxwiz::Reduction::Mean, 1.0f);
+    cyxwiz::Tensor loss = dice.Forward(predictions, targets);
+    cyxwiz::Tensor grad = dice.Backward(predictions, targets);
+
+    const float intersection = 0.8f + 0.9f;
+    const float pred_sum = 0.8f + 0.2f + 0.4f + 0.9f;
+    const float target_sum = 2.0f;
+    const float numerator = 2.0f * intersection + 1.0f;
+    const float denominator = pred_sum + target_sum + 1.0f;
+    const float expected_loss = 1.0f - numerator / denominator;
+
+    REQUIRE(dice.GetSmooth() == Catch::Approx(1.0f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 4});
+
+    const float denom_sq = denominator * denominator;
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(-((2.0f * denominator) - numerator) / denom_sq));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(-((0.0f * denominator) - numerator) / denom_sq));
+    REQUIRE(grad.Data<float>()[3] ==
+            Catch::Approx(-((2.0f * denominator) - numerator) / denom_sq));
+}
+
+TEST_CASE("TverskyLoss computes forward and backward values",
+          "[loss][overlap]") {
+    float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
+    float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 4}, target_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::TverskyLoss tversky(cyxwiz::Reduction::Mean, 0.3f, 0.7f, 1.0f);
+    cyxwiz::Tensor loss = tversky.Forward(predictions, targets);
+    cyxwiz::Tensor grad = tversky.Backward(predictions, targets);
+
+    const float tp = 0.8f + 0.9f;
+    const float fp = 0.2f + 0.4f;
+    const float fn = 0.2f + 0.1f;
+    const float numerator = tp + 1.0f;
+    const float denominator = tp + 0.3f * fp + 0.7f * fn + 1.0f;
+    const float expected_loss = 1.0f - numerator / denominator;
+
+    REQUIRE(tversky.GetAlpha() == Catch::Approx(0.3f));
+    REQUIRE(tversky.GetBeta() == Catch::Approx(0.7f));
+    REQUIRE(tversky.GetSmooth() == Catch::Approx(1.0f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 4});
+
+    const float denom_sq = denominator * denominator;
+    const float target_denominator_derivative = 1.0f - 0.7f;
+    const float background_denominator_derivative = 0.3f;
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * target_denominator_derivative)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(-((0.0f * denominator) -
+                            (numerator * background_denominator_derivative)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[3] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * target_denominator_derivative)) /
+                          denom_sq));
+}
+
+TEST_CASE("JaccardLoss computes forward and backward values",
+          "[loss][overlap]") {
+    float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
+    float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 4}, target_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::JaccardLoss jaccard(cyxwiz::Reduction::Mean, 1.0f);
+    cyxwiz::Tensor loss = jaccard.Forward(predictions, targets);
+    cyxwiz::Tensor grad = jaccard.Backward(predictions, targets);
+
+    const float intersection = 0.8f + 0.9f;
+    const float pred_sum = 0.8f + 0.2f + 0.4f + 0.9f;
+    const float target_sum = 2.0f;
+    const float numerator = intersection + 1.0f;
+    const float denominator = pred_sum + target_sum - intersection + 1.0f;
+    const float expected_loss = 1.0f - numerator / denominator;
+
+    REQUIRE(jaccard.GetSmooth() == Catch::Approx(1.0f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 4});
+
+    const float denom_sq = denominator * denominator;
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * 0.0f)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(-((0.0f * denominator) -
+                            (numerator * 1.0f)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[3] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * 0.0f)) /
+                          denom_sq));
+}
+
+TEST_CASE("Focal loss computes class-index forward reduction", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::FocalLoss focal(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor loss = focal.Forward(logits, targets);
+
+    const float row0_denom = std::exp(-1.0f) + 1.0f + std::exp(-2.0f);
+    const float row0_pt = 1.0f / row0_denom;
+    const float row1_denom = 1.0f + std::exp(-3.0f) + std::exp(-2.0f);
+    const float row1_pt = 1.0f / row1_denom;
+    const float expected = (
+        -0.25f * std::pow(1.0f - row0_pt, 2.0f) * std::log(row0_pt) +
+        -0.25f * std::pow(1.0f - row1_pt, 2.0f) * std::log(row1_pt)
+    ) / 2.0f;
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected));
+}
+
+TEST_CASE("Focal loss computes class-index backward values", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::FocalLoss focal(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor grad = focal.Backward(logits, targets);
+    const float* data = grad.Data<float>();
+
+    const float row0_denom = std::exp(-1.0f) + 1.0f + std::exp(-2.0f);
+    const float row0_probs[] = {std::exp(-1.0f) / row0_denom, 1.0f / row0_denom,
+                                std::exp(-2.0f) / row0_denom};
+    const float row0_pt = row0_probs[1];
+    const float row0_scale = 0.25f *
+        (std::pow(1.0f - row0_pt, 2.0f) -
+         2.0f * row0_pt * std::pow(1.0f - row0_pt, 1.0f) * std::log(row0_pt)) / 2.0f;
+    REQUIRE(data[0] == Catch::Approx(row0_scale * row0_probs[0]));
+    REQUIRE(data[1] == Catch::Approx(row0_scale * (row0_probs[1] - 1.0f)));
+    REQUIRE(data[2] == Catch::Approx(row0_scale * row0_probs[2]));
+
+    const float row1_denom = 1.0f + std::exp(-3.0f) + std::exp(-2.0f);
+    const float row1_probs[] = {1.0f / row1_denom, std::exp(-3.0f) / row1_denom,
+                                std::exp(-2.0f) / row1_denom};
+    const float row1_pt = row1_probs[0];
+    const float row1_scale = 0.25f *
+        (std::pow(1.0f - row1_pt, 2.0f) -
+         2.0f * row1_pt * std::pow(1.0f - row1_pt, 1.0f) * std::log(row1_pt)) / 2.0f;
+    REQUIRE(data[3] == Catch::Approx(row1_scale * (row1_probs[0] - 1.0f)));
+    REQUIRE(data[4] == Catch::Approx(row1_scale * row1_probs[1]));
+    REQUIRE(data[5] == Catch::Approx(row1_scale * row1_probs[2]));
+}
+
+TEST_CASE("Focal loss parameters follow their numerical domain",
+          "[loss][classification]") {
+    REQUIRE_NOTHROW(cyxwiz::FocalLoss(
+        0.0f, 0.0f, cyxwiz::Reduction::Mean));
+    REQUIRE_THROWS_AS(
+        cyxwiz::FocalLoss(-0.1f, 2.0f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::FocalLoss(
+            0.25f, std::numeric_limits<float>::infinity(),
+            cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+
+    cyxwiz::FocalLoss focal;
+    REQUIRE_THROWS_AS(focal.SetAlpha(
+        std::numeric_limits<float>::quiet_NaN()), std::invalid_argument);
+    REQUIRE_THROWS_AS(focal.SetGamma(-1.0f), std::invalid_argument);
+    focal.SetAlpha(0.75f);
+    focal.SetGamma(1.5f);
+    REQUIRE(focal.GetAlpha() == Catch::Approx(0.75f));
+    REQUIRE(focal.GetGamma() == Catch::Approx(1.5f));
+}
+
+TEST_CASE("Focal loss remains finite for extreme logits",
+          "[loss][classification]") {
+    const float logit_values[] = {
+        80.0f, -80.0f, 0.0f,
+        -60.0f, 60.0f, 0.0f,
+    };
+    const int32_t target_values[] = {1, 1};
+    const cyxwiz::Tensor logits(
+        {2, 3}, logit_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {2}, target_values, cyxwiz::DataType::Int32);
+    cyxwiz::FocalLoss focal(0.5f, 1.5f, cyxwiz::Reduction::Sum);
+
+    const cyxwiz::Tensor loss = focal.Forward(logits, targets);
+    const cyxwiz::Tensor gradient = focal.Backward(logits, targets);
+    REQUIRE(loss.Shape() == std::vector<size_t>{1});
+    REQUIRE(std::isfinite(loss.ReadData<float>()[0]));
+    REQUIRE(loss.ReadData<float>()[0] == Catch::Approx(80.0f).margin(1.0e-4f));
+    REQUIRE(gradient.Shape() == std::vector<size_t>{2, 3});
+    const float* values = gradient.ReadData<float>();
+    REQUIRE(values[0] == Catch::Approx(0.5f).margin(1.0e-5f));
+    REQUIRE(values[1] == Catch::Approx(-0.5f).margin(1.0e-5f));
+    REQUIRE(values[2] == Catch::Approx(0.0f).margin(1.0e-5f));
+    REQUIRE(values[3] == Catch::Approx(0.0f).margin(1.0e-5f));
+    REQUIRE(values[4] == Catch::Approx(0.0f).margin(1.0e-5f));
+    REQUIRE(values[5] == Catch::Approx(0.0f).margin(1.0e-5f));
+}
+
+TEST_CASE("Focal backward recomputes from the supplied logits",
+          "[loss][classification]") {
+    const float first_values[] = {
+        4.0f, -1.0f, 0.0f,
+        -2.0f, 3.0f, 1.0f,
+    };
+    const float second_values[] = {
+        -1.0f, 2.0f, 0.5f,
+        3.0f, -2.0f, 0.0f,
+    };
+    const int32_t target_values[] = {1, 0};
+    const cyxwiz::Tensor first(
+        {2, 3}, first_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second(
+        {2, 3}, second_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {2}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::FocalLoss reused(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    static_cast<void>(reused.Forward(first, targets));
+    const cyxwiz::Tensor actual = reused.Backward(second, targets);
+    cyxwiz::FocalLoss fresh(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    const cyxwiz::Tensor expected = fresh.Backward(second, targets);
+
+    REQUIRE(actual.Shape() == expected.Shape());
+    const float* actual_values = actual.ReadData<float>();
+    const float* expected_values = expected.ReadData<float>();
+    for (size_t index = 0; index < actual.NumElements(); ++index) {
+        REQUIRE(actual_values[index] ==
+                Catch::Approx(expected_values[index]).margin(1.0e-6f));
+    }
+}
+
+TEST_CASE("Cosine embedding loss computes forward reduction", "[loss]") {
+    float x1_values[] = {1.0f, 0.0f, 1.0f, 0.0f};
+    float x2_values[] = {1.0f, 0.0f, 1.0f, 0.0f};
+    float label_values[] = {1.0f, -1.0f};
+    cyxwiz::Tensor x1({2, 2}, x1_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor x2({2, 2}, x2_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::CosineEmbeddingLoss loss(0.25f, cyxwiz::Reduction::Mean);
+    loss.SetLabels(labels);
+
+    cyxwiz::Tensor output = loss.Forward(x1, x2);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx((0.0f + 0.75f) / 2.0f));
+}
+
+TEST_CASE("Cosine embedding loss computes backward values", "[loss]") {
+    float x1_values[] = {1.0f, 0.0f, 1.0f, 0.0f};
+    float x2_values[] = {0.0f, 1.0f, 1.0f, 0.0f};
+    float label_values[] = {1.0f, -1.0f};
+    cyxwiz::Tensor x1({2, 2}, x1_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor x2({2, 2}, x2_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::CosineEmbeddingLoss loss(0.25f, cyxwiz::Reduction::Mean);
+    loss.SetLabels(labels);
+
+    cyxwiz::Tensor grad = loss.Backward(x1, x2);
+    const float* data = grad.Data<float>();
+
+    REQUIRE(data[0] == Catch::Approx(0.0f));
+    REQUIRE(data[1] == Catch::Approx(-0.5f));
+    REQUIRE(data[2] == Catch::Approx(0.0f).margin(1e-5f));
+    REQUIRE(data[3] == Catch::Approx(0.0f).margin(1e-5f));
+}
+
+TEST_CASE("Triplet loss computes Euclidean forward reduction", "[loss]") {
+    float anchor_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float positive_values[] = {1.0f, 0.0f, 2.0f, 0.0f};
+    float negative_values[] = {0.0f, 2.0f, 0.0f, 2.0f};
+    cyxwiz::Tensor anchor({2, 2}, anchor_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor positive({2, 2}, positive_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor negative({2, 2}, negative_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::TripletLoss loss(1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean,
+                             cyxwiz::Reduction::Mean);
+    loss.SetNegative(negative);
+
+    cyxwiz::Tensor output = loss.Forward(anchor, positive);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx((0.0f + 1.0f) / 2.0f));
+}
+
+TEST_CASE("Triplet loss computes Euclidean anchor gradients", "[loss]") {
+    float anchor_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float positive_values[] = {1.0f, 0.0f, 2.0f, 0.0f};
+    float negative_values[] = {0.0f, 2.0f, 0.0f, 2.0f};
+    cyxwiz::Tensor anchor({2, 2}, anchor_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor positive({2, 2}, positive_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor negative({2, 2}, negative_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::TripletLoss loss(1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean,
+                             cyxwiz::Reduction::Mean);
+    loss.SetNegative(negative);
+
+    cyxwiz::Tensor grad = loss.Backward(anchor, positive);
+    const float* data = grad.Data<float>();
+
+    REQUIRE(data[0] == Catch::Approx(0.0f));
+    REQUIRE(data[1] == Catch::Approx(0.0f));
+    REQUIRE(data[2] == Catch::Approx(-0.5f));
+    REQUIRE(data[3] == Catch::Approx(0.5f));
+}
+
+TEST_CASE("Contrastive loss computes forward reduction", "[loss]") {
+    float x1_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float x2_values[] = {1.0f, 0.0f, 0.0f, 0.5f};
+    float label_values[] = {0.0f, 1.0f};
+    cyxwiz::Tensor x1({2, 2}, x1_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor x2({2, 2}, x2_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::ContrastiveLoss loss(1.0f, cyxwiz::Reduction::Mean);
+    loss.SetLabels(labels);
+
+    cyxwiz::Tensor output = loss.Forward(x1, x2);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx((1.0f + 0.25f) / 2.0f));
+}
+
+TEST_CASE("Contrastive loss computes x1 gradients", "[loss]") {
+    float x1_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float x2_values[] = {1.0f, 0.0f, 0.0f, 0.5f};
+    float label_values[] = {0.0f, 1.0f};
+    cyxwiz::Tensor x1({2, 2}, x1_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor x2({2, 2}, x2_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::ContrastiveLoss loss(1.0f, cyxwiz::Reduction::Mean);
+    loss.SetLabels(labels);
+
+    cyxwiz::Tensor grad = loss.Backward(x1, x2);
+    const float* data = grad.Data<float>();
+
+    REQUIRE(data[0] == Catch::Approx(-1.0f));
+    REQUIRE(data[1] == Catch::Approx(0.0f));
+    REQUIRE(data[2] == Catch::Approx(0.0f));
+    REQUIRE(data[3] == Catch::Approx(0.5f));
+}
+
+TEST_CASE("Metric-learning losses validate parameters and inputs before compute",
+          "[loss][metric-learning]") {
+    REQUIRE_THROWS_AS(cyxwiz::CosineEmbeddingLoss(1.1f, cyxwiz::Reduction::Mean),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::TripletLoss(0.0f, cyxwiz::TripletLoss::DistanceType::Euclidean,
+                                          cyxwiz::Reduction::Mean),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::ContrastiveLoss(std::numeric_limits<float>::quiet_NaN(), cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+
+    const float embedding_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const float invalid_cosine_labels[] = {1.0f, 0.5f};
+    const float invalid_contrastive_labels[] = {0.0f, -1.0f};
+    const cyxwiz::Tensor embeddings({2, 2}, embedding_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::CosineEmbeddingLoss cosine;
+    cosine.SetLabels(cyxwiz::Tensor({2}, invalid_cosine_labels, cyxwiz::DataType::Float32));
+    REQUIRE_THROWS_AS(cosine.Forward(embeddings, embeddings), std::runtime_error);
+
+    cyxwiz::ContrastiveLoss contrastive;
+    contrastive.SetLabels(
+        cyxwiz::Tensor({2}, invalid_contrastive_labels, cyxwiz::DataType::Float32));
+    REQUIRE_THROWS_AS(contrastive.Backward(embeddings, embeddings), std::runtime_error);
+
+    cyxwiz::TripletLoss triplet;
+    REQUIRE_THROWS_AS(triplet.Forward(embeddings, embeddings), std::runtime_error);
+    triplet.SetNegative(embeddings);
+    const cyxwiz::Tensor rank_one({4}, embedding_values, cyxwiz::DataType::Float32);
+    REQUIRE_THROWS_AS(triplet.Backward(rank_one, rank_one), std::runtime_error);
+}
+
+TEST_CASE("Metric-learning backward recomputes from supplied tensors", "[loss][metric-learning]") {
+    const float first_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const float second_values[] = {0.2f, 0.8f, 0.7f, -0.1f};
+    const float partner_values[] = {0.0f, 1.0f, -0.4f, 0.6f};
+    const float negative_values[] = {-0.5f, 0.3f, 0.9f, 0.2f};
+    const float pair_labels[] = {0.0f, 1.0f};
+    const cyxwiz::Tensor first({2, 2}, first_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second({2, 2}, second_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor partner({2, 2}, partner_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor negative({2, 2}, negative_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor labels({2}, pair_labels, cyxwiz::DataType::Float32);
+
+    cyxwiz::ContrastiveLoss reused_contrastive(1.5f, cyxwiz::Reduction::Mean);
+    reused_contrastive.SetLabels(labels);
+    static_cast<void>(reused_contrastive.Forward(first, partner));
+    const auto actual_contrastive = reused_contrastive.Backward(second, partner);
+    cyxwiz::ContrastiveLoss fresh_contrastive(1.5f, cyxwiz::Reduction::Mean);
+    fresh_contrastive.SetLabels(labels);
+    const auto expected_contrastive = fresh_contrastive.Backward(second, partner);
+
+    cyxwiz::TripletLoss reused_triplet(0.75f, cyxwiz::TripletLoss::DistanceType::Cosine,
+                                       cyxwiz::Reduction::Mean);
+    reused_triplet.SetNegative(negative);
+    static_cast<void>(reused_triplet.Forward(first, partner));
+    const auto actual_triplet = reused_triplet.BackwardAll(second, partner);
+    cyxwiz::TripletLoss fresh_triplet(0.75f, cyxwiz::TripletLoss::DistanceType::Cosine,
+                                      cyxwiz::Reduction::Mean);
+    fresh_triplet.SetNegative(negative);
+    const auto expected_triplet = fresh_triplet.BackwardAll(second, partner);
+
+    const auto require_equal = [](const cyxwiz::Tensor& actual, const cyxwiz::Tensor& expected) {
+        REQUIRE(actual.Shape() == expected.Shape());
+        const float* actual_values = actual.ReadData<float>();
+        const float* expected_values = expected.ReadData<float>();
+        for (size_t index = 0; index < actual.NumElements(); ++index) {
+            REQUIRE(actual_values[index] == Catch::Approx(expected_values[index]).margin(1.0e-6f));
+        }
+    };
+    require_equal(actual_contrastive, expected_contrastive);
+    require_equal(actual_triplet.anchor, expected_triplet.anchor);
+    require_equal(actual_triplet.positive, expected_triplet.positive);
+    require_equal(actual_triplet.negative, expected_triplet.negative);
+}
+
+#ifndef NDEBUG
+TEST_CASE("Metric-learning device label validation is explicitly attributed",
+          "[loss][metric-learning][arrayfire][residency]") {
+    const auto make_device_tensor = [](const std::vector<size_t>& shape,
+                                       const std::vector<float>& values) {
+        const cyxwiz::Tensor host(shape, values.data(), cyxwiz::DataType::Float32);
+        return cyxwiz::Tensor::FromSemanticArray(host.GetSemanticArray(), host.Shape());
+    };
+    const auto make_first = [make_device_tensor] {
+        return make_device_tensor({2, 2}, {1.0f, 0.0f, 0.2f, 0.8f});
+    };
+    const auto make_second = [make_device_tensor] {
+        return make_device_tensor({2, 2}, {0.0f, 1.0f, 0.7f, 0.1f});
+    };
+    const std::vector<std::pair<LossFactory, std::string>> losses = {
+        {[make_device_tensor] {
+             auto loss =
+                 std::make_unique<cyxwiz::CosineEmbeddingLoss>(0.2f, cyxwiz::Reduction::None);
+             loss->SetLabels(make_device_tensor({2}, {1.0f, -1.0f}));
+             return loss;
+         },
+         "CosineEmbeddingLoss"},
+        {[make_device_tensor] {
+             auto loss =
+                 std::make_unique<cyxwiz::ContrastiveLoss>(1.5f, cyxwiz::Reduction::None);
+             loss->SetLabels(make_device_tensor({2}, {0.0f, 1.0f}));
+             return loss;
+         },
+         "ContrastiveLoss"},
+    };
+
+    for (const auto& [factory, name] : losses) {
+        for (const bool forward : {true, false}) {
+            DYNAMIC_SECTION(name << (forward ? " forward" : " backward")) {
+                std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+                cyxwiz::Tensor result;
+                {
+                    const ScopedLossEventCapture capture(host_sync_events);
+                    const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+                        &CaptureLossHostSync);
+                    auto loss = factory();
+                    const auto first = make_first();
+                    const auto second = make_second();
+                    result = forward ? loss->Forward(first, second)
+                                     : loss->Backward(first, second);
+                }
+
+                REQUIRE(result.Shape() ==
+                        (forward ? std::vector<size_t>{2}
+                                 : std::vector<size_t>{2, 2}));
+                REQUIRE(host_sync_events.size() == 1);
+                const auto& event = host_sync_events.front();
+                REQUIRE(event.attribution_category == "loss_input_validation");
+                REQUIRE(event.attribution_operation ==
+                        name + (forward ? "::Forward" : "::Backward"));
+                REQUIRE(event.tensor_shape == std::vector<size_t>{2});
+                REQUIRE(event.bytes == 2 * sizeof(float));
+            }
+        }
+    }
+}
+#endif

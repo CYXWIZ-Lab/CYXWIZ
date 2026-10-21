@@ -1,0 +1,250 @@
+#include "properties_parameter_rules.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <set>
+
+namespace gui::properties_rules {
+
+bool TryParseDoubleStrict(const std::string& text, double& value) {
+    if (text.empty()) {
+        return false;
+    }
+
+    char* end = nullptr;
+    value = std::strtod(text.c_str(), &end);
+    return end != text.c_str() && end && *end == '\0' && std::isfinite(value);
+}
+
+bool TryParseIntStrict(const std::string& text, int& value) {
+    if (text.empty()) {
+        return false;
+    }
+
+    char* end = nullptr;
+    long parsed = std::strtol(text.c_str(), &end, 10);
+    if (end == text.c_str() || !end || *end != '\0') {
+        return false;
+    }
+    if (parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+NumericRange ParseNumericRange(const std::string& validation) {
+    NumericRange range;
+    if (validation.empty()) {
+        return range;
+    }
+
+    const size_t dash_pos = validation.find('-', 1);
+    if (dash_pos == std::string::npos || dash_pos + 1 >= validation.size()) {
+        return range;
+    }
+
+    double min_value = 0.0;
+    double max_value = 0.0;
+    if (!TryParseDoubleStrict(validation.substr(0, dash_pos), min_value) ||
+        !TryParseDoubleStrict(validation.substr(dash_pos + 1), max_value) ||
+        min_value > max_value) {
+        return range;
+    }
+
+    range.min_value = min_value;
+    range.max_value = max_value;
+    range.has_range = true;
+    return range;
+}
+
+namespace {
+
+bool IsDialogOwnedNode(NodeType type) {
+    switch (type) {
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsInternalParameterName(const std::string& name) {
+    if (!name.empty() && name[0] == '_') {
+        return true;
+    }
+
+    static const std::set<std::string> internal_params = {
+        "configured",
+        "data_loaded",
+        "loaded_backend",
+        "loaded_cols",
+        "loaded_memory_bytes",
+        "loaded_rows",
+        "audit_errors",
+        "audit_warnings",
+        "audit_status",
+        "file_category",
+        "source_type"
+    };
+    return internal_params.count(name) > 0;
+}
+
+} // namespace
+
+bool ShouldHideGenericParameter(
+    const MLNode& node,
+    const cyxwiz::ParameterDefinition& param) {
+    const NodeType type = node.type;
+    if (IsInternalParameterName(param.name)) {
+        return true;
+    }
+
+    if (IsDialogOwnedNode(type) &&
+        (param.name == "dataset_name" ||
+         param.name == "file_path" ||
+         param.name == "folder_path" ||
+         param.type == "file")) {
+        return true;
+    }
+
+    if ((type == NodeType::LSTM ||
+         type == NodeType::GRU ||
+         type == NodeType::RNN) &&
+        param.name == "input_size") {
+        return true;
+    }
+
+    if (type == NodeType::FillMissingValues ||
+        type == NodeType::StandardScaler ||
+        type == NodeType::TFIDFVectorizer ||
+        type == NodeType::CountVectorizer) {
+        const auto mode_it = node.parameters.find("operation_mode");
+        const bool transform_only =
+            mode_it != node.parameters.end() &&
+            mode_it->second == "transform_only";
+        const auto save_it = node.parameters.find("save_state");
+        const bool save_state =
+            save_it != node.parameters.end() &&
+            (save_it->second == "true" || save_it->second == "1");
+        if (param.name == "state_path") {
+            return !transform_only && !save_state;
+        }
+        if (param.name == "save_state") {
+            return transform_only;
+        }
+        if (param.name == "state_overwrite") {
+            const auto path_it = node.parameters.find("state_path");
+            return transform_only || !save_state ||
+                   path_it == node.parameters.end() ||
+                   path_it->second.empty();
+        }
+    }
+
+    return false;
+}
+
+bool ShouldUseSaveFileDialog(
+    const MLNode& node,
+    const cyxwiz::ParameterDefinition& param) {
+    if (param.name != "state_path") {
+        return false;
+    }
+    const auto mode = node.parameters.find("operation_mode");
+    return mode == node.parameters.end() ||
+           mode->second != "transform_only";
+}
+
+std::vector<std::pair<std::string, std::string>> FileParameterFilters(
+    const cyxwiz::ParameterDefinition& param) {
+    std::string extensions;
+    size_t start = 0;
+    while (start <= param.validation.size()) {
+        const size_t end = std::min(param.validation.find(';', start), param.validation.size());
+        std::string pattern = param.validation.substr(start, end - start);
+        while (!pattern.empty() && pattern.front() == ' ') pattern.erase(pattern.begin());
+        while (!pattern.empty() && pattern.back() == ' ') pattern.pop_back();
+        if (pattern.rfind("*.", 0) == 0 && pattern.size() > 2) {
+            extensions += (extensions.empty() ? "" : ",") + pattern.substr(2);
+        }
+        start = end + 1;
+    }
+    std::vector<std::pair<std::string, std::string>> filters;
+    if (!extensions.empty()) filters.emplace_back("Supported files", extensions);
+    filters.emplace_back("All Files", "*");
+    return filters;
+}
+
+bool ValidateParameter(
+    const std::string& value,
+    const cyxwiz::ParameterDefinition& param,
+    std::string& error) {
+    if (param.type == "fixed" && value != param.default_value) {
+        error = "Unsupported value; expected " + param.default_value;
+        return false;
+    }
+
+    if (value.empty()) {
+        if (param.required) {
+            error = "Required";
+            return false;
+        }
+        return true;
+    }
+
+    if (param.type == "int") {
+        int v = 0;
+        if (!TryParseIntStrict(value, v)) {
+            error = "Invalid integer";
+            return false;
+        }
+
+        NumericRange range = ParseNumericRange(param.validation);
+        if (range.has_range) {
+            if (v < static_cast<int>(range.min_value)) {
+                error = "Value must be >= " + std::to_string(static_cast<int>(range.min_value));
+                return false;
+            }
+            if (v > static_cast<int>(range.max_value)) {
+                error = "Value must be <= " + std::to_string(static_cast<int>(range.max_value));
+                return false;
+            }
+        }
+    } else if (param.type == "float") {
+        double v = 0.0;
+        if (!TryParseDoubleStrict(value, v)) {
+            error = "Invalid number";
+            return false;
+        }
+
+        NumericRange range = ParseNumericRange(param.validation);
+        if (range.has_range) {
+            if (v < range.min_value) {
+                error = "Value must be >= " + std::to_string(range.min_value);
+                return false;
+            }
+            if (v > range.max_value) {
+                error = "Value must be <= " + std::to_string(range.max_value);
+                return false;
+            }
+        }
+    } else if ((param.type == "enum" || param.type == "dropdown") && !param.enum_values.empty()) {
+        bool found = false;
+        for (const auto& ev : param.enum_values) {
+            if (ev == value) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            error = "Invalid option";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+} // namespace gui::properties_rules

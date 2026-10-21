@@ -3,11 +3,15 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <memory>
+#include <optional>
 #include <functional>
 #include <atomic>
+#include <cstdint>
 #include <thread>
+#include <utility>
 #include <imgui.h>
 #include <nlohmann/json_fwd.hpp>
 
@@ -16,6 +20,10 @@ struct ImNodesEditorContext;
 
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
+#include "../core/graph_model.h"
+#include "../core/operator_figures.h"
+#include "../core/pipeline_node_run_facts.h"
+
 namespace scripting { class ScriptingEngine; }
 
 namespace cyxwiz {
@@ -24,65 +32,27 @@ class GraphExecutor;
 class RLTrainingExecutor;
 class TrainingDashboardPanel;
 class PipelineExecutor;
+class PipelineExecutionTracker;
+struct TaskInfo;
+namespace guided { struct CheckNode; }
 }
+
+namespace cyxwiz {
+class LiveGraphCompile;
+}  // namespace cyxwiz
+
+namespace cyxwiz::dashboard {
+class DashboardWindow;
+struct DashboardTarget;
+struct WidgetSpec;
+}
+namespace cyxwiz::plot {
+class PlotNodeLane;
+class PlotWindow;
+}  // namespace cyxwiz::plot
 
 namespace gui {
 class Properties;
-class ShapeInferenceEngine;
-
-// Node category for organization and UI display (Unified Canvas Phase 1)
-enum class NodeCategory {
-    // Data I/O (Read & Write)
-    DataSources,      // CSV, SQL, HDF5, API + Export CSV, Parquet, SQL, JSON
-    Database,         // PostgreSQL, MySQL, SQLite, MongoDB (Coming Soon)
-    CloudStorage,     // AWS S3, Azure Blob, Google Cloud (Coming Soon)
-    DataTransform,    // Filter, Join, GroupBy, Sort, etc.
-
-    // Analytics & Visualization
-    Analytics,        // Stats, Visualize, Sample, Correlation
-    Visualization,    // 3D Scatter, Maps, Network Graphs (Coming Soon)
-
-    // ML Layers
-    Layers,           // Dense, Conv2D, LSTM, etc. (ML layers)
-    Activation,       // ReLU, Sigmoid, Softmax, etc.
-    Pooling,          // MaxPool, AvgPool, etc.
-    Normalization,    // BatchNorm, LayerNorm, etc.
-    Attention,        // MultiHeadAttention, Transformer, etc.
-    Recurrent,        // RNN, LSTM, GRU, etc.
-    ShapeOps,         // Reshape, Permute, Squeeze, etc.
-    MergeOps,         // Concatenate, Add, Multiply, etc.
-    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
-
-    // Training & Models
-    Training,         // Optimizer, Loss, LR Scheduler
-    Regularization,   // L1, L2, Dropout
-    ModelIO,          // Model Reader/Writer, Checkpoints (Coming Soon)
-    MLServices,       // AutoML, HuggingFace, MLflow (Coming Soon)
-    Explainability,   // SHAP, LIME (Coming Soon)
-
-    // Data Processing
-    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
-    DataPipeline,     // DatasetInput, DataLoader, Augmentation
-    TextProcessing,   // Tokenizer, Vocabulary, Padding
-    TimeSeries,       // Window, Features, Split
-    Audio,            // AudioInput, Spectrogram, MFCC
-    JsonXml,          // JSON Path, XML Reader (Coming Soon)
-
-    // Specialized
-    DNN,              // Pre-trained models, detection, pose
-    RL,               // Gym, ReplayBuffer, Policy, Value
-    BigData,          // Spark, Dask, Ray, Kafka (Coming Soon)
-
-    // Workflow & UI
-    Workflow,         // Loop, IF Switch, Try/Catch (Coming Soon)
-    Widgets,          // Interactive inputs (Coming Soon)
-    Reporting,        // PDF, HTML Reports (Coming Soon)
-    Utility,          // Lambda, Identity, Constant
-    Signal,           // Sliders, Sine, Scope (for simulation)
-
-    Plugin,           // Plugin-defined custom nodes
-    Unknown           // Fallback
-};
 
 // Icon pack selection for node icons
 enum class IconPack {
@@ -94,501 +64,18 @@ enum class IconPack {
     Phosphor        // Phosphor Icons - flexible icon family with multiple weights
 };
 
-// Node types for ML model building
-enum class NodeType {
-    // ===== Core Layers =====
-    Dense,
-
-    // Convolutional Layers
-    Conv1D,
-    Conv2D,
-    Conv3D,
-    DepthwiseConv2D,
-
-    // Pooling Layers
-    MaxPool2D,
-    AvgPool2D,
-    GlobalMaxPool,
-    GlobalAvgPool,
-    AdaptiveAvgPool,
-
-    // Normalization Layers
-    BatchNorm,
-    LayerNorm,
-    GroupNorm,
-    InstanceNorm,
-
-    // Regularization
-    Dropout,
-    Flatten,
-
-    // ===== Recurrent Layers =====
-    RNN,
-    LSTM,
-    GRU,
-    Bidirectional,
-    TimeDistributed,
-    Embedding,
-
-    // ===== Attention & Transformer =====
-    MultiHeadAttention,
-    SelfAttention,
-    CrossAttention,
-    LinearAttention,      // O(n) linear attention (Performer/Linear Transformer)
-    TransformerEncoder,
-    TransformerDecoder,
-    PositionalEncoding,
-
-    // ===== Activation Functions =====
-    ReLU,
-    LeakyReLU,
-    PReLU,
-    ELU,
-    SELU,
-    GELU,
-    Swish,
-    Mish,
-    Sigmoid,
-    Tanh,
-    Softmax,
-
-    // ===== Shape Operations =====
-    Reshape,
-    Permute,
-    Squeeze,
-    Unsqueeze,
-    View,
-    Split,
-
-    // ===== Merge Operations =====
-    Concatenate,
-    Add,
-    Multiply,
-    Average,
-
-    // ===== Output =====
-    Output,
-
-    // ===== Loss Functions =====
-    MSELoss,
-    CrossEntropyLoss,
-    BCELoss,
-    BCEWithLogits,
-    L1Loss,
-    SmoothL1Loss,
-    HuberLoss,
-    NLLLoss,
-
-    // ===== Optimizers =====
-    SGD,
-    Adam,
-    AdamW,
-    RMSprop,
-    Adagrad,
-    NAdam,
-
-    // ===== Learning Rate Schedulers =====
-    StepLR,
-    CosineAnnealing,
-    ReduceOnPlateau,
-    ExponentialLR,
-    WarmupScheduler,
-
-    // ===== Regularization Nodes =====
-    L1Regularization,
-    L2Regularization,
-    ElasticNet,
-
-    // ===== Utility Nodes =====
-    Lambda,
-    Identity,
-    Constant,
-    Parameter,
-
-    // ===== Signal / Control Nodes =====
-    SignalSlider,       // Interactive slider outputting scalar value
-    SineWave,           // Sine wave generator (amplitude, frequency, phase)
-    StepSignal,         // Step function (0 before t, value after t)
-    RampSignal,         // Linear ramp from start to end value
-    SignalScope,        // Real-time signal plotter (input visualization)
-
-    // ===== Data Pipeline Nodes =====
-    DatasetInput,       // Load dataset from DataRegistry
-    DataLoader,         // Batch iterator with shuffle/drop_last
-    Augmentation,       // Transform pipeline for data augmentation
-    DataSplit,          // Train/val/test splitter
-    TensorReshape,      // Reshape tensor dimensions (legacy, use Reshape)
-    Normalize,          // Normalize values (mean/std)
-    OneHotEncode,       // Label encoding
-
-    // ===== Composite Nodes =====
-    Subgraph,           // Encapsulated subgraph (collapsible)
-
-    // ===== DNN Inference Nodes =====
-    DNNModelLoad,       // Load pre-trained DNN model
-    DNNDetect,          // Object detection (YOLO, SSD)
-    DNNClassify,        // Image classification
-    DNNPoseEstimate,    // Pose estimation (OpenPose)
-    DNNFaceDetect,      // Face detection
-    DNNPreprocess,      // DNN preprocessing pipeline
-
-    // Pre-trained Model Shortcuts
-    PretrainedYOLO,     // YOLOv4 with default config
-    PretrainedMobileNet,// MobileNet classifier
-    PretrainedOpenPose, // OpenPose body estimation
-    PretrainedFaceNet,  // Face detector
-
-    // Post-processing Nodes
-    NonMaxSuppression,  // NMS for detections
-    ArgMax,             // Classification argmax
-    TopK,               // Top-K predictions
-    ThresholdFilter,    // Filter by confidence
-
-    // ===== Text Processing Nodes =====
-    TextTokenizer,      // Tokenize text -> integer sequences
-    TextVocabulary,     // Manage word<->index vocabulary
-    TextPadding,        // Pad/truncate sequences to fixed length
-
-    // ===== Upsampling Layers =====
-    ConvTranspose2D,    // Learnable transposed convolution
-    Upsample,           // Nearest/bilinear interpolation upsampling
-    PixelShuffle,       // Sub-pixel convolution rearrangement
-
-    // ===== Time-Series Nodes =====
-    TimeSeriesWindow,   // Sliding window for sequential data
-    TimeSeriesFeatures, // Lag, rolling, differencing features
-    TimeSeriesSplit,    // Chronological train/val/test split
-
-    // ===== Audio Processing Nodes =====
-    AudioInput,         // Load audio dataset
-    Spectrogram,        // Compute spectrogram from waveform
-    MelSpectrogram,     // Compute mel-spectrogram
-    MFCC,               // Extract MFCC features
-    AudioAugmentation,  // Time stretch, pitch shift, noise
-
-    // ===== RL Nodes =====
-    GymEnvironment,     // OpenAI Gym environment connector
-    ReplayBufferNode,   // Experience replay buffer
-    PolicyNetwork,      // Actor network for RL
-    ValueNetwork,       // Critic network for RL
-    RLTraining,         // RL training loop controller
-
-    // ===== Smart I/O Nodes (Unified - replaces individual format nodes) =====
-    DataInput,          // Universal data input with smart dialog (auto-detects format)
-    DataOutput,         // Universal data export with smart dialog (supports all formats)
-
-    // ===== Legacy Data Source Nodes (kept for compatibility) =====
-    CSVFile,            // Load CSV file into Arrow table
-    SQLQuery,           // Execute SQL query, return Arrow table
-    HDF5Dataset,        // Load HDF5 dataset into Arrow
-    ParquetFile,        // Load Parquet file into Arrow
-    JSONFile,           // Load JSON file into Arrow
-    ExcelFile,          // Load Excel file into Arrow
-    RESTAPISource,      // Fetch data from REST API
-
-    // Additional I/O formats (supported by engine)
-    TSVFile,            // Load TSV file into Arrow
-    TXTFile,            // Load plain text file
-    ImageCSVDataset,    // Images folder + CSV labels
-    StreamingDataset,   // Stream large datasets
-    ARFFFile,           // Weka ARFF format
-    FashionMNISTDataset,// Fashion-MNIST dataset
-    CIFAR100Dataset,    // CIFAR-100 dataset
-
-    // Additional I/O formats (Arrow, NumPy, Domain-specific)
-    FeatherFile,        // Apache Arrow Feather format
-    ArrowIPCFile,       // Arrow IPC binary format
-    NumPyFile,          // NumPy .npy/.npz files
-    AudioFolderDataset, // Audio files with class folders
-    TimeSeriesCSV,      // Time series CSV with windowing
-    TextCorpusDataset,  // Text corpus for NLP
-
-    // ===== Data Transform Nodes (Unified Canvas Phase 1) =====
-    FilterRows,         // Filter rows by SQL WHERE condition
-    SelectColumns,      // Select specific columns
-    JoinTables,         // Join two datasets (inner/left/right/outer)
-    GroupByAggregate,   // Group by columns with aggregations
-    SortRows,           // Sort rows by columns (ascending/descending)
-    FillMissingValues,  // Handle missing values (mean/median/mode/constant)
-    RemoveDuplicateRows,// Remove duplicate rows
-    PivotTable,         // Pivot wide to long or long to wide
-    UnionTables,        // Stack multiple datasets (UNION ALL)
-    RenameColumns,      // Rename columns
-
-    // ===== Analytics Nodes (Unified Canvas Phase 1) =====
-    DescribeStats,      // Compute statistical summary (count, mean, std, etc.)
-    VisualizeData,      // Create plots (scatter, bar, line, histogram)
-    SampleRows,         // Sample random rows from dataset
-    CorrelationMatrix,  // Compute correlation matrix
-    ValueCounts,        // Count unique values per column
-    CrossTabulation,    // Cross-tabulation (contingency table)
-
-    // ===== Data Export Nodes (Unified Canvas Phase 1) =====
-    ExportCSV,          // Export dataset to CSV
-    ExportParquet,      // Export dataset to Parquet
-    ExportSQL,          // Write dataset to SQL database
-    ExportJSON,         // Export dataset to JSON
-    ExportExcel,        // Export dataset to Excel (.xlsx)
-
-    // ===== KNIME-Style Table Manipulation Nodes =====
-    RowToColumnNames,   // Promote a row to column headers
-    TableSplitter,      // Split table at specified row
-    CellExtractor,      // Extract value from specific cell
-    CellUpdater,        // Update value in specific cell
-    TableCropper,       // Crop table to specified dimensions
-    ColumnAppender,     // Append columns from multiple tables
-    RowAppender,        // Append rows from multiple tables (alias for UnionTables)
-    Unpivot,            // Unpivot wide to long format
-    StringManipulation, // String operations (replace, trim, upper, lower)
-    MathFormula,        // Apply math formula to columns
-    RuleEngine,         // Apply if-then-else rules to create/modify columns
-
-    // ===== Machine Learning Algorithms (Phase 4 - Tool-to-Node Migration) =====
-    // Clustering
-    KMeansCluster,      // K-Means clustering algorithm
-    DBSCANCluster,      // DBSCAN density-based clustering
-    HierarchicalCluster,// Hierarchical/Agglomerative clustering
-    GMMCluster,         // Gaussian Mixture Model clustering
-
-    // Dimensionality Reduction
-    PCANode,            // Principal Component Analysis
-    TSNENode,           // t-SNE visualization
-    UMAPNode,           // UMAP dimensionality reduction
-
-    // Classification
-    DecisionTreeClassifier,  // Decision Tree classifier
-    RandomForestClassifier,  // Random Forest ensemble
-    GradientBoostingClassifier, // Gradient Boosted Trees
-    SVMClassifier,      // Support Vector Machine classifier
-    KNNClassifier,      // K-Nearest Neighbors classifier
-    NaiveBayesClassifier, // Naive Bayes classifier
-    LogisticRegressionNode, // Logistic Regression
-
-    // Regression
-    LinearRegressionNode,   // Linear Regression
-    PolynomialRegressionNode, // Polynomial Regression
-    SVMRegressor,       // Support Vector Regression
-
-    // ===== Model Evaluation Nodes (Phase 4) =====
-    ConfusionMatrixNode,    // Confusion matrix visualization
-    ROCCurveNode,       // ROC curve and AUC computation
-    PRCurveNode,        // Precision-Recall curve
-    LearningCurvesNode, // Training/validation learning curves
-    FeatureImportanceNode, // Feature importance analysis
-    CrossValidationNode,   // K-Fold cross-validation
-    RegressionMetricsNode,  // Regression metrics (MSE, RMSE, MAE, R²)
-
-    // ===== Data Preprocessing Nodes (Phase 4) =====
-    StandardScaler,     // Z-score standardization (mean=0, std=1)
-    MinMaxScaler,       // Min-Max scaling to [0,1]
-    RobustScaler,       // Robust scaling using median/IQR
-    LabelEncoder,       // Encode categorical labels as integers
-    OrdinalEncoder,     // Encode ordinal categories
-    TargetEncoder,      // Target-based encoding
-    TrainTestSplit,     // Stratified train/test split
-
-    // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
-    OutlierDetector,    // Detect/remove outliers (IQR, Z-score, Isolation Forest)
-    ImagePreprocessor,  // Image resize, crop, normalize pipeline
-    QualityAnalyzer,    // Image quality filtering (blur, brightness, contrast)
-    DataValidator,      // Schema validation and data quality checks
-
-    // ===== Dataset Source Nodes (Phase 4 - UI Consolidation) =====
-    ImageFolderDataset, // Load images from folder with class labels
-    MNISTDataset,       // Load MNIST handwritten digits dataset
-    CIFAR10Dataset,     // Load CIFAR-10 image classification dataset
-    HuggingFaceDataset, // Load dataset from HuggingFace Hub
-    KaggleDataset,      // Load dataset from Kaggle
-
-    // ===== Advanced Augmentation Nodes (Phase 6 - UI Consolidation) =====
-    AugmentationPreset, // Predefined augmentation pipelines (ImageNet, CIFAR, Medical, Self-Supervised)
-    GeometricTransform, // Geometric transforms (rotate, flip, crop, perspective, affine)
-    ColorTransform,     // Color transforms (brightness, contrast, saturation, hue, gamma)
-    MorphologyTransform,// Morphological operations (dilate, erode, blur, sharpen, edge)
-    AdvancedAugment,    // Advanced augmentation (Cutout, MixUp, CutMix, RandAugment, AutoAugment)
-
-    // ===== Signal Processing Nodes (Phase 4) =====
-    FFTNode,            // Fast Fourier Transform
-    IFFTNode,           // Inverse FFT
-    FilterDesigner,     // Design FIR/IIR filters
-    Convolution1D,      // 1D signal convolution
-    WaveletTransform,   // Discrete Wavelet Transform
-
-    // ===== Text Analytics Nodes (Phase 4) =====
-    TFIDFVectorizer,    // TF-IDF text vectorization
-    CountVectorizer,    // Bag-of-words vectorization
-    WordEmbeddings,     // Word embeddings (Word2Vec, GloVe)
-    SentimentAnalyzer,  // Sentiment analysis
-    NamedEntityRecognizer, // NER extraction
-
-    // ===== Utility Nodes (Phase 4) =====
-    CalculatorNode,     // Math expression calculator
-    UnitConverter,      // Unit conversion utility
-    RegexTester,        // Regular expression tester
-    JSONPathExtractor,  // Extract data using JSONPath
-    DataProfiler,       // Comprehensive data profiling
-
-
-    // ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
-    SVDNode,            // Singular Value Decomposition
-    QRDecomposition,    // QR matrix decomposition
-    CholeskyDecomposition, // Cholesky factorization
-    EigenDecomposition, // Eigenvalue/eigenvector decomposition
-    MatrixCalculator,   // General matrix operations
-
-    // ===== Time Series Analysis Nodes (Phase 5) =====
-    TimeSeriesDecomposition, // Trend/Seasonal/Residual decomposition
-    ACFNode,            // Autocorrelation function
-    PACFNode,           // Partial autocorrelation function
-    StationarityTest,   // ADF/KPSS stationarity tests
-    SeasonalityDetector,// Detect seasonal patterns
-    ARIMAForecaster,    // ARIMA time series forecasting
-    ExponentialSmoothing, // Holt-Winters forecasting
-
-    // ===== Statistics Nodes (Phase 5) =====
-    HypothesisTest,     // t-test, ANOVA, Chi-Square
-    DistributionFitter, // Fit probability distributions
-
-    // ===== Deep Learning Interpretation Nodes (Phase 5) =====
-    GradCAMNode,        // Grad-CAM visualization
-    SaliencyMapNode,    // Gradient saliency maps
-
-    // ===== Optimization Nodes (Phase 5) =====
-    GradientDescentViz, // Visualize optimization paths
-    ConvexityAnalyzer,  // Analyze function convexity
-    LPSolver,           // Linear programming solver
-    QPSolver,           // Quadratic programming solver
-    NumericalDifferentiation, // Numerical derivatives
-    NumericalIntegration,     // Numerical integration
-
-    // ===== Additional Text Processing (Phase 5) =====
-    WordFrequencyNode,  // Word frequency analysis
-    TokenizerNode,      // Text tokenization
-
-    // ===== Visualization Nodes (Phase 8 - Plot Types) =====
-    // Basic 2D Plots
-    LinePlot,           // Line plot (plot())
-    ScatterPlot,        // Scatter plot (scatter())
-    BarChart,           // Bar chart (bar/barh)
-    Histogram,          // Histogram distribution (hist())
-    PieChart,           // Pie chart (pie())
-    AreaPlot,           // Filled area plot (fill_between())
-
-    // Advanced 2D Plots
-    BoxPlot,            // Box plot statistics (boxplot())
-    ViolinPlot,         // Violin plot distribution (violinplot())
-    ErrorBarPlot,       // Error bar plot (errorbar())
-    StepPlot,           // Step plot (step())
-    HexbinPlot,         // Hexagonal binning (hexbin())
-
-    // Heatmaps & Matrices
-    Heatmap,            // Heatmap visualization
-    ContourPlot,        // Contour plot (contour/contourf())
-    Imshow,             // Image display (imshow())
-
-    // 3D Plots
-    Plot3D,             // 3D line plot
-    Scatter3D,          // 3D scatter plot
-    SurfacePlot,        // 3D surface plot
-    WireframePlot,      // 3D wireframe plot
-
-    // Specialized Plots
-    PolarPlot,          // Polar coordinate plot
-    QuiverPlot,         // Vector field plot (quiver())
-    StreamPlot,         // Streamline plot (streamplot())
-    SpectrogramPlot,    // Spectrogram visualization
-    NetworkGraph,       // Network/graph visualization
-
-    // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
-    PluginCustom,
-
-    // Special sentinel value
-    Unknown
-};
-
-// Attribute for node pins (inputs/outputs)
-enum class PinType {
-    Tensor,      // General tensor data
-    Labels,      // Label tensor (for classification)
-    Parameters,  // Model parameters
-    Loss,        // Loss value
-    Optimizer,   // Optimizer state
-    Dataset      // Dataset handle reference
-    // Note: Shape is metadata (node parameter), not a data flow type
-};
-
-// Pin capacity constants for variadic connections
-constexpr int PIN_UNLIMITED = -1;  // No limit on connections
-constexpr int PIN_SINGLE = 1;      // Standard single connection
-
-// Node pin structure
-struct NodePin {
-    int id;
-    PinType type;
-    std::string name;
-    bool is_input;  // true = input pin, false = output pin
-
-    // Variadic pin support - enables multiple connections to a single pin
-    bool is_variadic = false;        // True for pins accepting multiple connections
-    int min_connections = 0;         // Minimum required connections (0 = optional)
-    int max_connections = PIN_SINGLE; // Maximum allowed (-1 = unlimited)
-
-    // Visual indicators
-    bool is_required = true;         // Visual indicator for required pins
-
-    // Shape information (for smart validation and inference)
-    std::vector<size_t> shape;       // Tensor shape flowing through pin
-    bool shape_valid = false;        // Whether shape has been computed
-};
-
-// Visual node structure
-struct MLNode {
-    int id;
-    NodeType type;
-    NodeCategory category;  // Unified Canvas Phase 1: Category for UI organization
-    std::string name;
-    std::string description;  // KNIME-style: bound text displayed below node, moves with node
-    std::vector<NodePin> inputs;
-    std::vector<NodePin> outputs;
-
-    // Node-specific parameters (e.g., units for Dense layer)
-    std::map<std::string, std::string> parameters;
-
-    // Position for pattern insertion (optional - set by InstantiatePattern)
-    float initial_pos_x = 0.0f;
-    float initial_pos_y = 0.0f;
-    bool has_initial_position = false;  // True if position should be applied when inserting
-
-    // Dynamic pins (for plugin nodes like MuJoCo Plant that change pins based on parameters)
-    bool has_dynamic_pins = false;
-    std::string dynamic_pin_trigger;     // Parameter name that triggers pin rebuild
-    std::string resolved_config;         // Last resolved config value (to detect changes)
-    std::string plugin_qualified_name;   // "plugin_id:type_name" for calling ResolveDynamicPins
-};
-
-// Connection/Link types for visual differentiation
-enum class LinkType {
-    TensorFlow,         // Standard data flow (default)
-    ResidualSkip,       // Residual/Skip connection (additive)
-    DenseSkip,          // DenseNet-style skip (concatenative)
-    AttentionFlow,      // Attention Q/K/V connections
-    GradientFlow,       // Gradient backprop (for visualization)
-    ParameterFlow,      // Parameter updates
-    LossFlow            // Loss to optimizer
-};
-
-// Connection between nodes
-struct NodeLink {
-    int id;
-    int from_node;
-    int from_pin;
-    int to_node;
-    int to_pin;
-    LinkType type = LinkType::TensorFlow;  // Connection type for visual styling
+struct DataBoundaryMigrationResult {
+    bool success = false;
+    int nodes_migrated = 0;
+    int links_removed = 0;
+    int links_rerouted = 0;
+    std::string message;
 };
 
 // Graph snapshot for undo/redo
 struct GraphSnapshot {
+    std::vector<SubgraphData> subgraphs;
+    std::map<int, ImVec2> positions;
     std::vector<MLNode> nodes;
     std::vector<NodeLink> links;
     int next_node_id;
@@ -638,6 +125,12 @@ struct NodeAddSearchState {
     float search_debounce_timer_ = 0.0f;      // Time remaining before search triggers
     std::string last_search_query_;           // Last processed query
     bool search_dirty_ = false;               // True if search needs to be updated
+
+    // Palette curation (TOFIX157): matches that cannot run yet are counted
+    // and listed only after "Show"; the dropdown's height as drawn.
+    bool show_cant_run = false;
+    int cant_run_matches = 0;
+    float dropdown_height = 0.0f;
 };
 
 // Node implementation status for template/coming soon nodes
@@ -653,10 +146,17 @@ struct SearchableNode {
     std::string name;      // Display name (e.g., "Dense (512 units)")
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
-    std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
+    std::string extension_type_id;  // For PluginCustom: "provider_id:TypeName"
     NodeImplementationStatus status = NodeImplementationStatus::Implemented;  // Default to implemented
     std::string description;  // Brief description for info panel
     std::string tooltip;      // Tooltip text (for templates: why not available)
+    bool support_blocked = false;  // Derived from NodeMetadata::support_axes
+    std::string support_state;     // Compact central support state value
+    std::string support_reason;    // Compact central support reason
+    // Palette curation (TOFIX157, core/node_palette): a table step's group
+    // under Advanced operations ("Rows", ...), or a node that cannot run yet.
+    std::string advanced_group;
+    bool cant_run = false;
 };
 
 // Alignment types for arranging selected nodes
@@ -674,6 +174,18 @@ struct NodeGroup {
     float padding = 20.0f;  // Padding around contained nodes
 };
 
+// Default colour of a new canvas annotation, from the active theme tokens
+// (the colour itself is user data saved with the graph).
+ImU32 DefaultAnnotationColour();
+
+// The colour of a node category on the canvas, in the Node Browser and in
+// the node documentation: one series colour of the theme tokens per category.
+ImVec4 NodeCategoryColour(NodeCategory category);
+
+// The colour of a pin data type (Node Info panel, pin legends): one series
+// colour of the theme tokens per type.
+ImVec4 PinTypeColour(PinType type);
+
 // Canvas annotation (KNIME-style sticky note)
 struct CanvasAnnotation {
     int id;
@@ -688,7 +200,7 @@ struct CanvasAnnotation {
         : id(-1)
         , position(0, 0)
         , size(200, 100)
-        , color(IM_COL32(255, 255, 200, 255))  // Default yellow
+        , color(0)  // set by the creator: DefaultAnnotationColour() or the saved colour
         , is_minimized(false) {}
 };
 
@@ -710,15 +222,6 @@ struct CanvasFrame {
         , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
 };
 
-// Annotation color presets
-enum class AnnotationColor {
-    Yellow,   // Default - IM_COL32(255, 255, 200, 255)
-    Blue,     // Info - IM_COL32(200, 220, 255, 255)
-    Green,    // Done - IM_COL32(200, 255, 200, 255)
-    Orange,   // TODO - IM_COL32(255, 230, 200, 255)
-    Pink      // Important - IM_COL32(255, 200, 220, 255)
-};
-
 // Validation warning severity levels
 enum class ValidationSeverity {
     Error,    // Blocking errors (prevent training)
@@ -735,16 +238,6 @@ struct ValidationWarning {
     bool has_auto_fix = false;        // Whether auto-fix is available
     int from_node_id = -1;            // Source node (for connection issues)
     int to_node_id = -1;              // Target node (for connection issues)
-};
-
-// Subgraph data for encapsulated node groups
-struct SubgraphData {
-    int subgraph_node_id;                    // ID of the parent subgraph node
-    std::vector<MLNode> internal_nodes;      // Nodes inside the subgraph
-    std::vector<NodeLink> internal_links;    // Links between internal nodes
-    std::vector<int> input_pin_mappings;     // External input pin -> internal node pin
-    std::vector<int> output_pin_mappings;    // Internal node pin -> external output pin
-    bool expanded = false;                   // Whether subgraph is expanded (visible)
 };
 
 // Execution context for unified canvas (Unified Canvas Phase 2)
@@ -769,6 +262,10 @@ public:
     NodeEditor();
     ~NodeEditor();
 
+    // Cancels background work this editor owns (the data pipeline run) and
+    // drops its pending UI delivery. Called on project close and destruction.
+    void CancelOwnedBackgroundWork();
+
     void Render();
 
     // Set script editor for code output
@@ -776,6 +273,9 @@ public:
 
     // Set properties panel for node selection display
     void SetPropertiesPanel(Properties* properties) { properties_panel_ = properties; }
+    // The background compile of this graph (TOFIX123): link tooltips show
+    // the compiler's reason for a failed node. Owned by MainWindow.
+    void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -791,14 +291,99 @@ public:
 
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
+    // Configure a node as a double-click does (Properties "Open Dialog...").
+    void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
+    // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
+    void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // Add to Dashboard from Data Studio (TOFIX134 P3.11): the Dashboard nodes and
+    // whether each shows `dataset`; the Data Input a new one would read; the add
+    // itself is applied in the editor's next frame (node 0: a new Dashboard node).
+    std::vector<cyxwiz::dashboard::DashboardTarget> DashboardTargets(const std::string& dataset);
+    std::string DashboardSourceFor(const std::string& dataset) const;
+    void QueueDashboardWidget(int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget);
+    // A dashboard's "Open in Data Studio" / "Open in Query tab": dataset and SQL.
+    void SetOpenDataStudioQueryCallback(std::function<void(const std::string&, const std::string&)> cb) { open_data_studio_query_ = std::move(cb); }
+    // Word-vector runs on the Training Dashboard (TOFIX152): the running
+    // pipeline's step figures, its live status and its end go to the
+    // dashboard; a Word Embeddings dialog shows its node's run there.
+    struct WordVectorFeed {
+        std::function<void(const cyxwiz::OperatorFigures&)> figures;
+        std::function<void(int node_id, float step_share, const std::string& message)> progress;
+        std::function<void(int node_id, bool cancelled, const std::string& error)> ended;
+        std::function<void(int node_id)> show_run;
+        std::function<bool(int node_id)> has_run;
+        std::function<std::string(int node_id)> run_line;
+    };
+    void SetWordVectorFeed(WordVectorFeed feed) { word_vector_feed_ = std::move(feed); }
+    const WordVectorFeed& GetWordVectorFeed() const { return word_vector_feed_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
+    // Grid-space node positions from the last frame the canvas drew (empty
+    // until it has drawn once).
+    const std::map<int, ImVec2>& GetCachedNodePositions() const { return cached_node_positions_; }
+    int GetSelectedNodeId() const { return selected_node_id_; }
+    int GetSelectedNodeCount() const { return static_cast<int>(selected_node_ids_.size()); }
+    // A node to configure by id (e.g. the Properties panel opening another
+    // node's dialog); nullptr when it no longer exists.
+    MLNode* GetNodeForConfiguration(int node_id) { return FindNodeById(node_id); }
+    const std::string& GetCurrentFilePath() const { return current_file_path_; }
+    // File > Save: writes the graph to its file, asking for one the first time.
+    // An empty graph is nothing to save and returns true.
+    bool SaveCurrentGraph();
+    std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
+
+    // Thread-safe scalar simulation bridge used by Properties.
+    bool IsGraphSimulationRunning() const { return is_simulating_.load(); }
+    bool TryGetSimulationScalar(int pin_id, float& value) const;
+    float GetSimulationTime() const;
+    bool SetSimulationNodeParameter(int node_id,
+                                    const std::string& key,
+                                    const std::string& value);
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
     void SetTrainCallback(TrainCallback callback) { train_callback_ = callback; }
 
+    // Compile callback - set by MainWindow to dry-run the graph compilation (no training)
+    using CompileCallback = std::function<void()>;
+    void SetCompileCallback(CompileCallback callback) { compile_callback_ = callback; }
+
+    // Local Debug callback - runs one forward + one backward pass on a
+    // synthetic batch to catch shape / NaN / dead-subgraph bugs before
+    // real training. Mirrors SetCompileCallback; triggered by the
+    // toolbar "Local Debug" button or the F6 shortcut.
+    using DebugCallback = std::function<void()>;
+    void SetDebugCallback(DebugCallback callback) { debug_callback_ = callback; }
+
+    // Open Custom Node Editor callback - opens the CustomNodeEditorPanel from the Studio toolbar
+    using OpenCustomNodeEditorCallback = std::function<void()>;
+    void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
+
+    // Open Studio Debugger callback - opens the debugger panel from the Studio toolbar
+    using OpenStudioDebuggerCallback = std::function<void()>;
+    void SetOpenStudioDebuggerCallback(OpenStudioDebuggerCallback callback) { open_studio_debugger_callback_ = callback; }
+
+    // Open the Plugin Manager (TOFIX125): used where an extension node is
+    // missing or none is loaded.
+    using OpenPluginManagerCallback = std::function<void()>;
+    void SetOpenPluginManagerCallback(OpenPluginManagerCallback callback) { open_plugin_manager_callback_ = std::move(callback); }
+    void OpenPluginManager() { if (open_plugin_manager_callback_) open_plugin_manager_callback_(); }
+
+    // Explain Node callback - opens a node-scoped explanation in Studio Debugger.
+    using ExplainNodeCallback = std::function<void(int)>;
+    void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
+    // Graph replacement admission is checked by all load/clear entry points.
+    std::string GetGraphReplacementBlockReason() const;
+    bool CanReplaceGraph(const char* operation);
+    void SetTrainingDataLoadingCallback(std::function<bool()> callback) {
+        training_data_loading_callback_ = std::move(callback);
+    }
+    void SetGraphPreparationBusyCallback(std::function<bool()> callback) {
+        graph_preparation_busy_callback_ = std::move(callback);
+    }
+
 
     // Training state control
     void SetTrainingActive(bool active) { is_training_ = active; }
@@ -813,6 +398,51 @@ public:
 
     // Execute data pipeline using DuckDB (Phase 2)
     bool ExecuteDataPipeline();
+    // Run only what `node_id` needs: its upstream steps and itself, plus the
+    // Check nodes chained right after it when `with_checks` (TOFIX146
+    // "Run step" / "Preview output"). `include_step` false runs only the
+    // steps before it (the SQL Workbench's "Load inputs").
+    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true) {
+        return ExecuteDataPipelineThrough(std::vector<int>{node_id}, with_checks, include_step);
+    }
+    // Several steps in one run (Data Studio Validate's "Run checks").
+    bool ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step = true);
+    bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
+    // The Task View task of the latest data run (0: none), for a dialog that
+    // shows its progress or stops it.
+    uint64_t GetDataPipelineTaskId() const { return pipeline_task_id_; }
+
+    // A data step's neighbours in the executable graph (recipes lowered to
+    // their steps): what feeds each input pin and the Check nodes that
+    // follow it. `error` says why the graph could not be read.
+    struct DataStepNeighbour {
+        int id = -1;
+        int pin = 0;  // the step's input pin it feeds (inputs only)
+        std::string name;
+        std::string type;  // pipeline type name, e.g. "DataInput"
+        std::map<std::string, std::string> parameters;
+    };
+    struct DataStepContext {
+        std::vector<DataStepNeighbour> inputs;
+        std::vector<DataStepNeighbour> checks;
+        std::string recipe_name;  // the Preparation Recipe the step belongs to, if any
+        int recipe_steps = 0;
+        std::string error;
+    };
+    DataStepContext GetDataStepContext(int node_id) const;
+    // The executable graph's links (recipes lowered to their steps): which
+    // node feeds which input pin of which node (Data Studio's Validate reads
+    // what each check checks). Empty, with `error` saying why, when the
+    // graph cannot be run.
+    struct DataLink {
+        int from = -1;
+        int to = -1;
+        int pin = 0;
+    };
+    std::vector<DataLink> GetDataPipelineLinks(std::string* error = nullptr) const;
+    // Each node's latest run facts (rows, columns, time, outcome), kept
+    // across runs in this session.
+    const std::map<int, cyxwiz::PipelineNodeRunFacts>& GetNodeRunFacts() const { return node_run_facts_; }
 
     // Unified Canvas Phase 6: Execution visualization
     void SetNodeExecutionState(int node_id, NodeExecutionState state);
@@ -841,14 +471,30 @@ public:
     // Load graph from JSON string (for import from .cyxmodel)
     bool LoadGraphFromString(const std::string& json_string);
 
+    // The graph on the canvas no longer belongs to a file: Save asks for a
+    // name (a starter or template opened from the Engine's own files must not
+    // be overwritten).
+    void DetachFromFile();
+    // The generated code for a framework, synchronously and without the
+    // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
+    // export harness). Empty with a log line when the graph cannot be sorted.
+    std::string GenerateCodeText(CodeFramework framework);
+
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
+
+    // Legacy Data Input/Split/Loader graphs retain their original pin layout
+    // until the user explicitly requests this migration.
+    bool HasLegacyDataBoundary() const;
+    DataBoundaryMigrationResult MigrateLegacyDataBoundary();
 
     // Get current graph as JSON string (for export to .cyxmodel)
     std::string GetGraphJson() const;
 
     // Show the node editor window
     void Show() { show_window_ = true; }
+    // Show and bring the CyxWiz Studio tab to the front (gui::BringToFront).
+    void Raise();
 
     // ===== Data Studio Integration (Phase 5 Week 7) =====
 
@@ -888,13 +534,29 @@ public:
     // Made public so PatternBrowser can use it via callback
     MLNode CreateNode(NodeType type, const std::string& name);
 
+    // Deterministic node factory used by CreateNode and registry contract
+    // gates. Keeping the ID cursors explicit lets non-GUI callers exercise
+    // the exact production dispatch without constructing ImGui/ImNodes state.
+    static MLNode CreateNodeWithIds(NodeType type,
+                                    const std::string& name,
+                                    int& next_node_id,
+                                    int& next_pin_id);
+
     // Unified Canvas Phase 1: Get category for a node type
-    static NodeCategory GetCategoryForNodeType(NodeType type);
 
     // ===== Menu Operations (Public API for Toolbar) =====
 
-    // Add a node at the center of the visible area
+    // Add a node at the center of the visible area. For NodeType::PluginCustom
+    // `name` is the extension type id.
     void AddNodeFromMenu(NodeType type, const std::string& name);
+    void AddDataInputFromAsset(const std::string& path);
+    // Data > Import Dataset: a new Data Input node with its dialog open (data
+    // enters the Engine only through Data Input nodes).
+    void AddDataInputAndConfigure();
+    // Keep as node (Data Studio > Results, TOFIX157): a Data Input named
+    // `name` reading the kept test's Parquet file and a Test Evaluation node
+    // after it, in free space; the run loads the file.
+    void AddKeptTest(const std::string& path, const std::string& name);
 
     // Delete currently selected nodes
     void DeleteSelectedNodes();
@@ -938,20 +600,148 @@ public:
     std::string GetWorkflowDescription() const { return workflow_description_; }
     void SetWorkflowDescription(const std::string& desc);
 
+    // ===== Pin / Node State =====
+    // Drives pin colors in the node editor. The state machine is:
+    //   Default        → red hollow  (graph never compiled, or just edited)
+    //   CompileFailed  → red solid   (last Compile flagged this node)
+    //   CompilePassed  → green hollow (last Compile validated this node)
+    //   Trained        → green solid (training run completed successfully)
+    // Cleared on any graph modification so stale state is never shown.
+
+    enum class NodePinState {
+        Default,
+        CompileFailed,
+        CompilePassed,
+        Trained
+    };
+
+    void SetNodePinState(int node_id, NodePinState state);
+    void SetAllNodesPinState(NodePinState state);
+    void ClearValidationState();
+    NodePinState GetNodePinState(int node_id) const;
+    bool HasValidationState() const { return !node_pin_state_.empty(); }
+
+    // Select a node in the canvas and frame it into view; `raise` brings
+    // CyxWiz Studio forward (false: framed when it next shows).
+    void FocusNode(int node_id, bool raise = true);
+    // Select these nodes and frame them all into view (Data Studio's Show on
+    // canvas); applied in the canvas's next frame, like FocusNode.
+    void ShowNodes(std::vector<int> node_ids);
+
+    // A Subgraph as its Properties view shows it (TOFIX146 D5): its role and
+    // its steps in run order (the live canvas copies while it is expanded).
+    struct SubgraphStep {
+        int id = -1;
+        NodeType type{};
+        std::string name;
+    };
+    struct SubgraphSummary {
+        bool found = false;
+        bool expanded = false;
+        bool recipe = false;            // a Preparation Recipe, not a visual group
+        std::string recipe_contract;    // recipe_contract_version, when a recipe
+        std::vector<SubgraphStep> steps;
+        size_t inputs = 0;
+        size_t outputs = 0;
+    };
+    SubgraphSummary GetSubgraphSummary(int node_id) const;
+    // Applied at the start of the next canvas frame, so a Properties button
+    // never changes the node list while Properties is drawing one of its nodes.
+    // OpenStep is ShowStep, then the step's dialog opens in the frame the step
+    // is focused, so the dialog ends up in front of the canvas.
+    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep, OpenStep };
+    void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
+    // Adds a node of `type` after a step (TOFIX147 item 3; Data Studio
+    // Prepare's "Add a step", TOFIX148): it takes over the step's outgoing
+    // links (and its place as a recipe's output), joins the step's recipe,
+    // goes to the step's right (the nodes after it move right to make room)
+    // and is selected (CyxWiz Studio is not brought forward). Applied, like
+    // RequestSubgraphAction, at the start of the next canvas frame, in the
+    // order requested. `name` and `parameters`
+    // (optional) replace the node's defaults (a guided step's checks become
+    // Check nodes this way).
+    void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
+        pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
+    }
+    // A Text Tokenizer after the Data Input `input_id`, reading its text and
+    // label columns (the node's, unless given), opened once it is on the
+    // canvas (Compile's and Data Input's "Add a Text Tokenizer", TOFIX129 B-8).
+    void AddTextTokenizerAfter(int input_id, const std::string& text_column = {},
+                               const std::string& label_column = {});
+    // A node of `type` where the data of the Data Input `input_id` enters the
+    // model: after the Data Loader reading it (its data output; the labels
+    // keep their link), else after the input; opened once added (Resize and
+    // audio feature nodes, TOFIX129 B-9).
+    void AddModelInputStepAfter(int input_id, NodeType type);
+    // Opens the node's dialog at the start of the next canvas frame. A node
+    // dialog uses this to open another node's: opening it at once replaces
+    // the dialog that is still drawing (Properties keeps one).
+    void RequestOpenNode(int node_id) { pending_open_node_id_ = node_id; }
+    // A node of `type` reading the step's result beside what already reads
+    // it, below the step (Data Studio's Data Validator: its output is an
+    // issues table, not the rows, so it must not take over the step's links).
+    // It never joins a recipe (each recipe step must lead to the recipe's
+    // output): after a step inside one it reads the recipe's result
+    // (BranchSource). Data Studio's Keep as Plot node adds Plots this way.
+    void RequestBranchAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters = {},
+                            std::string name = {}) {
+        PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
+        request.branch = true;
+        pending_steps_after_.push_back(std::move(request));
+    }
+    // A guided step's checks as Check nodes right after it, in order (TOFIX148
+    // D4; Prepare, the SQL Workbench and Properties): a collapsed recipe
+    // holding the step opens first, since they are placed on the canvas.
+    void RequestChecksAfter(int step_id, const std::vector<cyxwiz::guided::CheckNode>& checks);
+    // The same with an empty guided SQL step.
+    void RequestGuidedStepAfter(int step_id) { pending_steps_after_.push_back({step_id, NodeType::SQLQuery, true, {}, {}, {}}); }
+    // The same with an SQL step running `query` (Data Studio's "Turn into SQL
+    // step"), named `name`.
+    void RequestSqlStepAfter(int step_id, std::string name, std::string query) {
+        pending_steps_after_.push_back({step_id, NodeType::SQLQuery, false, std::move(name), std::move(query), {}});
+    }
+    // What a branch from `step_id` reads: the step, or, for a step inside a
+    // recipe or group, its result: the subgraph node while collapsed, its
+    // last step while expanded.
+    int BranchSource(int step_id) const;
+    // A node by id, also a step inside a collapsed recipe (its stored copy;
+    // the canvas copy while expanded). Null when the graph has none.
+    const MLNode* FindStep(int node_id) const;
+    // Sets (and erases) parameters of a node or a collapsed recipe's step
+    // (Data Studio's Prepare saves an SQL step's query this way), and renames
+    // it when `name` is not empty, with an undo point. False when the graph
+    // has no such node.
+    bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
+                           const std::vector<std::string>& erase = {}, const std::string& name = {});
+
 private:
     void ShowToolbar();
+    // Studio nav (node_editor_toolbar.cpp, approved board 7): the graph menu,
+    // the clear confirmation, and whether the graph changed since it was
+    // saved or loaded.
+    void DrawGraphMenu();
+    void DrawClearConfirm();
+    void UpdateUnsavedState();
+    nlohmann::json GraphDocumentJson();
+    // Fingerprint of a saved-graph document (same text settings for save and check).
+    static size_t FingerprintOf(const nlohmann::json& document);
+    // Fingerprint of the current graph, or nullopt when it cannot be captured (logged once per message).
+    std::optional<size_t> GraphFingerprint();
+    std::string fingerprint_error_;
+    size_t saved_fingerprint_ = 0;
+    int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
+    double fingerprint_checked_at_ = -1.0;
+    bool unsaved_ = false;
+    bool clear_confirm_requested_ = false;
     void RenderNodes();
+    void RenderHoveredNodeTooltip(int hovered_node_id);
+    void SyncPipelineExecutionVisualization();
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
+    void ConfigureNode(int node_id);
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
-
-    // Unified Canvas Phase 3: Categorized node palette helpers
-    void ShowCategorizedNodeMenu();
-    void RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon);
-    static const char* GetCategoryIcon(NodeCategory category);
-    static const char* GetCategoryName(NodeCategory category);
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -959,6 +749,9 @@ private:
 
     // Node management
     void AddNode(NodeType type, const std::string& name);
+    // For NodeType::PluginCustom, `name` is the extension type id: the node can
+    // be added while its extension is registered.
+    bool CanAddNodeToGraph(NodeType type, const std::string& name = {}) const;
     void DeleteNode(int node_id);
     void ClearGraph();
 
@@ -970,9 +763,6 @@ private:
     ImU32 GetLinkColor(LinkType type) const;
     ImU32 GetLinkHoverColor(LinkType type) const;
 
-    // Get visual color for pins and links based on data type
-    ImU32 GetPinTypeColor(PinType type) const;
-    ImU32 GetPinTypeHoverColor(PinType type) const;
 
     // Connection tracking for variadic pins
     int GetConnectionCount(int pin_id) const;
@@ -987,9 +777,12 @@ private:
 
     // Pin lookup optimization
     void RebuildPinLookup();
+    void RebuildDataBoundaryPins(MLNode& node, bool legacy_contract);
 
     // File operations
     bool SaveGraph(const std::string& filepath);
+    bool LoadGraphJson(const nlohmann::json& graph_json,
+                       const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
     void ExportCodeToFile();
@@ -1037,6 +830,10 @@ private:
     void HandleKeyboardShortcuts();
     void FrameSelected();
     void FrameAll();
+    // Pans (and for FrameNodes zooms, at most to 100%) so grid-space points
+    // sit in the middle of the canvas at the current zoom.
+    void CenterViewOn(ImVec2 grid_point);
+    void FrameNodes(const std::vector<int>& node_ids);
 
     // Search functionality
     void ShowSearchBar();
@@ -1072,10 +869,8 @@ private:
     void RenderAnnotations();
     void RenderAnnotationEditPopup();
     void HandleAnnotationInteraction();
-    CanvasAnnotation* FindAnnotationById(int annotation_id);
     void ShowAnnotationContextMenu(int annotation_id);
     void ShowAnnotationEditPopup();
-    ImU32 GetAnnotationColorValue(AnnotationColor color) const;
 
     // Subgraph encapsulation
     void CreateSubgraphFromSelection(const std::string& name);
@@ -1084,12 +879,32 @@ private:
     void ToggleSubgraphExpansion(int node_id);
     bool IsSubgraphNode(int node_id) const;
     SubgraphData* GetSubgraphData(int node_id);
+    bool IsPreparationRecipeNode(int node_id) const;
+    // SQL step input pins follow its alias list (one named pin per input).
+    // Returns the ids of removed pins so their links can be dropped.
+    std::vector<int> SyncSqlStepInputPins(MLNode& node);
+    void SyncParameterDrivenPins();
+    // Marks a subgraph as a Preparation Recipe after validating the recipe
+    // contract, or turns it back into a visual group. Returns false and shows
+    // the reason when the subgraph does not qualify.
+    bool SetSubgraphPreparationRecipe(int node_id, bool recipe);
+    bool IsSubgraphMember(int node_id) const;
 
     // Framework-specific generators
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
+    // PyTorch export of the optimizer node's training recipe (tofix112).
+    const MLNode* FindExportOptimizerNode() const;
+    const MLNode* FindExportSchedulerNode() const;
+    std::string PyTorchOptimizerSetup() const;
+    std::string PyTorchPenaltyLines() const;
+    std::string PyTorchStepLines() const;
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
+    std::optional<std::string> FindDenseActivationConfigurationError(
+        const std::vector<int>& sorted_ids) const;
+    std::optional<std::string> FindUnsupportedSequentialLayerError(
+        const std::vector<int>& sorted_ids) const;
 
     // RL-specific code generation
     bool IsRLGraph(const std::vector<int>& sorted_ids) const;
@@ -1098,6 +913,10 @@ private:
 
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
+    // Output width of the layer feeding `node` (embedding dim, recurrent
+    // hidden size - doubled when bidirectional - or dense units); empty when
+    // it cannot be read from the graph (TOFIX112 export harness).
+    std::string InferredInputWidth(const MLNode& node) const;
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
     std::string NodeTypeToKerasLayer(const MLNode& node);
     std::string NodeTypeToPyCyxWizLayer(const MLNode& node);
@@ -1123,6 +942,9 @@ private:
     // Pin lookup optimization - O(1) pin ID -> (node*, pin*) mapping
     std::unordered_map<int, std::pair<MLNode*, NodePin*>> pin_lookup_;
 
+    // Pin state (node_id → NodePinState). Set by Compile/Train, cleared on graph change.
+    std::unordered_map<int, NodePinState> node_pin_state_;
+
     // UI state
     bool show_context_menu_;
     int context_menu_node_id_;  // -1 if clicking on canvas
@@ -1141,12 +963,29 @@ private:
 
     // Current file path for save/load
     std::string current_file_path_;
+    const cyxwiz::LiveGraphCompile* live_compile_ = nullptr;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
     struct PendingNode {
+        PendingNode(
+            NodeType type_value,
+            std::string name_value,
+            ImVec2 position_value,
+            std::unordered_map<std::string, std::string>
+                initial_parameters_value = {})
+            : type(type_value),
+              name(std::move(name_value)),
+              position(position_value),
+              initial_parameters(std::move(initial_parameters_value)) {}
+
         NodeType type;
         std::string name;
         ImVec2 position;  // Grid space position where node should be created
+        std::unordered_map<std::string, std::string> initial_parameters;
+        bool open_configuration = false;  // open the node's dialog once it exists
+        // A node of this type reading it, added to its right and linked.
+        std::optional<NodeType> then_type;
+        std::string then_name;
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)
@@ -1154,13 +993,82 @@ private:
     // Training callback
     TrainCallback train_callback_;
 
+    // Compile callback (dry-run GraphCompiler::Compile and show result popup)
+    CompileCallback compile_callback_;
+
+    // Local Debug callback (runs one forward + backward pass on synthetic data)
+    DebugCallback debug_callback_;
+
+    // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
+    OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
+    OpenPluginManagerCallback open_plugin_manager_callback_;
+
+    // Open Studio Debugger callback (opens StudioDebuggerPanel)
+    OpenStudioDebuggerCallback open_studio_debugger_callback_;
+
+    // Explain selected node in Studio Debugger.
+    ExplainNodeCallback explain_node_callback_;
+
+    // Deferred focus request so sidebar actions never touch ImNodes outside
+    // the live editor render scope.
+    int pending_focus_node_id_ = -1;
+    std::vector<int> pending_show_nodes_;  // ShowNodes, applied in the next canvas frame
+    // An expanded subgraph selected by its frame header (TOFIX147): shown in
+    // Properties while no canvas node is selected.
+    int frame_selected_subgraph_id_ = -1;
+    // The node under the pointer before the left button went down. ImNodes
+    // reports no hovered node in the press frame (the press activates an
+    // item), so a double-click is matched against this one.
+    int node_under_press_ = -1;
+    struct PendingSubgraphRequest {
+        int subgraph_id = -1;
+        SubgraphRequest request = SubgraphRequest::Expand;
+        int step_id = -1;
+        int frames_to_wait = 0;  // newly expanded steps are drawn before they can be selected
+        bool raise = true;       // ShowStep brings CyxWiz Studio forward
+    };
+    PendingSubgraphRequest pending_subgraph_request_;
+    // Nodes an Expand moved right to make room for the frame, by subgraph;
+    // Collapse moves them back when they are still where Expand put them.
+    struct RoomMove {
+        int id = -1;
+        ImVec2 from, to;
+    };
+    std::map<int, std::vector<RoomMove>> room_made_;
+    void ApplySubgraphRequest();
+    struct PendingStepAfter {
+        int after = -1;  // the step it follows
+        NodeType type = NodeType::SQLQuery;
+        bool guided = false;  // SQL: an empty guided step, else `query`
+        std::string name;     // "" : the default name
+        std::string query;    // SQL: its query
+        std::map<std::string, std::string> parameters;  // over the node's defaults
+        bool branch = false;  // RequestBranchAfter: a new reader, the step's links stay
+        bool open_dialog = false;  // open the new node's dialog once it is added
+    };
+    std::vector<PendingStepAfter> pending_steps_after_;
+    void ApplyStepAfterInsert();
+    int pending_open_node_id_ = -1;
+    void InsertStepAfter(const PendingStepAfter& request);
+    // A node to select once ImNodes has drawn it (a new node is dropped from
+    // the selection before its first frame).
+    struct DeferredFocus {
+        int node_id = -1;
+        int frames = 0;
+    };
+    DeferredFocus deferred_focus_;
+
     // Training animation state
-    bool is_training_ = false;
+    std::atomic<bool> is_training_{false};
+    std::function<bool()> graph_preparation_busy_callback_;
+    std::function<bool()> training_data_loading_callback_;
+
     float training_animation_time_ = 0.0f;
 
     // Zoom state
     float zoom_ = 1.0f;
-    static constexpr float ZOOM_MIN = 0.5f;
+    ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
+    static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
     static constexpr float ZOOM_MAX = 2.0f;
 
     // Icon pack selection (for node icons)
@@ -1209,7 +1117,6 @@ private:
     int pending_flatten_to_pin_ = -1;
 
     // Shape inference engine and validation warnings
-    std::unique_ptr<ShapeInferenceEngine> shape_inference_;
     std::vector<ValidationWarning> validation_warnings_;
 
     // Deferred clear flag (to call ImNodes clear inside BeginNodeEditor scope)
@@ -1217,6 +1124,24 @@ private:
 
     // Flag to recreate ImNodes editor context (full reset)
     bool pending_context_reset_ = false;
+
+    // UI-owned rejection feedback, rendered even when the Studio tab is hidden.
+    bool graph_busy_dialog_pending_ = false;
+    std::string graph_busy_message_;
+    // Why a pipeline or recipe action could not proceed (same rendering rule).
+    bool pipeline_notice_pending_ = false;
+    std::string pipeline_notice_;
+    void ShowPipelineNotice(std::string message);
+    // `only` (optional): the node ids this run executes, for a partial run.
+    bool SubmitDataPipelineJson(nlohmann::json pipeline_json, const std::set<int>* only = nullptr);
+    // The executable pipeline document for this graph (recipes lowered, Plot
+    // nodes left out); `recipe_steps` receives recipe -> step ids when given.
+    bool BuildDataPipelineJson(nlohmann::json& out, std::map<int, std::vector<int>>* recipe_steps,
+                               std::string& error) const;
+    // Recipe node -> its step node ids for the pipeline run in flight; the
+    // executor reports step states, the recipe node shows their roll-up.
+    std::map<int, std::vector<int>> recipe_step_ids_;
+    void RollUpRecipeExecutionStates();
 
     // Empty graph warning popup state
     bool show_empty_graph_warning_ = false;
@@ -1229,6 +1154,9 @@ private:
     std::vector<SearchableNode> all_searchable_nodes_;       // All available nodes for search
     std::vector<std::pair<int, SearchableNode*>> filtered_nodes_;  // Filtered results with scores
     bool searchable_nodes_initialized_ = false;
+    // Extension registry generation the list was built from; a plugin loaded
+    // or unloaded later rebuilds it.
+    uint64_t searchable_nodes_extension_generation_ = 0;
 
     // Unified Canvas Phase 3: Context menu search filter
     char context_menu_search_[256] = "";
@@ -1303,10 +1231,65 @@ private:
     // ===== RL Training State =====
     std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
-    bool rl_script_running_ = false;
+
+    // Plot nodes (TOFIX134 P2): the result lane and one Plot window per
+    // opened Plot node (node_editor_plot.cpp).
+    std::shared_ptr<cyxwiz::plot::PlotNodeLane> plot_lane_;
+    std::map<int, std::shared_ptr<cyxwiz::plot::PlotWindow>> plot_windows_;
+    std::map<int, uint64_t> plot_window_data_versions_;
+    void OpenPlotNode(int node_id);
+    void RenderPlotNodes();
+    void DrawPlotNodeStatus(const MLNode& node);
+    void DrawPlotNodeHeader(int node_id);
+    void PlotNodeInput(int plot_id, int source_id);
+    // The graph the Plot and Dashboard nodes read (TOFIX148): Preparation
+    // Recipes lowered to their steps, as the Data Pipeline runs them, so a
+    // plot can read a recipe's result. `fresh` rebuilds it now (a user
+    // action); otherwise at most twice a second (the lane's polling).
+    struct PlotLaneGraph {
+        std::vector<MLNode> nodes;
+        std::vector<NodeLink> links;
+        double built_at = -1.0;
+    };
+    PlotLaneGraph plot_lane_graph_;
+    const PlotLaneGraph& PlotGraph(bool fresh = true);
+    // Dashboard nodes (TOFIX134 P3): the same lane, one Dashboard window each.
+    std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
+    std::map<int, uint64_t> dashboard_data_versions_;
+    std::function<void(const std::string&)> open_data_studio_profile_;
+    std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
+    void OpenDashboardNode(int node_id);
+    // The Data Input node whose dataset this is (its ds_datainput_<id> or dataset_name), or -1.
+    int DataInputOf(const std::string& dataset) const;
+    struct PendingDashboardWidget {
+        int node_id = 0;
+        std::string dataset;
+        std::shared_ptr<cyxwiz::dashboard::WidgetSpec> widget;
+    };
+    std::vector<PendingDashboardWidget> pending_dashboard_widgets_;
+    void ApplyPendingDashboardWidgets();
+    void RenderDashboardWindows();
+    std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
-    std::unique_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    uint64_t pipeline_task_id_ = 0;
+    std::shared_ptr<cyxwiz::PipelineExecutionTracker> pipeline_execution_tracker_;
+    // The executor of the run in flight or last run; its facts are copied
+    // into node_run_facts_ while it runs and once when it ends.
+    std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    bool pipeline_facts_final_ = true;
+    // The run's step figures read so far, and the step that sent them.
+    WordVectorFeed word_vector_feed_;
+    size_t figures_read_ = 0;
+    int figures_node_ = -1;
+    std::string figures_node_name_;
+    bool figures_ended_ = false;
+    void FeedWordVectorRuns(const cyxwiz::TaskInfo& task_info);
+    std::map<int, cyxwiz::PipelineNodeRunFacts> node_run_facts_;
+    // Lifetime token for background work this editor owns; destroying the
+    // editor cancels that work and discards its pending UI delivery.
+    std::shared_ptr<const void> task_owner_token_ = std::make_shared<int>(0);
+    bool pipeline_execution_active_ = false;
     ExecutionContext execution_context_;
 
     // ===== Unified Canvas Phase 6: Execution Visualization =====
@@ -1331,5 +1314,4 @@ private:
 };
 
 } // namespace gui
-
 

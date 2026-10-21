@@ -1,0 +1,326 @@
+#pragma once
+
+#include "metric_learning_batch.h"
+#include "metric_learning_metrics.h"
+
+#include "algorithms/arrayfire_backend_utils.h"
+
+#include <nlohmann/json.hpp>
+
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include <optional>
+#include <map>
+
+namespace cyxwiz {
+
+enum class PairScoreMode {
+    EuclideanDistance,
+    NegativeEuclideanDistance,
+    CosineSimilarity,
+};
+
+inline const char* PairScoreModeName(PairScoreMode mode) {
+    switch (mode) {
+        case PairScoreMode::EuclideanDistance:
+            return "euclidean_distance";
+        case PairScoreMode::NegativeEuclideanDistance:
+            return "negative_euclidean_distance";
+        case PairScoreMode::CosineSimilarity:
+            return "cosine_similarity";
+    }
+    return "euclidean_distance";
+}
+
+inline PairScoreMode ParsePairScoreMode(const std::string& mode) {
+    if (mode.empty() ||
+        mode == "distance" ||
+        mode == "euclidean" ||
+        mode == "euclidean_distance") {
+        return PairScoreMode::EuclideanDistance;
+    }
+    if (mode == "negative_distance" ||
+        mode == "negative_euclidean" ||
+        mode == "negative_euclidean_distance" ||
+        mode == "similarity_from_distance") {
+        return PairScoreMode::NegativeEuclideanDistance;
+    }
+    if (mode == "cosine" ||
+        mode == "cosine_similarity") {
+        return PairScoreMode::CosineSimilarity;
+    }
+    throw std::invalid_argument("unknown PairScoreOutput score_mode: " + mode);
+}
+
+struct EmbeddingOutputRecord {
+    std::vector<float> embedding;
+    bool has_sample_id = false;
+    int64_t sample_id = 0;
+    bool has_class_id = false;
+    int64_t class_id = 0;
+};
+
+struct EmbeddingOutputResponse {
+    std::vector<size_t> embedding_shape;
+    std::vector<EmbeddingOutputRecord> records;
+};
+
+struct PairScoreRecord {
+    double score = 0.0;
+    double distance = 0.0;
+    bool has_sample_ids = false;
+    int64_t sample_id_a = 0;
+    int64_t sample_id_b = 0;
+    bool has_class_ids = false;
+    int64_t class_id_a = 0;
+    int64_t class_id_b = 0;
+};
+
+struct PairScoreOutputResponse {
+    PairScoreMode mode = PairScoreMode::EuclideanDistance;
+    std::vector<PairScoreRecord> records;
+    // Pair Score Output (TOFIX140 A5): with the model's threshold, every
+    // record also says whether the pair is the same (same[i]).
+    std::optional<double> threshold;
+    std::vector<bool> same;
+};
+
+// The Pair Score Output node's settings saved with a trained model
+// (ExportOptions::custom_metadata "pair_score_mode" / "pair_score_threshold").
+struct PairScoreDefaults {
+    PairScoreMode mode = PairScoreMode::EuclideanDistance;
+    double threshold = 0.5;
+};
+
+inline std::optional<PairScoreDefaults> PairScoreDefaultsFromMetadata(
+    const std::map<std::string, std::string>& metadata) {
+    const auto mode = metadata.find("pair_score_mode");
+    const auto threshold = metadata.find("pair_score_threshold");
+    if (mode == metadata.end() || threshold == metadata.end()) return std::nullopt;
+    PairScoreDefaults defaults;
+    defaults.mode = ParsePairScoreMode(mode->second);
+    defaults.threshold = std::stod(threshold->second);
+    return defaults;
+}
+
+// Same when the distance is at most the threshold, the negative distance at
+// least -threshold, or the cosine similarity at least the threshold.
+inline bool PairScoreMeansSame(PairScoreMode mode, double score, double threshold) {
+    switch (mode) {
+        case PairScoreMode::EuclideanDistance:
+            return score <= threshold;
+        case PairScoreMode::NegativeEuclideanDistance:
+            return score >= -threshold;
+        case PairScoreMode::CosineSimilarity:
+            return score >= threshold;
+    }
+    return false;
+}
+
+inline void ApplyPairScoreThreshold(PairScoreOutputResponse& response, double threshold) {
+    response.threshold = threshold;
+    response.same.clear();
+    for (const auto& record : response.records) {
+        response.same.push_back(PairScoreMeansSame(response.mode, record.score, threshold));
+    }
+}
+
+inline bool HasBatchVector(const Tensor& tensor, size_t batch_size) {
+    return !TensorIsEmpty(tensor) && TensorIsBatchVector(tensor, batch_size);
+}
+
+inline std::vector<size_t> PerSampleEmbeddingShape(const Tensor& embeddings) {
+    const auto& shape = embeddings.Shape();
+    if (shape.size() < 2 || shape[0] == 0) {
+        throw std::invalid_argument(
+            "EmbeddingOutput requires embeddings shaped [batch, ...features]");
+    }
+    return std::vector<size_t>(shape.begin() + 1, shape.end());
+}
+
+inline int64_t MetadataIdAt(const Tensor& ids, size_t row) {
+    return ClassIdAt(ids, row);
+}
+
+inline EmbeddingOutputResponse BuildEmbeddingOutputResponse(
+    const Tensor& embeddings,
+    const Tensor& sample_ids = Tensor(),
+    const Tensor& class_ids = Tensor()) {
+    const ScopedArrayFireHostSyncAttribution output_attribution(
+        ArrayFireHostSyncCategory::OutputMaterialization,
+        "MetricLearning::EmbeddingOutput");
+    const auto& shape = embeddings.Shape();
+    const auto sample_shape = PerSampleEmbeddingShape(embeddings);
+    const size_t batch_size = shape[0];
+    const size_t dim = FlattenedEmbeddingDim(embeddings);
+
+    const bool has_sample_ids = HasBatchVector(sample_ids, batch_size);
+    const bool has_class_ids = HasBatchVector(class_ids, batch_size);
+    if (!TensorIsEmpty(sample_ids) && !has_sample_ids) {
+        throw std::invalid_argument(
+            "EmbeddingOutput sample IDs must be [batch] or [batch, 1]");
+    }
+    if (!TensorIsEmpty(class_ids) && !has_class_ids) {
+        throw std::invalid_argument(
+            "EmbeddingOutput class IDs must be [batch] or [batch, 1]");
+    }
+
+    EmbeddingOutputResponse response;
+    response.embedding_shape = sample_shape;
+    response.records.reserve(batch_size);
+
+    const float* data = embeddings.ReadData<float>();
+    for (size_t row = 0; row < batch_size; ++row) {
+        EmbeddingOutputRecord record;
+        record.embedding.assign(data + row * dim, data + (row + 1) * dim);
+        if (has_sample_ids) {
+            record.has_sample_id = true;
+            record.sample_id = MetadataIdAt(sample_ids, row);
+        }
+        if (has_class_ids) {
+            record.has_class_id = true;
+            record.class_id = MetadataIdAt(class_ids, row);
+        }
+        response.records.push_back(std::move(record));
+    }
+
+    return response;
+}
+
+inline PairScoreOutputResponse BuildPairScoreOutputResponse(
+    const Tensor& embedding_a,
+    const Tensor& embedding_b,
+    PairScoreMode mode = PairScoreMode::EuclideanDistance,
+    const Tensor& sample_id_a = Tensor(),
+    const Tensor& sample_id_b = Tensor(),
+    const Tensor& class_id_a = Tensor(),
+    const Tensor& class_id_b = Tensor()) {
+    const ScopedArrayFireHostSyncAttribution output_attribution(
+        ArrayFireHostSyncCategory::OutputMaterialization,
+        "MetricLearning::PairScoreOutput");
+    if (embedding_a.Shape() != embedding_b.Shape()) {
+        throw std::invalid_argument(
+            "PairScoreOutput embeddings must have identical shapes");
+    }
+    const auto& shape = embedding_a.Shape();
+    const size_t pair_count = shape.empty() ? 0 : shape[0];
+    if (pair_count == 0) {
+        throw std::invalid_argument("PairScoreOutput embeddings cannot be empty");
+    }
+
+    const bool has_sample_ids =
+        HasBatchVector(sample_id_a, pair_count) &&
+        HasBatchVector(sample_id_b, pair_count);
+    const bool has_class_ids =
+        HasBatchVector(class_id_a, pair_count) &&
+        HasBatchVector(class_id_b, pair_count);
+    if ((!TensorIsEmpty(sample_id_a) || !TensorIsEmpty(sample_id_b)) &&
+        !has_sample_ids) {
+        throw std::invalid_argument(
+            "PairScoreOutput sample IDs must both be [batch] or [batch, 1]");
+    }
+    if ((!TensorIsEmpty(class_id_a) || !TensorIsEmpty(class_id_b)) &&
+        !has_class_ids) {
+        throw std::invalid_argument(
+            "PairScoreOutput class IDs must both be [batch] or [batch, 1]");
+    }
+
+    // Distances (and cosines) on the device, downloaded once.
+    const PairRowScores scores = ComputePairRowScores(
+        embedding_a, embedding_b, mode == PairScoreMode::CosineSimilarity);
+    PairScoreOutputResponse response;
+    response.mode = mode;
+    response.records.reserve(pair_count);
+
+    for (size_t row = 0; row < pair_count; ++row) {
+        PairScoreRecord record;
+        record.distance = scores.distances[row];
+        switch (mode) {
+            case PairScoreMode::EuclideanDistance:
+                record.score = record.distance;
+                break;
+            case PairScoreMode::NegativeEuclideanDistance:
+                record.score = -record.distance;
+                break;
+            case PairScoreMode::CosineSimilarity:
+                record.score = scores.cosines[row];
+                break;
+        }
+        if (has_sample_ids) {
+            record.has_sample_ids = true;
+            record.sample_id_a = MetadataIdAt(sample_id_a, row);
+            record.sample_id_b = MetadataIdAt(sample_id_b, row);
+        }
+        if (has_class_ids) {
+            record.has_class_ids = true;
+            record.class_id_a = MetadataIdAt(class_id_a, row);
+            record.class_id_b = MetadataIdAt(class_id_b, row);
+        }
+        response.records.push_back(record);
+    }
+
+    return response;
+}
+
+inline nlohmann::json EmbeddingOutputResponseToJson(
+    const EmbeddingOutputResponse& response) {
+    nlohmann::json records = nlohmann::json::array();
+    for (const auto& record : response.records) {
+        nlohmann::json item = {
+            {"embedding", record.embedding},
+        };
+        if (record.has_sample_id) {
+            item["sample_id"] = record.sample_id;
+        }
+        if (record.has_class_id) {
+            item["class_id"] = record.class_id;
+        }
+        records.push_back(std::move(item));
+    }
+
+    return {
+        {"output_type", "embedding"},
+        {"embedding_shape", response.embedding_shape},
+        {"records", std::move(records)},
+    };
+}
+
+inline nlohmann::json PairScoreOutputResponseToJson(
+    const PairScoreOutputResponse& response) {
+    nlohmann::json records = nlohmann::json::array();
+    for (size_t i = 0; i < response.records.size(); ++i) {
+        const auto& record = response.records[i];
+        nlohmann::json item = {
+            {"score", record.score},
+            {"distance", record.distance},
+        };
+        if (i < response.same.size()) {
+            item["same"] = static_cast<bool>(response.same[i]);
+        }
+        if (record.has_sample_ids) {
+            item["sample_id_a"] = record.sample_id_a;
+            item["sample_id_b"] = record.sample_id_b;
+        }
+        if (record.has_class_ids) {
+            item["class_id_a"] = record.class_id_a;
+            item["class_id_b"] = record.class_id_b;
+        }
+        records.push_back(std::move(item));
+    }
+
+    nlohmann::json out = {
+        {"output_type", "pair_score"},
+        {"score_mode", PairScoreModeName(response.mode)},
+        {"records", std::move(records)},
+    };
+    if (response.threshold) {
+        out["threshold"] = *response.threshold;
+    }
+    return out;
+}
+
+}  // namespace cyxwiz

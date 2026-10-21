@@ -1,0 +1,90 @@
+#pragma once
+
+#include "hdf5_table_adapter.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+#include <memory>
+
+namespace arrow {
+class Table;
+}
+
+namespace cyxwiz {
+
+struct DataConvertColumnPreview {
+    std::string name;
+    std::string type;
+    bool nullable = false;
+};
+
+struct DataConvertPreview {
+    bool ok = false;
+    std::string error;
+    int64_t rows = 0;
+    int64_t columns = 0;
+    char detected_delimiter = ',';
+    std::vector<DataConvertColumnPreview> schema;
+    std::vector<std::vector<std::string>> sample_rows;
+};
+
+struct DataConvertOptions {
+    std::string input_path;
+    std::string output_path;
+    std::string input_format = "auto";
+    std::string output_format = "parquet";
+    char delimiter = ',';
+    char decimal_point = '.';
+    bool auto_detect_delimiter = false;
+    bool has_header = true;
+    bool allow_newlines_in_values = true;
+    int skip_rows = 0;
+    // Kept for backward compatibility with older JSON parameter naming.
+    std::string parquet_compression = "snappy";
+    int64_t row_group_size = 1024 * 1024;
+    bool overwrite = false;
+    bool create_parent_dirs = true;
+    bool write_manifest = true;
+    int preview_rows = 20;
+    // Returned table describes persisted output; non-IPC formats require a
+    // disk reload. A fresh-cache result can still omit the table.
+    bool retain_output_table = false;
+    std::shared_ptr<arrow::Table> input_table;
+    std::string excel_sheet; // XLSX input only; empty selects the first worksheet.
+    std::string excel_start_column = "A"; // XLSX input only, inclusive Excel column label.
+    // Empty data path keeps DataConvert's conventional-name discovery. The
+    // shared adapter itself always requires an explicit absolute dataset path.
+    // Conversion retains float64 output; direct adapter reads can preserve types.
+    Hdf5TableSelection hdf5_selection{"", ""};
+    uint64_t hdf5_max_materialized_bytes = 256ULL * 1024 * 1024;
+};
+
+struct DataConvertResult {
+    bool ok = false;
+    bool skipped_fresh_output = false;
+    std::string error;
+    std::string output_path;
+    std::string manifest_path;
+    int64_t rows_read = 0;
+    int64_t rows_written = 0;
+    int64_t columns = 0;
+    int64_t bytes_written = 0;
+    char detected_delimiter = ',';
+    std::shared_ptr<arrow::Table> output_table;
+};
+
+class DataConvertService {
+public:
+    static std::shared_ptr<arrow::Table> LoadTable(
+        const DataConvertOptions& options,
+        std::string& error);
+    static DataConvertPreview Preview(const DataConvertOptions& options);
+    static DataConvertResult Convert(const DataConvertOptions& options);
+
+    // Backward-compatible phase-1 entry points.
+    static DataConvertPreview PreviewCsv(const DataConvertOptions& options);
+    static DataConvertResult ConvertCsvToParquet(const DataConvertOptions& options);
+};
+
+} // namespace cyxwiz

@@ -1,0 +1,78 @@
+{
+  "id": "mnist_classifier",
+  "name": "MNIST Digit Classifier",
+  "description": "Complete training pipeline for image classification. Use DataInput to load your dataset (MNIST, CIFAR, or custom images). Includes preprocessing, CNN model, loss, and optimizer.",
+  "category": "Training Pipeline",
+  "tags": ["mnist", "digits", "classification", "training", "cnn", "complete"],
+  "parameters": [
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "64",
+      "description": "Training batch size",
+      "min_value": "1",
+      "max_value": "512"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Adam learning rate",
+      "min_value": "0.0001",
+      "max_value": "0.1"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "10",
+      "description": "Number of training epochs",
+      "min_value": "1",
+      "max_value": "100"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {}},
+      {"id": "data_split", "type": "DataSplit", "name": "Train/Val/Test Split", "pos": [200, 300], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1"}},
+      {"id": "normalize", "type": "Normalize", "name": "Normalize [0,1]", "pos": [400, 300], "params": {"mean": "0.1307", "std": "0.3081"}},
+
+      {"id": "conv1", "type": "Conv2D", "name": "Conv2D 32", "pos": [600, 300], "params": {"filters": "32", "kernel_size": "3", "padding": "same"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [800, 300]},
+      {"id": "pool1", "type": "MaxPool2D", "name": "MaxPool 2x2", "pos": [1000, 300], "params": {"pool_size": "2", "stride": "2"}},
+
+      {"id": "conv2", "type": "Conv2D", "name": "Conv2D 64", "pos": [1200, 300], "params": {"filters": "64", "kernel_size": "3", "padding": "same"}},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU", "pos": [1400, 300]},
+      {"id": "pool2", "type": "MaxPool2D", "name": "MaxPool 2x2", "pos": [1600, 300], "params": {"pool_size": "2", "stride": "2"}},
+
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1800, 300]},
+      {"id": "fc1", "type": "Dense", "name": "Dense 128", "pos": [2000, 300], "params": {"units": "128"}},
+      {"id": "relu3", "type": "ReLU", "name": "ReLU", "pos": [2200, 300]},
+      {"id": "dropout", "type": "Dropout", "name": "Dropout 0.5", "pos": [2400, 300], "params": {"rate": "0.5"}},
+      {"id": "fc2", "type": "Dense", "name": "Dense 10", "pos": [2600, 300], "params": {"units": "10"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [2800, 300]},
+
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy Loss", "pos": [3000, 300]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam Optimizer", "pos": [3200, 300], "params": {"learning_rate": "$learning_rate", "beta1": "0.9", "beta2": "0.999"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [3400, 300]}
+    ],
+    "links": [
+      {"from": "data_input", "to": "data_split"},
+      {"from": "data_split", "to": "normalize"},
+      {"from": "normalize", "to": "conv1"},
+      {"from": "conv1", "to": "relu1"},
+      {"from": "relu1", "to": "pool1"},
+      {"from": "pool1", "to": "conv2"},
+      {"from": "conv2", "to": "relu2"},
+      {"from": "relu2", "to": "pool2"},
+      {"from": "pool2", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "relu3"},
+      {"from": "relu3", "to": "dropout"},
+      {"from": "dropout", "to": "fc2"},
+      {"from": "fc2", "to": "softmax"},
+      {"from": "softmax", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <thread>
@@ -19,7 +20,7 @@ namespace servernode {
 // Device allocation information from GUI
 // Used to specify which devices the user wants to share and their resource limits
 struct DeviceAllocation {
-    int device_type;           // 0=CPU, 1=CUDA, 2=OpenCL (matches protocol::DeviceType)
+    int device_type;           // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal (core/allocation_device_type.h)
     int device_id;             // Device index (0, 1, 2, etc.)
     std::string device_name;   // Human-readable name (e.g., "NVIDIA RTX 3080")
     bool is_enabled;           // Whether user enabled this device for sharing
@@ -34,6 +35,9 @@ struct DeviceAllocation {
 class HardwareDetector {
 public:
     static protocol::NodeInfo DetectHardwareInfo(const std::string& node_id);
+    // Verified routes, their training benchmarks, environment fingerprint and
+    // compute_score (TOFIX118 P3).
+    static void FillMeasuredCapability(protocol::NodeInfo* node_info);
     static int64_t GetAvailableRAM();  // Public - needed for heartbeat updates
 
 private:
@@ -72,15 +76,36 @@ public:
     void SetActiveJobs(const std::vector<std::string>& job_ids);
 
     // Get assigned node ID from server
-    std::string GetNodeId() const { return node_id_; }
+    // The Central Server's id once registered (it replaces the local id);
+    // read from other threads, e.g. the P2P service (TOFIX118 gap 3).
+    std::string GetNodeId() const {
+        std::lock_guard<std::mutex> lock(node_id_mutex_);
+        return node_id_;
+    }
 
     // Check if successfully registered
     bool IsRegistered() const { return is_registered_; }
 
     // Set authentication token (JWT from user login)
-    void SetAuthToken(const std::string& token) { auth_token_ = token; }
-    void ClearAuthToken() { auth_token_.clear(); }
-    bool HasAuthToken() const { return !auth_token_.empty(); }
+    // The owner's sign-in token. Set from the GUI (Apply / Retry); the
+    // heartbeat loop refreshes it through the web API before it expires,
+    // because the central server refuses expired tokens (TOFIX136 E2d).
+    void SetAuthToken(const std::string& token) {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        auth_token_ = token;
+    }
+    void ClearAuthToken() {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        auth_token_.clear();
+    }
+    bool HasAuthToken() const { return !CurrentToken().empty(); }
+    std::string CurrentToken() const {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        return auth_token_;
+    }
+    // Refresh when less than the refresh margin remains; true when the token
+    // is still usable afterwards.
+    bool RefreshAuthTokenIfDue();
 
     // Callback for when Central Server connection is lost
     using ConnectionLostCallback = std::function<void()>;
@@ -114,7 +139,9 @@ public:
         const std::string& model_weights_hash = "",
         int64_t model_size = 0,
         int64_t total_compute_time_ms = 0,
-        const std::string& error_message = ""
+        const std::string& error_message = "",
+        const protocol::JobTiming* timing = nullptr,                 // TOFIX118 P3
+        const protocol::EnvironmentFingerprint* environment = nullptr
     );
 
     // ========================================================================
@@ -130,7 +157,9 @@ public:
         const std::string& model_hash = "",
         const std::map<std::string, double>& final_metrics = {},
         int64_t training_time_seconds = 0,
-        int32_t epochs_completed = 0
+        int32_t epochs_completed = 0,
+        const protocol::JobTiming* timing = nullptr,                 // TOFIX118 P3
+        const protocol::EnvironmentFingerprint* environment = nullptr
     );
 
     // Report reservation timer expired (triggers payment release)
@@ -148,8 +177,10 @@ private:
 
     std::string central_server_address_;
     std::string node_id_;
+    mutable std::mutex node_id_mutex_;  // guards node_id_ writes vs GetNodeId
     std::string session_token_;
-    std::string auth_token_;  // JWT token for authentication
+    std::string auth_token_;  // JWT token for authentication (token_mutex_)
+    mutable std::mutex token_mutex_;
     bool is_registered_;
 
     std::unique_ptr<protocol::NodeService::Stub> stub_;

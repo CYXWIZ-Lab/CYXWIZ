@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <list>
 #include <functional>
 
 namespace cyxwiz {
@@ -102,6 +103,9 @@ public:
     size_t Size() const override;
     std::pair<std::vector<float>, int> GetItem(size_t index) const override;
     DatasetInfo GetInfo() const override;
+    std::string GetItemSource(size_t index) const override {
+        return index < image_paths_.size() ? image_paths_[index] : std::string();
+    }
 
 private:
     // Initialization

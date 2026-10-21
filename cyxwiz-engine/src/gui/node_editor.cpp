@@ -1,27 +1,46 @@
+#include "ui_buttons.h"
+#include "ui_tokens.h"
+#include "../core/pipeline_type_names.h"
 #include "node_editor.h"
+#include "../core/live_graph_compile.h"
+#include "../core/graph_node_factory.h"
+#include "subgraph_presentation.h"
 #include "node_documentation.h"
-#include "node_editor_shape_inference.h"
+#include "graph_replacement_policy.h"
+#include "../core/test_manager.h"
 #include "panels/script_editor.h"
 #include "properties.h"
 #include "patterns/pattern_library.h"
 #include "icons.h"
 #include "../core/data_registry.h"
 #include "../core/training_manager.h"
+#include "../core/training_trace_collector.h"
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
+#include "../core/simulation_runtime_capabilities.h"
 #include "../core/rl_training_executor.h"
+#include "separate_windows.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
+#include "../core/pipeline_execution_task.h"
+#include "../core/word_embeddings_presentation.h"
+#include "../core/preparation_recipe.h"
+#include "../core/sql_step_contract.h"
+#include "subgraph_document.h"
+#include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
+#include "../core/extension_node_presentation.h"
 #include "../core/node_metadata_registry.h"
+#include "graph_training_launcher.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cfloat>
 #include <memory>
 #include <chrono>
 #include <map>
@@ -39,6 +58,8 @@
 
 namespace gui {
 
+namespace ui = cyxwiz::ui;
+
 // Forward declaration (used in Render before definition)
 static std::string GetPinTypeName(PinType type);
 
@@ -47,10 +68,67 @@ void NodeEditor::SetWorkflowDescription(const std::string& desc) {
     workflow_description_[sizeof(workflow_description_) - 1] = '\0';
 }
 
+// ===== Pin / Node State =====
+
+void NodeEditor::SetNodePinState(int node_id, NodePinState state) {
+    node_pin_state_[node_id] = state;
+}
+
+void NodeEditor::SetAllNodesPinState(NodePinState state) {
+    for (const auto& node : nodes_) {
+        node_pin_state_[node.id] = state;
+    }
+}
+
+void NodeEditor::FocusNode(int node_id, bool raise) {
+    if (node_id < 0) {
+        return;
+    }
+
+    // Defer the actual ImNodes interaction until Render(), where the editor
+    // context is definitely active.
+    if (const auto* data = GetSubgraphData(node_id); data && data->expanded && !data->internal_nodes.empty()) {
+        node_id = data->internal_nodes.front().id;
+    }
+    pending_focus_node_id_ = node_id;
+    if (raise) Raise();
+}
+
+void NodeEditor::ShowNodes(std::vector<int> node_ids) {
+    if (node_ids.size() == 1) {
+        FocusNode(node_ids.front());
+        return;
+    }
+    pending_show_nodes_ = std::move(node_ids);
+    Raise();
+}
+
+void NodeEditor::Raise() {
+    show_window_ = true;
+    ::gui::BringToFront("CyxWiz Studio");
+}
+
+void NodeEditor::ClearValidationState() {
+    node_pin_state_.clear();
+}
+
+NodeEditor::NodePinState NodeEditor::GetNodePinState(int node_id) const {
+    auto it = node_pin_state_.find(node_id);
+    if (it == node_pin_state_.end()) return NodePinState::Default;
+    return it->second;
+}
+
 void NodeEditor::AddAnnotation() {
     // Add annotation at center of visible area
     ImVec2 center_pos = ImVec2(400.0f, 300.0f);  // Default position
     AddAnnotationAt(center_pos);
+}
+
+ImU32 DefaultAnnotationColour() {
+    // A sticky-note tint of the panel colour; the user may change it and
+    // the chosen colour is saved with the graph.
+    const ui::Tokens& t = ui::CurrentTokens();
+    return ui::ToU32(ui::Mix(t.bg_panel, t.warning, 0.35f));
 }
 
 void NodeEditor::AddAnnotationAt(const ImVec2& position) {
@@ -60,7 +138,7 @@ void NodeEditor::AddAnnotationAt(const ImVec2& position) {
     annotation.content = "Enter description here...";
     annotation.position = position;
     annotation.size = ImVec2(200.0f, 100.0f);
-    annotation.color = IM_COL32(255, 255, 200, 255);  // Yellow
+    annotation.color = DefaultAnnotationColour();
     annotation.is_minimized = false;
     annotations_.push_back(annotation);
 }
@@ -96,121 +174,94 @@ NodeEditor::NodeEditor()
     style.Flags |= ImNodesStyleFlags_GridLines;
 
     // Initialize shape inference engine
-    shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
-    // Create ML Training Pipeline showcase
-    // Demonstrates: Complete machine learning workflow with data preparation, model, loss, and optimizer
-    //
-    // Flow: DataInput → DataSplit → Normalize → Dense(128) → ReLU → Dense(10) → MSELoss → Adam → Output
-
-    // ========== DATA PREPARATION ==========
-
-    // 1. Data Input - Load dataset
-    MLNode data_input = CreateNode(NodeType::DataInput, "Data Input");
-    data_input.parameters["format"] = "csv";
-    data_input.parameters["file_path"] = "dataset.csv";
-    nodes_.push_back(data_input);
-    ImNodes::SetNodeGridSpacePos(data_input.id, ImVec2(50.0f, 200.0f));
-
-    // 2. Data Split - Split into train/val/test
-    MLNode data_split = CreateNode(NodeType::DataSplit, "Train/Test Split");
-    data_split.parameters["train_ratio"] = "0.8";
-    data_split.parameters["val_ratio"] = "0.1";
-    data_split.parameters["test_ratio"] = "0.1";
-    data_split.parameters["shuffle"] = "true";
-    nodes_.push_back(data_split);
-    ImNodes::SetNodeGridSpacePos(data_split.id, ImVec2(250.0f, 200.0f));
-
-    // 3. Normalize - Normalize input features
-    MLNode normalize = CreateNode(NodeType::Normalize, "Normalize");
-    normalize.parameters["method"] = "z-score";
-    normalize.parameters["mean"] = "0.0";
-    normalize.parameters["std"] = "1.0";
-    nodes_.push_back(normalize);
-    ImNodes::SetNodeGridSpacePos(normalize.id, ImVec2(450.0f, 200.0f));
-
-    // ========== NEURAL NETWORK ==========
-
-    // 4. Dense Layer - First hidden layer
-    MLNode dense1 = CreateNode(NodeType::Dense, "Dense (128)");
-    dense1.parameters["units"] = "128";
-    dense1.parameters["use_bias"] = "true";
-    nodes_.push_back(dense1);
-    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(650.0f, 200.0f));
-
-    // 5. ReLU Activation
-    MLNode relu = CreateNode(NodeType::ReLU, "ReLU");
-    nodes_.push_back(relu);
-    ImNodes::SetNodeGridSpacePos(relu.id, ImVec2(850.0f, 200.0f));
-
-    // 6. Dense Layer - Output layer
-    MLNode dense2 = CreateNode(NodeType::Dense, "Dense (10)");
-    dense2.parameters["units"] = "10";
-    dense2.parameters["use_bias"] = "true";
-    nodes_.push_back(dense2);
-    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(1050.0f, 200.0f));
-
-    // ========== TRAINING CONFIGURATION ==========
-
-    // 7. Loss Function
-    MLNode loss = CreateNode(NodeType::MSELoss, "MSE Loss");
-    nodes_.push_back(loss);
-    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(1250.0f, 200.0f));
-
-    // 8. Optimizer
-    MLNode optimizer = CreateNode(NodeType::Adam, "Adam");
-    optimizer.parameters["learning_rate"] = "0.001";
-    optimizer.parameters["beta1"] = "0.9";
-    optimizer.parameters["beta2"] = "0.999";
-    nodes_.push_back(optimizer);
-    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(1450.0f, 200.0f));
-
-    // 9. Output
-    MLNode output = CreateNode(NodeType::Output, "Output");
-    nodes_.push_back(output);
-    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(1650.0f, 200.0f));
-
-    // ========== CREATE CONNECTIONS ==========
-
-    // Data flow: DataInput -> DataSplit -> Normalize
-    CreateLink(data_input.outputs[0].id, data_split.inputs[0].id,
-               data_input.id, data_split.id);
-    CreateLink(data_split.outputs[0].id, normalize.inputs[0].id,
-               data_split.id, normalize.id);
-
-    // Model flow: Normalize -> Dense(128) -> ReLU -> Dense(10)
-    CreateLink(normalize.outputs[0].id, dense1.inputs[0].id,
-               normalize.id, dense1.id);
-    CreateLink(dense1.outputs[0].id, relu.inputs[0].id,
-               dense1.id, relu.id);
-    CreateLink(relu.outputs[0].id, dense2.inputs[0].id,
-               relu.id, dense2.id);
-
-    // Training flow: Dense(10) -> MSELoss -> Adam -> Output
-    CreateLink(dense2.outputs[0].id, loss.inputs[0].id,
-               dense2.id, loss.id);
-    CreateLink(loss.outputs[0].id, optimizer.inputs[0].id,
-               loss.id, optimizer.id);
-    CreateLink(optimizer.outputs[0].id, output.inputs[0].id,
-               optimizer.id, output.id);
-
-    spdlog::info("Created ML Training Pipeline with {} nodes and {} connections",
-                 nodes_.size(), links_.size());
-    spdlog::info("Pipeline: DataInput -> DataSplit -> Normalize -> Dense(128) -> ReLU -> Dense(10) -> MSELoss -> Adam -> Output");
+    // The canvas starts empty (owner 2026-10-02); ready-made graphs are
+    // under Examples in the Nodes panel.
 }
 
 NodeEditor::~NodeEditor() {
     OnStopSimulation();
+    // Owned background work must not outlive the editor: the pipeline task is
+    // asked to stop and its queued UI delivery is dropped before any editor
+    // state goes away. The worker owns its executor, so the run itself is safe.
+    CancelOwnedBackgroundWork();
     if (editor_context_) {
         ImNodes::EditorContextFree(editor_context_);
     }
 }
 
+std::vector<int> NodeEditor::SyncSqlStepInputPins(MLNode& node) {
+    return gui::SyncSqlStepInputPins(node, next_pin_id_);
+}
+
+void NodeEditor::SyncParameterDrivenPins() {
+    std::vector<int> removed;
+    bool pins_changed = false;
+    for (auto& node : nodes_) {
+        const size_t before = node.inputs.size();
+        const auto gone = SyncSqlStepInputPins(node);
+        pins_changed = pins_changed || node.inputs.size() != before || !gone.empty();
+        removed.insert(removed.end(), gone.begin(), gone.end());
+    }
+    if (!removed.empty()) {
+        std::erase_if(links_, [&removed](const NodeLink& link) {
+            return std::find(removed.begin(), removed.end(), link.to_pin) != removed.end();
+        });
+    }
+    // pin_lookup_ holds pointers into each node's pin vector; adding a pin
+    // can reallocate it, so the lookup must be rebuilt before any hover query.
+    if (pins_changed) RebuildPinLookup();
+}
+
+void NodeEditor::ShowPipelineNotice(std::string message) {
+    show_window_ = true;
+    pipeline_notice_ = std::move(message);
+    pipeline_notice_pending_ = true;
+}
+
+void NodeEditor::CancelOwnedBackgroundWork() {
+    const size_t cancelled =
+        cyxwiz::AsyncTaskManager::Instance().CancelOwnedBy(task_owner_token_);
+    if (cancelled > 0) {
+        spdlog::info("Node editor cancelled {} owned background task(s)", cancelled);
+    }
+}
+
+std::string NodeEditor::GetGraphReplacementBlockReason() const {
+    return std::string(GraphReplacementBlockReason({
+        is_training_.load() || cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+            HasActiveGraphTrainingPreparation(),
+        cyxwiz::TestManager::Instance().IsTestingActive(),
+        graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
+        training_data_loading_callback_ && training_data_loading_callback_(),
+        is_simulating_.load(), pipeline_execution_active_,
+        rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())}));
+}
+
+bool NodeEditor::CanReplaceGraph(const char* operation) {
+    const auto reason = GetGraphReplacementBlockReason();
+    if (reason.empty()) return true;
+    show_window_ = true;
+    graph_busy_message_ = std::string("Cannot ") + operation + " while " + reason +
+        ". Wait for completion or stop the active operation before trying again.";
+    graph_busy_dialog_pending_ = true;
+    spdlog::warn("Cannot {} while {}; wait for completion or stop the active operation first.", operation, reason);
+    return false;
+}
+
 void NodeEditor::Render() {
+    ApplySubgraphRequest();
+    ApplyStepAfterInsert();
     if (!show_window_) return;
 
+    SyncParameterDrivenPins();
+    SyncPipelineExecutionVisualization();
+
+    const bool training_animation_active =
+        is_training_ || cyxwiz::TrainingManager::Instance().IsTrainingActive();
+
     // Update training animation time
-    if (is_training_) {
+    if (training_animation_active) {
         training_animation_time_ += ImGui::GetIO().DeltaTime;
     }
 
@@ -228,10 +279,15 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (ImGui::Begin("CyxWiz Studio", &show_window_)) {
+    ::gui::NextWindowMayLeave("CyxWiz Studio");
+    const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);
+    ::gui::TabMenu("CyxWiz Studio", &show_window_);
+    if (expanded) {
         ShowToolbar();
-
-        ImGui::Separator();
+        const auto replacement_block = GetGraphReplacementBlockReason();
+        if (!replacement_block.empty()) {
+            ImGui::TextWrapped("Graph replacement locked: %s. Wait for completion or stop the active operation before loading or clearing a graph.", replacement_block.c_str());
+        }
 
         // Check if mouse is over minimap (using stored bounds from previous frame)
         // This needs to be done before ImNodes::BeginNodeEditor to prevent canvas panning
@@ -254,8 +310,55 @@ void NodeEditor::Render() {
         ImNodes::PushStyleVar(ImNodesStyleVar_LinkThickness, 3.0f * zoom_);
         ImNodes::PushStyleVar(ImNodesStyleVar_PinLineThickness, 1.0f * zoom_);
         ImGui::SetWindowFontScale(zoom_);
+        ImNodes::EditorContextSetZoom(zoom_);
 
+        canvas_size_ = ImGui::GetContentRegionAvail();
         ImNodes::BeginNodeEditor();
+
+        // Moving the view while the left button is down (the second press of
+        // a double-click that opens the node's dialog) would drag the node
+        // under the pointer by the distance the view moves: wait for the release.
+        const bool press_in_progress = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        // A node ImNodes has not drawn yet (added while the canvas was behind
+        // another tab) cannot be selected: SelectNode would store an invalid
+        // index and the selection would read a garbage id every frame. It
+        // waits until the node has been drawn once.
+        const bool focus_drawn = pending_focus_node_id_ >= 0 && cached_node_positions_.count(pending_focus_node_id_);
+        if (pending_focus_node_id_ >= 0 && !press_in_progress && (focus_drawn || !FindNodeById(pending_focus_node_id_))) {
+            auto it = std::find_if(nodes_.begin(), nodes_.end(),
+                                   [this](const MLNode& node) {
+                                       return node.id == pending_focus_node_id_;
+                                   });
+            if (it != nodes_.end()) {
+                ImNodes::ClearNodeSelection();
+                ImNodes::SelectNode(pending_focus_node_id_);
+                selected_node_id_ = pending_focus_node_id_;
+                const auto position = cached_node_positions_.find(
+                    pending_focus_node_id_);
+                if (position != cached_node_positions_.end()) {
+                    const ImVec2 size = ImNodes::GetNodeDimensions(pending_focus_node_id_);
+                    CenterViewOn(ImVec2(position->second.x + size.x * 0.5f / zoom_,
+                                        position->second.y + size.y * 0.5f / zoom_));
+                }
+                if (properties_panel_) {
+                    properties_panel_->SetSelectedNode(&(*it));
+                }
+            } else {
+                spdlog::warn("NodeEditor: deferred focus node {} not found", pending_focus_node_id_);
+            }
+            pending_focus_node_id_ = -1;
+        }
+        if (!pending_show_nodes_.empty() && !press_in_progress) {
+            ImNodes::ClearNodeSelection();
+            std::vector<int> present;
+            for (int id : pending_show_nodes_) {
+                if (!FindNodeById(id) || !cached_node_positions_.count(id)) continue;
+                ImNodes::SelectNode(id);
+                present.push_back(id);
+            }
+            FrameNodes(present);
+            pending_show_nodes_.clear();
+        }
 
         // Handle deferred ImNodes clear (must be inside BeginNodeEditor scope)
         // Note: We skip ImNodes::ClearNodeSelection/ClearLinkSelection because they may
@@ -278,6 +381,8 @@ void NodeEditor::Render() {
         RenderFrames();
 
         RenderNodes();
+        const auto frame_actions = detail::DrawExpandedSubgraphFrames(
+            nodes_, subgraphs_, zoom_, GetGraphReplacementBlockReason(), frame_selected_subgraph_id_);
 
         // Handle mouse wheel zoom (skip if mouse is over minimap)
         if (ImGui::IsWindowHovered() && !mouse_in_minimap_bounds) {
@@ -320,8 +425,8 @@ void NodeEditor::Render() {
 
             // Convert screen position to grid space
             context_menu_pos_ = ImVec2(
-                mouse_pos.x - editor_origin.x - panning.x,
-                mouse_pos.y - editor_origin.y - panning.y
+                (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                (mouse_pos.y - editor_origin.y - panning.y) / zoom_
             );
             right_click_detected = true;
         }
@@ -330,14 +435,22 @@ void NodeEditor::Render() {
         // This is needed because GetNodeGridSpacePos only works inside this scope
         cached_node_positions_.clear();
         for (const auto& node : nodes_) {
-            cached_node_positions_[node.id] = ImNodes::GetNodeGridSpacePos(node.id);
+            if (!detail::IsExpandedSubgraph(node.id, subgraphs_))
+                cached_node_positions_[node.id] = ImNodes::GetNodeGridSpacePos(node.id);
         }
 
         ImNodes::EndNodeEditor();
 
+        // Hover queries are only valid after EndNodeEditor. Query once and
+        // reuse the result for tooltips and context-menu routing.
+        int hovered_node_id = -1;
+        const bool is_node_hovered =
+            ImNodes::IsNodeHovered(&hovered_node_id);
+
         // Pin hover tooltip for all nodes (after EndNodeEditor)
         int hovered_pin_id = -1;
-        if (ImNodes::IsPinHovered(&hovered_pin_id)) {
+        const bool is_pin_hovered = ImNodes::IsPinHovered(&hovered_pin_id);
+        if (is_pin_hovered) {
             const MLNode* hovered_node = nullptr;
             const NodePin* hovered_pin = nullptr;
             bool hovered_is_input = false;
@@ -363,7 +476,59 @@ void NodeEditor::Render() {
                 } else {
                     ImGui::TextDisabled("Not connected");
                 }
+                if (!hovered_pin->description.empty()) {
+                    ImGui::Separator();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                    ImGui::TextUnformatted(hovered_pin->description.c_str());
+                    ImGui::PopTextWrapPos();
+                }
                 ImGui::EndTooltip();
+            }
+        }
+
+        // A pin tooltip is more specific than its parent node tooltip.
+        if (is_node_hovered && !is_pin_hovered) {
+            RenderHoveredNodeTooltip(hovered_node_id);
+        }
+
+        // Use the same configuration path as the node context menu. Complex
+        // nodes open their registered dialog; simple nodes focus Properties.
+        // A collapsed subgraph expands (TOFIX147).
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            node_under_press_ = is_node_hovered && !is_pin_hovered ? hovered_node_id : -1;
+        }
+        if (node_under_press_ >= 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            const int clicked = node_under_press_;
+            node_under_press_ = -1;
+            if (IsSubgraphNode(clicked)) {
+                RequestSubgraphAction(clicked, SubgraphRequest::Expand);
+            } else {
+                ConfigureNode(clicked);
+            }
+        }
+
+        // A link whose end has a compile error explains itself on hover
+        // (TOFIX123): the compiler's own message, as in the Compile popup.
+        if (live_compile_) {
+            int hovered_link_id = -1;
+            if (ImNodes::IsLinkHovered(&hovered_link_id)) {
+                for (const auto& link : links_) {
+                    if (link.id != hovered_link_id) continue;
+                    for (const int end : {link.to_node, link.from_node}) {
+                        const std::string reason = live_compile_->NodeErrorMessage(end);
+                        const MLNode* end_node = FindNodeById(end);
+                        if (reason.empty() || !end_node) continue;
+                        ImGui::BeginTooltip();
+                        ImGui::TextColored(ui::CurrentTokens().caution, "%s: will not compile",
+                                           end_node->name.c_str());
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                        ImGui::TextUnformatted(reason.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                        break;
+                    }
+                    break;
+                }
             }
         }
 
@@ -371,8 +536,6 @@ void NodeEditor::Render() {
         // IsNodeHovered() only works after EndNodeEditor() is called
         // Skip if right-click was on a frame (frame menu already shown)
         if (right_click_detected && !frame_right_clicked_) {
-            int hovered_node_id = -1;
-            bool is_node_hovered = ImNodes::IsNodeHovered(&hovered_node_id);
             if (is_node_hovered && hovered_node_id >= 0) {
                 // Right-click on node - show node-specific menu
                 right_clicked_node_id_ = hovered_node_id;
@@ -405,31 +568,52 @@ void NodeEditor::Render() {
                 // Get the dropped node type
                 cyxwiz::NodeType dropped_type = *(const cyxwiz::NodeType*)payload->Data;
 
-                // Get metadata to create proper node name
-                auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
-                auto* metadata = registry.GetMetadata(dropped_type);
-                std::string node_name = metadata ? metadata->name : "Node";
+                if (!CanAddNodeToGraph(dropped_type)) {
+                    spdlog::warn(
+                        "Blocked drag-drop graph add for unsupported node type {}",
+                        static_cast<int>(dropped_type));
+                } else {
+                    // Get metadata to create proper node name
+                    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+                    auto* metadata = registry.GetMetadata(dropped_type);
+                    std::string node_name = metadata ? metadata->name : "Node";
 
-                // Calculate drop position in grid space (reuse mouse_pos from earlier)
-                ImVec2 editor_origin = ImGui::GetWindowPos();
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                ImVec2 drop_pos(
-                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
-                );
+                    // Calculate drop position in grid space (reuse mouse_pos from earlier)
+                    ImVec2 editor_origin = ImGui::GetWindowPos();
+                    ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    ImVec2 drop_pos(
+                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
+                    );
 
-                // Queue node for addition
-                PendingNode pending;
-                pending.type = static_cast<NodeType>(dropped_type);
-                pending.name = node_name;
-                pending.position = drop_pos;
-                pending_nodes_.push_back(pending);
+                    // Queue node for addition
+                    pending_nodes_.emplace_back(
+                        static_cast<NodeType>(dropped_type), node_name, drop_pos);
 
-                spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+                    spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+                }
+            }
+
+            // An extension node from the Node Browser carries its type id.
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EXTENSION_NODE")) {
+                const std::string type_id(static_cast<const char*>(payload->Data),
+                                          static_cast<size_t>(payload->DataSize));
+                if (!CanAddNodeToGraph(NodeType::PluginCustom, type_id)) {
+                    spdlog::warn("Blocked drag-drop graph add for extension node '{}'", type_id);
+                } else {
+                    ImVec2 editor_origin = ImGui::GetWindowPos();
+                    ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    ImVec2 drop_pos(
+                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_);
+                    pending_nodes_.emplace_back(NodeType::PluginCustom, type_id, drop_pos);
+                    spdlog::info("Drag-drop: Adding extension node {} at ({}, {})",
+                                 type_id, drop_pos.x, drop_pos.y);
+                }
             }
 
             // Handle ANNOTATION drag-drop
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ANNOTATION")) {
+            if (ImGui::AcceptDragDropPayload("ANNOTATION") != nullptr) {
                 // Calculate drop position in grid space
                 ImVec2 editor_origin = ImGui::GetWindowPos();
                 ImVec2 panning = ImNodes::EditorContextGetPanning();
@@ -444,7 +628,7 @@ void NodeEditor::Render() {
             }
 
             // Handle STUDIO_FRAME drag-drop
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("STUDIO_FRAME")) {
+            if (ImGui::AcceptDragDropPayload("STUDIO_FRAME") != nullptr) {
                 // Calculate drop position in grid space
                 ImVec2 editor_origin = ImGui::GetWindowPos();
                 ImVec2 panning = ImNodes::EditorContextGetPanning();
@@ -473,8 +657,10 @@ void NodeEditor::Render() {
         if (!pending_nodes_.empty()) {
             SaveUndoState();  // Save state before adding nodes
         }
+        std::vector<int> configure_ids;
         for (const auto& pending : pending_nodes_) {
             MLNode node = CreateNode(pending.type, pending.name);
+            for (const auto& [key, value] : pending.initial_parameters) node.parameters[key] = value;
 
             nodes_.push_back(node);
 
@@ -495,14 +681,51 @@ void NodeEditor::Render() {
 
             spdlog::info("Added node: {} (ID: {}) at position ({}, {})",
                         pending.name, node.id, position.x, position.y);
+            if (pending.open_configuration) configure_ids.push_back(node.id);
+
+            // A node reading it, to its right (a kept test's Test Evaluation).
+            if (pending.then_type && !node.outputs.empty()) {
+                MLNode then = CreateNode(*pending.then_type, pending.then_name);
+                if (!then.inputs.empty()) {
+                    links_.push_back({next_link_id_++, node.id, node.outputs.front().id, then.id, then.inputs.front().id,
+                                      LinkType::TensorFlow});
+                    const int then_id = then.id;
+                    nodes_.push_back(std::move(then));
+                    ImNodes::SetNodeGridSpacePos(then_id, ImVec2(position.x + 260.0f, position.y));
+                    ImNodes::ClearNodeSelection();
+                    ImNodes::SelectNode(then_id);
+                    selected_node_id_ = then_id;
+                    spdlog::info("Added node: {} (ID: {}) reading node {}", pending.then_name, then_id, node.id);
+                }
+            }
         }
         if (!pending_nodes_.empty()) {
             RebuildPinLookup();  // Rebuild pin lookup after adding nodes
         }
         pending_nodes_.clear();
+        for (int id : configure_ids) ConfigureNode(id);
 
         // Handle interactions AFTER EndNodeEditor() - this is when ImNodes processes them
         HandleInteractions();
+        // Frame controls queue mutations until ImNodes has finished this frame.
+        if (frame_actions.collapse >= 0) {
+            frame_selected_subgraph_id_ = -1;
+            CollapseSubgraph(frame_actions.collapse);
+        }
+        if (frame_actions.select >= 0) {
+            // The wrapper of an expanded subgraph is not an ImNodes node, so
+            // its selection lives here, beside ImNodes' selection.
+            ImNodes::ClearNodeSelection();
+            selected_node_ids_.clear();
+            selected_node_id_ = -1;
+            frame_selected_subgraph_id_ = frame_actions.select;
+        } else if (frame_selected_subgraph_id_ >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                   ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && !frame_actions.header_hovered) {
+            // A click anywhere else on the canvas ends it (a node click then
+            // selects that node below).
+            frame_selected_subgraph_id_ = -1;
+            if (properties_panel_) properties_panel_->ClearSelection();
+        }
 
         // Handle keyboard shortcuts (Ctrl+Z, Ctrl+C, etc.)
         HandleKeyboardShortcuts();
@@ -555,14 +778,14 @@ void NodeEditor::Render() {
                     }
                 } else if (new_selected_id != selected_node_id_) {
                     // Only log if selection changed
-                    spdlog::info("Node selection changed to ID: {}", new_selected_id);
+                    spdlog::debug("Node selection changed to ID: {}", new_selected_id);
 
                     // Find the selected node and pass it to the properties panel
                     MLNode* selected = nullptr;
                     for (auto& node : nodes_) {
                         if (node.id == new_selected_id) {
                             selected = &node;
-                            spdlog::info("Found selected node: id={}, type={}, name={}",
+                            spdlog::debug("Found selected node: id={}, type={}, name={}",
                                          node.id, static_cast<int>(node.type), node.name);
                             break;
                         }
@@ -570,12 +793,15 @@ void NodeEditor::Render() {
 
                     if (selected) {
                         selected_node_id_ = new_selected_id;
-                        spdlog::info("About to call SetSelectedNode with node id={}", selected->id);
+                        spdlog::debug("About to call SetSelectedNode with node id={}", selected->id);
                         properties_panel_->SetSelectedNode(selected);
-                        spdlog::info("SetSelectedNode completed successfully");
+                        spdlog::debug("SetSelectedNode completed successfully");
                     } else {
-                        // Node ID not found in our nodes - could be stale data
-                        spdlog::debug("Selection ID {} not found in nodes vector, ignoring", new_selected_id);
+                        // Not one of our nodes (an index ImNodes kept for a node it
+                        // never drew): drop the selection so it is not read again
+                        // every frame.
+                        spdlog::debug("Selection ID {} not found in nodes vector; selection cleared", new_selected_id);
+                        ImNodes::ClearNodeSelection();
                     }
                 } else {
                     // Selection unchanged, update silently
@@ -591,13 +817,79 @@ void NodeEditor::Render() {
                     }
                 }
             } else if (num_selected == 0 && selected_node_id_ != -1) {
-                spdlog::info("Node deselected");
+                spdlog::debug("Node deselected");
                 selected_node_id_ = -1;
                 properties_panel_->ClearSelection();
+            }
+            if (num_selected > 0) frame_selected_subgraph_id_ = -1;
+            if (frame_selected_subgraph_id_ >= 0) {
+                // Re-resolved every frame, like a canvas selection; it ends when
+                // the subgraph collapses or is gone.
+                const SubgraphData* data = GetSubgraphData(frame_selected_subgraph_id_);
+                MLNode* wrapper = data && data->expanded ? FindNodeById(frame_selected_subgraph_id_) : nullptr;
+                if (wrapper) {
+                    properties_panel_->SetSelectedNode(wrapper);
+                } else {
+                    frame_selected_subgraph_id_ = -1;
+                    properties_panel_->ClearSelection();
+                }
             }
         }
     }
     ImGui::End();
+
+    // Outside the Studio Begin/End body: inactive dock tabs skip that body.
+    // Open in this render scope, not in the caller's asset-browser/menu scope.
+    if (graph_busy_dialog_pending_) {
+        ImGui::OpenPopup("Graph busy##GraphReplacement");
+        graph_busy_dialog_pending_ = false;
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
+    if (ImGui::BeginPopupModal("Graph busy##GraphReplacement", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
+        ImGui::TextUnformatted(graph_busy_message_.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        ImGui::TextUnformatted("The requested graph change was not applied.");
+        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::EndPopup();
+    }
+
+    if (pipeline_notice_pending_) {
+        ImGui::OpenPopup("Pipeline##PipelineNotice");
+        pipeline_notice_pending_ = false;
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
+    if (ImGui::BeginPopupModal("Pipeline##PipelineNotice", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
+        ImGui::TextUnformatted(pipeline_notice_.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::EndPopup();
+    }
+
+    // RL metrics scripts reported (TOFIX134 P0 item 7); a script that reports
+    // without an RL run started from the canvas still gets the dashboard.
+    if (scripting_engine_) {
+        const auto samples = scripting_engine_->TakeRLMetrics();
+        if (!samples.empty() && !rl_dashboard_) {
+            rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+            rl_dashboard_->SetVisible(true);
+        }
+        for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
+    }
+
+    // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
+    RenderPlotNodes();
 
     // Render RL Training Dashboard (separate window)
     if (rl_dashboard_) {
@@ -702,7 +994,7 @@ void NodeEditor::Render() {
     }
 
     if (ImGui::BeginPopupModal("Empty Graph Warning", &show_empty_graph_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION);
         ImGui::SameLine();
         ImGui::Text("Cannot Save Empty Graph");
         ImGui::Separator();
@@ -735,7 +1027,7 @@ void NodeEditor::Render() {
                               &show_auto_insert_flatten_dialog_,
                               ImGuiWindowFlags_AlwaysAutoResize)) {
 
-        ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().warning,
                          ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
         ImGui::Separator();
         ImGui::Spacing();
@@ -790,11 +1082,6 @@ void NodeEditor::Render() {
                 CreateLink(flatten_out, pending_flatten_to_pin_,
                          flatten_node.id, pending_flatten_to_node_);
 
-                // Invalidate shape cache
-                if (shape_inference_) {
-                    shape_inference_->InvalidateShapes();
-                }
-
                 // Save undo state
                 SaveUndoState();
 
@@ -826,341 +1113,15 @@ void NodeEditor::Render() {
     }
 }
 
-void NodeEditor::ShowToolbar() {
-    // Enhanced toolbar styling
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
-
-    // File operations with icons
-    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
-        ShowSaveDialog();
-    }
-    ImGui::SameLine();
-
-    if (ImGui::Button(ICON_FA_FOLDER_OPEN " Load")) {
-        ShowLoadDialog();
-    }
-    ImGui::SameLine();
-
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
-
-    // Zoom controls
-    if (ImGui::Button(ICON_FA_MINUS)) {
-        zoom_ = std::max(ZOOM_MIN, zoom_ - 0.1f);
-    }
-    ImGui::SameLine();
-    ImGui::Text("%.0f%%", zoom_ * 100.0f);
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_PLUS)) {
-        zoom_ = std::min(ZOOM_MAX, zoom_ + 0.1f);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_EXPAND " Fit")) {
-        zoom_ = 1.0f; ImNodes::EditorContextResetPanning(ImVec2(0, 0));
-    }
-    ImGui::SameLine();
-
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
-
-    // Selection tools
-    if (ImGui::Button(ICON_FA_OBJECT_GROUP " Select All")) {
-        SelectAll();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_TRASH " Delete")) {
-        DeleteSelected();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_COPY " Duplicate")) {
-        DuplicateSelection();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_ERASER " Clear All")) {
-        ClearGraph();
-    }
-    ImGui::SameLine();
-
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
-
-    // Minimap toggle
-    if (ImGui::Button(show_minimap_ ? ICON_FA_SITEMAP " Minimap" : ICON_FA_SITEMAP)) {
-        show_minimap_ = !show_minimap_;
-    }
-    ImGui::SameLine();
-
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
-
-    // Stats display
-    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CIRCLE_NODES " %zu", nodes_.size());
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_LINK " %zu", links_.size());
-    
-    int num_selected = ImNodes::NumSelectedNodes();
-    if (num_selected > 0) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), ICON_FA_SQUARE_CHECK " %d", num_selected);
-    }
-
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
-
-    // Code generation controls - second toolbar row
-    ImGui::Separator();
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
-    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CODE " Code:");
-    ImGui::SameLine();
-
-    // Framework selection
-    // Unified Canvas Phase 4.2: Execution mode selector
-    const char* exec_modes[] = { "Code Gen", "Data Pipeline", "Local Training" };
-    int current_exec_mode = static_cast<int>(execution_mode_);
-    ImGui::SetNextItemWidth(130.0f);
-    if (ImGui::Combo("##ExecMode", &current_exec_mode, exec_modes, 3)) {
-        execution_mode_ = static_cast<ExecutionMode>(current_exec_mode);
-        spdlog::info("Execution mode changed to: {}", exec_modes[current_exec_mode]);
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Execution Mode:\n"
-            "Code Gen - Generate Python code\n"
-            "Data Pipeline - Execute with DuckDB/Arrow\n"
-            "Local Training - Train ML model locally");
-    }
-    ImGui::SameLine();
-
-    // Show appropriate controls based on execution mode
-    if (execution_mode_ == ExecutionMode::CodeGeneration) {
-        // Framework selector for code generation
-        const char* frameworks[] = { "PyTorch", "TensorFlow", "Keras", "PyCyxWiz" };
-        int current_framework = static_cast<int>(selected_framework_);
-        ImGui::SetNextItemWidth(120.0f);
-        if (ImGui::Combo("##Framework", &current_framework, frameworks, 4)) {
-            selected_framework_ = static_cast<CodeFramework>(current_framework);
-            spdlog::info("Code generation framework changed to: {}", frameworks[current_framework]);
-        }
-        ImGui::SameLine();
-
-        if (ImGui::Button(ICON_FA_GEARS " Generate")) {
-            GeneratePythonCode();
-        }
-    } else if (execution_mode_ == ExecutionMode::DuckDBPipeline) {
-        // Execute data pipeline button
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
-        if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
-            ExecuteDataPipeline();
-        }
-        ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Execute data transformation pipeline using DuckDB");
-        }
-    }
-    ImGui::SameLine();
-
-    if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
-        ShowExportDialog();
-    }
-
-    // Training controls
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
-
-    // Check training state from TrainingManager
-    auto& training_mgr = cyxwiz::TrainingManager::Instance();
-    bool training_active = training_mgr.IsTrainingActive();
-
-    if (training_active) {
-        // Show training progress and stop button
-        auto metrics = training_mgr.GetCurrentMetrics();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_SPINNER " Epoch %d/%d",
-            metrics.current_epoch, metrics.total_epochs);
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-        if (ImGui::Button(ICON_FA_STOP " Stop")) {
-            training_mgr.StopTraining();
-        }
-        ImGui::PopStyleColor(2);
-    } else {
-        // Train button - green when valid, disabled when invalid
-        bool can_train = IsGraphValid() && train_callback_;
-        if (!can_train) {
-            ImGui::BeginDisabled();
-        }
-
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
-        if (ImGui::Button(ICON_FA_PLAY " Train")) {
-            if (train_callback_) {
-                spdlog::info("NodeEditor: Starting training from graph");
-                train_callback_(nodes_, links_);
-            }
-        }
-        ImGui::PopStyleColor(3);
-
-        if (!can_train) {
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                if (!train_callback_) {
-                    ImGui::SetTooltip("Training callback not set (no dataset loaded?)");
-                } else {
-                    ImGui::SetTooltip("Graph is not valid for training. Need: DatasetInput -> Model layers -> Loss");
-                }
-            }
-        }
-    }
-
-    // Simulation controls (for signal/MuJoCo Plant graphs)
-    if (HasSimulationNodes()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
-
-        if (is_simulating_) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-            if (ImGui::Button(ICON_FA_STOP " Stop Sim")) {
-                OnStopSimulation();
-            }
-            ImGui::PopStyleColor(2);
-            ImGui::SameLine();
-            if (graph_executor_) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "t=%.2fs",
-                    graph_executor_->GetSimTime());
-            }
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.6f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.55f, 0.7f, 1.0f));
-            bool rl_running = rl_executor_ && rl_executor_->IsTraining();
-            if (rl_running) {
-                ImGui::BeginDisabled();
-                ImGui::Button(ICON_FA_PLAY " Run Sim");
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("Stop RL training first");
-                }
-            } else if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
-                OnRunSimulation();
-            }
-            ImGui::PopStyleColor(2);
-        }
-    }
-
-    // RL Training controls (for graphs with RL nodes)
-    if (HasRLNodes()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
-
-        if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-            if (ImGui::Button(ICON_FA_STOP " Stop RL")) {
-                OnStopRLTraining();
-            }
-            ImGui::PopStyleColor(2);
-            ImGui::SameLine();
-            if (rl_script_running_) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training via Python...");
-            } else if (rl_executor_) {
-                auto metrics = rl_executor_->GetMetrics();
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Ep %d | R:%.1f",
-                    metrics.episode_count, metrics.mean_episode_reward);
-            }
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.5f, 0.3f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.4f, 1.0f));
-            if (is_simulating_) {
-                ImGui::BeginDisabled();
-                ImGui::Button(ICON_FA_PLAY " Train RL");
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("Stop graph simulation first");
-                }
-            } else if (ImGui::Button(ICON_FA_PLAY " Train RL")) {
-                OnStartRLTraining();
-            }
-            ImGui::PopStyleColor(2);
-        }
-    }
-
-    // Export Policy (ONNX) button
-    if (HasRLNodes()) {
-        ImGui::SameLine();
-        bool has_trained = rl_executor_ && !rl_executor_->IsTraining() && rl_executor_->GetMetrics().episode_count > 0;
-        if (!has_trained) {
-            ImGui::BeginDisabled();
-            ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX");
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Train an RL agent first");
-            }
-            ImGui::EndDisabled();
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.3f, 0.1f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.4f, 0.2f, 1.0f));
-            if (ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX")) {
-                export_onnx_dialog_open_ = true;
-            }
-            ImGui::PopStyleColor(2);
-        }
-    }
-
-    // Sim performance metrics (Phase 4.7)
-    if (is_simulating_ && last_eval_time_ms_ > 0.0f) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
-        float fps = (last_eval_time_ms_ > 0.001f) ? 1000.0f / last_eval_time_ms_ : 0.0f;
-        ImVec4 color = (last_eval_time_ms_ < 16.0f) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.6f, 0.2f, 1.0f);
-        ImGui::TextColored(color, "%.1fms (%.0f FPS)", last_eval_time_ms_, fps);
-    }
-
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
-
-    // ONNX Export dialog
-    if (export_onnx_dialog_open_) {
-        ImGui::OpenPopup("Export Policy (ONNX)");
-        export_onnx_dialog_open_ = false;
-    }
-    if (ImGui::BeginPopupModal("Export Policy (ONNX)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Export trained RL policy to ONNX format.");
-        ImGui::Separator();
-
-        static char onnx_path[512] = "policy.onnx";
-        ImGui::Text("Output path:");
-        ImGui::InputText("##onnx_path", onnx_path, sizeof(onnx_path));
-        ImGui::Spacing();
-
-        if (ImGui::Button("Export", ImVec2(120, 0))) {
-            ExportPolicyONNX(std::string(onnx_path));
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
+// ShowToolbar: node_editor_toolbar.cpp (Studio nav, approved board 7).
 
 void NodeEditor::RenderMinimap() {
-    if (nodes_.empty()) return;
+    // Drawn whenever it is switched on; an empty canvas (new graph, Clear All)
+    // shows an empty overview instead of hiding the minimap.
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Get parent window position and size for calculating minimap position
     ImVec2 parent_window_pos = ImGui::GetWindowPos();
-    ImVec2 parent_window_size = ImGui::GetWindowSize();
-
     // Get content region to properly account for toolbar/title bar
     ImVec2 content_min = ImGui::GetWindowContentRegionMin();
     ImVec2 content_max = ImGui::GetWindowContentRegionMax();
@@ -1170,6 +1131,11 @@ void NodeEditor::RenderMinimap() {
     float content_bottom = parent_window_pos.y + content_max.y;
     float content_left = parent_window_pos.x + content_min.x;
     float content_right = parent_window_pos.x + content_max.x;
+    // A window of its own: on a canvas smaller than the minimap it drew over
+    // the panels beside, so it waits until the canvas has room.
+    if (content_right - content_left < minimap_size_.x + 20.0f ||
+        content_bottom - content_top < minimap_size_.y + 20.0f)
+        return;
 
     // Define corner positions
     const float padding = 10.0f;
@@ -1192,16 +1158,20 @@ void NodeEditor::RenderMinimap() {
     ImVec2 minimap_pos = getCornerPos(minimap_position_);
 
     // Set next window position and create a floating window for the minimap
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 0.92f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.22f, 0.22f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.40f, 0.50f, 0.8f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                          ui::WithAlpha(t.bg_panel, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, t.bg_bar);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.bg_bar);
+    ImGui::PushStyleColor(ImGuiCol_Border, t.border);
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                                     ImGuiWindowFlags_NoMove;  // We handle movement manually
@@ -1213,37 +1183,57 @@ void NodeEditor::RenderMinimap() {
         ImVec2 win_pos = ImGui::GetWindowPos();
         ImVec2 win_size = ImGui::GetWindowSize();
         const float grid_step = 20.0f;
-        ImU32 grid_color = IM_COL32(60, 65, 75, 40);
+        ImU32 grid_color = ImGui::GetColorU32(ui::WithAlpha(t.border, 0.35f));
         for (float x = win_pos.x; x < win_pos.x + win_size.x; x += grid_step) {
             bg_draw_list->AddLine(ImVec2(x, win_pos.y), ImVec2(x, win_pos.y + win_size.y), grid_color);
         }
         for (float y = win_pos.y; y < win_pos.y + win_size.y; y += grid_step) {
             bg_draw_list->AddLine(ImVec2(win_pos.x, y), ImVec2(win_pos.x + win_size.x, y), grid_color);
         }
-        
+
         // Draw stats header bar at top
         const float header_height = 16.0f;
         bg_draw_list->AddRectFilled(
-            win_pos, 
+            win_pos,
             ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
-            IM_COL32(30, 35, 45, 220)
+            ImGui::GetColorU32(t.bg_bar), 6.0f, ImDrawFlags_RoundCornersTop
         );
         bg_draw_list->AddLine(
             ImVec2(win_pos.x, win_pos.y + header_height),
             ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
-            IM_COL32(60, 70, 90, 200)
+            ImGui::GetColorU32(t.border_soft)
         );
-        
-        // Draw stats text
+
+        // Stats (or an empty-canvas note) and a close button in the header.
         char stats_text[64];
-        snprintf(stats_text, sizeof(stats_text), "%zu nodes | %zu links", nodes_.size(), links_.size());
+        if (nodes_.empty()) {
+            snprintf(stats_text, sizeof(stats_text), "Empty canvas");
+        } else {
+            snprintf(stats_text, sizeof(stats_text), "%zu nodes | %zu links", nodes_.size(), links_.size());
+        }
         ImVec2 text_size = ImGui::CalcTextSize(stats_text);
         bg_draw_list->AddText(
-            ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f, win_pos.y + 2.0f),
-            IM_COL32(160, 170, 190, 220),
+            ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f,
+                   win_pos.y + (header_height - text_size.y) * 0.5f),
+            ImGui::GetColorU32(t.text_dim),
             stats_text
         );
-        
+        {
+            const char* close_icon = ICON_FA_XMARK;
+            const ImVec2 close_size = ImGui::CalcTextSize(close_icon);
+            const ImVec2 close_pos(win_pos.x + win_size.x - close_size.x - 6.0f,
+                                   win_pos.y + (header_height - close_size.y) * 0.5f);
+            const bool close_hovered = ImGui::IsMouseHoveringRect(
+                ImVec2(close_pos.x - 3.0f, win_pos.y),
+                ImVec2(win_pos.x + win_size.x, win_pos.y + header_height));
+            bg_draw_list->AddText(close_pos,
+                                  ImGui::GetColorU32(close_hovered ? t.text : t.text_faint),
+                                  close_icon);
+            if (close_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                show_minimap_ = false;
+            }
+        }
+
         // Get the draw list for this window
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 window_pos = ImGui::GetWindowPos();
@@ -1267,6 +1257,7 @@ void NodeEditor::RenderMinimap() {
     float max_x = -FLT_MAX, max_y = -FLT_MAX;
 
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
         ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
 
@@ -1274,6 +1265,15 @@ void NodeEditor::RenderMinimap() {
         min_y = std::min(min_y, node_pos.y);
         max_x = std::max(max_x, node_pos.x + node_dims.x);
         max_y = std::max(max_y, node_pos.y + node_dims.y);
+    }
+
+    if (min_x == FLT_MAX) {
+        const ImVec2 view_pan = ImNodes::EditorContextGetPanning();
+        const ImVec2 view_size = ImGui::GetContentRegionAvail();
+        min_x = -view_pan.x;
+        min_y = -view_pan.y;
+        max_x = -view_pan.x + std::max(view_size.x, 200.0f);
+        max_y = -view_pan.y + std::max(view_size.y, 120.0f);
     }
 
     // Add padding to bounds
@@ -1304,11 +1304,13 @@ void NodeEditor::RenderMinimap() {
     };
 
     // Minimap content area rect (window already provides background)
-    ImVec2 minimap_content_min = window_pos;
     ImVec2 minimap_content_max = ImVec2(window_pos.x + window_size.x, window_pos.y + window_size.y);
 
     // Draw links first (underneath nodes)
-    for (const auto& link : links_) {
+    for (const auto& saved_link : links_) {
+        const auto display = detail::DisplaySubgraphLink(saved_link, nodes_, subgraphs_);
+        if (!display) continue;
+        const auto& link = *display;
         // Find source and destination nodes
         const MLNode* from_node = nullptr;
         const MLNode* to_node = nullptr;
@@ -1342,15 +1344,16 @@ void NodeEditor::RenderMinimap() {
             ImVec2 mm_from = gridToMinimap(from_pos);
             ImVec2 mm_to = gridToMinimap(to_pos);
             // Use a gradient-like effect: brighter in middle
-            ImU32 link_color = is_training_ ? 
-                IM_COL32(200, 220, 100, 180) :  // Amber-ish during training
-                IM_COL32(130, 160, 200, 160);   // Blue-gray normally
+            ImU32 link_color = is_training_ ?
+                ui::ToU32(ui::WithAlpha(t.running, 180.0f / 255.0f)) :  // training in progress
+                ui::ToU32(ui::WithAlpha(t.text_dim, 160.0f / 255.0f));
             draw_list->AddLine(mm_from, mm_to, link_color, 1.5f);
         }
     }
 
     // Draw nodes
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
         ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
 
@@ -1362,22 +1365,17 @@ void NodeEditor::RenderMinimap() {
 
         // Get node color based on type
         unsigned int color = GetNodeColor(node.type);
-        ImU32 fill_color = IM_COL32(
-            (color >> 0) & 0xFF,
-            (color >> 8) & 0xFF,
-            (color >> 16) & 0xFF,
-            200
-        );
+        ImU32 fill_color = ui::ToU32(ui::WithAlpha(ImGui::ColorConvertU32ToFloat4(color), 200.0f / 255.0f));
 
         // Check if node is selected (support multi-selection)
         bool is_selected = ImNodes::IsNodeSelected(node.id);
 
         // Draw node with rounded corners
         draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 3.0f);
-        
+
         // Draw subtle border for all nodes
-        draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
-            IM_COL32(255, 255, 255, 40), 3.0f, 0, 1.0f);
+        draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y),
+            ui::ToU32(ui::WithAlpha(t.text, 40.0f / 255.0f)), 3.0f, 0, 1.0f);
 
         if (is_selected) {
             // Blue glow effect matching main editor
@@ -1387,22 +1385,19 @@ void NodeEditor::RenderMinimap() {
                 draw_list->AddRect(
                     ImVec2(mm_pos.x - offset, mm_pos.y - offset),
                     ImVec2(mm_pos.x + mm_size.x + offset, mm_pos.y + mm_size.y + offset),
-                    IM_COL32(100, 180, 255, alpha), 3.0f, 0, 1.5f
+                    ui::ToU32(ui::WithAlpha(t.accent_text, alpha / 255.0f)), 3.0f, 0, 1.5f
                 );
             }
             // Bright selection border
-            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
-                IM_COL32(100, 180, 255, 255), 3.0f, 0, 2.0f);
+            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y),
+                ui::ToU32(t.accent_text), 3.0f, 0, 2.0f);
         }
     }
 
-    // Draw viewport rectangle
+    // Draw viewport rectangle: the canvas in grid space (screen = grid * zoom + panning)
     ImVec2 panning = ImNodes::EditorContextGetPanning();
-    ImVec2 canvas_size = ImGui::GetContentRegionAvail();
-
-    // Viewport in grid space (note: panning is negated)
-    ImVec2 viewport_min_grid = ImVec2(-panning.x, -panning.y);
-    ImVec2 viewport_max_grid = ImVec2(-panning.x + canvas_size.x, -panning.y + canvas_size.y);
+    ImVec2 viewport_min_grid = ImVec2(-panning.x / zoom_, -panning.y / zoom_);
+    ImVec2 viewport_max_grid = ImVec2((-panning.x + canvas_size_.x) / zoom_, (-panning.y + canvas_size_.y) / zoom_);
 
     ImVec2 viewport_mm_min = gridToMinimap(viewport_min_grid);
     ImVec2 viewport_mm_max = gridToMinimap(viewport_max_grid);
@@ -1414,15 +1409,15 @@ void NodeEditor::RenderMinimap() {
     viewport_mm_max.y = std::min(viewport_mm_max.y, window_pos.y + window_size.y);
 
     // Draw semi-transparent viewport indicator with enhanced styling
-    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(80, 140, 255, 35));
-    
+    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, ui::ToU32(ui::WithAlpha(t.accent, 35.0f / 255.0f)));
+
     // Draw viewport border with rounded corners
-    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 160, 255, 220), 2.0f, 0, 2.0f);
-    
+    draw_list->AddRect(viewport_mm_min, viewport_mm_max, ui::ToU32(ui::WithAlpha(t.accent_text, 220.0f / 255.0f)), 2.0f, 0, 2.0f);
+
     // Draw corner handles for visual emphasis
     const float handle_size = 4.0f;
-    ImU32 handle_color = IM_COL32(130, 180, 255, 255);
-    
+    ImU32 handle_color = ui::ToU32(t.accent_text);
+
     // Top-left corner
     draw_list->AddRectFilled(
         ImVec2(viewport_mm_min.x - 1, viewport_mm_min.y - 1),
@@ -1460,13 +1455,7 @@ void NodeEditor::RenderMinimap() {
             float rel_x = (mouse_pos.x - window_pos.x - offset_x) / scale + min_x;
             float rel_y = (mouse_pos.y - window_pos.y - offset_y) / scale + min_y;
 
-            // Center viewport on clicked position
-            ImVec2 new_panning = ImVec2(
-                -(rel_x - canvas_size.x * 0.5f),
-                -(rel_y - canvas_size.y * 0.5f)
-            );
-
-            ImNodes::EditorContextResetPanning(new_panning);
+            CenterViewOn(ImVec2(rel_x, rel_y));
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         } else {
             minimap_navigating_ = false;
@@ -1479,7 +1468,7 @@ void NodeEditor::RenderMinimap() {
 
         // Draw crosshair at mouse position
         const float crosshair_size = 8.0f;
-        ImU32 crosshair_color = IM_COL32(255, 255, 255, 200);
+        ImU32 crosshair_color = ui::ToU32(ui::WithAlpha(t.text_bright, 200.0f / 255.0f));
 
         draw_list->AddLine(
             ImVec2(mouse_pos.x - crosshair_size, mouse_pos.y),
@@ -1501,13 +1490,7 @@ void NodeEditor::RenderMinimap() {
             float rel_x = (mouse_pos.x - window_pos.x - offset_x) / scale + min_x;
             float rel_y = (mouse_pos.y - window_pos.y - offset_y) / scale + min_y;
 
-            // Center viewport on clicked position
-            ImVec2 new_panning = ImVec2(
-                -(rel_x - canvas_size.x * 0.5f),
-                -(rel_y - canvas_size.y * 0.5f)
-            );
-
-            ImNodes::EditorContextResetPanning(new_panning);
+            CenterViewOn(ImVec2(rel_x, rel_y));
         }
 
         // Show tooltip
@@ -1553,7 +1536,7 @@ void NodeEditor::RenderMinimap() {
     if (!mouse_in_minimap) {
         const float arrow_size = 6.0f;
         const float arrow_padding = 6.0f;
-        ImU32 arrow_color = IM_COL32(120, 120, 130, 150);
+        ImU32 arrow_color = ui::ToU32(ui::WithAlpha(t.text_dim, 150.0f / 255.0f));
 
         // Draw 4-way arrow icon at bottom right corner
         ImVec2 icon_pos = ImVec2(
@@ -1593,7 +1576,7 @@ void NodeEditor::RenderMinimap() {
     }  // End ImGui::Begin("##MinimapWindow")
     ImGui::End();
     ImGui::PopStyleColor(4);
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 }
 
 // Unified Canvas Phase 6: Helper function to get pin type name as string
@@ -1620,11 +1603,32 @@ void NodeEditor::RebuildPinLookup() {
 }
 
 void NodeEditor::RenderNodes() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Update execution pulse animation
     execution_pulse_time_ += ImGui::GetIO().DeltaTime;
 
-    // Render all nodes
+    int active_trace_node_id = -1;
+    std::string active_trace_stage;
+    float active_trace_progress = 0.0f;
+    if (is_training_) {
+        const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+        for (auto it = trace.recent_events.rbegin();
+             it != trace.recent_events.rend();
+             ++it) {
+            if (it->node_id >= 0) {
+                active_trace_node_id = it->node_id;
+                active_trace_stage = it->task_stage.empty()
+                    ? it->stage
+                    : it->task_stage;
+                active_trace_progress = it->task_progress;
+                break;
+            }
+        }
+    }
+
+    // Expanded wrappers are represented by frames, not separate canvas nodes.
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         // Unified Canvas Phase 6: Check execution state for highlighting
         auto exec_state_it = node_execution_states_.find(node.id);
         bool has_exec_state = (exec_state_it != node_execution_states_.end());
@@ -1633,25 +1637,37 @@ void NodeEditor::RenderNodes() {
         // Set node color based on execution state OR type
         ImU32 title_color;
         if (exec_state == NodeExecutionState::Executing) {
-            // Pulsing blue for executing node
+            // Pulsing running colour for the executing node
             float pulse = 0.5f + 0.5f * std::sin(execution_pulse_time_ * 4.0f);
-            ImU32 base = IM_COL32(30, 100, 200, 255);
-            ImU32 highlight = IM_COL32(60, 150, 255, 255);
-            title_color = ImGui::ColorConvertFloat4ToU32(ImVec4(
-                (base & 0xFF) / 255.0f * (1 - pulse) + (highlight & 0xFF) / 255.0f * pulse,
-                ((base >> 8) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 8) & 0xFF) / 255.0f * pulse,
-                ((base >> 16) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 16) & 0xFF) / 255.0f * pulse,
-                1.0f
-            ));
+            const ImVec4 base = ui::Mix(t.running, t.bg_window, 0.35f);
+            title_color = ui::ToU32(ui::Mix(base, t.running, pulse));
         } else if (exec_state == NodeExecutionState::Completed) {
-            // Green for completed
-            title_color = IM_COL32(50, 150, 70, 255);
+            // Success colour for completed
+            title_color = ui::ToU32(t.success);
         } else if (exec_state == NodeExecutionState::Error) {
-            // Red for error
-            title_color = IM_COL32(200, 50, 50, 255);
+            // Error colour for a failed node
+            title_color = ui::ToU32(t.error);
         } else {
             // Normal color based on type
             title_color = GetNodeColor(node.type);
+        }
+        // Extension nodes: the colour the plugin declares, or the
+        // not-installed look (TOFIX125, approved mockup).
+        std::optional<cyxwiz::ExtensionCanvasStyle> extension_style;
+        if (node.type == NodeType::PluginCustom) {
+            const auto descriptor =
+                cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+            extension_style = cyxwiz::BuildExtensionCanvasStyle(
+                node, descriptor ? &*descriptor : nullptr, GetNodeColor(node.type));
+            if (extension_style->missing) {
+                // The not-installed look in theme colours: a raised box with
+                // a caution outline and status line.
+                extension_style->box_color = ui::ToU32(t.bg_raised);
+                extension_style->outline_color = ui::ToU32(t.caution);
+            }
+            if (exec_state == NodeExecutionState::Idle) {
+                title_color = extension_style->box_color;
+            }
         }
 
         // ===== KNIME-STYLE RENDERING for ALL Nodes =====
@@ -1686,7 +1702,6 @@ void NodeEditor::RenderNodes() {
             // Settings - match Node Browser exactly
             const float ICON_BOX_SIZE = 64.0f * zoom_;
             const float CORNER_RADIUS = 6.0f;
-            const float BORDER_THICKNESS = 2.0f;
 
             bool show_name = true;
             auto show_name_it = node.parameters.find("show_name");
@@ -1712,25 +1727,50 @@ void NodeEditor::RenderNodes() {
                 float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
                 if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
                 for (const auto& pin : node.inputs) {
-                    bool is_connected = IsPinConnected(pin.id);
                     bool is_running = (exec_state == NodeExecutionState::Executing);
                     bool has_error = (exec_state == NodeExecutionState::Error);
-                    ImU32 pin_color = IM_COL32(220, 50, 50, 255);
-                    ImU32 pin_hover = IM_COL32(255, 80, 80, 255);
-                    ImNodesPinShape pin_shape = ImNodesPinShape_Circle;
+
+                    // Pin color is driven by the node's compile/train state.
+                    // Default = red hollow, CompileFailed = red solid,
+                    // CompilePassed = green hollow, Trained = green solid.
+                    ImU32 pin_color;
+                    ImU32 pin_hover;
+                    ImNodesPinShape pin_shape;
+                    switch (GetNodePinState(node.id)) {
+                        case NodePinState::CompileFailed:
+                            pin_color = ui::ToU32(t.caution);
+                            pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::CompilePassed:
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                        case NodePinState::Trained:
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::Default:
+                        default:
+                            pin_color = ui::ToU32(t.pending);
+                            pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                    }
+
+                    // Execution state takes highest priority
                     if (has_error) {
-                        pin_color = IM_COL32(220, 180, 50, 255);
-                        pin_hover = IM_COL32(240, 200, 80, 255);
+                        pin_color = ui::ToU32(t.error);
+                        pin_hover = ui::ToU32(ui::Mix(t.error, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     } else if (is_running) {
-                        pin_color = IM_COL32(50, 200, 50, 255);
-                        pin_hover = IM_COL32(80, 230, 80, 255);
-                        pin_shape = ImNodesPinShape_CircleFilled;
-                    } else if (is_connected) {
-                        pin_color = IM_COL32(220, 50, 50, 255);
-                        pin_hover = IM_COL32(255, 80, 80, 255);
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     }
+
                     ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
                     ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
                     ImNodes::BeginInputAttribute(pin.id, pin_shape);
@@ -1757,25 +1797,48 @@ void NodeEditor::RenderNodes() {
                 float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
                 if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
                 for (const auto& pin : node.outputs) {
-                    bool is_connected = IsPinConnected(pin.id);
                     bool is_running = (exec_state == NodeExecutionState::Executing);
                     bool has_error = (exec_state == NodeExecutionState::Error);
-                    ImU32 pin_color = IM_COL32(220, 50, 50, 255);
-                    ImU32 pin_hover = IM_COL32(255, 80, 80, 255);
-                    ImNodesPinShape pin_shape = ImNodesPinShape_Circle;
+
+                    // Pin color from node compile/train state (see input pin block above).
+                    ImU32 pin_color;
+                    ImU32 pin_hover;
+                    ImNodesPinShape pin_shape;
+                    switch (GetNodePinState(node.id)) {
+                        case NodePinState::CompileFailed:
+                            pin_color = ui::ToU32(t.caution);
+                            pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::CompilePassed:
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                        case NodePinState::Trained:
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::Default:
+                        default:
+                            pin_color = ui::ToU32(t.pending);
+                            pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                    }
+
+                    // Execution state takes highest priority
                     if (has_error) {
-                        pin_color = IM_COL32(220, 180, 50, 255);
-                        pin_hover = IM_COL32(240, 200, 80, 255);
+                        pin_color = ui::ToU32(t.error);
+                        pin_hover = ui::ToU32(ui::Mix(t.error, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     } else if (is_running) {
-                        pin_color = IM_COL32(50, 200, 50, 255);
-                        pin_hover = IM_COL32(80, 230, 80, 255);
-                        pin_shape = ImNodesPinShape_CircleFilled;
-                    } else if (is_connected) {
-                        pin_color = IM_COL32(220, 50, 50, 255);
-                        pin_hover = IM_COL32(255, 80, 80, 255);
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     }
+
                     ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
                     ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
                     ImNodes::BeginOutputAttribute(pin.id, pin_shape);
@@ -1797,15 +1860,42 @@ void NodeEditor::RenderNodes() {
             ImU32 bg_color = title_color;
             draw_list->AddRectFilled(icon_pos, icon_max, bg_color, CORNER_RADIUS);
             // Add rounded border around the icon box
-            ImU32 border_color = IM_COL32(80, 80, 90, 200);
+            ImU32 border_color = ui::ToU32(ui::WithAlpha(t.border, 200.0f / 255.0f));
             draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
+
+            // A missing extension: orange outline and "Not installed" under
+            // the box, like the Subgraph role line below.
+            if (extension_style && extension_style->missing) {
+                draw_list->AddRect(icon_pos, icon_max, extension_style->outline_color,
+                                   CORNER_RADIUS, 0, 2.5f);
+                const char* status = extension_style->status_line.c_str();
+                const ImVec2 status_size = ImGui::CalcTextSize(status);
+                draw_list->AddText(
+                    ImVec2(icon_pos.x + (ICON_BOX_SIZE - status_size.x) * 0.5f, icon_max.y + 3.0f),
+                    extension_style->outline_color, status);
+            }
+
+            // A recipe and a visual group look alike otherwise; say which it is.
+            if (node.type == NodeType::Subgraph) {
+                const bool recipe = IsPreparationRecipeNode(node.id);
+                const char* role = recipe ? "Preparation Recipe" : "Visual group (does not run)";
+                const ImU32 role_color = recipe ? ui::ToU32(t.success)
+                                                : ui::ToU32(t.text_dim);
+                if (recipe) {
+                    draw_list->AddRect(icon_pos, icon_max, role_color, CORNER_RADIUS, 0, 2.5f);
+                }
+                const ImVec2 role_size = ImGui::CalcTextSize(role);
+                draw_list->AddText(
+                    ImVec2(icon_pos.x + (ICON_BOX_SIZE - role_size.x) * 0.5f, icon_max.y + 3.0f),
+                    role_color, role);
+            }
 
             // Draw node name ABOVE the icon
             if (show_name) {
                 ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
                 float name_x = icon_pos.x + (ICON_BOX_SIZE - name_size.x) * 0.5f;
                 float name_y = icon_pos.y - name_size.y - 4.0f;
-                draw_list->AddText(ImVec2(name_x, name_y), IM_COL32(200, 200, 200, 255), node.name.c_str());
+                draw_list->AddText(ImVec2(name_x, name_y), ui::ToU32(t.text), node.name.c_str());
             }
 
             // Draw centered icon (55% of box height, like Node Browser)
@@ -1817,21 +1907,8 @@ void NodeEditor::RenderNodes() {
                 icon_pos.x + (ICON_BOX_SIZE - icon_text_size.x) * 0.5f,
                 icon_pos.y + (ICON_BOX_SIZE - icon_text_size.y) * 0.5f
             );
-            draw_list->AddText(font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
-
-            // Draw description BELOW the icon (e.g., "Reading adult.csv")
-            std::string display_desc = node.description;
-            if (display_desc.empty()) {
-                // Show default text for unconfigured nodes
-                display_desc = "Double-click to configure";
-            }
-            float desc_y = icon_max.y + 4.0f;
-            ImVec2 desc_size = ImGui::CalcTextSize(display_desc.c_str());
-            float desc_x = icon_pos.x + (ICON_BOX_SIZE - desc_size.x) * 0.5f;
-            // Clamp to icon left edge if description is wider
-            desc_x = std::max(desc_x, icon_pos.x - 10.0f);
-            ImU32 desc_color = node.description.empty() ? IM_COL32(120, 120, 120, 200) : IM_COL32(150, 180, 220, 255);
-            draw_list->AddText(ImVec2(desc_x, desc_y), desc_color, display_desc.c_str());
+            draw_list->AddText(font, scaled_icon_size, icon_text_pos,
+                               ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
             // Drag handle: icon box only (keeps pin drag separate from node move)
             ImVec2 cursor_backup = ImGui::GetCursorScreenPos();
@@ -1881,14 +1958,51 @@ void NodeEditor::RenderNodes() {
             // Node title bar
             ImNodes::BeginNodeTitleBar();
             ImGui::TextUnformatted(node.name.c_str());
+            if (node.type == NodeType::Subgraph) {
+                if (IsPreparationRecipeNode(node.id)) {
+                    ImGui::TextColored(t.success, "Preparation Recipe");
+                } else {
+                    ImGui::TextDisabled("Visual group (does not run)");
+                }
+            }
             ImNodes::EndNodeTitleBar();
 
             // Input pins
             for (const auto& pin : node.inputs) {
-                ImNodes::BeginInputAttribute(pin.id);
-                ImGui::TextUnformatted(pin.name.c_str());
+                ImU32 pin_color;
+                ImU32 pin_hover;
+                ImNodesPinShape pin_shape;
+                switch (GetNodePinState(node.id)) {
+                    case NodePinState::CompileFailed:
+                        pin_color = ui::ToU32(t.caution);
+                        pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                        break;
+                    case NodePinState::CompilePassed:
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                        pin_shape = ImNodesPinShape_Circle;
+                        break;
+                    case NodePinState::Trained:
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                        break;
+                    case NodePinState::Default:
+                    default:
+                        pin_color = ui::ToU32(t.pending);
+                        pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
+                        pin_shape = ImNodesPinShape_Circle;
+                        break;
+                }
 
-            ImNodes::EndInputAttribute();
+                ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
+                ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
+                ImNodes::BeginInputAttribute(pin.id, pin_shape);
+                ImGui::TextUnformatted(pin.name.c_str());
+                ImNodes::EndInputAttribute();
+                ImNodes::PopColorStyle();
+                ImNodes::PopColorStyle();
         }
 
         // Display key parameter based on node type
@@ -1897,42 +2011,42 @@ void NodeEditor::RenderNodes() {
             case NodeType::Dense: {
                 auto it = node.parameters.find("units");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Units: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Units: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::Conv2D: {
                 auto it = node.parameters.find("filters");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Filters: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Filters: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::MaxPool2D: {
                 auto it = node.parameters.find("pool_size");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Pool: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Pool: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::Dropout: {
                 auto it = node.parameters.find("rate");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Rate: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Rate: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::BatchNorm: {
                 auto it = node.parameters.find("momentum");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Momentum: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Momentum: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::Output: {
-                auto it = node.parameters.find("classes");
+                auto it = node.parameters.find("num_classes");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Classes: %s", it->second.c_str());
                 }
                 break;
             }
@@ -1941,31 +2055,24 @@ void NodeEditor::RenderNodes() {
             case NodeType::DatasetInput: {
                 auto it = node.parameters.find("dataset_name");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Dataset: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Dataset: %s", it->second.c_str());
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 0.7f), "Dataset: <select>");
+                    ImGui::TextColored(t.text_faint, "Dataset: <select>");
                 }
                 auto split_it = node.parameters.find("split");
                 if (split_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Split: %s", split_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Split: %s", split_it->second.c_str());
                 }
                 break;
             }
             case NodeType::DataLoader: {
                 auto it = node.parameters.find("batch_size");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Batch: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Batch: %s", it->second.c_str());
                 }
                 auto shuffle_it = node.parameters.find("shuffle");
                 if (shuffle_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Shuffle: %s", shuffle_it->second.c_str());
-                }
-                break;
-            }
-            case NodeType::Augmentation: {
-                auto it = node.parameters.find("transforms");
-                if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Transforms: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Shuffle: %s", shuffle_it->second.c_str());
                 }
                 break;
             }
@@ -1974,15 +2081,8 @@ void NodeEditor::RenderNodes() {
                 auto val_it = node.parameters.find("val_ratio");
                 auto test_it = node.parameters.find("test_ratio");
                 if (train_it != node.parameters.end() && val_it != node.parameters.end() && test_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Split: %s/%s/%s",
+                    ImGui::TextColored(t.accent_text, "Split: %s/%s/%s",
                         train_it->second.c_str(), val_it->second.c_str(), test_it->second.c_str());
-                }
-                break;
-            }
-            case NodeType::TensorReshape: {
-                auto it = node.parameters.find("shape");
-                if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Shape: %s", it->second.c_str());
                 }
                 break;
             }
@@ -1990,44 +2090,44 @@ void NodeEditor::RenderNodes() {
                 auto mean_it = node.parameters.find("mean");
                 auto std_it = node.parameters.find("std");
                 if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Mean: %s", mean_it->second.c_str());
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Std: %s", std_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Mean: %s", mean_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Std: %s", std_it->second.c_str());
                 }
                 break;
             }
             case NodeType::OneHotEncode: {
                 auto it = node.parameters.find("num_classes");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Classes: %s", it->second.c_str());
                 }
                 break;
             }
 
             // Text Processing
             case NodeType::TextTokenizer: {
-                const char* types[] = {"Whitespace", "Word", "Character"};
+                const char* types[] = {"Whitespace", "Word", "Character", "Byte BPE"};
                 auto type_it = node.parameters.find("tokenizer_type");
                 int type_idx = type_it != node.parameters.end() ? std::stoi(type_it->second) : 1;
-                if (type_idx >= 0 && type_idx < 3) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Type: %s", types[type_idx]);
+                if (type_idx >= 0 && type_idx < 4) {
+                    ImGui::TextColored(t.accent_text, "Type: %s", types[type_idx]);
                 }
                 auto len_it = node.parameters.find("max_length");
                 if (len_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Max Len: %s", len_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Max Len: %s", len_it->second.c_str());
                 }
                 break;
             }
             case NodeType::TextVocabulary: {
                 auto it = node.parameters.find("max_vocab_size");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Max Vocab: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Max Vocab: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::TextPadding: {
                 auto it = node.parameters.find("max_length");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Pad to: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Pad to: %s", it->second.c_str());
                 }
                 break;
             }
@@ -2038,10 +2138,10 @@ void NodeEditor::RenderNodes() {
                 auto k = node.parameters.find("kernel_size");
                 auto s = node.parameters.find("stride");
                 if (out_ch != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Out: %s ch", out_ch->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Out: %s ch", out_ch->second.c_str());
                 }
                 if (k != node.parameters.end() && s != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "K:%s S:%s", k->second.c_str(), s->second.c_str());
+                    ImGui::TextColored(t.accent_text, "K:%s S:%s", k->second.c_str(), s->second.c_str());
                 }
                 break;
             }
@@ -2050,38 +2150,42 @@ void NodeEditor::RenderNodes() {
                 auto sf = node.parameters.find("scale_factor");
                 auto mode = node.parameters.find("mode");
                 if (sf != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Scale: %sx", sf->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Scale: %sx", sf->second.c_str());
                 }
                 int m = mode != node.parameters.end() ? std::stoi(mode->second) : 0;
                 if (m >= 0 && m < 2) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Mode: %s", modes[m]);
+                    ImGui::TextColored(t.accent_text, "Mode: %s", modes[m]);
                 }
                 break;
             }
             case NodeType::PixelShuffle: {
                 auto it = node.parameters.find("upscale_factor");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Factor: %sx", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Factor: %sx", it->second.c_str());
                 }
                 break;
             }
 
             // Time-Series
             case NodeType::TimeSeriesWindow: {
-                auto ws = node.parameters.find("window_size");
-                auto fh = node.parameters.find("forecast_horizon");
-                if (ws != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Window: %s", ws->second.c_str());
+                auto iw = node.parameters.find("input_width");
+                auto shift = node.parameters.find("shift");
+                if (iw != node.parameters.end()) {
+                    ImGui::TextColored(t.accent_text, "Width: %s", iw->second.c_str());
                 }
-                if (fh != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Horizon: %s", fh->second.c_str());
+                if (shift != node.parameters.end()) {
+                    ImGui::TextColored(t.accent_text, "Shift: %s", shift->second.c_str());
                 }
                 break;
             }
             case NodeType::TimeSeriesFeatures: {
                 auto lag = node.parameters.find("lag_values");
                 if (lag != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Lags: %s", lag->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Lags: %s", lag->second.c_str());
+                }
+                auto rolling = node.parameters.find("rolling_windows");
+                if (rolling != node.parameters.end() && !rolling->second.empty()) {
+                    ImGui::TextColored(t.accent_text, "Rolling: %s", rolling->second.c_str());
                 }
                 break;
             }
@@ -2089,7 +2193,7 @@ void NodeEditor::RenderNodes() {
                 auto tr = node.parameters.find("train_ratio");
                 auto vr = node.parameters.find("val_ratio");
                 if (tr != node.parameters.end() && vr != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Train: %s  Val: %s", tr->second.c_str(), vr->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Train: %s  Val: %s", tr->second.c_str(), vr->second.c_str());
                 }
                 break;
             }
@@ -2098,7 +2202,7 @@ void NodeEditor::RenderNodes() {
             case NodeType::AudioInput: {
                 auto sr = node.parameters.find("sample_rate");
                 if (sr != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "SR: %s Hz", sr->second.c_str());
+                    ImGui::TextColored(t.accent_text, "SR: %s Hz", sr->second.c_str());
                 }
                 break;
             }
@@ -2106,23 +2210,23 @@ void NodeEditor::RenderNodes() {
             case NodeType::MelSpectrogram: {
                 auto nfft = node.parameters.find("n_fft");
                 if (nfft != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "FFT: %s", nfft->second.c_str());
+                    ImGui::TextColored(t.accent_text, "FFT: %s", nfft->second.c_str());
                 }
                 auto mels = node.parameters.find("n_mels");
                 if (mels != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "Mels: %s", mels->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Mels: %s", mels->second.c_str());
                 }
                 break;
             }
             case NodeType::MFCC: {
                 auto n = node.parameters.find("n_mfcc");
                 if (n != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "MFCC: %s", n->second.c_str());
+                    ImGui::TextColored(t.accent_text, "MFCC: %s", n->second.c_str());
                 }
                 break;
             }
             case NodeType::AudioAugmentation: {
-                ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "Audio Augment");
+                ImGui::TextColored(t.accent_text, "Audio Augment");
                 break;
             }
 
@@ -2130,14 +2234,14 @@ void NodeEditor::RenderNodes() {
             case NodeType::GymEnvironment: {
                 auto env = node.parameters.find("env_name");
                 if (env != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Env: %s", env->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Env: %s", env->second.c_str());
                 }
                 break;
             }
             case NodeType::ReplayBufferNode: {
                 auto cap = node.parameters.find("capacity");
                 if (cap != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Cap: %s", cap->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Cap: %s", cap->second.c_str());
                 }
                 break;
             }
@@ -2145,7 +2249,7 @@ void NodeEditor::RenderNodes() {
             case NodeType::ValueNetwork: {
                 auto hs = node.parameters.find("hidden_size");
                 if (hs != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Hidden: %s", hs->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Hidden: %s", hs->second.c_str());
                 }
                 break;
             }
@@ -2153,10 +2257,10 @@ void NodeEditor::RenderNodes() {
                 auto algo = node.parameters.find("algorithm");
                 auto eps = node.parameters.find("episodes");
                 if (algo != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Algo: %s", algo->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Algo: %s", algo->second.c_str());
                 }
                 if (eps != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Episodes: %s", eps->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Episodes: %s", eps->second.c_str());
                 }
                 break;
             }
@@ -2169,12 +2273,42 @@ void NodeEditor::RenderNodes() {
 
         // Output pins
         for (const auto& pin : node.outputs) {
-            ImNodes::BeginOutputAttribute(pin.id);
+            ImU32 pin_color;
+            ImU32 pin_hover;
+            ImNodesPinShape pin_shape;
+            switch (GetNodePinState(node.id)) {
+                case NodePinState::CompileFailed:
+                    pin_color = ui::ToU32(t.caution);
+                    pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
+                    pin_shape = ImNodesPinShape_CircleFilled;
+                    break;
+                case NodePinState::CompilePassed:
+                    pin_color = ui::ToU32(t.success);
+                    pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                    pin_shape = ImNodesPinShape_Circle;
+                    break;
+                case NodePinState::Trained:
+                    pin_color = ui::ToU32(t.success);
+                    pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                    pin_shape = ImNodesPinShape_CircleFilled;
+                    break;
+                case NodePinState::Default:
+                default:
+                    pin_color = ui::ToU32(t.pending);
+                    pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
+                    pin_shape = ImNodesPinShape_Circle;
+                    break;
+            }
+
+            ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
+            ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
+            ImNodes::BeginOutputAttribute(pin.id, pin_shape);
             const float text_width = ImGui::CalcTextSize(pin.name.c_str()).x;
             ImGui::Indent(120.0f + ImGui::CalcTextSize(pin.name.c_str()).x - text_width);
             ImGui::TextUnformatted(pin.name.c_str());
-
             ImNodes::EndOutputAttribute();
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
         }
         // Pop standard node title bar styles
             ImNodes::PopColorStyle();  // TitleBarSelected
@@ -2183,39 +2317,6 @@ void NodeEditor::RenderNodes() {
         } // End of standard node rendering else block
 
         ImNodes::EndNode();
-
-        // Check if this node is hovered for documentation tooltip
-        int hovered_node_id = -1;
-        if (ImNodes::IsNodeHovered(&hovered_node_id) && hovered_node_id == node.id) {
-            // Unified Canvas Phase 6: Show execution state in tooltip
-            if (has_exec_state && exec_state != NodeExecutionState::Idle) {
-                ImGui::BeginTooltip();
-
-                // Show execution status
-                if (exec_state == NodeExecutionState::Executing) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), ICON_FA_SPINNER " Executing...");
-                } else if (exec_state == NodeExecutionState::Completed) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Completed");
-                } else if (exec_state == NodeExecutionState::Error) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_FA_TIMES " Error");
-
-                    // Show error message if available
-                    auto error_it = node_execution_errors_.find(node.id);
-                    if (error_it != node_execution_errors_.end()) {
-                        ImGui::Separator();
-                        ImGui::TextWrapped("%s", error_it->second.c_str());
-                    }
-                } else if (exec_state == NodeExecutionState::Pending) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_CLOCK " Pending...");
-                }
-
-                ImGui::Separator();
-                ImGui::EndTooltip();
-            }
-
-            // Show node documentation
-            NodeDocumentationManager::Instance().RenderTooltip(node.type);
-        }
 
         // Draw selection glow effect for selected nodes (skip for KNIME-style)
         bool skip_glow = true;  // All nodes are KNIME-style now
@@ -2230,7 +2331,7 @@ void NodeEditor::RenderNodes() {
             for (int i = 3; i >= 0; --i) {
                 float offset = glow_size * (i + 1) * 0.4f;
                 int alpha = 15 * (4 - i);  // Fade out: 60, 45, 30, 15
-                ImU32 glow_color = IM_COL32(100, 180, 255, alpha);
+                ImU32 glow_color = ui::ToU32(ui::WithAlpha(t.accent_text, alpha / 255.0f));
                 draw_list->AddRect(
                     ImVec2(node_pos.x - offset, node_pos.y - offset),
                     ImVec2(node_pos.x + node_dims.x + offset, node_pos.y + node_dims.y + offset),
@@ -2245,15 +2346,18 @@ void NodeEditor::RenderNodes() {
             draw_list->AddRect(
                 ImVec2(node_pos.x - 1, node_pos.y - 1),
                 ImVec2(node_pos.x + node_dims.x + 1, node_pos.y + node_dims.y + 1),
-                IM_COL32(100, 180, 255, 180),
+                ui::ToU32(ui::WithAlpha(t.accent_text, 180.0f / 255.0f)),
                 6.0f * zoom_,
                 0,
                 2.0f
             );
         }
 
+        // Plot nodes show their data status below the node (TOFIX134 P2).
+        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) {
+            DrawPlotNodeStatus(node);
+        } else if (!node.description.empty()) {
         // KNIME-style: Draw node description below the node (bound to node, moves with it)
-        if (!node.description.empty()) {
             ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -2304,19 +2408,19 @@ void NodeEditor::RenderNodes() {
             ImVec2 box_min(text_x - padding_x, desc_y - padding_y);
             ImVec2 box_max(text_x + text_size.x + padding_x, desc_y + text_size.y + padding_y);
 
-            draw_list->AddRectFilled(box_min, box_max, IM_COL32(30, 35, 50, 245), 5.0f * zoom_);
-            draw_list->AddRect(box_min, box_max, IM_COL32(80, 100, 130, 220), 5.0f * zoom_, 0, 1.2f * zoom_);
+            draw_list->AddRectFilled(box_min, box_max, ui::ToU32(ui::WithAlpha(t.bg_panel, 245.0f / 255.0f)), 5.0f * zoom_);
+            draw_list->AddRect(box_min, box_max, ui::ToU32(ui::WithAlpha(t.border, 220.0f / 255.0f)), 5.0f * zoom_, 0, 1.2f * zoom_);
 
             // Left accent line
             draw_list->AddRectFilled(
                 ImVec2(box_min.x + 2.0f * zoom_, box_min.y + 3.0f * zoom_),
                 ImVec2(box_min.x + 5.0f * zoom_, box_max.y - 3.0f * zoom_),
-                IM_COL32(100, 149, 237, 255)
+                ui::ToU32(t.accent)
             );
 
             // Draw text
             draw_list->AddText(font, font_size, ImVec2(text_x + 4.0f * zoom_, desc_y),
-                IM_COL32(230, 235, 245, 255), wrapped.c_str());
+                ui::ToU32(t.text), wrapped.c_str());
         }
 
         // Apply any pending position AFTER the node has been created
@@ -2344,7 +2448,7 @@ void NodeEditor::RenderNodes() {
                 ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
                 // Draw warning icon (yellow triangle with exclamation mark)
-                ImU32 warning_color = IM_COL32(255, 193, 7, 255);  // Amber/yellow
+                ImU32 warning_color = ui::ToU32(t.warning);
                 draw_list->AddText(icon_pos, warning_color, ICON_FA_TRIANGLE_EXCLAMATION);
 
                 // Show tooltip when hovering over icon area
@@ -2358,7 +2462,7 @@ void NodeEditor::RenderNodes() {
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 
                     // Warning header
-                    ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+                    ImGui::TextColored(ui::CurrentTokens().warning,
                                      ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
                     ImGui::Separator();
 
@@ -2368,10 +2472,10 @@ void NodeEditor::RenderNodes() {
                     // Suggested fix
                     if (warning.has_auto_fix && !warning.suggested_fix.empty()) {
                         ImGui::Spacing();
-                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                        ImGui::TextColored(t.success,
                                          ICON_FA_LIGHTBULB " Suggestion:");
                         ImGui::TextWrapped("%s", warning.suggested_fix.c_str());
-                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                        ImGui::TextColored(t.text_dim,
                                          "(Try connecting the nodes to see auto-fix dialog)");
                     }
 
@@ -2392,6 +2496,69 @@ void NodeEditor::RenderNodes() {
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
+            if (is_training_) {
+                const bool is_active_trace_node =
+                    node.id == active_trace_node_id;
+                std::string badge = "training";
+                if (is_active_trace_node && !active_trace_stage.empty()) {
+                    badge = active_trace_stage;
+                    if (active_trace_progress > 0.0f) {
+                        badge += " ";
+                        badge += std::to_string(static_cast<int>(
+                            active_trace_progress * 100.0f));
+                        badge += "%";
+                    }
+                }
+                const char* badge_text = badge.c_str();
+                ImVec2 text_size = ImGui::CalcTextSize(badge_text);
+                const float pad_x = 7.0f * zoom_;
+                const float pad_y = 3.0f * zoom_;
+                ImVec2 badge_min(
+                    node_pos.x + node_dims.x - text_size.x - pad_x * 2.0f - 8.0f * zoom_,
+                    node_pos.y + 6.0f * zoom_);
+                ImVec2 badge_max(
+                    badge_min.x + text_size.x + pad_x * 2.0f,
+                    badge_min.y + text_size.y + pad_y * 2.0f);
+                const ImVec4 badge_fill = is_active_trace_node
+                    ? ui::WithAlpha(t.accent, 225.0f / 255.0f)
+                    : ui::WithAlpha(t.bg_raised, 210.0f / 255.0f);
+                draw_list->AddRectFilled(
+                    badge_min,
+                    badge_max,
+                    ui::ToU32(badge_fill),
+                    7.0f * zoom_);
+                draw_list->AddRect(
+                    badge_min,
+                    badge_max,
+                    is_active_trace_node
+                        ? ui::ToU32(ui::WithAlpha(t.accent_text, 245.0f / 255.0f))
+                        : ui::ToU32(ui::WithAlpha(t.border, 230.0f / 255.0f)),
+                    7.0f * zoom_,
+                    0,
+                    1.0f * zoom_);
+                draw_list->AddText(
+                    ImVec2(badge_min.x + pad_x, badge_min.y + pad_y),
+                    ui::ToU32(ui::ReadableOn(t, badge_fill)),
+                    badge_text);
+
+                if (is_active_trace_node && active_trace_progress > 0.0f) {
+                    const float clamped_progress =
+                        std::max(0.0f, std::min(1.0f, active_trace_progress));
+                    const float bar_height = 3.0f * zoom_;
+                    ImVec2 bar_min(badge_min.x, badge_max.y + 2.0f * zoom_);
+                    ImVec2 bar_max(badge_max.x, badge_max.y + 2.0f * zoom_ + bar_height);
+                    ImVec2 fill_max(
+                        bar_min.x + (bar_max.x - bar_min.x) * clamped_progress,
+                        bar_max.y);
+                    draw_list->AddRectFilled(
+                        bar_min, bar_max, ui::ToU32(ui::WithAlpha(t.bg_input, 210.0f / 255.0f)),
+                        2.0f * zoom_);
+                    draw_list->AddRectFilled(
+                        bar_min, fill_max, ui::ToU32(ui::WithAlpha(t.running, 240.0f / 255.0f)),
+                        2.0f * zoom_);
+                }
+            }
+
             // Position: centered below node
             float indicator_radius = 5.0f * zoom_;
             ImVec2 indicator_pos = ImVec2(
@@ -2406,16 +2573,16 @@ void NodeEditor::RenderNodes() {
 
             switch (exec_state) {
                 case NodeExecutionState::Completed:
-                    indicator_color = IM_COL32(76, 175, 80, 255);   // Green
+                    indicator_color = ui::ToU32(t.success);
                     break;
                 case NodeExecutionState::Pending:
-                    indicator_color = IM_COL32(255, 193, 7, 255);   // Yellow/Amber
+                    indicator_color = ui::ToU32(t.pending);
                     break;
                 case NodeExecutionState::Executing:
                     is_executing = true;
                     break;
                 case NodeExecutionState::Error:
-                    indicator_color = IM_COL32(244, 67, 54, 255);   // Red
+                    indicator_color = ui::ToU32(t.error);
                     break;
                 default:
                     show_indicator = false;  // Idle - no indicator
@@ -2430,21 +2597,21 @@ void NodeEditor::RenderNodes() {
 
                     // Draw background circle (faded)
                     draw_list->AddCircle(indicator_pos, indicator_radius,
-                                        IM_COL32(60, 150, 255, 60), 0, 2.0f * zoom_);
+                                        ui::ToU32(ui::WithAlpha(t.running, 60.0f / 255.0f)), 0, 2.0f * zoom_);
 
                     // Draw spinning arc
                     draw_list->PathArcTo(indicator_pos, indicator_radius, angle, angle + arc_length, 12);
-                    draw_list->PathStroke(IM_COL32(60, 150, 255, 255), false, 2.5f * zoom_);
+                    draw_list->PathStroke(ui::ToU32(t.running), false, 2.5f * zoom_);
                 } else {
                     // Static filled circle for other states
                     draw_list->AddCircleFilled(indicator_pos, indicator_radius, indicator_color);
                     draw_list->AddCircle(indicator_pos, indicator_radius,
-                                        IM_COL32(0, 0, 0, 80), 0, 1.0f * zoom_);
+                                        ui::ToU32(ui::WithAlpha(t.bg_window, 80.0f / 255.0f)), 0, 1.0f * zoom_);
 
                     // Add X overlay for error state
                     if (exec_state == NodeExecutionState::Error) {
                         float x_size = indicator_radius * 0.5f;
-                        ImU32 x_color = IM_COL32(255, 255, 255, 255);
+                        ImU32 x_color = ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(indicator_color)));
                         draw_list->AddLine(
                             ImVec2(indicator_pos.x - x_size, indicator_pos.y - x_size),
                             ImVec2(indicator_pos.x + x_size, indicator_pos.y + x_size),
@@ -2460,7 +2627,7 @@ void NodeEditor::RenderNodes() {
                     // Add checkmark for completed state
                     if (exec_state == NodeExecutionState::Completed) {
                         float check_size = indicator_radius * 0.5f;
-                        ImU32 check_color = IM_COL32(255, 255, 255, 255);
+                        ImU32 check_color = ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(indicator_color)));
                         // Draw checkmark: short line down-left, then long line down-right
                         ImVec2 p1 = ImVec2(indicator_pos.x - check_size * 0.5f, indicator_pos.y);
                         ImVec2 p2 = ImVec2(indicator_pos.x - check_size * 0.1f, indicator_pos.y + check_size * 0.4f);
@@ -2473,35 +2640,89 @@ void NodeEditor::RenderNodes() {
         }
     }
 
+    const bool training_animation_active =
+        is_training_ || cyxwiz::TrainingManager::Instance().IsTrainingActive();
+
     // Render all links with color based on link type (and training animation if active)
     for (const auto& link : links_) {
         ImU32 link_color, link_hovered, link_selected;
 
-        if (is_training_) {
-            // Create pulsing amber/green effect during training
+        auto src_exec_it = node_execution_states_.find(link.from_node);
+        auto dst_exec_it = node_execution_states_.find(link.to_node);
+        const NodeExecutionState src_exec = src_exec_it == node_execution_states_.end()
+            ? NodeExecutionState::Idle
+            : src_exec_it->second;
+        const NodeExecutionState dst_exec = dst_exec_it == node_execution_states_.end()
+            ? NodeExecutionState::Idle
+            : dst_exec_it->second;
+        const bool pipeline_link_flowing = pipeline_execution_active_ &&
+            src_exec == NodeExecutionState::Completed &&
+            dst_exec == NodeExecutionState::Executing;
+        const bool pipeline_link_completed =
+            src_exec == NodeExecutionState::Completed &&
+            dst_exec == NodeExecutionState::Completed;
+
+        if (training_animation_active) {
+            // Pulse between warning and success colours during training
             // Pulse frequency: ~2 Hz (full cycle every 0.5 seconds)
             float pulse = (std::sin(training_animation_time_ * 12.0f + link.id * 0.5f) + 1.0f) * 0.5f;
 
-            // Interpolate between amber (255, 191, 0) and green (0, 255, 100)
-            float r = 255.0f * (1.0f - pulse) + 0.0f * pulse;
-            float g = 191.0f * (1.0f - pulse) + 255.0f * pulse;
-            float b = 0.0f * (1.0f - pulse) + 100.0f * pulse;
-
-            link_color = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 255);
-            link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
-            link_selected = IM_COL32(255, 255, 255, 255);
+            const ImVec4 pulse_colour = ui::Mix(t.warning, t.success, pulse);
+            link_color = ui::ToU32(pulse_colour);
+            link_hovered = ui::ToU32(ui::WithAlpha(pulse_colour, 200.0f / 255.0f));
+            link_selected = ui::ToU32(t.text_bright);
+        } else if (pipeline_link_flowing) {
+            const float pulse =
+                (std::sin(execution_pulse_time_ * 10.0f + link.id * 0.35f) + 1.0f) * 0.5f;
+            link_color = ui::ToU32(ui::Mix(t.running, t.text_bright, 0.35f * pulse));
+            link_hovered = ui::ToU32(ui::Mix(t.running, t.text_bright, 0.4f));
+            link_selected = ui::ToU32(t.text_bright);
+        } else if (pipeline_link_completed) {
+            link_color = ui::ToU32(ui::WithAlpha(t.success, 240.0f / 255.0f));
+            link_hovered = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+            link_selected = ui::ToU32(t.text_bright);
         } else {
-            // Use link type colors when not training
-            link_color = GetLinkColor(link.type);
-            link_hovered = GetLinkHoverColor(link.type);
-            link_selected = IM_COL32(255, 255, 255, 255);
+            // Standard data-flow links follow the latest compile (TOFIX123):
+            // grey until compiled, orange when the node at either end has a
+            // compile error (hover shows why), green if passed, solid green if
+            // trained. Special link types keep their own distinctive colors.
+            if (link.type == LinkType::TensorFlow) {
+                NodePinState src_state = GetNodePinState(link.from_node);
+                if (GetNodePinState(link.to_node) == NodePinState::CompileFailed) {
+                    src_state = NodePinState::CompileFailed;
+                }
+                switch (src_state) {
+                    case NodePinState::CompileFailed:
+                        link_color   = ui::ToU32(t.caution);
+                        link_hovered = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
+                        break;
+                    case NodePinState::CompilePassed:
+                        link_color   = ui::ToU32(ui::WithAlpha(t.success, 200.0f / 255.0f));  // slightly translucent
+                        link_hovered = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                        break;
+                    case NodePinState::Trained:
+                        link_color   = ui::ToU32(t.success);  // solid green
+                        link_hovered = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+                        break;
+                    case NodePinState::Default:
+                    default:
+                        link_color   = ui::ToU32(ui::WithAlpha(t.pending, 170.0f / 255.0f));  // not compiled yet
+                        link_hovered = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
+                        break;
+                }
+            } else {
+                link_color = GetLinkColor(link.type);
+                link_hovered = GetLinkHoverColor(link.type);
+            }
+            link_selected = ui::ToU32(t.text_bright);
         }
 
         ImNodes::PushColorStyle(ImNodesCol_Link, link_color);
         ImNodes::PushColorStyle(ImNodesCol_LinkHovered, link_hovered);
         ImNodes::PushColorStyle(ImNodesCol_LinkSelected, link_selected);
 
-        ImNodes::Link(link.id, link.from_pin, link.to_pin);
+        const auto display = detail::DisplaySubgraphLink(link, nodes_, subgraphs_);
+        if (display) ImNodes::Link(display->id, display->from_pin, display->to_pin);
 
         ImNodes::PopColorStyle();
         ImNodes::PopColorStyle();
@@ -2518,6 +2739,93 @@ void NodeEditor::RenderNodes() {
     }
 }
 
+void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto node_it = std::find_if(
+        nodes_.begin(), nodes_.end(),
+        [hovered_node_id](const MLNode& node) {
+            return node.id == hovered_node_id;
+        });
+    if (node_it == nodes_.end()) {
+        return;
+    }
+
+    const MLNode& node = *node_it;
+    const auto exec_state_it = node_execution_states_.find(node.id);
+    const bool has_exec_state = exec_state_it != node_execution_states_.end();
+    const NodeExecutionState exec_state = has_exec_state
+        ? exec_state_it->second
+        : NodeExecutionState::Idle;
+
+    if (has_exec_state && exec_state != NodeExecutionState::Idle) {
+        ImGui::BeginTooltip();
+        if (exec_state == NodeExecutionState::Executing) {
+            ImGui::TextColored(t.running,
+                               ICON_FA_SPINNER " Executing...");
+        } else if (exec_state == NodeExecutionState::Completed) {
+            ImGui::TextColored(t.success,
+                               ICON_FA_CHECK " Completed");
+        } else if (exec_state == NodeExecutionState::Error) {
+            ImGui::TextColored(t.error,
+                               ICON_FA_TIMES " Error");
+            const auto error_it = node_execution_errors_.find(node.id);
+            if (error_it != node_execution_errors_.end()) {
+                ImGui::Separator();
+                ImGui::TextWrapped("%s", error_it->second.c_str());
+            }
+        } else if (exec_state == NodeExecutionState::Pending) {
+            ImGui::TextColored(t.pending,
+                               ICON_FA_CLOCK " Pending...");
+        }
+        ImGui::Separator();
+        ImGui::EndTooltip();
+    }
+
+    if (is_training_) {
+        const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+        const auto active_it = std::find_if(
+            trace.recent_events.rbegin(), trace.recent_events.rend(),
+            [](const auto& event) { return event.node_id >= 0; });
+        if (active_it != trace.recent_events.rend() &&
+            active_it->node_id == hovered_node_id) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(t.accent_text,
+                               "Active training node");
+            if (!active_it->task_name.empty()) {
+                ImGui::Text("Task: %s", active_it->task_name.c_str());
+            }
+            const std::string& stage = active_it->task_stage.empty()
+                ? active_it->stage
+                : active_it->task_stage;
+            if (!stage.empty()) {
+                ImGui::Text("Stage: %s", stage.c_str());
+            }
+            if (!active_it->message.empty()) {
+                ImGui::TextWrapped("%s", active_it->message.c_str());
+            }
+            if (active_it->task_progress > 0.0f) {
+                ImGui::ProgressBar(active_it->task_progress,
+                                   ImVec2(220.0f, 0.0f));
+            }
+            if (active_it->total_items > 0) {
+                ImGui::Text(
+                    "Items: %llu / %llu",
+                    static_cast<unsigned long long>(active_it->processed_items),
+                    static_cast<unsigned long long>(active_it->total_items));
+            }
+            if (active_it->estimated_memory_bytes > 0) {
+                const double mib =
+                    static_cast<double>(active_it->estimated_memory_bytes) /
+                    (1024.0 * 1024.0);
+                ImGui::Text("Estimated memory: %.1f MiB", mib);
+            }
+            ImGui::EndTooltip();
+        }
+    }
+
+    NodeDocumentationManager::Instance().RenderTooltip(node);
+}
+
 void NodeEditor::HandleInteractions() {
     // Handle new link creation
     // Use the extended version that provides both node IDs and pin IDs
@@ -2525,7 +2833,9 @@ void NodeEditor::HandleInteractions() {
     if (ImNodes::IsLinkCreated(&from_node, &from_pin, &to_node, &to_pin)) {
         // Validate the link before creating it
         std::string error_message;
-        if (ValidateLink(from_pin, to_pin, error_message)) {
+        const bool crosses_boundary = detail::CrossesExpandedSubgraphBoundary(from_node, to_node, subgraphs_);
+        if (crosses_boundary) error_message = "Collapse the subgraph before changing external connections.";
+        if (!crosses_boundary && ValidateLink(from_pin, to_pin, error_message)) {
             SaveUndoState();  // Save state before creating link
 
             NodeLink link;
@@ -2554,6 +2864,7 @@ void NodeEditor::HandleInteractions() {
 
         if (it != links_.end()) {
             SaveUndoState();  // Save state before deleting link
+            ClearValidationState();  // Graph changed — stale compile results
             spdlog::info("Deleted link {}", deleted_link_id);
             links_.erase(it);
         }
@@ -2565,7 +2876,7 @@ void NodeEditor::HandleInteractions() {
     // Debug: Log selection count (only when it changes)
     static int last_selected_count = 0;
     if (num_selected_nodes != last_selected_count) {
-        spdlog::info("Selected nodes: {}", num_selected_nodes);
+        spdlog::debug("Selected nodes: {}", num_selected_nodes);
         last_selected_count = num_selected_nodes;
     }
 
@@ -2609,6 +2920,7 @@ void NodeEditor::ShowSearchBar() {
         window_pos.y + ImGui::GetFrameHeight() + 60.0f  // Below toolbar
     );
 
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(bar_pos);
     ImGui::SetNextWindowSize(ImVec2(bar_width, bar_height));
     ImGui::SetNextWindowBgAlpha(0.95f);
@@ -2655,7 +2967,7 @@ void NodeEditor::ShowSearchBar() {
             ImGui::Text("%d/%zu", search_state_.current_match_index + 1,
                        search_state_.matching_node_ids.size());
         } else if (strlen(search_state_.search_buffer) > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No matches");
+            ImGui::TextColored(ui::CurrentTokens().caution, "No matches");
         }
 
         // Navigation buttons
@@ -2760,6 +3072,9 @@ void NodeEditor::NavigateToMatch(int direction) {
 
     // Get the matched node ID
     int node_id = search_state_.matching_node_ids[search_state_.current_match_index];
+    if (const auto* data = GetSubgraphData(node_id); data && data->expanded && !data->internal_nodes.empty()) {
+        node_id = data->internal_nodes.front().id;
+    }
 
     // Select the node
     ImNodes::ClearNodeSelection();
@@ -3045,6 +3360,7 @@ NodeGroup* NodeEditor::FindGroupContainingNode(int node_id) {
 
 void NodeEditor::RenderAnnotations() {
     if (annotations_.empty()) return;
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 editor_origin = ImGui::GetWindowPos();
@@ -3125,13 +3441,12 @@ void NodeEditor::RenderAnnotations() {
         }
 
         // Colors
+        // The note colour is user data; ink and outlines are derived from it.
         ImU32 bg_color = annotation.color;
-        ImU32 title_color = IM_COL32(
-            static_cast<int>((bg_color & 0xFF) * 0.75f),
-            static_cast<int>(((bg_color >> 8) & 0xFF) * 0.75f),
-            static_cast<int>(((bg_color >> 16) & 0xFF) * 0.75f),
-            255
-        );
+        const ImVec4 bg_vec = ImGui::ColorConvertU32ToFloat4(bg_color);
+        const ImVec4 title_vec(bg_vec.x * 0.75f, bg_vec.y * 0.75f, bg_vec.z * 0.75f, 1.0f);
+        ImU32 title_color = ui::ToU32(title_vec);
+        const ImVec4 ink = ui::ReadableOn(t, bg_vec);
 
         // Draw title bar
         ImDrawFlags corners = annotation.is_minimized ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop;
@@ -3146,11 +3461,17 @@ void NodeEditor::RenderAnnotations() {
         }
 
         // Draw border
-        ImU32 border_color = (is_hovered || is_active) ? IM_COL32(130, 130, 110, 255) : IM_COL32(100, 100, 80, 200);
+        ImU32 border_color = (is_hovered || is_active)
+            ? ui::ToU32(ui::WithAlpha(ui::Mix(bg_vec, ink, 0.45f), 1.0f))
+            : ui::ToU32(ui::WithAlpha(ui::Mix(bg_vec, ink, 0.3f), 200.0f / 255.0f));
         draw_list->AddRect(p_min, p_max, border_color, 4.0f * zoom_, 0, 1.5f * zoom_);
 
         // Draw minimize button
-        ImU32 min_btn_color = mouse_on_min_btn ? IM_COL32(80, 70, 50, 255) : IM_COL32(100, 90, 70, 200);
+        const ImVec4 min_btn_vec = mouse_on_min_btn
+            ? ui::WithAlpha(ui::Mix(title_vec, ink, 0.35f), 1.0f)
+            : ui::WithAlpha(ui::Mix(title_vec, ink, 0.2f), 200.0f / 255.0f);
+        ImU32 min_btn_color = ui::ToU32(min_btn_vec);
+        const ImU32 min_btn_ink = ui::ToU32(ui::ReadableOn(t, min_btn_vec));
         draw_list->AddRectFilled(min_btn_min, min_btn_max, min_btn_color, 3.0f * zoom_);
         // Draw - or + symbol
         float sym_y = (min_btn_min.y + min_btn_max.y) * 0.5f;
@@ -3158,7 +3479,7 @@ void NodeEditor::RenderAnnotations() {
         draw_list->AddLine(
             ImVec2(min_btn_min.x + sym_margin, sym_y),
             ImVec2(min_btn_max.x - sym_margin, sym_y),
-            IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+            min_btn_ink, 2.0f * zoom_
         );
         if (annotation.is_minimized) {
             // Draw + (add vertical line)
@@ -3166,7 +3487,7 @@ void NodeEditor::RenderAnnotations() {
             draw_list->AddLine(
                 ImVec2(sym_x, min_btn_min.y + sym_margin),
                 ImVec2(sym_x, min_btn_max.y - sym_margin),
-                IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+                min_btn_ink, 2.0f * zoom_
             );
         }
 
@@ -3175,7 +3496,7 @@ void NodeEditor::RenderAnnotations() {
         float title_font_size = 13.0f * zoom_;
         std::string display_title = annotation.title.empty() ? "Note" : annotation.title;
         ImVec2 title_pos(p_min.x + 8.0f * zoom_, p_min.y + 5.0f * zoom_);
-        draw_list->AddText(font, title_font_size, title_pos, IM_COL32(50, 40, 20, 255), display_title.c_str());
+        draw_list->AddText(font, title_font_size, title_pos, ui::ToU32(ui::ReadableOn(t, title_vec)), display_title.c_str());
 
         // Draw content text (only if not minimized)
         if (!annotation.is_minimized && !annotation.content.empty()) {
@@ -3184,7 +3505,7 @@ void NodeEditor::RenderAnnotations() {
             float content_y = p_min.y + title_height + 6.0f * zoom_;
             float max_width = size.x - 16.0f * zoom_;
             draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
-                IM_COL32(40, 35, 20, 255), annotation.content.c_str(), nullptr, max_width);
+                ui::ToU32(ink), annotation.content.c_str(), nullptr, max_width);
         }
 
         // Placeholder text if empty and not minimized
@@ -3193,7 +3514,7 @@ void NodeEditor::RenderAnnotations() {
             float content_x = p_min.x + 8.0f * zoom_;
             float content_y = p_min.y + title_height + 8.0f * zoom_;
             draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
-                IM_COL32(120, 110, 90, 180), "Double-click to edit...");
+                ui::ToU32(ui::WithAlpha(ink, 180.0f / 255.0f)), "Double-click to edit...");
         }
 
         // Selection highlight
@@ -3201,7 +3522,7 @@ void NodeEditor::RenderAnnotations() {
             draw_list->AddRect(
                 ImVec2(p_min.x - 2, p_min.y - 2),
                 ImVec2(p_max.x + 2, p_max.y + 2),
-                IM_COL32(100, 150, 255, 200),
+                ui::ToU32(ui::WithAlpha(t.accent_text, 200.0f / 255.0f)),
                 6.0f * zoom_, 0, 2.0f * zoom_
             );
         }
@@ -3289,7 +3610,7 @@ void NodeEditor::RenderAnnotationEditPopup() {
         }
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 130);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ui::CurrentTokens().error);
         if (ImGui::Button("Delete", ImVec2(120, 0))) {
             // Remove annotation
             annotations_.erase(
@@ -3366,7 +3687,9 @@ void NodeEditor::RenderGroups() {
 
         // Draw group label
         ImVec2 label_pos = ImVec2(screen_min.x + 8.0f, screen_min.y + 4.0f);
-        draw_list->AddText(label_pos, IM_COL32(255, 255, 255, 220), group.name.c_str());
+        draw_list->AddText(label_pos,
+            ui::ToU32(ui::WithAlpha(ui::ReadableOn(ui::CurrentTokens(), group.color), 220.0f / 255.0f)),
+            group.name.c_str());
     }
 }
 
@@ -3374,6 +3697,7 @@ void NodeEditor::RenderGroups() {
 
 void NodeEditor::RenderFrames() {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Reset frame right-click flag each frame
     frame_right_clicked_ = false;
@@ -3402,8 +3726,9 @@ void NodeEditor::RenderFrames() {
             ImVec4(frame.color.x * 0.2f, frame.color.y * 0.2f, frame.color.z * 0.2f, 0.15f));
         ImU32 border_color = ImGui::ColorConvertFloat4ToU32(
             ImVec4(frame.color.x, frame.color.y, frame.color.z, frame.is_selected ? 1.0f : 0.6f));
-        ImU32 text_color = IM_COL32(255, 255, 255, 230);
-        ImU32 desc_color = IM_COL32(200, 200, 200, 180);
+        ImU32 text_color = ui::ToU32(ui::WithAlpha(
+            ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(header_color)), 230.0f / 255.0f));
+        ImU32 desc_color = ui::ToU32(ui::WithAlpha(t.text_dim, 180.0f / 255.0f));
 
         // Draw body background
         ImVec2 body_min = ImVec2(screen_min.x, screen_min.y + HEADER_HEIGHT);
@@ -3450,7 +3775,7 @@ void NodeEditor::RenderFrames() {
             ImVec2(screen_max.x, screen_max.y - RESIZE_HANDLE),
             ImVec2(screen_max.x - RESIZE_HANDLE, screen_max.y),
             screen_max,
-            IM_COL32(200, 200, 200, 120));
+            ui::ToU32(ui::WithAlpha(t.text_dim, 120.0f / 255.0f)));
 
         // Handle interactions - header for drag, resize corner for resize
         ImGui::SetCursorScreenPos(screen_min);
@@ -3662,309 +3987,68 @@ void NodeEditor::DeleteFrame(int frame_id) {
     spdlog::info("Deleted frame {}", frame_id);
 }
 
-// ===== Subgraph Encapsulation =====
 
-void NodeEditor::CreateSubgraphFromSelection(const std::string& name) {
-    if (selected_node_ids_.size() < 2) {
-        spdlog::warn("Need at least 2 selected nodes to create subgraph");
-        return;
-    }
-
-    SaveUndoState();
-
-    // Collect selected nodes and their internal links
-    std::vector<MLNode> internal_nodes;
-    std::vector<NodeLink> internal_links;
-    std::set<int> selected_set(selected_node_ids_.begin(), selected_node_ids_.end());
-
-    // Copy selected nodes to internal storage
-    for (const auto& node : nodes_) {
-        if (selected_set.count(node.id)) {
-            internal_nodes.push_back(node);
-        }
-    }
-
-    // Find internal links (both endpoints in selection)
-    for (const auto& link : links_) {
-        if (selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
-            internal_links.push_back(link);
-        }
-    }
-
-    // Find boundary pins - inputs are pins with external sources, outputs have external destinations
-    std::vector<std::pair<int, int>> input_pins;   // (node_id, pin_id) pairs
-    std::vector<std::pair<int, int>> output_pins;  // (node_id, pin_id) pairs
-
-    for (const auto& link : links_) {
-        // Link from outside to inside -> input boundary
-        if (!selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
-            input_pins.push_back({link.to_node, link.to_pin});
-        }
-        // Link from inside to outside -> output boundary
-        if (selected_set.count(link.from_node) && !selected_set.count(link.to_node)) {
-            output_pins.push_back({link.from_node, link.from_pin});
-        }
-    }
-
-    // Calculate center position of selected nodes
-    float center_x = 0, center_y = 0;
-    int count = 0;
-    for (int node_id : selected_node_ids_) {
-        auto pos_it = cached_node_positions_.find(node_id);
-        if (pos_it != cached_node_positions_.end()) {
-            center_x += pos_it->second.x;
-            center_y += pos_it->second.y;
-            count++;
-        }
-    }
-    if (count > 0) {
-        center_x /= count;
-        center_y /= count;
-    }
-
-    // Create the subgraph node
-    MLNode subgraph_node;
-    subgraph_node.id = next_node_id_++;
-    subgraph_node.type = NodeType::Subgraph;
-    subgraph_node.name = name.empty() ? "Subgraph" : name;
-    subgraph_node.parameters["node_count"] = std::to_string(internal_nodes.size());
-
-    // Create input pins for boundary inputs
-    for (size_t i = 0; i < input_pins.size(); ++i) {
-        NodePin pin;
-        pin.id = next_pin_id_++;
-        pin.type = PinType::Tensor;
-        pin.name = "In " + std::to_string(i + 1);
-        pin.is_input = true;
-        subgraph_node.inputs.push_back(pin);
-    }
-
-    // Create output pins for boundary outputs
-    for (size_t i = 0; i < output_pins.size(); ++i) {
-        NodePin pin;
-        pin.id = next_pin_id_++;
-        pin.type = PinType::Tensor;
-        pin.name = "Out " + std::to_string(i + 1);
-        pin.is_input = false;
-        subgraph_node.outputs.push_back(pin);
-    }
-
-    // Store subgraph data
-    SubgraphData data;
-    data.subgraph_node_id = subgraph_node.id;
-    data.internal_nodes = std::move(internal_nodes);
-    data.internal_links = std::move(internal_links);
-    data.expanded = false;
-
-    // Store pin mappings
-    for (const auto& [node_id, pin_id] : input_pins) {
-        data.input_pin_mappings.push_back(pin_id);
-    }
-    for (const auto& [node_id, pin_id] : output_pins) {
-        data.output_pin_mappings.push_back(pin_id);
-    }
-
-    subgraphs_.push_back(std::move(data));
-
-    // Rewire external connections to the subgraph node
-    std::vector<NodeLink> links_to_add;
-    std::vector<int> links_to_remove;
-
-    for (size_t i = 0; i < links_.size(); ++i) {
-        const auto& link = links_[i];
-
-        // Link from outside to inside -> connect to subgraph input
-        if (!selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
-            // Find which input pin this maps to
-            for (size_t j = 0; j < input_pins.size(); ++j) {
-                if (input_pins[j].second == link.to_pin) {
-                    NodeLink new_link;
-                    new_link.id = next_link_id_++;
-                    new_link.from_node = link.from_node;
-                    new_link.from_pin = link.from_pin;
-                    new_link.to_node = subgraph_node.id;
-                    new_link.to_pin = subgraph_node.inputs[j].id;
-                    new_link.type = link.type;
-                    links_to_add.push_back(new_link);
-                    break;
-                }
-            }
-            links_to_remove.push_back(static_cast<int>(i));
-        }
-
-        // Link from inside to outside -> connect from subgraph output
-        if (selected_set.count(link.from_node) && !selected_set.count(link.to_node)) {
-            // Find which output pin this maps to
-            for (size_t j = 0; j < output_pins.size(); ++j) {
-                if (output_pins[j].second == link.from_pin) {
-                    NodeLink new_link;
-                    new_link.id = next_link_id_++;
-                    new_link.from_node = subgraph_node.id;
-                    new_link.from_pin = subgraph_node.outputs[j].id;
-                    new_link.to_node = link.to_node;
-                    new_link.to_pin = link.to_pin;
-                    new_link.type = link.type;
-                    links_to_add.push_back(new_link);
-                    break;
-                }
-            }
-            links_to_remove.push_back(static_cast<int>(i));
-        }
-
-        // Internal links are removed from main graph
-        if (selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
-            links_to_remove.push_back(static_cast<int>(i));
-        }
-    }
-
-    // Remove old links (in reverse order to maintain indices)
-    std::sort(links_to_remove.begin(), links_to_remove.end(), std::greater<int>());
-    for (int idx : links_to_remove) {
-        links_.erase(links_.begin() + idx);
-    }
-
-    // Add new links
-    for (auto& link : links_to_add) {
-        links_.push_back(link);
-    }
-
-    // Remove selected nodes from main graph
-    nodes_.erase(
-        std::remove_if(nodes_.begin(), nodes_.end(),
-            [&selected_set](const MLNode& n) { return selected_set.count(n.id); }),
-        nodes_.end()
-    );
-
-    // Add subgraph node
-    nodes_.push_back(subgraph_node);
-
-    // Position the subgraph node at the center of removed nodes
-    pending_positions_[subgraph_node.id] = ImVec2(center_x, center_y);
-    pending_positions_frames_ = 3;
-
-    // Clear selection and select the new subgraph
-    selected_node_ids_.clear();
-    selected_node_ids_.push_back(subgraph_node.id);
-
-    spdlog::info("Created subgraph '{}' with {} internal nodes",
-                 subgraph_node.name, subgraphs_.back().internal_nodes.size());
-}
-
-void NodeEditor::ExpandSubgraph(int node_id) {
-    SubgraphData* data = GetSubgraphData(node_id);
-    if (!data) {
-        spdlog::warn("Node {} is not a subgraph", node_id);
-        return;
-    }
-
-    if (data->expanded) return;
-
-    SaveUndoState();
-    data->expanded = true;
-
-    // Get position of subgraph node
-    ImVec2 base_pos = ImVec2(0, 0);
-    auto pos_it = cached_node_positions_.find(node_id);
-    if (pos_it != cached_node_positions_.end()) {
-        base_pos = pos_it->second;
-    }
-
-    // Add internal nodes back to the main graph
-    float offset_x = 0, offset_y = 50;
-    for (auto& internal_node : data->internal_nodes) {
-        // Offset position relative to subgraph node
-        pending_positions_[internal_node.id] = ImVec2(base_pos.x + offset_x, base_pos.y + offset_y);
-        nodes_.push_back(internal_node);
-        offset_x += 180;
-        if (offset_x > 500) {
-            offset_x = 0;
-            offset_y += 120;
-        }
-    }
-
-    // Add internal links back
-    for (const auto& link : data->internal_links) {
-        links_.push_back(link);
-    }
-
-    pending_positions_frames_ = 3;
-    spdlog::info("Expanded subgraph {}", node_id);
-}
-
-void NodeEditor::CollapseSubgraph(int node_id) {
-    SubgraphData* data = GetSubgraphData(node_id);
-    if (!data) return;
-
-    if (!data->expanded) return;
-
-    SaveUndoState();
-    data->expanded = false;
-
-    // Remove internal nodes from main graph
-    std::set<int> internal_ids;
-    for (const auto& node : data->internal_nodes) {
-        internal_ids.insert(node.id);
-    }
-
-    nodes_.erase(
-        std::remove_if(nodes_.begin(), nodes_.end(),
-            [&internal_ids](const MLNode& n) { return internal_ids.count(n.id); }),
-        nodes_.end()
-    );
-
-    // Remove internal links
-    links_.erase(
-        std::remove_if(links_.begin(), links_.end(),
-            [&internal_ids](const NodeLink& l) {
-                return internal_ids.count(l.from_node) && internal_ids.count(l.to_node);
-            }),
-        links_.end()
-    );
-
-    spdlog::info("Collapsed subgraph {}", node_id);
-}
-
-void NodeEditor::ToggleSubgraphExpansion(int node_id) {
-    SubgraphData* data = GetSubgraphData(node_id);
-    if (!data) return;
-
-    if (data->expanded) {
-        CollapseSubgraph(node_id);
-    } else {
-        ExpandSubgraph(node_id);
-    }
-}
-
-bool NodeEditor::IsSubgraphNode(int node_id) const {
-    const MLNode* node = FindNodeById(node_id);
-    return node && node->type == NodeType::Subgraph;
-}
-
-SubgraphData* NodeEditor::GetSubgraphData(int node_id) {
-    for (auto& data : subgraphs_) {
-        if (data.subgraph_node_id == node_id) {
-            return &data;
-        }
-    }
-    return nullptr;
-}
 
 
 // ========== Menu Operations Implementation ==========
 
 void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
+    if (!CanAddNodeToGraph(type, name)) {
+        spdlog::warn("Blocked toolbar graph add for unsupported node '{}' (type={})",
+                     name, static_cast<int>(type));
+        return;
+    }
+
     // Get center of the visible area for node placement
     ImVec2 panning = ImNodes::EditorContextGetPanning();
     ImVec2 visible_center(-panning.x + 400, -panning.y + 300);
     
     // Queue the node for addition (deferred to avoid modifying nodes_ during rendering)
-    PendingNode pending;
-    pending.type = type;
-    pending.name = name;
-    pending.position = visible_center;
-    pending_nodes_.push_back(pending);
+    pending_nodes_.emplace_back(type, name, visible_center);
     
     spdlog::info("Menu: Adding {} node at center of view", name);
+}
+
+void NodeEditor::AddDataInputFromAsset(const std::string& path) {
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};
+    pending.initial_parameters["file_path"] = path;
+    pending.initial_parameters["source_type"] = "file";
+    pending.initial_parameters["configured"] = "false";
+    pending.initial_parameters["data_loaded"] = "false";
+    pending_nodes_.push_back(std::move(pending));
+    spdlog::info("Asset Browser queued Data Input source {}", path);
+}
+void NodeEditor::AddKeptTest(const std::string& path, const std::string& name) {
+    // Below the graph, at its left edge, clear of its nodes and links (an
+    // empty graph: where FindEmptyPosition puts a node).
+    ImVec2 position(-99999.0f, -99999.0f);
+    if (!cached_node_positions_.empty()) {
+        float left = FLT_MAX, bottom = -FLT_MAX;
+        for (const auto& [id, at] : cached_node_positions_) {
+            left = std::min(left, at.x);
+            bottom = std::max(bottom, at.y);
+        }
+        position = ImVec2(left, bottom + 200.0f);
+    }
+    PendingNode pending{NodeType::DataInput, name, position};
+    pending.initial_parameters["file_path"] = path;
+    pending.initial_parameters["source_type"] = "file";
+    pending.initial_parameters["file_type"] = "parquet";
+    pending.initial_parameters["configured"] = "false";
+    pending.initial_parameters["data_loaded"] = "false";
+    pending.then_type = NodeType::TestEvaluationNode;
+    pending.then_name = "Test Evaluation";
+    pending_nodes_.push_back(std::move(pending));
+    spdlog::info("Keep as node: queued Data Input '{}' ({}) and a Test Evaluation node", name, path);
+}
+
+void NodeEditor::AddDataInputAndConfigure() {
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};
+    pending.open_configuration = true;
+    pending_nodes_.push_back(std::move(pending));
+    Show();
 }
 
 void NodeEditor::DeleteSelectedNodes() {
@@ -3978,48 +4062,67 @@ void NodeEditor::DuplicateSelectedNodes() {
 }
 
 void NodeEditor::GroupSelectedNodes() {
-    // TODO: Implement node grouping
-    spdlog::info("Group selected nodes - not yet implemented");
+    // Menu entry point: same action as Ctrl+G and the context menu.
+    CreateGroupFromSelection("");
 }
 
 void NodeEditor::UngroupSelectedNodes() {
-    // TODO: Implement node ungrouping
-    spdlog::info("Ungroup selected nodes - not yet implemented");
+    // Menu entry point: same action as Ctrl+Shift+G and the context menu.
+    UngroupSelection();
 }
 
 // ===== Graph Simulation =====
 
 bool NodeEditor::HasSimulationNodes() const {
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::SignalSlider ||
-            node.type == NodeType::SineWave ||
-            node.type == NodeType::StepSignal ||
-            node.type == NodeType::RampSignal ||
-            node.type == NodeType::SignalScope ||
-            node.type == NodeType::Constant) {
+        if (cyxwiz::IsBuiltInSimulationRuntimeNode(node.type)) {
             return true;
         }
         // Check for MuJoCo Plant or other simulation plugin nodes
-        if (node.type == NodeType::PluginCustom) {
-            auto qname = node.plugin_qualified_name;
-            if (qname.find("MuJoCoPlant") != std::string::npos ||
-                qname.find("MuJoCoEnv") != std::string::npos) {
-                return true;
-            }
+        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
+            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv")) {
+            return true;
         }
     }
     return false;
 }
 
+bool NodeEditor::TryGetSimulationScalar(int pin_id, float& value) const {
+    if (!graph_executor_) return false;
+    cyxwiz::NodeValue node_value;
+    if (!graph_executor_->TryGetPinValue(pin_id, node_value)) return false;
+    const auto* scalar = std::get_if<float>(&node_value);
+    if (!scalar) return false;
+    value = *scalar;
+    return true;
+}
+
+float NodeEditor::GetSimulationTime() const {
+    return graph_executor_ ? graph_executor_->GetSimTime() : 0.0f;
+}
+
+bool NodeEditor::SetSimulationNodeParameter(int node_id,
+                                            const std::string& key,
+                                            const std::string& value) {
+    return graph_executor_ &&
+           graph_executor_->SetNodeParameter(node_id, key, value);
+}
+
 void NodeEditor::OnRunSimulation() {
     if (is_simulating_) return;
+
+    // A previous failed simulation may have ended its worker before the UI
+    // observed the terminal state. Reclaim it before assigning a new thread.
+    if (sim_thread_.joinable()) {
+        sim_thread_.join();
+    }
 
     spdlog::info("NodeEditor: Starting graph simulation");
 
     // Create and build executor
     graph_executor_ = std::make_unique<cyxwiz::GraphExecutor>();
 
-    // Set plugin eval callback: routes to PluginNodeRegistry → plugin DLL
+    // Set plugin eval callback: routes to ExtensionNodeRegistry → plugin DLL
     graph_executor_->SetPluginEvalCallback(
         [](const std::string& plugin_qualified_name,
            const cyxwiz::NodeEvalContext& ctx) -> cyxwiz::NodeEvalResult {
@@ -4041,8 +4144,8 @@ void NodeEditor::OnRunSimulation() {
             }
 
             // Route to plugin via registry
-            auto provider = cyxwiz::plugin::PluginNodeRegistry::Instance()
-                                .GetNodeProvider(plugin_qualified_name);
+            auto provider = cyxwiz::ExtensionNodeRegistry::Instance()
+                                .SignalProvider(plugin_qualified_name);
             if (!provider) {
                 cyxwiz::NodeEvalResult r;
                 r.success = false;
@@ -4105,7 +4208,7 @@ void NodeEditor::OnRunSimulation() {
 }
 
 void NodeEditor::OnStopSimulation() {
-    if (!is_simulating_) return;
+    if (!is_simulating_ && !sim_thread_.joinable()) return;
 
     spdlog::info("NodeEditor: Stopping graph simulation");
     sim_stop_requested_ = true;
@@ -4171,8 +4274,8 @@ void NodeEditor::OnStartRLTraining() {
     // Find MuJoCo Plant node for MJCF path
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            if (node.plugin_qualified_name.find("MuJoCoPlant") != std::string::npos) {
-                config.plugin_qualified_name = node.plugin_qualified_name;
+            if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant")) {
+                config.plugin_qualified_name = node.extension_type_id;
                 auto mp = node.parameters.find("mjcf_path");
                 if (mp != node.parameters.end() && !mp->second.empty()) {
                     config.env_mjcf_path = mp->second;
@@ -4189,10 +4292,10 @@ void NodeEditor::OnStartRLTraining() {
     std::map<std::string, std::string> reward_params, obs_filter_params;
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            if (node.plugin_qualified_name.find("RewardFunction") != std::string::npos) {
+            if (cyxwiz::IsExtensionTypeName(node, "RewardFunction")) {
                 reward_params = node.parameters;
             }
-            if (node.plugin_qualified_name.find("ObservationFilter") != std::string::npos) {
+            if (cyxwiz::IsExtensionTypeName(node, "ObservationFilter")) {
                 obs_filter_params = node.parameters;
             }
         }
@@ -4209,18 +4312,19 @@ void NodeEditor::OnStartRLTraining() {
     if (!rl_dashboard_) {
         rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     }
+    rl_dashboard_->ResetRLMetrics();
     rl_dashboard_->SetRLTrainingState(true);
     rl_dashboard_->SetVisible(true);
-    rl_dashboard_->ResetRLMetrics();
 
     // Set up pycyxwiz flags
     std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";
     scripting_engine_->ExecuteCommand(setup_script);
 
-    // Set completion callback
+    // Completion handling for this run only (TOFIX133 P0 item 9).
     auto dashboard = rl_dashboard_;
     rl_script_running_ = true;
-    scripting_engine_->SetCompletionCallback([this, dashboard](const scripting::ExecutionResult& result) {
+    scripting::ScriptingEngine::RunCallbacks callbacks;
+    callbacks.on_complete = [this, dashboard](const scripting::ExecutionResult& result) {
         rl_script_running_ = false;
         dashboard->SetRLTrainingState(false);
         if (!result.success) {
@@ -4228,10 +4332,14 @@ void NodeEditor::OnStartRLTraining() {
         } else {
             spdlog::info("RL training script completed successfully");
         }
-    });
+    };
 
     // Run training script async
-    scripting_engine_->ExecuteScriptAsync(script);
+    if (!scripting_engine_->ExecuteScriptAsync(script, std::move(callbacks))) {
+        rl_script_running_ = false;
+        dashboard->SetRLTrainingState(false);
+        spdlog::warn("RL training not started: another script is running");
+    }
 }
 
 
@@ -4252,9 +4360,10 @@ void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
     // Request export via plugin's EvaluateNode with "export_onnx" command
     std::string plugin_qname;
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::PluginCustom &&
-            node.plugin_qualified_name.find("MuJoCo") != std::string::npos) {
-            plugin_qname = node.plugin_qualified_name;
+        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
+            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv") ||
+            cyxwiz::IsExtensionTypeName(node, "RLAgent")) {
+            plugin_qname = node.extension_type_id;
             break;
         }
     }
@@ -4264,7 +4373,7 @@ void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
         return;
     }
 
-    auto* provider = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeProvider(plugin_qname);
+    auto* provider = cyxwiz::ExtensionNodeRegistry::Instance().SignalProvider(plugin_qname);
     if (!provider) {
         spdlog::error("NodeEditor: Plugin provider not found");
         return;
@@ -4349,11 +4458,6 @@ void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
         dataset_input->name = "Dataset: " + dataset_name;
     }
 
-    // Trigger shape inference
-    if (shape_inference_) {
-        shape_inference_->ComputeAllShapes(nodes_, links_);
-    }
-
     // Save undo state
     SaveUndoState();
 
@@ -4378,17 +4482,150 @@ bool NodeEditor::ExecuteDataPipeline() {
         return false;
     }
 
-    // Check if we have a pipeline executor
-    if (!pipeline_executor_) {
-        pipeline_executor_ = std::make_unique<cyxwiz::PipelineExecutor>();
-        spdlog::info("Created PipelineExecutor instance");
+    if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
+        spdlog::warn("Data transformation pipeline is already running (task ID: {})",
+                     pipeline_task_id_);
+        return false;
     }
 
-    // Convert node graph to JSON for PipelineExecutor
     nlohmann::json pipeline_json;
+    std::string error;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_step_ids_, error)) {
+        spdlog::error("Pipeline not started: {}", error);
+        if (!subgraphs_.empty()) ShowPipelineNotice("The pipeline was not started.\n\n" + error);
+        return false;
+    }
+    return SubmitDataPipelineJson(std::move(pipeline_json));
+}
+
+bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step) {
+    if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
+        spdlog::warn("Data transformation pipeline is already running (task ID: {})",
+                     pipeline_task_id_);
+        return false;
+    }
+    nlohmann::json pipeline_json;
+    std::string error;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_step_ids_, error)) {
+        spdlog::error("Step not run: {}", error);
+        ShowPipelineNotice("The step was not run.\n\n" + error);
+        return false;
+    }
+    // Keep the step, everything upstream of it and, when asked, the Row
+    // Count Checks chained right after it.
+    std::map<int, std::vector<int>> upstream;
+    std::map<int, std::vector<int>> downstream;
+    for (const auto& link : pipeline_json.at("links")) {
+        const int from = link.at("start_node").get<int>();
+        const int to = link.at("end_node").get<int>();
+        upstream[to].push_back(from);
+        downstream[from].push_back(to);
+    }
+    std::map<int, std::string> types;
+    for (const auto& node : pipeline_json.at("nodes")) {
+        types[node.at("id").get<int>()] = node.at("type").get<std::string>();
+    }
+    if (node_ids.empty()) return false;
+    for (int node_id : node_ids) {
+        if (!types.count(node_id)) {
+            ShowPipelineNotice("The step was not run.\n\nIt is not part of the data pipeline.");
+            return false;
+        }
+    }
+    std::set<int> keep;
+    std::vector<int> pending = node_ids;
+    while (!pending.empty()) {
+        const int id = pending.back();
+        pending.pop_back();
+        if (!keep.insert(id).second) continue;
+        for (int from : upstream[id]) pending.push_back(from);
+    }
+    if (!include_step) {
+        for (int node_id : node_ids) keep.erase(node_id);
+        if (keep.empty()) {
+            ShowPipelineNotice("Nothing runs before this step.");
+            return false;
+        }
+    }
+    if (with_checks && include_step) {
+        for (int at : node_ids) {
+            for (;;) {
+                const auto& next = downstream[at];
+                if (next.size() != 1 || types[next.front()] != "RowCountCheck") break;
+                at = next.front();
+                keep.insert(at);
+            }
+        }
+    }
+    nlohmann::json nodes = nlohmann::json::array();
+    for (auto& node : pipeline_json.at("nodes")) {
+        if (keep.count(node.at("id").get<int>())) nodes.push_back(std::move(node));
+    }
+    nlohmann::json links = nlohmann::json::array();
+    for (auto& link : pipeline_json.at("links")) {
+        if (keep.count(link.at("start_node").get<int>()) && keep.count(link.at("end_node").get<int>())) {
+            links.push_back(std::move(link));
+        }
+    }
+    pipeline_json["nodes"] = std::move(nodes);
+    pipeline_json["links"] = std::move(links);
+    spdlog::info("Running {} ({} of the graph's steps{})",
+                 node_ids.size() == 1 ? "step " + std::to_string(node_ids.front())
+                                      : std::to_string(node_ids.size()) + " steps",
+                 keep.size(), with_checks ? ", with their checks" : "");
+    return SubmitDataPipelineJson(std::move(pipeline_json), &keep);
+}
+
+bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
+                                       std::map<int, std::vector<int>>* recipe_steps,
+                                       std::string& error) const {
+    // Convert node graph to JSON for PipelineExecutor
+    pipeline_json = nlohmann::json::object();
+    pipeline_json["graph"] = current_file_path_;  // named in the lineage exports write
     pipeline_json["nodes"] = nlohmann::json::array();
+    if (recipe_steps) recipe_steps->clear();
+
+    if (!subgraphs_.empty()) {
+        // Preparation Recipes run as their steps: lower the same saved-document
+        // form that Save writes, so a reopened graph runs exactly like this one.
+        nlohmann::json lowered;
+        try {
+            nlohmann::json document;
+            gui::detail::WriteEditorGraphContent(document, nodes_, links_, subgraphs_, {});
+            lowered = cyxwiz::LowerPreparationRecipes(document);
+        } catch (const std::exception& e) {
+            error = e.what();
+            return false;
+        }
+        // Each step's recipe by name (the lineage an export writes names it).
+        std::map<int, std::string> recipe_of_step;
+        for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
+            if (recipe_steps) (*recipe_steps)[recipe_id.get<int>()].push_back(std::stoi(step_id));
+            if (const MLNode* recipe = FindNodeById(recipe_id.get<int>())) recipe_of_step[std::stoi(step_id)] = recipe->name;
+        }
+        for (const auto& node : lowered.at("nodes")) {
+            nlohmann::json node_json;
+            node_json["id"] = node.at("id");
+            node_json["type"] = GetNodeTypeName(static_cast<NodeType>(node.at("type").get<int>()));
+            node_json["name"] = node.at("name");
+            node_json["parameters"] = node.at("parameters");
+            if (const auto it = recipe_of_step.find(node.at("id").get<int>()); it != recipe_of_step.end()) node_json["recipe"] = it->second;
+            pipeline_json["nodes"].push_back(std::move(node_json));
+        }
+        pipeline_json["links"] = nlohmann::json::array();
+        for (const auto& link : lowered.at("links")) {
+            pipeline_json["links"].push_back({
+                {"start_node", link.at("from_node")},
+                {"end_node", link.at("to_node")},
+                {"start_pin_index", link.value("from_pin_index", 0)},
+                {"end_pin_index", link.value("to_pin_index", 0)}});
+        }
+        return true;
+    }
 
     for (const auto& node : nodes_) {
+        // Plot and Dashboard nodes show data; they are not pipeline steps (TOFIX134 P2, P3).
+        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) continue;
         nlohmann::json node_json;
         node_json["id"] = node.id;
         node_json["type"] = GetNodeTypeName(node.type);
@@ -4400,110 +4637,299 @@ bool NodeEditor::ExecuteDataPipeline() {
             node_json["parameters"][key] = value;
         }
 
-        // Add inputs (connected node IDs)
-        node_json["inputs"] = nlohmann::json::array();
-        for (const auto& link : links_) {
-            // Find if this link connects TO this node
-            for (const auto& input_pin : node.inputs) {
-                if (link.to_pin == input_pin.id) {
-                    // Find the source node
-                    for (const auto& src_node : nodes_) {
-                        for (const auto& out_pin : src_node.outputs) {
-                            if (link.from_pin == out_pin.id) {
-                                node_json["inputs"].push_back(src_node.id);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add outputs (connected node IDs)
-        node_json["outputs"] = nlohmann::json::array();
-        for (const auto& link : links_) {
-            // Find if this link connects FROM this node
-            for (const auto& output_pin : node.outputs) {
-                if (link.from_pin == output_pin.id) {
-                    // Find the destination node
-                    for (const auto& dst_node : nodes_) {
-                        for (const auto& in_pin : dst_node.inputs) {
-                            if (link.to_pin == in_pin.id) {
-                                node_json["outputs"].push_back(dst_node.id);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         pipeline_json["nodes"].push_back(node_json);
     }
 
-    // Set up progress callback
-    pipeline_executor_->SetProgressCallback([](float progress, const std::string& status) {
-        spdlog::info("Pipeline progress: {:.1f}% - {}", progress * 100, status);
-    });
-
-    // Set up completion callback
-    pipeline_executor_->SetCompletionCallback([](bool success) {
-        if (success) {
-            spdlog::info("Pipeline execution completed successfully!");
-        } else {
-            spdlog::error("Pipeline execution failed!");
+    // PipelineExecutor treats this top-level list as the canonical graph
+    // connection contract. NodeLink already owns the resolved node IDs, so
+    // preserve them directly instead of deriving duplicate per-node edges.
+    pipeline_json["links"] = nlohmann::json::array();
+    for (const auto& link : links_) {
+        const MLNode* from_node = FindNodeById(link.from_node);
+        const MLNode* to_node = FindNodeById(link.to_node);
+        if (!from_node || !to_node) {
+            error = "Pipeline link " + std::to_string(link.id) + " references a missing node";
+            return false;
         }
-    });
-
-    // Execute the pipeline
-    std::string pipeline_str = pipeline_json.dump(2);
-    spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
-
-    bool success = pipeline_executor_->ExecutePipeline(pipeline_str);
-    if (!success) {
-        spdlog::error("Pipeline execution failed: {}", pipeline_executor_->GetLastError());
+        if (to_node->type == NodeType::Plot || to_node->type == NodeType::Dashboard) continue;
+        const auto from_pin = std::find_if(
+            from_node->outputs.begin(), from_node->outputs.end(),
+            [&link](const NodePin& pin) { return pin.id == link.from_pin; });
+        const auto to_pin = std::find_if(
+            to_node->inputs.begin(), to_node->inputs.end(),
+            [&link](const NodePin& pin) { return pin.id == link.to_pin; });
+        if (from_pin == from_node->outputs.end() ||
+            to_pin == to_node->inputs.end()) {
+            error = "Pipeline link " + std::to_string(link.id) + " references a missing pin";
+            return false;
+        }
+        pipeline_json["links"].push_back({
+            {"start_node", link.from_node},
+            {"end_node", link.to_node},
+            {"start_pin_index", static_cast<int>(
+                std::distance(from_node->outputs.begin(), from_pin))},
+            {"end_pin_index", static_cast<int>(
+                std::distance(to_node->inputs.begin(), to_pin))}
+        });
     }
-    return success;
+    return true;
+}
+
+std::vector<NodeEditor::DataLink> NodeEditor::GetDataPipelineLinks(std::string* error) const {
+    std::vector<DataLink> links;
+    nlohmann::json pipeline_json;
+    std::string why;
+    if (error) error->clear();
+    if (!BuildDataPipelineJson(pipeline_json, nullptr, why)) {
+        if (error) *error = why;
+        return links;
+    }
+    for (const auto& link : pipeline_json.at("links"))
+        links.push_back({link.at("start_node").get<int>(), link.at("end_node").get<int>(), link.value("end_pin_index", 0)});
+    return links;
+}
+
+NodeEditor::DataStepContext NodeEditor::GetDataStepContext(int node_id) const {
+    DataStepContext context;
+    nlohmann::json pipeline_json;
+    std::map<int, std::vector<int>> recipe_steps;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_steps, context.error)) return context;
+    for (const auto& [recipe_id, steps] : recipe_steps) {
+        if (std::find(steps.begin(), steps.end(), node_id) == steps.end()) continue;
+        const MLNode* recipe = FindNodeById(recipe_id);
+        context.recipe_name = recipe ? recipe->name : std::string("#") + std::to_string(recipe_id);
+        context.recipe_steps = static_cast<int>(steps.size());
+    }
+    std::map<int, const nlohmann::json*> by_id;
+    for (const auto& node : pipeline_json.at("nodes")) by_id[node.at("id").get<int>()] = &node;
+    const auto neighbour = [&](int id, int pin) {
+        DataStepNeighbour out;
+        out.id = id;
+        out.pin = pin;
+        const auto it = by_id.find(id);
+        if (it == by_id.end()) return out;
+        out.name = it->second->value("name", std::string());
+        out.type = it->second->value("type", std::string());
+        for (const auto& [key, value] : it->second->at("parameters").items()) {
+            if (value.is_string()) out.parameters[key] = value.get<std::string>();
+        }
+        return out;
+    };
+    std::map<int, std::vector<int>> downstream;
+    for (const auto& link : pipeline_json.at("links")) {
+        const int from = link.at("start_node").get<int>();
+        const int to = link.at("end_node").get<int>();
+        downstream[from].push_back(to);
+        if (to == node_id) context.inputs.push_back(neighbour(from, link.value("end_pin_index", 0)));
+    }
+    std::sort(context.inputs.begin(), context.inputs.end(),
+              [](const DataStepNeighbour& a, const DataStepNeighbour& b) { return a.pin < b.pin; });
+    int at = node_id;
+    for (;;) {
+        const auto& next = downstream[at];
+        if (next.size() != 1) break;
+        auto check = neighbour(next.front(), 0);
+        if (check.type != "RowCountCheck") break;
+        at = check.id;
+        context.checks.push_back(std::move(check));
+    }
+    return context;
+}
+
+bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std::set<int>* only) {
+    // Snapshot the graph on the UI thread, then execute through the shared
+    // task system. The worker owns its PipelineExecutor, so it never reads
+    // mutable editor state and remains safe if the editor closes mid-run.
+    //
+    // Each node in this run reads "not run" until the run gets to it. The
+    // executor is kept between runs (lazy evaluation, TOFIX154): it reuses an
+    // unchanged node's result, and drops the earlier result of each node it
+    // runs again, so a node the run fails at leaves nothing stale.
+    for (const auto& node : pipeline_json.at("nodes")) node_run_facts_.erase(node.at("id").get<int>());
+    std::string pipeline_str = pipeline_json.dump(2);
+    // One line: Debug is recorded in every build, and the indented form was
+    // about 140 lines per run.
+    spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
+    auto executor = pipeline_executor_ && !pipeline_executor_->IsExecuting()
+        ? pipeline_executor_
+        : std::make_shared<cyxwiz::PipelineExecutor>();
+    executor->SetArtifactRoot(
+        cyxwiz::ProjectManager::Instance().GetArtifactsPath());
+    executor->SetExportRoot(
+        cyxwiz::ProjectManager::Instance().GetExportsPath());
+    executor->SetIngestionCacheRoot(
+        cyxwiz::ProjectManager::Instance().GetIngestionCachePath());
+    executor->SetProjectRoot(
+        cyxwiz::ProjectManager::Instance().GetProjectRoot());
+    auto submission = cyxwiz::SubmitPipelineExecutionTask(
+        "Execute Data Pipeline", std::move(pipeline_str),
+        std::move(executor), task_owner_token_);
+    pipeline_task_id_ = submission.task_id;
+    pipeline_execution_tracker_ = std::move(submission.tracker);
+    pipeline_executor_ = std::move(submission.executor);
+    pipeline_facts_final_ = false;
+    figures_read_ = 0;
+    figures_node_ = -1;
+    figures_node_name_.clear();
+    figures_ended_ = false;
+    pipeline_execution_active_ = pipeline_task_id_ != 0;
+    ClearExecutionStates();
+    if (pipeline_execution_active_) {
+        for (const auto& node : nodes_) {
+            // A partial run (Run step) leaves the steps it does not run idle.
+            if (only && !only->count(node.id)) continue;
+            SetNodeExecutionState(node.id, NodeExecutionState::Pending);
+        }
+    }
+    spdlog::debug("Data transformation pipeline queued as task ID: {}",
+                 pipeline_task_id_);
+    return pipeline_task_id_ != 0;
 }
 
 // Helper to get node type name as string for PipelineExecutor
 std::string NodeEditor::GetNodeTypeName(NodeType type) const {
-    switch (type) {
-        case NodeType::CSVFile: return "FileInput";
-        case NodeType::FilterRows: return "FilterRows";
-        case NodeType::SelectColumns: return "SelectColumns";
-        case NodeType::JoinTables: return "Join";
-        case NodeType::GroupByAggregate: return "GroupBy";
-        case NodeType::SortRows: return "SortRows";
-        case NodeType::FillMissingValues: return "FillMissing";
-        case NodeType::RemoveDuplicateRows: return "RemoveDuplicates";
-        case NodeType::RenameColumns: return "RenameColumns";
-        case NodeType::SampleRows: return "SampleRows";
-        case NodeType::SQLQuery: return "SQLQuery";
-        case NodeType::ParquetFile: return "ParquetInput";
-        case NodeType::ExportCSV: return "ExportCSV";
-        case NodeType::ExportParquet: return "ExportParquet";
-        case NodeType::ExportJSON: return "ExportJSON";
-        case NodeType::DescribeStats: return "DescribeStats";
-        // KNIME-style table manipulation nodes
-        case NodeType::ExcelFile: return "ExcelInput";
-        case NodeType::ExportExcel: return "ExportExcel";
-        case NodeType::RowToColumnNames: return "RowToColumnNames";
-        case NodeType::TableSplitter: return "TableSplitter";
-        case NodeType::CellExtractor: return "CellExtractor";
-        case NodeType::CellUpdater: return "CellUpdater";
-        case NodeType::TableCropper: return "TableCropper";
-        case NodeType::ColumnAppender: return "ColumnAppender";
-        case NodeType::RowAppender: return "RowAppender";
-        case NodeType::Unpivot: return "Unpivot";
-        case NodeType::StringManipulation: return "StringManipulation";
-        case NodeType::MathFormula: return "MathFormula";
-        case NodeType::RuleEngine: return "RuleEngine";
-        default: return "Unknown";
-    }
+    // One table with the Plot node's result lane (core/pipeline_type_names).
+    return cyxwiz::PipelineTypeName(type);
 }
 
 // ===== Unified Canvas Phase 6: Execution Visualization =====
+
+void NodeEditor::SyncPipelineExecutionVisualization() {
+    if (pipeline_task_id_ == 0 || !pipeline_execution_tracker_) {
+        pipeline_execution_active_ = false;
+        return;
+    }
+
+    const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(pipeline_task_id_);
+    if (!task) {
+        pipeline_execution_active_ = false;
+        return;
+    }
+
+    const auto task_info = task->GetInfo();
+    pipeline_execution_active_ =
+        task_info.state == cyxwiz::TaskState::Pending ||
+        task_info.state == cyxwiz::TaskState::Running;
+    const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
+    // Run facts for Properties (TOFIX146): copied while the run is live and
+    // once more when it ends; earlier runs' facts stay for nodes not rerun.
+    // A node this run meant to run but never reached (a step before it
+    // failed) is still pending at the end: its earlier facts go, so it
+    // reads "not run" instead of an old "pass".
+    if (pipeline_executor_ && !pipeline_facts_final_) {
+        for (auto& [id, facts] : pipeline_executor_->GetNodeRunFacts()) node_run_facts_[id] = std::move(facts);
+        pipeline_facts_final_ = !pipeline_execution_active_;
+        if (pipeline_facts_final_) {
+            for (const auto& [node_id, event] : snapshot.node_states)
+                if (event == cyxwiz::PipelineNodeExecutionEvent::Pending) node_run_facts_.erase(node_id);
+        }
+    }
+
+    FeedWordVectorRuns(task_info);
+
+    for (const auto& [node_id, event] : snapshot.node_states) {
+        switch (event) {
+            case cyxwiz::PipelineNodeExecutionEvent::Pending:
+                SetNodeExecutionState(node_id, NodeExecutionState::Pending);
+                break;
+            case cyxwiz::PipelineNodeExecutionEvent::Executing:
+                SetNodeExecutionState(node_id, NodeExecutionState::Executing);
+                break;
+            case cyxwiz::PipelineNodeExecutionEvent::Completed:
+                SetNodeExecutionState(node_id, NodeExecutionState::Completed);
+                break;
+            case cyxwiz::PipelineNodeExecutionEvent::Error: {
+                const auto status_it = snapshot.node_status.find(node_id);
+                SetNodeExecutionError(
+                    node_id,
+                    status_it == snapshot.node_status.end()
+                        ? task_info.error_message
+                        : status_it->second);
+                break;
+            }
+        }
+    }
+
+    if (task_info.state == cyxwiz::TaskState::Failed) {
+        for (auto& [node_id, state] : node_execution_states_) {
+            if (state == NodeExecutionState::Executing) {
+                SetNodeExecutionError(node_id, task_info.error_message);
+            } else if (state == NodeExecutionState::Pending) {
+                state = NodeExecutionState::Idle;
+            }
+        }
+    } else if (task_info.state == cyxwiz::TaskState::Cancelled) {
+        for (auto& [node_id, state] : node_execution_states_) {
+            if (state == NodeExecutionState::Executing ||
+                state == NodeExecutionState::Pending) {
+                state = NodeExecutionState::Idle;
+            }
+        }
+        currently_executing_node_id_ = -1;
+    }
+    RollUpRecipeExecutionStates();
+}
+
+// A Word Embeddings step's figures, live status and end, to the dashboard.
+void NodeEditor::FeedWordVectorRuns(const cyxwiz::TaskInfo& task_info) {
+    if (!word_vector_feed_.figures || figures_ended_) return;
+    for (const auto& figures : pipeline_execution_tracker_->GetFigures(figures_read_)) {
+        ++figures_read_;
+        figures_node_ = figures.node_id;
+        figures_node_name_ = figures.node_name;
+        word_vector_feed_.figures(figures);
+    }
+    if (figures_node_ < 0) return;
+    // The step's own share between its figures ("<node>: Counting word pairs (9%)").
+    const std::string& status = task_info.status_message;
+    if (pipeline_execution_active_ && word_vector_feed_.progress && status.rfind(figures_node_name_ + ": ", 0) == 0) {
+        const float share = cyxwiz::StepShareFromStatus(status);
+        if (share >= 0.0f) word_vector_feed_.progress(figures_node_, share, cyxwiz::StepMessageFromStatus(status));
+    }
+    if (task_info.state == cyxwiz::TaskState::Failed || task_info.state == cyxwiz::TaskState::Cancelled) {
+        if (word_vector_feed_.ended) {
+            word_vector_feed_.ended(figures_node_, task_info.state == cyxwiz::TaskState::Cancelled,
+                                    task_info.error_message);
+        }
+        figures_ended_ = true;
+    }
+}
+
+void NodeEditor::RollUpRecipeExecutionStates() {
+    // A collapsed recipe runs as its steps; show their combined state on the
+    // recipe node so it and its links reflect the run like any other node.
+    for (const auto& [recipe_id, steps] : recipe_step_ids_) {
+        bool any_error = false, any_running = false, any_pending = false;
+        size_t completed = 0;
+        std::string error;
+        for (int step : steps) {
+            const auto it = node_execution_states_.find(step);
+            const auto state = it == node_execution_states_.end() ? NodeExecutionState::Idle : it->second;
+            switch (state) {
+            case NodeExecutionState::Error:
+                any_error = true;
+                if (error.empty()) {
+                    const auto msg = node_execution_errors_.find(step);
+                    error = msg == node_execution_errors_.end() ? std::string() : msg->second;
+                }
+                break;
+            case NodeExecutionState::Executing: any_running = true; break;
+            case NodeExecutionState::Pending: any_pending = true; break;
+            case NodeExecutionState::Completed: ++completed; break;
+            case NodeExecutionState::Idle: break;
+            }
+        }
+        if (any_error) {
+            SetNodeExecutionError(recipe_id, error.empty() ? "a recipe step failed" : error);
+        } else if (any_running || (completed > 0 && completed < steps.size() && pipeline_execution_active_)) {
+            SetNodeExecutionState(recipe_id, NodeExecutionState::Executing);
+        } else if (!steps.empty() && completed == steps.size()) {
+            SetNodeExecutionState(recipe_id, NodeExecutionState::Completed);
+        } else if (any_pending) {
+            SetNodeExecutionState(recipe_id, NodeExecutionState::Pending);
+        }
+    }
+}
 
 void NodeEditor::SetNodeExecutionState(int node_id, NodeExecutionState state) {
     node_execution_states_[node_id] = state;

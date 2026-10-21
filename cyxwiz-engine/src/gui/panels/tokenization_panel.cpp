@@ -1,5 +1,8 @@
 #include "tokenization_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -8,7 +11,7 @@ namespace cyxwiz {
 
 TokenizationPanel::TokenizationPanel() {
     GenerateSampleText();
-    spdlog::info("TokenizationPanel initialized");
+    spdlog::debug("TokenizationPanel initialized");
 }
 
 TokenizationPanel::~TokenizationPanel() {
@@ -29,17 +32,11 @@ void TokenizationPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("tokenization", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -82,62 +79,61 @@ void TokenizationPanel::RenderToolbar() {
 }
 
 void TokenizationPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_SLIDERS " Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Parameters");
 
     // Tokenization method
     const char* methods[] = { "Whitespace", "Word", "Sentence", "N-gram" };
-    ImGui::Combo("Method", &method_idx_, methods, IM_ARRAYSIZE(methods));
+    ui::FieldLabel("Method");
+    ImGui::Combo("##method", &method_idx_, methods, IM_ARRAYSIZE(methods));
 
     if (method_idx_ == 3) {
-        ImGui::DragInt("N-gram size", &ngram_n_, 1.0f, 2, 5);
+        ui::FieldLabel("N-gram size");
+        ImGui::DragInt("##ngram_size", &ngram_n_, 1.0f, 2, 5);
     }
 
-    ImGui::Spacing();
-
-    // Options
+    ui::SettingsSection("Options");
     ImGui::Checkbox("Lowercase", &lowercase_);
     ImGui::Checkbox("Remove Punctuation", &remove_punctuation_);
     ImGui::Checkbox("Remove Stopwords", &remove_stopwords_);
     ImGui::Checkbox("Apply Stemming", &apply_stemming_);
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_DATABASE " Sample Text");
-    ImGui::Separator();
+    ui::SettingsSection("Sample text");
 
     const char* sample_types[] = { "Lorem Ipsum", "News Article", "Positive Review",
                                    "Negative Review", "Technical" };
-    if (ImGui::Combo("Type", &sample_type_idx_, sample_types, IM_ARRAYSIZE(sample_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##sample_type", &sample_type_idx_, sample_types, IM_ARRAYSIZE(sample_types))) {
         GenerateSampleText();
         has_result_ = false;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_KEYBOARD " Input Text");
-    ImGui::Separator();
+    ui::SettingsSection("Input");
+    ui::FieldLabel("Input text");
 
-    float available_height = ImGui::GetContentRegionAvail().y - 40;
+    // Room for the Regular run button below (taller than a frame).
+    float available_height = ImGui::GetContentRegionAvail().y - ui::ButtonHeight(ui::ButtonSize::Regular) -
+                             ImGui::GetStyle().ItemSpacing.y * 2.0f;
     ImGui::InputTextMultiline("##InputText", text_buffer_, sizeof(text_buffer_),
                               ImVec2(-1, available_height),
                               ImGuiInputTextFlags_AllowTabInput);
 
-    if (ImGui::Button(ICON_FA_PLAY " Tokenize", ImVec2(-1, 0))) {
+    if (ui::PrimaryButton("Tokenize", text_buffer_[0] != '\0', "Enter some text first",
+                          ui::ButtonSize::Regular, -FLT_MIN)) {
         TokenizeAsync();
     }
 }
 
 void TokenizationPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Enter text and click 'Tokenize' to see results");
+        ui::EmptyState(ICON_FA_SCISSORS, "No tokens yet",
+                       "Enter or generate some text, then Tokenize.");
         return;
     }
 
@@ -155,6 +151,7 @@ void TokenizationPanel::RenderResults() {
 }
 
 void TokenizationPanel::RenderTokenList() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Tokens (%d):", static_cast<int>(processed_tokens_.size()));
     ImGui::Separator();
 
@@ -177,8 +174,8 @@ void TokenizationPanel::RenderTokenList() {
         }
 
         // Token chip
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ui::WithAlpha(t.accent, 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::WithAlpha(t.accent, 0.55f));
         ImGui::SmallButton(token.c_str());
         ImGui::PopStyleColor(2);
 

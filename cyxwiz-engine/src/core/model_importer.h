@@ -1,5 +1,7 @@
 #pragma once
 
+#include "executable_model.h"
+
 #include "model_format.h"
 #include "formats/cyxmodel_format.h"
 #include <cyxwiz/sequential.h>
@@ -63,6 +65,19 @@ public:
     ImportResult ImportCyxModel(
         const std::string& input_path,
         SequentialModel& model,
+        const ImportOptions& options,
+        ProgressCallback progress_cb = nullptr
+    );
+
+    /**
+     * Import a CyxWiz package (.cyxmodel v3) as the model it holds: a layer
+     * stack, or a graph with branches rebuilt from its graph as a
+     * GraphExecutableModel (TOFIX157). ImportCyxModel above refuses the
+     * latter: a layer stack cannot hold it.
+     */
+    ImportResult ImportExecutableModel(
+        const std::string& input_path,
+        std::shared_ptr<IExecutableModel>& model,
         const ImportOptions& options,
         ProgressCallback progress_cb = nullptr
     );
@@ -156,18 +171,22 @@ private:
         TensorDType dtype
     );
 
-    // Helper to populate model from weights map
+    // Helper to populate model from weights map (a SequentialModel or an
+    // IExecutableModel: only GetParameters / SetParameters are used)
+    template <typename Model>
     bool PopulateModelWeights(
-        SequentialModel& model,
+        Model& model,
         const std::map<std::string, std::vector<uint8_t>>& weights,
         const std::map<std::string, std::vector<int64_t>>& shapes,
         const ImportOptions& options,
-        std::vector<std::string>& warnings
+        std::vector<std::string>& warnings,
+        const std::map<std::string, TensorDType>* dtypes = nullptr
     );
 
     // Validate that model architecture matches weights
+    template <typename Model>
     bool ValidateModelArchitecture(
-        SequentialModel& model,
+        Model& model,
         const std::map<std::string, std::vector<int64_t>>& weight_shapes,
         std::string& error_message
     );

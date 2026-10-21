@@ -2,6 +2,7 @@
 
 #include "plugin_types.h"
 #include "plugin_loader.h"
+#include "engine_plugin_context.h"
 #include "security/permission_dialog.h"
 #include <memory>
 #include <unordered_map>
@@ -15,6 +16,9 @@ namespace cyxwiz::plugin {
 
 // Forward declarations
 class PluginContext;
+struct AssistantContextSnapshot;
+struct AssistantCommandRequest;
+struct AssistantCommandResponse;
 
 // ============================================================================
 // PluginManager - Singleton managing plugin discovery, loading, and lifecycle
@@ -97,10 +101,20 @@ public:
     // Get context for plugin
     PluginContext* GetContext(const std::string& plugin_id) const;
 
+    // Publish assistant context to all initialized plugin contexts.
+    void SetAssistantContextSnapshotForAll(const AssistantContextSnapshot& snapshot);
+
+    // Run a slash-command request through the first loaded assistant provider.
+    AssistantCommandResponse RunAssistantCommand(const AssistantCommandRequest& request);
+
     // ===== Dependency Resolution =====
 
     // Get load order respecting dependencies (topological sort)
     std::vector<std::string> ResolveLoadOrder() const;
+
+    // Removes the plugin's nodes, panels, data loaders, training hooks and
+    // analytics from their registries. Each registry takes its own lock.
+    void RemoveRegistrations(const std::string& plugin_id);
 
     // ===== Security =====
 
@@ -111,17 +125,24 @@ private:
     PluginManager() = default;
     ~PluginManager();
 
+    // Per plugin: the lease every module of its trainable nodes holds
+    // (TOFIX125). On unload the plugin's library moves into the lease, so
+    // it is freed only when the last module made by it is destroyed.
+    struct ExtensionLease;
+    std::unordered_map<std::string, std::shared_ptr<ExtensionLease>> extension_leases_;
+
     // Plugin storage: id -> LoadedPlugin
     std::unordered_map<std::string, std::unique_ptr<LoadedPlugin>> plugins_;
 
-    // Plugin contexts: id -> PluginContext
-    std::unordered_map<std::string, std::unique_ptr<PluginContext>> contexts_;
+    // Plugin contexts: id -> the Engine's context for that plugin
+    std::unordered_map<std::string, std::unique_ptr<EnginePluginContext>> contexts_;
 
     // Search paths for plugin directories
     std::vector<std::filesystem::path> search_paths_;
 
     // Thread safety
     mutable std::recursive_mutex mutex_;
+    mutable std::mutex assistant_command_mutex_;
 
     // Permission approval dialog
     security::PermissionDialog permission_dialog_;

@@ -2,21 +2,21 @@
 
 #include <arrow/api.h>
 #include <duckdb.hpp>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-#include <map>
 
 namespace cyxwiz {
 
 /**
  * DuckDB Connector (Phase 0 Day 4)
  *
- * Provides zero-copy SQL queries on Arrow tables using DuckDB.
+ * Provides SQL queries on Arrow tables using DuckDB.
  * This is the Data Studio query engine foundation.
  *
  * Key Features:
- * - Zero-copy Arrow table registration
+ * - Arrow table registration into an in-memory DuckDB table
  * - SQL query execution with result as Arrow table
  * - Multiple table joins without data duplication
  * - Window functions, aggregations, CTEs
@@ -38,12 +38,62 @@ namespace cyxwiz {
  *       LIMIT 10
  *   )");
  */
+// One policy for every connection (TOFIX148): the SQL step, the session
+// query service (Data Studio, profiles, dashboards) and the pipeline
+// executor's operators all run SQL built from what people type, so none may
+// read or write files, reach the network, install or load extensions, or
+// change the configuration. Tables come in through RegisterTable.
 class DuckDBConnector {
 public:
     /**
-     * Constructor - creates in-memory DuckDB instance
+     * An in-memory database under the policy above. `allowed_directories`:
+     * engine-owned folders DuckDB may still read (the session query
+     * service's attachment folder and Parquet cache). SQL could read files
+     * there too, so only engine-owned folders belong here.
      */
-    DuckDBConnector();
+    explicit DuckDBConnector(std::vector<std::string> allowed_directories = {});
+
+    // True when the database and connection opened.
+    bool IsReady() const { return conn_ != nullptr; }
+
+    // Why `sql` is not exactly one read-only SELECT statement (WITH allowed),
+    // using DuckDB's own parser; empty when it is.
+    std::string ReadOnlySelectRejection(const std::string& sql);
+
+    // Binds `sql` without running it. Returns why it cannot bind, or which
+    // result columns have a type that does not come back exactly (the result
+    // type table in the .cpp: anything but boolean, integers, float, double,
+    // text, DATE, TIMESTAMP and DECIMAL up to 15 digits); empty when every
+    // column round-trips.
+    std::string UnsupportedResultColumns(const std::string& sql);
+
+    // Thread-safe request to stop the query running on this connection.
+    void Interrupt();
+
+    // Another connection to the same database (its tables and views), for
+    // running queries side by side; one query at a time on each connection.
+    // Null when this connector is not ready.
+    std::unique_ptr<DuckDBConnector> NewConnection();
+
+    // A read-only view of a Parquet file under `name`; no rows are copied
+    // (TOFIX154). The file's folder must be one the connection may read.
+    bool RegisterParquetView(const std::string& name, const std::string& path);
+    // The same file loaded into a DuckDB table (columnar, spills under the
+    // memory limit): for SQL that needs the table's rowid (input row order).
+    bool RegisterParquetTable(const std::string& name, const std::string& path);
+
+    // Writes the rows of a read-only SELECT to a Parquet file (128K-row
+    // groups): DuckDB streams them and spills as it needs, so the result is
+    // never whole in memory. The folder must be one the connection may write.
+    // Returns the number of rows, -1 on error (GetLastError).
+    int64_t CopyQueryToParquet(const std::string& sql, const std::string& path);
+
+    // The column names a query's result would have (bound, not run).
+    std::vector<std::string> ResultColumnNames(const std::string& sql);
+
+    // True while the data budget and spill folder are the ones the database
+    // was opened with (TOFIX154); owners reopen it when they change.
+    bool MatchesDataBudget() const;
 
     /**
      * Destructor - closes connection
@@ -55,14 +105,17 @@ public:
     DuckDBConnector& operator=(const DuckDBConnector&) = delete;
 
     /**
-     * Register Arrow table for SQL queries (zero-copy)
+     * Register Arrow table for SQL queries.
      *
      * @param table_name SQL table identifier
      * @param arrow_table Arrow table to register
      * @return true on success
      *
-     * Note: The Arrow table MUST stay alive during queries!
-     * DuckDB does not copy data, it creates a view.
+     * Note: The current DuckDB 1.4.x adapter copies supported Arrow scalar
+     * values into an in-memory DuckDB table. This avoids the version-specific
+     * arrow_scan pointer ABI while preserving SQL transform behavior
+     * (duckdb.dll does not export ArrowArrayStreamWrapper, which the C++
+     * arrow_scan needs; checked TOFIX146 step 4c).
      */
     bool RegisterTable(const std::string& table_name,
                        std::shared_ptr<arrow::Table> arrow_table);
@@ -89,6 +142,10 @@ public:
      */
     std::shared_ptr<arrow::Table> Query(const std::string& sql);
 
+    // The same with `?` / `$1` parameters bound to values (never pasted into
+    // the text). nullptr on error (GetLastError()).
+    std::shared_ptr<arrow::Table> QueryWithParams(const std::string& sql, std::vector<duckdb::Value> params);
+
     /**
      * Execute SQL query that doesn't return data (CREATE, INSERT, UPDATE, DELETE)
      *
@@ -98,168 +155,22 @@ public:
     bool Execute(const std::string& sql);
 
     /**
-     * Get list of registered tables
-     */
-    std::vector<std::string> GetTableNames() const;
-
-    /**
-     * Get table schema (column names and types)
-     */
-    struct ColumnInfo {
-        std::string name;
-        std::string type;
-        bool nullable;
-    };
-    std::vector<ColumnInfo> GetTableSchema(const std::string& table_name);
-
-    /**
-     * Get row count for a table
-     */
-    int64_t GetRowCount(const std::string& table_name);
-
-    /**
-     * Check if table exists
-     */
-    bool HasTable(const std::string& table_name) const;
-
-    /**
      * Get last error message
      */
     std::string GetLastError() const { return last_error_; }
 
-    /**
-     * Query profiling information
-     */
-    struct QueryProfile {
-        std::string query;
-        double execution_time_ms;
-        int64_t rows_scanned;
-        int64_t rows_returned;
-        std::string plan;
-    };
-
-    /**
-     * Get query execution plan (EXPLAIN)
-     */
-    std::string ExplainQuery(const std::string& sql);
-
-    /**
-     * Profile query execution
-     */
-    QueryProfile ProfileQuery(const std::string& sql);
-
-    /**
-     * Enable/disable query profiling
-     */
-    void SetProfilingEnabled(bool enabled);
-
-    /**
-     * Common Data Studio Operations (convenience methods)
-     */
-
-    /**
-     * Filter rows by condition
-     * @return Filtered Arrow table
-     */
-    std::shared_ptr<arrow::Table> FilterRows(
-        const std::string& table_name,
-        const std::string& condition
-    );
-
-    /**
-     * Select specific columns
-     */
-    std::shared_ptr<arrow::Table> SelectColumns(
-        const std::string& table_name,
-        const std::vector<std::string>& columns
-    );
-
-    /**
-     * Group by and aggregate
-     *
-     * @param table_name Source table
-     * @param group_by_cols Columns to group by
-     * @param aggregations Map of: output_column -> "AGG(input_column)"
-     *
-     * Example:
-     *   auto result = db.GroupBy("sales", {"region"},
-     *       {{"total_sales", "SUM(amount)"},
-     *        {"avg_price", "AVG(price)"}});
-     */
-    std::shared_ptr<arrow::Table> GroupBy(
-        const std::string& table_name,
-        const std::vector<std::string>& group_by_cols,
-        const std::map<std::string, std::string>& aggregations
-    );
-
-    /**
-     * Join two tables
-     */
-    enum class JoinType { Inner, Left, Right, Full };
-
-    std::shared_ptr<arrow::Table> Join(
-        const std::string& left_table,
-        const std::string& right_table,
-        const std::string& on_clause,
-        JoinType join_type = JoinType::Inner
-    );
-
-    /**
-     * Sort table
-     */
-    std::shared_ptr<arrow::Table> Sort(
-        const std::string& table_name,
-        const std::vector<std::string>& order_by_cols,
-        bool ascending = true
-    );
-
-    /**
-     * Distinct rows
-     */
-    std::shared_ptr<arrow::Table> Distinct(
-        const std::string& table_name,
-        const std::vector<std::string>& columns = {}
-    );
-
-    /**
-     * Sample rows (for data preview)
-     */
-    std::shared_ptr<arrow::Table> Sample(
-        const std::string& table_name,
-        int64_t n,
-        bool random = false
-    );
-
-    /**
-     * Compute column statistics
-     */
-    struct ColumnStats {
-        std::string column_name;
-        int64_t count;
-        int64_t null_count;
-        double min;
-        double max;
-        double mean;
-        double median;
-        double std_dev;
-        double percentile_25;
-        double percentile_75;
-    };
-
-    std::vector<ColumnStats> ComputeStats(const std::string& table_name);
-
 private:
-    std::unique_ptr<duckdb::DuckDB> db_;
+    std::shared_ptr<duckdb::DuckDB> db_;  // shared with the connections NewConnection makes
     std::unique_ptr<duckdb::Connection> conn_;
-    std::map<std::string, std::shared_ptr<arrow::Table>> registered_tables_;
     std::string last_error_;
-    bool profiling_enabled_ = false;
+    uint64_t opened_budget_ = 0;   // DataBudgetShareBytes() when opened (memory_limit)
+    std::string opened_spill_;     // DataSpillDirectory() when opened (its temp_directory is a folder in it)
+
+    struct SharedTag {};
+    DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db);
 
     // Helper: Convert DuckDB result to Arrow table
     std::shared_ptr<arrow::Table> ResultToArrow(duckdb::unique_ptr<duckdb::QueryResult> result);
-
-    // Helper: Convert JoinType enum to SQL string
-    std::string JoinTypeToSQL(JoinType type) const;
 };
 
 } // namespace cyxwiz

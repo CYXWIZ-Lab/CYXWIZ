@@ -10,9 +10,9 @@ namespace cyxwiz {
  *
  * Binary format (single file):
  *   Magic: "CYXW" (0x43595857)
- *   Version: 2
- *   JSON metadata + serialized tensors
- *   Created by: Tools > Save Trained Model
+ *   Version: 3 (legacy v2 detection retained)
+ *   Complete package inventory with typed tensors and tokenizer assets
+ *   Created by: native Export Model
  *
  * Directory format:
  *   model.cyxmodel/
@@ -20,8 +20,8 @@ namespace cyxwiz {
  *   ├── graph.cyxgraph
  *   ├── config.json
  *   ├── weights/manifest.json
- *   └── weights/*.bin
- *   Created by: Deploy > Export Model
+ *   └── weights/(tensor files).bin
+ *   Created by: Binary to Directory conversion
  */
 class ModelConverter {
 public:

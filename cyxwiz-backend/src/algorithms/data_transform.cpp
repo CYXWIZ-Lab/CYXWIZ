@@ -1,1225 +1,780 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// Column transforms, statistics and the normality test on ArrayFire (TOFIX140): the
+// CPU option is ArrayFire's CPU backend and there are no hand-written CPU kernels.
+// Each column crosses to the device once and its
+// result comes back once; float64 where the active device has it, else float32.
+// Semantics follow scikit-learn / scipy (StandardScaler, RobustScaler,
+// QuantileTransformer, scipy.stats.boxcox / yeojohnson / normaltest); PyTorch
+// reference fixtures check them (generate_data_transform_fixtures.py).
+
 #ifdef _WIN32
-#ifndef NOMINMAX
 #define NOMINMAX
-#endif
 #endif
 
 #include "cyxwiz/data_transform.h"
-#include <spdlog/spdlog.h>
+#include "arrayfire_host_values.h"
+
 #include <algorithm>
-#include <numeric>
 #include <cmath>
+#include <initializer_list>
+#include <iterator>
 #include <limits>
-#include <random>
+#include <string>
+#include <type_traits>
+#include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
-// Ensure Windows min/max macros are undefined after all includes
-#ifdef _WIN32
 #ifdef min
 #undef min
 #endif
 #ifdef max
 #undef max
 #endif
-#endif
 
 namespace cyxwiz {
 
-// GPU availability check (cached)
-static bool s_use_gpu = false;
-static bool s_gpu_checked = false;
+namespace {
 
-static bool CheckGPUAvailable() {
-    if (s_gpu_checked) return s_use_gpu;
-    s_gpu_checked = true;
+using Columns = std::vector<std::vector<double>>;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::Backend backend = af::getActiveBackend();
-        s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        if (s_use_gpu) {
-            spdlog::info("[DataTransform] GPU acceleration enabled");
-        }
-    } catch (const af::exception& e) {
-        spdlog::warn("[DataTransform] GPU check failed: {}", e.what());
-        s_use_gpu = false;
-    }
-#endif
-    return s_use_gpu;
-}
+constexpr double kDegenerate = 1e-10;  // zero variance for the lambda search
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
-    ColumnStats stats;
-    if (data.empty()) return stats;
-
-    stats.count = static_cast<int>(data.size());
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-
-            stats.min = af::min<double>(gpu_data);
-            stats.max = af::max<double>(gpu_data);
-            stats.mean = af::mean<double>(gpu_data);
-            stats.std_dev = af::stdev<double>(gpu_data, AF_VARIANCE_SAMPLE);
-
-            // Sort for percentiles
-            af::array sorted = af::sort(gpu_data);
-            std::vector<double> sorted_cpu(data.size());
-            sorted.host(sorted_cpu.data());
-
-            stats.median = GetPercentile(sorted_cpu, 50.0);
-            stats.q1 = GetPercentile(sorted_cpu, 25.0);
-            stats.q3 = GetPercentile(sorted_cpu, 75.0);
-            stats.iqr = stats.q3 - stats.q1;
-
-            // Check for negatives and zeros (CPU)
-            for (const auto& x : data) {
-                if (x < 0) stats.has_negatives = true;
-                if (x == 0) stats.has_zeros = true;
-            }
-
-            return stats;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU stats failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    stats.min = *std::min_element(data.begin(), data.end());
-    stats.max = *std::max_element(data.begin(), data.end());
-    stats.mean = std::accumulate(data.begin(), data.end(), 0.0) / data.size();
-
-    // Standard deviation
-    double variance = 0.0;
-    for (const auto& x : data) {
-        variance += (x - stats.mean) * (x - stats.mean);
-    }
-    stats.std_dev = std::sqrt(variance / data.size());
-
-    // Median and quartiles
-    std::vector<double> sorted = data;
-    std::sort(sorted.begin(), sorted.end());
-
-    stats.median = GetPercentile(sorted, 50.0);
-    stats.q1 = GetPercentile(sorted, 25.0);
-    stats.q3 = GetPercentile(sorted, 75.0);
-    stats.iqr = stats.q3 - stats.q1;
-
-    // Check for negatives and zeros
-    for (const auto& x : data) {
-        if (x < 0) stats.has_negatives = true;
-        if (x == 0) stats.has_zeros = true;
-    }
-
-    return stats;
-}
-
-double DataTransform::GetPercentile(std::vector<double> data, double percentile) {
-    if (data.empty()) return 0.0;
-
-    std::sort(data.begin(), data.end());
-
-    double idx = (percentile / 100.0) * (data.size() - 1);
-    size_t lower = static_cast<size_t>(std::floor(idx));
-    size_t upper = static_cast<size_t>(std::ceil(idx));
-
-    if (lower == upper) return data[lower];
-
-    double frac = idx - lower;
-    return data[lower] * (1.0 - frac) + data[upper] * frac;
-}
-
-std::vector<int> DataTransform::DetectOutliers(const std::vector<double>& data, double iqr_multiplier) {
-    std::vector<int> outliers;
-    if (data.size() < 4) return outliers;
-
-    auto stats = ComputeColumnStats(data);
-    double lower_bound = stats.q1 - iqr_multiplier * stats.iqr;
-    double upper_bound = stats.q3 + iqr_multiplier * stats.iqr;
-
-    for (size_t i = 0; i < data.size(); ++i) {
-        if (data[i] < lower_bound || data[i] > upper_bound) {
-            outliers.push_back(static_cast<int>(i));
-        }
-    }
-
-    return outliers;
-}
-
-bool DataTransform::CanApplyLogTransform(const std::vector<double>& data, bool use_log1p) {
-    for (const auto& x : data) {
-        if (use_log1p) {
-            if (x < -1.0) return false;  // log1p requires x > -1
-        } else {
-            if (x <= 0.0) return false;  // log requires x > 0
-        }
-    }
-    return true;
-}
-
-bool DataTransform::CanApplyBoxCox(const std::vector<double>& data) {
-    for (const auto& x : data) {
-        if (x <= 0.0) return false;  // Box-Cox requires strictly positive
-    }
-    return true;
-}
-
-// ============================================================================
-// Normalization (Min-Max Scaling)
-// ============================================================================
-
-TransformResult DataTransform::NormalizeColumn(const std::vector<double>& data,
-                                                double range_min, double range_max) {
-    TransformResult result;
-    result.method = "normalize";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-
-            double data_min = af::min<double>(gpu_data);
-            double data_max = af::max<double>(gpu_data);
-            double data_range = data_max - data_min;
-
-            if (data_range < 1e-10) {
-                result.error_message = "Data has zero range (constant values)";
-                return result;
-            }
-
-            result.params["data_min"] = data_min;
-            result.params["data_max"] = data_max;
-            result.params["range_min"] = range_min;
-            result.params["range_max"] = range_max;
-
-            double target_range = range_max - range_min;
-            af::array transformed = ((gpu_data - data_min) / data_range) * target_range + range_min;
-
-            std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
-
-            result.transformed_data.push_back(transformed_cpu);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU normalize failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    double data_min = *std::min_element(data.begin(), data.end());
-    double data_max = *std::max_element(data.begin(), data.end());
-    double data_range = data_max - data_min;
-
-    if (data_range < 1e-10) {
-        result.error_message = "Data has zero range (constant values)";
-        return result;
-    }
-
-    result.params["data_min"] = data_min;
-    result.params["data_max"] = data_max;
-    result.params["range_min"] = range_min;
-    result.params["range_max"] = range_max;
-
-    std::vector<double> transformed(data.size());
-    double target_range = range_max - range_min;
-
-    for (size_t i = 0; i < data.size(); ++i) {
-        transformed[i] = ((data[i] - data_min) / data_range) * target_range + range_min;
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
+template <typename Result>
+Result Fail(Result result, std::string message) {
+    result.success = false;
+    result.error_message = std::move(message);
+    if constexpr (std::is_same_v<Result, TransformResult>) result.transformed_data.clear();
     return result;
 }
 
-TransformResult DataTransform::Normalize(const std::vector<std::vector<double>>& data,
-                                         double range_min, double range_max) {
-    TransformResult result;
-    result.method = "normalize";
+std::string ColumnMessage(size_t column, const std::string& message) {
+    return "Column " + std::to_string(column) + ": " + message;
+}
 
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
+enum class PowerFamily { BoxCox, YeoJohnson };
+
+constexpr dim_t kMaxTileElements = dim_t{1} << 22;  // lambda-profile batch size
+constexpr double kZeroLambda = 1e-12;
+
+// A device row of host values in the precision of `like`.
+af::array RowLike(const std::vector<double>& values, const af::array& like) {
+    af::array row = HostValuesToDevice(values);
+    return af::moddims(row, 1, static_cast<dim_t>(values.size())).as(like.type());
+}
+
+// numpy / torch "linear" percentile of an ascending column at each fraction in
+// [0, 1]: lerp(s[floor], s[ceil], t), using b - (b - a)(1 - t) for t >= 0.5.
+af::array Percentiles(const af::array& sorted, const af::array& fractions) {
+    const af::array position = fractions * static_cast<double>(sorted.elements() - 1);
+    const af::array lower = af::floor(position);
+    const af::array t = position - lower;
+    const af::array a = af::lookup(sorted, lower.as(u32));
+    const af::array b = af::lookup(sorted, af::ceil(position).as(u32));
+    const af::array diff = b - a;
+    return af::select(t >= 0.5, b - diff * (1.0 - t), a + diff * t);
+}
+
+// Percentiles at host fractions, back on the host.
+std::vector<double> PercentilesAt(const af::array& sorted, const std::vector<double>& fractions,
+                                  const char* operation) {
+    return DeviceToHostValues(Percentiles(sorted, HostValuesToDevice(fractions).as(sorted.type())), operation);
+}
+
+// Linear quantiles of an ascending column at i / (size - 1), i = 0 .. size - 1. The
+// sorted position i (n - 1) / (size - 1) is split in integers, so it never rounds off a
+// data point (a rounded position changes which repeated values match a quantile exactly).
+af::array ExactQuantiles(const af::array& sorted, int size) {
+    const dim_t n = sorted.elements();
+    const af::dim4 dims(size);
+    const af::array denominator = af::constant(static_cast<long long>(size - 1), dims, s64);
+    const af::array numerator = af::range(dims, 0, s64) * af::constant(static_cast<long long>(n - 1), dims, s64);
+    const af::array remainder = af::mod(numerator, denominator);
+    const af::array lower = (numerator - remainder) / denominator;
+    const af::array upper = af::min(lower + af::constant(1LL, dims, s64), af::constant(static_cast<long long>(n - 1), dims, s64));
+    const af::array t = remainder.as(sorted.type()) / static_cast<double>(size - 1);
+    const af::array a = af::lookup(sorted, lower.as(u32));
+    const af::array b = af::lookup(sorted, upper.as(u32));
+    const af::array diff = b - a;
+    return af::select(t >= 0.5, b - diff * (1.0 - t), a + diff * t);
+}
+
+// scikit-learn's _handle_zeros_in_scale: a scale below 10 eps divides by 1.
+double ZeroSafeScale(double scale) {
+    return scale < 10.0 * std::numeric_limits<double>::epsilon() ? 1.0 : scale;
+}
+
+// scikit-learn's _is_constant_feature: a variance within the rounding error of its
+// own computation is a constant column (scale 1), with the compute precision's
+// epsilon. On a float32 device a constant column's variance is ~1e-14, not 0.
+bool IsConstantFeature(double variance, double mean, dim_t n) {
+    const double epsilon =
+        DeviceHasDouble() ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
+    const double count = static_cast<double>(n);
+    const double bound = count * epsilon * variance + std::pow(count * mean * epsilon, 2.0);
+    return variance <= bound;
+}
+
+double PopulationStd(const af::array& x) {
+    const af::array centered = x - af::mean<double>(x);
+    return std::sqrt(af::mean<double>(centered * centered));
+}
+
+// Box-Cox / Yeo-Johnson of the column x at each lambda in the row `lambdas`
+// (k entries): an [n, k] matrix, one transformed column per lambda.
+af::array PowerTransformed(const af::array& x, const af::array& lambdas, PowerFamily family) {
+    const dim_t n = x.elements(), k = lambdas.elements();
+    const af::array lam = af::tile(lambdas, static_cast<unsigned>(n), 1);
+    if (family == PowerFamily::BoxCox) {
+        const af::array logx = af::tile(af::log(x), 1, static_cast<unsigned>(k));
+        return af::select(af::abs(lam) < kZeroLambda, logx, af::expm1(lam * logx) / lam);
     }
+    const af::array values = af::tile(x, 1, static_cast<unsigned>(k));
+    const af::array lp = af::log1p(af::abs(values));
+    const af::array positive = af::select(af::abs(lam) < kZeroLambda, lp, af::expm1(lam * lp) / lam);
+    const af::array other = 2.0 - lam;
+    const af::array negative = -af::select(af::abs(other) < kZeroLambda, lp, af::expm1(other * lp) / other);
+    return af::select(values >= 0.0, positive, negative);
+}
 
-    result.params["range_min"] = range_min;
-    result.params["range_max"] = range_max;
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = NormalizeColumn(data[col], range_min, range_max);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
-        }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-        result.params["col" + std::to_string(col) + "_min"] = col_result.params["data_min"];
-        result.params["col" + std::to_string(col) + "_max"] = col_result.params["data_max"];
+// Profile log-likelihood at each lambda (scipy boxcox_llf / yeojohnson_llf):
+// (lambda - 1) * J - n/2 * log(var(y)), J = sum log x (Box-Cox) or
+// sum sign(x) log1p(|x|) (Yeo-Johnson), var the population variance.
+std::vector<double> LogLikelihoods(const af::array& x, PowerFamily family, const std::vector<double>& lambdas,
+                                   const char* operation) {
+    const dim_t n = x.elements();
+    const double jacobian = family == PowerFamily::BoxCox
+        ? af::sum<double>(af::log(x))
+        : af::sum<double>(af::select(x >= 0.0, af::log1p(af::abs(x)), -af::log1p(af::abs(x))));
+    const size_t chunk = static_cast<size_t>(std::max<dim_t>(1, kMaxTileElements / n));
+    std::vector<double> result;
+    result.reserve(lambdas.size());
+    for (size_t start = 0; start < lambdas.size(); start += chunk) {
+        const std::vector<double> part(lambdas.begin() + static_cast<std::ptrdiff_t>(start),
+                                       lambdas.begin() + static_cast<std::ptrdiff_t>(std::min(lambdas.size(), start + chunk)));
+        const af::array lam = RowLike(part, x);
+        const af::array y = PowerTransformed(x, lam, family);
+        const af::array centered = y - af::tile(af::mean(y, 0), static_cast<unsigned>(n), 1);
+        const af::array variance = af::mean(centered * centered, 0);
+        const af::array llf = (lam - 1.0) * jacobian - 0.5 * static_cast<double>(n) * af::log(variance);
+        const std::vector<double> values = DeviceToHostValues(llf, operation);
+        result.insert(result.end(), values.begin(), values.end());
     }
-
-    result.success = true;
     return result;
 }
 
-// ============================================================================
-// Standardization (Z-Score)
-// ============================================================================
-
-TransformResult DataTransform::StandardizeColumn(const std::vector<double>& data) {
-    TransformResult result;
-    result.method = "standardize";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-
-            double mean = af::mean<double>(gpu_data);
-            double std_dev = af::stdev<double>(gpu_data, AF_VARIANCE_SAMPLE);
-
-            if (std_dev < 1e-10) {
-                result.error_message = "Data has zero variance (constant values)";
-                return result;
-            }
-
-            result.params["mean"] = mean;
-            result.params["std_dev"] = std_dev;
-
-            af::array transformed = (gpu_data - mean) / std_dev;
-
-            std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
-
-            result.transformed_data.push_back(transformed_cpu);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU standardize failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    double mean = std::accumulate(data.begin(), data.end(), 0.0) / data.size();
-
-    double variance = 0.0;
-    for (const auto& x : data) {
-        variance += (x - mean) * (x - mean);
-    }
-    double std_dev = std::sqrt(variance / data.size());
-
-    if (std_dev < 1e-10) {
-        result.error_message = "Data has zero variance (constant values)";
-        return result;
-    }
-
-    result.params["mean"] = mean;
-    result.params["std_dev"] = std_dev;
-
-    std::vector<double> transformed(data.size());
-    for (size_t i = 0; i < data.size(); ++i) {
-        transformed[i] = (data[i] - mean) / std_dev;
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
-    return result;
+std::vector<double> Linspace(double start, double stop, int count) {
+    std::vector<double> values(static_cast<size_t>(count));
+    const double step = (stop - start) / (count - 1);
+    for (int i = 0; i < count; ++i) values[static_cast<size_t>(i)] = start + i * step;
+    values.back() = stop;
+    return values;
 }
 
-TransformResult DataTransform::Standardize(const std::vector<std::vector<double>>& data) {
-    TransformResult result;
-    result.method = "standardize";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = StandardizeColumn(data[col]);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
+// Index of the largest finite value, or -1.
+int BestFinite(const std::vector<double>& values) {
+    int best = -1;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (std::isfinite(values[i]) && (best < 0 || values[i] > values[static_cast<size_t>(best)])) {
+            best = static_cast<int>(i);
         }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-        result.params["col" + std::to_string(col) + "_mean"] = col_result.params["mean"];
-        result.params["col" + std::to_string(col) + "_std"] = col_result.params["std_dev"];
     }
-
-    result.success = true;
-    return result;
+    return best;
 }
 
-// ============================================================================
-// Log Transforms
-// ============================================================================
-
-TransformResult DataTransform::LogTransformColumn(const std::vector<double>& data,
-                                                   const std::string& base,
-                                                   bool use_log1p) {
-    TransformResult result;
-    result.method = "log_transform";
-    result.params["base"] = (base == "natural") ? 0.0 : (base == "log10") ? 10.0 : 2.0;
-    result.params["use_log1p"] = use_log1p ? 1.0 : 0.0;
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    if (!CanApplyLogTransform(data, use_log1p)) {
-        result.error_message = use_log1p ?
-            "Data contains values <= -1 (log1p requires x > -1)" :
-            "Data contains non-positive values (log requires x > 0)";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-
-            if (use_log1p) {
-                gpu_data = gpu_data + 1.0;
-            }
-
-            af::array transformed;
-            if (base == "natural") {
-                transformed = af::log(gpu_data);
-            } else if (base == "log10") {
-                transformed = af::log10(gpu_data);
-            } else {  // log2
-                transformed = af::log(gpu_data) / std::log(2.0);
-            }
-
-            std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
-
-            result.transformed_data.push_back(transformed_cpu);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU log transform failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    std::vector<double> transformed(data.size());
-
-    for (size_t i = 0; i < data.size(); ++i) {
-        double x = use_log1p ? (data[i] + 1.0) : data[i];
-
-        if (base == "natural") {
-            transformed[i] = std::log(x);
-        } else if (base == "log10") {
-            transformed[i] = std::log10(x);
-        } else {  // log2
-            transformed[i] = std::log2(x);
-        }
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
-    return result;
-}
-
-TransformResult DataTransform::LogTransform(const std::vector<std::vector<double>>& data,
-                                            const std::string& base,
-                                            bool use_log1p) {
-    TransformResult result;
-    result.method = "log_transform";
-    result.params["base"] = (base == "natural") ? 0.0 : (base == "log10") ? 10.0 : 2.0;
-    result.params["use_log1p"] = use_log1p ? 1.0 : 0.0;
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = LogTransformColumn(data[col], base, use_log1p);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
-        }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Box-Cox Transform
-// ============================================================================
-
-BoxCoxLambdaResult DataTransform::FindOptimalLambda(const std::vector<double>& data,
-                                                     double lambda_min,
-                                                     double lambda_max,
-                                                     int n_steps) {
+// Maximum-likelihood lambda: the coarse profile across [lambda_min, lambda_max],
+// then eight rounds of 33-point refinement around the best point (each round
+// narrows the bracket 16x, to ~1e-10 of the grid spacing).
+BoxCoxLambdaResult SearchLambda(const af::array& x, PowerFamily family, double lambda_min, double lambda_max,
+                                int n_steps, const char* operation) {
     BoxCoxLambdaResult result;
+    result.lambdas_tested = Linspace(lambda_min, lambda_max, n_steps + 1);
+    result.log_likelihoods = LogLikelihoods(x, family, result.lambdas_tested, operation);
+    const int coarse = BestFinite(result.log_likelihoods);
+    if (coarse < 0) return Fail(result, "No lambda in the range gives a finite likelihood");
 
-    if (data.empty() || !CanApplyBoxCox(data)) {
-        return result;
-    }
-
-    double step = (lambda_max - lambda_min) / n_steps;
-    double best_ll = -std::numeric_limits<double>::infinity();
-    double best_lambda = 0.0;
-
-    int n = static_cast<int>(data.size());
-
-    // Compute geometric mean for normalization
-    double log_sum = 0.0;
-    for (const auto& x : data) {
-        log_sum += std::log(x);
-    }
-    double geom_mean = std::exp(log_sum / n);
-
-    for (int i = 0; i <= n_steps; ++i) {
-        double lambda = lambda_min + i * step;
-        result.lambdas_tested.push_back(lambda);
-
-        // Transform data
-        std::vector<double> transformed(n);
-        for (int j = 0; j < n; ++j) {
-            if (std::abs(lambda) < 1e-10) {
-                transformed[j] = geom_mean * std::log(data[j]);
-            } else {
-                transformed[j] = (std::pow(data[j], lambda) - 1.0) / (lambda * std::pow(geom_mean, lambda - 1));
-            }
+    double best = result.lambdas_tested[static_cast<size_t>(coarse)];
+    double best_ll = result.log_likelihoods[static_cast<size_t>(coarse)];
+    double low = result.lambdas_tested[static_cast<size_t>(std::max(coarse - 1, 0))];
+    double high = result.lambdas_tested[static_cast<size_t>(std::min(coarse + 1, n_steps))];
+    constexpr int kPoints = 33;
+    for (int round = 0; round < 8 && high > low; ++round) {
+        const std::vector<double> lambdas = Linspace(low, high, kPoints);
+        const std::vector<double> lls = LogLikelihoods(x, family, lambdas, operation);
+        const int i = BestFinite(lls);
+        if (i >= 0 && lls[static_cast<size_t>(i)] >= best_ll) {
+            best = lambdas[static_cast<size_t>(i)];
+            best_ll = lls[static_cast<size_t>(i)];
         }
-
-        // Compute variance of transformed data
-        double mean = std::accumulate(transformed.begin(), transformed.end(), 0.0) / n;
-        double variance = 0.0;
-        for (const auto& t : transformed) {
-            variance += (t - mean) * (t - mean);
-        }
-        variance /= n;
-
-        // Log-likelihood (proportional)
-        double ll = -0.5 * n * std::log(variance);
-        result.log_likelihoods.push_back(ll);
-
-        if (ll > best_ll) {
-            best_ll = ll;
-            best_lambda = lambda;
-        }
+        const double half_width = (high - low) / (kPoints - 1);
+        low = std::max(lambda_min, best - half_width);
+        high = std::min(lambda_max, best + half_width);
     }
-
-    result.optimal_lambda = best_lambda;
+    result.optimal_lambda = best;
     result.best_log_likelihood = best_ll;
     result.success = true;
     return result;
 }
 
-TransformResult DataTransform::BoxCoxColumn(const std::vector<double>& data,
-                                            double lambda,
-                                            bool auto_lambda) {
+// Rejects what the lambda search cannot handle; empty when the column is usable.
+std::string LambdaSearchRefusal(const af::array& x, PowerFamily family, double lambda_min, double lambda_max,
+                                int n_steps) {
+    if (n_steps < 2 || !(lambda_min < lambda_max)) return "Lambda range needs lambda_min < lambda_max and at least 2 steps";
+    if (x.elements() < 2) return "Needs at least 2 values";
+    if (family == PowerFamily::BoxCox && !af::allTrue<bool>(x > 0.0)) return "Box-Cox requires strictly positive data";
+    if (PopulationStd(x) < kDegenerate) return "Data has zero variance (constant values)";
+    return {};
+}
+
+// Standard normal quantile (Wichura, AS241 PPND16; relative error ~1e-16).
+af::array NormalQuantile(const af::array& p) {
+    const auto poly = [](const af::array& r, std::initializer_list<double> c) {
+        af::array value = af::constant(0.0, r.dims(), r.type());
+        for (auto it = std::rbegin(c); it != std::rend(c); ++it) value = value * r + *it;
+        return value;
+    };
+    const af::array q = p - 0.5;
+    const af::array rc = 0.180625 - q * q;
+    const af::array central = q *
+        poly(rc, {3.3871328727963666080e0, 1.3314166789178437745e+2, 1.9715909503065514427e+3,
+                  1.3731693765509461125e+4, 4.5921953931549871457e+4, 6.7265770927008700853e+4,
+                  3.3430575583588128105e+4, 2.5090809287301226727e+3}) /
+        poly(rc, {1.0, 4.2313330701600911252e+1, 6.8718700749205790830e+2, 5.3941960214247511077e+3,
+                  2.1213794301586595867e+4, 3.9307895800092710610e+4, 2.8729085735721942674e+4,
+                  5.2264952788528545610e+3});
+    const af::array r = af::sqrt(-af::log(af::select(q < 0.0, p, 1.0 - p)));
+    const af::array rm = r - 1.6;
+    const af::array inner_tail = poly(rm, {1.42343711074968357734e0, 4.63033784615654529590e0, 5.76949722146069140550e0,
+                                     3.64784832476320460504e0, 1.27045825245236838258e0, 2.41780725177450611770e-1,
+                                     2.27238449892691845833e-2, 7.74545014278341407640e-4}) /
+        poly(rm, {1.0, 2.05319162663775882187e0, 1.67638483018380384940e0, 6.89767334985100004550e-1,
+                  1.48103976427480074590e-1, 1.51986665636164571966e-2, 5.47593808499534494600e-4,
+                  1.05075007164441684324e-9});
+    const af::array rf = r - 5.0;
+    const af::array outer_tail = poly(rf, {6.65790464350110377720e0, 5.46378491116411436990e0, 1.78482653991729133580e0,
+                                    2.96560571828504891230e-1, 2.65321895265761230930e-2, 1.24266094738807843860e-3,
+                                    2.71155556874348757815e-5, 2.01033439929228813265e-7}) /
+        poly(rf, {1.0, 5.99832206555887937690e-1, 1.36929880922735805310e-1, 1.48753612908506148525e-2,
+                  7.86869131145613259100e-4, 1.84631831751005468180e-5, 1.42151175831644588870e-7,
+                  2.04426310338993978564e-15});
+    const af::array tail = af::select(r <= 5.0, inner_tail, outer_tail);
+    return af::select(af::abs(q) <= 0.425, central, af::select(q < 0.0, -tail, tail));
+}
+
+// For each x, the number of entries of the ascending q that are <= x
+// (strict: < x); a vectorised binary search.
+af::array CountBelow(const af::array& q, const af::array& x, bool strict) {
+    const int size = static_cast<int>(q.elements());
+    af::array low = af::constant(0, x.dims(), s32);
+    af::array high = af::constant(size, x.dims(), s32);
+    const af::array last = af::constant(size - 1, x.dims(), s32);
+    for (int span = size + 1; span > 0; span /= 2) {  // floor(log2(size + 1)) + 1 halvings
+        const af::array active = low < high;
+        const af::array mid = (low + high) >> 1;
+        const af::array probe = af::lookup(q, af::min(mid, last).as(u32));
+        const af::array go_right = active && (strict ? probe < x : probe <= x);
+        low = af::select(go_right, mid + 1, low);
+        high = af::select(active && !go_right, mid, high);
+    }
+    return low;
+}
+
+// np.interp(x, q, refs) (forward) averaged with -np.interp(-x, -q[::-1],
+// -refs[::-1]) (reverse), as QuantileTransformer does to centre repeated quantiles.
+af::array QuantileInterpolate(const af::array& q, const af::array& refs, const af::array& x) {
+    const int size = static_cast<int>(q.elements());
+    const auto at = [](const af::array& values, const af::array& index) { return af::lookup(values, index.as(u32)); };
+    const af::array first = af::constant(0, x.dims(), s32), last = af::constant(size - 1, x.dims(), s32);
+    const auto clamp = [&](const af::array& index) { return af::max(af::min(index, last), first); };
+
+    const af::array k = CountBelow(q, x, false) - 1;  // rightmost q[k] <= x
+    const af::array k0 = clamp(k), k1 = clamp(k + 1);
+    const af::array qk = at(q, k0), rk = at(refs, k0);
+    const af::array forward_slope = (at(refs, k1) - rk) / (at(q, k1) - qk);
+    af::array forward = af::select(qk == x, rk, forward_slope * (x - qk) + rk);
+    forward = af::select(k < 0, at(refs, first), forward);
+    forward = af::select(k >= size - 1, at(refs, last), forward);
+
+    const af::array m = CountBelow(q, x, true);  // leftmost q[m] >= x
+    const af::array m0 = clamp(m), m1 = clamp(m - 1);
+    const af::array qm = at(q, m0), rm = at(refs, m0);
+    const af::array reverse_slope = (rm - at(refs, m1)) / (qm - at(q, m1));
+    af::array reverse = af::select(qm == x, rm, rm - reverse_slope * (qm - x));
+    reverse = af::select(m <= 0, at(refs, first), reverse);
+    reverse = af::select(m >= size, at(refs, last), reverse);
+    return 0.5 * (forward + reverse);
+}
+
+// Runs `transform` on each column on the device. It returns the transformed column,
+// or sets `refusal` (and the result is the column's error).
+template <typename Transform>
+TransformResult TransformEachColumn(const Columns& data, const char* method, const char* operation,
+                                    Transform&& transform) {
     TransformResult result;
-    result.method = "boxcox";
+    result.method = method;
+    if (data.empty()) return Fail(result, "Empty data");
+    try {
+        for (size_t col = 0; col < data.size(); ++col) {
+            if (data[col].empty()) return Fail(result, ColumnMessage(col, "Empty data"));
+            const af::array x = HostValuesToDevice(data[col]);
+            std::string refusal;
+            const af::array y = transform(x, "col" + std::to_string(col) + "_", result.params, refusal);
+            if (!refusal.empty()) return Fail(result, ColumnMessage(col, refusal));
+            result.transformed_data.push_back(DeviceToHostValues(y, operation));
+        }
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Fail(result, DeviceError(operation, e));
+    }
+}
 
+}  // namespace
+
+// ============================================================================
+// Input checks
+// ============================================================================
+
+bool DataTransform::CanApplyLogTransform(const std::vector<double>& data, bool use_log1p) {
+    return std::all_of(data.begin(), data.end(), [use_log1p](double x) { return use_log1p ? x > -1.0 : x > 0.0; });
+}
+
+bool DataTransform::CanApplyBoxCox(const std::vector<double>& data) {
+    return std::all_of(data.begin(), data.end(), [](double x) { return x > 0.0; });
+}
+
+// ============================================================================
+// Statistics
+// ============================================================================
+
+ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
+    ColumnStats stats;
     if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
+        stats.error_message = "Empty data";
+        return stats;
     }
-
-    if (!CanApplyBoxCox(data)) {
-        result.error_message = "Box-Cox requires strictly positive data";
-        return result;
+    try {
+        const af::array x = HostValuesToDevice(data);
+        stats.min = af::min<double>(x);
+        stats.max = af::max<double>(x);
+        stats.mean = af::mean<double>(x);
+        stats.std_dev = PopulationStd(x);
+        const af::array d = x - stats.mean;
+        const af::array d2 = d * d;
+        const double m2 = af::mean<double>(d2);
+        stats.skewness = m2 > 0.0 ? af::mean<double>(d2 * d) / std::pow(m2, 1.5) : 0.0;
+        const std::vector<double> quartiles =
+            PercentilesAt(af::sort(x), {0.25, 0.5, 0.75}, "DataTransform::ComputeColumnStats");
+        stats.q1 = quartiles[0];
+        stats.median = quartiles[1];
+        stats.q3 = quartiles[2];
+        stats.iqr = stats.q3 - stats.q1;
+        stats.count = static_cast<int>(data.size());
+    } catch (const af::exception& e) {
+        stats = ColumnStats{};
+        stats.error_message = DeviceError("DataTransform::ComputeColumnStats", e);
     }
-
-    double use_lambda = lambda;
-    if (auto_lambda) {
-        auto lambda_result = FindOptimalLambda(data);
-        if (!lambda_result.success) {
-            result.error_message = "Failed to find optimal lambda";
-            return result;
-        }
-        use_lambda = lambda_result.optimal_lambda;
-    }
-
-    result.params["lambda"] = use_lambda;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-
-            af::array transformed;
-            if (std::abs(use_lambda) < 1e-10) {
-                transformed = af::log(gpu_data);
-            } else {
-                transformed = (af::pow(gpu_data, use_lambda) - 1.0) / use_lambda;
-            }
-
-            std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
-
-            result.transformed_data.push_back(transformed_cpu);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU BoxCox failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    std::vector<double> transformed(data.size());
-
-    for (size_t i = 0; i < data.size(); ++i) {
-        if (std::abs(use_lambda) < 1e-10) {
-            transformed[i] = std::log(data[i]);
-        } else {
-            transformed[i] = (std::pow(data[i], use_lambda) - 1.0) / use_lambda;
-        }
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
-    return result;
-}
-
-TransformResult DataTransform::BoxCox(const std::vector<std::vector<double>>& data,
-                                      double lambda,
-                                      bool auto_lambda) {
-    TransformResult result;
-    result.method = "boxcox";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = BoxCoxColumn(data[col], lambda, auto_lambda);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
-        }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-        result.params["col" + std::to_string(col) + "_lambda"] = col_result.params["lambda"];
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Yeo-Johnson Transform
-// ============================================================================
-
-TransformResult DataTransform::YeoJohnsonColumn(const std::vector<double>& data,
-                                                 double lambda,
-                                                 bool auto_lambda) {
-    TransformResult result;
-    result.method = "yeojohnson";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    double use_lambda = lambda;
-    if (auto_lambda) {
-        // Simple search for optimal lambda (similar to Box-Cox but supports negatives)
-        double best_ll = -std::numeric_limits<double>::infinity();
-        for (double l = -5.0; l <= 5.0; l += 0.1) {
-            std::vector<double> temp(data.size());
-            for (size_t i = 0; i < data.size(); ++i) {
-                double x = data[i];
-                if (x >= 0) {
-                    if (std::abs(l) < 1e-10) {
-                        temp[i] = std::log(x + 1);
-                    } else {
-                        temp[i] = (std::pow(x + 1, l) - 1) / l;
-                    }
-                } else {
-                    if (std::abs(l - 2) < 1e-10) {
-                        temp[i] = -std::log(-x + 1);
-                    } else {
-                        temp[i] = -(std::pow(-x + 1, 2 - l) - 1) / (2 - l);
-                    }
-                }
-            }
-
-            double mean = std::accumulate(temp.begin(), temp.end(), 0.0) / temp.size();
-            double var = 0;
-            for (const auto& t : temp) var += (t - mean) * (t - mean);
-            var /= temp.size();
-
-            double ll = -0.5 * data.size() * std::log(var + 1e-10);
-            if (ll > best_ll) {
-                best_ll = ll;
-                use_lambda = l;
-            }
-        }
-    }
-
-    result.params["lambda"] = use_lambda;
-
-    std::vector<double> transformed(data.size());
-    for (size_t i = 0; i < data.size(); ++i) {
-        double x = data[i];
-        if (x >= 0) {
-            if (std::abs(use_lambda) < 1e-10) {
-                transformed[i] = std::log(x + 1);
-            } else {
-                transformed[i] = (std::pow(x + 1, use_lambda) - 1) / use_lambda;
-            }
-        } else {
-            if (std::abs(use_lambda - 2) < 1e-10) {
-                transformed[i] = -std::log(-x + 1);
-            } else {
-                transformed[i] = -(std::pow(-x + 1, 2 - use_lambda) - 1) / (2 - use_lambda);
-            }
-        }
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
-    return result;
-}
-
-TransformResult DataTransform::YeoJohnson(const std::vector<std::vector<double>>& data,
-                                          double lambda,
-                                          bool auto_lambda) {
-    TransformResult result;
-    result.method = "yeojohnson";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = YeoJohnsonColumn(data[col], lambda, auto_lambda);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
-        }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-        result.params["col" + std::to_string(col) + "_lambda"] = col_result.params["lambda"];
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Robust Scaling
-// ============================================================================
-
-TransformResult DataTransform::RobustScaleColumn(const std::vector<double>& data) {
-    TransformResult result;
-    result.method = "robust_scale";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    auto stats = ComputeColumnStats(data);
-
-    if (stats.iqr < 1e-10) {
-        result.error_message = "Data has zero IQR";
-        return result;
-    }
-
-    result.params["median"] = stats.median;
-    result.params["iqr"] = stats.iqr;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-            af::array transformed = (gpu_data - stats.median) / stats.iqr;
-
-            std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
-
-            result.transformed_data.push_back(transformed_cpu);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU robust scale failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    std::vector<double> transformed(data.size());
-    for (size_t i = 0; i < data.size(); ++i) {
-        transformed[i] = (data[i] - stats.median) / stats.iqr;
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
-    return result;
-}
-
-TransformResult DataTransform::RobustScale(const std::vector<std::vector<double>>& data) {
-    TransformResult result;
-    result.method = "robust_scale";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = RobustScaleColumn(data[col]);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
-        }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-        result.params["col" + std::to_string(col) + "_median"] = col_result.params["median"];
-        result.params["col" + std::to_string(col) + "_iqr"] = col_result.params["iqr"];
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Max Abs Scaling
-// ============================================================================
-
-TransformResult DataTransform::MaxAbsScaleColumn(const std::vector<double>& data) {
-    TransformResult result;
-    result.method = "maxabs_scale";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && data.size() > 1000) {
-        try {
-            af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-            double max_abs = af::max<double>(af::abs(gpu_data));
-
-            if (max_abs < 1e-10) {
-                result.error_message = "Data is all zeros";
-                return result;
-            }
-
-            result.params["max_abs"] = max_abs;
-
-            af::array transformed = gpu_data / max_abs;
-
-            std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
-
-            result.transformed_data.push_back(transformed_cpu);
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU maxabs scale failed, fallback to CPU: {}", e.what());
-        }
-    }
-#endif
-
-    // CPU fallback
-    double max_abs = 0.0;
-    for (const auto& x : data) {
-        max_abs = std::max(max_abs, std::abs(x));
-    }
-
-    if (max_abs < 1e-10) {
-        result.error_message = "Data is all zeros";
-        return result;
-    }
-
-    result.params["max_abs"] = max_abs;
-
-    std::vector<double> transformed(data.size());
-    for (size_t i = 0; i < data.size(); ++i) {
-        transformed[i] = data[i] / max_abs;
-    }
-
-    result.transformed_data.push_back(transformed);
-    result.success = true;
-    return result;
-}
-
-TransformResult DataTransform::MaxAbsScale(const std::vector<std::vector<double>>& data) {
-    TransformResult result;
-    result.method = "maxabs_scale";
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        auto col_result = MaxAbsScaleColumn(data[col]);
-        if (!col_result.success) {
-            result.error_message = "Column " + std::to_string(col) + ": " + col_result.error_message;
-            return result;
-        }
-        result.transformed_data.push_back(col_result.transformed_data[0]);
-        result.params["col" + std::to_string(col) + "_maxabs"] = col_result.params["max_abs"];
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Quantile Transform
-// ============================================================================
-
-TransformResult DataTransform::QuantileTransform(const std::vector<std::vector<double>>& data,
-                                                  const std::string& output_distribution,
-                                                  int n_quantiles) {
-    TransformResult result;
-    result.method = "quantile_transform";
-    result.params["output_distribution"] = (output_distribution == "normal") ? 1.0 : 0.0;
-    result.params["n_quantiles"] = static_cast<double>(n_quantiles);
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        const auto& column = data[col];
-        std::vector<double> transformed(column.size());
-
-        // Sort indices
-        std::vector<size_t> indices(column.size());
-        std::iota(indices.begin(), indices.end(), 0);
-        std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
-            return column[a] < column[b];
-        });
-
-        // Assign ranks
-        for (size_t i = 0; i < indices.size(); ++i) {
-            double quantile = static_cast<double>(i) / (indices.size() - 1);
-
-            if (output_distribution == "normal") {
-                // Inverse CDF of standard normal
-                // Using approximation
-                double t = quantile;
-                if (t <= 0.0) t = 0.0001;
-                if (t >= 1.0) t = 0.9999;
-
-                // Approximation for inverse normal CDF
-                double a0 = 2.515517, a1 = 0.802853, a2 = 0.010328;
-                double b1 = 1.432788, b2 = 0.189269, b3 = 0.001308;
-
-                double p = t < 0.5 ? t : 1 - t;
-                double s = std::sqrt(-2.0 * std::log(p));
-                double z = s - (a0 + a1 * s + a2 * s * s) / (1 + b1 * s + b2 * s * s + b3 * s * s * s);
-
-                transformed[indices[i]] = (t < 0.5) ? -z : z;
-            } else {
-                transformed[indices[i]] = quantile;
-            }
-        }
-
-        result.transformed_data.push_back(transformed);
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Power Transform
-// ============================================================================
-
-TransformResult DataTransform::PowerTransform(const std::vector<std::vector<double>>& data,
-                                               double power) {
-    TransformResult result;
-    result.method = "power_transform";
-    result.params["power"] = power;
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable() && !data.empty() && data[0].size() > 1000) {
-        try {
-            for (size_t col = 0; col < data.size(); ++col) {
-                af::array gpu_data(static_cast<dim_t>(data[col].size()), data[col].data());
-
-                // Check for negative values with fractional power
-                if (power != std::floor(power)) {
-                    double min_val = af::min<double>(gpu_data);
-                    if (min_val < 0) {
-                        result.error_message = "Cannot apply fractional power to negative values";
-                        return result;
-                    }
-                }
-
-                af::array transformed = af::pow(gpu_data, power);
-
-                std::vector<double> transformed_cpu(data[col].size());
-                transformed.host(transformed_cpu.data());
-
-                result.transformed_data.push_back(transformed_cpu);
-            }
-
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU power transform failed, fallback to CPU: {}", e.what());
-            result.transformed_data.clear();
-        }
-    }
-#endif
-
-    // CPU fallback
-    for (size_t col = 0; col < data.size(); ++col) {
-        std::vector<double> transformed(data[col].size());
-
-        for (size_t i = 0; i < data[col].size(); ++i) {
-            double x = data[col][i];
-            if (x < 0 && power != std::floor(power)) {
-                result.error_message = "Cannot apply fractional power to negative values";
-                return result;
-            }
-            transformed[i] = std::pow(x, power);
-        }
-
-        result.transformed_data.push_back(transformed);
-    }
-
-    result.success = true;
-    return result;
-}
-
-// ============================================================================
-// Inverse Transforms
-// ============================================================================
-
-std::vector<double> DataTransform::InverseTransformColumn(
-    const std::vector<double>& data,
-    const TransformResult& original_result) {
-
-    std::vector<double> result(data.size());
-
-    if (original_result.method == "normalize") {
-        double data_min = original_result.params.at("data_min");
-        double data_max = original_result.params.at("data_max");
-        double range_min = original_result.params.at("range_min");
-        double range_max = original_result.params.at("range_max");
-        double data_range = data_max - data_min;
-        double target_range = range_max - range_min;
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            result[i] = ((data[i] - range_min) / target_range) * data_range + data_min;
-        }
-    } else if (original_result.method == "standardize") {
-        double mean = original_result.params.at("mean");
-        double std_dev = original_result.params.at("std_dev");
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            result[i] = data[i] * std_dev + mean;
-        }
-    } else if (original_result.method == "log_transform") {
-        double base_param = original_result.params.at("base");
-        bool use_log1p = original_result.params.at("use_log1p") > 0.5;
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            double val;
-            if (base_param < 1.0) {  // natural
-                val = std::exp(data[i]);
-            } else if (base_param > 9.0) {  // log10
-                val = std::pow(10.0, data[i]);
-            } else {  // log2
-                val = std::pow(2.0, data[i]);
-            }
-            result[i] = use_log1p ? (val - 1.0) : val;
-        }
-    } else if (original_result.method == "boxcox") {
-        double lambda = original_result.params.at("lambda");
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            if (std::abs(lambda) < 1e-10) {
-                result[i] = std::exp(data[i]);
-            } else {
-                double temp = data[i] * lambda + 1.0;
-                if (temp <= 0) temp = 1e-10;
-                result[i] = std::pow(temp, 1.0 / lambda);
-            }
-        }
-    } else if (original_result.method == "robust_scale") {
-        double median = original_result.params.at("median");
-        double iqr = original_result.params.at("iqr");
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            result[i] = data[i] * iqr + median;
-        }
-    } else if (original_result.method == "maxabs_scale") {
-        double max_abs = original_result.params.at("max_abs");
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            result[i] = data[i] * max_abs;
-        }
-    } else if (original_result.method == "power_transform") {
-        double power = original_result.params.at("power");
-
-        for (size_t i = 0; i < data.size(); ++i) {
-            result[i] = std::pow(data[i], 1.0 / power);
-        }
-    }
-
-    return result;
-}
-
-std::vector<std::vector<double>> DataTransform::InverseTransform(
-    const std::vector<std::vector<double>>& data,
-    const TransformResult& original_result) {
-
-    std::vector<std::vector<double>> result;
-
-    for (size_t col = 0; col < data.size(); ++col) {
-        TransformResult col_result;
-        col_result.method = original_result.method;
-
-        // Extract column-specific params
-        if (original_result.method == "normalize") {
-            col_result.params["data_min"] = original_result.params.at("col" + std::to_string(col) + "_min");
-            col_result.params["data_max"] = original_result.params.at("col" + std::to_string(col) + "_max");
-            col_result.params["range_min"] = original_result.params.at("range_min");
-            col_result.params["range_max"] = original_result.params.at("range_max");
-        } else if (original_result.method == "standardize") {
-            col_result.params["mean"] = original_result.params.at("col" + std::to_string(col) + "_mean");
-            col_result.params["std_dev"] = original_result.params.at("col" + std::to_string(col) + "_std");
-        } else if (original_result.method == "boxcox" || original_result.method == "yeojohnson") {
-            col_result.params["lambda"] = original_result.params.at("col" + std::to_string(col) + "_lambda");
-        } else if (original_result.method == "robust_scale") {
-            col_result.params["median"] = original_result.params.at("col" + std::to_string(col) + "_median");
-            col_result.params["iqr"] = original_result.params.at("col" + std::to_string(col) + "_iqr");
-        } else if (original_result.method == "maxabs_scale") {
-            col_result.params["max_abs"] = original_result.params.at("col" + std::to_string(col) + "_maxabs");
-        } else {
-            col_result.params = original_result.params;
-        }
-
-        result.push_back(InverseTransformColumn(data[col], col_result));
-    }
-
-    return result;
-}
-
-// ============================================================================
-// Normality Tests
-// ============================================================================
-
-NormalityTestResult DataTransform::ShapiroWilkTest(const std::vector<double>& data) {
-    NormalityTestResult result;
-    result.test_name = "Shapiro-Wilk";
-
-    // Simplified Shapiro-Wilk implementation
-    // For a full implementation, you'd need the coefficients table
-    if (data.size() < 3 || data.size() > 5000) {
-        result.statistic = 0;
-        result.p_value = 0;
-        return result;
-    }
-
-    std::vector<double> sorted = data;
-    std::sort(sorted.begin(), sorted.end());
-
-    int n = static_cast<int>(data.size());
-    double mean = std::accumulate(sorted.begin(), sorted.end(), 0.0) / n;
-
-    double ss = 0.0;
-    for (const auto& x : sorted) {
-        ss += (x - mean) * (x - mean);
-    }
-
-    // Simplified W statistic calculation
-    double b = 0.0;
-    for (int i = 0; i < n / 2; ++i) {
-        double a_coef = 0.7071;  // Simplified coefficient
-        b += a_coef * (sorted[n - 1 - i] - sorted[i]);
-    }
-
-    double W = (b * b) / ss;
-    result.statistic = W;
-
-    // Approximate p-value (simplified)
-    result.p_value = W > 0.95 ? 0.1 : (W > 0.9 ? 0.05 : 0.01);
-    result.is_normal = result.p_value > 0.05;
-
-    return result;
+    return stats;
 }
 
 NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double>& data) {
     NormalityTestResult result;
     result.test_name = "D'Agostino-Pearson";
-
     if (data.size() < 20) {
-        result.statistic = 0;
-        result.p_value = 0;
+        result.error_message = "Needs at least 20 values";
         return result;
     }
-
-    int n = static_cast<int>(data.size());
-    double mean = std::accumulate(data.begin(), data.end(), 0.0) / n;
-
-    // Calculate moments
-    double m2 = 0, m3 = 0, m4 = 0;
-    for (const auto& x : data) {
-        double d = x - mean;
-        m2 += d * d;
-        m3 += d * d * d;
-        m4 += d * d * d * d;
+    double m2 = 0.0, m3 = 0.0, m4 = 0.0;
+    try {
+        const af::array x = HostValuesToDevice(data);
+        const af::array d = x - af::mean<double>(x);
+        const af::array d2 = d * d;
+        m2 = af::mean<double>(d2);
+        m3 = af::mean<double>(d2 * d);
+        m4 = af::mean<double>(d2 * d2);
+    } catch (const af::exception& e) {
+        result.error_message = DeviceError("DataTransform::DAgostinoPearsonTest", e);
+        return result;
     }
-    m2 /= n;
-    m3 /= n;
-    m4 /= n;
+    if (m2 <= 0.0) {
+        result.error_message = "Data has zero variance (constant values)";
+        return result;
+    }
+    // scipy.stats.skewtest / kurtosistest on the biased moments, combined.
+    const double n = static_cast<double>(data.size());
+    const double skew = m3 / std::pow(m2, 1.5);
+    double y = skew * std::sqrt((n + 1.0) * (n + 3.0) / (6.0 * (n - 2.0)));
+    const double beta2 = 3.0 * (n * n + 27.0 * n - 70.0) * (n + 1.0) * (n + 3.0) /
+                         ((n - 2.0) * (n + 5.0) * (n + 7.0) * (n + 9.0));
+    const double w2 = -1.0 + std::sqrt(2.0 * (beta2 - 1.0));
+    const double delta = 1.0 / std::sqrt(0.5 * std::log(w2));
+    const double alpha = std::sqrt(2.0 / (w2 - 1.0));
+    if (y == 0.0) y = 1.0;
+    const double z_skew = delta * std::log(y / alpha + std::sqrt((y / alpha) * (y / alpha) + 1.0));
 
-    // Skewness and kurtosis
-    double skew = m3 / std::pow(m2, 1.5);
-    double kurt = m4 / (m2 * m2) - 3;
+    const double b2 = m4 / (m2 * m2);
+    const double expected = 3.0 * (n - 1.0) / (n + 1.0);
+    const double var_b2 = 24.0 * n * (n - 2.0) * (n - 3.0) / ((n + 1.0) * (n + 1.0) * (n + 3.0) * (n + 5.0));
+    const double standardized = (b2 - expected) / std::sqrt(var_b2);
+    const double sqrt_beta1 = 6.0 * (n * n - 5.0 * n + 2.0) / ((n + 7.0) * (n + 9.0)) *
+                              std::sqrt(6.0 * (n + 3.0) * (n + 5.0) / (n * (n - 2.0) * (n - 3.0)));
+    const double a = 6.0 + 8.0 / sqrt_beta1 * (2.0 / sqrt_beta1 + std::sqrt(1.0 + 4.0 / (sqrt_beta1 * sqrt_beta1)));
+    const double term1 = 1.0 - 2.0 / (9.0 * a);
+    const double denom = 1.0 + standardized * std::sqrt(2.0 / (a - 4.0));
+    if (denom == 0.0) {
+        result.error_message = "Kurtosis test is undefined for this data";
+        return result;
+    }
+    const double term2 = (denom > 0.0 ? 1.0 : -1.0) * std::cbrt((1.0 - 2.0 / a) / std::abs(denom));
+    const double z_kurt = (term1 - term2) / std::sqrt(2.0 / (9.0 * a));
 
-    // Z-scores for skewness and kurtosis
-    double z_skew = std::abs(skew) / std::sqrt(6.0 / n);
-    double z_kurt = std::abs(kurt) / std::sqrt(24.0 / n);
-
-    // Combined K^2 statistic
     result.statistic = z_skew * z_skew + z_kurt * z_kurt;
-
-    // Approximate p-value (chi-squared with 2 df)
-    result.p_value = std::exp(-result.statistic / 2);
+    result.p_value = std::exp(-0.5 * result.statistic);  // chi-squared, 2 degrees of freedom
     result.is_normal = result.p_value > 0.05;
-
+    result.computed = true;
     return result;
+}
+
+// ============================================================================
+// Scalers
+// ============================================================================
+
+// Min-max scaling of x to [range_min, range_max] with its low and high (a
+// constant column maps to range_min).
+static af::array NormalizedColumn(const af::array& x, double low, double high, double range_min,
+                                  double range_max) {
+    return (x - low) / ZeroSafeScale(high - low) * (range_max - range_min) + range_min;
+}
+
+TransformResult DataTransform::Normalize(const Columns& data, double range_min, double range_max) {
+    TransformResult result = TransformEachColumn(data, "normalize", "DataTransform::Normalize",
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const double low = af::min<double>(x), high = af::max<double>(x);
+            params[prefix + "min"] = low;
+            params[prefix + "max"] = high;
+            return NormalizedColumn(x, low, high, range_min, range_max);
+        });
+    if (result.success) {
+        result.params["range_min"] = range_min;
+        result.params["range_max"] = range_max;
+    }
+    return result;
+}
+
+bool DataTransform::StandardizeParameters(const ColumnMoments& moments, const StandardizeOptions& options,
+                                          double& center, double& scale) {
+    center = options.with_mean ? moments.mean : 0.0;
+    scale = 1.0;
+    if (options.with_std) {
+        const double variance = moments.count > 0.0 ? moments.m2 / moments.count : 0.0;
+        scale = IsConstantFeature(variance, moments.mean, static_cast<dim_t>(moments.count))
+                    ? 1.0
+                    : ZeroSafeScale(std::sqrt(variance));
+    }
+    return std::isfinite(moments.mean) && std::isfinite(center) && std::isfinite(scale);
+}
+
+void DataTransform::CombineMoments(ColumnMoments& total, const ColumnMoments& batch) {
+    if (batch.count <= 0.0) return;
+    if (total.count <= 0.0) {
+        total = batch;
+        return;
+    }
+    total.min = std::min(total.min, batch.min);
+    total.max = std::max(total.max, batch.max);
+    const double count = total.count + batch.count;
+    const double delta = batch.mean - total.mean;
+    total.mean += delta * batch.count / count;
+    total.m2 += batch.m2 + delta * delta * total.count * batch.count / count;
+    total.count = count;
+}
+
+bool DataTransform::Moments(const Columns& data, std::vector<ColumnMoments>& moments, std::string& error) {
+    moments.assign(data.size(), {});
+    try {
+        for (size_t col = 0; col < data.size(); ++col) {
+            if (data[col].empty()) continue;
+            const af::array x = HostValuesToDevice(data[col]);
+            const double mean = af::mean<double>(x);
+            const af::array centered = x - mean;
+            moments[col] = {static_cast<double>(x.elements()), mean, af::sum<double>(centered * centered),
+                            af::min<double>(x), af::max<double>(x)};
+        }
+        return true;
+    } catch (const af::exception& e) {
+        error = DeviceError("DataTransform::Moments", e);
+        return false;
+    }
+}
+
+TransformResult DataTransform::Standardize(const Columns& data, const StandardizeOptions& options) {
+    return TransformEachColumn(data, "standardize", "DataTransform::Standardize",
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
+            const double column_mean = af::mean<double>(x);
+            const af::array centered = x - column_mean;
+            const ColumnMoments moments{static_cast<double>(x.elements()), column_mean,
+                                        af::sum<double>(centered * centered), 0.0, 0.0};
+            double mean = 0.0, scale = 1.0;
+            if (!StandardizeParameters(moments, options, mean, scale)) {
+                refusal = "Data has missing or non-finite values";
+                return {};
+            }
+            params[prefix + "mean"] = mean;
+            params[prefix + "std"] = scale;
+            return (x - mean) / scale;
+        });
+}
+
+TransformResult DataTransform::NormalizeColumns(const Columns& data, const std::vector<double>& lows,
+                                                const std::vector<double>& highs, double range_min,
+                                                double range_max) {
+    if (lows.size() != data.size() || highs.size() != data.size()) {
+        TransformResult result;
+        result.method = "normalize";
+        return Fail(result, "Need one min and one max per column");
+    }
+    size_t column = 0;
+    TransformResult result = TransformEachColumn(data, "normalize", "DataTransform::NormalizeColumns",
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const size_t i = column++;
+            params[prefix + "min"] = lows[i];
+            params[prefix + "max"] = highs[i];
+            return NormalizedColumn(x, lows[i], highs[i], range_min, range_max);
+        });
+    if (result.success) {
+        result.params["range_min"] = range_min;
+        result.params["range_max"] = range_max;
+    }
+    return result;
+}
+
+TransformResult DataTransform::ScaleColumns(const Columns& data, const std::vector<double>& centers,
+                                            const std::vector<double>& scales) {
+    if (centers.size() != data.size() || scales.size() != data.size()) {
+        TransformResult result;
+        result.method = "scale_columns";
+        return Fail(result, "Need one center and one scale per column");
+    }
+    for (double scale : scales) {
+        if (!std::isfinite(scale) || scale == 0.0) {
+            TransformResult result;
+            result.method = "scale_columns";
+            return Fail(result, "Scales must be finite and non-zero");
+        }
+    }
+    size_t column = 0;
+    return TransformEachColumn(data, "scale_columns", "DataTransform::ScaleColumns",
+        [&](const af::array& x, const std::string&, auto&, std::string&) -> af::array {
+            const size_t i = column++;
+            return (x - centers[i]) / scales[i];
+        });
+}
+
+OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const std::string& method, double threshold) {
+    OutlierFlags result;
+    if (method != "iqr" && method != "zscore") {
+        result.error_message = "Unknown outlier method '" + method + "' (iqr or zscore)";
+        return result;
+    }
+    if (!(threshold > 0.0)) {
+        result.error_message = "Threshold must be positive";
+        return result;
+    }
+    if (data.empty()) {
+        result.success = true;
+        return result;
+    }
+    try {
+        const af::array x = HostValuesToDevice(data);
+        af::array flags;
+        if (method == "iqr") {
+            const std::vector<double> q = PercentilesAt(af::sort(x), {0.25, 0.75}, "DataTransform::FindOutliers");
+            const double spread = q[1] - q[0];
+            flags = x < q[0] - threshold * spread || x > q[1] + threshold * spread;
+        } else {
+            const double std_dev = PopulationStd(x);
+            flags = std_dev > 0.0 ? af::abs(x - af::mean<double>(x)) / std_dev > threshold
+                                  : af::constant(0, x.dims(), b8);
+        }
+        const std::vector<double> values = DeviceToHostValues(flags.as(x.type()), "DataTransform::FindOutliers");
+        result.is_outlier.resize(values.size());
+        for (size_t i = 0; i < values.size(); ++i) result.is_outlier[i] = values[i] != 0.0 ? 1 : 0;
+        result.count = static_cast<size_t>(af::count<double>(flags));
+        result.success = true;
+    } catch (const af::exception& e) {
+        result = OutlierFlags{};
+        result.error_message = DeviceError("DataTransform::FindOutliers", e);
+    }
+    return result;
+}
+
+TransformResult DataTransform::LogTransform(const Columns& data, const std::string& base, bool use_log1p) {
+    if (base != "natural" && base != "log10" && base != "log2") {
+        TransformResult result;
+        result.method = "log_transform";
+        return Fail(result, "Unknown log base '" + base + "' (natural, log10 or log2)");
+    }
+    TransformResult result = TransformEachColumn(data, "log_transform", "DataTransform::LogTransform",
+        [&](const af::array& x, const std::string&, auto&, std::string& refusal) -> af::array {
+            if (!af::allTrue<bool>(use_log1p ? x > -1.0 : x > 0.0)) {
+                refusal = use_log1p ? "Data contains values <= -1 (log1p requires x > -1)"
+                                    : "Data contains non-positive values (log requires x > 0)";
+                return {};
+            }
+            const af::array natural = use_log1p ? af::log1p(x) : af::log(x);
+            if (base == "natural") return natural;
+            return natural / std::log(base == "log10" ? 10.0 : 2.0);
+        });
+    result.params["base"] = base == "natural" ? 0.0 : base == "log10" ? 10.0 : 2.0;
+    result.params["use_log1p"] = use_log1p ? 1.0 : 0.0;
+    return result;
+}
+
+TransformResult DataTransform::RobustScale(const Columns& data, const RobustScaleOptions& options) {
+    if (!(options.quantile_min >= 0.0 && options.quantile_min < options.quantile_max && options.quantile_max <= 100.0)) {
+        TransformResult result;
+        result.method = "robust_scale";
+        return Fail(result, "Quantiles must satisfy 0 <= quantile_min < quantile_max <= 100");
+    }
+    return TransformEachColumn(data, "robust_scale", "DataTransform::RobustScale",
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const std::vector<double> q = PercentilesAt(
+                af::sort(x), {options.quantile_min / 100.0, 0.5, options.quantile_max / 100.0}, "DataTransform::RobustScale");
+            const double center = options.with_centering ? q[1] : 0.0;
+            // scikit-learn's _handle_zeros_in_scale: a spread below 10 eps scales by 1.
+            const double spread = q[2] - q[0];
+            const double scale =
+                options.with_scaling && spread >= 10.0 * std::numeric_limits<double>::epsilon() ? spread : 1.0;
+            params[prefix + "median"] = center;
+            params[prefix + "iqr"] = scale;
+            return (x - center) / scale;
+        });
+}
+
+TransformResult DataTransform::MaxAbsScale(const Columns& data) {
+    return TransformEachColumn(data, "maxabs_scale", "DataTransform::MaxAbsScale",
+        [](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const double max_abs = ZeroSafeScale(af::max<double>(af::abs(x)));
+            params[prefix + "maxabs"] = max_abs;
+            return x / max_abs;
+        });
+}
+
+TransformResult DataTransform::QuantileTransform(const Columns& data, const std::string& output_distribution,
+                                                 int n_quantiles) {
+    const bool normal = output_distribution == "normal";
+    if (!normal && output_distribution != "uniform") {
+        TransformResult result;
+        result.method = "quantile_transform";
+        return Fail(result, "Unknown output distribution '" + output_distribution + "' (uniform or normal)");
+    }
+    if (n_quantiles < 2) {
+        TransformResult result;
+        result.method = "quantile_transform";
+        return Fail(result, "Needs at least 2 quantiles");
+    }
+    TransformResult result = TransformEachColumn(data, "quantile_transform", "DataTransform::QuantileTransform",
+        [&](const af::array& x, const std::string&, auto&, std::string& refusal) -> af::array {
+            const dim_t n = x.elements();
+            if (n < 2) {
+                refusal = "Needs at least 2 values";
+                return {};
+            }
+            const int size = static_cast<int>(std::min<dim_t>(n_quantiles, n));
+            const af::array refs = af::range(af::dim4(size), 0, x.type()) / static_cast<double>(size - 1);
+            const af::array quantiles = af::scan(ExactQuantiles(af::sort(x), size), 0, AF_BINARY_MAX);
+            const double lower_x = af::min<double>(quantiles), upper_x = af::max<double>(quantiles);
+
+            af::array y = QuantileInterpolate(quantiles, refs, x);
+            // x + 1e-7 > upper_x as QuantileTransformer writes it; the == keeps the
+            // bound values themselves on a float32 device, where x + 1e-7 rounds to x.
+            constexpr double kBoundsThreshold = 1e-7;
+            const af::array upper = normal ? (x > upper_x - kBoundsThreshold) || (x == upper_x) : x == upper_x;
+            const af::array lower = normal ? (x < lower_x + kBoundsThreshold) || (x == lower_x) : x == lower_x;
+            y = af::select(upper, 1.0, y);
+            y = af::select(lower, 0.0, y);
+            if (!normal) return y;
+            const double clip = kBoundsThreshold - std::numeric_limits<double>::epsilon();
+            af::array z = NormalQuantile(af::max(af::min(y, af::constant(1.0 - clip, y.dims(), y.type())),
+                                                 af::constant(clip, y.dims(), y.type())));
+            // The bounds are scipy's norm.ppf(1 - clip) and norm.ppf(clip): float32
+            // cannot hold 1 - clip (it rounds to 1 - 1.19e-7, ppf 5.1666).
+            constexpr double kUpperZ = 5.19933758270342, kLowerZ = -5.199337582605575;
+            z = af::select(upper, kUpperZ, z);
+            return af::select(lower, kLowerZ, z);
+        });
+    result.params["output_distribution"] = normal ? 1.0 : 0.0;
+    result.params["n_quantiles"] = static_cast<double>(n_quantiles);
+    return result;
+}
+
+// ============================================================================
+// Box-Cox and Yeo-Johnson
+// ============================================================================
+
+namespace {
+
+BoxCoxLambdaResult FindLambda(const std::vector<double>& data, PowerFamily family, double lambda_min,
+                              double lambda_max, int n_steps, const char* operation) {
+    BoxCoxLambdaResult result;
+    if (data.empty()) return Fail(result, "Empty data");
+    try {
+        const af::array x = HostValuesToDevice(data);
+        const std::string refusal = LambdaSearchRefusal(x, family, lambda_min, lambda_max, n_steps);
+        if (!refusal.empty()) return Fail(result, refusal);
+        return SearchLambda(x, family, lambda_min, lambda_max, n_steps, operation);
+    } catch (const af::exception& e) {
+        return Fail(result, DeviceError(operation, e));
+    }
+}
+
+TransformResult PowerColumn(const std::vector<double>& data, PowerFamily family, double lambda, bool auto_lambda,
+                            const char* method, const char* operation) {
+    TransformResult result;
+    result.method = method;
+    if (data.empty()) return Fail(result, "Empty data");
+    try {
+        const af::array x = HostValuesToDevice(data);
+        if (family == PowerFamily::BoxCox && !af::allTrue<bool>(x > 0.0)) {
+            return Fail(result, "Box-Cox requires strictly positive data");
+        }
+        double use_lambda = lambda;
+        if (auto_lambda) {
+            const std::string refusal = LambdaSearchRefusal(x, family, -5.0, 5.0, 100);
+            if (!refusal.empty()) return Fail(result, refusal);
+            const BoxCoxLambdaResult search = SearchLambda(x, family, -5.0, 5.0, 100, operation);
+            if (!search.success) return Fail(result, search.error_message);
+            use_lambda = search.optimal_lambda;
+        }
+        const af::array y = PowerTransformed(x, RowLike({use_lambda}, x), family);
+        result.transformed_data.push_back(DeviceToHostValues(y, operation));
+        result.params["lambda"] = use_lambda;
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Fail(result, DeviceError(operation, e));
+    }
+}
+
+}  // namespace
+
+BoxCoxLambdaResult DataTransform::FindOptimalLambda(const std::vector<double>& data, double lambda_min,
+                                                    double lambda_max, int n_steps) {
+    return FindLambda(data, PowerFamily::BoxCox, lambda_min, lambda_max, n_steps, "DataTransform::FindOptimalLambda");
+}
+
+BoxCoxLambdaResult DataTransform::FindOptimalYeoJohnsonLambda(const std::vector<double>& data, double lambda_min,
+                                                              double lambda_max, int n_steps) {
+    return FindLambda(data, PowerFamily::YeoJohnson, lambda_min, lambda_max, n_steps,
+                      "DataTransform::FindOptimalYeoJohnsonLambda");
+}
+
+TransformResult DataTransform::BoxCoxColumn(const std::vector<double>& data, double lambda, bool auto_lambda) {
+    return PowerColumn(data, PowerFamily::BoxCox, lambda, auto_lambda, "boxcox", "DataTransform::BoxCoxColumn");
+}
+
+TransformResult DataTransform::YeoJohnsonColumn(const std::vector<double>& data, double lambda, bool auto_lambda) {
+    return PowerColumn(data, PowerFamily::YeoJohnson, lambda, auto_lambda, "yeojohnson",
+                       "DataTransform::YeoJohnsonColumn");
 }
 
 } // namespace cyxwiz

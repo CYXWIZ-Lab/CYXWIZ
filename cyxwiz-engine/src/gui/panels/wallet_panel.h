@@ -58,7 +58,6 @@ private:
     std::string FormatBalance(double balance) const;
     std::string FormatTimestamp(int64_t timestamp) const;
     std::string GetTransactionIcon(const std::string& type) const;
-    void SyncWithAuthClient();
 
     // Wallet state
     WalletConnectionStatus status_;
@@ -90,7 +89,6 @@ private:
     std::string external_wallet_address_;
 
     // Auth sync
-    bool auth_synced_;
 };
 
 } // namespace gui

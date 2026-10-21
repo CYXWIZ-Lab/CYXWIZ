@@ -1,5 +1,6 @@
 #include "differentiation_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
@@ -76,7 +77,7 @@ void DifferentiationPanel::RenderToolbar() {
     ImGui::SameLine();
 
     if (has_result_) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().success,
             ICON_FA_CHECK " f'(x) = %.6e", result_.value);
     }
 }
@@ -164,7 +165,7 @@ void DifferentiationPanel::RenderMethodSelector() {
     }
 
     // Show formula
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     switch (method_) {
         case Method::Forward:
             ImGui::TextWrapped("f'(x) = [f(x+h) - f(x)] / h");
@@ -184,7 +185,8 @@ void DifferentiationPanel::RenderMethodSelector() {
 
 void DifferentiationPanel::RenderLoadingIndicator() {
     ImGui::Text("Computing derivatives...");
-    float progress = 0.5f + 0.5f * std::sin(ImGui::GetTime() * 5.0f);
+    float progress = 0.5f + 0.5f * static_cast<float>(
+        std::sin(ImGui::GetTime() * 5.0));
     ImGui::ProgressBar(progress, ImVec2(-1, 0));
 }
 
@@ -219,13 +221,13 @@ void DifferentiationPanel::RenderResults() {
 
 void DifferentiationPanel::RenderDerivativeValue() {
     if (!has_result_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Click 'Compute' to calculate derivative");
         return;
     }
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().error,
             "Error: %s", result_.error_message.c_str());
         return;
     }
@@ -298,7 +300,7 @@ void DifferentiationPanel::RenderDerivativeValue() {
 
 void DifferentiationPanel::RenderComparison() {
     if (!show_comparison_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Enable 'Show comparison' and click 'Compare All'");
         return;
     }
@@ -352,10 +354,10 @@ void DifferentiationPanel::RenderComparison() {
         // Analytical (if known)
         if (std::abs(analytical_derivative_) > 1e-15) {
             ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Analytical");
-            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%.10f", analytical_derivative_);
-            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Exact");
-            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "0");
+            ImGui::TableNextColumn(); ImGui::TextColored(ui::CurrentTokens().success, "Analytical");
+            ImGui::TableNextColumn(); ImGui::TextColored(ui::CurrentTokens().success, "%.10f", analytical_derivative_);
+            ImGui::TableNextColumn(); ImGui::TextColored(ui::CurrentTokens().success, "Exact");
+            ImGui::TableNextColumn(); ImGui::TextColored(ui::CurrentTokens().success, "0");
         }
 
         ImGui::EndTable();
@@ -376,11 +378,11 @@ void DifferentiationPanel::RenderFunctionPlot() {
         ImPlot::SetupAxes("x", "y");
 
         // Plot function
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::SeriesColour(ui::CurrentTokens(), 0), 2.0f);
         ImPlot::PlotLine("f(x)", plot_x_.data(), plot_y_.data(), static_cast<int>(plot_x_.size()));
 
         // Plot derivative
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::SeriesColour(ui::CurrentTokens(), 1), 2.0f);
         ImPlot::PlotLine("f'(x)", plot_x_.data(), derivative_y_.data(), static_cast<int>(plot_x_.size()));
 
         // Mark evaluation point
@@ -397,7 +399,7 @@ void DifferentiationPanel::RenderFunctionPlot() {
                 case SingleVarFunction::Log: py = (px > 0) ? std::log(px) : 0; break;
             }
 
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ui::CurrentTokens().accent, 2.0f);
             ImPlot::PlotScatter("Point", &px, &py, 1);
         }
 
@@ -444,7 +446,7 @@ void DifferentiationPanel::RenderGradientPlot() {
 
                         double arrow_x[2] = { x, x + gx };
                         double arrow_y[2] = { y, y + gy };
-                        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.4f, 0.2f, 0.8f), 1.5f);
+                        ImPlot::SetNextLineStyle(ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 1), 0.8f), 1.5f);
                         ImPlot::PlotLine("##arrow", arrow_x, arrow_y, 2);
                     }
                 }
@@ -452,7 +454,7 @@ void DifferentiationPanel::RenderGradientPlot() {
         }
 
         // Mark evaluation point
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ui::CurrentTokens().accent, 2.0f);
         ImPlot::PlotScatter("Point", &point_x_, &point_y_, 1);
 
         ImPlot::EndPlot();

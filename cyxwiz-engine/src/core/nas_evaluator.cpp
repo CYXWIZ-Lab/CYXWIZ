@@ -57,7 +57,6 @@ bool NASEvaluator::IsTrainableLayer(gui::NodeType type) {
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
             return true;
@@ -158,13 +157,12 @@ int64_t NASEvaluator::EstimateLayerParams(
             break;
         }
         case gui::NodeType::Embedding: {
-            int vocab_size = GetParam("vocab_size", 10000);
-            int embed_dim = GetParam("embed_dim", 128);
+            int vocab_size = GetParam("num_embeddings", 10000);
+            int embed_dim = GetParam("embedding_dim", 256);
             param_count = static_cast<int64_t>(vocab_size) * embed_dim;
             break;
         }
-        case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention: {
+        case gui::NodeType::MultiHeadAttention: {
             int dim = GetParam("embed_dim", 64);
             param_count = 4 * static_cast<int64_t>(dim) * dim;  // Q, K, V, O projections
             break;
@@ -376,6 +374,10 @@ std::pair<bool, std::string> NASEvaluator::ValidateArchitecture(
         if (node.type == gui::NodeType::Output) has_output = true;
     }
 
+    if (!has_input) {
+        return {false, "Missing DatasetInput node"};
+    }
+
     if (!has_output) {
         return {false, "Missing Output node"};
     }
@@ -385,11 +387,6 @@ std::pair<bool, std::string> NASEvaluator::ValidateArchitecture(
     for (const auto& link : links) {
         connected_nodes.insert(link.from_node);
         connected_nodes.insert(link.to_node);
-    }
-
-    // Single node graphs are valid if it's an output
-    if (nodes.size() == 1 && nodes[0].type == gui::NodeType::Output) {
-        return {true, ""};
     }
 
     if (connected_nodes.size() < nodes.size() - 1) {
@@ -633,6 +630,8 @@ NASEvaluator::SuggestArchitectures(
     int output_size,
     int num_suggestions)
 {
+    (void)input_shape;
+
     std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> suggestions;
 
     std::mt19937 rng(42);

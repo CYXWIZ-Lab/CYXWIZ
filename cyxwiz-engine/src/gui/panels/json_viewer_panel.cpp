@@ -1,5 +1,8 @@
 #include "json_viewer_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -8,7 +11,7 @@ namespace cyxwiz {
 
 JSONViewerPanel::JSONViewerPanel() {
     LoadSample();
-    spdlog::info("JSONViewerPanel initialized");
+    spdlog::debug("JSONViewerPanel initialized");
 }
 
 JSONViewerPanel::~JSONViewerPanel() {
@@ -29,17 +32,10 @@ void JSONViewerPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            // Left panel: Input
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.4f, 0), true);
+            // Left: input, right: results
+            ui::BeginSettingsColumn("json_viewer", ImGui::GetContentRegionAvail().x * 0.4f);
             RenderInputSection();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            // Right panel: Results
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
 
             if (ImGui::BeginTabBar("JSONTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_ALIGN_LEFT " Formatted")) {
@@ -61,13 +57,14 @@ void JSONViewerPanel::Render() {
                 ImGui::EndTabBar();
             }
 
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
 }
 
 void JSONViewerPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_CHECK " Validate")) {
         ValidateAsync();
     }
@@ -103,11 +100,11 @@ void JSONViewerPanel::RenderToolbar() {
 
     if (has_result_) {
         if (result_.is_valid) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.success);
             ImGui::Text(ICON_FA_CHECK " Valid JSON");
             ImGui::PopStyleColor();
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.error);
             ImGui::Text(ICON_FA_XMARK " Invalid JSON");
             ImGui::PopStyleColor();
         }
@@ -115,8 +112,7 @@ void JSONViewerPanel::RenderToolbar() {
 }
 
 void JSONViewerPanel::RenderInputSection() {
-    ImGui::Text(ICON_FA_KEYBOARD " Input JSON");
-    ImGui::Separator();
+    ui::FieldLabel("Input JSON");
 
     float available_height = ImGui::GetContentRegionAvail().y - 30;
     ImGui::InputTextMultiline("##JSONInput", input_buffer_, sizeof(input_buffer_),
@@ -129,20 +125,21 @@ void JSONViewerPanel::RenderInputSection() {
 }
 
 void JSONViewerPanel::RenderFormattedView() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Enter JSON and click 'Validate' or 'Format'");
+        ui::EmptyState(ICON_FA_CODE, "Nothing formatted yet", "Enter JSON, then Validate or Format.");
         return;
     }
 
     if (!result_.is_valid) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::Text("Error at line %d, column %d:", result_.error_line, result_.error_column);
         ImGui::TextWrapped("%s", result_.error_detail.c_str());
         ImGui::PopStyleColor();
@@ -150,11 +147,11 @@ void JSONViewerPanel::RenderFormattedView() {
     }
 
     // Copy buttons
-    if (ImGui::Button(ICON_FA_COPY " Copy Formatted")) {
+    if (ui::SecondaryButton("Copy Formatted")) {
         CopyFormatted();
     }
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_COPY " Copy Minified")) {
+    if (ui::SecondaryButton("Copy Minified")) {
         CopyMinified();
     }
 
@@ -189,20 +186,22 @@ void JSONViewerPanel::RenderFormattedView() {
                 }
 
                 if (next_non_space < json.length() && json[next_non_space] == ':') {
-                    // Key - blue
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.8f, 1.0f, 1.0f));
+                    // Key
+                    ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
                 } else {
-                    // String value - green
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 1.0f, 0.6f, 1.0f));
+                    // String value
+                    ImGui::PushStyleColor(ImGuiCol_Text, t.success);
                 }
                 ImGui::TextUnformatted(str_segment.c_str());
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 0);
             }
             else if (c == ':' || c == ',' || c == '{' || c == '}' || c == '[' || c == ']') {
-                // Punctuation - white
+                // Punctuation
                 char buf[2] = { c, '\0' };
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
                 ImGui::TextUnformatted(buf);
+                ImGui::PopStyleColor();
                 ImGui::SameLine(0, 0);
                 i++;
             }
@@ -211,22 +210,22 @@ void JSONViewerPanel::RenderFormattedView() {
                 i++;
             }
             else if (isdigit(c) || c == '-' || c == '.') {
-                // Number - yellow
+                // Number
                 size_t start = i;
                 while (i < json.length() && (isdigit(json[i]) || json[i] == '.' || json[i] == '-' || json[i] == 'e' || json[i] == 'E' || json[i] == '+')) {
                     i++;
                 }
                 std::string num_segment = json.substr(start, i - start);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.series[2]);
                 ImGui::TextUnformatted(num_segment.c_str());
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 0);
             }
             else if (json.substr(i, 4) == "true" || json.substr(i, 5) == "false" || json.substr(i, 4) == "null") {
-                // Boolean/null - orange
+                // Boolean / null
                 size_t len = (json[i] == 't' || json[i] == 'n') ? 4 : 5;
                 std::string kw = json.substr(i, len);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, kw == "null" ? t.text_faint : t.warning);
                 ImGui::TextUnformatted(kw.c_str());
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 0);
@@ -344,6 +343,7 @@ void JSONViewerPanel::RenderStatistics() {
 }
 
 void JSONViewerPanel::RenderPathQuery() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_MAGNIFYING_GLASS " JSON Path Query");
     ImGui::Separator();
 
@@ -360,7 +360,7 @@ void JSONViewerPanel::RenderPathQuery() {
 
     if (!path_result_.empty()) {
         ImGui::Text("Result:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
         ImGui::TextWrapped("%s", path_result_.c_str());
         ImGui::PopStyleColor();
     }

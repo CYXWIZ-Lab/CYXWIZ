@@ -1,10 +1,15 @@
 #pragma once
 
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <map>
 #include <functional>
 #include <ctime>
+#include <optional>
 #include <nlohmann/json.hpp>
 
 namespace cyxwiz {
@@ -14,8 +19,7 @@ namespace cyxwiz {
  */
 struct EditorSettings {
     // Script Editor settings
-    int theme = 3;           // 0=Dark, 1=Light, 2=RetroBlu, 3=Monokai, 4=Dracula, 5=OneDark, 6=GitHub
-    float font_scale = 1.6f; // 1.0=Small, 1.3=Medium, 1.6=Large, 2.0=Extra Large
+    float font_scale = 1.3f; // 1.0=Small 14px, 1.3=Medium 16px, 1.6=Large 20px, 2.0=Extra Large 24px
     int tab_size = 4;        // 2, 4, or 8
     bool show_whitespace = true;
     bool syntax_highlighting = true;
@@ -90,8 +94,11 @@ public:
 
     // Path utilities (all return absolute paths)
     std::string GetScriptsPath() const;
+    std::string GetCyxGraphsPath() const;
     std::string GetModelsPath() const;
     std::string GetDatasetsPath() const;
+    std::string GetIngestionCachePath() const;
+    std::string GetArtifactsPath() const;
     std::string GetCheckpointsPath() const;
     std::string GetExportsPath() const;
     std::string GetPluginsPath() const;
@@ -108,10 +115,43 @@ public:
     void SetOnProjectOpened(ProjectCallback callback) { on_opened_ = std::move(callback); }
     void SetOnProjectClosed(ProjectCallback callback) { on_closed_ = std::move(callback); }
     void SetOnProjectVenvReady(ProjectCallback callback) { on_venv_ready_ = std::move(callback); }
+    // Asked before the open project closes (Close, Open or Create another):
+    // returns false to keep it, after telling the user why (`operation` is
+    // what was asked, for example "open another project"). Closing it under
+    // a training run cancelled the run and dropped its data.
+    using CloseGuard = std::function<bool(const std::string& operation)>;
+    void SetCloseGuard(CloseGuard guard) { close_guard_ = std::move(guard); }
+    // True when no project is open or the guard lets it close.
+    bool MayCloseProject(const std::string& operation) const {
+        return !HasActiveProject() || !close_guard_ || close_guard_(operation);
+    }
     void NotifyProjectVenvReady(const std::string& project_root);
+
+    // Creating a project's Python environment takes a few seconds; the UI
+    // shows this state and Python waits for it instead of starting from the
+    // base interpreter (which would need a restart to switch).
+    enum class PythonEnvSetupState { None, Pending, Ready, Failed };
+    struct PythonEnvSetupStatus {
+        PythonEnvSetupState state = PythonEnvSetupState::None;
+        std::string project_root;
+        std::string message;
+        std::chrono::steady_clock::time_point changed{};
+    };
+    void SetPythonEnvSetupStatus(PythonEnvSetupState state,
+                                 const std::string& project_root,
+                                 const std::string& message);
+    PythonEnvSetupStatus GetPythonEnvSetupStatus() const;
+    bool IsPythonEnvSetupPending(const std::string& project_root) const;
+
+    // Lifetime token of the open project. Background work that belongs to
+    // the project binds to it (AsyncTaskManager RunAsync/BindOwner);
+    // CloseProject, or opening another project, cancels that work and
+    // discards its pending UI delivery. Empty when no project is open.
+    std::weak_ptr<const void> GetSessionToken() const { return session_token_; }
 
     // Default filter extensions
     static const std::map<std::string, std::vector<std::string>>& GetDefaultFilters();
+    static std::optional<std::string> ResolveProjectFilePath(const std::string& path);
 
     // Recent projects management
     struct RecentProject {
@@ -121,6 +161,8 @@ public:
     };
     const std::vector<RecentProject>& GetRecentProjects() const { return recent_projects_; }
     void ClearRecentProjects();
+    // Start page > Actions > Remove from this list. The project itself is untouched.
+    void RemoveRecentProject(const std::string& path);
     static constexpr size_t MAX_RECENT_PROJECTS = 10;
 
 private:
@@ -139,7 +181,11 @@ private:
     void SaveRecentProjects();
     std::string GetRecentProjectsFilePath() const;
 
+    void BeginProjectSession();
+    void EndProjectSession();
+
     // State
+    std::shared_ptr<const void> session_token_;
     std::string project_root_;      // Absolute path to project directory
     std::string project_name_;      // Project name
     std::string project_file_path_; // Full path to .cyxwiz file
@@ -152,6 +198,18 @@ private:
     ProjectCallback on_opened_;
     ProjectCallback on_closed_;
     ProjectCallback on_venv_ready_;
+    CloseGuard close_guard_;
+
+    mutable std::mutex python_env_mutex_;
+    PythonEnvSetupStatus python_env_status_;
 };
+
+// Re-points a project virtual environment whose base interpreter no longer
+// exists - for example the bundled Python of a base folder replaced by an
+// upgrade - at the current interpreter (python -m venv --upgrade), keeping
+// installed packages. Returns true when the environment is usable; false
+// with the reason in *message when it cannot be repaired safely.
+bool RepairProjectVenvBase(const std::string& venv_interpreter,
+                           std::string* message = nullptr);
 
 } // namespace cyxwiz

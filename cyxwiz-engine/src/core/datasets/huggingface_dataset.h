@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <limits>
 #include <random>
 
 namespace fs = std::filesystem;
@@ -159,7 +160,13 @@ private:
 
             std::random_device rd;
             std::mt19937 gen(rd());
-            std::uniform_int_distribution<> label_dist(0, num_classes_ - 1);
+            if (num_classes_ == 0 ||
+                num_classes_ - 1 > static_cast<size_t>(std::numeric_limits<int>::max())) {
+                spdlog::error("HuggingFace dataset has unsupported class count: {}", num_classes_);
+                return false;
+            }
+            const int max_label = static_cast<int>(num_classes_ - 1);
+            std::uniform_int_distribution<> label_dist(0, max_label);
             std::uniform_real_distribution<float> pixel_dist(0.0f, 1.0f);
 
             for (size_t i = 0; i < num_samples; i++) {

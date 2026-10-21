@@ -23,6 +23,7 @@ public:
     std::string GetStatusSummary() const;
 
 private:
+    void RenderTrainingTraceSummary();
     void RenderTaskItem(const TaskInfo& info);
     void RenderProgressBar(float progress, const ImVec2& size);
     std::string FormatDuration(std::chrono::steady_clock::time_point start,

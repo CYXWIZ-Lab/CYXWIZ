@@ -1,0 +1,2311 @@
+#include "extension_node_registry.h"
+#include "guarded_extension_module.h"
+#include "model_builder.h"
+#include "dense_activation_configuration_policy.h"
+#include "error_codes.h"
+#include "graph_executable_model.h"
+#include "normalization_regularization_configuration_policy.h"
+#include "recurrent_configuration_policy.h"
+#include "sequence_projection_configuration_policy.h"
+#include "transformer_configuration_policy.h"
+#include "upsampling_configuration_policy.h"
+#include "spatial_head_module.h"
+#include "stacked_metric_loss.h"
+#include "spatial_sequential_head.h"
+#include "sequence_conv_section.h"
+#include <spdlog/spdlog.h>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
+
+#include "quiet_build_log.h"
+
+namespace {
+// Engine policy strings -> backend block options (tofix112). The policy has
+// already validated every value; an unknown value here is a programming error.
+cyxwiz::TransformerBlockOptions ToTransformerBlockOptions(const cyxwiz::TransformerConfiguration& c) {
+    cyxwiz::TransformerBlockOptions options;
+    options.norm_type = c.norm_type == "rms_norm" ? cyxwiz::TransformerNormType::RMSNorm
+                                                  : cyxwiz::TransformerNormType::LayerNorm;
+    options.norm_eps = c.norm_eps;
+    options.ffn_type = c.ffn_type == "gated" ? cyxwiz::TransformerFeedForwardType::Gated
+                                             : cyxwiz::TransformerFeedForwardType::Mlp;
+    options.ffn_bias = c.ffn_bias;
+    if (!cyxwiz::TransformerFfnActivationFromName(c.ffn_activation, options.ffn_activation)) {
+        throw std::runtime_error("TransformerDecoder ffn_activation '" + c.ffn_activation + "' is not mapped");
+    }
+    options.position_encoding = c.position_encoding == "rope" ? cyxwiz::TransformerPositionEncoding::Rope
+                                                              : cyxwiz::TransformerPositionEncoding::External;
+    options.rope_base = c.rope_base;
+    if (c.position_encoding == "alibi") options.position_encoding = cyxwiz::TransformerPositionEncoding::Alibi;
+    options.attention_bias = c.attention_bias;
+    options.qk_norm = c.qk_norm;
+    options.rope_fraction = c.rope_fraction;
+    options.block_layout = c.block_layout == "parallel" ? cyxwiz::TransformerBlockLayout::Parallel
+                                                        : cyxwiz::TransformerBlockLayout::Sequential;
+    options.sandwich_norm = c.sandwich_norm;
+    options.residual_init_scale = c.residual_init_scale;
+    options.attn_logit_softcap = c.attn_logit_softcap;
+    options.sliding_window = static_cast<int>(c.sliding_window);
+    options.num_kv_heads = static_cast<int>(c.num_kv_heads);
+    return options;
+}
+
+// MultiHeadAttention node options (tofix112), validated by the policy.
+cyxwiz::MultiHeadAttentionOptions ToMultiHeadAttentionOptions(const cyxwiz::TransformerConfiguration& c) {
+    cyxwiz::MultiHeadAttentionOptions options;
+    options.causal = c.causal;
+    options.sliding_window = static_cast<int>(c.sliding_window);
+    options.num_kv_heads = static_cast<int>(c.num_kv_heads);
+    options.qk_norm = c.qk_norm;
+    options.rope = c.position_encoding == "rope";
+    options.rope_base = c.rope_base;
+    options.rope_fraction = c.rope_fraction;
+    options.alibi = c.position_encoding == "alibi";
+    options.logit_softcap = c.attn_logit_softcap;
+    return options;
+}
+}  // namespace
+
+
+namespace cyxwiz {
+
+namespace {
+
+size_t ParseSizeParam(const CompiledLayer& layer,
+                      const std::string& key,
+                      size_t fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return static_cast<size_t>(std::stoul(it->second));
+    } catch (...) {
+        return fallback;
+    }
+}
+
+float ParseFloatParam(const CompiledLayer& layer,
+                      const std::string& key,
+                      float fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return std::stof(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool ParseBoolParam(const CompiledLayer& layer,
+                    const std::string& key,
+                    bool fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    return it->second == "true" || it->second == "1";
+}
+
+std::string ParseStringParam(const CompiledLayer& layer,
+                             const std::string& key,
+                             const std::string& fallback = "");
+
+Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
+                                    size_t expected_rows,
+                                    size_t expected_cols);
+
+std::string TrimAscii(std::string value) {
+    auto is_space = [](unsigned char c) {
+        return std::isspace(c) != 0;
+    };
+    value.erase(value.begin(),
+                std::find_if(value.begin(), value.end(),
+                             [&](char c) { return !is_space(static_cast<unsigned char>(c)); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(),
+                             [&](char c) { return !is_space(static_cast<unsigned char>(c)); }).base(),
+                value.end());
+    return value;
+}
+
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+const std::string* FindLossParam(const TrainingConfiguration& config,
+                                 std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        auto it = config.loss_params.find(key);
+        if (it != config.loss_params.end()) {
+            return &it->second;
+        }
+    }
+    return nullptr;
+}
+
+bool IsNeutralLossValue(const std::string& value) {
+    const std::string lower = ToLowerAscii(TrimAscii(value));
+    return lower.empty() || lower == "none" || lower == "false" ||
+           lower == "0" || lower == "off";
+}
+
+std::vector<float> ParseFloatVectorLiteral(const std::string& raw,
+                                           const char* context) {
+    std::string value = raw;
+    for (char& c : value) {
+        if (c == '[' || c == ']' || c == '(' || c == ')' ||
+            c == ',' || c == ';') {
+            c = ' ';
+        }
+    }
+
+    std::vector<float> values;
+    std::istringstream in(value);
+    std::string token;
+    while (in >> token) {
+        try {
+            size_t parsed = 0;
+            const float weight = std::stof(token, &parsed);
+            if (parsed != token.size() || !std::isfinite(weight) ||
+                weight < 0.0f) {
+                throw std::runtime_error("invalid weight");
+            }
+            values.push_back(weight);
+        } catch (...) {
+            throw std::runtime_error(std::string(context) +
+                                     " contains invalid float weight '" +
+                                     token + "'");
+        }
+    }
+    return values;
+}
+
+std::vector<float> ResolveCrossEntropyClassWeights(
+    const TrainingConfiguration& config) {
+    const std::string* class_weight =
+        FindLossParam(config, {"class_weight"});
+    const std::string* explicit_weights =
+        FindLossParam(config, {"class_weights", "weight", "weights"});
+
+    if (class_weight && IsNeutralLossValue(*class_weight)) {
+        return {};
+    }
+
+    if (class_weight) {
+        const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
+        if (mode == "balanced") {
+            spdlog::warn(
+                "TrainingExecutor: class_weight=balanced was not resolved "
+                "before loss construction; "
+                "using unweighted CrossEntropy loss");
+            return {};
+        }
+        if (mode == "manual") {
+            if (!explicit_weights || IsNeutralLossValue(*explicit_weights)) {
+                throw std::runtime_error(
+                    "CrossEntropy class_weight=manual requires class_weights");
+            }
+        } else if (!explicit_weights) {
+            explicit_weights = class_weight;
+        }
+    }
+
+    if (!explicit_weights || IsNeutralLossValue(*explicit_weights)) {
+        return {};
+    }
+
+    std::vector<float> weights =
+        ParseFloatVectorLiteral(*explicit_weights,
+                                "CrossEntropy class_weights");
+    const size_t expected_classes =
+        config.output_size > 0
+            ? config.output_size
+            : config.preprocessing.num_classes;
+    if (expected_classes > 0 && weights.size() != expected_classes) {
+        throw std::runtime_error(
+            "CrossEntropy class_weights size (" +
+            std::to_string(weights.size()) +
+            ") does not match class/output count (" +
+            std::to_string(expected_classes) + ")");
+    }
+    return weights;
+}
+
+float ResolveBCEWithLogitsPosWeight(const TrainingConfiguration& config) {
+    const std::string* value = FindLossParam(config, {"pos_weight"});
+    if (!value || IsNeutralLossValue(*value)) {
+        return 1.0f;
+    }
+    const std::string text = TrimAscii(*value);
+    try {
+        size_t parsed = 0;
+        const float pos_weight = std::stof(text, &parsed);
+        if (parsed != text.size() || !std::isfinite(pos_weight) ||
+            pos_weight <= 0.0f) {
+            throw std::runtime_error("invalid pos_weight");
+        }
+        return pos_weight;
+    } catch (...) {
+        throw std::runtime_error(
+            "BCEWithLogits pos_weight must be a positive finite float");
+    }
+}
+
+float ResolveCrossEntropyLabelSmoothing(const TrainingConfiguration& config) {
+    const std::string* value = FindLossParam(config, {"label_smoothing"});
+    if (!value || IsNeutralLossValue(*value)) {
+        return 0.0f;
+    }
+    const std::string text = TrimAscii(*value);
+    try {
+        size_t parsed = 0;
+        const float smoothing = std::stof(text, &parsed);
+        if (parsed != text.size() || !std::isfinite(smoothing) ||
+            smoothing < 0.0f || smoothing >= 1.0f) {
+            throw std::runtime_error("invalid label_smoothing");
+        }
+        return smoothing;
+    } catch (...) {
+        throw std::runtime_error(
+            "CrossEntropy label_smoothing must be a finite float in [0, 1)");
+    }
+}
+
+float ResolveLossFloatParam(const TrainingConfiguration& config,
+                            const char* key,
+                            float fallback,
+                            float min_value,
+                            const char* context) {
+    const std::string* value = FindLossParam(config, {key});
+    if (!value || IsNeutralLossValue(*value)) {
+        return fallback;
+    }
+    const std::string text = TrimAscii(*value);
+    try {
+        size_t parsed = 0;
+        const float parsed_value = std::stof(text, &parsed);
+        if (parsed != text.size() || !std::isfinite(parsed_value) ||
+            parsed_value < min_value) {
+            throw std::runtime_error("invalid float");
+        }
+        return parsed_value;
+    } catch (...) {
+        throw std::runtime_error(std::string(context) +
+                                 " must be a finite float >= " +
+                                 std::to_string(min_value));
+    }
+}
+
+Reduction ResolveLossReduction(const TrainingConfiguration& config) {
+    const std::string* value = FindLossParam(config, {"reduction"});
+    if (!value) {
+        return Reduction::Mean;
+    }
+    const std::string mode = ToLowerAscii(TrimAscii(*value));
+    if (mode.empty() || mode == "false" || mode == "0" || mode == "off") {
+        return Reduction::Mean;
+    }
+    if (mode == "mean") {
+        return Reduction::Mean;
+    }
+    if (mode == "sum") {
+        return Reduction::Sum;
+    }
+    if (mode == "none") {
+        return Reduction::None;
+    }
+    throw std::runtime_error(
+        "Loss reduction must be one of: mean, sum, none");
+}
+
+const char* ReductionName(Reduction reduction) {
+    switch (reduction) {
+        case Reduction::Mean: return "mean";
+        case Reduction::Sum: return "sum";
+        case Reduction::None: return "none";
+    }
+    return "mean";
+}
+
+std::vector<int> ParseIntListParam(const CompiledLayer& layer,
+                                   const std::string& key) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return {};
+    }
+
+    std::string value = it->second;
+    value.erase(std::remove(value.begin(), value.end(), '['), value.end());
+    value.erase(std::remove(value.begin(), value.end(), ']'), value.end());
+    value.erase(std::remove(value.begin(), value.end(), ' '), value.end());
+
+    std::vector<int> out;
+    std::stringstream ss(value);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            continue;
+        }
+        try {
+            out.push_back(std::stoi(token));
+        } catch (...) {
+        }
+    }
+    return out;
+}
+
+TensorMaskOp ParseTensorMaskOp(const CompiledLayer& layer) {
+    auto it = layer.parameters.find("op");
+    const std::string op = it != layer.parameters.end() ? it->second : ">";
+
+    if (layer.type == gui::NodeType::TensorLogicalMask) {
+        return TensorMaskOp::LogicalNot;
+    }
+    if (op == ">=") return TensorMaskOp::CompareGreaterEqual;
+    if (op == "<") return TensorMaskOp::CompareLess;
+    if (op == "<=") return TensorMaskOp::CompareLessEqual;
+    if (op == "==") return TensorMaskOp::CompareEqual;
+    if (op == "!=") return TensorMaskOp::CompareNotEqual;
+    return TensorMaskOp::CompareGreater;
+}
+
+// The type of the layer that will consume layer i's output. Extension
+// layers (TOFIX125) that keep their input's shape, such as an elementwise
+// activation, are looked through: the layer before one sizes its output for
+// the layer after it. Unknown when nothing follows.
+gui::NodeType NextConsumerType(const TrainingConfiguration& config, size_t i) {
+    for (size_t j = i + 1; j < config.layers.size(); ++j) {
+        const auto& next = config.layers[j];
+        if (next.type == gui::NodeType::PluginCustom && next.output_shape == next.input_shape) {
+            continue;
+        }
+        return next.type;
+    }
+    return gui::NodeType::Unknown;
+}
+
+// Populate `model` with modules per config.layers. Returns false if
+// config produced zero layers. Logging is identical to the pre-extraction
+// path so existing training regression tests still match on log output.
+bool BuildSequential(
+    SequentialModel& model,
+    const TrainingConfiguration& config,
+    std::vector<BuiltModuleProvenance>* provenance) {
+    CYXWIZ_BUILDER_INFO("TrainingExecutor: Building model from {} layer configs", config.layers.size());
+
+    if (provenance) {
+        provenance->clear();
+        provenance->reserve(config.layers.size());
+    }
+
+    // Track input size for each layer
+    size_t current_input_size = config.input_size;
+    size_t current_sequence_length = config.input_size > 0 ? config.input_size : 1;
+    const auto spatial_head = ResolveSpatialSequentialHead(config);
+    const auto sequence_section = ResolveSequenceConvSection(config);
+
+    for (size_t i = 0; i < config.layers.size(); ++i) {
+        const auto& layer_cfg = config.layers[i];
+        const size_t module_count_before = model.Size();
+
+        DenseActivationConfiguration dense_activation_configuration;
+        if (const auto reason = ResolveDenseActivationConfiguration(
+                layer_cfg.type, layer_cfg.parameters,
+                dense_activation_configuration, layer_cfg.units,
+                layer_cfg.negative_slope, layer_cfg.alpha)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+
+        if (const auto reason =
+                ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                    layer_cfg.type, layer_cfg.parameters)) {
+            throw std::runtime_error(
+                "unsupported layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+        if (const auto reason =
+                ResolveInvalidSequenceProjectionConfigurationReason(
+                    layer_cfg.type, layer_cfg.parameters)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+        NormalizationRegularizationConfiguration
+            normalization_regularization_configuration;
+        if (const auto reason =
+                ResolveNormalizationRegularizationConfiguration(
+                    layer_cfg.type, layer_cfg.parameters,
+                    normalization_regularization_configuration)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+        TransformerConfiguration transformer_configuration;
+        if (const auto reason = ResolveTransformerConfiguration(
+                layer_cfg.type, layer_cfg.parameters,
+                transformer_configuration)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+
+        // A branched graph (TOFIX140 A2): a layer reads the width of the pin
+        // that feeds it, not the output of the layer before it in sort order.
+        if ((!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) &&
+            !layer_cfg.input_shape.empty() && layer_cfg.input_shape.size() <= 2) {
+            current_input_size = layer_cfg.input_shape.back();
+        }
+
+        switch (layer_cfg.type) {
+            case gui::NodeType::Dense: {
+                const size_t out_features =
+                    dense_activation_configuration.dense_units;
+                model.Add<LinearModule>(current_input_size, out_features, true);
+                CYXWIZ_BUILDER_INFO("  [{}] Linear({} -> {})", i, current_input_size, out_features);
+                current_input_size = out_features;
+                break;
+            }
+
+            case gui::NodeType::Concatenate: {
+                if (!ParseBoolParam(layer_cfg, "sequence_feature_fusion", false)) {
+                    spdlog::warn(
+                        "  [{}] Concatenate is not supported in SequentialModel",
+                        i);
+                    break;
+                }
+                if (i != 0) {
+                    throw std::runtime_error(
+                        "sequence feature fusion must be the first model layer");
+                }
+
+                size_t word_num_embeddings =
+                    ParseSizeParam(layer_cfg, "word_num_embeddings",
+                                   ParseSizeParam(layer_cfg, "num_embeddings", 10000));
+                size_t word_embedding_dim =
+                    ParseSizeParam(layer_cfg, "word_embedding_dim",
+                                   ParseSizeParam(layer_cfg, "embedding_dim", 256));
+                size_t pos_num_embeddings =
+                    ParseSizeParam(layer_cfg, "pos_num_embeddings", 128);
+                size_t pos_embedding_dim =
+                    ParseSizeParam(layer_cfg, "pos_embedding_dim", 32);
+
+                if (word_num_embeddings < 2) word_num_embeddings = 2;
+                if (pos_num_embeddings < 2) pos_num_embeddings = 2;
+                if (word_embedding_dim < 1) word_embedding_dim = 1;
+                if (pos_embedding_dim < 1) pos_embedding_dim = 1;
+
+                int word_padding_idx = -1;
+                if (auto it = layer_cfg.parameters.find("word_padding_idx");
+                    it != layer_cfg.parameters.end()) {
+                    try { word_padding_idx = std::stoi(it->second); }
+                    catch (...) {}
+                }
+                int pos_padding_idx = -1;
+                if (auto it = layer_cfg.parameters.find("pos_padding_idx");
+                    it != layer_cfg.parameters.end()) {
+                    try { pos_padding_idx = std::stoi(it->second); }
+                    catch (...) {}
+                }
+
+                model.Add<SequenceFeatureFusionModule>(
+                    word_num_embeddings,
+                    word_embedding_dim,
+                    pos_num_embeddings,
+                    pos_embedding_dim,
+                    word_padding_idx,
+                    pos_padding_idx);
+                current_sequence_length =
+                    config.input_size > 0 ? config.input_size : 1;
+                current_input_size = word_embedding_dim + pos_embedding_dim;
+                CYXWIZ_BUILDER_INFO(
+                    "  [{}] SequenceFeatureFusion(word={}x{}, pos={}x{}) - "
+                    "output [batch, seq_len={}, features={}]",
+                    i,
+                    word_num_embeddings,
+                    word_embedding_dim,
+                    pos_num_embeddings,
+                    pos_embedding_dim,
+                    current_sequence_length,
+                    current_input_size);
+                break;
+            }
+
+            case gui::NodeType::Embedding: {
+                // Read num_embeddings (vocab size) and embedding_dim from
+                // the generic parameters map. Defaults cover the case
+                // where the dialog-created node still has its factory
+                // defaults (10000 / 256). Both params come from the
+                // node editor's Properties panel.
+                size_t num_embeddings = 10000;
+                size_t embedding_dim = 256;
+                auto ne_it = layer_cfg.parameters.find("num_embeddings");
+                if (ne_it != layer_cfg.parameters.end()) {
+                    try { num_embeddings = static_cast<size_t>(std::stoi(ne_it->second)); }
+                    catch (...) {}
+                }
+                auto ed_it = layer_cfg.parameters.find("embedding_dim");
+                if (ed_it != layer_cfg.parameters.end()) {
+                    try { embedding_dim = static_cast<size_t>(std::stoi(ed_it->second)); }
+                    catch (...) {}
+                }
+
+                if (num_embeddings < 2) num_embeddings = 2;
+                if (embedding_dim < 1) embedding_dim = 1;
+
+                int padding_idx = -1;
+                auto pad_it = layer_cfg.parameters.find("padding_idx");
+                if (pad_it != layer_cfg.parameters.end()) {
+                    try { padding_idx = std::stoi(pad_it->second); }
+                    catch (...) {}
+                }
+
+                const std::string weights_file =
+                    ParseStringParam(layer_cfg, "weights_file",
+                        ParseStringParam(layer_cfg, "embedding_weights_file"));
+                const bool freeze_embedding =
+                    ParseBoolParam(layer_cfg, "freeze", false);
+                const float max_norm =
+                    ParseFloatParam(layer_cfg, "max_norm", 0.0f);
+
+                if (!weights_file.empty()) {
+                    auto embedding = std::make_unique<EmbeddingModule>(
+                        num_embeddings, embedding_dim, padding_idx, max_norm);
+                    try {
+                        Tensor weights = LoadEmbeddingWeightsTextFile(
+                            weights_file, num_embeddings, embedding_dim);
+                        embedding->LoadPretrainedWeights(weights, freeze_embedding);
+                        CYXWIZ_BUILDER_INFO("  [{}] Loaded embedding weights from '{}'{}",
+                                     i, weights_file,
+                                     freeze_embedding ? " (frozen)" : "");
+                    } catch (const std::exception& e) {
+                        throw std::runtime_error(
+                            "Embedding layer failed to load weights_file '" +
+                            weights_file + "': " + e.what());
+                    }
+                    model.AddModule(std::move(embedding));
+                } else {
+                    model.Add<EmbeddingModule>(num_embeddings, embedding_dim,
+                                               padding_idx, max_norm);
+                }
+
+                // Shape tracking: input is [batch, seq_len] with
+                // current_input_size = seq_len. Embedding output is
+                // [batch, seq_len, embedding_dim].
+                //
+                // Lookahead: if the next layer is a recurrent layer
+                // (LSTM / GRU / RNN) or TransformerEncoder, keep
+                // current_input_size = embedding_dim because the sequence
+                // layer's
+                // `input_size` is the per-timestep feature count, not
+                // the flattened sequence length. Otherwise collapse
+                // to seq_len * embedding_dim so the downstream
+                // Flatten/Dense head gets the right feature count
+                // even if the user didn't drop a Flatten node.
+                const size_t seq_len = current_input_size;
+                current_sequence_length = seq_len > 0 ? seq_len : 1;
+                bool next_is_recurrent = false;
+                if (i + 1 < config.layers.size()) {
+                    const auto nt = NextConsumerType(config, i);
+                    if (nt == gui::NodeType::LSTM ||
+                        nt == gui::NodeType::GRU  ||
+                        nt == gui::NodeType::RNN  ||
+                        nt == gui::NodeType::LayerNorm ||
+                        nt == gui::NodeType::PositionalEncoding ||
+                        nt == gui::NodeType::MultiHeadAttention ||
+                        nt == gui::NodeType::CrossAttention ||
+                        nt == gui::NodeType::LinearAttention ||
+                        nt == gui::NodeType::TransformerEncoder ||
+                        nt == gui::NodeType::TransformerDecoder ||
+                        nt == gui::NodeType::TimeDistributed) {
+                        next_is_recurrent = true;
+                    }
+                }
+                if (next_is_recurrent) {
+                    CYXWIZ_BUILDER_INFO("  [{}] Embedding({} x {}) — shape "
+                                 "[seq_len={}] -> [seq_len={}, embed={}], "
+                                 "next layer is recurrent: input_size={} "
+                                 "(per-timestep features)",
+                                 i, num_embeddings, embedding_dim,
+                                 seq_len, seq_len, embedding_dim,
+                                 embedding_dim);
+                    current_input_size = embedding_dim;
+                } else {
+                    const size_t new_size = seq_len * embedding_dim;
+                    CYXWIZ_BUILDER_INFO("  [{}] Embedding({} x {}) — shape "
+                                 "[seq_len={}] -> [seq_len={}, embed={}], "
+                                 "next Flatten/Dense sees {} features",
+                                 i, num_embeddings, embedding_dim,
+                                 seq_len, seq_len, embedding_dim, new_size);
+                    current_input_size = new_size;
+                }
+                break;
+            }
+
+            case gui::NodeType::LSTM: {
+                size_t hidden_size = 128;
+                size_t num_layers  = 1;
+                bool bidirectional = false;
+                bool return_sequences = false;
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" ||
+                                     bi_it->second == "1");
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" ||
+                                        rs_it->second == "1");
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                model.Add<LSTMModule>(current_input_size, hidden_size,
+                                      num_layers, bidirectional,
+                                      return_sequences);
+
+                const size_t output_features = hidden_size *
+                                               (bidirectional ? 2 : 1);
+                CYXWIZ_BUILDER_INFO("  [{}] LSTM(in={}, hidden={}, layers={}, "
+                             "bidir={}, return_seq={}) — output "
+                             "[batch, {}] ({} features)",
+                             i, current_input_size, hidden_size,
+                             num_layers, bidirectional, return_sequences,
+                             output_features, output_features);
+                current_input_size = output_features;
+                break;
+            }
+
+            case gui::NodeType::GRU: {
+                size_t hidden_size = 128;
+                size_t num_layers  = 1;
+                bool bidirectional = false;
+                bool return_sequences = false;
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" ||
+                                     bi_it->second == "1");
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" ||
+                                        rs_it->second == "1");
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                model.Add<GRUModule>(current_input_size, hidden_size,
+                                     num_layers, bidirectional,
+                                     return_sequences);
+
+                const size_t output_features = hidden_size *
+                                               (bidirectional ? 2 : 1);
+                CYXWIZ_BUILDER_INFO("  [{}] GRU(in={}, hidden={}, layers={}, "
+                             "bidir={}, return_seq={}) — output "
+                             "[batch, {}] ({} features)",
+                             i, current_input_size, hidden_size,
+                             num_layers, bidirectional, return_sequences,
+                             output_features, output_features);
+                current_input_size = output_features;
+                break;
+            }
+
+            case gui::NodeType::RNN: {
+                // tofix68 Studio RNN wiring. dropout is rejected fail-closed
+                // by the recurrent configuration policy before ModelBuilder
+                // runs; bidirectional uses RNNModule's split path.
+                size_t hidden_size = 128;
+                size_t num_layers = 1;
+                bool return_sequences = false;
+                bool bidirectional = false;
+                std::string nonlinearity = "tanh";
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" ||
+                                     bi_it->second == "1");
+                }
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" ||
+                                        rs_it->second == "1");
+                }
+                auto act_it = layer_cfg.parameters.find("nonlinearity");
+                if (act_it != layer_cfg.parameters.end() &&
+                    !act_it->second.empty()) {
+                    nonlinearity = act_it->second;
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                model.Add<RNNModule>(current_input_size, hidden_size,
+                                     num_layers, return_sequences,
+                                     nonlinearity, bidirectional);
+
+                const size_t output_features =
+                    hidden_size * (bidirectional ? 2 : 1);
+                CYXWIZ_BUILDER_INFO("  [{}] RNN(in={}, hidden={}, layers={}, "
+                             "nonlinearity={}, bidir={}, return_seq={}) — "
+                             "output [batch, {}]",
+                             i, current_input_size, hidden_size,
+                             num_layers, nonlinearity, bidirectional,
+                             return_sequences, output_features);
+                current_input_size = output_features;
+                break;
+            }
+
+            case gui::NodeType::TransformerEncoder: {
+                const size_t d_model = current_input_size > 0
+                    ? current_input_size
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != d_model) {
+                    throw std::runtime_error(
+                        "TransformerEncoder d_model does not match incoming "
+                        "feature width");
+                }
+                if (d_model % transformer_configuration.num_heads != 0) {
+                    throw std::runtime_error(
+                        "TransformerEncoder incoming feature width must be "
+                        "divisible by num_heads");
+                }
+
+                model.Add<TransformerEncoderModule>(
+                    d_model,
+                    transformer_configuration.num_heads,
+                    transformer_configuration.feedforward_width,
+                    transformer_configuration.dropout,
+                    transformer_configuration.norm_first,
+                    transformer_configuration.ffn_dropout);
+
+                bool next_is_transformer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_transformer =
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LinearAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
+                }
+
+                const size_t downstream_features = current_sequence_length * d_model;
+                CYXWIZ_BUILDER_INFO("  [{}] TransformerEncoder(d_model={}, heads={}, "
+                             "ff={}, dropout={}) - output [batch, {}, {}]",
+                             i, d_model, transformer_configuration.num_heads,
+                             transformer_configuration.feedforward_width,
+                             transformer_configuration.dropout,
+                             current_sequence_length, d_model);
+                current_input_size = next_is_transformer
+                    ? d_model
+                    : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::CrossAttention: {
+                // Query over Key / Value (TOFIX140 Group C); the graph runtime
+                // feeds its three inputs (CrossAttentionModule::ForwardInputs).
+                const auto param = [&](const char* key, const char* fallback) {
+                    const auto it = layer_cfg.parameters.find(key);
+                    return it == layer_cfg.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+                };
+                const size_t embed_dim = static_cast<size_t>(std::stoul(param("embed_dim", "512")));
+                const size_t heads = static_cast<size_t>(std::stoul(param("num_heads", "8")));
+                const float dropout = std::stof(param("dropout", "0.0"));
+                const std::string bias = param("use_bias", "true");
+                if (current_input_size > 0 && current_input_size != embed_dim) {
+                    throw std::runtime_error("CrossAttention embed_dim does not match the Query width");
+                }
+                if (heads == 0 || embed_dim % heads != 0) {
+                    throw std::runtime_error("CrossAttention embed_dim must be divisible by num_heads");
+                }
+                model.Add<CrossAttentionModule>(embed_dim, heads, dropout, bias != "false" && bias != "0");
+                CYXWIZ_BUILDER_INFO("  [{}] CrossAttention(embed_dim={}, heads={}, dropout={})", i, embed_dim,
+                                    heads, dropout);
+                current_input_size = embed_dim;
+                break;
+            }
+
+            case gui::NodeType::LinearAttention: {
+                // Kernel self-attention over [batch, length, embed_dim] (TOFIX140 Group C).
+                const auto param = [&](const char* key, const char* fallback) {
+                    const auto it = layer_cfg.parameters.find(key);
+                    return it == layer_cfg.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+                };
+                const size_t embed_dim = static_cast<size_t>(std::stoul(param("embed_dim", "512")));
+                const size_t heads = static_cast<size_t>(std::stoul(param("num_heads", "8")));
+                const std::string feature_map = param("feature_map", "elu");
+                const float eps = std::stof(param("eps", "1e-6"));
+                const std::string causal = param("causal", "false");
+                const std::string bias = param("use_bias", "true");
+                // The compiler's [length, width] sample, so a sequence fed
+                // straight from the data (not after an Embedding) is read right.
+                const auto& sample = layer_cfg.input_shape;
+                if (sample.size() == 2) {
+                    current_sequence_length = sample[0];
+                    current_input_size = sample[1];
+                }
+                if (current_input_size > 0 && current_input_size != embed_dim) {
+                    throw std::runtime_error("LinearAttention embed_dim does not match the incoming feature width");
+                }
+                if (feature_map != "elu" && feature_map != "relu") {
+                    throw std::runtime_error("LinearAttention feature_map must be elu or relu");
+                }
+                model.Add<LinearAttentionModule>(
+                    embed_dim, heads,
+                    feature_map == "relu" ? LinearAttentionModule::FeatureMap::Relu
+                                          : LinearAttentionModule::FeatureMap::EluPlusOne,
+                    eps, causal == "true" || causal == "1", bias != "false" && bias != "0");
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LinearAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] LinearAttention(embed_dim={}, heads={}, feature_map={}, causal={}) - "
+                                    "output [batch, {}, {}]",
+                                    i, embed_dim, heads, feature_map, causal, current_sequence_length, embed_dim);
+                current_input_size = next_is_sequence_layer ? embed_dim : current_sequence_length * embed_dim;
+                break;
+            }
+
+            case gui::NodeType::MultiHeadAttention: {
+                const size_t embed_dim = current_input_size > 0
+                    ? current_input_size
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != embed_dim) {
+                    throw std::runtime_error(
+                        "MultiHeadAttention embed_dim does not match incoming "
+                        "feature width");
+                }
+                if (embed_dim % transformer_configuration.num_heads != 0) {
+                    throw std::runtime_error(
+                        "MultiHeadAttention incoming feature width must be "
+                        "divisible by num_heads");
+                }
+
+                model.Add<MultiHeadAttentionModule>(
+                    embed_dim,
+                    transformer_configuration.num_heads,
+                    transformer_configuration.dropout,
+                    transformer_configuration.use_bias,
+                    ToMultiHeadAttentionOptions(transformer_configuration));
+
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LinearAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
+                }
+
+                const size_t downstream_features =
+                    current_sequence_length * embed_dim;
+                CYXWIZ_BUILDER_INFO("  [{}] MultiHeadAttention(embed_dim={}, heads={}, "
+                             "dropout={}) - self-attention output [batch, {}, {}]",
+                             i, embed_dim, transformer_configuration.num_heads,
+                             transformer_configuration.dropout,
+                             current_sequence_length, embed_dim);
+                current_input_size = next_is_sequence_layer
+                    ? embed_dim
+                    : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::PositionalEncoding: {
+                const size_t d_model = current_input_size > 0
+                    ? current_input_size
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != d_model) {
+                    throw std::runtime_error(
+                        "PositionalEncoding d_model does not match incoming "
+                        "feature width");
+                }
+
+                if (transformer_configuration.encoding_type == "learned") {
+                    model.Add<LearnedPositionalEmbeddingModule>(
+                        d_model, transformer_configuration.max_sequence_length);
+                } else {
+                    model.Add<PositionalEncodingModule>(
+                        d_model, transformer_configuration.max_sequence_length);
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] PositionalEncoding({}, d_model={}, max_len={}) - output "
+                             "[batch, {}, {}]",
+                             i, transformer_configuration.encoding_type, d_model,
+                             transformer_configuration.max_sequence_length,
+                             current_sequence_length, d_model);
+                current_input_size = d_model;
+                break;
+            }
+
+            case gui::NodeType::TransformerDecoder: {
+                const size_t d_model = current_input_size > 0
+                    ? current_input_size
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != d_model) {
+                    throw std::runtime_error(
+                        "TransformerDecoder d_model does not match incoming "
+                        "feature width");
+                }
+                if (d_model % transformer_configuration.num_heads != 0) {
+                    throw std::runtime_error(
+                        "TransformerDecoder incoming feature width must be "
+                        "divisible by num_heads");
+                }
+
+                model.Add<TransformerDecoderModule>(
+                    d_model,
+                    transformer_configuration.num_heads,
+                    transformer_configuration.feedforward_width,
+                    transformer_configuration.dropout,
+                    transformer_configuration.norm_first,
+                    transformer_configuration.ffn_dropout,
+                    ToTransformerBlockOptions(transformer_configuration));
+
+                bool next_is_transformer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_transformer =
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LinearAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
+                }
+
+                const size_t downstream_features = current_sequence_length * d_model;
+                CYXWIZ_BUILDER_INFO("  [{}] TransformerDecoder(d_model={}, heads={}, "
+                             "ff={}, dropout={}) - output [batch, {}, {}]",
+                             i, d_model, transformer_configuration.num_heads,
+                             transformer_configuration.feedforward_width,
+                             transformer_configuration.dropout,
+                             current_sequence_length, d_model);
+                current_input_size = next_is_transformer
+                    ? d_model
+                    : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::TimeDistributed: {
+                size_t out_features = layer_cfg.units > 0
+                    ? layer_cfg.units
+                    : ParseSizeParam(layer_cfg, "units",
+                                     ParseSizeParam(layer_cfg, "out_features",
+                                                    config.output_size > 0 ? config.output_size : 64));
+                if (out_features < 1) {
+                    out_features = 1;
+                }
+                const auto tie_it = layer_cfg.parameters.find("tie_embedding");
+                const bool tie = tie_it != layer_cfg.parameters.end() &&
+                                 (tie_it->second == "true" || tie_it->second == "1" || tie_it->second == "True");
+                if (tie) {
+                    // Share the nearest upstream Embedding table (tofix112):
+                    // logits = h E^T, no bias, one saved tensor.
+                    EmbeddingModule* embedding = nullptr;
+                    for (size_t k = model.Size(); k-- > 0 && !embedding;) {
+                        embedding = dynamic_cast<EmbeddingModule*>(model.GetModule(k));
+                    }
+                    if (!embedding) {
+                        throw std::runtime_error(
+                            "TimeDistributed tie_embedding=true needs an Embedding node earlier in the model");
+                    }
+                    if (embedding->EmbeddingDim() != current_input_size ||
+                        embedding->NumEmbeddings() != out_features) {
+                        throw std::runtime_error(
+                            "TimeDistributed tie_embedding=true needs input width = embedding_dim (" +
+                            std::to_string(embedding->EmbeddingDim()) + ") and units = vocabulary size (" +
+                            std::to_string(embedding->NumEmbeddings()) + "); got " +
+                            std::to_string(current_input_size) + " -> " + std::to_string(out_features));
+                    }
+                    model.Add<TiedOutputProjectionModule>(*embedding, false);
+                    CYXWIZ_BUILDER_INFO("  [{}] TiedOutputProjection({} -> {}) shares the Embedding table",
+                                 i, current_input_size, out_features);
+                    current_input_size = out_features;
+                    break;
+                }
+                model.Add<TimeDistributedDenseModule>(current_input_size,
+                                                      out_features,
+                                                      true);
+                CYXWIZ_BUILDER_INFO("  [{}] TimeDistributedDense({} -> {}) - output "
+                             "[batch, seq_len, {}]",
+                             i, current_input_size, out_features,
+                             out_features);
+                current_input_size = out_features;
+                break;
+            }
+
+            case gui::NodeType::ReLU: {
+                model.Add<ReLUModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] ReLU", i);
+                break;
+            }
+
+            case gui::NodeType::Sigmoid: {
+                model.Add<SigmoidModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Sigmoid", i);
+                break;
+            }
+
+            case gui::NodeType::Tanh: {
+                model.Add<TanhModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Tanh", i);
+                break;
+            }
+
+            case gui::NodeType::LeakyReLU: {
+                const float slope =
+                    dense_activation_configuration.negative_slope;
+                model.Add<LeakyReLUModule>(slope);
+                CYXWIZ_BUILDER_INFO("  [{}] LeakyReLU(slope={})", i, slope);
+                break;
+            }
+
+            case gui::NodeType::ELU: {
+                const float alpha = dense_activation_configuration.elu_alpha;
+                model.Add<ELUModule>(alpha);
+                CYXWIZ_BUILDER_INFO("  [{}] ELU(alpha={})", i, alpha);
+                break;
+            }
+
+            case gui::NodeType::SELU: {
+                model.Add<SELUModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] SELU", i);
+                break;
+            }
+
+            case gui::NodeType::PReLU: {
+                const int slopes = static_cast<int>(ParseSizeParam(layer_cfg, "num_parameters", 1));
+                const float init = ParseFloatParam(layer_cfg, "init", 0.25f);
+                if (slopes < 1) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                             ": PReLU needs at least one slope");
+                }
+                if (slopes > 1 && current_input_size != 0 && static_cast<size_t>(slopes) != current_input_size &&
+                    !(spatial_head && i < spatial_head->input_shapes.size())) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                             ": PReLU has " + std::to_string(slopes) + " slopes but its input has " +
+                                             std::to_string(current_input_size) + " features");
+                }
+                model.Add<PReLUModule>(slopes, init);
+                CYXWIZ_BUILDER_INFO("  [{}] PReLU(slopes={}, init={})", i, slopes, init);
+                break;
+            }
+
+            case gui::NodeType::GELU: {
+                model.Add<GELUModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] GELU", i);
+                break;
+            }
+
+            case gui::NodeType::Swish: {
+                model.Add<SwishModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Swish", i);
+                break;
+            }
+
+            case gui::NodeType::Mish: {
+                model.Add<MishModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Mish", i);
+                break;
+            }
+
+            case gui::NodeType::Softmax: {
+                model.Add<SoftmaxModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);
+                break;
+            }
+
+            case gui::NodeType::Dropout: {
+                model.Add<DropoutModule>(
+                    normalization_regularization_configuration.dropout_rate);
+                CYXWIZ_BUILDER_INFO(
+                    "  [{}] Dropout(p={})", i,
+                    normalization_regularization_configuration.dropout_rate);
+                break;
+            }
+
+            // The CNN stack (TOFIX140 A1): [H,W,C,N] modules, channels from
+            // the spatial head's shape walk (the compiler's rule).
+            case gui::NodeType::Conv2D:
+            case gui::NodeType::DepthwiseConv2D:
+            case gui::NodeType::MaxPool2D:
+            case gui::NodeType::AvgPool2D:
+            case gui::NodeType::ConvTranspose2D:
+            case gui::NodeType::GroupNorm:
+            case gui::NodeType::InstanceNorm: {
+                if (!spatial_head || i >= spatial_head->input_shapes.size()) {
+                    throw std::runtime_error(
+                        "spatial layer at index " + std::to_string(i) +
+                        " is outside the spatial head (Flatten before Dense)");
+                }
+                const auto& in_shape = spatial_head->input_shapes[i];
+                if (in_shape.size() != 3) {
+                    throw std::runtime_error(
+                        "spatial layer at index " + std::to_string(i) +
+                        " needs the model's input_shape [H,W,C] to know its channels");
+                }
+                const int channels = static_cast<int>(in_shape[2]);
+                spatial::Geometry g;
+                try {
+                    g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[2]);
+                } catch (const std::invalid_argument& error) {
+                    throw std::runtime_error("invalid layer configuration at index " +
+                                             std::to_string(i) + ": " + error.what());
+                }
+                switch (layer_cfg.type) {
+                    case gui::NodeType::Conv2D:
+                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
+                                            g.channels_out, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::DepthwiseConv2D:
+                        model.Add<DepthwiseConv2DModule>(channels, g.depth_multiplier, g.kernel, g.stride,
+                                                         g.padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] DepthwiseConv2D({} x {}, k={}, s={}, p={})", i, channels,
+                                            g.depth_multiplier, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::MaxPool2D:
+                        model.Add<MaxPool2DModule>(g.kernel, g.stride, g.padding);
+                        CYXWIZ_BUILDER_INFO("  [{}] MaxPool2D(pool={}, s={}, p={})", i, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::AvgPool2D:
+                        model.Add<AvgPool2DModule>(g.kernel, g.stride, g.padding);
+                        CYXWIZ_BUILDER_INFO("  [{}] AvgPool2D(pool={}, s={}, p={})", i, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::ConvTranspose2D:
+                        model.Add<ConvTranspose2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding,
+                                                         g.output_padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] ConvTranspose2D({} -> {}, k={}, s={}, p={}, op={})", i, channels,
+                                            g.channels_out, g.kernel, g.stride, g.padding, g.output_padding);
+                        break;
+                    case gui::NodeType::GroupNorm: {
+                        const float eps = ParseFloatParam(layer_cfg, "eps", 1e-5f);
+                        const bool affine = ParseBoolParam(layer_cfg, "affine", true);
+                        model.Add<GroupNormModule>(g.groups, channels, eps, affine);
+                        CYXWIZ_BUILDER_INFO("  [{}] GroupNorm(groups={}, channels={})", i, g.groups, channels);
+                        break;
+                    }
+                    case gui::NodeType::InstanceNorm: {
+                        const float eps = ParseFloatParam(layer_cfg, "eps", 1e-5f);
+                        const bool affine = ParseBoolParam(layer_cfg, "affine", false);
+                        model.Add<InstanceNorm2DModule>(channels, eps, affine);
+                        CYXWIZ_BUILDER_INFO("  [{}] InstanceNorm2D(channels={})", i, channels);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                break;
+            }
+
+            case gui::NodeType::Upsample:
+            case gui::NodeType::PixelShuffle: {
+                UpsamplingConfiguration resolved;
+                if (const auto reason = ResolveUpsamplingConfiguration(
+                        layer_cfg.type, layer_cfg.parameters, resolved,
+                        layer_cfg.scale_factor, layer_cfg.upsample_mode)) {
+                    throw std::runtime_error("invalid upsampling configuration at index " +
+                                             std::to_string(i) + ": " + *reason);
+                }
+                // Direct construction consumes semantic [H,W,C,N] tensors.
+                // Studio remains gated until ingress/head layout is integrated.
+                if (layer_cfg.type == gui::NodeType::Upsample) {
+                    model.Add<Upsample2DModule>(resolved.factor,
+                        resolved.mode == 0 ? UpsampleMode::Nearest : UpsampleMode::Bilinear);
+                } else {
+                    model.Add<PixelShuffleModule>(resolved.factor);
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] {} (semantic [H,W,C,N])", i,
+                             model.GetModule(model.Size() - 1)->GetName());
+                break;
+            }
+
+            // The sequence section (TOFIX140): Conv1D on [L,C,N], opened on
+            // the input rows or after an Embedding (sequence_conv_section.h).
+            // Adaptive Avg Pool: [H,W,C,N] -> [s,s,C,N] (torch AdaptiveAvgPool2d).
+            case gui::NodeType::AdaptiveAvgPool: {
+                if (!spatial_head || i >= spatial_head->input_shapes.size()) {
+                    throw std::runtime_error("Adaptive Avg Pool at index " + std::to_string(i) +
+                                             " is outside the spatial section (Flatten before Dense)");
+                }
+                const int size = spatial::AdaptiveOutputSize(layer_cfg.parameters);
+                model.Add<AdaptiveAvgPool2DModule>(size, size);
+                CYXWIZ_BUILDER_INFO("  [{}] AdaptiveAvgPool2D -> [{}, {}, C]", i, size, size);
+                break;
+            }
+
+            // Conv3D on [D,H,W,C] volume rows (TOFIX140 Group C): the
+            // compiler's shape walk gives the sample; rows stay rows, so the
+            // Flatten that ends the section is a plain one.
+            case gui::NodeType::Conv3D: {
+                const auto& in_shape = layer_cfg.input_shape;
+                if (in_shape.size() != 4) {
+                    throw std::runtime_error("Conv3D at index " + std::to_string(i) +
+                                             " needs its [D, H, W, C] input sample");
+                }
+                spatial::Geometry g;
+                try {
+                    g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[3]);
+                } catch (const std::invalid_argument& error) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) + ": " +
+                                             error.what());
+                }
+                auto conv = std::make_unique<Conv3DModule>(in_shape[0], in_shape[1], in_shape[2], in_shape[3],
+                                                           static_cast<size_t>(g.channels_out), g.kernel,
+                                                           g.stride, g.padding, true);
+                const auto out_shape = conv->OutputSample();
+                if (out_shape != layer_cfg.output_shape) {
+                    throw std::runtime_error("Conv3D at index " + std::to_string(i) +
+                                             ": the backend's output sample differs from the compiled shape");
+                }
+                model.AddModule(std::move(conv));
+                current_input_size = out_shape[0] * out_shape[1] * out_shape[2] * out_shape[3];
+                CYXWIZ_BUILDER_INFO("  [{}] Conv3D({} -> {}, k={}, s={}, p={}) [{}x{}x{}] -> [{}x{}x{}]", i,
+                                    in_shape[3], g.channels_out, g.kernel, g.stride, g.padding, in_shape[0],
+                                    in_shape[1], in_shape[2], out_shape[0], out_shape[1], out_shape[2]);
+                break;
+            }
+
+            case gui::NodeType::Conv1D: {
+                if (!sequence_section || i >= sequence_section->input_shapes.size() ||
+                    sequence_section->input_shapes[i].size() != 2) {
+                    throw std::runtime_error(
+                        "Conv1D at index " + std::to_string(i) +
+                        " needs its [L, C] input sample (the input rows' length is not known yet)");
+                }
+                const auto& in_shape = sequence_section->input_shapes[i];
+                if (i == sequence_section->open_index) {
+                    if (sequence_section->from_rows) {
+                        model.Add<SequenceRowsModule>(in_shape[0], in_shape[1]);
+                    } else {
+                        model.Add<SequenceChannelsLastModule>();
+                    }
+                }
+                const auto g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[1]);
+                model.Add<Conv1DModule>(static_cast<int>(in_shape[1]), g.channels_out, g.kernel,
+                                        g.stride, g.padding, 1, true);
+                CYXWIZ_BUILDER_INFO("  [{}] Conv1D({} -> {}, k={}, s={}, p={}) on [L={}, C={}]", i,
+                                    in_shape[1], g.channels_out, g.kernel, g.stride, g.padding,
+                                    in_shape[0], in_shape[1]);
+                break;
+            }
+
+            case gui::NodeType::Flatten: {
+                if (sequence_section && sequence_section->close_index == i) {
+                    model.Add<SequenceFlattenModule>();
+                    current_input_size = sequence_section->features;
+                    CYXWIZ_BUILDER_INFO("  [{}] SequenceFlatten [L,C,N] -> [N,{}]", i, current_input_size);
+                } else if (spatial_head && spatial_head->flatten_index == i) {
+                    model.Add<SpatialFlattenModule>(spatial_head->sample_shape);
+                    current_input_size = spatial_head->features;
+                    CYXWIZ_BUILDER_INFO("  [{}] SpatialFlatten [H,W,C,N] -> [N,{}]",
+                                 i, current_input_size);
+                } else {
+                    model.Add<FlattenModule>(1);
+                    CYXWIZ_BUILDER_INFO("  [{}] Flatten", i);
+                }
+                break;
+            }
+
+            case gui::NodeType::Reshape:
+            case gui::NodeType::View:
+            case gui::NodeType::Squeeze:
+            case gui::NodeType::Unsqueeze: {
+                if (layer_cfg.output_shape.empty()) {
+                    spdlog::error("  [{}] shape op missing resolved output_shape", i);
+                    break;
+                }
+                model.Add<ReshapeModule>(layer_cfg.output_shape);
+                CYXWIZ_BUILDER_INFO("  [{}] ShapeOp({} dims)", i, layer_cfg.output_shape.size());
+                break;
+            }
+
+            case gui::NodeType::Permute: {
+                if (layer_cfg.dims.empty()) {
+                    spdlog::error("  [{}] Permute missing normalized dims", i);
+                    break;
+                }
+                model.Add<PermuteModule>(layer_cfg.dims);
+                CYXWIZ_BUILDER_INFO("  [{}] Permute({} dims)", i, layer_cfg.dims.size());
+                break;
+            }
+
+            case gui::NodeType::TensorBroadcastTo: {
+                if (layer_cfg.output_shape.empty()) {
+                    spdlog::error("  [{}] TensorBroadcastTo missing resolved output_shape", i);
+                    break;
+                }
+                model.Add<TensorShapeModule>(TensorShapeOp::BroadcastTo, layer_cfg.output_shape);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorBroadcastTo({} dims)", i, layer_cfg.output_shape.size());
+                break;
+            }
+
+            case gui::NodeType::TensorExpand: {
+                if (layer_cfg.output_shape.empty()) {
+                    spdlog::error("  [{}] TensorExpand missing resolved output_shape", i);
+                    break;
+                }
+                model.Add<TensorShapeModule>(TensorShapeOp::Expand, layer_cfg.output_shape);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorExpand({} dims)", i, layer_cfg.output_shape.size());
+                break;
+            }
+
+            case gui::NodeType::TensorIndexSelect: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", 0.0f));
+                const std::vector<int> indices = ParseIntListParam(layer_cfg, "indices");
+                model.Add<TensorShapeModule>(TensorShapeOp::IndexSelect,
+                                             std::vector<size_t>{},
+                                             dim,
+                                             indices);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorIndexSelect(dim={}, indices={})",
+                             i, dim, indices.size());
+                break;
+            }
+
+            case gui::NodeType::TensorAbs: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Abs);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorAbs", i);
+                break;
+            }
+
+            case gui::NodeType::TensorExp: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Exp);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorExp", i);
+                break;
+            }
+
+            case gui::NodeType::TensorLog: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Log);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorLog", i);
+                break;
+            }
+
+            case gui::NodeType::TensorSqrt: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Sqrt);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorSqrt", i);
+                break;
+            }
+
+            case gui::NodeType::TensorSign: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Sign);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorSign", i);
+                break;
+            }
+
+            case gui::NodeType::TensorPow: {
+                const float exponent = ParseFloatParam(layer_cfg, "exponent", 2.0f);
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Pow, exponent);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorPow(exponent={})", i, exponent);
+                break;
+            }
+
+            case gui::NodeType::TensorClip: {
+                const float min_val = ParseFloatParam(layer_cfg, "min", 0.0f);
+                const float max_val = ParseFloatParam(layer_cfg, "max", 1.0f);
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Clip, min_val, max_val);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorClip(min={}, max={})", i, min_val, max_val);
+                break;
+            }
+
+            case gui::NodeType::TensorCompare: {
+                const TensorMaskOp op = ParseTensorMaskOp(layer_cfg);
+                const float scalar = ParseFloatParam(layer_cfg, "scalar", 0.0f);
+                model.Add<TensorMaskModule>(op, scalar);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorCompare(scalar={})", i, scalar);
+                break;
+            }
+
+            case gui::NodeType::TensorLogicalMask: {
+                model.Add<TensorMaskModule>(TensorMaskOp::LogicalNot);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorLogicalMask(op=not)", i);
+                break;
+            }
+
+            case gui::NodeType::TensorSum: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Sum, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorSum(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorMean: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Mean, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorMean(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorMax: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Max, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorMax(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorMin: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Min, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorMin(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorProd: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Prod, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorProd(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorVar: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Var, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorVar(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorStd: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Std, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorStd(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::BatchNorm: {
+                model.Add<BatchNormModule>(
+                    current_input_size,
+                    normalization_regularization_configuration.epsilon,
+                    normalization_regularization_configuration.momentum);
+                CYXWIZ_BUILDER_INFO(
+                    "  [{}] BatchNorm(features={}, eps={}, momentum={})", i,
+                    current_input_size,
+                    normalization_regularization_configuration.epsilon,
+                    normalization_regularization_configuration.momentum);
+                break;
+            }
+
+            case gui::NodeType::LayerNorm: {
+                std::vector<int> normalized_shape =
+                    normalization_regularization_configuration.normalized_shape;
+                if (normalization_regularization_configuration
+                        .automatic_normalized_shape) {
+                    normalized_shape.push_back(
+                        static_cast<int>(current_input_size > 0
+                                             ? current_input_size
+                                             : 1));
+                }
+                model.Add<LayerNormModule>(
+                    normalized_shape,
+                    normalization_regularization_configuration.epsilon,
+                    normalization_regularization_configuration
+                        .elementwise_affine);
+                CYXWIZ_BUILDER_INFO("  [{}] LayerNorm(normalized_shape={}, eps={}, affine={})",
+                             i, normalized_shape.front(),
+                             normalization_regularization_configuration.epsilon,
+                             normalization_regularization_configuration
+                                 .elementwise_affine);
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LinearAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
+                }
+                if (config.preprocessing_domain == PreprocessingDomain::Text &&
+                    !next_is_sequence_layer) {
+                    current_input_size = current_sequence_length * current_input_size;
+                }
+                break;
+            }
+
+            case gui::NodeType::Output:
+            case gui::NodeType::SequenceTagOutput: {
+                // Output node is just a marker, not an actual layer
+                // The actual output transformation is done by the preceding Dense layer
+                CYXWIZ_BUILDER_INFO("  [{}] Output (marker, no layer added)", i);
+                break;
+            }
+
+            // Skip non-layer nodes (preprocessing, loss functions, optimizers)
+            case gui::NodeType::DatasetInput:
+            case gui::NodeType::DataLoader:
+            case gui::NodeType::DataSplit:
+            case gui::NodeType::Normalize:
+            case gui::NodeType::OneHotEncode:
+            // Loss functions
+            case gui::NodeType::MSELoss:
+            case gui::NodeType::CrossEntropyLoss:
+            case gui::NodeType::FocalLoss:
+            case gui::NodeType::BCELoss:
+            case gui::NodeType::BCEWithLogits:
+            case gui::NodeType::L1Loss:
+            case gui::NodeType::SmoothL1Loss:
+            case gui::NodeType::HuberLoss:
+            case gui::NodeType::NLLLoss:
+            case gui::NodeType::SoftDiceLoss:
+            case gui::NodeType::TverskyLoss:
+            case gui::NodeType::JaccardLoss:
+            // Optimizers
+            case gui::NodeType::SGD:
+            case gui::NodeType::Adam:
+            case gui::NodeType::AdamW:
+                // These are not layers in the sequential model
+                break;
+
+            // A global pool ends the spatial or sequence section like Flatten:
+            // one value per channel, [N,C] rows (torch adaptive_avg/max_pool + flatten).
+            case gui::NodeType::GlobalAvgPool:
+            case gui::NodeType::GlobalMaxPool: {
+                const bool average = layer_cfg.type == gui::NodeType::GlobalAvgPool;
+                if (sequence_section && sequence_section->close_index == i) {
+                    if (average) {
+                        model.Add<SequenceGlobalAvgPoolModule>();
+                    } else {
+                        model.Add<SequenceGlobalMaxPoolModule>();
+                    }
+                    current_input_size = sequence_section->features;
+                } else if (spatial_head && spatial_head->flatten_index == i) {
+                    if (average) {
+                        model.Add<GlobalAvgPool2DModule>();
+                    } else {
+                        model.Add<GlobalMaxPool2DModule>();
+                    }
+                    current_input_size = spatial_head->features;
+                } else {
+                    throw std::runtime_error(
+                        std::string(average ? "Global Avg Pool" : "Global Max Pool") + " at index " +
+                        std::to_string(i) + " needs an [H,W,C] or [L,C] sample before it");
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] {} -> [N,{}]", i,
+                                    model.GetModule(model.Size() - 1)->GetName(), current_input_size);
+                break;
+            }
+
+            case gui::NodeType::PluginCustom: {
+                // An extension node (TOFIX125): its factory builds the module,
+                // wrapped so its shapes are checked and errors name the node.
+                auto& registry = ExtensionNodeRegistry::Instance();
+                const auto factory = registry.TensorFactory(layer_cfg.extension_type_id);
+                if (!factory) {
+                    throw std::runtime_error(
+                        "extension node '" + layer_cfg.name + "' (" + layer_cfg.extension_type_id +
+                        ") is not installed or cannot train");
+                }
+                std::string error;
+                std::unique_ptr<Module> module;
+                try {
+                    module = factory->CreateModule(layer_cfg.input_shape, layer_cfg.parameters, error);
+                } catch (const std::exception& e) {
+                    error = e.what();
+                }
+                if (!module) {
+                    throw std::runtime_error(
+                        "extension node '" + layer_cfg.name + "' (" + layer_cfg.extension_type_id +
+                        ") could not create its module" + (error.empty() ? std::string() : ": " + error));
+                }
+                model.AddModule(std::make_unique<GuardedExtensionModule>(
+                    std::move(module), layer_cfg.node_id, layer_cfg.name, layer_cfg.extension_type_id,
+                    layer_cfg.output_shape, registry.ProviderLease(layer_cfg.extension_type_id)));
+                CYXWIZ_BUILDER_INFO("  [{}] Extension {} ({} -> {})", i, layer_cfg.extension_type_id,
+                                    FormatTensorShape(layer_cfg.input_shape), FormatTensorShape(layer_cfg.output_shape));
+                // A node that changes the width tells the next layer.
+                if (!layer_cfg.output_shape.empty() && layer_cfg.output_shape != layer_cfg.input_shape) {
+                    current_input_size = layer_cfg.output_shape.back();
+                }
+                break;
+            }
+
+            default:
+                spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));
+                break;
+        }
+
+        if (provenance) {
+            const size_t module_count_after = model.Size();
+            if (module_count_after == module_count_before) {
+                provenance->push_back({
+                    i,
+                    std::nullopt,
+                    layer_cfg.node_id,
+                    layer_cfg.name,
+                    layer_cfg.type,
+                    {},
+                    layer_cfg.input_shape,
+                    layer_cfg.output_shape,
+                    layer_cfg.parameters,
+                });
+            } else {
+                for (size_t module_index = module_count_before;
+                     module_index < module_count_after;
+                     ++module_index) {
+                    Module* module = model.GetModule(module_index);
+                    provenance->push_back({
+                        i,
+                        module_index,
+                        layer_cfg.node_id,
+                        layer_cfg.name,
+                        layer_cfg.type,
+                        module ? module->GetName() : std::string{},
+                        layer_cfg.input_shape,
+                        layer_cfg.output_shape,
+                        layer_cfg.parameters,
+                    });
+                }
+            }
+        }
+    }
+
+    if (model.Size() == 0) {
+        spdlog::error("TrainingExecutor: No layers were added to the model!");
+        return false;
+    }
+
+    // Print model summary (the backend logs it; skipped inside a
+    // QuietModelBuildScope like the rest of the build log).
+    if (!g_quiet_build_log) model.Summary();
+
+    return true;
+}
+
+int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
+    auto it = config.loss_params.find("ignore_index");
+    if (it != config.loss_params.end() && !it->second.empty()) {
+        try {
+            return std::stoi(it->second);
+        } catch (...) {
+            spdlog::warn("TrainingExecutor: ignoring invalid CrossEntropy "
+                         "ignore_index='{}'", it->second);
+        }
+    }
+    if (config.sequence_batch.enabled &&
+        config.sequence_batch.create_causal_lm_targets) {
+        return config.sequence_batch.target_ignore_index;
+    }
+    if (config.sequence_batch.enabled) {
+        return config.sequence_batch.ignore_index;
+    }
+    return -100;
+}
+
+ResolvedOptimizerConfiguration ResolveOptimizerConfigurationImpl(
+    const TrainingConfiguration& config) {
+    ResolvedOptimizerConfiguration out;
+    out.optimizer_type = config.optimizer_type;
+    out.optimizer_name = config.GetOptimizerName();
+    out.learning_rate = config.learning_rate;
+
+    switch (config.optimizer_type) {
+        case gui::NodeType::SGD:
+            out.momentum = config.momentum;
+            break;
+        case gui::NodeType::Adam:
+        case gui::NodeType::NAdam:
+            out.beta1 = config.beta1;
+            out.beta2 = config.beta2;
+            out.epsilon = config.epsilon;
+            break;
+        case gui::NodeType::AdamW:
+            out.beta1 = config.beta1;
+            out.beta2 = config.beta2;
+            out.epsilon = config.epsilon;
+            out.weight_decay = config.weight_decay;
+            break;
+        case gui::NodeType::RMSprop:
+            out.rmsprop_alpha = config.rmsprop_alpha;
+            out.epsilon = config.epsilon;
+            out.momentum = config.momentum;
+            break;
+        case gui::NodeType::Adagrad:
+            out.epsilon = config.epsilon;
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+
+std::unique_ptr<Optimizer> BuildOptimizerFromConfigImpl(
+    const TrainingConfiguration& config) {
+    const ResolvedOptimizerConfiguration resolved =
+        ResolveOptimizerConfigurationImpl(config);
+
+    switch (config.optimizer_type) {
+        case gui::NodeType::SGD:
+            return std::make_unique<SGDOptimizer>(
+                resolved.learning_rate, resolved.momentum.value());
+        case gui::NodeType::Adam:
+            return std::make_unique<AdamOptimizer>(
+                resolved.learning_rate, resolved.beta1.value(),
+                resolved.beta2.value(), resolved.epsilon.value());
+        case gui::NodeType::AdamW:
+            return std::make_unique<AdamWOptimizer>(
+                resolved.learning_rate, resolved.beta1.value(),
+                resolved.beta2.value(), resolved.epsilon.value(),
+                resolved.weight_decay.value());
+        case gui::NodeType::RMSprop:
+            return std::make_unique<RMSpropOptimizer>(
+                resolved.learning_rate, resolved.rmsprop_alpha.value(),
+                resolved.epsilon.value(), resolved.momentum.value());
+        case gui::NodeType::Adagrad:
+            return std::make_unique<AdaGradOptimizer>(
+                resolved.learning_rate, resolved.epsilon.value());
+        case gui::NodeType::NAdam:
+            return std::make_unique<NAdamOptimizer>(
+                resolved.learning_rate, resolved.beta1.value(),
+                resolved.beta2.value(), resolved.epsilon.value());
+        default:
+            return CreateOptimizer(config.GetOptimizerType(),
+                                   resolved.learning_rate);
+    }
+}
+
+ResolvedLossConfiguration ResolveLossConfigurationImpl(
+    const TrainingConfiguration& config) {
+    ResolvedLossConfiguration out;
+    out.loss_type = config.loss_type;
+    out.loss_name = config.GetLossName();
+    out.reduction = ResolveLossReduction(config);
+
+    switch (config.loss_type) {
+        case gui::NodeType::CrossEntropyLoss:
+            out.ignore_index_applicable = true;
+            out.ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            out.class_weights_applicable = true;
+            out.class_weights = ResolveCrossEntropyClassWeights(config);
+            out.label_smoothing_applicable = true;
+            out.label_smoothing = ResolveCrossEntropyLabelSmoothing(config);
+            break;
+        case gui::NodeType::FocalLoss:
+            out.alpha = ResolveLossFloatParam(
+                config, "alpha", 0.25f, 0.0f, "FocalLoss alpha");
+            out.gamma = ResolveLossFloatParam(
+                config, "gamma", 2.0f, 0.0f, "FocalLoss gamma");
+            break;
+        case gui::NodeType::BCEWithLogits:
+            out.pos_weight = ResolveBCEWithLogitsPosWeight(config);
+            break;
+        case gui::NodeType::SmoothL1Loss:
+        case gui::NodeType::HuberLoss:
+            out.beta = ResolveLossFloatParam(
+                config, "beta", 1.0f, 0.000001f,
+                "SmoothL1/Huber beta");
+            break;
+        case gui::NodeType::NLLLoss:
+            out.ignore_index_applicable = true;
+            out.ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            break;
+        case gui::NodeType::SoftDiceLoss:
+            out.smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "SoftDice smooth");
+            break;
+        case gui::NodeType::TverskyLoss:
+            out.alpha = ResolveLossFloatParam(
+                config, "alpha", 0.5f, 0.0f, "Tversky alpha");
+            out.beta = ResolveLossFloatParam(
+                config, "beta", 0.5f, 0.0f, "Tversky beta");
+            out.smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "Tversky smooth");
+            break;
+        case gui::NodeType::JaccardLoss:
+            out.smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
+            break;
+        // The backend losses check the exact ranges (Triplet > 0, Cosine
+        // Embedding <= 1) on construction.
+        case gui::NodeType::TripletLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 1.0f, 0.0f, "Triplet margin");
+            break;
+        case gui::NodeType::ContrastiveLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 1.0f, 0.0f, "Contrastive margin");
+            break;
+        case gui::NodeType::CosineEmbeddingLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 0.0f, -1.0f, "Cosine Embedding margin");
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+
+std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& config) {
+    const ResolvedLossConfiguration resolved =
+        ResolveLossConfigurationImpl(config);
+    const Reduction reduction = resolved.reduction;
+    switch (config.loss_type) {
+        case gui::NodeType::CrossEntropyLoss: {
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using CrossEntropy loss "
+                         "(reduction={}, ignore_index={}, class_weights={}, "
+                         "label_smoothing={})",
+                         ReductionName(reduction), resolved.ignore_index,
+                         resolved.class_weights.size(),
+                         resolved.label_smoothing);
+            return std::make_unique<CrossEntropyLoss>(
+                reduction, resolved.ignore_index, resolved.class_weights,
+                resolved.label_smoothing);
+        }
+        case gui::NodeType::FocalLoss: {
+            const float alpha = resolved.alpha.value();
+            const float gamma = resolved.gamma.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Focal loss "
+                         "(reduction={}, alpha={}, gamma={})",
+                         ReductionName(reduction), alpha, gamma);
+            return std::make_unique<FocalLoss>(
+                alpha, gamma, reduction);
+        }
+        case gui::NodeType::MSELoss:
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using MSE loss (reduction={})",
+                         ReductionName(reduction));
+            return CreateLoss(LossType::MSE, reduction);
+        case gui::NodeType::BCELoss:
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using BCE loss (reduction={})",
+                         ReductionName(reduction));
+            return CreateLoss(LossType::BinaryCrossEntropy, reduction);
+        case gui::NodeType::BCEWithLogits: {
+            const float pos_weight = resolved.pos_weight.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using BCEWithLogits loss "
+                         "(reduction={}, pos_weight={})",
+                         ReductionName(reduction), pos_weight);
+            return std::make_unique<BCEWithLogitsLoss>(
+                reduction, pos_weight);
+        }
+        case gui::NodeType::L1Loss:
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using L1 loss (reduction={})",
+                         ReductionName(reduction));
+            return CreateLoss(LossType::L1, reduction);
+        case gui::NodeType::SmoothL1Loss: {
+            const float beta = resolved.beta.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using SmoothL1 loss "
+                         "(reduction={}, beta={})",
+                         ReductionName(reduction), beta);
+            return CreateLoss(LossType::SmoothL1, reduction, beta);
+        }
+        case gui::NodeType::HuberLoss: {
+            const float delta = resolved.beta.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Huber loss "
+                         "(reduction={}, delta={})",
+                         ReductionName(reduction), delta);
+            return CreateLoss(LossType::Huber, reduction, delta);
+        }
+        case gui::NodeType::NLLLoss: {
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using NLL loss "
+                         "(reduction={}, ignore_index={})",
+                         ReductionName(reduction), resolved.ignore_index);
+            return std::make_unique<NLLLoss>(
+                reduction, resolved.ignore_index);
+        }
+        case gui::NodeType::SoftDiceLoss: {
+            const float smooth = resolved.smooth.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using SoftDice loss "
+                         "(reduction={}, smooth={})",
+                         ReductionName(reduction), smooth);
+            return std::make_unique<SoftDiceLoss>(reduction, smooth);
+        }
+        case gui::NodeType::TverskyLoss: {
+            const float alpha = resolved.alpha.value();
+            const float beta = resolved.beta.value();
+            const float smooth = resolved.smooth.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Tversky loss "
+                         "(reduction={}, alpha={}, beta={}, smooth={})",
+                         ReductionName(reduction), alpha, beta, smooth);
+            return std::make_unique<TverskyLoss>(
+                reduction, alpha, beta, smooth);
+        }
+        case gui::NodeType::JaccardLoss: {
+            const float smooth = resolved.smooth.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Jaccard loss "
+                         "(reduction={}, smooth={})",
+                         ReductionName(reduction), smooth);
+            return std::make_unique<JaccardLoss>(reduction, smooth);
+        }
+        case gui::NodeType::TripletLoss: {
+            // Over the Triplet Dataset Builder's stacked [anchors; positives;
+            // negatives] embeddings; mean over triplets as torch.
+            const float margin = resolved.margin.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Triplet loss "
+                         "(stacked batch, margin={})", margin);
+            return std::make_unique<StackedTripletLoss>(margin, config.metric_mining);
+        }
+        case gui::NodeType::ContrastiveLoss:
+        case gui::NodeType::CosineEmbeddingLoss: {
+            // Over the Pair Dataset Builder's stacked [firsts; seconds]
+            // embeddings; mean over pairs.
+            const float margin = resolved.margin.value();
+            const bool contrastive = config.loss_type == gui::NodeType::ContrastiveLoss;
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} loss (stacked pairs, margin={})",
+                         contrastive ? "Contrastive" : "Cosine Embedding", margin);
+            return std::make_unique<StackedPairLoss>(
+                contrastive ? StackedPairLoss::Kind::Contrastive : StackedPairLoss::Kind::CosineEmbedding,
+                margin, config.metric_mining);
+        }
+        default:
+            // Training another objective than the graph's would be silent
+            // and wrong; the compiler should have refused this node.
+            throw std::runtime_error(
+                "ModelBuilder has no loss implementation for node type " +
+                std::to_string(static_cast<int>(config.loss_type)));
+    }
+}
+
+std::string ParseStringParam(const CompiledLayer& layer,
+                             const std::string& key,
+                             const std::string& fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    return it->second;
+}
+
+// An Embedding weights file: a matrix of numbers (spaces or commas) with one
+// row per token id, or word vectors as text, a word and its values per line
+// in file order (word2vec / fastText .vec after its "count dim" header, GloVe
+// .txt). With `values` null only the shape is counted.
+bool ReadEmbeddingWeightsText(const std::string& path, size_t& rows, size_t& cols,
+                              std::vector<float>* values, std::string& error) {
+    rows = 0;
+    cols = 0;
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        error = "could not open embedding weights file: " + path;
+        return false;
+    }
+    // Fields split by white space; a matrix may also use commas. A word file's
+    // word is its line's first field as written ("," and "#" are words too).
+    const auto split = [](std::string line, bool commas) {
+        if (commas) std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream iss(line);
+        std::vector<std::string> tokens;
+        std::string token;
+        while (iss >> token) tokens.push_back(token);
+        return tokens;
+    };
+    const auto number = [](const std::string& token, float& out) {
+        char* end = nullptr;
+        out = std::strtof(token.c_str(), &end);
+        return end != token.c_str() && *end == '\0';
+    };
+    const auto integer = [](const std::string& token) {
+        return !token.empty() && std::all_of(token.begin(), token.end(),
+                                             [](unsigned char c) { return std::isdigit(c) != 0; });
+    };
+    bool words = false;  // each line starts with its word
+    const auto add_row = [&](const std::vector<std::string>& tokens) {
+        const size_t first = words ? 1 : 0;
+        const size_t width = tokens.size() > first ? tokens.size() - first : 0;
+        if (cols == 0) {
+            cols = width;
+        } else if (width != cols) {
+            error = "embedding weights file has inconsistent row widths (row " + std::to_string(rows + 1) + ")";
+            return false;
+        }
+        if (values) {
+            for (size_t i = first; i < tokens.size(); ++i) {
+                float value = 0.0f;
+                if (!number(tokens[i], value)) {
+                    error = "embedding weights file has a value that is not a number in row " +
+                            std::to_string(rows + 1) + ": '" + tokens[i] + "'";
+                    return false;
+                }
+                values->push_back(value);
+            }
+        }
+        ++rows;
+        return true;
+    };
+    // The format is known from the first line, or from the second when the
+    // first holds two whole numbers (a "count dim" header, or a matrix row).
+    bool decided = false;
+    std::vector<std::string> two_numbers;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // "#" starts a comment in a matrix (the starter builder's header line).
+        if (line.empty() || (!words && line[0] == '#')) continue;
+        if (!decided) {
+            const auto fields = split(line, false);
+            if (fields.empty()) continue;
+            float value = 0.0f;
+            const bool rest_numbers = std::all_of(fields.begin() + 1, fields.end(),
+                                                  [&](const std::string& f) { return number(f, value); });
+            if (two_numbers.empty() && fields.size() == 2 && integer(fields[0]) && integer(fields[1])) {
+                two_numbers = fields;
+                continue;
+            }
+            if (!two_numbers.empty()) {
+                const bool header = !number(fields[0], value) && rest_numbers &&
+                                    fields.size() == std::stoull(two_numbers[1]) + 1;
+                if (header) {
+                    words = true;
+                } else if (!add_row(two_numbers)) {
+                    return false;
+                }
+            } else {
+                words = !number(fields[0], value) && fields.size() > 1 && rest_numbers;
+            }
+            decided = true;
+        }
+        const auto tokens = split(line, !words);
+        if (tokens.empty()) continue;
+        if (!add_row(tokens)) return false;
+    }
+    if (!decided && !two_numbers.empty() && !add_row(two_numbers)) return false;
+    if (rows == 0 || cols == 0) {
+        error = "no embedding rows found in " + path;
+        return false;
+    }
+    return true;
+}
+
+Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
+                                    size_t expected_rows,
+                                    size_t expected_cols) {
+    std::vector<float> values;
+    size_t rows = 0;
+    size_t cols = 0;
+    std::string error;
+    if (!ReadEmbeddingWeightsText(path, rows, cols, &values, error)) {
+        throw std::runtime_error(error);
+    }
+
+    if (rows != expected_rows || cols != expected_cols) {
+        std::ostringstream msg;
+        msg << "embedding weights shape mismatch: expected "
+            << expected_rows << " x " << expected_cols
+            << ", got " << rows << " x " << cols;
+        throw std::runtime_error(msg.str());
+    }
+
+    return Tensor({rows, cols}, values.data(), DataType::Float32);
+}
+
+} // namespace
+
+bool InspectEmbeddingWeightsFile(const std::string& path, size_t& rows, size_t& cols, std::string& error) {
+    return ReadEmbeddingWeightsText(path, rows, cols, nullptr, error);
+}
+
+std::unique_ptr<Loss> BuildLossFromConfig(
+    const TrainingConfiguration& config) {
+    return BuildLossFromConfigImpl(config);
+}
+
+ResolvedLossConfiguration ResolveLossConfiguration(
+    const TrainingConfiguration& config) {
+    return ResolveLossConfigurationImpl(config);
+}
+
+std::unique_ptr<Optimizer> BuildOptimizerFromConfig(
+    const TrainingConfiguration& config) {
+    return BuildOptimizerFromConfigImpl(config);
+}
+
+ResolvedOptimizerConfiguration ResolveOptimizerConfiguration(
+    const TrainingConfiguration& config) {
+    return ResolveOptimizerConfigurationImpl(config);
+}
+
+BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
+    BuiltModel out;
+
+    try {
+        out.model = std::make_unique<SequentialModel>();
+        if (!BuildSequential(*out.model, config, &out.module_provenance)) {
+            out.error_message = errors::FormatError(
+                errors::Compiler::UnsupportedTrainingNode,
+                "ModelBuilder could not add any supported trainable layers");
+            out.model.reset();
+            return out;
+        }
+
+        out.loss = BuildLossFromConfig(config);
+        out.optimizer = BuildOptimizerFromConfig(config);
+        if (!out.loss) {
+            out.error_message = errors::FormatError(
+                errors::Training::LossSetupFailed,
+                "ModelBuilder failed to create loss");
+            out.model.reset();
+            return out;
+        }
+        if (!out.optimizer) {
+            out.error_message = errors::FormatError(
+                errors::Training::OptimizerSetupFailed,
+                "ModelBuilder failed to create optimizer");
+            out.model.reset();
+            out.loss.reset();
+            return out;
+        }
+
+        CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} optimizer with lr={}",
+                     config.GetOptimizerName(), config.learning_rate);
+    } catch (const std::exception& e) {
+        out.error_message = errors::FormatError(
+            errors::Training::ModelBuildFailed,
+            "ModelBuilder failed to build model/loss/optimizer",
+            e.what());
+        out.model.reset();
+        out.loss.reset();
+        out.optimizer.reset();
+    }
+
+    return out;
+}
+
+QuietModelBuildScope::QuietModelBuildScope() : previous_(g_quiet_build_log) {
+    g_quiet_build_log = true;
+}
+
+QuietModelBuildScope::~QuietModelBuildScope() {
+    g_quiet_build_log = previous_;
+}
+
+BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config) {
+    if (!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) {
+        return BuildGraphExecutableFromConfig(config);
+    }
+
+    BuiltExecutableModel out;
+    BuiltModel sequential = BuildSequentialFromConfig(config);
+    if (!sequential.ok()) {
+        out.error_message = sequential.error_message;
+        return out;
+    }
+
+    out.model = std::make_unique<SequentialExecutableModel>(
+        std::move(sequential.model));
+    out.loss = std::move(sequential.loss);
+    out.optimizer = std::move(sequential.optimizer);
+    return out;
+}
+
+BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration& config) {
+    BuiltExecutableModel out;
+
+    std::vector<int> layer_node_ids;
+    layer_node_ids.reserve(config.layers.size());
+    for (const auto& layer : config.layers) {
+        layer_node_ids.push_back(layer.node_id);
+    }
+
+    const bool has_graph_ops = !config.graph_op_node_ids.empty();
+
+    // Multi-input layers (Cross Attention) run in the graph runtime even when
+    // the graph has no merge / split ops.
+    if (!has_graph_ops && config.multi_input_layer_node_ids.empty()) {
+        std::string reason;
+        if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
+                                                   layer_node_ids,
+                                                   &reason)) {
+            out.error_message = errors::FormatError(
+                errors::Training::ModelBuildFailed,
+                "GraphExecutableModel cannot build graph executable",
+                reason);
+            spdlog::warn("{}", out.error_message);
+            return out;
+        }
+    }
+
+    BuiltModel sequential;
+    if (!config.layers.empty()) {
+        sequential = BuildSequentialFromConfig(config);
+        if (!sequential.ok()) {
+            out.error_message = sequential.error_message;
+            return out;
+        }
+    } else {
+        try {
+            sequential.model = std::make_unique<SequentialModel>();
+            sequential.loss = BuildLossFromConfig(config);
+            sequential.optimizer = BuildOptimizerFromConfig(config);
+        } catch (const std::exception& e) {
+            out.error_message = errors::FormatError(
+                errors::Training::ModelBuildFailed,
+                "GraphExecutableModel failed to build loss/optimizer",
+                e.what());
+            return out;
+        }
+        if (!sequential.loss || !sequential.optimizer) {
+            out.error_message = errors::FormatError(
+                errors::Training::ModelBuildFailed,
+                "GraphExecutableModel failed to create loss or optimizer");
+            return out;
+        }
+        CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} optimizer with lr={}",
+                     config.GetOptimizerName(), config.learning_rate);
+    }
+
+    out.model = std::make_unique<GraphExecutableModel>(
+        std::move(sequential.model),
+        config.graph_plan,
+        std::move(layer_node_ids),
+        config.graph_op_node_ids);
+    out.loss = std::move(sequential.loss);
+    out.optimizer = std::move(sequential.optimizer);
+    return out;
+}
+
+} // namespace cyxwiz

@@ -35,7 +35,6 @@ private:
     void ReplaceAsync();
     void CopyResult();
     void ClearAll();
-    void InsertPattern(const std::string& name, const std::string& pattern);
     void GenerateSampleText();
 
 private:

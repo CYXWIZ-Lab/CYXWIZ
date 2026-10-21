@@ -1,6 +1,7 @@
 #include "job_status_panel.h"
 #include "common.pb.h"
 #include "../../network/p2p_client.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 #include <chrono>
@@ -28,7 +29,6 @@ JobStatusPanel::JobStatusPanel()
     , show_all_jobs_(false)  // Only show P2P jobs by default
     , show_completed_jobs_(true)
     , max_displayed_jobs_(20)
-    , submit_job_dialog_open_(false)
 {
     model_definition_input_[0] = '\0';
     dataset_uri_input_[0] = '\0';
@@ -89,6 +89,7 @@ void JobStatusPanel::Render() {
 }
 
 void JobStatusPanel::RenderJobControls() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Auto-refresh toggle
     if (ImGui::Checkbox("Auto-refresh", &auto_refresh_)) {
         if (auto_refresh_) {
@@ -114,9 +115,9 @@ void JobStatusPanel::RenderJobControls() {
 
     // Connection status
     if (job_manager_ && job_manager_->IsConnected()) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected to Server");
+        ImGui::TextColored(t.success, "Connected to Server");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
+        ImGui::TextColored(t.error, "Disconnected");
     }
 }
 
@@ -191,6 +192,7 @@ void JobStatusPanel::RenderJobList() {
 }
 
 void JobStatusPanel::RenderSelectedJobDetails() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (selected_job_id_.empty()) {
         ImGui::TextDisabled("No job selected");
         ImGui::TextDisabled("Select a job from the list to view details");
@@ -214,7 +216,7 @@ void JobStatusPanel::RenderSelectedJobDetails() {
     }
 
     if (!selected_job) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Selected job not found");
+        ImGui::TextColored(t.error, "Selected job not found");
         selected_job_id_.clear();
         return;
     }
@@ -275,7 +277,7 @@ void JobStatusPanel::RenderSelectedJobDetails() {
     // Error information
     if (selected_job->status.has_error()) {
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error");
+        ImGui::TextColored(t.error, "Error");
         ImGui::TextWrapped("%s", selected_job->status.error().message().c_str());
     }
 
@@ -320,15 +322,15 @@ void JobStatusPanel::RenderSelectedJobDetails() {
             if (!p2p_connected) {
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "(Waiting for P2P)");
+                ImGui::TextColored(t.pending, "(Waiting for P2P)");
             }
         }
     }
 
     // Delete button - always visible, but disabled for active jobs
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, t.error);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.text_bright, 0.15f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::Mix(t.error, t.bg_window, 0.25f));
     if (is_active) {
         ImGui::BeginDisabled();
     }
@@ -361,6 +363,7 @@ void JobStatusPanel::RenderSelectedJobDetails() {
 }
 
 void JobStatusPanel::RenderNodeAssignment() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!job_manager_) {
         return;
     }
@@ -382,10 +385,10 @@ void JobStatusPanel::RenderNodeAssignment() {
     ImGui::Separator();
 
     if (selected_job->assigned_node_address.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Waiting for node assignment...");
+        ImGui::TextColored(t.running, "Waiting for node assignment...");
         ImGui::TextDisabled("Central Server is finding a suitable node");
     } else {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Node Assignment Received!");
+        ImGui::TextColored(t.success, "Node Assignment Received!");
 
         ImGui::Text("Node Endpoint: %s", selected_job->assigned_node_address.c_str());
 
@@ -396,7 +399,7 @@ void JobStatusPanel::RenderNodeAssignment() {
 
             // Token expiration (we don't have this directly, but could add it to ActiveJob)
             // For now, show that token exists
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "JWT Token Ready");
+            ImGui::TextColored(t.success, "JWT Token Ready");
 
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
@@ -409,6 +412,7 @@ void JobStatusPanel::RenderNodeAssignment() {
 }
 
 void JobStatusPanel::RenderP2PConnectionStatus() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!job_manager_) {
         return;
     }
@@ -432,7 +436,7 @@ void JobStatusPanel::RenderP2PConnectionStatus() {
 
     if (!selected_job->p2p_client) {
         if (!selected_job->assigned_node_address.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Auto-connecting...");
+            ImGui::TextColored(t.running, "Auto-connecting...");
             ImGui::TextDisabled("Engine is establishing P2P connection");
         } else {
             ImGui::TextDisabled("Not connected (waiting for assignment)");
@@ -442,11 +446,11 @@ void JobStatusPanel::RenderP2PConnectionStatus() {
         auto p2p_client = selected_job->p2p_client;
 
         if (p2p_client->IsConnected()) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected!");
+            ImGui::TextColored(t.success, "Connected!");
             ImGui::Text("Endpoint: %s", selected_job->assigned_node_address.c_str());
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Training stream active");
+            ImGui::TextColored(t.running, "Training stream active");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Connection failed");
+            ImGui::TextColored(t.error, "Connection failed");
 
             std::string error = p2p_client->GetLastError();
             if (!error.empty()) {
@@ -475,20 +479,21 @@ std::string JobStatusPanel::GetStatusString(int status_code) const {
 }
 
 ImVec4 JobStatusPanel::GetStatusColor(int status_code) const {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Using if-else to avoid Windows macro conflicts with STATUS_*
     if (status_code == cyxwiz::protocol::STATUS_UNKNOWN)
-        return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);  // Gray
+        return t.pending;  // Gray
     if (status_code == cyxwiz::protocol::STATUS_PENDING)
-        return ImVec4(1.0f, 1.0f, 0.0f, 1.0f);  // Yellow
+        return t.pending;  // Yellow
     if (status_code == cyxwiz::protocol::STATUS_IN_PROGRESS)
-        return ImVec4(0.0f, 0.5f, 1.0f, 1.0f);  // Blue
+        return t.running;  // Blue
     if (status_code == cyxwiz::protocol::STATUS_SUCCESS || status_code == cyxwiz::protocol::STATUS_COMPLETED)
-        return ImVec4(0.0f, 1.0f, 0.0f, 1.0f);  // Green
+        return t.success;  // Green
     if (status_code == cyxwiz::protocol::STATUS_FAILED ||
         status_code == cyxwiz::protocol::STATUS_CANCELLED ||
         status_code == cyxwiz::protocol::STATUS_ERROR)
-        return ImVec4(1.0f, 0.0f, 0.0f, 1.0f);  // Red
-    return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // White
+        return t.error;  // Red
+    return t.text;  // White
 }
 
 std::string JobStatusPanel::FormatTimestamp(int64_t unix_timestamp) const {
@@ -576,12 +581,12 @@ void JobStatusPanel::OnP2PProgressUpdate(const std::string& job_id,
 
     auto loss_it = progress.metrics.find("loss");
     if (loss_it != progress.metrics.end()) {
-        loss = loss_it->second;
+        loss = static_cast<float>(loss_it->second);
     }
 
     auto acc_it = progress.metrics.find("accuracy");
     if (acc_it != progress.metrics.end()) {
-        acc = acc_it->second * 100.0f;  // Convert to percentage
+        acc = static_cast<float>(acc_it->second * 100.0);  // Convert to percentage
     }
 
     metrics.AddPoint(epoch_val, loss, acc);

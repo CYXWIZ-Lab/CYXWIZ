@@ -5,6 +5,8 @@
 #include <map>
 #include <optional>
 #include <chrono>
+#include <cctype>
+#include <cstdint>
 
 namespace cyxwiz {
 
@@ -12,7 +14,7 @@ namespace cyxwiz {
  * Supported model file formats
  */
 enum class ModelFormat {
-    CyxModel,       // .cyxmodel - Native complete format (ZIP archive)
+    CyxModel,       // .cyxmodel - Native CYXW v3 binary package (legacy directories readable)
     ONNX,           // .onnx - ONNX interchange format
     Safetensors,    // .safetensors - Safe tensor serialization
     GGUF,           // .gguf - GGML Universal Format for LLMs
@@ -51,6 +53,30 @@ enum class TensorDType {
 };
 
 /**
+ * Training configuration stored in .cyxmodel
+ */
+struct TrainingConfig {
+    // Optimizer settings
+    std::string optimizer_type;     // "SGD", "Adam", "AdamW", etc.
+    float learning_rate = 0.001f;
+    float momentum = 0.9f;
+    float weight_decay = 0.0f;
+    float beta1 = 0.9f;             // Adam
+    float beta2 = 0.999f;           // Adam
+    float epsilon = 1e-8f;          // Adam
+
+    // Training settings
+    int batch_size = 32;
+    int epochs = 0;
+    std::string loss_function;      // "CrossEntropy", "MSE", etc.
+
+    // Data info
+    std::string dataset_name;
+    int num_classes = 0;
+    std::vector<int64_t> input_shape;
+};
+
+/**
  * Export options for model serialization
  */
 struct ExportOptions {
@@ -60,6 +86,45 @@ struct ExportOptions {
     bool include_optimizer_state = true;
     bool include_training_history = true;
     bool include_graph = true;
+    bool include_tokenizer_assets = true;
+
+    // Optional text tokenizer deployment assets for CyxModel packages.
+    // When empty, ModelExporter may infer these from graph_json for text
+    // graphs. Explicit values are copied into tokenizer/config.json and
+    // tokenizer/vocab.txt inside the .cyxmodel directory package.
+    std::string text_tokenizer_config_json;
+    std::string text_tokenizer_vocab_path;
+    // Owned bytes from the training dataset; mutually exclusive with a path.
+    std::string text_tokenizer_vocab_data;
+    // Optional SentencePiece-compatible model artifact. Mutually exclusive
+    // path/data sources are copied into tokenizer/model.spm.
+    std::string text_tokenizer_model_path;
+    std::string text_tokenizer_model_data;
+    std::optional<TrainingConfig> trained_config;
+
+    // Optional sequence deployment assets for CyxModel packages.
+    // When empty, ModelExporter may infer these from graph_json for
+    // sequence-tagging / NER graphs. Explicit values are copied into
+    // sequence/token_vocab.txt, sequence/pos_vocab.txt and
+    // sequence/tag_vocab.txt.
+    bool include_sequence_assets = true;
+    size_t sequence_max_sequence_length = 0;
+    bool sequence_batch_first = true;
+    bool sequence_create_attention_mask = true;
+    bool sequence_create_causal_lm_targets = false;
+    int64_t sequence_word_pad_id = 0;
+    int64_t sequence_pos_pad_id = 0;
+    int64_t sequence_tag_ignore_index = -100;
+    int64_t sequence_target_ignore_index = -100;
+    std::string sequence_token_vocabulary_path;
+    std::string sequence_pos_vocabulary_path;
+    std::string sequence_tag_vocabulary_path;
+
+    // Optional native tree-family model artifact for table-path models.
+    // CyxModelFormat stores this payload at tree/model.json.
+    bool include_tree_model_artifact = false;
+    std::string tree_model_artifact_json;
+    std::string tree_model_artifact_path;
 
     // Quantization
     Quantization quantization = Quantization::None;
@@ -77,7 +142,7 @@ struct ExportOptions {
     std::map<std::string, std::string> custom_metadata;
 
     // Advanced options
-    bool compress = true;                   // Use compression in ZIP
+    bool compress = false;                  // CYXW v3 is uncompressed; true rejects explicitly
     int compression_level = 6;              // 0-9, where 9 is maximum compression
 };
 
@@ -117,10 +182,17 @@ struct ImportResult {
 
     // Loaded model info
     std::string model_name;
+    std::string model_family;
     std::string format_version;
     int num_parameters = 0;
     int num_layers = 0;
     std::vector<std::string> layer_names;
+    bool supports_bert_encoder = false;
+    std::string bert_encoder_task;
+    std::string bert_encoder_input_kind;
+    std::string bert_encoder_output_contract;
+    bool bert_encoder_has_attention_mask = false;
+    bool bert_encoder_requires_token_type_ids = false;
 
     // Warnings (non-fatal issues)
     std::vector<std::string> warnings;
@@ -137,6 +209,15 @@ struct ProbeResult {
     ModelFormat format = ModelFormat::Unknown;
     std::string format_version;
     std::string model_name;
+    std::string model_family;
+    bool supports_generation = false;
+    std::string generation_output_contract;
+    bool supports_bert_encoder = false;
+    std::string bert_encoder_task;
+    std::string bert_encoder_input_kind;
+    std::string bert_encoder_output_contract;
+    bool bert_encoder_has_attention_mask = false;
+    bool bert_encoder_requires_token_type_ids = false;
     std::string author;
     std::string description;
 
@@ -157,6 +238,29 @@ struct ProbeResult {
     bool has_optimizer_state = false;
     bool has_training_history = false;
     bool has_graph = false;
+    bool has_tokenizer = false;
+    bool has_vocabulary = false;
+    bool has_sequence = false;
+    bool has_sequence_token_vocabulary = false;
+    bool has_sequence_pos_vocabulary = false;
+    bool has_sequence_tag_vocabulary = false;
+    bool has_tree_model_artifact = false;
+    std::string tree_model_type;
+    std::string tree_model_artifact_path;
+    bool sequence_batch_first = true;
+    bool sequence_create_attention_mask = true;
+    bool sequence_create_causal_lm_targets = false;
+    size_t sequence_max_sequence_length = 0;
+    int64_t sequence_word_pad_id = 0;
+    int64_t sequence_pos_pad_id = 0;
+    int64_t sequence_tag_ignore_index = -100;
+    int64_t sequence_target_ignore_index = -100;
+    std::string sequence_token_vocabulary_path;
+    std::string sequence_pos_vocabulary_path;
+    std::string sequence_tag_vocabulary_path;
+
+    // manifest metadata.custom (free-form key/value pairs).
+    std::map<std::string, std::string> custom_metadata;
 
     std::string error_message;
 };
@@ -185,30 +289,6 @@ struct WeightsManifest {
 };
 
 /**
- * Training configuration stored in .cyxmodel
- */
-struct TrainingConfig {
-    // Optimizer settings
-    std::string optimizer_type;     // "SGD", "Adam", "AdamW", etc.
-    float learning_rate = 0.001f;
-    float momentum = 0.9f;
-    float weight_decay = 0.0f;
-    float beta1 = 0.9f;             // Adam
-    float beta2 = 0.999f;           // Adam
-    float epsilon = 1e-8f;          // Adam
-
-    // Training settings
-    int batch_size = 32;
-    int epochs = 0;
-    std::string loss_function;      // "CrossEntropy", "MSE", etc.
-
-    // Data info
-    std::string dataset_name;
-    int num_classes = 0;
-    std::vector<int64_t> input_shape;
-};
-
-/**
  * Training history stored in .cyxmodel
  */
 struct TrainingHistory {
@@ -227,6 +307,14 @@ struct TrainingHistory {
     int best_epoch = 0;
 };
 
+// An extension node type the model needs (TOFIX125 P6): from the graph's
+// extension blocks, so a reader knows what to install before importing.
+struct ModelExtensionRequirement {
+    std::string type_id;       // "<provider_id>:<TypeName>"
+    std::string version;       // node contract version it was trained with
+    std::string content_hash;  // code hash it was trained with ("" for a C++ plugin)
+};
+
 /**
  * Model manifest for .cyxmodel format
  */
@@ -239,6 +327,15 @@ struct ModelManifest {
     // Model info
     std::string model_name;
     std::string model_type;         // "SequentialModel", etc.
+    std::string model_family;       // e.g., "causal_lm", "classifier"
+    bool supports_generation = false;
+    std::string generation_output_contract;
+    bool supports_bert_encoder = false;
+    std::string bert_encoder_task;
+    std::string bert_encoder_input_kind;
+    std::string bert_encoder_output_contract;
+    bool bert_encoder_has_attention_mask = false;
+    bool bert_encoder_requires_token_type_ids = false;
     int num_parameters = 0;
     int num_layers = 0;
 
@@ -256,6 +353,29 @@ struct ModelManifest {
     bool has_optimizer_state = false;
     bool has_training_history = false;
     bool has_graph = false;
+    bool has_tokenizer = false;
+    bool has_vocabulary = false;
+    bool has_sequence = false;
+    bool has_sequence_token_vocabulary = false;
+    bool has_sequence_pos_vocabulary = false;
+    bool has_sequence_tag_vocabulary = false;
+    bool has_tree_model_artifact = false;
+    std::string tree_model_type;
+    std::string tree_model_artifact_path;
+    bool sequence_batch_first = true;
+    bool sequence_create_attention_mask = true;
+    bool sequence_create_causal_lm_targets = false;
+    size_t sequence_max_sequence_length = 0;
+    int64_t sequence_word_pad_id = 0;
+    int64_t sequence_pos_pad_id = 0;
+    int64_t sequence_tag_ignore_index = -100;
+    int64_t sequence_target_ignore_index = -100;
+    std::string sequence_token_vocabulary_path;
+    std::string sequence_pos_vocabulary_path;
+    std::string sequence_tag_vocabulary_path;
+
+    // Extension node types the graph uses, once per type.
+    std::vector<ModelExtensionRequirement> extensions;
 };
 
 // Utility functions
@@ -278,7 +398,10 @@ inline std::string GetFormatExtension(ModelFormat format) {
  */
 inline ModelFormat GetFormatFromExtension(const std::string& ext) {
     std::string lower_ext = ext;
-    for (auto& c : lower_ext) c = std::tolower(c);
+    for (auto& c : lower_ext) {
+        c = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(c)));
+    }
 
     if (lower_ext == ".cyxmodel") return ModelFormat::CyxModel;
     if (lower_ext == ".onnx") return ModelFormat::ONNX;

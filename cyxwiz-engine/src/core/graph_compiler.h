@@ -1,9 +1,21 @@
 #pragma once
 
-#include "../gui/node_editor.h"
+#include "bert_encoder_contract.h"
+#include "compiled_graph_plan.h"
+#include "dataset_partitions.h"
+#include "metric_learning_graph_contract.h"
+#include "metric_learning_batch.h"
+#include "training_parameter_contract.h"
+#include "training_scheduler_controller.h"
+#include "training_generation_preview_settings.h"
+#include <core/regression_target_transform.h>
+#include "graph_model.h"
+#include "../preprocessing/preprocessing_config.h"
+#include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/layer.h>
 #include <cyxwiz/optimizer.h>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <map>
@@ -16,8 +28,8 @@ namespace cyxwiz {
  * Represents a compiled layer ready for execution
  */
 struct CompiledLayer {
-    gui::NodeType type;
-    int node_id;
+    gui::NodeType type = gui::NodeType::Dense;
+    int node_id = -1;
     std::string name;
     std::map<std::string, std::string> parameters;
 
@@ -53,21 +65,332 @@ struct CompiledLayer {
     // Computed shapes (after compilation)
     std::vector<size_t> input_shape;
     std::vector<size_t> output_shape;
+
+    // For shape ops that need normalized dimension order at runtime.
+    std::vector<int> dims;
+
+    // Extension nodes (NodeType::PluginCustom, TOFIX125): the module comes
+    // from the factory registered for this type id.
+    std::string extension_type_id;
+    std::string extension_version;
 };
 
 /**
- * Preprocessing configuration extracted from graph
+ * Preprocessing domain — which kind of data the preprocessing graph is
+ * operating on. Determined by the DataInput node's file_category parameter
+ * and used to dispatch domain-specific preprocessing extractors.
+ */
+enum class PreprocessingDomain {
+    Tabular,     // CSV / Arrow / Parquet numeric data
+    Image,       // Image folders, CSV+images
+    Audio,       // Audio files with feature extraction
+    Text,        // Text corpora with tokenization
+    TimeSeries,  // Windowed time-series from CSV
+    General      // Domain-agnostic nodes (DataSplit, DataLoader)
+};
+
+/**
+ * Tabular preprocessing configuration (the original v0.1 struct, kept for
+ * backward compatibility). Extracted from Normalize /
+ * OneHotEncode nodes.
  */
 struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
 
-    bool has_reshape = false;
-    std::vector<int> reshape_dims;
-
     bool has_onehot = false;
     size_t num_classes = 0;
+};
+
+// ImagePreprocessingConfig lives in preprocessing/preprocessing_config.h
+// (already includes resize, CLAHE, denoising, sharpening, edge detection,
+// morphology, blur, perspective, and pyramid). We reuse it directly rather
+// than defining a second struct with the same name. The graph compiler's
+// domain-specific extractors populate fields on it.
+
+/**
+ * Audio feature-extraction type. Driven by whichever preprocessing node
+ * the user dropped on the canvas (Spectrogram / MelSpectrogram / MFCC).
+ * None means no feature node was found; the compiler and the audio batcher
+ * refuse that (CW-C-0205).
+ */
+enum class AudioFeatureType {
+    None = 0,
+    Spectrogram = 1,
+    MelSpectrogram = 2,
+    MFCC = 3,
+};
+
+/**
+ * Audio preprocessing configuration (Phase 2.1).
+ *
+ * Populated by audio-domain extractors in the graph compiler when a
+ * Spectrogram / MelSpectrogram / MFCC / AudioAugmentation node is
+ * present in the graph. Audio training needs a feature node; the
+ * AudioDatasetEntry carries only the loading settings.
+ *
+ * Shape matches what backend MelConfig / MFCCConfig accept — the
+ * batcher translates this into the AudioDatasetConfig fed into
+ * AudioDataset's feature extraction path.
+ */
+struct AudioPreprocessingConfig {
+    // True iff a Spectrogram/MelSpectrogram/MFCC node was found.
+    bool has_feature_node = false;
+    AudioFeatureType feature_type = AudioFeatureType::None;
+
+    // Shared STFT params (all feature types use these)
+    int n_fft = 512;
+    int hop_length = 256;
+    bool log_scale = true;
+
+    // Mel-specific (used by MelSpectrogram and MFCC)
+    int n_mels = 128;
+    float fmin = 0.0f;
+    float fmax = 0.0f;  // 0 = Nyquist (sample_rate / 2)
+
+    // MFCC-specific
+    int n_mfcc = 13;
+
+    // AudioAugmentation — applied to the raw waveform before feature
+    // extraction. noise_level > 0 enables additive Gaussian noise.
+    // time_stretch / pitch_shift are boolean flags; v1 uses hardcoded
+    // random ranges (±10% stretch, ±2 semitones). v2 will expose the
+    // ranges as float parameters on the GUI node.
+    bool has_augmentation = false;
+    float noise_level = 0.0f;
+    bool time_stretch = false;
+    bool pitch_shift = false;
+};
+
+/**
+ * Text shape contract the compiler reads from the graph: the reachable Text
+ * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
+ * Tokenizing itself runs in PipelineMaterializer.
+ */
+struct TextPreprocessingConfig {
+    int max_length = 512;
+    int pad_value = 0;
+};
+
+// Sequence tagging / NER batch contract. Compile identifies the intended
+// named payloads. Runtime training must enter through StartTrainingSequence
+// with a prebuilt ISequenceBatcher; generic tabular dispatch still fails closed.
+struct SequenceBatchConfig {
+    // Runtime-only identity captured when preparing the active model.
+    std::vector<std::string> expected_token_vocabulary;
+    std::string tokenizer_config_json;
+    std::string tokenizer_vocabulary_artifact;
+    bool enabled = false;
+    std::string token_column;
+    std::string pos_column;
+    std::string tag_column;
+    std::string target_column;
+    std::string sentence_id_column;
+    bool batch_first = true;
+    bool create_attention_mask = false;
+    bool create_causal_lm_targets = false;
+    int max_sequence_length = 0;
+    int64_t word_pad_id = 0;
+    int64_t pos_pad_id = 0;
+    int ignore_index = -100;
+    int target_ignore_index = -100;
+};
+
+inline std::string SequenceBatchRuntimeUnsupportedMessage() {
+    return "Sequence/NER graph training requires a prebuilt ISequenceBatcher. "
+           "Use the Studio graph-training launcher or StartTrainingSequence; "
+           "generic tabular TrainingExecutor dispatch cannot consume named "
+           "sequence payloads.";
+}
+
+/**
+ * A single graph validation finding. Populated by GraphCompiler::Compile
+ * during a Compile pass and surfaced to the user via the Compile popup.
+ *
+ * Tiered so the user can see at a glance which issues will block Train
+ * and which are just hints. node_id is -1 for graph-level findings (e.g.
+ * "no DataInput node"), otherwise it points at the offending node so the
+ * UI can highlight it.
+ */
+enum class IssueLevel {
+    Error,    // blocks Train; the graph cannot run as-is
+    Warning,  // allowed to Train but the user should be aware
+    Info      // pure FYI
+};
+
+struct ValidationIssue {
+    IssueLevel level = IssueLevel::Error;
+    int node_id = -1;                  // -1 == graph-level
+    std::string node_name;             // empty for graph-level
+    std::string message;
+    std::string error_code;            // optional stable CW-* code
+};
+
+/**
+ * Where the training objective obtains its target signal.
+ *
+ * A target is not necessarily a label column on the raw Data Input. Forecast
+ * windows and self-supervised operators can generate targets inside the graph,
+ * media loaders can derive them from dataset structure, and reinforcement
+ * learning obtains them from environment transitions.
+ */
+enum class TargetOrigin {
+    Unresolved,
+    DatasetColumn,
+    DatasetStructure,
+    GraphGenerated,
+    Environment
+};
+
+enum class TargetValueKind {
+    Unspecified,
+    Continuous,
+    Categorical,
+    TokenIds,
+    EnvironmentSignal
+};
+
+struct TargetContract {
+    // False for target-free estimators/objectives. Current tensor loss nodes
+    // require targets; future estimator and RL compilers can express their
+    // different contracts without reintroducing a blanket label requirement.
+    bool required_by_objective = false;
+    TargetOrigin origin = TargetOrigin::Unresolved;
+    TargetValueKind value_kind = TargetValueKind::Unspecified;
+    int producer_node_id = -1;
+    std::string producer_node_name;
+    std::string primary_column;
+    size_t width = 0;
+
+    bool IsResolved() const {
+        return !required_by_objective ||
+               origin != TargetOrigin::Unresolved;
+    }
+
+    bool IsGeneratedByGraph() const {
+        return origin == TargetOrigin::GraphGenerated;
+    }
+};
+
+namespace BackendPlacementStatus {
+inline constexpr const char* Gpu = "gpu";
+inline constexpr const char* Cpu = "cpu";
+inline constexpr const char* Mixed = "mixed";
+inline constexpr const char* Risk = "risk";
+inline constexpr const char* Unsupported = "unsupported";
+inline constexpr const char* Unknown = "unknown";
+} // namespace BackendPlacementStatus
+
+namespace BackendPlacementReason {
+inline constexpr const char* ArrayFireTensorOpCapable =
+    "arrayfire_tensor_op_capable";
+inline constexpr const char* GraphRuntimeArrayFire =
+    "graph_runtime_arrayfire";
+inline constexpr const char* BackendCapabilityUnclassified =
+    "backend_capability_unclassified";
+inline constexpr const char* TimeDistributedSequenceWrapper =
+    "timedistributed_sequence_wrapper";
+inline constexpr const char* UnsupportedSequentialModelLayer =
+    "unsupported_sequential_model_layer";
+inline constexpr const char* NativeProviderSelected =
+    "native_provider_selected";
+inline constexpr const char* ExtensionModuleCode =
+    "extension_module_code";
+} // namespace BackendPlacementReason
+
+struct BackendPlacementEntry {
+    int node_id = -1;
+    std::string node_name;
+    std::string node_type;
+    std::string requested_backend = "auto";
+    std::string expected_backend = BackendPlacementStatus::Unknown;
+    std::string fallback_backend;
+    std::string status = BackendPlacementStatus::Unknown;
+    std::string reason_code;
+    std::string explanation;
+    std::string suggested_action;
+    // Run-time metadata of execution-plan entries (execution_placement_plan.h).
+    std::string observation_device;
+    std::string observation_dtype;
+    std::string observation_probe_outcome;
+    std::string observation_probe_scope;
+    // GpuExecutionModeName of the owning operation family's declared mode
+    // (cyxwiz/gpu_execution_modes.h); empty when the node has no audited
+    // family yet.
+    std::string declared_execution_mode;
+
+    bool NeedsUserAttention() const {
+        return status == BackendPlacementStatus::Cpu ||
+               status == BackendPlacementStatus::Mixed ||
+               status == BackendPlacementStatus::Risk ||
+               status == BackendPlacementStatus::Unsupported ||
+               status == BackendPlacementStatus::Unknown;
+    }
+
+    bool HasObservationMetadata() const {
+        return !observation_device.empty() ||
+               !observation_dtype.empty() ||
+               !observation_probe_outcome.empty() ||
+               !observation_probe_scope.empty();
+    }
+};
+
+struct BackendPlacementSummary {
+    size_t total = 0;
+    size_t gpu = 0;
+    size_t cpu = 0;
+    size_t mixed = 0;
+    size_t risk = 0;
+    size_t unsupported = 0;
+    size_t unknown = 0;
+
+    bool HasCpuOrRisk() const {
+        return cpu > 0 || risk > 0 || unsupported > 0;
+    }
+
+    bool HasNonGpu() const {
+        return cpu > 0 || mixed > 0 || risk > 0 ||
+               unsupported > 0 || unknown > 0;
+    }
+};
+
+namespace PinMemoryTransferMode {
+inline constexpr const char* RegularHostMemory = "regular_host_memory";
+inline constexpr const char* PinnedHostMemory = "pinned_host_memory";
+inline constexpr const char* PinnedRequestedButUnsupported =
+    "pinned_requested_but_unsupported";
+inline constexpr const char* PinnedRequestedButNotApplicable =
+    "pinned_requested_but_not_applicable";
+} // namespace PinMemoryTransferMode
+
+namespace PinMemoryTransferReason {
+inline constexpr const char* NotRequested = "pin_memory_not_requested";
+inline constexpr const char* BackendUnavailable =
+    "pinned_host_memory_backend_unavailable";
+inline constexpr const char* CpuBackendNotApplicable =
+    "pin_memory_cpu_backend_not_applicable";
+inline constexpr const char* Active = "pinned_host_memory_active";
+} // namespace PinMemoryTransferReason
+
+struct PinMemoryTransferStatus {
+    bool requested = false;
+    int node_id = -1;
+    std::string node_name;
+    std::string backend = "auto";
+    int batch_size = 0;
+    std::vector<size_t> feature_shape;
+    std::string effective_mode = PinMemoryTransferMode::RegularHostMemory;
+    std::string reason_code = PinMemoryTransferReason::NotRequested;
+    std::string message =
+        "pin_memory was not requested; regular host memory will be used.";
+
+    bool NeedsUserWarning() const {
+        return effective_mode ==
+                   PinMemoryTransferMode::PinnedRequestedButUnsupported ||
+               effective_mode ==
+                   PinMemoryTransferMode::PinnedRequestedButNotApplicable;
+    }
 };
 
 /**
@@ -77,35 +400,237 @@ struct TrainingConfiguration {
     // Model architecture (in execution order)
     std::vector<CompiledLayer> layers;
 
+    // Pin-aware selected training path. Passive until graph-runtime execution
+    // lands; `layers` remains the source for current SequentialModel training.
+    CompiledGraphPlan graph_plan;
+
+    // Opt-in graph-runtime nodes that are executable outside SequentialModel.
+    // The compiler leaves this empty until a node group is deliberately
+    // exposed. Focused backend tests may populate it directly.
+    std::vector<int> graph_op_node_ids;
+    // Layers with several inputs (Cross Attention): the graph runtime runs
+    // them, so the model is built as a graph even without graph ops.
+    std::vector<int> multi_input_layer_node_ids;
+
+    // Passive metric-learning graph contract. Populated when the selected
+    // training path contains metric-learning nodes, but remains
+    // executable=false until the graph executor and local inference routes are
+    // implemented.
+    MetricLearningGraphContract metric_learning_graph;
+    // Passive BERT-style encoder contract. Populated when the selected graph
+    // explicitly declares a BERT-style encoder path or uses an encoder with a
+    // first-class token/CLS classifier head.
+    BertEncoderGraphContract bert_encoder_graph;
+
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST
+    // [L, C] when the input rows are channel-major sequences, torch's [N,C,L]
+    // (time-series windows: [input_width, features]; audio: [frames, bins]).
+    // A first-layer Conv1D reads it (sequence_conv_section.h).
+    std::vector<size_t> sequence_input_shape;
     size_t input_size = 0;              // Flattened size
     size_t output_size = 0;             // Number of classes
 
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
+    int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
+    ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    TargetContract target;              // Objective target provenance
+    RegressionTargetTransform regression_target_transform;
+
+    // DataSplit configuration (from DataSplit node, or defaults if absent)
     float train_ratio = 0.8f;
     float val_ratio = 0.1f;
     float test_ratio = 0.1f;
+    int split_seed = 42;
+    bool has_data_split = false;        // true if a DataSplit node was found
+    bool stratified = false;            // preserve label ratios when supported
 
-    // Preprocessing
+    // DataLoader configuration (from DataLoader node, or defaults if absent).
+    // epochs lives here too — DataLoader owns all training-loop hyperparams.
+    int batch_size = 32;
+    int epochs = 10;
+    bool shuffle = true;
+    bool drop_last = false;
+    int num_workers = 0;                // forwarded to supported batchers
+    int prefetch_factor = 0;            // bounded async batch queue depth; 0 disables prefetch
+    int log_interval = 10;              // batch metric/log cadence; 0 samples first/final only
+    int validation_freq = 1;            // epoch-based validation cadence; final epoch always validates
+    int model_seed = -1;               // optional model initialization/dropout seed; -1 leaves RNG unchanged
+    int dataloader_seed = 42;           // deterministic DataLoader split/shuffle seed
+    int grad_accum_steps = training_contract::kGradientAccumulationStepsDefault;
+    TrainingGenerationPreviewSettings generation_preview;
+    bool balance_classes = false;       // rebalance training split batches when supported
+    std::string balance_mode = "none";  // none|oversample|undersample|weighted_sampler
+    std::string balance_target = "max"; // max|median|min|number
+    int balance_seed = 42;              // deterministic class balancing seed
+    bool has_data_loader = false;       // true if a DataLoader node was found
+    bool save_best_checkpoint = true;   // keep best validation epoch
+    int early_stopping_patience = 5;    // stop after this many non-improving epochs
+    std::string checkpoint_dir;         // optional override, defaults to run-local path
+    std::string initialize_from_checkpoint; // warm start: model weights only (TOFIX143)
+    PinMemoryTransferStatus pin_memory_transfer;
+
+    // Preprocessing — tabular config (backward-compatible)
     GraphPreprocessingConfig preprocessing;
 
+    // Preprocessing — domain detection. Set by Compile based on the
+    // DataInput node's file_category. Drives dispatch to the right
+    // batcher and the right set of preprocessing extractors.
+    PreprocessingDomain preprocessing_domain = PreprocessingDomain::Tabular;
+
+    // Preprocessing — image-specific (Phase 1). Populated by image-
+    // domain extractors in the preprocessing table when
+    // preprocessing_domain == Image.
+    ImagePreprocessingConfig image_preprocessing;
+
+    // The image transform nodes between Resize and Normalize, in graph
+    // order: run by the image batcher on the device (Normalize after them).
+    cyxwiz::image::ImageAugmentation image_augmentation;
+    // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
+    int image_mix_node_id = -1;
+    // The Quality Analyzer node and the files its analysis leaves out of
+    // training (the image batcher skips them; they stay on disk).
+    int image_quality_node_id = -1;
+    std::vector<std::string> image_excluded_files;
+
+    // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
+    // domain extractors in the preprocessing table when
+    // preprocessing_domain == Audio.
+    AudioPreprocessingConfig audio_preprocessing;
+
+    // Preprocessing - text-specific legacy override bundle. Graph text
+    // nodes now route through PipelineMaterializer instead of this config.
+    TextPreprocessingConfig text_preprocessing;
+
+    // Structured sequence tagging / NER contract. Populated when the selected
+    // training path advertises token/tag/POS sequence semantics.
+    SequenceBatchConfig sequence_batch;
+
+    // Phase 4 Time-Series: set to true when Compile finds a TimeSeriesWindow
+    // node in the graph. Signals to the training dispatch that the batcher
+    // should read labels as float (regression via MSELoss), that the
+    // partition column must drive index selection instead of train_split
+    // slicing, and that the label column is the auto-emitted `y` column.
+    bool is_time_series = false;
+    // Ordered target width emitted by TimeSeriesWindow. One preserves the
+    // historical scalar `y`; wider outputs use `y`, `y_1`, ... in order.
+    size_t time_series_target_width = 1;
+
     // Loss function
+    int loss_node_id = -1;              // Selected loss node
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
     std::map<std::string, std::string> loss_params;
 
     // Optimizer
+    int optimizer_node_id = -1;         // Selected supported optimizer node
     gui::NodeType optimizer_type = gui::NodeType::Adam;
     float learning_rate = 0.001f;
     float momentum = 0.9f;
     float beta1 = 0.9f;
     float beta2 = 0.999f;
+    float epsilon = 1e-8f;
+    float rmsprop_alpha = 0.99f;
     float weight_decay = 0.0f;
+    // Training recipe (optimizer node, all optimizers): per-update learning-rate
+    // schedule, global-norm gradient clipping, AdamW weight-decay exclusions.
+    std::string lr_schedule = "none";   // none | warmup_cosine | warmup_linear | warmup_constant
+    float warmup_ratio = 0.02f;         // fraction of all optimizer updates spent warming up
+    float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
+    float grad_clip_norm = 0.0f;        // 0 = off
+    std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
+    // Scheduler node on the training optimizer (TOFIX140 A3). TrainingExecutor
+    // attaches it unless a scheduler is configured on the executor directly.
+    std::optional<TrainingSchedulerSpec> scheduler;
+    int scheduler_node_id = -1;
+    // Regularization node between the loss and the optimizer (TOFIX140 A4):
+    // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
+    float regularization_l1 = 0.0f;
+    float regularization_l2 = 0.0f;
+    int regularization_node_id = -1;
+    // Pair / Triplet Dataset Builder + its loss (TOFIX140 A5): TrainingExecutor
+    // wraps every batcher in a MetricBatchSampler, so the model runs once over
+    // [firsts; seconds] or [anchors; positives; negatives] picked in-batch by
+    // class id. Pair accuracy calls a pair similar at pair_decision_threshold
+    // (Contrastive: distance below margin / 2; Cosine Embedding: cosine above
+    // (1 + margin) / 2).
+    MetricSampling metric_sampling = MetricSampling::None;
+    // The builder's `mining`: random stacks seeded picks; hard / semi-hard
+    // let the loss mine from the batch's embeddings.
+    MetricMining metric_mining = MetricMining::Random;
+    int metric_builder_node_id = -1;
+    float pair_decision_threshold = 0.0f;
+    // Pair / Retrieval Metrics nodes on the encoder output (TOFIX140 A5):
+    // evaluated at validated epochs, on the held-out test rows and in the
+    // Test step (metric_learning_evaluation.h).
+    bool pair_metrics = false;
+    double pair_metric_threshold = 0.5;
+    bool retrieval_metrics = false;
+    size_t retrieval_k = 10;
+    // Embedding Output: after training, the partition's embeddings are
+    // written to embedding_output_path (made absolute in the project by the
+    // host that starts training).
+    bool embedding_output = false;
+    std::string embedding_output_path;
+    std::string embedding_output_partition = "all";
+    bool embedding_output_metadata = true;
+    // Pair Score Output: saved with the trained model as the inference
+    // server's /v1/pair-score defaults.
+    bool pair_score_output = false;
+    std::string pair_score_mode = "distance";
+    double pair_score_threshold = 0.5;
 
     // Validation
     bool is_valid = false;
     std::string error_message;
+
+    // Detailed validation findings collected during Compile. Includes errors
+    // (which set is_valid=false), warnings, and informational notes. The
+    // Compile popup renders all of these with severity icons; Train is
+    // blocked iff any Error-level issue is present.
+    std::vector<ValidationIssue> issues;
+
+    // Backend placement preflight entries. This is the compiler-owned execution
+    // placement contract that the UI/runtime can surface before training starts.
+    std::vector<BackendPlacementEntry> backend_placements;
+    // Deterministic identity of the compiler capability plan. Runtime
+    // resolution produces a separate executable fingerprint after binding the
+    // immutable execution-device context.
+    std::string compiler_placement_fingerprint;
+
+    // The strict execution policy (execution_policy.h): the run stays on the
+    // selected device - no ArrayFire CPU recovery, the placement plan must be
+    // fully on the device, no debug sample dumps.
+    bool strict_execution = false;
+
+    // Convenience: count issues by level. Used by UI gating logic.
+    size_t CountIssues(IssueLevel level) const {
+        size_t n = 0;
+        for (const auto& i : issues) if (i.level == level) ++n;
+        return n;
+    }
+    bool HasErrors() const { return CountIssues(IssueLevel::Error) > 0; }
+
+    BackendPlacementSummary SummarizeBackendPlacements() const {
+        BackendPlacementSummary summary;
+        summary.total = backend_placements.size();
+        for (const auto& placement : backend_placements) {
+            if (placement.status == BackendPlacementStatus::Gpu) {
+                ++summary.gpu;
+            } else if (placement.status == BackendPlacementStatus::Cpu) {
+                ++summary.cpu;
+            } else if (placement.status == BackendPlacementStatus::Mixed) {
+                ++summary.mixed;
+            } else if (placement.status == BackendPlacementStatus::Risk) {
+                ++summary.risk;
+            } else if (placement.status == BackendPlacementStatus::Unsupported) {
+                ++summary.unsupported;
+            } else {
+                ++summary.unknown;
+            }
+        }
+        return summary;
+    }
 
     // Helper methods
     OptimizerType GetOptimizerType() const {
@@ -113,6 +638,9 @@ struct TrainingConfiguration {
             case gui::NodeType::SGD: return OptimizerType::SGD;
             case gui::NodeType::Adam: return OptimizerType::Adam;
             case gui::NodeType::AdamW: return OptimizerType::AdamW;
+            case gui::NodeType::RMSprop: return OptimizerType::RMSprop;
+            case gui::NodeType::Adagrad: return OptimizerType::AdaGrad;
+            case gui::NodeType::NAdam: return OptimizerType::NAdam;
             default: return OptimizerType::Adam;
         }
     }
@@ -121,12 +649,19 @@ struct TrainingConfiguration {
         switch (loss_type) {
             case gui::NodeType::MSELoss: return "MSE";
             case gui::NodeType::CrossEntropyLoss: return "CrossEntropy";
+            case gui::NodeType::FocalLoss: return "Focal";
             case gui::NodeType::BCELoss: return "BCE";
             case gui::NodeType::BCEWithLogits: return "BCEWithLogits";
             case gui::NodeType::L1Loss: return "L1";
             case gui::NodeType::SmoothL1Loss: return "SmoothL1";
             case gui::NodeType::HuberLoss: return "SmoothL1";  // HuberLoss is alias
             case gui::NodeType::NLLLoss: return "NLL";
+            case gui::NodeType::SoftDiceLoss: return "SoftDice";
+            case gui::NodeType::TverskyLoss: return "Tversky";
+            case gui::NodeType::JaccardLoss: return "Jaccard";
+            case gui::NodeType::TripletLoss: return "Triplet";
+            case gui::NodeType::ContrastiveLoss: return "Contrastive";
+            case gui::NodeType::CosineEmbeddingLoss: return "CosineEmbedding";
             default: return "CrossEntropy";
         }
     }
@@ -136,10 +671,23 @@ struct TrainingConfiguration {
             case gui::NodeType::SGD: return "SGD";
             case gui::NodeType::Adam: return "Adam";
             case gui::NodeType::AdamW: return "AdamW";
+            case gui::NodeType::RMSprop: return "RMSprop";
+            case gui::NodeType::Adagrad: return "Adagrad";
+            case gui::NodeType::NAdam: return "NAdam";
             default: return "Adam";
         }
     }
 };
+
+inline bool UsesContinuousTargetMetrics(
+    const TrainingConfiguration& config) {
+    if (config.target.value_kind == TargetValueKind::Continuous) return true;
+    if (config.target.value_kind != TargetValueKind::Unspecified) return false;
+    return config.loss_type == gui::NodeType::MSELoss ||
+           config.loss_type == gui::NodeType::L1Loss ||
+           config.loss_type == gui::NodeType::SmoothL1Loss ||
+           config.loss_type == gui::NodeType::HuberLoss;
+}
 
 /**
  * GraphCompiler - Compiles visual node graph into executable training configuration
@@ -147,9 +695,21 @@ struct TrainingConfiguration {
  * Takes the node graph from NodeEditor and produces a TrainingConfiguration
  * that can be used by TrainingExecutor to run actual training.
  */
+// The [H, W, 3] image the image batcher decodes: the Resize target, or
+// 224 x 224 without one. The image transforms start from this shape.
+cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config);
+
+// Makes the files a compiled graph names relative to its project absolute
+// under `project_root`: an Embedding's weights file (a Word Embeddings node's
+// saved vectors, artifacts/word_embeddings/...), the warm-start checkpoint and
+// the Embedding Output file. Everything that builds the model from the config
+// (Train, the live compile's parameter count) calls it; empty root: no change.
+void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::string& project_root);
+
 class GraphCompiler {
 public:
     GraphCompiler() = default;
+    enum class Purpose { Training, ModelImport };
 
     /**
      * Compile the node graph into a training configuration
@@ -159,7 +719,9 @@ public:
      */
     TrainingConfiguration Compile(
         const std::vector<gui::MLNode>& nodes,
-        const std::vector<gui::NodeLink>& links
+        const std::vector<gui::NodeLink>& links,
+        bool allow_unloaded_data = false,
+        Purpose purpose = Purpose::Training
     );
 
     /**
@@ -174,6 +736,10 @@ public:
         const std::vector<gui::NodeLink>& links,
         std::string& error
     );
+
+    // The data domain of a preprocessing node the trainer applies itself
+    // (Normalize, image transforms, audio features...), or nullopt.
+    static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
 
 private:
     // Topological sort for execution order
@@ -198,13 +764,16 @@ private:
     ) const;
 
     // Find specific node types
-    const gui::MLNode* FindDatasetInputNode(const std::vector<gui::MLNode>& nodes) const;
+    const gui::MLNode* FindDatasetInputNode(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links) const;
     const gui::MLNode* FindLossNode(const std::vector<gui::MLNode>& nodes) const;
     const gui::MLNode* FindOptimizerNode(const std::vector<gui::MLNode>& nodes) const;
     const gui::MLNode* FindOutputNode(const std::vector<gui::MLNode>& nodes) const;
 
     // Check if node is a model layer (trainable)
     bool IsModelLayer(gui::NodeType type) const;
+    bool IsTrainableExtensionLayer(const gui::MLNode& node) const;
 
     // Check if node is an activation function
     bool IsActivation(gui::NodeType type) const;
@@ -215,10 +784,10 @@ private:
     // Extract layer parameters from node
     CompiledLayer ExtractLayerConfig(const gui::MLNode& node) const;
 
-    // Extract preprocessing config
+    // Extract preprocessing config (table-driven, domain-aware)
     void ExtractPreprocessing(
         const gui::MLNode& node,
-        GraphPreprocessingConfig& config
+        TrainingConfiguration& config
     ) const;
 
     // Shape inference
@@ -236,6 +805,43 @@ private:
     bool IsFullyConnected(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links
+    ) const;
+
+    // Pin-connectivity checks added 2026-04-17 to make the canvas the
+    // source of truth at compile time. Until the architectural
+    // TrainingExecutor pin-walking fix lands (tofix.md), the runtime
+    // still ignores topology — but at least these checks prevent users
+    // from training a graph whose Loss has nothing wired into Targets,
+    // or whose Targets pin is wired to a tensor source that never
+    // touched a Labels output.
+    void ValidateRequiredInputsConnected(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
+
+    void ValidateLossTargetsReachLabels(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
+
+    void ValidateLossPredictionsReachModel(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
+
+    void ValidateOptimizerReachesLoss(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
+
+    void ValidateRequiredOutputsConnected(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
     ) const;
 };
 

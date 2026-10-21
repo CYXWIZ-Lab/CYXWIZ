@@ -1,10 +1,17 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <cyxwiz/layer.h>
+#include <cyxwiz/loss.h>
+#include <cyxwiz/optimizer.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <cstring>
+#include <map>
+#include <stdexcept>
 
 using namespace cyxwiz;
 using Catch::Matchers::WithinAbs;
@@ -28,6 +35,51 @@ bool TensorsApproxEqual(const Tensor& a, const Tensor& b, float epsilon = 1e-4f)
 // Helper to compare shapes (std::vector<size_t>)
 bool ShapesEqual(const std::vector<size_t>& a, const std::vector<size_t>& b) {
     return a == b;
+}
+
+float SigmoidRef(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
+}
+
+Tensor FilledTensor(const std::vector<size_t>& shape, float value) {
+    size_t count = 1;
+    for (size_t dim : shape) count *= dim;
+    std::vector<float> values(count, value);
+    return Tensor(shape, values.data(), DataType::Float32);
+}
+
+std::map<std::string, Tensor> LstmOneUnitParams(float input_weight) {
+    return {
+        {"layer0_W_ih", FilledTensor({4, 1}, input_weight)},
+        {"layer0_W_hh", FilledTensor({4, 1}, 0.0f)},
+        {"layer0_b_ih", FilledTensor({4}, 0.0f)},
+        {"layer0_b_hh", FilledTensor({4}, 0.0f)}
+    };
+}
+
+std::map<std::string, Tensor> GruOneUnitParams(float input_weight) {
+    return {
+        {"layer0_W_ih", FilledTensor({3, 1}, input_weight)},
+        {"layer0_W_hh", FilledTensor({3, 1}, 0.0f)},
+        {"layer0_b_ih", FilledTensor({3}, 0.0f)},
+        {"layer0_b_hh", FilledTensor({3}, 0.0f)}
+    };
+}
+
+float LstmOneStepRef(float x, float input_weight) {
+    const float pre = input_weight * x;
+    const float i = SigmoidRef(pre);
+    const float g = std::tanh(pre);
+    const float o = SigmoidRef(pre);
+    const float c = i * g;
+    return o * std::tanh(c);
+}
+
+float GruOneStepRef(float x, float input_weight) {
+    const float pre = input_weight * x;
+    const float z = SigmoidRef(pre);
+    const float n = std::tanh(pre);
+    return (1.0f - z) * n;
 }
 
 // ============================================================================
@@ -232,6 +284,65 @@ TEST_CASE("EmbeddingLayer - Backward pass gradient accumulation", "[embedding][b
     REQUIRE(found_grad);
 }
 
+// TOFIX140 F5: ids are converted, validated and scattered on the device.
+TEST_CASE("EmbeddingModule - device ids, scatter-add and refusals", "[embedding][backward]") {
+    EmbeddingModule embed(4, 2, /*padding_idx=*/3);
+    std::vector<float> table = {0.0f, 1.0f, 10.0f, 11.0f, 20.0f, 21.0f, 30.0f, 31.0f};
+    embed.SetParameters({{"weight", Tensor({4, 2}, table.data(), DataType::Float32)}});
+
+    // Ids [[0, 1], [0, 3]]: 0 twice (gradients add), 3 is padding (no gradient, zero row).
+    const std::vector<float> float_ids = {0.0f, 1.0f, 0.0f, 3.0f};
+    const std::vector<int32_t> int32_ids = {0, 1, 0, 3};
+    const std::vector<int64_t> int64_ids = {0, 1, 0, 3};
+    const Tensor from_float = embed.Forward(Tensor({2, 2}, float_ids.data(), DataType::Float32));
+    const Tensor from_int64 = embed.Forward(Tensor({2, 2}, int64_ids.data(), DataType::Int64));
+    const Tensor output = embed.Forward(Tensor({2, 2}, int32_ids.data(), DataType::Int32));
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 2, 2});
+    const std::vector<float> expected = {0.0f, 1.0f, 10.0f, 11.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    for (size_t i = 0; i < expected.size(); ++i) {
+        REQUIRE(output.ReadData<float>()[i] == expected[i]);
+        REQUIRE(from_float.ReadData<float>()[i] == expected[i]);
+        REQUIRE(from_int64.ReadData<float>()[i] == expected[i]);
+    }
+
+    const std::vector<float> grad = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    embed.Backward(Tensor({2, 2, 2}, grad.data(), DataType::Float32));
+    const Tensor weight_grad = embed.GetGradients().at("weight");
+    const std::vector<float> expected_grad = {6.0f, 8.0f, 3.0f, 4.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (size_t i = 0; i < expected_grad.size(); ++i) {
+        REQUIRE(weight_grad.ReadData<float>()[i] == expected_grad[i]);
+    }
+
+    const std::vector<float> fractional = {0.0f, 1.5f};
+    REQUIRE_THROWS_AS(embed.Forward(Tensor({1, 2}, fractional.data(), DataType::Float32)), std::runtime_error);
+    const std::vector<int64_t> outside = {0, 4};
+    REQUIRE_THROWS_AS(embed.Forward(Tensor({1, 2}, outside.data(), DataType::Int64)), std::runtime_error);
+    const std::vector<int32_t> negative = {-1, 0};
+    REQUIRE_THROWS_AS(embed.Forward(Tensor({1, 2}, negative.data(), DataType::Int32)), std::runtime_error);
+}
+
+TEST_CASE("SequenceFeatureFusionModule - device concat and gradient split", "[embedding][backward]") {
+    SequenceFeatureFusionModule fusion(3, 2, 2, 1);
+    const std::vector<float> word_table = {0.0f, 1.0f, 10.0f, 11.0f, 20.0f, 21.0f};
+    const std::vector<float> pos_table = {100.0f, 200.0f};
+    fusion.SetParameters({{"word.weight", Tensor({3, 2}, word_table.data(), DataType::Float32)},
+                          {"pos.weight", Tensor({2, 1}, pos_table.data(), DataType::Float32)}});
+    // [batch 1, seq 2, (word, pos)]: tokens (2, 1) and (0, 0).
+    const std::vector<float> ids = {2.0f, 1.0f, 0.0f, 0.0f};
+    const Tensor output = fusion.Forward(Tensor({1, 2, 2}, ids.data(), DataType::Float32));
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 2, 3});
+    const std::vector<float> expected = {20.0f, 21.0f, 200.0f, 0.0f, 1.0f, 100.0f};
+    for (size_t i = 0; i < expected.size(); ++i) REQUIRE(output.ReadData<float>()[i] == expected[i]);
+
+    const std::vector<float> grad = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    fusion.Backward(Tensor({1, 2, 3}, grad.data(), DataType::Float32));
+    const auto gradients = fusion.GetGradients();
+    const std::vector<float> word_grad = {4.0f, 5.0f, 0.0f, 0.0f, 1.0f, 2.0f};
+    const std::vector<float> pos_grad = {6.0f, 3.0f};
+    for (size_t i = 0; i < word_grad.size(); ++i) REQUIRE(gradients.at("word.weight").ReadData<float>()[i] == word_grad[i]);
+    for (size_t i = 0; i < pos_grad.size(); ++i) REQUIRE(gradients.at("pos.weight").ReadData<float>()[i] == pos_grad[i]);
+}
+
 TEST_CASE("EmbeddingLayer - Frozen weights", "[embedding][backward]") {
     const int num_embeddings = 3;
     const int embedding_dim = 2;
@@ -263,6 +374,13 @@ TEST_CASE("LSTMLayer - Output shape", "[lstm][shape]") {
 
     // Output shape: [batch=4, seq_len=5, hidden_size=20]
     REQUIRE(ShapesEqual(output.Shape(), {4, 5, 20}));
+}
+
+TEST_CASE("LSTMLayer rejects invalid input shape", "[lstm][validation]") {
+    LSTMLayer lstm(10, 20, 1, true, false, 0.0f);
+
+    REQUIRE_THROWS_AS(lstm.Forward(Tensor::Zeros({2, 10})), std::invalid_argument);
+    REQUIRE_THROWS_AS(lstm.Forward(Tensor::Zeros({2, 3, 9})), std::invalid_argument);
 }
 
 TEST_CASE("LSTMLayer - Bidirectional output shape", "[lstm][shape][bidirectional]") {
@@ -327,6 +445,99 @@ TEST_CASE("LSTMLayer - Simple forward computation", "[lstm][forward][computation
     REQUIRE(out_data[1] <= 1.0f);
 }
 
+TEST_CASE("LSTMLayer - Matches one-step gate equation", "[lstm][forward][reference]") {
+    LSTMLayer lstm(1, 1, 1, true, false, 0.0f);
+    lstm.SetParameters(LstmOneUnitParams(1.0f));
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = lstm.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 1}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(LstmOneStepRef(0.5f, 1.0f), 1e-5f));
+}
+
+TEST_CASE("BiLSTMLayer - Concatenates forward and reverse reference outputs", "[lstm][bidirectional][reference]") {
+    LSTMLayer lstm(1, 1, 1, true, true, 0.0f);
+    auto params = LstmOneUnitParams(1.0f);
+    params["layer0_W_ih_reverse"] = FilledTensor({4, 1}, 0.5f);
+    params["layer0_W_hh_reverse"] = FilledTensor({4, 1}, 0.0f);
+    params["layer0_b_ih_reverse"] = FilledTensor({4}, 0.0f);
+    params["layer0_b_hh_reverse"] = FilledTensor({4}, 0.0f);
+    lstm.SetParameters(params);
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = lstm.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 2}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(LstmOneStepRef(0.5f, 1.0f), 1e-5f));
+    REQUIRE_THAT(output.Data<float>()[1], WithinAbs(LstmOneStepRef(0.5f, 0.5f), 1e-5f));
+}
+
+
+TEST_CASE("LSTMModule split bidirectional path matches the bidirectional reference forward and checks numerically",
+          "[lstm][bidirectional][module]") {
+    // Forward parity: the split path with weights mapped onto an LSTMLayer
+    // constructed bidirectional must give the same [batch, seq, 2H] output.
+    LSTMModule module(3, 4, 1, /*bidirectional=*/true, /*return_sequences=*/true);
+    const auto module_params = module.GetParameters();
+    REQUIRE(module_params.count("layer0.forward.W_ih") == 1);
+    REQUIRE(module_params.count("layer0.reverse.W_hh") == 1);
+
+    LSTMLayer reference(3, 4, 1, true, true, 0.0f);
+    std::map<std::string, Tensor> mapped;
+    for (const char* key : {"W_ih", "W_hh", "b_ih", "b_hh"}) {
+        mapped[std::string("layer0_") + key] =
+            module_params.at(std::string("layer0.forward.") + key);
+        mapped[std::string("layer0_") + key + "_reverse"] =
+            module_params.at(std::string("layer0.reverse.") + key);
+    }
+    reference.SetParameters(mapped);
+
+    Tensor input = Tensor::Random({2, 5, 3});
+    const Tensor expected = reference.Forward(input);
+    const Tensor actual = module.Forward(input);
+    REQUIRE(ShapesEqual(actual.Shape(), {2, 5, 8}));
+    REQUIRE(TensorsApproxEqual(actual, expected, 1e-5f));
+
+    // Last-step reduction keeps [batch, 2H].
+    LSTMModule last_step(3, 4, 1, true, false);
+    REQUIRE(ShapesEqual(last_step.Forward(input).Shape(), {2, 8}));
+    REQUIRE(last_step.GetName() == "BiLSTM(3 -> 8, last)");
+
+    // Numerical check of the split-path backward: dL/dx for L = sum(y * U)
+    // against central differences on the input.
+    Tensor upstream = Tensor::Random({2, 5, 8});
+    const Tensor dx = module.Backward(upstream);
+    REQUIRE(ShapesEqual(dx.Shape(), {2, 5, 3}));
+    const auto loss = [&](const Tensor& x) {
+        LSTMModule probe(3, 4, 1, true, true);
+        probe.SetParameters(module_params);
+        const Tensor y = probe.Forward(x);
+        const float* py = y.ReadData<float>();
+        const float* pu = upstream.ReadData<float>();
+        double total = 0.0;
+        for (size_t i = 0; i < y.NumElements(); ++i) total += double(py[i]) * pu[i];
+        return total;
+    };
+    const float* dx_data = dx.ReadData<float>();
+    const float eps = 1e-3f;
+    for (size_t i : {size_t{0}, size_t{7}, size_t{16}, size_t{29}}) {
+        Tensor plus = input.Clone();
+        Tensor minus = input.Clone();
+        plus.MutableData<float>()[i] += eps;
+        minus.MutableData<float>()[i] -= eps;
+        const double numeric = (loss(plus) - loss(minus)) / (2.0 * eps);
+        REQUIRE_THAT(dx_data[i], WithinAbs(static_cast<float>(numeric), 2e-3f));
+    }
+    // Gradients exist for both branches.
+    const auto grads = module.GetGradients();
+    REQUIRE(grads.count("layer0.forward.W_ih") == 1);
+    REQUIRE(grads.count("layer0.reverse.W_ih") == 1);
+    REQUIRE(grads.at("layer0.reverse.W_ih").NumElements() == 16 * 3);
+}
+
 TEST_CASE("LSTMLayer - State persistence", "[lstm][state]") {
     LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
 
@@ -357,6 +568,58 @@ TEST_CASE("LSTMLayer - State persistence", "[lstm][state]") {
     REQUIRE(TensorsApproxEqual(h1, h3, 1e-5f));
 }
 
+TEST_CASE("Recurrent layers are stateless per Forward unless an initial state is set",
+          "[lstm][gru][state]") {
+    // Owner ruling 2026-09-23 (track68): the CPU/AF paths start every
+    // Forward from zero, like the native provider and PyTorch. An explicit
+    // SetHiddenState applies to the NEXT Forward only.
+    const Tensor input = Tensor::Random({2, 3, 4});
+    const Tensor smaller = Tensor::Random({1, 3, 4});
+
+    {
+        LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
+        const Tensor first = lstm.Forward(input);
+        const Tensor h_first = lstm.GetHiddenState().Clone();
+        const Tensor second = lstm.Forward(input);
+        REQUIRE(TensorsApproxEqual(first, second, 1e-6f));
+        REQUIRE(TensorsApproxEqual(h_first, lstm.GetHiddenState(), 1e-6f));
+
+        Tensor h0 = Tensor::Ones({1, 2, 8});
+        Tensor c0 = Tensor::Ones({1, 2, 8});
+        lstm.SetHiddenState(h0);
+        lstm.SetCellState(c0);
+        const Tensor seeded = lstm.Forward(input);
+        REQUIRE_FALSE(TensorsApproxEqual(seeded, first, 1e-6f));
+        // One-shot: the following Forward is back to the zero state.
+        const Tensor third = lstm.Forward(input);
+        REQUIRE(TensorsApproxEqual(third, first, 1e-6f));
+
+        // A smaller final batch must not index the previous batch's state.
+        Tensor small_out;
+        REQUIRE_NOTHROW(small_out = lstm.Forward(smaller));
+        REQUIRE(ShapesEqual(small_out.Shape(), {1, 3, 8}));
+        REQUIRE(ShapesEqual(lstm.GetHiddenState().Shape(), {1, 1, 8}));
+    }
+
+    {
+        GRULayer gru(4, 8, 1, true, false, 0.0f);
+        const Tensor first = gru.Forward(input);
+        const Tensor second = gru.Forward(input);
+        REQUIRE(TensorsApproxEqual(first, second, 1e-6f));
+
+        gru.SetHiddenState(Tensor::Ones({1, 2, 8}));
+        const Tensor seeded = gru.Forward(input);
+        REQUIRE_FALSE(TensorsApproxEqual(seeded, first, 1e-6f));
+        const Tensor third = gru.Forward(input);
+        REQUIRE(TensorsApproxEqual(third, first, 1e-6f));
+
+        Tensor small_out;
+        REQUIRE_NOTHROW(small_out = gru.Forward(smaller));
+        REQUIRE(ShapesEqual(small_out.Shape(), {1, 3, 8}));
+        REQUIRE(ShapesEqual(gru.GetHiddenState().Shape(), {1, 1, 8}));
+    }
+}
+
 TEST_CASE("LSTMLayer - Backward pass runs without error", "[lstm][backward]") {
     LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
 
@@ -385,6 +648,13 @@ TEST_CASE("GRULayer - Output shape", "[gru][shape]") {
     Tensor output = gru.Forward(input);
 
     REQUIRE(ShapesEqual(output.Shape(), {4, 5, 20}));
+}
+
+TEST_CASE("GRULayer rejects invalid input shape", "[gru][validation]") {
+    GRULayer gru(10, 20, 1, true, false, 0.0f);
+
+    REQUIRE_THROWS_AS(gru.Forward(Tensor::Zeros({2, 10})), std::invalid_argument);
+    REQUIRE_THROWS_AS(gru.Forward(Tensor::Zeros({2, 3, 9})), std::invalid_argument);
 }
 
 TEST_CASE("GRULayer - Bidirectional output shape", "[gru][shape][bidirectional]") {
@@ -428,6 +698,36 @@ TEST_CASE("GRULayer - Simple forward computation", "[gru][forward][computation]"
     REQUIRE(out_data[0] <= 1.0f);
     REQUIRE(out_data[1] >= -1.0f);
     REQUIRE(out_data[1] <= 1.0f);
+}
+
+TEST_CASE("GRULayer - Matches one-step gate equation", "[gru][forward][reference]") {
+    GRULayer gru(1, 1, 1, true, false, 0.0f);
+    gru.SetParameters(GruOneUnitParams(1.0f));
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = gru.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 1}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(GruOneStepRef(0.5f, 1.0f), 1e-5f));
+}
+
+TEST_CASE("BiGRULayer - Concatenates forward and reverse reference outputs", "[gru][bidirectional][reference]") {
+    GRULayer gru(1, 1, 1, true, true, 0.0f);
+    auto params = GruOneUnitParams(1.0f);
+    params["layer0_W_ih_reverse"] = FilledTensor({3, 1}, 0.5f);
+    params["layer0_W_hh_reverse"] = FilledTensor({3, 1}, 0.0f);
+    params["layer0_b_ih_reverse"] = FilledTensor({3}, 0.0f);
+    params["layer0_b_hh_reverse"] = FilledTensor({3}, 0.0f);
+    gru.SetParameters(params);
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = gru.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 2}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(GruOneStepRef(0.5f, 1.0f), 1e-5f));
+    REQUIRE_THAT(output.Data<float>()[1], WithinAbs(GruOneStepRef(0.5f, 0.5f), 1e-5f));
 }
 
 TEST_CASE("GRULayer - State persistence", "[gru][state]") {
@@ -509,6 +809,147 @@ TEST_CASE("Embedding + GRU integration", "[integration]") {
 
     Tensor gru_out = gru.Forward(embedded);
     REQUIRE(ShapesEqual(gru_out.Shape(), {2, 10, 32}));
+}
+
+TEST_CASE("TransformerDecoderModule preserves sequence shape", "[transformer][decoder][module]") {
+    TransformerDecoderModule decoder(2, 1, 4, 0.0f, false);
+
+    float input_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    Tensor input({1, 3, 2}, input_values, DataType::Float32);
+
+    Tensor output = decoder.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 3, 2});
+
+    float grad_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    Tensor grad_output({1, 3, 2}, grad_values, DataType::Float32);
+    Tensor grad_input = decoder.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{1, 3, 2});
+
+    REQUIRE_FALSE(decoder.GetParameters().empty());
+    REQUIRE(decoder.GetName().find("TransformerDecoder") != std::string::npos);
+}
+
+TEST_CASE("TransformerDecoderLayer single-input path does not use cross attention",
+          "[transformer][decoder][causal]") {
+    TransformerDecoderLayer baseline(2, 1, 4, 0.0f, false);
+    TransformerDecoderLayer mutated(2, 1, 4, 0.0f, false);
+    auto params = baseline.GetParameters();
+    mutated.SetParameters(params);
+
+    for (auto& [name, tensor] : params) {
+        if (name.find("cross_attn.") != 0) {
+            continue;
+        }
+        float* data = tensor.Data<float>();
+        for (size_t i = 0; i < tensor.NumElements(); ++i) {
+            data[i] = 17.0f;
+        }
+    }
+    mutated.SetParameters(params);
+
+    float input_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    Tensor input({1, 3, 2}, input_values, DataType::Float32);
+
+    Tensor baseline_out = baseline.Forward(input);
+    Tensor mutated_out = mutated.Forward(input);
+    REQUIRE(TensorsApproxEqual(baseline_out, mutated_out, 1e-5f));
+}
+
+TEST_CASE("PositionalEncodingModule adds sinusoidal sequence positions",
+          "[language_model][positional_encoding]") {
+    PositionalEncodingModule pos(4, 3);
+    Tensor input = Tensor::Zeros({1, 2, 4});
+
+    Tensor output = pos.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 2, 4});
+    const float* data = output.Data<float>();
+    REQUIRE(data[0] == Catch::Approx(0.0f).margin(1e-6f));
+    REQUIRE(data[1] == Catch::Approx(1.0f).margin(1e-6f));
+    REQUIRE(data[2] == Catch::Approx(0.0f).margin(1e-6f));
+    REQUIRE(data[3] == Catch::Approx(1.0f).margin(1e-6f));
+    REQUIRE(data[4] == Catch::Approx(std::sin(1.0)).margin(1e-6f));
+    REQUIRE(data[5] == Catch::Approx(std::cos(1.0)).margin(1e-6f));
+    REQUIRE(data[6] == Catch::Approx(std::sin(0.01)).margin(1e-6f));
+    REQUIRE(data[7] == Catch::Approx(std::cos(0.01)).margin(1e-6f));
+
+    Tensor grad = pos.Backward(output);
+    REQUIRE(TensorsApproxEqual(grad, output));
+}
+
+TEST_CASE("Minimal causal LM module stack produces token logits and gradients",
+          "[language_model][transformer][decoder]") {
+    SequentialModel model;
+    model.Add<EmbeddingModule>(5, 2, 0);
+    model.Add<PositionalEncodingModule>(2, 3);
+    model.Add<TransformerDecoderModule>(2, 1, 4, 0.0f, false);
+    model.Add<TimeDistributedDenseModule>(2, 5, true);
+
+    int64_t token_values[] = {1, 2, 3};
+    Tensor input_ids({1, 3}, token_values, DataType::Int64);
+
+    Tensor logits = model.Forward(input_ids);
+    REQUIRE(logits.Shape() == std::vector<size_t>{1, 3, 5});
+
+    int64_t target_values[] = {2, 3, -100};
+    Tensor target_ids({1, 3}, target_values, DataType::Int64);
+    CrossEntropyLoss loss(Reduction::Mean, -100);
+
+    Tensor loss_value = loss.Forward(logits, target_ids);
+    REQUIRE(std::isfinite(loss_value.Data<float>()[0]));
+
+    Tensor grad_logits = loss.Backward(logits, target_ids);
+    REQUIRE(grad_logits.Shape() == std::vector<size_t>{1, 3, 5});
+
+    (void)model.Backward(grad_logits);
+    REQUIRE_FALSE(model.GetParameters().empty());
+    REQUIRE_FALSE(model.GetGradients().empty());
+}
+
+TEST_CASE("Minimal causal LM stack supports toy next-token training step",
+          "[language_model][transformer][decoder][training]") {
+    SequentialModel model;
+    model.Add<EmbeddingModule>(3, 4, 0);
+    model.Add<PositionalEncodingModule>(4, 3);
+    model.Add<TransformerDecoderModule>(4, 1, 8, 0.0f, false);
+    model.Add<TimeDistributedDenseModule>(4, 3, true);
+
+    int64_t token_values[] = {0, 1, 2};
+    Tensor input_ids({1, 3}, token_values, DataType::Int64);
+
+    int64_t target_values[] = {1, 2, 0};
+    Tensor target_ids({1, 3}, target_values, DataType::Int64);
+
+    CrossEntropyLoss loss(Reduction::Mean, -100);
+    SGDOptimizer optimizer(0.05);
+
+    Tensor initial_loss = loss.Forward(model.Forward(input_ids), target_ids);
+    REQUIRE(std::isfinite(initial_loss.Data<float>()[0]));
+
+    for (int step = 0; step < 50; ++step) {
+        Tensor logits = model.Forward(input_ids);
+        Tensor loss_value = loss.Forward(logits, target_ids);
+        REQUIRE(std::isfinite(loss_value.Data<float>()[0]));
+        Tensor grad_logits = loss.Backward(logits, target_ids);
+        (void)model.Backward(grad_logits);
+        model.UpdateParameters(&optimizer);
+    }
+
+    Tensor final_loss = loss.Forward(model.Forward(input_ids), target_ids);
+    REQUIRE(std::isfinite(final_loss.Data<float>()[0]));
+    REQUIRE_FALSE(model.GetParameters().empty());
+    REQUIRE_FALSE(model.GetGradients().empty());
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 #include "project_manager.h"
 #include "async_task_manager.h"
 #include "core/engine_config.h"
+#include "core/python_detector.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -45,65 +46,6 @@ int RunVenvCommand(const std::string& command) {
     return std::system(wrapped_cmd.c_str());
 #else
     return std::system(command.c_str());
-#endif
-}
-
-bool IsVenvBinDir(const fs::path& path) {
-    auto name = path.filename().string();
-#ifdef _WIN32
-    std::transform(name.begin(), name.end(), name.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return name == "scripts";
-#else
-    return name == "bin";
-#endif
-}
-
-fs::path ResolveVenvRoot(const fs::path& interpreter_path) {
-    auto parent = interpreter_path.parent_path();
-    if (!IsVenvBinDir(parent)) {
-        return {};
-    }
-    auto root = parent.parent_path();
-    if (root.empty()) {
-        return {};
-    }
-    if (fs::exists(root / "pyvenv.cfg")) {
-        return root;
-    }
-    return {};
-}
-
-fs::path ResolvePythonHomeFromInterpreter(const fs::path& interpreter_path) {
-    auto venv_root = ResolveVenvRoot(interpreter_path);
-    if (!venv_root.empty()) {
-        return venv_root;
-    }
-    return interpreter_path.parent_path();
-}
-
-bool HasVenvModule(const fs::path& python_home) {
-#ifdef _WIN32
-    fs::path venv_dir = python_home / "Lib" / "venv";
-    return fs::exists(venv_dir);
-#else
-    fs::path lib_dir = python_home / "lib";
-    if (!fs::exists(lib_dir)) {
-        return false;
-    }
-    for (const auto& entry : fs::directory_iterator(lib_dir)) {
-        if (!entry.is_directory()) {
-            continue;
-        }
-        auto name = entry.path().filename().string();
-        if (name.rfind("python", 0) != 0) {
-            continue;
-        }
-        if (fs::exists(entry.path() / "venv")) {
-            return true;
-        }
-    }
-    return false;
 #endif
 }
 
@@ -270,11 +212,16 @@ bool CreateProjectVenv(const fs::path& project_dir, std::string* error_out) {
         return false;
     }
 
-    // Verify system Python has venv module
-    fs::path python_home = ResolvePythonHomeFromInterpreter(fs::path(system_python));
-    if (!python_home.empty() && !HasVenvModule(python_home)) {
+    const auto python = cyxwiz::core::PythonDetector::ValidatePythonInstallation(system_python);
+    if (!python) {
         if (error_out) {
-            *error_out = "System Python is missing the venv module at " + python_home.string();
+            *error_out = "System Python could not be validated: " + system_python;
+        }
+        return false;
+    }
+    if (!cyxwiz::core::PythonDetector::MeetsRequirements(*python)) {
+        if (error_out) {
+            *error_out = cyxwiz::core::PythonDetector::GetRequirementError(*python);
         }
         return false;
     }
@@ -320,12 +267,18 @@ bool CreateProjectVenv(const fs::path& project_dir, std::string* error_out) {
     return false;
 }
 
-void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& project_name) {
+void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& project_name,
+                              std::weak_ptr<const void> session) {
     std::string project_root = project_dir.string();
     std::string task_name = "Create Python venv";
     if (!project_name.empty()) {
         task_name += " (" + project_name + ")";
     }
+
+    using SetupState = cyxwiz::ProjectManager::PythonEnvSetupState;
+    cyxwiz::ProjectManager::Instance().SetPythonEnvSetupStatus(
+        SetupState::Pending, project_root,
+        "Setting up the project's Python environment...");
 
     cyxwiz::AsyncTaskManager::Instance().RunAsync(
         task_name,
@@ -339,13 +292,30 @@ void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& pr
         },
         nullptr,
         [project_root](bool success, const std::string& error) {
+            auto& manager = cyxwiz::ProjectManager::Instance();
             if (success) {
                 spdlog::info("Project venv created: {}", project_root);
-                cyxwiz::ProjectManager::Instance().NotifyProjectVenvReady(project_root);
+                manager.SetPythonEnvSetupStatus(SetupState::Ready, project_root,
+                                                "Python environment ready");
+                manager.NotifyProjectVenvReady(project_root);
             } else {
                 spdlog::error("Project venv creation failed for {}: {}", project_root, error);
+                manager.SetPythonEnvSetupStatus(
+                    SetupState::Failed, project_root,
+                    error.empty() ? "Python environment setup failed" : error);
             }
-        });
+        },
+        std::move(session));
+}
+
+std::string ToLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool HasProjectExtension(const fs::path& path) {
+    return ToLower(path.extension().string()) == ".cyxwiz";
 }
 
 } // namespace
@@ -356,8 +326,7 @@ namespace cyxwiz {
 EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     EditorSettings settings;
     // Script Editor settings
-    settings.theme = j.value("theme", 3);
-    settings.font_scale = j.value("font_scale", 1.6f);
+    settings.font_scale = j.value("font_scale", 1.3f);
     settings.tab_size = j.value("tab_size", 4);
     settings.show_whitespace = j.value("show_whitespace", true);
     settings.syntax_highlighting = j.value("syntax_highlighting", true);
@@ -373,7 +342,6 @@ EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
 nlohmann::json EditorSettings::ToJson() const {
     nlohmann::json j;
     // Script Editor settings
-    j["theme"] = theme;
     j["font_scale"] = font_scale;
     j["tab_size"] = tab_size;
     j["show_whitespace"] = show_whitespace;
@@ -389,6 +357,7 @@ nlohmann::json EditorSettings::ToJson() const {
 
 // Static default filters
 static const std::map<std::string, std::vector<std::string>> s_default_filters = {
+    {"Graphs", {".cyxgraph"}},
     {"Scripts", {".py", ".cyx"}},
     {"Models", {".h5", ".onnx", ".pt", ".safetensors", ".bin"}},
     {"Datasets", {".csv", ".json", ".parquet", ".h5", ".arrow", ".txt"}},
@@ -459,6 +428,23 @@ ProjectManager& ProjectManager::Instance() {
     return instance;
 }
 
+void ProjectManager::BeginProjectSession() {
+    EndProjectSession();  // switching projects closes the previous session
+    session_token_ = std::make_shared<int>(0);
+}
+
+void ProjectManager::EndProjectSession() {
+    if (!session_token_) {
+        return;
+    }
+    const size_t cancelled =
+        cyxwiz::AsyncTaskManager::Instance().CancelOwnedBy(session_token_);
+    if (cancelled > 0) {
+        spdlog::info("Project session ended: cancelled {} background task(s)", cancelled);
+    }
+    session_token_.reset();
+}
+
 void ProjectManager::NotifyProjectVenvReady(const std::string& project_root) {
     if (on_venv_ready_) {
         on_venv_ready_(project_root);
@@ -469,10 +455,61 @@ const std::map<std::string, std::vector<std::string>>& ProjectManager::GetDefaul
     return s_default_filters;
 }
 
+std::optional<std::string> ProjectManager::ResolveProjectFilePath(const std::string& path) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    std::error_code ec;
+    fs::path selected(path);
+    if (!fs::exists(selected, ec) || ec) {
+        return std::nullopt;
+    }
+
+    if (fs::is_regular_file(selected, ec) && HasProjectExtension(selected)) {
+        return NormalizePath(fs::absolute(selected, ec)).string();
+    }
+
+    if (!fs::is_directory(selected, ec) || ec) {
+        return std::nullopt;
+    }
+
+    fs::path named = selected / (selected.filename().string() + ".cyxwiz");
+    if (fs::is_regular_file(named, ec) && !ec) {
+        return NormalizePath(fs::absolute(named, ec)).string();
+    }
+
+    fs::path first_match;
+    for (const auto& entry : fs::directory_iterator(selected, ec)) {
+        if (ec) {
+            spdlog::warn("Could not scan project directory {}: {}", selected.string(), ec.message());
+            return std::nullopt;
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (!HasProjectExtension(entry.path())) {
+            continue;
+        }
+        if (!first_match.empty()) {
+            spdlog::warn("Multiple .cyxwiz files found in {}; using {}", selected.string(), first_match.string());
+            return NormalizePath(fs::absolute(first_match, ec)).string();
+        }
+        first_match = entry.path();
+    }
+
+    if (!first_match.empty()) {
+        return NormalizePath(fs::absolute(first_match, ec)).string();
+    }
+
+    return std::nullopt;
+}
+
 bool ProjectManager::CreateProject(const std::string& name, const std::string& location) {
     try {
         // Close any existing project
         if (HasActiveProject()) {
+            if (!MayCloseProject("create another project")) return false;
             CloseProject();
         }
 
@@ -489,6 +526,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
         }
 
         // Set up project state
+        BeginProjectSession();
         project_root_ = project_dir.string();
         project_name_ = name;
         project_file_path_ = (project_dir / (name + ".cyxwiz")).string();
@@ -510,7 +548,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
 
         spdlog::info("Project created: {} at {}", name, project_root_);
 
-        QueueProjectVenvCreation(project_dir, name);
+        QueueProjectVenvCreation(project_dir, name, GetSessionToken());
 
         // Add to recent projects
         AddToRecentProjects(name, project_file_path_);
@@ -530,16 +568,31 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
 
 bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
     try {
-        // Close any existing project
-        if (HasActiveProject()) {
-            CloseProject();
-        }
-
         // Verify file exists
         fs::path file_path(cyxwiz_file_path);
         if (!fs::exists(file_path)) {
             spdlog::error("Project file not found: {}", cyxwiz_file_path);
             return false;
+        }
+
+        // The Start Page may select/open a project before the main window is
+        // constructed. Application startup then asks to open that same path
+        // after the project callbacks are installed. Reopening used to close
+        // the active project and restart its asynchronous asset scan, leaving
+        // the first scan racing the close/reopen cycle. Make same-project open
+        // idempotent and preserve the already initialized project state.
+        if (HasActiveProject()) {
+            std::error_code equivalent_error;
+            const bool already_active = fs::equivalent(
+                fs::path(project_file_path_), file_path, equivalent_error);
+            if (!equivalent_error && already_active) {
+                spdlog::debug(
+                    "Project already active; skipping duplicate open: {}",
+                    project_file_path_);
+                return true;
+            }
+            if (!MayCloseProject("open another project")) return false;
+            CloseProject();
         }
 
         // Read project file
@@ -548,13 +601,32 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
         }
 
         // Set up project state
+        BeginProjectSession();
         project_file_path_ = fs::absolute(file_path).string();
         project_root_ = file_path.parent_path().string();
         project_name_ = config_.name;
 
-        // Ensure default filters if not present
+        // Ensure the canonical graph directory exists for legacy projects.
+        // This is additive: older user-created folders are never moved or
+        // deleted during project open.
+        std::error_code graph_dir_error;
+        fs::create_directories(
+            fs::path(project_root_) / "cyxgraph", graph_dir_error);
+        if (graph_dir_error) {
+            spdlog::warn(
+                "Could not create canonical cyxgraph directory in '{}': {}",
+                project_root_, graph_dir_error.message());
+        }
+
+        // Ensure default filters if not present. Merge newly introduced
+        // canonical filters into older projects without discarding custom
+        // filters stored in the project file.
         if (config_.filters.empty()) {
             InitializeDefaultFilters();
+        } else {
+            for (const auto& [name, extensions] : s_default_filters) {
+                config_.filters.try_emplace(name, extensions);
+            }
         }
 
         spdlog::info("Project opened: {} from {}", project_name_, project_root_);
@@ -576,26 +648,11 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
         if (!fs::exists(python_env_file) && !fs::exists(python_dir)) {
             spdlog::warn("Legacy project detected (no python_env.json) - creating virtual environment");
 
-            // Create venv for legacy project
+            // As for a new project: Python waits for the environment (setup
+            // pending), then starts in it.
             auto& config = cyxwiz::core::EngineConfig::Instance();
             if (config.HasSystemPython()) {
-                // Use the async task manager to create venv in the background
-                spdlog::info("Creating venv for legacy project: {}", project_name_);
-                auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
-                task_mgr.RunAsync(
-                    "Create venv for legacy project",
-                    [project_root = project_root_](cyxwiz::LambdaTask& task) {
-                        task.ReportProgress(0.05f, "Creating virtual environment for legacy project...");
-                        std::string error;
-                        if (!CreateProjectVenv(fs::path(project_root), &error)) {
-                            spdlog::error("Failed to create venv for legacy project: {}", error);
-                            task.MarkFailed(error);
-                        } else {
-                            spdlog::info("Virtual environment created for legacy project");
-                            task.ReportProgress(1.0f, "Virtual environment ready");
-                        }
-                    }
-                );
+                QueueProjectVenvCreation(fs::path(project_root_), project_name_, GetSessionToken());
             } else {
                 spdlog::error("Cannot create venv for legacy project: no system Python configured");
             }
@@ -617,6 +674,10 @@ void ProjectManager::CloseProject() {
     }
 
     std::string old_root = project_root_;
+
+    // Work owned by this project stops here and never reports into the next
+    // one (TOFIX101 section 7: project close cancels owned work).
+    EndProjectSession();
 
     // Clear state
     project_root_.clear();
@@ -706,6 +767,11 @@ std::string ProjectManager::GetScriptsPath() const {
     return (fs::path(project_root_) / "scripts").string();
 }
 
+std::string ProjectManager::GetCyxGraphsPath() const {
+    if (!HasActiveProject()) return "";
+    return (fs::path(project_root_) / "cyxgraph").string();
+}
+
 std::string ProjectManager::GetModelsPath() const {
     if (!HasActiveProject()) return "";
     return (fs::path(project_root_) / "models").string();
@@ -714,6 +780,16 @@ std::string ProjectManager::GetModelsPath() const {
 std::string ProjectManager::GetDatasetsPath() const {
     if (!HasActiveProject()) return "";
     return (fs::path(project_root_) / "datasets").string();
+}
+
+std::string ProjectManager::GetIngestionCachePath() const {
+    if (!HasActiveProject()) return "";
+    return (fs::path(project_root_) / "cache" / "ingestion").string();
+}
+
+std::string ProjectManager::GetArtifactsPath() const {
+    if (!HasActiveProject()) return "";
+    return (fs::path(project_root_) / "artifacts").string();
 }
 
 std::string ProjectManager::GetCheckpointsPath() const {
@@ -756,9 +832,12 @@ std::string ProjectManager::MakeRelativePath(const std::string& absolute_path) c
 bool ProjectManager::CreateDirectoryStructure(const std::string& project_dir) {
     try {
         fs::create_directories(project_dir);
+        fs::create_directories(fs::path(project_dir) / "cyxgraph");
         fs::create_directories(fs::path(project_dir) / "scripts");
         fs::create_directories(fs::path(project_dir) / "models");
         fs::create_directories(fs::path(project_dir) / "datasets");
+        fs::create_directories(fs::path(project_dir) / "cache" / "ingestion");
+        fs::create_directories(fs::path(project_dir) / "artifacts");
         fs::create_directories(fs::path(project_dir) / "checkpoints");
         fs::create_directories(fs::path(project_dir) / "exports");
         fs::create_directories(fs::path(project_dir) / "plugins");
@@ -843,6 +922,13 @@ void ProjectManager::AddToRecentProjects(const std::string& name, const std::str
     SaveRecentProjects();
 }
 
+void ProjectManager::RemoveRecentProject(const std::string& path) {
+    recent_projects_.erase(std::remove_if(recent_projects_.begin(), recent_projects_.end(),
+                                          [&path](const RecentProject& p) { return p.path == path; }),
+                           recent_projects_.end());
+    SaveRecentProjects();
+}
+
 void ProjectManager::ClearRecentProjects() {
     recent_projects_.clear();
     SaveRecentProjects();
@@ -901,7 +987,7 @@ void ProjectManager::LoadRecentProjects() {
             }
         }
 
-        spdlog::info("Loaded {} recent projects", recent_projects_.size());
+        spdlog::debug("Loaded {} recent projects", recent_projects_.size());
 
     } catch (const std::exception& e) {
         spdlog::warn("Failed to load recent projects: {}", e.what());
@@ -932,6 +1018,90 @@ void ProjectManager::SaveRecentProjects() {
     } catch (const std::exception& e) {
         spdlog::warn("Failed to save recent projects: {}", e.what());
     }
+}
+
+void ProjectManager::SetPythonEnvSetupStatus(PythonEnvSetupState state,
+                                             const std::string& project_root,
+                                             const std::string& message) {
+    std::lock_guard<std::mutex> lock(python_env_mutex_);
+    python_env_status_.state = state;
+    python_env_status_.project_root = project_root;
+    python_env_status_.message = message;
+    python_env_status_.changed = std::chrono::steady_clock::now();
+}
+
+ProjectManager::PythonEnvSetupStatus ProjectManager::GetPythonEnvSetupStatus() const {
+    std::lock_guard<std::mutex> lock(python_env_mutex_);
+    return python_env_status_;
+}
+
+bool ProjectManager::IsPythonEnvSetupPending(const std::string& project_root) const {
+    std::lock_guard<std::mutex> lock(python_env_mutex_);
+    return python_env_status_.state == PythonEnvSetupState::Pending &&
+           python_env_status_.project_root == project_root;
+}
+
+bool RepairProjectVenvBase(const std::string& venv_interpreter, std::string* message) {
+    const fs::path venv_dir = fs::path(venv_interpreter).parent_path().parent_path();
+    std::ifstream config_file(venv_dir / "pyvenv.cfg");
+    if (!config_file) {
+        return true;  // Not a venv: nothing to repair.
+    }
+    std::string home;
+    std::string version;
+    std::string line;
+    const auto trim = [](std::string value) {
+        const auto first = value.find_first_not_of(" \t\r");
+        const auto last = value.find_last_not_of(" \t\r");
+        return first == std::string::npos ? std::string{} : value.substr(first, last - first + 1);
+    };
+    while (std::getline(config_file, line)) {
+        const auto equals = line.find('=');
+        if (equals == std::string::npos) continue;
+        const std::string key = trim(line.substr(0, equals));
+        const std::string value = trim(line.substr(equals + 1));
+        if (key == "home") home = value;
+        else if (key == "version" || key == "version_info") version = value;
+    }
+    std::error_code ec;
+    if (home.empty() || fs::exists(home, ec)) {
+        return true;
+    }
+
+    const auto fail = [&](const std::string& reason) {
+        if (message) *message = reason;
+        return false;
+    };
+    const std::string base = cyxwiz::core::EngineConfig::Instance().GetSystemPythonPath();
+    if (base.empty()) {
+        return fail("Project environment's base Python is missing (" + home +
+                    ") and no replacement interpreter is available");
+    }
+    const auto python = cyxwiz::core::PythonDetector::ValidatePythonInstallation(base);
+    if (!python || !cyxwiz::core::PythonDetector::MeetsRequirements(*python)) {
+        return fail("Replacement interpreter is not usable: " + base);
+    }
+    // Installed packages are built for one Python minor version.
+    const std::string minor_prefix =
+        std::to_string(python->major) + "." + std::to_string(python->minor) + ".";
+    if (!version.empty() && version.rfind(minor_prefix, 0) != 0 &&
+        version != minor_prefix.substr(0, minor_prefix.size() - 1)) {
+        return fail("Project environment was created with Python " + version +
+                    " but the available interpreter is " + python->version +
+                    "; recreate the environment");
+    }
+
+    spdlog::warn("Project environment's base Python is missing ({}); re-pointing it at {}",
+                 home, base);
+    const std::string command =
+        "\"" + base + "\" -m venv --upgrade \"" + venv_dir.string() + "\"";
+    const int result = RunVenvCommand(command);
+    if (result != 0 || !fs::exists(GetVenvInterpreterPath(venv_dir), ec)) {
+        return fail("Could not repair the project environment (exit code " +
+                    std::to_string(result) + ")");
+    }
+    spdlog::info("Project environment repaired: {}", venv_dir.string());
+    return true;
 }
 
 } // namespace cyxwiz

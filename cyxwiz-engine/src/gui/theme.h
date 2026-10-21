@@ -41,6 +41,7 @@ enum class ThemePreset {
     CyxOSTuiClassic, // Green phosphor IBM 3278 terminal
     CyxOSTuiMatrix,  // The Matrix digital rain aesthetic
     CyxOSTuiAmber,   // Amber CRT P3 phosphor terminal
+    CyxWizLaunch,    // UX.md launch/dashboard theme
 
     COUNT
 };
@@ -61,6 +62,7 @@ struct ThemeConfig {
     float window_border_size = 1.0f;
     float frame_border_size = 0.0f;
     float popup_border_size = 1.0f;
+    float child_border_size = 0.0f;   // child regions are told apart by tone, not outlines (owner rule)
 
     // Padding and spacing
     ImVec2 window_padding = ImVec2(8.0f, 8.0f);
@@ -91,6 +93,11 @@ public:
 
     // Get preset name for display
     static const char* GetPresetName(ThemePreset preset);
+    // Group heading for the Appearance theme cards ("CyxWiz", "IDE", ...).
+    static const char* GetPresetGroup(ThemePreset preset);
+    // Card swatch: window background, panel, accent.
+    struct PresetSwatch { ImVec4 background; ImVec4 panel; ImVec4 accent; };
+    static PresetSwatch GetPresetSwatch(ThemePreset preset);
 
     // Get all available presets
     static std::vector<ThemePreset> GetAvailablePresets();
@@ -110,11 +117,14 @@ public:
 
     // Apply matching dock style for current theme
     void ApplyDockStyle();
+    // Scrollbar tracks, table headers and grid lines in the window tone, for every preset.
+    void HarmonizeSurfaces();
 
 private:
     // Theme application methods
     void ApplyCyxWizDark();
     void ApplyCyxWizLight();
+    void ApplyCyxWizLaunch();
     void ApplyVSCodeDark();
     void ApplyUnrealEngine();
     void ApplyModernDark();

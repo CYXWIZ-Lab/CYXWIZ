@@ -63,10 +63,14 @@ add_library(cyxwiz-protocol STATIC
     common/utils.cpp
 )
 
-# Mark generated protobuf headers as SYSTEM to suppress warnings when included
 target_include_directories(cyxwiz-protocol
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Generated protobuf headers depend on third-party headers and should not make
+# their implementation warnings part of CyxWiz's warning budget.
+target_include_directories(cyxwiz-protocol SYSTEM
+    PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(cyxwiz-protocol PUBLIC

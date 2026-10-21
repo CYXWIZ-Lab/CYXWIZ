@@ -15,6 +15,8 @@
 #include <fstream>
 #include <random>
 #include <cstring>
+#include <atomic>
+#include <chrono>
 
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
 // vcpkg's ONNX package uses onnx-ml.pb.h (ML variant)
@@ -29,8 +31,34 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Test data directory
-const std::string TEST_EXPORT_DIR = "test_onnx_export_data";
+std::atomic_uint64_t g_temp_counter{0};
+
+class TempDir {
+public:
+    explicit TempDir(const std::string& prefix) {
+        const auto id = g_temp_counter.fetch_add(1, std::memory_order_relaxed);
+        path_ = fs::temp_directory_path() /
+            (prefix + "_" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+             "_" + std::to_string(id));
+
+        std::error_code ec;
+        fs::create_directories(path_, ec);
+        REQUIRE_FALSE(ec);
+    }
+
+    ~TempDir() {
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+    }
+
+    std::string Path(const std::string& filename) const {
+        return (path_ / filename).string();
+    }
+
+private:
+    fs::path path_;
+};
 
 // Forward declarations for model exporter (we test through the public API)
 struct ExportOptions {
@@ -101,20 +129,6 @@ cyxwiz::Tensor CreateRandomInput(const std::vector<size_t>& shape) {
     return tensor;
 }
 
-// Helper: Setup test directory
-void SetupTestDir() {
-    if (!fs::exists(TEST_EXPORT_DIR)) {
-        fs::create_directory(TEST_EXPORT_DIR);
-    }
-}
-
-// Helper: Cleanup test directory
-void CleanupTestDir() {
-    if (fs::exists(TEST_EXPORT_DIR)) {
-        fs::remove_all(TEST_EXPORT_DIR);
-    }
-}
-
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
 // Helper: Read and validate ONNX file structure
 bool ValidateONNXFile(const std::string& path, onnx::ModelProto& model) {
@@ -133,14 +147,14 @@ bool ValidateONNXFile(const std::string& path, onnx::ModelProto& model) {
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
 
 TEST_CASE("ExportONNX - Basic Export", "[onnx][export]") {
-    SetupTestDir();
+    TempDir test_dir("cyxwiz_onnx_export");
 
     SECTION("Export simple MLP model") {
         auto model = CreateSmallTestModel();
         REQUIRE(model != nullptr);
         REQUIRE(model->Size() > 0);
 
-        std::string output_path = TEST_EXPORT_DIR + "/simple_mlp.onnx";
+        std::string output_path = test_dir.Path("simple_mlp.onnx");
 
         // Use ModelExporter if available, otherwise direct protobuf creation
         // This test validates that the model can be serialized correctly
@@ -162,7 +176,7 @@ TEST_CASE("ExportONNX - Basic Export", "[onnx][export]") {
 
     SECTION("Export creates valid ONNX file") {
         auto model = CreateSmallTestModel();
-        std::string output_path = TEST_EXPORT_DIR + "/valid_export.onnx";
+        std::string output_path = test_dir.Path("valid_export.onnx");
 
         // Create a minimal valid ONNX file
         onnx::ModelProto model_proto;
@@ -208,7 +222,6 @@ TEST_CASE("ExportONNX - Basic Export", "[onnx][export]") {
         REQUIRE(loaded_model.ir_version() == 8);
         REQUIRE(loaded_model.producer_name() == "CyxWiz-Test");
 
-        fs::remove(output_path);
     }
 
     SECTION("Reject empty model") {
@@ -219,13 +232,9 @@ TEST_CASE("ExportONNX - Basic Export", "[onnx][export]") {
         auto params = empty_model.GetParameters();
         REQUIRE(params.empty());
     }
-
-    CleanupTestDir();
 }
 
 TEST_CASE("ExportONNX - Layer Mapping", "[onnx][export]") {
-    SetupTestDir();
-
     SECTION("Linear layers map correctly") {
         auto model = CreateSmallTestModel();
         auto params = model->GetParameters();
@@ -264,13 +273,9 @@ TEST_CASE("ExportONNX - Layer Mapping", "[onnx][export]") {
             }
         }
     }
-
-    CleanupTestDir();
 }
 
 TEST_CASE("ExportONNX - Weights", "[onnx][export]") {
-    SetupTestDir();
-
     SECTION("All weights exported as initializers") {
         auto model = CreateSmallTestModel();
         auto params = model->GetParameters();
@@ -314,13 +319,9 @@ TEST_CASE("ExportONNX - Weights", "[onnx][export]") {
             }
         }
     }
-
-    CleanupTestDir();
 }
 
 TEST_CASE("ExportONNX - Metadata", "[onnx][export]") {
-    SetupTestDir();
-
     SECTION("Model metadata structure") {
         onnx::ModelProto model;
         model.set_ir_version(8);
@@ -351,15 +352,13 @@ TEST_CASE("ExportONNX - Metadata", "[onnx][export]") {
             REQUIRE(model.opset_import(0).version() == version);
         }
     }
-
-    CleanupTestDir();
 }
 
 TEST_CASE("ExportONNX - ONNX Proto Serialization", "[onnx][proto]") {
-    SetupTestDir();
+    TempDir test_dir("cyxwiz_onnx_export");
 
     SECTION("Serialize and deserialize model") {
-        std::string path = TEST_EXPORT_DIR + "/serialize_test.onnx";
+        std::string path = test_dir.Path("serialize_test.onnx");
 
         // Create model
         onnx::ModelProto original;
@@ -403,11 +402,7 @@ TEST_CASE("ExportONNX - ONNX Proto Serialization", "[onnx][proto]") {
         REQUIRE(loaded.graph().initializer_size() == 1);
         REQUIRE(loaded.graph().initializer(0).name() == "test_weight");
         REQUIRE(loaded.graph().initializer(0).float_data_size() == 6);
-
-        fs::remove(path);
     }
-
-    CleanupTestDir();
 }
 
 #else  // !CYXWIZ_HAS_ONNX_EXPORT

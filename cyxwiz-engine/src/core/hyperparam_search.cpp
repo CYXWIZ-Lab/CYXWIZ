@@ -277,6 +277,12 @@ void HyperparamSearch::RunSearchThread() {
 
         // Run the trial
         TrialResult result = RunTrial(trial, params, categorical_params);
+        if (!result.error_message.empty()) {
+            // A trial that cannot train stops the whole search (fail closed).
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            results_.push_back(result);
+            break;
+        }
 
         // Store result
         {
@@ -362,36 +368,14 @@ TrialResult HyperparamSearch::RunTrial(
     }
     spdlog::info("Trial {} params: {}", trial_id, param_str);
 
-    // TODO: Integrate with actual TrainingExecutor
-    // For now, simulate training with random results
-    std::uniform_real_distribution<float> loss_dist(0.1f, 2.0f);
-    std::uniform_real_distribution<float> acc_dist(0.5f, 0.99f);
-
-    // Simulate epochs
-    for (int epoch = 0; epoch < config_.epochs_per_trial && !stop_requested_.load(); ++epoch) {
-        // Wait while paused
-        while (is_paused_.load() && !stop_requested_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        if (stop_requested_.load()) break;
-
-        // Simulate training time
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        // Update progress
-        result.epochs_completed = epoch + 1;
-        result.train_loss = loss_dist(rng_);
-        result.train_accuracy = acc_dist(rng_);
-        result.val_loss = loss_dist(rng_);
-        result.val_accuracy = acc_dist(rng_);
-
-        if (on_trial_progress_) {
-            on_trial_progress_(trial_id, epoch + 1, result.val_loss, result.val_accuracy);
-        }
-    }
-
-    result.completed = !stop_requested_.load();
+    // Trials are not connected to TrainingExecutor yet. Fail closed: a trial
+    // must never report invented losses or accuracies as if it had trained
+    // (tofix112 recipe audit 2026-09-25; the previous stub returned random values).
+    result.completed = false;
+    result.error_message =
+        "Hyperparameter search does not train models yet; no trial results are produced. "
+        "Run the candidate graphs directly and compare their validation loss.";
+    spdlog::error("Trial {}: {}", trial_id, result.error_message);
 
     auto trial_end = std::chrono::steady_clock::now();
     result.duration_seconds = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -406,10 +390,14 @@ HyperparamSearch::SampleGrid(int trial_idx) {
     std::map<std::string, std::string> categorical_params;
 
     // Calculate indices for each parameter
-    int remaining = trial_idx;
+    size_t remaining = static_cast<size_t>(std::max(0, trial_idx));
     for (const auto& param : config_.space.parameters) {
         if (param.type == ParamType::Categorical) {
-            int idx = remaining % param.options.size();
+            if (param.options.empty()) {
+                spdlog::warn("Skipping categorical parameter '{}' with no options", param.name);
+                continue;
+            }
+            const size_t idx = remaining % param.options.size();
             remaining /= param.options.size();
             categorical_params[param.name] = param.options[idx];
         } else {
@@ -418,10 +406,13 @@ HyperparamSearch::SampleGrid(int trial_idx) {
                 num_steps = static_cast<int>((param.max_value - param.min_value) / param.step) + 1;
             }
 
-            int idx = remaining % num_steps;
-            remaining /= num_steps;
+            const size_t step_count = static_cast<size_t>(std::max(1, num_steps));
+            const size_t idx = remaining % step_count;
+            remaining /= step_count;
 
-            float t = (num_steps > 1) ? static_cast<float>(idx) / (num_steps - 1) : 0.5f;
+            float t = (step_count > 1)
+                ? static_cast<float>(idx) / static_cast<float>(step_count - 1)
+                : 0.5f;
 
             if (param.type == ParamType::LogScale) {
                 float log_min = std::log(param.min_value);
@@ -477,15 +468,6 @@ HyperparamSearch::SampleBayesian() {
     // For now, fall back to random sampling
     spdlog::warn("Bayesian optimization not yet implemented, using random sampling");
     return SampleRandom();
-}
-
-void HyperparamSearch::ApplyParameters(
-    const std::map<std::string, float>& params,
-    const std::map<std::string, std::string>& categorical_params)
-{
-    // TODO: Apply parameters to training configuration
-    // This will map parameter names like "learning_rate", "batch_size", etc.
-    // to the actual TrainingConfiguration struct
 }
 
 } // namespace cyxwiz

@@ -1,0 +1,53 @@
+name: Installer Alpha Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable alpha tag matching the asset URL path
+        required: true
+        type: string
+      asset_base_url:
+        description: Direct HTTPS or canonical GitHub Release root for assets
+        required: true
+        type: string
+      cyxwiz_release:
+        description: CyxWiz release version
+        required: true
+        default: "0.2.0"
+        type: string
+      bundle_version:
+        description: Installer bundle version
+        required: true
+        default: "1.0.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: Authorize alpha candidate
+    if: vars.CYXWIZ_ALPHA_CANDIDATE_ENABLED == 'true'
+    environment: cyxwiz-alpha
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Record bounded publication scope
+        run: |
+          echo 'Building release-configured artifacts only.'
+          echo 'This workflow does not create or upload a hosted release.'
+
+  build:
+    name: Build four-platform candidate
+    needs: authorize
+    uses: ./.github/workflows/installer-native.yml
+    with:
+      release_mode: true
+      release_tag: ${{ inputs.release_tag }}
+      asset_base_url: ${{ inputs.asset_base_url }}
+      cyxwiz_release: ${{ inputs.cyxwiz_release }}
+      bundle_version: ${{ inputs.bundle_version }}
+    secrets:
+      CYXWIZ_INSTALLER_TRUST_STORE_B64: >-
+        ${{ secrets.CYXWIZ_INSTALLER_TRUST_STORE_B64 }}

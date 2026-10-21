@@ -1,26 +1,484 @@
 #include "duckdb_connector.h"
+#include "data_budget.h"
+#include <arrow/c/bridge.h>
+#include <duckdb/common/arrow/arrow_converter.hpp>
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <unordered_map>
 #include <chrono>
+#include <filesystem>
+#include <thread>
 #include <sstream>
 
 namespace cyxwiz {
+namespace {
+
+// DuckDB 1.x exceptions carry their message as JSON in what(); ErrorData
+// turns it back into the readable "Parser Error: ..." text.
+std::string ErrorText(const std::exception& e) {
+    return duckdb::ErrorData(e).Message();
+}
+
+std::string QuoteIdentifier(const std::string& identifier) {
+    std::string quoted = "\"";
+    for (char c : identifier) {
+        if (c == '"') {
+            quoted += "\"\"";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+// "VIEW", "BASE TABLE", or empty when no object in the main schema has this
+// name. DROP VIEW IF EXISTS fails when the name is a table (and DROP TABLE
+// when it is a view), so callers drop by the kind found here.
+std::string ExistingObjectKind(duckdb::Connection& conn, const std::string& name) {
+    auto lookup = conn.Prepare(
+        "SELECT table_type FROM information_schema.tables WHERE table_schema = 'main' AND table_name = $1");
+    if (lookup->HasError()) return {};
+    auto found = lookup->Execute(name);
+    if (found->HasError()) return {};
+    auto chunk = found->Fetch();
+    return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).ToString() : std::string();
+}
+
+// The one table of result types (TOFIX148): how a result column of each
+// DuckDB type comes back as Arrow. `native`: DuckDB's Arrow export gives
+// this exact Arrow type, so whole chunks go through the C interface;
+// otherwise values are appended one by one. `exact`: every value comes
+// back unchanged (the SQL step refuses result columns that would not).
+struct ResultType {
+    std::shared_ptr<arrow::DataType> arrow;
+    bool native;
+    bool exact;
+};
+
+ResultType ResultTypeFor(const duckdb::LogicalType& type) {
+    switch (type.id()) {
+        case duckdb::LogicalTypeId::BOOLEAN: return {arrow::boolean(), true, true};
+        case duckdb::LogicalTypeId::TINYINT:
+        case duckdb::LogicalTypeId::SMALLINT: return {arrow::int32(), false, true};
+        case duckdb::LogicalTypeId::INTEGER: return {arrow::int32(), true, true};
+        case duckdb::LogicalTypeId::BIGINT: return {arrow::int64(), true, true};
+        case duckdb::LogicalTypeId::UTINYINT:
+        case duckdb::LogicalTypeId::USMALLINT:
+        case duckdb::LogicalTypeId::UINTEGER: return {arrow::uint32(), false, true};
+        case duckdb::LogicalTypeId::UBIGINT: return {arrow::uint64(), true, true};
+        case duckdb::LogicalTypeId::FLOAT: return {arrow::float32(), true, true};
+        case duckdb::LogicalTypeId::DOUBLE: return {arrow::float64(), true, true};
+        case duckdb::LogicalTypeId::VARCHAR: return {arrow::utf8(), true, true};
+        // Dates and timestamps stay dates (owner 2026-10-14).
+        case duckdb::LogicalTypeId::DATE: return {arrow::date32(), true, true};
+        case duckdb::LogicalTypeId::TIMESTAMP: return {arrow::timestamp(arrow::TimeUnit::MICRO), true, true};
+        // 0.1, 1234567.5, SUM of decimals: numbers, as double; exact up to 15
+        // digits, so the SQL step accepts those (owner 2026-10-14).
+        case duckdb::LogicalTypeId::DECIMAL:
+            return {arrow::float64(), false, duckdb::DecimalType::GetWidth(type) <= 15};
+        // Timestamps with a time zone or another unit, HUGEINT, BLOB, nested
+        // types: their text.
+        default: return {arrow::utf8(), false, false};
+    }
+}
+
+bool ConvertsNatively(const duckdb::LogicalType& type) { return ResultTypeFor(type).native; }
+
+std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    switch (type->id()) {
+        case arrow::Type::BOOL:
+            return "BOOLEAN";
+        case arrow::Type::INT8:
+        case arrow::Type::UINT8:
+        case arrow::Type::INT16:
+        case arrow::Type::UINT16:
+        case arrow::Type::INT32:
+            return "INTEGER";
+        case arrow::Type::UINT32:
+        case arrow::Type::INT64:
+            return "BIGINT";
+        case arrow::Type::UINT64:
+            return "HUGEINT";
+        case arrow::Type::FLOAT:
+            return "FLOAT";
+        case arrow::Type::DOUBLE:
+            return "DOUBLE";
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+            return "VARCHAR";
+        case arrow::Type::DATE32:
+            return "DATE";
+        case arrow::Type::TIMESTAMP:  // a time zone stays text (below)
+            if (std::static_pointer_cast<arrow::TimestampType>(type)->timezone().empty()) return "TIMESTAMP";
+            return "VARCHAR";
+        case arrow::Type::DECIMAL128:
+            return "DOUBLE";
+        // Nested columns (TOFIX143): lists and structs keep their structure so
+        // SQL can read them; previously they arrived as their text form.
+        case arrow::Type::LIST:
+            return DuckDBTypeForArrowType(
+                std::static_pointer_cast<arrow::ListType>(type)->value_type()) + "[]";
+        case arrow::Type::STRUCT: {
+            std::string sql = "STRUCT(";
+            for (int i = 0; i < type->num_fields(); ++i) {
+                if (i > 0) sql += ", ";
+                sql += QuoteIdentifier(type->field(i)->name()) + " " +
+                       DuckDBTypeForArrowType(type->field(i)->type());
+            }
+            return sql + ")";
+        }
+        default:
+            return "VARCHAR";
+    }
+}
+
+duckdb::LogicalType DuckDBLogicalTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    switch (type->id()) {
+        case arrow::Type::BOOL:
+            return duckdb::LogicalType::BOOLEAN;
+        case arrow::Type::INT8:
+        case arrow::Type::UINT8:
+        case arrow::Type::INT16:
+        case arrow::Type::UINT16:
+        case arrow::Type::INT32:
+            return duckdb::LogicalType::INTEGER;
+        case arrow::Type::UINT32:
+        case arrow::Type::INT64:
+            return duckdb::LogicalType::BIGINT;
+        case arrow::Type::UINT64:
+            return duckdb::LogicalType::HUGEINT;
+        case arrow::Type::FLOAT:
+            return duckdb::LogicalType::FLOAT;
+        case arrow::Type::DOUBLE:
+        case arrow::Type::DECIMAL128:
+            return duckdb::LogicalType::DOUBLE;
+        case arrow::Type::DATE32:
+            return duckdb::LogicalType::DATE;
+        case arrow::Type::TIMESTAMP:
+            if (std::static_pointer_cast<arrow::TimestampType>(type)->timezone().empty())
+                return duckdb::LogicalType::TIMESTAMP;
+            return duckdb::LogicalType::VARCHAR;
+        case arrow::Type::LIST:
+            return duckdb::LogicalType::LIST(DuckDBLogicalTypeForArrowType(
+                std::static_pointer_cast<arrow::ListType>(type)->value_type()));
+        case arrow::Type::STRUCT: {
+            duckdb::child_list_t<duckdb::LogicalType> children;
+            for (const auto& field : type->fields())
+                children.emplace_back(field->name(), DuckDBLogicalTypeForArrowType(field->type()));
+            return duckdb::LogicalType::STRUCT(std::move(children));
+        }
+        default:
+            return duckdb::LogicalType::VARCHAR;
+    }
+}
+
+duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& scalar);
+
+// Elements and fields carry typed NULLs so a list/struct value matches its column type.
+duckdb::Value DuckDBNestedValue(const std::shared_ptr<arrow::Scalar>& scalar,
+                                const std::shared_ptr<arrow::DataType>& type) {
+    if (!scalar || !scalar->is_valid) return duckdb::Value(DuckDBLogicalTypeForArrowType(type));
+    return DuckDBValueFromArrowScalar(scalar);
+}
+
+duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return duckdb::Value();
+    }
+
+    switch (scalar->type->id()) {
+        case arrow::Type::BOOL:
+            return duckdb::Value(
+                std::static_pointer_cast<arrow::BooleanScalar>(scalar)->value);
+        case arrow::Type::INT8:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value);
+        case arrow::Type::UINT8:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value);
+        case arrow::Type::INT16:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value);
+        case arrow::Type::UINT16:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value);
+        case arrow::Type::INT32:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value);
+        case arrow::Type::UINT32:
+            return duckdb::Value::BIGINT(
+                std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value);
+        case arrow::Type::INT64:
+            return duckdb::Value::BIGINT(
+                std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+        case arrow::Type::UINT64:
+            return duckdb::Value::UHUGEINT(
+                std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+        case arrow::Type::FLOAT:
+            return duckdb::Value::FLOAT(
+                std::static_pointer_cast<arrow::FloatScalar>(scalar)->value);
+        case arrow::Type::DOUBLE:
+            return duckdb::Value::DOUBLE(
+                std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value);
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+            return duckdb::Value(scalar->ToString());
+        case arrow::Type::DATE32:
+            return duckdb::Value::DATE(duckdb::date_t(std::static_pointer_cast<arrow::Date32Scalar>(scalar)->value));
+        case arrow::Type::TIMESTAMP: {
+            const auto& ts = static_cast<const arrow::TimestampScalar&>(*scalar);
+            const auto& tt = static_cast<const arrow::TimestampType&>(*scalar->type);
+            if (!tt.timezone().empty()) return duckdb::Value(scalar->ToString());
+            int64_t micros = ts.value;
+            switch (tt.unit()) {
+                case arrow::TimeUnit::SECOND: micros *= 1000000; break;
+                case arrow::TimeUnit::MILLI: micros *= 1000; break;
+                case arrow::TimeUnit::MICRO: break;
+                case arrow::TimeUnit::NANO: micros /= 1000; break;
+            }
+            return duckdb::Value::TIMESTAMP(duckdb::timestamp_t(micros));
+        }
+        case arrow::Type::DECIMAL128: {
+            const auto& dec = static_cast<const arrow::Decimal128Scalar&>(*scalar);
+            const int32_t scale = static_cast<const arrow::Decimal128Type&>(*scalar->type).scale();
+            return duckdb::Value::DOUBLE(dec.value.ToDouble(scale));
+        }
+        case arrow::Type::LIST: {
+            const auto& list = static_cast<const arrow::ListScalar&>(*scalar);
+            const auto child_type = std::static_pointer_cast<arrow::ListType>(scalar->type)->value_type();
+            std::vector<duckdb::Value> values;
+            values.reserve(static_cast<size_t>(list.value->length()));
+            for (int64_t i = 0; i < list.value->length(); ++i) {
+                auto element = list.value->GetScalar(i);
+                if (!element.ok()) throw std::runtime_error(element.status().ToString());
+                values.push_back(DuckDBNestedValue(*element, child_type));
+            }
+            return duckdb::Value::LIST(DuckDBLogicalTypeForArrowType(child_type), std::move(values));
+        }
+        case arrow::Type::STRUCT: {
+            const auto& item = static_cast<const arrow::StructScalar&>(*scalar);
+            duckdb::child_list_t<duckdb::Value> children;
+            for (int i = 0; i < scalar->type->num_fields(); ++i)
+                children.emplace_back(scalar->type->field(i)->name(),
+                                      DuckDBNestedValue(item.value[static_cast<size_t>(i)],
+                                                        scalar->type->field(i)->type()));
+            return duckdb::Value::STRUCT(std::move(children));
+        }
+        default:
+            return duckdb::Value(scalar->ToString());
+    }
+}
+
+// One value into the builder ResultTypeFor chose for its column.
+arrow::Status AppendDuckDBValueToArrowBuilder(const duckdb::Value& value, arrow::ArrayBuilder* builder) {
+    if (value.IsNull()) return builder->AppendNull();
+    switch (builder->type()->id()) {
+        case arrow::Type::BOOL: return static_cast<arrow::BooleanBuilder*>(builder)->Append(value.GetValue<bool>());
+        case arrow::Type::INT32: return static_cast<arrow::Int32Builder*>(builder)->Append(value.GetValue<int32_t>());
+        case arrow::Type::INT64: return static_cast<arrow::Int64Builder*>(builder)->Append(value.GetValue<int64_t>());
+        case arrow::Type::UINT32: return static_cast<arrow::UInt32Builder*>(builder)->Append(value.GetValue<uint32_t>());
+        case arrow::Type::UINT64: return static_cast<arrow::UInt64Builder*>(builder)->Append(value.GetValue<uint64_t>());
+        case arrow::Type::FLOAT: return static_cast<arrow::FloatBuilder*>(builder)->Append(value.GetValue<float>());
+        case arrow::Type::DOUBLE: return static_cast<arrow::DoubleBuilder*>(builder)->Append(value.GetValue<double>());
+        case arrow::Type::DATE32:
+            return static_cast<arrow::Date32Builder*>(builder)->Append(value.GetValue<duckdb::date_t>().days);
+        case arrow::Type::TIMESTAMP:
+            return static_cast<arrow::TimestampBuilder*>(builder)->Append(value.GetValue<duckdb::timestamp_t>().value);
+        default: return static_cast<arrow::StringBuilder*>(builder)->Append(value.ToString());
+    }
+}
+
+} // namespace
 
 // =============================================================================
 // Constructor / Destructor
 // =============================================================================
 
-DuckDBConnector::DuckDBConnector() {
+DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
     try {
-        // Create in-memory DuckDB instance
-        db_ = std::make_unique<duckdb::DuckDB>(nullptr);  // nullptr = in-memory
+        duckdb::DBConfig config;
+        // The data budget bounds DuckDB too; over it, sorts, joins and
+        // group-bys spill to the spill directory instead of failing. Set
+        // before external access is switched off, which locks temp_directory.
+        opened_budget_ = DataBudgetShareBytes();
+        opened_spill_ = DataSpillDirectory();
+        config.SetOptionByName("memory_limit",
+                               duckdb::Value(std::to_string(std::max<uint64_t>(64, opened_budget_ >> 20)) + "MB"));
+        // Each DuckDB thread needs working memory of its own: one per 256 MB
+        // of budget (a 5 GB sort under 244 MB failed with two threads, ran
+        // with one); more threads than the budget feeds fail instead of
+        // spilling.
+        const uint64_t threads = std::clamp<uint64_t>(opened_budget_ / (256ULL << 20), 1,
+                                                      std::max(1u, std::thread::hardware_concurrency()));
+        config.SetOptionByName("threads", duckdb::Value::BIGINT(static_cast<int64_t>(threads)));
+        // A folder of its own under the spill directory: DuckDBs running at
+        // once (sibling branches) would otherwise share spill file names.
+        static std::atomic<uint64_t> opened{0};
+        const std::string spill = opened_spill_.empty() ? std::string() :
+            (std::filesystem::path(opened_spill_) /
+             (std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" + std::to_string(++opened))).string();
+        std::error_code spill_error;
+        if (!spill.empty() && (std::filesystem::create_directories(spill, spill_error), !spill_error)) {
+            config.SetOptionByName("temp_directory", duckdb::Value(spill));
+            // With external access off DuckDB touches only allowed folders,
+            // its own spill folder included.
+            std::string folder = std::filesystem::path(spill).generic_string();
+            if (folder.back() != '/') folder += '/';
+            config.options.allowed_directories.insert(folder);
+        }
+        config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
+        config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
+        config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
+        for (auto& dir : allowed_directories) config.options.allowed_directories.insert(std::move(dir));
+        config.SetOptionByName("lock_configuration", duckdb::Value::BOOLEAN(true));
+        // The spill folder goes with the database (connections made by
+        // NewConnection share it).
+        db_ = std::shared_ptr<duckdb::DuckDB>(new duckdb::DuckDB(nullptr, &config), [spill](duckdb::DuckDB* db) {
+            delete db;
+            std::error_code ignored;
+            if (!spill.empty()) std::filesystem::remove_all(spill, ignored);
+        });
         conn_ = std::make_unique<duckdb::Connection>(*db_);
-
-        spdlog::info("DuckDB connector initialized (in-memory mode)");
-
-    } catch (const duckdb::Exception& e) {
-        spdlog::error("Failed to initialize DuckDB: {}", e.what());
-        last_error_ = e.what();
+        spdlog::debug("DuckDB connector initialized (in-memory, no file or network access)");
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to initialize DuckDB: {}", ErrorText(e));
+        last_error_ = ErrorText(e);
+        conn_.reset();
+        db_.reset();
     }
+}
+
+std::string DuckDBConnector::ReadOnlySelectRejection(const std::string& sql) {
+    if (!conn_) return "DuckDB connection not initialized";
+    try {
+        auto statements = conn_->ExtractStatements(sql);
+        if (statements.size() != 1) {
+            return "the SQL step takes exactly one statement; found " +
+                   std::to_string(statements.size());
+        }
+        if (statements.front()->type != duckdb::StatementType::SELECT_STATEMENT) {
+            return "only a read-only SELECT (or WITH ... SELECT) is allowed in a SQL step";
+        }
+        return {};
+    } catch (const std::exception& e) {
+        return std::string("the SQL does not parse: ") + ErrorText(e);
+    }
+}
+
+std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
+    if (!conn_) return "DuckDB connection not initialized";
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) return prepared->GetError();
+        const auto& names = prepared->GetNames();
+        const auto& types = prepared->GetTypes();
+        std::string unsupported;
+        for (size_t i = 0; i < types.size(); ++i) {
+            if (ResultTypeFor(types[i]).exact) continue;
+            unsupported += (unsupported.empty() ? "" : ", ") + std::string("'") + names[i] + "' (" +
+                           types[i].ToString() + ")";
+        }
+        if (!unsupported.empty()) {
+            return "result column(s) " + unsupported +
+                   " have a type that cannot be returned exactly; CAST them in the query "
+                   "(for example to VARCHAR, BIGINT or DOUBLE)";
+        }
+        return {};
+    } catch (const std::exception& e) {
+        return ErrorText(e);
+    }
+}
+
+std::vector<std::string> DuckDBConnector::ResultColumnNames(const std::string& sql) {
+    if (!conn_) return {};
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) {
+            last_error_ = prepared->GetError();
+            return {};
+        }
+        return prepared->GetNames();
+    } catch (const std::exception& e) {
+        last_error_ = ErrorText(e);
+        return {};
+    }
+}
+
+namespace {
+// 'a''b' quoting for a file path in SQL (forward slashes).
+std::string SqlPathLiteral(const std::string& path) {
+    std::string text = "'";
+    for (char c : path) {
+        if (c == '\\') text += '/';
+        else if (c == '\'') text += "''";
+        else text += c;
+    }
+    return text + "'";
+}
+}  // namespace
+
+bool DuckDBConnector::RegisterParquetView(const std::string& name, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return false;
+    }
+    return Execute("CREATE OR REPLACE VIEW " + QuoteIdentifier(name) +
+                   " AS SELECT * FROM read_parquet(" + SqlPathLiteral(path) + ")");
+}
+
+bool DuckDBConnector::RegisterParquetTable(const std::string& name, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return false;
+    }
+    return Execute("CREATE OR REPLACE TABLE " + QuoteIdentifier(name) +
+                   " AS SELECT * FROM read_parquet(" + SqlPathLiteral(path) + ")");
+}
+
+int64_t DuckDBConnector::CopyQueryToParquet(const std::string& sql, const std::string& path) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return -1;
+    }
+    try {
+        auto result = conn_->Query("COPY (" + sql + ") TO " + SqlPathLiteral(path) +
+                                   " (FORMAT PARQUET, ROW_GROUP_SIZE 131072, COMPRESSION ZSTD)");
+        if (result->HasError()) {
+            last_error_ = result->GetError();
+            return -1;
+        }
+        auto chunk = result->Fetch();
+        return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).GetValue<int64_t>() : 0;
+    } catch (const std::exception& e) {
+        last_error_ = ErrorText(e);
+        return -1;
+    }
+}
+
+void DuckDBConnector::Interrupt() {
+    if (conn_) conn_->Interrupt();
+}
+
+DuckDBConnector::DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db) : db_(std::move(db)) {
+    try {
+        conn_ = std::make_unique<duckdb::Connection>(*db_);
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        conn_.reset();
+    }
+}
+
+bool DuckDBConnector::MatchesDataBudget() const {
+    return opened_budget_ == DataBudgetShareBytes() && opened_spill_ == DataSpillDirectory();
+}
+
+std::unique_ptr<DuckDBConnector> DuckDBConnector::NewConnection() {
+    if (!db_ || !conn_) return nullptr;
+    std::unique_ptr<DuckDBConnector> c(new DuckDBConnector(SharedTag{}, db_));
+    c->opened_budget_ = opened_budget_;
+    c->opened_spill_ = opened_spill_;
+    return c->IsReady() ? std::move(c) : nullptr;
 }
 
 DuckDBConnector::~DuckDBConnector() {
@@ -31,13 +489,18 @@ DuckDBConnector::~DuckDBConnector() {
 }
 
 // =============================================================================
-// Table Registration (Zero-Copy Arrow Integration)
+// Table Registration (the rows are copied into a DuckDB table)
 // =============================================================================
 
 bool DuckDBConnector::RegisterTable(
     const std::string& table_name,
     std::shared_ptr<arrow::Table> arrow_table) {
 
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        spdlog::error(last_error_);
+        return false;
+    }
     if (!arrow_table) {
         last_error_ = "Cannot register null Arrow table";
         spdlog::error(last_error_);
@@ -45,40 +508,82 @@ bool DuckDBConnector::RegisterTable(
     }
 
     try {
-        // Register Arrow table as a DuckDB table (zero-copy view)
-        // DuckDB will query the Arrow table directly without copying
-        conn_->TableFunction("arrow_scan", {duckdb::Value::POINTER((uintptr_t)arrow_table.get())})
-             ->CreateView(table_name, true, true);
+        const std::string quoted_table_name = QuoteIdentifier(table_name);
+        // Replace whatever holds the name (a table registered earlier on
+        // this connection, or a view).
+        const std::string existing = ExistingObjectKind(*conn_, table_name);
+        if (!existing.empty()) {
+            const char* kind = existing == "VIEW" ? "VIEW" : "TABLE";
+            auto drop = conn_->Query(std::string("DROP ") + kind + " " + quoted_table_name);
+            if (drop->HasError()) {
+                last_error_ = drop->GetError();
+                spdlog::error("Failed to drop existing {} '{}': {}", existing, table_name, last_error_);
+                return false;
+            }
+        }
 
-        // Store reference to keep Arrow table alive
-        registered_tables_[table_name] = arrow_table;
+        std::ostringstream create_sql;
+        create_sql << "CREATE TABLE " << quoted_table_name << " (";
+        for (int i = 0; i < arrow_table->num_columns(); ++i) {
+            if (i > 0) {
+                create_sql << ", ";
+            }
+            const auto& field = arrow_table->schema()->field(i);
+            create_sql << QuoteIdentifier(field->name()) << " "
+                       << DuckDBTypeForArrowType(field->type());
+        }
+        create_sql << ")";
 
-        spdlog::info("Registered Arrow table '{}': {} rows, {} columns",
+        auto create_result = conn_->Query(create_sql.str());
+        if (create_result->HasError()) {
+            last_error_ = create_result->GetError();
+            spdlog::error("Failed to create table '{}': {}", table_name, last_error_);
+            return false;
+        }
+
+        duckdb::Appender appender(*conn_, table_name);
+        for (int64_t row = 0; row < arrow_table->num_rows(); ++row) {
+            appender.BeginRow();
+            for (int col = 0; col < arrow_table->num_columns(); ++col) {
+                auto scalar_result = arrow_table->column(col)->GetScalar(row);
+                if (!scalar_result.ok()) {
+                    last_error_ = scalar_result.status().ToString();
+                    spdlog::error("Failed to read Arrow scalar at row {}, column {}: {}",
+                                  row, col, last_error_);
+                    return false;
+                }
+                appender.Append(DuckDBValueFromArrowScalar(*scalar_result));
+            }
+            appender.EndRow();
+        }
+        appender.Close();
+
+        spdlog::debug("Registered Arrow table '{}' as DuckDB table: {} rows, {} columns",
                      table_name, arrow_table->num_rows(), arrow_table->num_columns());
 
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Failed to register table '{}': {}", table_name, last_error_);
         return false;
     }
 }
 
 bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
+    if (!conn_) return false;
     try {
-        // Drop view
-        std::string sql = "DROP VIEW IF EXISTS " + table_name;
-        conn_->Query(sql);
-
-        // Remove from tracking
-        registered_tables_.erase(table_name);
+        const std::string existing = ExistingObjectKind(*conn_, table_name);
+        if (!existing.empty()) {
+            conn_->Query(std::string(existing == "VIEW" ? "DROP VIEW " : "DROP TABLE ") +
+                         QuoteIdentifier(table_name));
+        }
 
         spdlog::debug("Unregistered table '{}'", table_name);
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Failed to unregister table '{}': {}", table_name, last_error_);
         return false;
     }
@@ -121,8 +626,34 @@ std::shared_ptr<arrow::Table> DuckDBConnector::Query(const std::string& sql) {
         return arrow_result;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Query exception: {}", last_error_);
+        return nullptr;
+    }
+}
+
+std::shared_ptr<arrow::Table> DuckDBConnector::QueryWithParams(const std::string& sql, std::vector<duckdb::Value> params) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return nullptr;
+    }
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) {
+            last_error_ = prepared->GetError();
+            return nullptr;
+        }
+        duckdb::vector<duckdb::Value> values(params.begin(), params.end());
+        auto result = prepared->Execute(values, false);
+        if (!result || result->HasError()) {
+            last_error_ = result ? result->GetError() : std::string("no result");
+            return nullptr;
+        }
+        auto table = ResultToArrow(std::move(result));
+        if (!table) last_error_ = "the result could not be converted to a table";
+        return table;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
         return nullptr;
     }
 }
@@ -146,361 +677,10 @@ bool DuckDBConnector::Execute(const std::string& sql) {
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Execute exception: {}", last_error_);
         return false;
     }
-}
-
-// =============================================================================
-// Table Introspection
-// =============================================================================
-
-std::vector<std::string> DuckDBConnector::GetTableNames() const {
-    std::vector<std::string> names;
-    for (const auto& [name, table] : registered_tables_) {
-        names.push_back(name);
-    }
-    return names;
-}
-
-std::vector<DuckDBConnector::ColumnInfo> DuckDBConnector::GetTableSchema(
-    const std::string& table_name) {
-
-    std::vector<ColumnInfo> schema;
-
-    try {
-        std::string sql = "DESCRIBE " + table_name;
-        auto result = conn_->Query(sql);
-
-        if (result->HasError()) {
-            spdlog::error("Failed to get schema for '{}': {}", table_name, result->GetError());
-            return schema;
-        }
-
-        // DuckDB DESCRIBE returns: column_name, column_type, null, key, default, extra
-        while (true) {
-            auto chunk = result->Fetch();
-            if (!chunk || chunk->size() == 0) break;
-
-            for (idx_t row = 0; row < chunk->size(); ++row) {
-                ColumnInfo info;
-                info.name = chunk->GetValue(0, row).ToString();
-                info.type = chunk->GetValue(1, row).ToString();
-                info.nullable = chunk->GetValue(2, row).ToString() == "YES";
-                schema.push_back(info);
-            }
-        }
-
-    } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception getting schema: {}", e.what());
-    }
-
-    return schema;
-}
-
-int64_t DuckDBConnector::GetRowCount(const std::string& table_name) {
-    try {
-        std::string sql = "SELECT COUNT(*) FROM " + table_name;
-        auto result = conn_->Query(sql);
-
-        if (result->HasError()) {
-            spdlog::error("Failed to get row count: {}", result->GetError());
-            return -1;
-        }
-
-        auto chunk = result->Fetch();
-        if (chunk && chunk->size() > 0) {
-            return chunk->GetValue(0, 0).GetValue<int64_t>();
-        }
-
-    } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception getting row count: {}", e.what());
-    }
-
-    return -1;
-}
-
-bool DuckDBConnector::HasTable(const std::string& table_name) const {
-    return registered_tables_.find(table_name) != registered_tables_.end();
-}
-
-// =============================================================================
-// Query Analysis
-// =============================================================================
-
-std::string DuckDBConnector::ExplainQuery(const std::string& sql) {
-    try {
-        std::string explain_sql = "EXPLAIN " + sql;
-        auto result = conn_->Query(explain_sql);
-
-        if (result->HasError()) {
-            return "Error: " + result->GetError();
-        }
-
-        std::ostringstream plan;
-        while (true) {
-            auto chunk = result->Fetch();
-            if (!chunk || chunk->size() == 0) break;
-
-            for (idx_t row = 0; row < chunk->size(); ++row) {
-                plan << chunk->GetValue(0, row).ToString() << "\n";
-            }
-        }
-
-        return plan.str();
-
-    } catch (const duckdb::Exception& e) {
-        return "Exception: " + std::string(e.what());
-    }
-}
-
-DuckDBConnector::QueryProfile DuckDBConnector::ProfileQuery(const std::string& sql) {
-    QueryProfile profile;
-    profile.query = sql;
-
-    auto start = std::chrono::high_resolution_clock::now();
-
-    auto result = Query(sql);
-
-    auto end = std::chrono::high_resolution_clock::now();
-    profile.execution_time_ms = std::chrono::duration<double, std::milli>(end - start).count();
-
-    if (result) {
-        profile.rows_returned = result->num_rows();
-    }
-
-    profile.plan = ExplainQuery(sql);
-
-    return profile;
-}
-
-void DuckDBConnector::SetProfilingEnabled(bool enabled) {
-    profiling_enabled_ = enabled;
-    try {
-        if (enabled) {
-            conn_->Query("PRAGMA enable_profiling");
-        } else {
-            conn_->Query("PRAGMA disable_profiling");
-        }
-    } catch (const duckdb::Exception& e) {
-        spdlog::warn("Failed to set profiling: {}", e.what());
-    }
-}
-
-// =============================================================================
-// Convenience Methods (Data Studio Operations)
-// =============================================================================
-
-std::shared_ptr<arrow::Table> DuckDBConnector::FilterRows(
-    const std::string& table_name,
-    const std::string& condition) {
-
-    std::string sql = "SELECT * FROM " + table_name + " WHERE " + condition;
-    return Query(sql);
-}
-
-std::shared_ptr<arrow::Table> DuckDBConnector::SelectColumns(
-    const std::string& table_name,
-    const std::vector<std::string>& columns) {
-
-    if (columns.empty()) {
-        return Query("SELECT * FROM " + table_name);
-    }
-
-    std::ostringstream sql;
-    sql << "SELECT ";
-    for (size_t i = 0; i < columns.size(); ++i) {
-        if (i > 0) sql << ", ";
-        sql << columns[i];
-    }
-    sql << " FROM " << table_name;
-
-    return Query(sql.str());
-}
-
-std::shared_ptr<arrow::Table> DuckDBConnector::GroupBy(
-    const std::string& table_name,
-    const std::vector<std::string>& group_by_cols,
-    const std::map<std::string, std::string>& aggregations) {
-
-    std::ostringstream sql;
-    sql << "SELECT ";
-
-    // Group by columns
-    for (size_t i = 0; i < group_by_cols.size(); ++i) {
-        if (i > 0) sql << ", ";
-        sql << group_by_cols[i];
-    }
-
-    // Aggregations
-    for (const auto& [output_col, agg_expr] : aggregations) {
-        if (!group_by_cols.empty() || &agg_expr != &aggregations.begin()->second) {
-            sql << ", ";
-        }
-        sql << agg_expr << " AS " << output_col;
-    }
-
-    sql << " FROM " << table_name;
-
-    if (!group_by_cols.empty()) {
-        sql << " GROUP BY ";
-        for (size_t i = 0; i < group_by_cols.size(); ++i) {
-            if (i > 0) sql << ", ";
-            sql << group_by_cols[i];
-        }
-    }
-
-    return Query(sql.str());
-}
-
-std::string DuckDBConnector::JoinTypeToSQL(JoinType type) const {
-    switch (type) {
-        case JoinType::Inner: return "INNER JOIN";
-        case JoinType::Left:  return "LEFT JOIN";
-        case JoinType::Right: return "RIGHT JOIN";
-        case JoinType::Full:  return "FULL OUTER JOIN";
-        default: return "INNER JOIN";
-    }
-}
-
-std::shared_ptr<arrow::Table> DuckDBConnector::Join(
-    const std::string& left_table,
-    const std::string& right_table,
-    const std::string& on_clause,
-    JoinType join_type) {
-
-    std::ostringstream sql;
-    sql << "SELECT * FROM " << left_table << " "
-        << JoinTypeToSQL(join_type) << " "
-        << right_table << " ON " << on_clause;
-
-    return Query(sql.str());
-}
-
-std::shared_ptr<arrow::Table> DuckDBConnector::Sort(
-    const std::string& table_name,
-    const std::vector<std::string>& order_by_cols,
-    bool ascending) {
-
-    std::ostringstream sql;
-    sql << "SELECT * FROM " << table_name << " ORDER BY ";
-
-    for (size_t i = 0; i < order_by_cols.size(); ++i) {
-        if (i > 0) sql << ", ";
-        sql << order_by_cols[i];
-    }
-
-    if (!ascending) {
-        sql << " DESC";
-    }
-
-    return Query(sql.str());
-}
-
-std::shared_ptr<arrow::Table> DuckDBConnector::Distinct(
-    const std::string& table_name,
-    const std::vector<std::string>& columns) {
-
-    std::ostringstream sql;
-    sql << "SELECT DISTINCT ";
-
-    if (columns.empty()) {
-        sql << "*";
-    } else {
-        for (size_t i = 0; i < columns.size(); ++i) {
-            if (i > 0) sql << ", ";
-            sql << columns[i];
-        }
-    }
-
-    sql << " FROM " << table_name;
-    return Query(sql.str());
-}
-
-std::shared_ptr<arrow::Table> DuckDBConnector::Sample(
-    const std::string& table_name,
-    int64_t n,
-    bool random) {
-
-    std::ostringstream sql;
-    sql << "SELECT * FROM " << table_name;
-
-    if (random) {
-        sql << " USING SAMPLE " << n;
-    } else {
-        sql << " LIMIT " << n;
-    }
-
-    return Query(sql.str());
-}
-
-std::vector<DuckDBConnector::ColumnStats> DuckDBConnector::ComputeStats(
-    const std::string& table_name) {
-
-    std::vector<ColumnStats> stats;
-
-    // Get schema first
-    auto schema = GetTableSchema(table_name);
-
-    for (const auto& col_info : schema) {
-        // Skip non-numeric columns
-        if (col_info.type.find("INT") == std::string::npos &&
-            col_info.type.find("DOUBLE") == std::string::npos &&
-            col_info.type.find("FLOAT") == std::string::npos &&
-            col_info.type.find("DECIMAL") == std::string::npos) {
-            continue;
-        }
-
-        ColumnStats col_stat;
-        col_stat.column_name = col_info.name;
-
-        // Compute all stats in one query
-        std::ostringstream sql;
-        sql << "SELECT "
-            << "COUNT(" << col_info.name << ") as count, "
-            << "COUNT(*) - COUNT(" << col_info.name << ") as null_count, "
-            << "MIN(" << col_info.name << ") as min_val, "
-            << "MAX(" << col_info.name << ") as max_val, "
-            << "AVG(" << col_info.name << ") as mean, "
-            << "MEDIAN(" << col_info.name << ") as median, "
-            << "STDDEV(" << col_info.name << ") as std_dev, "
-            << "PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY " << col_info.name << ") as p25, "
-            << "PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY " << col_info.name << ") as p75 "
-            << "FROM " << table_name;
-
-        auto result = Query(sql.str());
-        if (result && result->num_rows() > 0) {
-            // Extract values from result
-            auto count_col = result->GetColumnByName("count");
-            auto null_count_col = result->GetColumnByName("null_count");
-            auto min_col = result->GetColumnByName("min_val");
-            auto max_col = result->GetColumnByName("max_val");
-            auto mean_col = result->GetColumnByName("mean");
-            auto median_col = result->GetColumnByName("median");
-            auto std_dev_col = result->GetColumnByName("std_dev");
-            auto p25_col = result->GetColumnByName("p25");
-            auto p75_col = result->GetColumnByName("p75");
-
-            // Convert to scalars (simplified - assumes single row result)
-            // In production, you'd need proper Arrow scalar extraction
-            col_stat.count = 0;  // Placeholder
-            col_stat.null_count = 0;
-            col_stat.min = 0.0;
-            col_stat.max = 0.0;
-            col_stat.mean = 0.0;
-            col_stat.median = 0.0;
-            col_stat.std_dev = 0.0;
-            col_stat.percentile_25 = 0.0;
-            col_stat.percentile_75 = 0.0;
-
-            // TODO: Proper Arrow scalar extraction here
-        }
-
-        stats.push_back(col_stat);
-    }
-
-    return stats;
 }
 
 // =============================================================================
@@ -515,8 +695,6 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
     }
 
     try {
-        // DuckDB 1.4.3: Manually convert result to Arrow
-        // Build Arrow arrays from DuckDB chunks
         std::vector<std::shared_ptr<arrow::Field>> fields;
         std::vector<std::shared_ptr<arrow::Array>> columns;
 
@@ -524,15 +702,53 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         auto& types = result->types;
         auto& names = result->names;
 
+        // Booleans, integers, floats, doubles and text: export whole chunks
+        // through the Arrow C interface (same Arrow types as below).
+        if (std::all_of(types.begin(), types.end(), ConvertsNatively)) {
+            duckdb::ClientProperties options = result->client_properties;
+            options.arrow_offset_size = duckdb::ArrowOffsetSize::REGULAR;
+            options.produce_arrow_string_view = false;
+            ArrowSchema c_schema;
+            duckdb::ArrowConverter::ToArrowSchema(&c_schema, types, names, options);
+            auto schema = arrow::ImportSchema(&c_schema);
+            if (!schema.ok()) {
+                spdlog::error("Arrow schema import failed: {}", schema.status().ToString());
+                return nullptr;
+            }
+            const std::unordered_map<duckdb::idx_t, const duckdb::shared_ptr<duckdb::ArrowTypeExtensionData>> no_extensions;
+            std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+            while (true) {
+                auto chunk = result->Fetch();
+                if (!chunk || chunk->size() == 0) break;
+                ArrowArray c_array;
+                duckdb::ArrowConverter::ToArrowArray(*chunk, &c_array, options, no_extensions);
+                auto batch = arrow::ImportRecordBatch(&c_array, *schema);
+                if (!batch.ok()) {
+                    spdlog::error("Arrow batch import failed: {}", batch.status().ToString());
+                    return nullptr;
+                }
+                batches.push_back(std::move(*batch));
+            }
+            auto table = arrow::Table::FromRecordBatches(*schema, batches);
+            if (!table.ok()) {
+                spdlog::error("Arrow table assembly failed: {}", table.status().ToString());
+                return nullptr;
+            }
+            return *table;
+        }
+
         // Initialize builders for each column
         std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
         for (size_t i = 0; i < types.size(); ++i) {
-            // Map DuckDB type to Arrow type and create builder
-            // For simplicity, we'll use string builders for all types
-            // In production, map each DuckDB type to proper Arrow type
-            fields.push_back(arrow::field(names[i], arrow::utf8()));
-            builders.push_back(std::unique_ptr<arrow::ArrayBuilder>(
-                new arrow::StringBuilder()));
+            const auto arrow_type = ResultTypeFor(types[i]).arrow;
+            fields.push_back(arrow::field(names[i], arrow_type));
+            std::unique_ptr<arrow::ArrayBuilder> builder;
+            const arrow::Status made = arrow::MakeBuilder(arrow::default_memory_pool(), arrow_type, &builder);
+            if (!made.ok()) {
+                spdlog::error("Arrow builder for '{}': {}", names[i], made.ToString());
+                return nullptr;
+            }
+            builders.push_back(std::move(builder));
         }
 
         // Iterate through result chunks
@@ -543,8 +759,12 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
             for (idx_t row = 0; row < chunk->size(); ++row) {
                 for (size_t col = 0; col < chunk->ColumnCount(); ++col) {
                     auto value = chunk->GetValue(col, row);
-                    auto* str_builder = static_cast<arrow::StringBuilder*>(builders[col].get());
-                    str_builder->Append(value.ToString());
+                    auto status = AppendDuckDBValueToArrowBuilder(value, builders[col].get());
+                    if (!status.ok()) {
+                        spdlog::error("Failed to append DuckDB result value: {}",
+                                      status.ToString());
+                        return nullptr;
+                    }
                 }
             }
         }
@@ -567,7 +787,7 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         return table;
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception converting result to Arrow: {}", e.what());
+        spdlog::error("Exception converting result to Arrow: {}", ErrorText(e));
         return nullptr;
     }
 }

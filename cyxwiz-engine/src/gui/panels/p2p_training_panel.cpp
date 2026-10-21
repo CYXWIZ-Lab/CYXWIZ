@@ -1,8 +1,11 @@
 #include "p2p_training_panel.h"
+#include <ctime>
+#include "../ui_buttons.h"
 #include "../../core/model_format.h"
 #include "../../core/model_exporter.h"
 #include "../../core/formats/cyxmodel_format.h"
 #include "../../core/project_manager.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 #include <implot.h>
@@ -80,6 +83,12 @@ void P2PTrainingPanel::SetP2PClient(std::shared_ptr<network::P2PClient> client) 
         p2p_client_->SetLogCallback([this](const std::string& source, const std::string& message) {
             OnLog(source, message);
         });
+
+        // The node's category; the Server Connection window does not
+        // replace this one (TOFIX118 P4 GUI).
+        p2p_client_->SetFailureCallback([this](const network::TrainingFailureReport& report) {
+            OnFailure(report);
+        });
     }
 }
 
@@ -92,6 +101,8 @@ void P2PTrainingPanel::StartMonitoring(const std::string& job_id, const std::str
     training_complete_ = false;
     has_error_ = false;
     error_message_.clear();
+    has_failure_ = false;
+    stopped_by_user_ = false;
     training_start_time_ = std::chrono::steady_clock::now();
 
     // Clear previous data
@@ -99,7 +110,12 @@ void P2PTrainingPanel::StartMonitoring(const std::string& job_id, const std::str
     accuracy_history_.Clear();
     gpu_usage_history_.Clear();
     memory_usage_history_.Clear();
-    checkpoint_history_.clear();
+    // A resumed job keeps its checkpoints listed; a different job starts empty.
+    if (job_id != checkpoints_job_id_) {
+        checkpoint_history_.clear();
+        open_checkpoint_rows_.clear();
+        checkpoints_job_id_ = job_id;
+    }
     log_entries_.clear();
 
     // Re-enable control buttons for new training
@@ -195,6 +211,8 @@ void P2PTrainingPanel::Render() {
         ImGui::Separator();
     }
 
+    RenderRecoveryCards();
+
     // Model export section (shown when training is complete or stopped)
     if (training_complete_) {
         RenderModelExport();
@@ -228,24 +246,25 @@ void P2PTrainingPanel::Render() {
 }
 
 void P2PTrainingPanel::RenderConnectionStatus() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Job ID: %s", job_id_.empty() ? "N/A" : job_id_.c_str());
     ImGui::SameLine();
 
     if (is_monitoring_) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[ACTIVE]");
+        ImGui::TextColored(t.running, "[ACTIVE]");
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[IDLE]");
+        ImGui::TextColored(t.pending, "[IDLE]");
     }
 
     ImGui::Text("Node: %s", node_address_.empty() ? "N/A" : node_address_.c_str());
 
     if (p2p_client_ && p2p_client_->IsConnected()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
+        ImGui::TextColored(t.success, "Connected");
     }
 
     if (has_error_) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", error_message_.c_str());
+        ImGui::TextColored(t.error, "Error: %s", error_message_.c_str());
     }
 }
 
@@ -322,25 +341,26 @@ void P2PTrainingPanel::RenderTrainingControls() {
 }
 
 void P2PTrainingPanel::RenderModelExport() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Model Export");
 
     // Check if project is open
     auto& project = ProjectManager::Instance();
     if (!project.HasActiveProject()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+        ImGui::TextColored(t.warning,
             "No project open.");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "Please create or open a project to export models.");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "File > New Project or File > Open Project");
         return;
     }
 
     // Check if model is available
     if (!model_available_) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+        ImGui::TextColored(t.warning,
             "No model weights available for export.");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "Training may have been stopped before any weights were saved.");
         return;
     }
@@ -394,16 +414,16 @@ void P2PTrainingPanel::RenderModelExport() {
 
     // Show info about .cyxmodel format
     if (export_format_ == 1) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "CyxModel includes: graph, weights, training config, and history");
         if (graph_json_.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+            ImGui::TextColored(t.warning,
                 "Warning: Graph JSON not available. Export will include weights only.");
         }
     }
 
     if (!download_error_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", download_error_.c_str());
+        ImGui::TextColored(t.error, "Error: %s", download_error_.c_str());
     }
 }
 
@@ -419,9 +439,29 @@ void P2PTrainingPanel::RenderProgressBar() {
 
     ImGui::ProgressBar(current_progress_, ImVec2(-1, 0), progress_text);
 
-    // ETA
-    if (estimated_time_remaining_ > 0) {
-        ImGui::Text("Estimated Time Remaining: %s", FormatDuration(estimated_time_remaining_).c_str());
+    // Time left, elapsed and speed as the node reports them (TOFIX118 P4c);
+    // a dash where the node did not report one.
+    cyxwiz::RemoteProgressInputs inputs;
+    inputs.epoch = static_cast<int>(current_epoch_);
+    inputs.total_epochs = static_cast<int>(total_epochs_);
+    inputs.batch = current_batch_;
+    inputs.total_batches = total_batches_;
+    inputs.eta_seconds = latest_progress_.eta_seconds;
+    inputs.elapsed_seconds = latest_progress_.elapsed_seconds;
+    inputs.samples_per_second = latest_progress_.samples_per_second;
+    inputs.batch_size = training_batch_size_;
+    const auto view = cyxwiz::BuildProgressView(inputs);
+    if (ImGui::BeginTable("##node_progress", 3, ImGuiTableFlags_SizingStretchProp)) {
+        const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn(); ImGui::TextColored(muted, "Time left (node)");
+        ImGui::TableNextColumn(); ImGui::TextColored(muted, "Elapsed (node)");
+        ImGui::TableNextColumn(); ImGui::TextColored(muted, "Speed (node)");
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn(); ImGui::TextUnformatted(view.eta.c_str());
+        ImGui::TableNextColumn(); ImGui::TextUnformatted(view.elapsed.c_str());
+        ImGui::TableNextColumn(); ImGui::TextUnformatted(view.speed.c_str());
+        ImGui::EndTable();
     }
 
     // Current metrics
@@ -479,6 +519,7 @@ void P2PTrainingPanel::RenderMetricsPlots() {
 }
 
 void P2PTrainingPanel::RenderLogs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     ImGui::Checkbox("Auto-scroll", &auto_scroll_logs_);
@@ -491,11 +532,11 @@ void P2PTrainingPanel::RenderLogs() {
 
     if (ImGui::BeginChild("LogsScrollArea", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar)) {
         for (const auto& entry : log_entries_) {
-            ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // White for INFO
+            ImVec4 color = t.text;  // White for INFO
             if (entry.level == "WARN") {
-                color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);  // Yellow for warnings
+                color = t.warning;  // Yellow for warnings
             } else if (entry.level == "ERROR") {
-                color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);  // Red for errors
+                color = t.error;  // Red for errors
             }
 
             ImGui::TextColored(color, "[%s] [%s] [%s] %s",
@@ -520,39 +561,65 @@ void P2PTrainingPanel::RenderCheckpoints() {
         return;
     }
 
-    if (ImGui::BeginTable("CheckpointsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Epoch");
-        ImGui::TableSetupColumn("Timestamp");
-        ImGui::TableSetupColumn("Hash");
-        ImGui::TableSetupColumn("Size");
-        ImGui::TableSetupColumn("Storage URI");
+    const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+    if (ImGui::BeginTable("CheckpointsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                                      ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Epoch", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+        ImGui::TableSetupColumn("Continues at batch", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Received", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Loss then", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 0.6f);
         ImGui::TableHeadersRow();
 
-        for (const auto& ckpt : checkpoint_history_) {
+        // Newest first: the resume point is the top row.
+        for (size_t n = checkpoint_history_.size(); n-- > 0;) {
+            const auto& ckpt = checkpoint_history_[n];
+            cyxwiz::RemoteCheckpointRow row;
+            row.epoch = static_cast<int>(ckpt.epoch);
+            row.next_batch = ckpt.next_batch;
+            row.total_batches = ckpt.total_batches;
+            const auto time_value = std::chrono::system_clock::to_time_t(ckpt.timestamp);
+            char received[16] = {};
+            std::strftime(received, sizeof(received), "%H:%M:%S", std::localtime(&time_value));
+            row.received = received;
+            row.loss = ckpt.loss;
+            row.hash = ckpt.checkpoint_hash;
+            const auto view = cyxwiz::BuildCheckpointView(row);
+
+            ImGui::PushID(static_cast<int>(n));
             ImGui::TableNextRow();
-
-            ImGui::TableSetColumnIndex(0);
-            ImGui::Text("%u", ckpt.epoch);
-
-            ImGui::TableSetColumnIndex(1);
-            auto time_t_val = std::chrono::system_clock::to_time_t(ckpt.timestamp);
-            ImGui::Text("%s", std::ctime(&time_t_val));
-
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%s", ckpt.checkpoint_hash.substr(0, 8).c_str());
-
-            ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.2f MB", ckpt.size_bytes / (1024.0 * 1024.0));
-
-            ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%s", ckpt.storage_uri.c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(view.epoch.c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(view.continues_at.c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(view.received.c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(view.loss.c_str());
+            ImGui::TableNextColumn();
+            const bool open = open_checkpoint_rows_.count(n) > 0;
+            if (cyxwiz::ui::LinkButton(open ? "Hide" : "Details")) {
+                if (open) open_checkpoint_rows_.erase(n); else open_checkpoint_rows_.insert(n);
+            }
+            if (open) {
+                for (const auto& [key, value] : view.details) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TableNextColumn(); ImGui::TextColored(muted, "%s", key.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextUnformatted(value.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+            }
+            ImGui::PopID();
         }
-
         ImGui::EndTable();
     }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(muted, "Checkpoints stay on the node until the job succeeds, then the node removes them. "
+                              "They stay listed when this job is sent again.");
+    ImGui::PopTextWrapPos();
 }
 
 void P2PTrainingPanel::RenderStopConfirmPopup() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Open popup if requested
     if (show_stop_confirm_popup_) {
         ImGui::OpenPopup("Stop Training?");
@@ -576,8 +643,8 @@ void P2PTrainingPanel::RenderStopConfirmPopup() {
         float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, t.error);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.text_bright, 0.15f));
         if (ImGui::Button("Yes, Stop", ImVec2(button_width, 0))) {
             if (p2p_client_ && p2p_client_->StopTraining()) {
                 AddLogEntry("WARN", "Training stopped by user");
@@ -614,7 +681,7 @@ void P2PTrainingPanel::OnProgress(const network::TrainingProgress& progress) {
     total_epochs_ = progress.total_epochs;
     current_batch_ = progress.current_batch;
     total_batches_ = progress.total_batches;
-    current_progress_ = progress.progress_percentage;
+    current_progress_ = static_cast<float>(progress.progress_percentage);
 
     // Update metrics history - protect against division by zero
     float epoch_value = static_cast<float>(progress.current_epoch);
@@ -623,15 +690,18 @@ void P2PTrainingPanel::OnProgress(const network::TrainingProgress& progress) {
     }
 
     if (progress.metrics.count("loss")) {
-        loss_history_.AddPoint(epoch_value, progress.metrics.at("loss"));
+        loss_history_.AddPoint(epoch_value, static_cast<float>(progress.metrics.at("loss")));
     }
 
     if (progress.metrics.count("accuracy")) {
-        accuracy_history_.AddPoint(epoch_value, progress.metrics.at("accuracy"));
+        accuracy_history_.AddPoint(epoch_value,
+                                   static_cast<float>(progress.metrics.at("accuracy")));
     }
 
-    gpu_usage_history_.AddPoint(epoch_value, progress.gpu_usage * 100.0f);
-    memory_usage_history_.AddPoint(epoch_value, progress.memory_usage * 100.0f);
+    gpu_usage_history_.AddPoint(epoch_value,
+                                static_cast<float>(progress.gpu_usage * 100.0));
+    memory_usage_history_.AddPoint(epoch_value,
+                                   static_cast<float>(progress.memory_usage * 100.0));
 
     // Update ETA
     UpdateETA();
@@ -651,6 +721,9 @@ void P2PTrainingPanel::OnCheckpoint(const network::CheckpointInfo& checkpoint) {
     entry.storage_uri = checkpoint.storage_uri;
     entry.size_bytes = checkpoint.size_bytes;
     entry.timestamp = std::chrono::system_clock::now();
+    entry.next_batch = checkpoint.next_batch;
+    entry.total_batches = latest_progress_.total_batches;
+    if (latest_progress_.metrics.count("loss")) entry.loss = latest_progress_.metrics.at("loss");
 
     checkpoint_history_.push_back(entry);
     // Enforce size limit to prevent unbounded memory growth
@@ -671,6 +744,16 @@ void P2PTrainingPanel::OnComplete(const network::TrainingComplete& complete) {
     if (complete.success) {
         AddLogEntry("INFO", "Training completed successfully!");
         AddLogEntry("INFO", "Total training time: " + FormatDuration(complete.total_training_time));
+        if (complete.total_epochs_completed > 0) {
+            AddLogEntry("INFO", "Epochs completed: " + std::to_string(complete.total_epochs_completed));
+        }
+        if (complete.samples_per_second > 0.0) {
+            AddLogEntry("INFO", "Node speed: " + std::to_string(complete.samples_per_second) + " samples/s over " +
+                                    cyxwiz::FormatRemoteDuration(static_cast<long long>(complete.train_seconds)));
+        }
+        // The node removes a job's checkpoints once it succeeds (P4e-3).
+        checkpoint_history_.clear();
+        open_checkpoint_rows_.clear();
 
         if (complete.final_metrics.count("loss")) {
             AddLogEntry("INFO", "Final loss: " + std::to_string(complete.final_metrics.at("loss")));
@@ -681,6 +764,7 @@ void P2PTrainingPanel::OnComplete(const network::TrainingComplete& complete) {
     } else {
         // Check if stopped by user (not an error)
         if (complete.final_metrics.count("stopped_by_user")) {
+            stopped_by_user_ = true;
             AddLogEntry("WARN", "Training stopped by user");
         } else {
             AddLogEntry("ERROR", "Training failed");

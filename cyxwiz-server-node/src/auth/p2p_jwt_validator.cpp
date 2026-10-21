@@ -70,6 +70,16 @@ std::optional<P2PAuthClaims> P2PJwtValidator::ValidateToken(const std::string& t
             return std::nullopt;
         }
 
+        // The reservation (TOFIX118 gap 2): the node reports its end under
+        // this id and enforces its end time.
+        if (decoded.has_payload_claim("reservation_id") && decoded.has_payload_claim("reservation_expires")) {
+            claims.reservation_id = decoded.get_payload_claim("reservation_id").as_string();
+            claims.reservation_expires = decoded.get_payload_claim("reservation_expires").as_integer();
+        } else {
+            spdlog::warn("P2P JWT: Missing reservation_id or reservation_expires claim");
+            return std::nullopt;
+        }
+
         // Get timestamps
         claims.exp = std::chrono::duration_cast<std::chrono::seconds>(
             decoded.get_expires_at().time_since_epoch()).count();
@@ -93,31 +103,31 @@ std::optional<P2PAuthClaims> P2PJwtValidator::ValidateToken(const std::string& t
     }
 }
 
-bool P2PJwtValidator::ValidateForJob(const std::string& token,
+std::optional<P2PAuthClaims> P2PJwtValidator::ValidateForJob(const std::string& token,
                                       const std::string& expected_job_id,
                                       const std::string& expected_node_id) {
     auto claims = ValidateToken(token);
     if (!claims) {
-        return false;
+        return std::nullopt;
     }
 
     // Verify job_id matches what we expect
     if (claims->job_id != expected_job_id) {
         spdlog::warn("P2P JWT job_id mismatch: got '{}', expected '{}'",
                      claims->job_id, expected_job_id);
-        return false;
+        return std::nullopt;
     }
 
     // Verify node_id matches our node's ID
     if (claims->node_id != expected_node_id) {
         spdlog::warn("P2P JWT node_id mismatch: got '{}', expected '{}'",
                      claims->node_id, expected_node_id);
-        return false;
+        return std::nullopt;
     }
 
     spdlog::info("P2P JWT validated for job {} from user {}",
                  expected_job_id, claims->sub);
-    return true;
+    return claims;
 }
 
 } // namespace cyxwiz

@@ -1,17 +1,3055 @@
 #include "pipeline_executor.h"
-#include "duckdb_connector.h"
+#include "dataset_lineage.h"
+#include "sha256_digest.h"
+#include "hashing_output_stream.h"
+#include <cyxwiz/device.h>
+#include <cyxwiz/model_evaluation.h>
+#include "project_data_path.h"
+#include "sql_transform.h"
+#include "filter_condition.h"
+#include "archive_text_source.h"
+#include "html_document_text.h"
+#include "error_codes.h"
 #include "data_registry.h"
+#include "test_evaluation_tables.h"
+#include "test_predictions_metrics.h"
+#include "data_budget.h"
+#include "sql_step_presentation.h"
+#include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
+#include <arrow/io/buffered.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
+#include "data_convert_service.h"
+#include "data_input_parameters.h"
+#include "data_input_formats.h"
+#include "ner_sequence_builder.h"
+#include "node_executors/pipeline_operator_factory.h"
+#include "node_executors/word_embeddings_operator.h"
+#include "preprocessing_state.h"
+#include "pipeline_runtime_capabilities.h"
+#include "sequence_vocabulary.h"
+#include <arrow/api.h>
+#include <arrow/compute/api.h>
+#include <arrow/csv/api.h>
+#include <arrow/scalar.h>
+#include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cerrno>
+#include <charconv>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <filesystem>
 #include <queue>
+#include <regex>
+#include <sstream>
+#include <iomanip>
 #include <future>
+#include <limits>
 #include <thread>
 #include <chrono>
+#include <ctime>
+#include <functional>
 #include <set>
+#include <mutex>
+#include <optional>
 
 namespace cyxwiz {
+
+namespace {
+
+// The registry name of an operator node's result.
+std::string OperatorOutputName(const std::string& type, int id) {
+    return "ds_operator_" + type + "_" + std::to_string(id);
+}
+
+bool TryParseFiniteDouble(const std::string& value, double& out);
+bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
+bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type);
+std::string ParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    const std::string& fallback);
+bool RequireRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::string& column,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error);
+
+bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
+                          const std::string& name) {
+    auto it = parameters.find(name);
+    return it != parameters.end() && !it->second.empty();
+}
+
+std::string TrimString(const std::string& value) {
+    auto begin = std::find_if_not(value.begin(), value.end(),
+                                  [](unsigned char c) { return std::isspace(c); });
+    auto end = std::find_if_not(value.rbegin(), value.rend(),
+                                [](unsigned char c) { return std::isspace(c); }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+size_t PositiveSizeParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    size_t fallback) {
+    auto it = parameters.find(key);
+    if (it == parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+    try {
+        const long long parsed = std::stoll(it->second);
+        return parsed > 0 ? static_cast<size_t>(parsed) : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string FormatBytesForLog(long double bytes) {
+    constexpr long double kGiB =
+        1024.0L * 1024.0L * 1024.0L;
+    constexpr long double kMiB = 1024.0L * 1024.0L;
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(1);
+    if (bytes >= kGiB) {
+        oss << static_cast<double>(bytes / kGiB) << " GiB";
+    } else {
+        oss << static_cast<double>(bytes / kMiB) << " MiB";
+    }
+    return oss.str();
+}
+
+void WarnIfDenseTextVectorizerMaterializationIsLarge(
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const std::shared_ptr<arrow::Table>& input_table) {
+    if (!input_table) {
+        return;
+    }
+    if (node_type != "TFIDFVectorizer" &&
+        node_type != "CountVectorizer" &&
+        node_type != "TextVectorize") {
+        return;
+    }
+
+    constexpr long double kLargeBoundedOutputBytes =
+        2.0L * 1024.0L * 1024.0L * 1024.0L;
+    constexpr long double kElementBytes = 4.0L;
+    const int64_t rows = input_table->num_rows();
+    if (rows <= 0) {
+        return;
+    }
+    const size_t max_features =
+        PositiveSizeParameterOrDefault(parameters, "max_features", 2000);
+    const long double estimated_bytes =
+        static_cast<long double>(rows) *
+        static_cast<long double>(max_features) *
+        kElementBytes;
+    if (estimated_bytes <= kLargeBoundedOutputBytes) {
+        return;
+    }
+
+    const std::string ngram_range =
+        ParameterOrDefault(parameters, "ngram_range", "1,1");
+    const std::string stop_words =
+        ParameterOrDefault(parameters, "stop_words", "english");
+    spdlog::warn(
+        "[Pipeline] {} dense materialization may pressure host memory: "
+        "rows={}, max_features={}, ngram_range={}, stop_words={}, "
+        "estimated feature allocation={}. Lower max_features, sample rows, "
+        "or use the future sparse path before scaling this graph.",
+        node_type,
+        rows,
+        max_features,
+        ngram_range,
+        stop_words,
+        FormatBytesForLog(estimated_bytes));
+}
+
+std::string DetectFormatNameFromPath(const std::string& path) {
+    std::filesystem::path file_path(path);
+    std::string extension = file_path.extension().string();
+    if (!extension.empty() && extension.front() == '.') {
+        extension.erase(extension.begin());
+    }
+    return ToLowerAscii(extension);
+}
+
+std::shared_ptr<ArrowDataset> LoadDataConvertOutputDataset(
+    const std::string& output_path,
+    const std::string& dataset_name,
+    const std::string& output_format) {
+    std::string format = ToLowerAscii(TrimString(output_format));
+    if (format.empty() || format == "auto") {
+        format = DetectFormatNameFromPath(output_path);
+    }
+
+    DataConvertOptions load_options;
+    load_options.input_path = output_path;
+    load_options.input_format = format;
+    load_options.has_header = true;
+    load_options.auto_detect_delimiter = true;
+    std::string error;
+    auto table = DataConvertService::LoadTable(load_options, error);
+    if (!table) {
+        spdlog::warn("DataConvert output reload failed for '{}': {}",
+                     output_path, error);
+        return nullptr;
+    }
+    return std::make_shared<ArrowDataset>(table, dataset_name);
+}
+
+std::string ToUpperAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::toupper(c));
+                   });
+    return value;
+}
+
+void ParseCommaList(const std::string& value, std::vector<std::string>& out) {
+    std::stringstream parts(value);
+    std::string part;
+    while (std::getline(parts, part, ',')) {
+        const std::string trimmed = TrimString(part);
+        if (!trimmed.empty()) {
+            out.push_back(trimmed);
+        }
+    }
+}
+
+std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
+    std::map<std::string, std::string> result;
+    std::stringstream pairs(mapping);
+    std::string pair;
+    while (std::getline(pairs, pair, ',')) {
+        std::stringstream semicolon_pairs(pair);
+        std::string semicolon_pair;
+        while (std::getline(semicolon_pairs, semicolon_pair, ';')) {
+            const auto delimiter = semicolon_pair.find(':');
+            if (delimiter == std::string::npos) {
+                continue;
+            }
+            const std::string old_name = TrimString(semicolon_pair.substr(0, delimiter));
+            const std::string new_name = TrimString(semicolon_pair.substr(delimiter + 1));
+            if (!old_name.empty() && !new_name.empty()) {
+                result[old_name] = new_name;
+            }
+        }
+    }
+    return result;
+}
+
+std::string ScalarToColumnName(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return {};
+    }
+    std::string value = TrimString(scalar->ToString());
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+        value = value.substr(1, value.size() - 2);
+    }
+    return TrimString(value);
+}
+
+std::string QuoteSqlIdentifier(const std::string& identifier) {
+    std::string quoted = "\"";
+    for (char c : identifier) {
+        if (c == '"') {
+            quoted += "\"\"";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string QuoteSqlStringLiteral(const std::string& value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+std::string QuoteJsonString(const std::string& value) {
+    std::string quoted = "\"";
+    const char* hex = "0123456789abcdef";
+    for (unsigned char c : value) {
+        switch (c) {
+        case '"':
+            quoted += "\\\"";
+            break;
+        case '\\':
+            quoted += "\\\\";
+            break;
+        case '\b':
+            quoted += "\\b";
+            break;
+        case '\f':
+            quoted += "\\f";
+            break;
+        case '\n':
+            quoted += "\\n";
+            break;
+        case '\r':
+            quoted += "\\r";
+            break;
+        case '\t':
+            quoted += "\\t";
+            break;
+        default:
+            if (c < 0x20) {
+                quoted += "\\u00";
+                quoted.push_back(hex[(c >> 4) & 0x0f]);
+                quoted.push_back(hex[c & 0x0f]);
+            } else {
+                quoted.push_back(static_cast<char>(c));
+            }
+            break;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string ScalarToJsonValue(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return "null";
+    }
+
+    switch (scalar->type->id()) {
+    case arrow::Type::BOOL:
+        return std::static_pointer_cast<arrow::BooleanScalar>(scalar)->value
+                   ? "true"
+                   : "false";
+    case arrow::Type::STRING:
+        return QuoteJsonString(
+            ScalarToColumnName(scalar));
+    case arrow::Type::LARGE_STRING:
+        return QuoteJsonString(
+            ScalarToColumnName(scalar));
+    case arrow::Type::INT8:
+    case arrow::Type::INT16:
+    case arrow::Type::INT32:
+    case arrow::Type::INT64:
+    case arrow::Type::UINT8:
+    case arrow::Type::UINT16:
+    case arrow::Type::UINT32:
+    case arrow::Type::UINT64:
+    case arrow::Type::FLOAT:
+    case arrow::Type::DOUBLE:
+        return scalar->ToString();
+    default:
+        return QuoteJsonString(scalar->ToString());
+    }
+}
+
+struct RuleEngineLiteral {
+    std::string sql;
+    bool numeric = false;
+    bool null_value = false;
+};
+
+bool BuildRuleEngineLiteral(const std::string& raw_value,
+                            RuleEngineLiteral& literal,
+                            std::string& error) {
+    const std::string value = TrimString(raw_value);
+    if (value.empty()) {
+        error = "RuleEngine: rule value is required";
+        return false;
+    }
+
+    if (ToLowerAscii(value) == "null") {
+        literal.sql = "NULL";
+        literal.null_value = true;
+        return true;
+    }
+
+    if (value.size() >= 2 &&
+        ((value.front() == '\'' && value.back() == '\'') ||
+         (value.front() == '"' && value.back() == '"'))) {
+        literal.sql = QuoteSqlStringLiteral(value.substr(1, value.size() - 2));
+        return true;
+    }
+
+    double numeric_value = 0.0;
+    if (TryParseFiniteDouble(value, numeric_value)) {
+        literal.sql = value;
+        literal.numeric = true;
+        return true;
+    }
+
+    literal.sql = QuoteSqlStringLiteral(value);
+    return true;
+}
+
+bool BuildRuleEngineCondition(const std::shared_ptr<arrow::Table>& table,
+                              const std::string& condition,
+                              std::string& expression,
+                              std::string& error) {
+    static const std::vector<std::string> operators = {
+        ">=", "<=", "!=", "==", "=", ">", "<"};
+    for (const auto& op : operators) {
+        const auto pos = condition.find(op);
+        if (pos == std::string::npos) {
+            continue;
+        }
+
+        const std::string column = TrimString(condition.substr(0, pos));
+        const std::string raw_value = TrimString(condition.substr(pos + op.size()));
+        if (column.empty() || raw_value.empty()) {
+            error = "RuleEngine: condition must use column operator value";
+            return false;
+        }
+        if (!table || !table->schema()) {
+            error = "RuleEngine: input table schema is unavailable";
+            return false;
+        }
+
+        const int column_index = table->schema()->GetFieldIndex(column);
+        if (column_index < 0) {
+            error = "RuleEngine: condition column '" + column + "' not found";
+            return false;
+        }
+
+        RuleEngineLiteral literal;
+        if (!BuildRuleEngineLiteral(raw_value, literal, error)) {
+            return false;
+        }
+        const bool ordered_compare = op == ">" || op == "<" || op == ">=" || op == "<=";
+        if (ordered_compare) {
+            const auto field = table->schema()->field(column_index);
+            if (!field || !IsNumericArrowType(field->type()) || !literal.numeric) {
+                error = "RuleEngine: ordered comparisons require numeric columns and values";
+                return false;
+            }
+        }
+
+        const std::string sql_op = (op == "==" || op == "=") ? "=" : op;
+        expression = QuoteSqlIdentifier(column) + " " + sql_op + " " + literal.sql;
+        return true;
+    }
+
+    error = "RuleEngine: condition must contain a supported comparison operator";
+    return false;
+}
+
+bool BuildRuleEngineCaseExpression(const std::shared_ptr<arrow::Table>& table,
+                                   const std::string& rules,
+                                   const std::string& default_value,
+                                   std::string& expression,
+                                   std::string& error) {
+    RuleEngineLiteral default_literal;
+    if (!BuildRuleEngineLiteral(default_value.empty() ? "NULL" : default_value,
+                                default_literal, error)) {
+        return false;
+    }
+
+    expression = "CASE";
+    bool saw_rule = false;
+    std::stringstream lines(rules);
+    std::string line;
+    while (std::getline(lines, line)) {
+        line = TrimString(line);
+        if (line.empty()) {
+            continue;
+        }
+
+        const auto delimiter = line.find("=>");
+        if (delimiter == std::string::npos) {
+            error = "RuleEngine: rules must use condition => value";
+            return false;
+        }
+
+        std::string condition_expression;
+        if (!BuildRuleEngineCondition(table, TrimString(line.substr(0, delimiter)),
+                                      condition_expression, error)) {
+            return false;
+        }
+
+        RuleEngineLiteral value_literal;
+        if (!BuildRuleEngineLiteral(TrimString(line.substr(delimiter + 2)),
+                                    value_literal, error)) {
+            return false;
+        }
+
+        expression += " WHEN " + condition_expression + " THEN " +
+                      value_literal.sql;
+        saw_rule = true;
+    }
+
+    if (!saw_rule) {
+        error = "RuleEngine: rules are required";
+        return false;
+    }
+
+    expression += " ELSE " + default_literal.sql + " END";
+    return true;
+}
+
+std::string NormalizeUnitName(std::string unit) {
+    unit = ToLowerAscii(TrimString(unit));
+    unit.erase(std::remove_if(unit.begin(), unit.end(),
+                              [](unsigned char c) { return std::isspace(c); }),
+               unit.end());
+    return unit;
+}
+
+bool UnitScaleToBase(const std::string& category,
+                     const std::string& unit,
+                     double& scale,
+                     std::string& error) {
+    const std::string normalized = NormalizeUnitName(unit);
+    const auto fail = [&]() {
+        error = "UnitConverter: unsupported " + category + " unit '" + unit + "'";
+        return false;
+    };
+
+    if (category == "length") {
+        if (normalized == "m" || normalized == "meter" || normalized == "meters") scale = 1.0;
+        else if (normalized == "km" || normalized == "kilometer" || normalized == "kilometers") scale = 1000.0;
+        else if (normalized == "cm" || normalized == "centimeter" || normalized == "centimeters") scale = 0.01;
+        else if (normalized == "mm" || normalized == "millimeter" || normalized == "millimeters") scale = 0.001;
+        else if (normalized == "ft" || normalized == "foot" || normalized == "feet") scale = 0.3048;
+        else if (normalized == "in" || normalized == "inch" || normalized == "inches") scale = 0.0254;
+        else if (normalized == "mi" || normalized == "mile" || normalized == "miles") scale = 1609.344;
+        else return fail();
+        return true;
+    }
+
+    if (category == "mass") {
+        if (normalized == "kg" || normalized == "kilogram" || normalized == "kilograms") scale = 1.0;
+        else if (normalized == "g" || normalized == "gram" || normalized == "grams") scale = 0.001;
+        else if (normalized == "mg" || normalized == "milligram" || normalized == "milligrams") scale = 0.000001;
+        else if (normalized == "lb" || normalized == "lbs" || normalized == "pound" || normalized == "pounds") scale = 0.45359237;
+        else if (normalized == "oz" || normalized == "ounce" || normalized == "ounces") scale = 0.028349523125;
+        else return fail();
+        return true;
+    }
+
+    if (category == "time") {
+        if (normalized == "s" || normalized == "sec" || normalized == "second" || normalized == "seconds") scale = 1.0;
+        else if (normalized == "min" || normalized == "minute" || normalized == "minutes") scale = 60.0;
+        else if (normalized == "h" || normalized == "hr" || normalized == "hour" || normalized == "hours") scale = 3600.0;
+        else if (normalized == "day" || normalized == "days" || normalized == "d") scale = 86400.0;
+        else return fail();
+        return true;
+    }
+
+    if (category == "area") {
+        if (normalized == "m2" || normalized == "m^2" || normalized == "sqm") scale = 1.0;
+        else if (normalized == "cm2" || normalized == "cm^2") scale = 0.0001;
+        else if (normalized == "ft2" || normalized == "ft^2" || normalized == "sqft") scale = 0.09290304;
+        else if (normalized == "acre" || normalized == "acres") scale = 4046.8564224;
+        else return fail();
+        return true;
+    }
+
+    if (category == "volume") {
+        if (normalized == "l" || normalized == "liter" || normalized == "liters") scale = 1.0;
+        else if (normalized == "ml" || normalized == "milliliter" || normalized == "milliliters") scale = 0.001;
+        else if (normalized == "m3" || normalized == "m^3") scale = 1000.0;
+        else if (normalized == "ft3" || normalized == "ft^3") scale = 28.316846592;
+        else if (normalized == "gal" || normalized == "gallon" || normalized == "gallons") scale = 3.785411784;
+        else return fail();
+        return true;
+    }
+
+    error = "UnitConverter: unsupported category '" + category + "'";
+    return false;
+}
+
+bool BuildUnitConverterExpression(const std::string& category,
+                                  const std::string& from_unit,
+                                  const std::string& to_unit,
+                                  const std::string& quoted_column,
+                                  std::string& expression,
+                                  std::string& error) {
+    const std::string normalized_category = ToLowerAscii(TrimString(category));
+    if (normalized_category == "temperature") {
+        const std::string from = NormalizeUnitName(from_unit);
+        const std::string to = NormalizeUnitName(to_unit);
+        std::string celsius_expression;
+        if (from == "c" || from == "celsius") {
+            celsius_expression = quoted_column;
+        } else if (from == "f" || from == "fahrenheit") {
+            celsius_expression = "((" + quoted_column + " - 32.0) * 5.0 / 9.0)";
+        } else if (from == "k" || from == "kelvin") {
+            celsius_expression = "(" + quoted_column + " - 273.15)";
+        } else {
+            error = "UnitConverter: unsupported temperature unit '" + from_unit + "'";
+            return false;
+        }
+
+        if (to == "c" || to == "celsius") {
+            expression = celsius_expression;
+        } else if (to == "f" || to == "fahrenheit") {
+            expression = "((" + celsius_expression + ") * 9.0 / 5.0 + 32.0)";
+        } else if (to == "k" || to == "kelvin") {
+            expression = "((" + celsius_expression + ") + 273.15)";
+        } else {
+            error = "UnitConverter: unsupported temperature unit '" + to_unit + "'";
+            return false;
+        }
+        return true;
+    }
+
+    double from_scale = 1.0;
+    double to_scale = 1.0;
+    if (!UnitScaleToBase(normalized_category, from_unit, from_scale, error) ||
+        !UnitScaleToBase(normalized_category, to_unit, to_scale, error)) {
+        return false;
+    }
+
+    expression = "((" + quoted_column + ") * " + std::to_string(from_scale) +
+                 " / " + std::to_string(to_scale) + ")";
+    return true;
+}
+
+std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
+    std::vector<std::string> result;
+    std::stringstream stream(value);
+    std::string name;
+    while (std::getline(stream, name, ',')) {
+        name = TrimString(name);
+        if (!name.empty()) {
+            result.push_back(name);
+        }
+    }
+    return result;
+}
+
+bool ResolveDataInputColumnProjection(
+    const std::map<std::string, std::string>& parameters,
+    std::vector<std::string>& columns,
+    std::string& error) {
+    columns.clear();
+
+    auto selected_it = parameters.find("selected_columns");
+    if (selected_it != parameters.end() &&
+        !TrimString(selected_it->second).empty()) {
+        const std::string serialized = TrimString(selected_it->second);
+        if (serialized == "*") {
+            return true;
+        }
+        try {
+            const auto parsed = nlohmann::json::parse(serialized);
+            if (!parsed.is_array()) {
+                error = "DataInput: selected_columns must be a JSON array of column names";
+                return false;
+            }
+            for (const auto& item : parsed) {
+                if (!item.is_string()) {
+                    error = "DataInput: selected_columns contains a non-string value";
+                    return false;
+                }
+                const std::string name = TrimString(item.get<std::string>());
+                if (name.empty()) {
+                    error = "DataInput: selected_columns contains an empty column name";
+                    return false;
+                }
+                if (std::find(columns.begin(), columns.end(), name) ==
+                    columns.end()) {
+                    columns.push_back(name);
+                }
+            }
+            // The dialog serializes an empty array to mean all columns.
+            return true;
+        } catch (const nlohmann::json::exception& e) {
+            error = "DataInput: invalid selected_columns JSON: " +
+                    std::string(e.what());
+            return false;
+        }
+    }
+
+    // Backward-compatible fallback for graphs that predate the canonical
+    // selected_columns JSON parameter.
+    auto columns_it = parameters.find("columns");
+    if (columns_it == parameters.end()) {
+        return true;
+    }
+    const std::string legacy = TrimString(columns_it->second);
+    if (legacy.empty() || legacy == "*") {
+        return true;
+    }
+    columns = ParseCommaSeparatedNames(legacy);
+    if (columns.empty()) {
+        error = "DataInput: columns projection does not contain a valid column name";
+        return false;
+    }
+    return true;
+}
+
+bool ResolveExistingColumns(const std::shared_ptr<arrow::Table>& table,
+                            const std::string& node_type,
+                            const std::string& columns,
+                            std::vector<std::string>& column_names,
+                            std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    column_names = ParseCommaSeparatedNames(columns);
+    if (column_names.empty()) {
+        error = node_type + ": no columns were provided";
+        return false;
+    }
+
+    for (const auto& column : column_names) {
+        if (table->schema()->GetFieldIndex(column) < 0) {
+            error = node_type + ": column '" + column + "' not found";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string JoinQuotedColumns(const std::vector<std::string>& column_names) {
+    std::string result;
+    for (size_t i = 0; i < column_names.size(); ++i) {
+        if (i > 0) {
+            result += ", ";
+        }
+        result += QuoteSqlIdentifier(column_names[i]);
+    }
+    return result;
+}
+
+bool RequireColumnExists(const std::shared_ptr<arrow::Table>& table,
+                         const std::string& node_type,
+                         const std::string& column,
+                         const std::string& table_role,
+                         std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+    if (table->schema()->GetFieldIndex(column) < 0) {
+        error = node_type + ": column '" + column + "' not found in " +
+                table_role;
+        return false;
+    }
+    return true;
+}
+
+bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    if (!type) {
+        return false;
+    }
+    switch (type->id()) {
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::UINT64:
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    return type &&
+           (type->id() == arrow::Type::STRING ||
+            type->id() == arrow::Type::LARGE_STRING);
+}
+
+bool IsTextLabelArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    if (!type) {
+        return false;
+    }
+    switch (type->id()) {
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsValidNumericLiteral(const std::string& value) {
+    double parsed = 0.0;
+    return TryParseFiniteDouble(value, parsed);
+}
+
+std::string FormatPreprocessingNumericLiteral(double value) {
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << value;
+    return stream.str();
+}
+
+bool BuildFillMissingConstantExpression(
+    const std::shared_ptr<arrow::Field>& field,
+    const std::string& raw_value,
+    std::string& expression,
+    std::string& error) {
+    if (!field || !field->type()) {
+        error = "FillMissing: input field type is unavailable";
+        return false;
+    }
+
+    const std::string trimmed_value = TrimString(raw_value);
+    if (IsNumericArrowType(field->type())) {
+        if (!IsValidNumericLiteral(trimmed_value)) {
+            error = "FillMissing: constant value '" + raw_value +
+                    "' is not numeric for column '" + field->name() + "'";
+            return false;
+        }
+        expression = trimmed_value;
+        return true;
+    }
+
+    if (IsStringArrowType(field->type())) {
+        expression = QuoteSqlStringLiteral(raw_value);
+        return true;
+    }
+
+    if (field->type()->id() == arrow::Type::BOOL) {
+        const std::string normalized = ToLowerAscii(trimmed_value);
+        if (normalized != "true" && normalized != "false") {
+            error = "FillMissing: constant value '" + raw_value +
+                    "' is not boolean for column '" + field->name() + "'";
+            return false;
+        }
+        expression = normalized;
+        return true;
+    }
+
+    error = "FillMissing: constant fill is not supported for column '" +
+            field->name() + "' of type " + field->type()->ToString();
+    return false;
+}
+
+class FilterRowsConditionParser {
+public:
+    FilterRowsConditionParser(const std::shared_ptr<arrow::Table>& table,
+                              const std::vector<FilterConditionToken>& tokens)
+        : table_(table), tokens_(tokens) {}
+
+    bool Parse(std::string& expression, std::string& error) {
+        if (!table_ || !table_->schema()) {
+            error = "FilterRows: input table schema is unavailable";
+            return false;
+        }
+        if (!ParseExpression(expression, error)) {
+            return false;
+        }
+        if (Peek().kind != FilterConditionTokenKind::End) {
+            error = "FilterRows: unexpected token '" + Peek().value + "'";
+            return false;
+        }
+        return true;
+    }
+
+private:
+    bool ParseExpression(std::string& expression, std::string& error) {
+        if (!ParseTerm(expression, error)) {
+            return false;
+        }
+        while (Peek().kind == FilterConditionTokenKind::Or) {
+            Consume();
+            std::string rhs;
+            if (!ParseTerm(rhs, error)) {
+                return false;
+            }
+            expression = "(" + expression + " OR " + rhs + ")";
+        }
+        return true;
+    }
+
+    bool ParseTerm(std::string& expression, std::string& error) {
+        if (!ParseFactor(expression, error)) {
+            return false;
+        }
+        while (Peek().kind == FilterConditionTokenKind::And) {
+            Consume();
+            std::string rhs;
+            if (!ParseFactor(rhs, error)) {
+                return false;
+            }
+            expression = "(" + expression + " AND " + rhs + ")";
+        }
+        return true;
+    }
+
+    bool ParseFactor(std::string& expression, std::string& error) {
+        if (Peek().kind == FilterConditionTokenKind::LeftParen) {
+            Consume();
+            if (!ParseExpression(expression, error)) {
+                return false;
+            }
+            if (Peek().kind != FilterConditionTokenKind::RightParen) {
+                error = "FilterRows: expected ')'";
+                return false;
+            }
+            Consume();
+            expression = "(" + expression + ")";
+            return true;
+        }
+        return ParseComparison(expression, error);
+    }
+
+    bool ParseComparison(std::string& expression, std::string& error) {
+        if (Peek().kind != FilterConditionTokenKind::Identifier) {
+            error = "FilterRows: expected a column name";
+            return false;
+        }
+        const std::string column = Consume().value;
+        const int column_index = table_->schema()->GetFieldIndex(column);
+        if (column_index < 0) {
+            error = "FilterRows: column '" + column + "' not found";
+            return false;
+        }
+
+        if (Peek().kind == FilterConditionTokenKind::Is) {
+            // column IS [NOT] EMPTY: missing, and for text also ''.
+            Consume();
+            const bool negated = Peek().kind == FilterConditionTokenKind::Not;
+            if (negated) Consume();
+            if (Peek().kind != FilterConditionTokenKind::Empty) {
+                error = "FilterRows: expected EMPTY after IS for column '" + column + "'";
+                return false;
+            }
+            Consume();
+            const std::string name = QuoteSqlIdentifier(column);
+            const bool text = IsStringArrowType(table_->schema()->field(column_index)->type());
+            if (negated) {
+                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : name + " IS NOT NULL";
+            } else {
+                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : name + " IS NULL";
+            }
+            return true;
+        }
+        if (Peek().kind != FilterConditionTokenKind::ComparisonOperator) {
+            error = "FilterRows: expected a comparison operator after column '" +
+                    column + "'";
+            return false;
+        }
+        const std::string op = Consume().value;
+
+        const auto field = table_->schema()->field(column_index);
+        if (field->type()->id() == arrow::Type::BOOL) {
+            if (op != "=" && op != "!=" && op != "<>") {
+                error = "FilterRows: boolean column '" + column +
+                        "' only supports equality comparisons (=, !=, <>)";
+                return false;
+            }
+            if (Peek().kind != FilterConditionTokenKind::BooleanLiteral) {
+                error = "FilterRows: boolean column '" + column +
+                        "' requires an unquoted true or false literal";
+                return false;
+            }
+            expression = QuoteSqlIdentifier(column) + " " + op + " " + Consume().value;
+            return true;
+        }
+
+        if (IsNumericArrowType(field->type())) {
+            if (Peek().kind != FilterConditionTokenKind::NumericLiteral) {
+                error = "FilterRows: column '" + column +
+                        "' requires a numeric literal";
+                return false;
+            }
+            const std::string literal = Consume().value;
+            expression = QuoteSqlIdentifier(column) + " " + op + " " + literal;
+            return true;
+        }
+
+        if (IsStringArrowType(field->type())) {
+            if (op != "=" && op != "!=" && op != "<>") {
+                error = "FilterRows: string column '" + column +
+                        "' only supports equality comparisons";
+                return false;
+            }
+            if (Peek().kind != FilterConditionTokenKind::StringLiteral) {
+                error = "FilterRows: column '" + column +
+                        "' requires a quoted string literal";
+                return false;
+            }
+            const std::string literal = Consume().value;
+            expression = QuoteSqlIdentifier(column) + " " + op + " " +
+                         QuoteSqlStringLiteral(literal);
+            return true;
+        }
+
+        error = "FilterRows: column '" + column +
+                "' has unsupported type " + field->type()->ToString();
+        return false;
+    }
+
+    const FilterConditionToken& Peek() const {
+        return tokens_[index_];
+    }
+
+    const FilterConditionToken& Consume() {
+        return tokens_[index_++];
+    }
+
+    std::shared_ptr<arrow::Table> table_;
+    const std::vector<FilterConditionToken>& tokens_;
+    size_t index_ = 0;
+};
+
+bool BuildFilterRowsConditionExpression(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& condition,
+    std::string& expression,
+    std::string& error,
+    std::vector<FilterConditionToken>* validated_tokens = nullptr) {
+    std::vector<FilterConditionToken> tokens;
+    if (!TokenizeFilterCondition(condition, tokens, error)) {
+        return false;
+    }
+    FilterRowsConditionParser parser(table, tokens);
+    if (!parser.Parse(expression, error)) {
+        return false;
+    }
+    if (validated_tokens) {
+        *validated_tokens = std::move(tokens);
+    }
+    return true;
+}
+
+enum class ArrowFilterRowsAttempt {
+    Unsupported,
+    Applied,
+};
+
+ArrowFilterRowsAttempt TryApplyArrowEqualityFilter(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::vector<FilterConditionToken>& tokens,
+    std::shared_ptr<arrow::Table>& result) {
+    result.reset();
+    if (!table || !table->schema() || tokens.size() != 4 ||
+        tokens[0].kind != FilterConditionTokenKind::Identifier ||
+        tokens[1].kind != FilterConditionTokenKind::ComparisonOperator ||
+        tokens[1].value != "=" ||
+        tokens[3].kind != FilterConditionTokenKind::End) {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    const int column_index =
+        table->schema()->GetFieldIndex(tokens[0].value);
+    if (column_index < 0) {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+    const auto field = table->schema()->field(column_index);
+    if (!field || !field->type()) {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    std::shared_ptr<arrow::Scalar> literal;
+    if (tokens[2].kind == FilterConditionTokenKind::NumericLiteral &&
+        IsNumericArrowType(field->type())) {
+        auto scalar_result =
+            arrow::Scalar::Parse(field->type(), tokens[2].value);
+        if (!scalar_result.ok()) {
+            spdlog::debug(
+                "[Pipeline] FilterRows Arrow scalar parse unavailable for "
+                "'{}' (type={}): {}",
+                field->name(), field->type()->ToString(),
+                scalar_result.status().ToString());
+            return ArrowFilterRowsAttempt::Unsupported;
+        }
+        literal = *scalar_result;
+    } else {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    std::vector<std::shared_ptr<arrow::Array>> mask_chunks;
+    mask_chunks.reserve(
+        static_cast<size_t>(table->column(column_index)->num_chunks()));
+    for (const auto& chunk : table->column(column_index)->chunks()) {
+        arrow::BooleanBuilder builder;
+        auto status = builder.Reserve(chunk->length());
+        if (!status.ok()) {
+            return ArrowFilterRowsAttempt::Unsupported;
+        }
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (chunk->IsNull(row)) {
+                status = builder.AppendNull();
+            } else {
+                auto value_result = chunk->GetScalar(row);
+                if (!value_result.ok()) {
+                    return ArrowFilterRowsAttempt::Unsupported;
+                }
+                status = builder.Append((*value_result)->Equals(*literal));
+            }
+            if (!status.ok()) {
+                return ArrowFilterRowsAttempt::Unsupported;
+            }
+        }
+        std::shared_ptr<arrow::Array> mask_chunk;
+        status = builder.Finish(&mask_chunk);
+        if (!status.ok()) {
+            return ArrowFilterRowsAttempt::Unsupported;
+        }
+        mask_chunks.push_back(std::move(mask_chunk));
+    }
+    auto mask = std::make_shared<arrow::ChunkedArray>(
+        std::move(mask_chunks), arrow::boolean());
+
+    auto filter_result = arrow::compute::Filter(
+        arrow::Datum(table), arrow::Datum(mask),
+        arrow::compute::FilterOptions::Defaults());
+    if (!filter_result.ok() || filter_result->kind() != arrow::Datum::TABLE) {
+        spdlog::debug(
+            "[Pipeline] FilterRows Arrow filtering unavailable for '{}': {}",
+            field->name(), filter_result.status().ToString());
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    result = filter_result->table();
+    return ArrowFilterRowsAttempt::Applied;
+}
+
+bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
+                       const std::string& node_type,
+                       const std::string& column,
+                       const std::string& kind,
+                       bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+                       std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    const int column_index = table->schema()->GetFieldIndex(column);
+    if (column_index < 0) {
+        error = node_type + ": column '" + column + "' not found";
+        return false;
+    }
+
+    const auto field = table->schema()->field(column_index);
+    if (!field || !predicate(field->type())) {
+        const std::string found =
+            field && field->type() ? field->type()->ToString() : "unknown";
+        error = node_type + ": column '" + column + "' must be " + kind +
+                " (found " + found + ")";
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::string> SplitSequenceTokens(const std::string& value) {
+    std::vector<std::string> tokens;
+    std::istringstream stream(value);
+    std::string token;
+    while (stream >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+bool ExtractStringSequencesFromColumn(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::string& column_name,
+    std::vector<std::vector<std::string>>& sequences,
+    std::string& error) {
+    std::string schema_error;
+    if (!RequireColumnKind(table, node_type, column_name,
+                           "string/large_string", IsStringArrowType,
+                           schema_error)) {
+        error = schema_error;
+        return false;
+    }
+
+    const int column_index = table->schema()->GetFieldIndex(column_name);
+    auto column = table->column(column_index);
+    if (!column) {
+        error = node_type + ": column '" + column_name + "' is not readable";
+        return false;
+    }
+
+    sequences.clear();
+    sequences.reserve(static_cast<size_t>(table->num_rows()));
+    for (const auto& chunk : column->chunks()) {
+        for (int64_t i = 0; i < chunk->length(); ++i) {
+            if (chunk->IsNull(i)) {
+                continue;
+            }
+            if (chunk->type_id() == arrow::Type::STRING) {
+                sequences.push_back(SplitSequenceTokens(
+                    std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(i)));
+            } else if (chunk->type_id() == arrow::Type::LARGE_STRING) {
+                sequences.push_back(SplitSequenceTokens(
+                    std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetString(i)));
+            }
+        }
+    }
+
+    if (sequences.empty()) {
+        error = node_type + ": column '" + column_name +
+                "' did not contain any vocabulary tokens";
+        return false;
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> MakeSequenceVocabularyTable(
+    const SequenceVocabulary& vocabulary) {
+    arrow::StringBuilder value_builder;
+    arrow::Int64Builder id_builder;
+
+    const auto& values = vocabulary.Values();
+    for (size_t i = 0; i < values.size(); ++i) {
+        auto value_status = value_builder.Append(values[i]);
+        if (!value_status.ok()) {
+            throw std::runtime_error(value_status.ToString());
+        }
+        auto id_status = id_builder.Append(static_cast<int64_t>(i));
+        if (!id_status.ok()) {
+            throw std::runtime_error(id_status.ToString());
+        }
+    }
+
+    std::shared_ptr<arrow::Array> value_array;
+    std::shared_ptr<arrow::Array> id_array;
+    auto value_finish = value_builder.Finish(&value_array);
+    if (!value_finish.ok()) {
+        throw std::runtime_error(value_finish.ToString());
+    }
+    auto id_finish = id_builder.Finish(&id_array);
+    if (!id_finish.ok()) {
+        throw std::runtime_error(id_finish.ToString());
+    }
+
+    return arrow::Table::Make(
+        arrow::schema({
+            arrow::field("value", arrow::utf8()),
+            arrow::field("id", arrow::int64()),
+        }),
+        {value_array, id_array});
+}
+
+std::string JoinInt64Sequence(const std::vector<int64_t>& values,
+                              size_t output_length,
+                              int64_t pad_value) {
+    std::ostringstream out;
+    for (size_t i = 0; i < output_length; ++i) {
+        if (i > 0) {
+            out << ' ';
+        }
+        out << (i < values.size() ? values[i] : pad_value);
+    }
+    return out.str();
+}
+
+std::string BuildAttentionMaskString(size_t token_count, size_t output_length) {
+    std::ostringstream out;
+    const size_t visible_count = std::min(token_count, output_length);
+    for (size_t i = 0; i < output_length; ++i) {
+        if (i > 0) {
+            out << ' ';
+        }
+        out << (i < visible_count ? 1 : 0);
+    }
+    return out.str();
+}
+
+bool ReadStringColumnValue(const std::shared_ptr<arrow::Table>& table,
+                           int column_index,
+                           int64_t row_index,
+                           std::string& value,
+                           std::string& error) {
+    auto column = table->column(column_index);
+    if (!column) {
+        error = "string column is not readable";
+        return false;
+    }
+
+    auto scalar_result = column->GetScalar(row_index);
+    if (!scalar_result.ok()) {
+        error = scalar_result.status().ToString();
+        return false;
+    }
+
+    auto scalar = *scalar_result;
+    if (!scalar || !scalar->is_valid) {
+        value.clear();
+        return true;
+    }
+
+    value = ScalarToColumnName(scalar);
+    return true;
+}
+
+bool ExtractNERSequenceRowsFromTable(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::map<std::string, std::string>& parameters,
+    std::vector<NERSequenceRow>& rows,
+    std::string& error) {
+    const std::string token_column =
+        ParameterOrDefault(parameters, "token_column", "tokens");
+    const std::string pos_column =
+        ParameterOrDefault(parameters, "pos_column", "");
+    const std::string tag_column =
+        ParameterOrDefault(parameters, "tag_column", "ner_tags");
+
+    if (!RequireRoleColumnKind(table, "NERSequenceBuilder", token_column,
+                               "token", "string/large_string",
+                               IsStringArrowType, error)) {
+        return false;
+    }
+    if (!pos_column.empty() &&
+        !RequireRoleColumnKind(table, "NERSequenceBuilder", pos_column,
+                               "POS", "string/large_string",
+                               IsStringArrowType, error)) {
+        return false;
+    }
+    if (!RequireRoleColumnKind(table, "NERSequenceBuilder", tag_column,
+                               "tag", "string/large_string",
+                               IsStringArrowType, error)) {
+        return false;
+    }
+
+    const int token_index = table->schema()->GetFieldIndex(token_column);
+    const int pos_index = pos_column.empty()
+        ? -1
+        : table->schema()->GetFieldIndex(pos_column);
+    const int tag_index = table->schema()->GetFieldIndex(tag_column);
+
+    rows.clear();
+    rows.reserve(static_cast<size_t>(table->num_rows()));
+    for (int64_t row_index = 0; row_index < table->num_rows(); ++row_index) {
+        std::string tokens;
+        std::string pos_tags;
+        std::string ner_tags;
+        if (!ReadStringColumnValue(table, token_index, row_index, tokens, error)) {
+            error = "NERSequenceBuilder token row " +
+                    std::to_string(row_index) + ": " + error;
+            return false;
+        }
+        if (pos_index >= 0 &&
+            !ReadStringColumnValue(table, pos_index, row_index, pos_tags, error)) {
+            error = "NERSequenceBuilder POS row " +
+                    std::to_string(row_index) + ": " + error;
+            return false;
+        }
+        if (!ReadStringColumnValue(table, tag_index, row_index, ner_tags, error)) {
+            error = "NERSequenceBuilder tag row " +
+                    std::to_string(row_index) + ": " + error;
+            return false;
+        }
+
+        rows.push_back({
+            SplitSequenceTokens(tokens),
+            SplitSequenceTokens(pos_tags),
+            SplitSequenceTokens(ner_tags),
+        });
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> MakeNERSequenceTable(
+    const NERSequenceBuildResult& result,
+    bool create_attention_mask) {
+    arrow::StringBuilder word_builder;
+    arrow::StringBuilder pos_builder;
+    arrow::StringBuilder tag_builder;
+    arrow::StringBuilder mask_builder;
+    arrow::Int64Builder length_builder;
+
+    const size_t configured_length =
+        result.batcher_config.max_sequence_length;
+    for (const auto& sample : result.samples) {
+        const size_t output_length = configured_length > 0
+            ? configured_length
+            : sample.word_ids.size();
+
+        auto word_status = word_builder.Append(
+            JoinInt64Sequence(sample.word_ids, output_length,
+                              result.batcher_config.word_pad_id));
+        auto pos_status = pos_builder.Append(
+            JoinInt64Sequence(sample.pos_ids, output_length,
+                              result.batcher_config.pos_pad_id));
+        auto tag_status = tag_builder.Append(
+            JoinInt64Sequence(sample.tag_ids, output_length,
+                              result.batcher_config.tag_ignore_index));
+        auto mask_status = mask_builder.Append(
+            create_attention_mask
+                ? BuildAttentionMaskString(sample.word_ids.size(), output_length)
+                : "");
+        auto length_status = length_builder.Append(
+            static_cast<int64_t>(output_length));
+
+        if (!word_status.ok() || !pos_status.ok() ||
+            !tag_status.ok() || !mask_status.ok() ||
+            !length_status.ok()) {
+            throw std::runtime_error("failed to build NER sequence output table");
+        }
+    }
+
+    std::shared_ptr<arrow::Array> word_array;
+    std::shared_ptr<arrow::Array> pos_array;
+    std::shared_ptr<arrow::Array> tag_array;
+    std::shared_ptr<arrow::Array> mask_array;
+    std::shared_ptr<arrow::Array> length_array;
+    auto word_finish = word_builder.Finish(&word_array);
+    auto pos_finish = pos_builder.Finish(&pos_array);
+    auto tag_finish = tag_builder.Finish(&tag_array);
+    auto mask_finish = mask_builder.Finish(&mask_array);
+    auto length_finish = length_builder.Finish(&length_array);
+    if (!word_finish.ok() || !pos_finish.ok() ||
+        !tag_finish.ok() || !mask_finish.ok() ||
+        !length_finish.ok()) {
+        throw std::runtime_error("failed to finish NER sequence output table");
+    }
+
+    return arrow::Table::Make(
+        arrow::schema({
+            arrow::field("word_ids", arrow::utf8()),
+            arrow::field("pos_ids", arrow::utf8()),
+            arrow::field("tag_ids", arrow::utf8()),
+            arrow::field("attention_mask", arrow::utf8()),
+            arrow::field("sequence_length", arrow::int64()),
+        }),
+        {word_array, pos_array, tag_array, mask_array, length_array});
+}
+
+bool RequireRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::string& column,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    const int column_index = table->schema()->GetFieldIndex(column);
+    const std::string column_role =
+        (role == "column") ? "column" : role + " column";
+    if (column_index < 0) {
+        error = node_type + ": " + column_role + " '" + column +
+                "' not found";
+        return false;
+    }
+
+    const auto field = table->schema()->field(column_index);
+    if (!field || !predicate(field->type())) {
+        const std::string found =
+            field && field->type() ? field->type()->ToString() : "unknown";
+        error = node_type + ": " + column_role + " '" + column +
+                "' must be " + kind + " (found " + found + ")";
+        return false;
+    }
+    return true;
+}
+
+bool IsSimpleSqlIdentifier(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    const auto is_identifier_char = [](unsigned char c) {
+        return std::isalnum(c) || c == '_';
+    };
+    if (!(std::isalpha(static_cast<unsigned char>(value.front())) ||
+          value.front() == '_')) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(),
+                       [is_identifier_char](unsigned char c) {
+                           return is_identifier_char(c);
+                       });
+}
+
+bool IsNumericAggregateFunction(const std::string& function_name) {
+    return function_name == "SUM" || function_name == "AVG" ||
+           function_name == "MEDIAN";
+}
+
+bool IsAllowedAggregateFunction(const std::string& function_name) {
+    return function_name == "COUNT" || function_name == "SUM" ||
+           function_name == "AVG" || function_name == "MIN" ||
+           function_name == "MAX" || function_name == "MEDIAN" ||
+           function_name == "MODE" || function_name == "STRING_AGG";
+}
+
+bool BuildGroupByAggregationExpression(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& aggregation,
+    const std::map<std::string, std::string>& parameters,
+    std::string& expression,
+    std::string& error) {
+    const std::string spec = TrimString(aggregation);
+    const auto open = spec.find('(');
+    const auto close = spec.find(')', open == std::string::npos ? 0 : open + 1);
+    if (open == std::string::npos || close == std::string::npos ||
+        spec.find('(', open + 1) != std::string::npos ||
+        spec.find(')', close + 1) != std::string::npos) {
+        error = "GroupBy: unsupported aggregation '" + spec +
+                "'; expected FUNC(column) or COUNT(*)";
+        return false;
+    }
+
+    const std::string function_name =
+        ToUpperAscii(TrimString(spec.substr(0, open)));
+    if (!IsAllowedAggregateFunction(function_name)) {
+        error = "GroupBy: aggregation function '" + function_name +
+                "' is not supported";
+        return false;
+    }
+
+    const std::string argument =
+        TrimString(spec.substr(open + 1, close - open - 1));
+    if (argument.empty()) {
+        error = "GroupBy: aggregation '" + spec + "' has no column argument";
+        return false;
+    }
+
+    std::string quoted_argument;
+    if (argument == "*") {
+        if (function_name != "COUNT") {
+            error = "GroupBy: only COUNT(*) can use '*'";
+            return false;
+        }
+        quoted_argument = "*";
+    } else {
+        if (!table || !table->schema()) {
+            error = "GroupBy: input table schema is unavailable";
+            return false;
+        }
+        const int column_index = table->schema()->GetFieldIndex(argument);
+        if (column_index < 0) {
+            error = "GroupBy: aggregation column '" + argument + "' not found";
+            return false;
+        }
+        const auto field = table->schema()->field(column_index);
+        if (IsNumericAggregateFunction(function_name) &&
+            (!field || !IsNumericArrowType(field->type()))) {
+            const std::string found =
+                field && field->type() ? field->type()->ToString() : "unknown";
+            error = "GroupBy: aggregation column '" + argument +
+                    "' must be numeric for " + function_name +
+                    " (found " + found + ")";
+            return false;
+        }
+        quoted_argument = QuoteSqlIdentifier(argument);
+    }
+
+    expression = function_name + "(" + quoted_argument + ")";
+    if (function_name == "STRING_AGG") {
+        if (!RequireRoleColumnKind(table, "GroupBy", argument, "text aggregation",
+                                   "string/large_string", IsStringArrowType, error)) {
+            return false;
+        }
+        const std::string order_by = ParameterOrDefault(parameters, "text_order_by", "");
+        if (TrimString(order_by).empty()) {
+            error = "GroupBy: STRING_AGG requires 'text_order_by' columns";
+            return false;
+        }
+        std::vector<std::string> order_columns;
+        if (!ResolveExistingColumns(table, "GroupBy text_order_by", order_by,
+                                    order_columns, error)) {
+            return false;
+        }
+        std::string order_expression;
+        for (const auto& column : order_columns) {
+            const auto type = table->schema()->GetFieldByName(column)->type();
+            if (!IsNumericArrowType(type) && !IsStringArrowType(type)) {
+                error = "GroupBy: text_order_by column '" + column +
+                        "' must be numeric or text";
+                return false;
+            }
+            if (!order_expression.empty()) order_expression += ", ";
+            order_expression += QuoteSqlIdentifier(column) + " ASC NULLS LAST";
+        }
+        const std::string separator = ParameterOrDefault(parameters, "text_separator", " ");
+        if (separator.find('\0') != std::string::npos) {
+            error = "GroupBy: text_separator cannot contain NUL";
+            return false;
+        }
+        // A text tie-break makes equal order keys independent of input row order.
+        // DuckDB STRING_AGG skips null text, retaining NULL for all-null groups.
+        expression = "STRING_AGG(" + quoted_argument + ", " +
+                     QuoteSqlStringLiteral(separator) + " ORDER BY " + order_expression +
+                     ", " + quoted_argument + " ASC NULLS LAST)";
+    }
+
+    const std::string suffix = TrimString(spec.substr(close + 1));
+    if (!suffix.empty()) {
+        const std::string lowered_suffix = ToLowerAscii(suffix);
+        if (lowered_suffix.rfind("as ", 0) != 0) {
+            error = "GroupBy: aggregation alias must use AS";
+            return false;
+        }
+        const std::string alias = TrimString(suffix.substr(3));
+        if (!IsSimpleSqlIdentifier(alias)) {
+            error = "GroupBy: aggregation alias '" + alias +
+                    "' is not a valid identifier";
+            return false;
+        }
+        expression += " AS " + QuoteSqlIdentifier(alias);
+    }
+    return true;
+}
+
+bool BuildGroupByAggregationExpressions(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& aggregations,
+    const std::map<std::string, std::string>& parameters,
+    std::string& expressions,
+    std::string& error) {
+    const std::vector<std::string> specs = ParseCommaSeparatedNames(aggregations);
+    if (specs.empty()) {
+        error = "GroupBy: no aggregations were provided";
+        return false;
+    }
+
+    std::vector<std::string> built;
+    built.reserve(specs.size());
+    for (const auto& spec : specs) {
+        std::string expression;
+        if (!BuildGroupByAggregationExpression(table, spec, parameters, expression, error)) {
+            return false;
+        }
+        built.push_back(expression);
+    }
+
+    for (size_t i = 0; i < built.size(); ++i) {
+        if (i > 0) {
+            expressions += ", ";
+        }
+        expressions += built[i];
+    }
+    return true;
+}
+
+bool BuildMathFormulaExpression(const std::shared_ptr<arrow::Table>& table,
+                                const std::string& formula,
+                                std::string& expression,
+                                std::string& error) {
+    if (!table || !table->schema()) {
+        error = "MathFormula: input table schema is unavailable";
+        return false;
+    }
+
+    expression.clear();
+    bool saw_token = false;
+    size_t index = 0;
+    while (index < formula.size()) {
+        const unsigned char c = static_cast<unsigned char>(formula[index]);
+        if (std::isspace(c)) {
+            expression.push_back(' ');
+            ++index;
+            continue;
+        }
+
+        if (std::isalpha(c) || c == '_') {
+            const size_t start = index;
+            ++index;
+            while (index < formula.size()) {
+                const unsigned char id_char =
+                    static_cast<unsigned char>(formula[index]);
+                if (!std::isalnum(id_char) && id_char != '_') {
+                    break;
+                }
+                ++index;
+            }
+
+            const std::string column = formula.substr(start, index - start);
+            const int column_index = table->schema()->GetFieldIndex(column);
+            if (column_index < 0) {
+                error = "MathFormula: formula references unknown column '" +
+                        column + "'";
+                return false;
+            }
+            const auto field = table->schema()->field(column_index);
+            if (!field || !IsNumericArrowType(field->type())) {
+                const std::string found =
+                    field && field->type() ? field->type()->ToString()
+                                           : "unknown";
+                error = "MathFormula: formula column '" + column +
+                        "' must be numeric (found " + found + ")";
+                return false;
+            }
+            expression += QuoteSqlIdentifier(column);
+            saw_token = true;
+            continue;
+        }
+
+        if (std::isdigit(c) ||
+            (formula[index] == '.' && index + 1 < formula.size() &&
+             std::isdigit(static_cast<unsigned char>(formula[index + 1])))) {
+            const size_t start = index;
+            bool saw_digit = false;
+            bool saw_dot = false;
+            while (index < formula.size()) {
+                const unsigned char number_char =
+                    static_cast<unsigned char>(formula[index]);
+                if (std::isdigit(number_char)) {
+                    saw_digit = true;
+                    ++index;
+                    continue;
+                }
+                if (formula[index] == '.' && !saw_dot) {
+                    saw_dot = true;
+                    ++index;
+                    continue;
+                }
+                break;
+            }
+            if (index < formula.size() &&
+                (formula[index] == 'e' || formula[index] == 'E')) {
+                const size_t exponent = index;
+                ++index;
+                if (index < formula.size() &&
+                    (formula[index] == '+' || formula[index] == '-')) {
+                    ++index;
+                }
+                const size_t exponent_digits = index;
+                while (index < formula.size() &&
+                       std::isdigit(static_cast<unsigned char>(formula[index]))) {
+                    ++index;
+                }
+                if (exponent_digits == index) {
+                    index = exponent;
+                }
+            }
+            if (!saw_digit) {
+                error = "MathFormula: invalid numeric literal";
+                return false;
+            }
+            expression += formula.substr(start, index - start);
+            saw_token = true;
+            continue;
+        }
+
+        if (formula[index] == '+' || formula[index] == '-' ||
+            formula[index] == '*' || formula[index] == '/' ||
+            formula[index] == '(' || formula[index] == ')') {
+            expression.push_back(formula[index]);
+            ++index;
+            saw_token = true;
+            continue;
+        }
+
+        error = "MathFormula: formula contains unsupported token '" +
+                std::string(1, formula[index]) + "'";
+        return false;
+    }
+
+    if (!saw_token) {
+        error = "MathFormula: Formula required";
+        return false;
+    }
+    return true;
+}
+
+bool BuildCalculatorExpression(const std::string& formula,
+                               std::string& expression,
+                               std::string& error) {
+    expression.clear();
+    bool saw_token = false;
+    size_t index = 0;
+    while (index < formula.size()) {
+        const unsigned char c = static_cast<unsigned char>(formula[index]);
+        if (std::isspace(c)) {
+            expression.push_back(' ');
+            ++index;
+            continue;
+        }
+
+        if (std::isdigit(c) ||
+            (formula[index] == '.' && index + 1 < formula.size() &&
+             std::isdigit(static_cast<unsigned char>(formula[index + 1])))) {
+            const size_t start = index;
+            bool saw_digit = false;
+            bool saw_dot = false;
+            while (index < formula.size()) {
+                const unsigned char number_char =
+                    static_cast<unsigned char>(formula[index]);
+                if (std::isdigit(number_char)) {
+                    saw_digit = true;
+                    ++index;
+                    continue;
+                }
+                if (formula[index] == '.' && !saw_dot) {
+                    saw_dot = true;
+                    ++index;
+                    continue;
+                }
+                break;
+            }
+            if (index < formula.size() &&
+                (formula[index] == 'e' || formula[index] == 'E')) {
+                const size_t exponent = index;
+                ++index;
+                if (index < formula.size() &&
+                    (formula[index] == '+' || formula[index] == '-')) {
+                    ++index;
+                }
+                const size_t exponent_digits = index;
+                while (index < formula.size() &&
+                       std::isdigit(static_cast<unsigned char>(formula[index]))) {
+                    ++index;
+                }
+                if (exponent_digits == index) {
+                    index = exponent;
+                }
+            }
+            if (!saw_digit) {
+                error = "CalculatorNode: invalid numeric literal";
+                return false;
+            }
+            expression += formula.substr(start, index - start);
+            saw_token = true;
+            continue;
+        }
+
+        if (formula[index] == '+' || formula[index] == '-' ||
+            formula[index] == '*' || formula[index] == '/' ||
+            formula[index] == '(' || formula[index] == ')') {
+            expression.push_back(formula[index]);
+            ++index;
+            saw_token = true;
+            continue;
+        }
+
+        error = "CalculatorNode: expression contains unsupported token '" +
+                std::string(1, formula[index]) + "'";
+        return false;
+    }
+
+    if (!saw_token) {
+        error = "CalculatorNode: expression is required";
+        return false;
+    }
+    return true;
+}
+
+bool ParseSimpleJsonPath(const std::string& path,
+                         std::vector<std::string>& segments,
+                         std::string& error) {
+    segments.clear();
+    const std::string trimmed = TrimString(path);
+    if (trimmed.empty()) {
+        error = "JSONPathExtractor: path is required";
+        return false;
+    }
+    if (trimmed == "$") {
+        return true;
+    }
+    if (trimmed.rfind("$.", 0) != 0) {
+        error = "JSONPathExtractor: only simple $.field paths are supported";
+        return false;
+    }
+
+    std::stringstream tokens(trimmed.substr(2));
+    std::string token;
+    while (std::getline(tokens, token, '.')) {
+        token = TrimString(token);
+        if (token.empty() || token.find('[') != std::string::npos ||
+            token.find(']') != std::string::npos) {
+            error = "JSONPathExtractor: only dot-separated object fields are supported";
+            return false;
+        }
+        segments.push_back(token);
+    }
+    return true;
+}
+
+bool ExtractJsonPathValue(const nlohmann::json& document,
+                          const std::vector<std::string>& segments,
+                          nlohmann::json& value) {
+    const nlohmann::json* current = &document;
+    for (const auto& segment : segments) {
+        if (!current->is_object()) {
+            return false;
+        }
+        const auto it = current->find(segment);
+        if (it == current->end()) {
+            return false;
+        }
+        current = &(*it);
+    }
+    value = *current;
+    return true;
+}
+
+std::string JsonValueToDatasetString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    return value.dump();
+}
+
+bool BuildRegexOptions(const std::string& flags,
+                       std::regex::flag_type& options,
+                       std::string& error) {
+    options = std::regex::ECMAScript;
+    for (char flag : flags) {
+        if (std::isspace(static_cast<unsigned char>(flag))) {
+            continue;
+        }
+        if (flag == 'i' || flag == 'I') {
+            options |= std::regex::icase;
+            continue;
+        }
+        if (flag == 'm' || flag == 'M') {
+            continue;
+        }
+        error = "RegexTester: unsupported regex flag '" + std::string(1, flag) + "'";
+        return false;
+    }
+    return true;
+}
+
+bool TryParseInteger(const std::string& value, int64_t& parsed) {
+    if (value.empty()) {
+        return false;
+    }
+    const char* begin = value.data();
+    const char* end = value.data() + value.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    return ec == std::errc() && ptr == end;
+}
+
+bool IsForbiddenIntegerValue(
+    int64_t value,
+    const std::vector<int64_t>& forbidden_values) {
+    return std::find(forbidden_values.begin(), forbidden_values.end(), value) !=
+           forbidden_values.end();
+}
+
+bool IsIntegerAtLeastExcept(const std::string& value,
+                            int64_t minimum,
+                            const std::vector<int64_t>& forbidden_values) {
+    int64_t parsed = 0;
+    return TryParseInteger(value, parsed) && parsed >= minimum &&
+           !IsForbiddenIntegerValue(parsed, forbidden_values);
+}
+
+bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
+    return IsIntegerAtLeastExcept(value, minimum, {});
+}
+
+bool TryParseFiniteDouble(const std::string& value, double& out) {
+    const std::string trimmed = TrimString(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    errno = 0;
+    char* end = nullptr;
+    out = std::strtod(trimmed.c_str(), &end);
+    return end == trimmed.c_str() + trimmed.size() && errno != ERANGE &&
+           std::isfinite(out);
+}
+
+double FloatParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    double default_value) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return default_value;
+    }
+    double value = default_value;
+    return TryParseFiniteDouble(it->second, value) ? value : default_value;
+}
+
+bool TryParseBooleanParameterValue(const std::string& value, bool& out) {
+    const std::string normalized_value = ToLowerAscii(TrimString(value));
+    if (normalized_value == "true") {
+        out = true;
+        return true;
+    }
+    if (normalized_value == "false") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+bool ValidateOptionalBooleanParameter(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& node_type,
+    const char* parameter_name,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+
+    bool parsed = false;
+    if (!TryParseBooleanParameterValue(it->second, parsed)) {
+        error = node_type + ": '" + parameter_name +
+                "' must be 'true' or 'false'";
+        return false;
+    }
+    return true;
+}
+
+bool OptionalBooleanParameterIsTrue(
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return false;
+    }
+
+    bool parsed = false;
+    return TryParseBooleanParameterValue(it->second, parsed) && parsed;
+}
+
+std::string NormalizeSortOrder(
+    const std::map<std::string, std::string>& parameters) {
+    auto order_it = parameters.find("order");
+    if (order_it != parameters.end() && !order_it->second.empty()) {
+        return ToUpperAscii(TrimString(order_it->second));
+    }
+
+    auto ascending_it = parameters.find("ascending");
+    if (ascending_it != parameters.end() && !ascending_it->second.empty() &&
+        ToLowerAscii(TrimString(ascending_it->second)) == "false") {
+        return "DESC";
+    }
+    return "ASC";
+}
+
+std::string NormalizeJoinTypeSql(const std::string& value) {
+    const std::string join_type = ToLowerAscii(TrimString(value));
+    if (join_type == "left") {
+        return "LEFT";
+    }
+    if (join_type == "right") {
+        return "RIGHT";
+    }
+    if (join_type == "outer") {
+        return "FULL OUTER";
+    }
+    return "INNER";
+}
+
+std::string NormalizeDataInputFileType(const std::string& value) {
+    return NormalizeDataInputFormat(value);
+}
+
+std::string NormalizeDataInputFileType(
+    const std::map<std::string, std::string>& parameters) {
+    std::string format;
+    std::string error;
+    return ResolveDataInputFormatAliases(parameters, format, error)
+        ? format
+        : "auto";
+}
+
+std::string NormalizeDatasetOutputFormat(
+    const std::map<std::string, std::string>& parameters) {
+    auto format_it = parameters.find("format");
+    if (format_it != parameters.end() && !format_it->second.empty()) {
+        return ToLowerAscii(TrimString(format_it->second));
+    }
+
+    auto file_type_it = parameters.find("file_type");
+    if (file_type_it != parameters.end() && !file_type_it->second.empty()) {
+        return ToLowerAscii(TrimString(file_type_it->second));
+    }
+
+    return "csv";
+}
+
+std::string NormalizeDataOutputPath(
+    const std::map<std::string, std::string>& parameters) {
+    auto file_path_it = parameters.find("file_path");
+    if (file_path_it != parameters.end() && !file_path_it->second.empty()) {
+        return TrimString(file_path_it->second);
+    }
+
+    auto path_it = parameters.find("path");
+    if (path_it != parameters.end() && !path_it->second.empty()) {
+        return TrimString(path_it->second);
+    }
+
+    return {};
+}
+
+bool HasTrailingDirectorySeparator(const std::string& value) {
+    return !value.empty() &&
+           (value.back() == '/' || value.back() == '\\');
+}
+
+std::string SanitizeExportFileStem(std::string stem) {
+    stem = TrimString(stem);
+    if (stem.empty()) {
+        stem = "dataset_export";
+    }
+    for (char& c : stem) {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (!std::isalnum(uc) && c != '-' && c != '_') {
+            c = '_';
+        }
+    }
+    while (!stem.empty() && stem.front() == '_') {
+        stem.erase(stem.begin());
+    }
+    while (!stem.empty() && stem.back() == '_') {
+        stem.pop_back();
+    }
+    return stem.empty() ? "dataset_export" : stem;
+}
+
+std::filesystem::path DefaultExportDirectory(
+    const std::string& configured_root) {
+    if (!configured_root.empty()) {
+        return std::filesystem::path(configured_root);
+    }
+
+    std::error_code ec;
+    auto temp = std::filesystem::temp_directory_path(ec);
+    return ec
+        ? std::filesystem::path(".") / "cyxwiz" / "exports"
+        : temp / "cyxwiz" / "exports";
+}
+
+// A relative output path resolves against the project folder when the node's
+// path_base is "project" (new nodes, same rule as Data Input sources), and
+// against the exports folder otherwise (graphs saved before path_base existed
+// are migrated to "exports" on load; headless graphs without the key keep it).
+std::string ResolveDatasetExportPath(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& fallback_stem,
+    const std::string& extension,
+    const std::string& default_root,
+    const std::string& project_root = {}) {
+
+    const std::string raw_path = NormalizeDataOutputPath(parameters);
+    const std::string clean_extension =
+        extension.empty() || extension.front() == '.'
+            ? extension
+            : "." + extension;
+    const std::string default_filename =
+        SanitizeExportFileStem(fallback_stem) + clean_extension;
+
+    std::filesystem::path resolved;
+    if (raw_path.empty()) {
+        resolved = DefaultExportDirectory(default_root) / default_filename;
+    } else {
+        std::filesystem::path candidate(raw_path);
+        std::error_code is_dir_error;
+        const bool is_existing_directory =
+            std::filesystem::is_directory(candidate, is_dir_error);
+        if (is_existing_directory || HasTrailingDirectorySeparator(raw_path) ||
+            !candidate.has_filename()) {
+            resolved = candidate / default_filename;
+        } else {
+            resolved = candidate;
+            if (!clean_extension.empty() && resolved.extension().empty()) {
+                resolved += clean_extension;
+            }
+        }
+    }
+
+    const auto base_it = parameters.find("path_base");
+    const bool project_base = base_it != parameters.end() && base_it->second == "project" &&
+                              !raw_path.empty() && !project_root.empty();
+    if (resolved.is_relative()) {
+        resolved = project_base ? std::filesystem::path(project_root) / resolved
+                                : DefaultExportDirectory(default_root) / resolved;
+    }
+
+    const auto parent = resolved.parent_path();
+    if (!parent.empty()) {
+        std::error_code create_error;
+        std::filesystem::create_directories(parent, create_error);
+        if (create_error) {
+            spdlog::warn("Failed to create export directory '{}': {}",
+                         parent.string(), create_error.message());
+        }
+    }
+
+    return resolved.string();
+}
+
+std::string ParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    const std::string& fallback = {}) {
+    auto it = parameters.find(key);
+    return it != parameters.end() ? it->second : fallback;
+}
+
+bool OptionalBooleanParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    bool fallback) {
+    auto it = parameters.find(key);
+    if (it == parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+
+    bool parsed = false;
+    return TryParseBooleanParameterValue(it->second, parsed) ? parsed : fallback;
+}
+
+int64_t OptionalIntegerParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    int64_t fallback) {
+    auto it = parameters.find(key);
+    if (it == parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+
+    int64_t parsed = fallback;
+    return TryParseInteger(it->second, parsed) ? parsed : fallback;
+}
+
+std::string NormalizeBinningMethod(const std::string& value) {
+    const std::string method = ToLowerAscii(TrimString(value));
+    if (method == "equal_frequency") {
+        return "equal_freq";
+    }
+    return method.empty() ? "equal_width" : method;
+}
+
+const char* MissingRequiredParameter(
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<const char*>& required_parameters) {
+    if (node_type == "DataInput") {
+        const auto source_it = parameters.find("source_type");
+        const std::string source_type =
+            (source_it != parameters.end() && !source_it->second.empty())
+                ? ToLowerAscii(TrimString(source_it->second))
+                : "file";
+        if (source_type == "file") {
+            return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
+        }
+        if (source_type == "folder") {
+            return HasNonEmptyParameter(parameters, "folder_path") ? nullptr : "folder_path";
+        }
+        return nullptr;
+    }
+
+    if (node_type == "RenameColumns") {
+        return (HasNonEmptyParameter(parameters, "mapping") ||
+                HasNonEmptyParameter(parameters, "rename_map"))
+            ? nullptr
+            : "mapping";
+    }
+
+    if (node_type == "ExportCSV" || node_type == "ExportJSON" ||
+        node_type == "ExportParquet" || node_type == "DataOutput") {
+        return nullptr;
+    }
+
+    if (node_type == "DataConvert") {
+        if (!HasNonEmptyParameter(parameters, "output_path")) {
+            return "output_path";
+        }
+        return nullptr;
+    }
+
+    for (const char* parameter : required_parameters) {
+        if (!HasNonEmptyParameter(parameters, parameter)) {
+            return parameter;
+        }
+    }
+
+    return nullptr;
+}
+
+bool HasSupportedParameterValues(
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+        allowed_parameter_values,
+    const std::vector<PipelineIntegerParameterRuntimeCapability>&
+        integer_parameters,
+    const std::vector<PipelineFloatParameterRuntimeCapability>&
+        float_parameters,
+    std::string& error) {
+    if (!ValidatePipelineRuntimeParameterCapabilities(
+            node_type,
+            parameters,
+            allowed_parameter_values,
+            integer_parameters,
+            float_parameters,
+            "PipelineExecutor",
+            error)) {
+        return false;
+    }
+
+    if (node_type == "TimeSeriesSplit") {
+        const double train_ratio =
+            FloatParameterOrDefault(parameters, "train_ratio", 0.8);
+        const double val_ratio =
+            FloatParameterOrDefault(parameters, "val_ratio", 0.1);
+        const double test_ratio =
+            FloatParameterOrDefault(parameters, "test_ratio", 0.1);
+        if (train_ratio <= 0.0) {
+            error = "TimeSeriesSplit train_ratio must be > 0";
+            return false;
+        }
+        const double sum = train_ratio + val_ratio + test_ratio;
+        if (std::fabs(sum - 1.0) > 0.01) {
+            error = "TimeSeriesSplit ratios must sum to 1.0";
+            return false;
+        }
+    }
+
+    if (node_type == "RobustScaler") {
+        const double quantile_min =
+            FloatParameterOrDefault(parameters, "quantile_min", 25.0);
+        const double quantile_max =
+            FloatParameterOrDefault(parameters, "quantile_max", 75.0);
+        if (quantile_max <= quantile_min) {
+            error = "RobustScaler quantile_min must be less than quantile_max";
+            return false;
+        }
+    }
+
+    if (node_type == "HierarchicalCluster") {
+        const auto linkage_it = parameters.find("linkage");
+        const std::string linkage =
+            (linkage_it != parameters.end() && !linkage_it->second.empty())
+                ? ToLowerAscii(TrimString(linkage_it->second))
+                : "ward";
+        const auto metric_it = parameters.find("metric");
+        const std::string metric =
+            (metric_it != parameters.end() && !metric_it->second.empty())
+                ? ToLowerAscii(TrimString(metric_it->second))
+                : "euclidean";
+        if (linkage == "ward" && metric != "euclidean") {
+            error = "HierarchicalCluster linkage='ward' requires metric='euclidean'";
+            return false;
+        }
+    }
+
+    if (node_type == "Convolution1D") {
+        auto kernel_it = parameters.find("kernel");
+        if (kernel_it != parameters.end()) {
+            bool saw_value = false;
+            std::stringstream tokens(kernel_it->second);
+            std::string token;
+            while (std::getline(tokens, token, ',')) {
+                double value = 0.0;
+                if (!TryParseFiniteDouble(token, value)) {
+                    error = "Convolution1D kernel must be a comma-separated list of finite numbers";
+                    return false;
+                }
+                saw_value = true;
+            }
+            if (!saw_value) {
+                error = "Convolution1D kernel must be a comma-separated list of finite numbers";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "FilterDesigner") {
+        const auto filter_type_it = parameters.find("filter_type");
+        const std::string filter_type =
+            (filter_type_it != parameters.end() &&
+             !filter_type_it->second.empty())
+                ? ToLowerAscii(TrimString(filter_type_it->second))
+                : "lowpass";
+        if (filter_type == "bandpass" || filter_type == "bandstop") {
+            if (!HasNonEmptyParameter(parameters, "cutoff_high")) {
+                error = "FilterDesigner " + filter_type +
+                        " requires cutoff_high";
+                return false;
+            }
+            const double cutoff =
+                FloatParameterOrDefault(parameters, "cutoff", 0.5);
+            const double cutoff_high =
+                FloatParameterOrDefault(parameters, "cutoff_high", 0.0);
+            if (cutoff_high <= cutoff) {
+                error = "FilterDesigner " + filter_type +
+                        " requires cutoff_high > cutoff";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "StringManipulation") {
+        const auto operation_it = parameters.find("operation");
+        const std::string operation =
+            (operation_it != parameters.end() && !operation_it->second.empty())
+                ? ToLowerAscii(TrimString(operation_it->second))
+                : "trim";
+        if (operation == "replace" &&
+            !HasNonEmptyParameter(parameters, "param1")) {
+            error = "StringManipulation replace requires param1";
+            return false;
+        }
+        if (operation == "substring") {
+            const auto start_it = parameters.find("param1");
+            const auto length_it = parameters.find("param2");
+            if (start_it == parameters.end() || start_it->second.empty() ||
+                !IsIntegerAtLeast(start_it->second, 1)) {
+                error = "StringManipulation substring param1 must be an integer >= 1";
+                return false;
+            }
+            if (length_it == parameters.end() || length_it->second.empty() ||
+                !IsIntegerAtLeast(length_it->second, 0)) {
+                error = "StringManipulation substring param2 must be an integer >= 0";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "TableCropper") {
+        const auto start_row_it = parameters.find("start_row");
+        const auto end_row_it = parameters.find("end_row");
+        const int64_t start_row =
+            (start_row_it != parameters.end() && !start_row_it->second.empty())
+                ? std::stoll(start_row_it->second)
+                : 0;
+        const int64_t end_row =
+            (end_row_it != parameters.end() && !end_row_it->second.empty())
+                ? std::stoll(end_row_it->second)
+                : -1;
+        if (end_row >= 0 && end_row < start_row) {
+            error = "TableCropper end_row must be >= start_row";
+            return false;
+        }
+    }
+
+    if (node_type == "TextCleanNode" || node_type == "TextClean") {
+        if (!ValidateOptionalBooleanParameter(
+                parameters, node_type, "lowercase", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "remove_html", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "remove_special_chars", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "remove_stopwords", error)) {
+            return false;
+        }
+        const auto mode_it = parameters.find("html_mode");
+        const std::string mode = mode_it == parameters.end() || mode_it->second.empty() ? "legacy_tags" : mode_it->second;
+        if (mode != "legacy_tags" && mode != "parsed_html") {
+            error = node_type + " html_mode must be legacy_tags or parsed_html";
+            return false;
+        }
+        if (mode == "parsed_html") {
+            if (!HtmlDocumentParserAvailable()) {
+                error = node_type + " parsed HTML unavailable: enable html-parser feature and CYXWIZ_ENABLE_HTML_PARSER";
+                return false;
+            }
+            if (!OptionalBooleanParameterIsTrue(parameters,"remove_html") ||
+                OptionalBooleanParameterIsTrue(parameters,"lowercase") ||
+                OptionalBooleanParameterIsTrue(parameters,"remove_special_chars")) {
+                error = node_type + " parsed_html requires Remove HTML=true, Lowercase=false and Normalize special characters=false; it preserves paragraph boundaries and punctuation";
+                return false;
+            }
+        }
+        const auto remove_stopwords_it = parameters.find("remove_stopwords");
+        if (remove_stopwords_it != parameters.end() &&
+            OptionalBooleanParameterIsTrue(parameters, "remove_stopwords")) {
+            error = node_type + " remove_stopwords is not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
+    if (node_type == "TextVectorize" &&
+        HasNonEmptyParameter(parameters, "max_features")) {
+        error = "TextVectorize max_features is not supported by the legacy PipelineExecutor path; use CountVectorizer or TFIDFVectorizer";
+        return false;
+    }
+
+    if (node_type == "TextTokenizer") {
+        if (!ValidateOptionalBooleanParameter(
+                parameters, node_type, "lowercase", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "vocab_build_if_missing", error)) {
+            return false;
+        }
+    }
+
+    if (node_type == "TSWindow") {
+        const auto stride_it = parameters.find("stride");
+        if (stride_it != parameters.end() && !stride_it->second.empty() &&
+            std::stoi(stride_it->second) != 1) {
+            error = "TSWindow stride values other than 1 are not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
+    if (node_type == "BinningNode" || node_type == "Binning") {
+        const auto columns_it = parameters.find("columns");
+        if (columns_it != parameters.end() &&
+            columns_it->second.find(',') != std::string::npos) {
+            error = node_type + " columns supports exactly one column";
+            return false;
+        }
+    }
+
+    if (node_type == "PolynomialFeaturesNode" ||
+        node_type == "PolynomialFeatures") {
+        const auto columns_it = parameters.find("columns");
+        if (columns_it != parameters.end() &&
+            columns_it->second.find(',') != std::string::npos) {
+            error = node_type + " columns supports exactly one column";
+            return false;
+        }
+    }
+
+    if (node_type == "DataInput") {
+        if (!ValidateOptionalBooleanParameter(
+                parameters, node_type, "has_header", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "json_lines", error)) {
+            return false;
+        }
+
+        const auto source_it = parameters.find("source_type");
+        const std::string source_type =
+            (source_it != parameters.end() && !source_it->second.empty())
+                ? ToLowerAscii(TrimString(source_it->second))
+                : "file";
+
+        std::string file_type;
+        if (!ResolveDataInputFormatAliases(
+                parameters, file_type, error)) {
+            return false;
+        }
+        if (source_type == "file") {
+            const auto path = parameters.find("file_path");
+            file_type = data_input::ResolveFormat(
+                file_type, path == parameters.end() ? "" : path->second);
+            if (!data_input::IsExecutable(file_type)) {
+                error = data_input::UnsupportedReason(file_type, data_input::kHdf5BuildAvailable);
+                return false;
+            }
+        }
+        if (source_type == "file" &&
+            (file_type == "csv" || file_type == "tsv")) {
+            const auto delimiter_it = parameters.find("delimiter");
+            const std::string delimiter =
+                delimiter_it != parameters.end() && !delimiter_it->second.empty()
+                    ? delimiter_it->second
+                    : (file_type == "tsv" ? "\t" : ",");
+            const auto decimal_it = parameters.find("decimal_point");
+            const std::string decimal_point =
+                decimal_it != parameters.end() && !decimal_it->second.empty()
+                    ? decimal_it->second
+                    : ".";
+            if (delimiter.size() != 1 || decimal_point.size() != 1) {
+                error =
+                    "DataInput delimiter and decimal_point must each be one character";
+                return false;
+            }
+            if (delimiter[0] == decimal_point[0]) {
+                error =
+                    "DataInput delimiter and decimal_point must be different";
+                return false;
+            }
+        }
+        const auto skip_rows_it = parameters.find("skip_rows");
+        if (source_type == "file" && skip_rows_it != parameters.end() &&
+            !skip_rows_it->second.empty() &&
+            !IsIntegerAtLeast(skip_rows_it->second, 0)) {
+            error = "DataInput skip_rows must be a non-negative integer";
+            return false;
+        }
+        if (source_type == "file" && file_type == "zip_text") {
+            const auto member = parameters.find("archive_member");
+            if (member == parameters.end() || member->second.empty()) {
+                error = "DataInput ZIP text requires archive_member (exact path inside ZIP)";
+                return false;
+            }
+        }
+        const auto sheet_idx_it = parameters.find("sheet_idx");
+        if (source_type == "file" && file_type == "excel" &&
+            sheet_idx_it != parameters.end() && !sheet_idx_it->second.empty() &&
+            !IsIntegerAtLeast(sheet_idx_it->second, 0)) {
+            error = "DataInput sheet_idx must be a non-negative integer";
+            return false;
+        }
+        if (source_type == "folder") {
+            const auto category_it = parameters.find("file_category");
+            const std::string file_category =
+                (category_it != parameters.end() && !category_it->second.empty())
+                    ? ToLowerAscii(TrimString(category_it->second))
+                    : "image";
+            if (file_category != "image") {
+                error = "DataInput folder source only supports image category in PipelineExecutor";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "DataOutput" || node_type == "SaveDataset") {
+        auto format_it = parameters.find("format");
+        auto file_type_it = parameters.find("file_type");
+        if (format_it != parameters.end() && !format_it->second.empty() &&
+            file_type_it != parameters.end() && !file_type_it->second.empty()) {
+            const std::string format =
+                ToLowerAscii(TrimString(format_it->second));
+            const std::string file_type =
+                ToLowerAscii(TrimString(file_type_it->second));
+            if (format != file_type) {
+                error = node_type + " format and file_type disagree";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "DataConvert") {
+        const auto skip_rows_it = parameters.find("skip_rows");
+        if (skip_rows_it != parameters.end() && !skip_rows_it->second.empty()) {
+            int64_t parsed = 0;
+            if (!TryParseInteger(skip_rows_it->second, parsed) || parsed < 0 ||
+                parsed > std::numeric_limits<int>::max()) {
+                error = "DataConvert skip_rows must be an integer between 0 and INT_MAX";
+                return false;
+            }
+        }
+        const auto row_group_it = parameters.find("row_group_size");
+        if (row_group_it != parameters.end() && !row_group_it->second.empty() &&
+            !IsIntegerAtLeast(row_group_it->second, 1)) {
+            error = "DataConvert row_group_size must be an integer >= 1";
+            return false;
+        }
+        for (const char* bool_param : {"header", "has_header",
+                                       "allow_newlines_in_values",
+                                       "overwrite",
+                                       "create_parent_dirs",
+                                       "write_manifest"}) {
+            if (!ValidateOptionalBooleanParameter(parameters, node_type,
+                                                  bool_param, error)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool ValidateOptionalRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    return RequireRoleColumnKind(table, node_type, it->second, role, kind,
+                                 predicate, error);
+}
+
+bool ValidateOptionalRoleColumnExists(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+    if (table->schema()->GetFieldIndex(it->second) < 0) {
+        error = node_type + ": " + role + " column '" + it->second +
+                "' not found";
+        return false;
+    }
+    return true;
+}
+
+bool ValidateTextOperatorInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    const auto text_it = parameters.find("text_col");
+    if (text_it == parameters.end() || text_it->second.empty()) {
+        return true;
+    }
+    if (!RequireRoleColumnKind(table, node_type, text_it->second, "text",
+                               "string/large_string", IsStringArrowType,
+                               error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnKind(
+        table, node_type, parameters, "label_col", "label",
+        "string or numeric label", IsTextLabelArrowType, error);
+}
+
+bool ValidateRequiredRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    return RequireRoleColumnKind(table, node_type, it->second, role, kind,
+                                 predicate, error);
+}
+
+bool ValidateOptionalRoleColumnListKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+
+    const std::vector<std::string> columns = ParseCommaSeparatedNames(it->second);
+    if (columns.empty()) {
+        const std::string column_role =
+            (role == "column") ? "columns" : role + " columns";
+        error = node_type + ": no " + column_role + " were provided";
+        return false;
+    }
+    for (const auto& column : columns) {
+        if (!RequireRoleColumnKind(table, node_type, column, role, kind,
+                                   predicate, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateOptionalRoleColumnListExists(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    const std::vector<std::string> columns =
+        ParseCommaSeparatedNames(it->second);
+    if (columns.empty()) {
+        error = node_type + ": no " + role + " columns were provided";
+        return false;
+    }
+    for (const auto& column : columns) {
+        if (table->schema()->GetFieldIndex(column) < 0) {
+            error = node_type + ": " + role + " column '" + column +
+                    "' not found";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateSignalColumnInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "signal_col", "signal", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateValueColumnInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "value_col", "value", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateTimeSeriesWindowInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateValueColumnInputSchema(table, node_type, parameters,
+                                        error)) {
+        return false;
+    }
+    if (!ValidateOptionalRoleColumnListKind(
+            table, node_type, parameters, "feature_cols", "feature",
+            "numeric", IsNumericArrowType, error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnKind(
+        table, node_type, parameters, "time_col", "time", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateFeatureColumnsInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateOptionalRoleColumnListKind(
+        table, node_type, parameters, "feature_cols", "feature", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateFeatureColumnsWithLabelInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateFeatureColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnExists(
+        table, node_type, parameters, "label_col", "label", error);
+}
+
+bool ValidateNumericColumnsInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateOptionalRoleColumnListKind(
+        table, node_type, parameters, "columns", "column", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateNumericColumnsWithLabelInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateNumericColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    if (!ValidateOptionalRoleColumnExists(
+            table, node_type, parameters, "label_col", "label", error)) {
+        return false;
+    }
+    if (node_type == "StandardScaler") {
+        return ValidateOptionalRoleColumnListExists(
+            table, node_type, parameters, "exclude_columns", "excluded",
+            error);
+    }
+    return true;
+}
+
+bool ValidateOutlierDetectorInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    const auto columns_it = parameters.find("columns");
+    if (columns_it != parameters.end() &&
+        ToLowerAscii(TrimString(columns_it->second)) == "all") {
+        return ValidateOptionalRoleColumnExists(
+            table, node_type, parameters, "label_col", "label", error);
+    }
+    return ValidateNumericColumnsWithLabelInputSchema(table, node_type,
+                                                     parameters, error);
+}
+
+bool ValidateCategoricalColumnsInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateOptionalRoleColumnListKind(
+        table, node_type, parameters, "columns", "categorical",
+        "string/large_string", IsStringArrowType, error);
+}
+
+bool ValidatePCAInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateFeatureColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnKind(
+        table, node_type, parameters, "label_col", "label",
+        "string or numeric label", IsTextLabelArrowType, error);
+}
+
+bool ValidateLinearRegressionInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateFeatureColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "target_col", "target", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidatePolynomialRegressionInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateRequiredRoleColumnKind(
+            table, node_type, parameters, "feature_col", "feature",
+            "numeric", IsNumericArrowType, error)) {
+        return false;
+    }
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "target_col", "target", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateTargetEncoderInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateCategoricalColumnsInputSchema(table, node_type, parameters,
+                                               error)) {
+        return false;
+    }
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "target_col", "target", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidatePipelineOperatorInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    gui::NodeType type,
+    std::string& error) {
+    switch (type) {
+        case gui::NodeType::TextTokenizer:
+        case gui::NodeType::CountVectorizer:
+        case gui::NodeType::TFIDFVectorizer:
+        case gui::NodeType::SentimentAnalyzer:
+            return ValidateTextOperatorInputSchema(table, node_type,
+                                                   parameters, error);
+        case gui::NodeType::FFTNode:
+        case gui::NodeType::Convolution1D:
+        case gui::NodeType::FilterDesigner:
+        case gui::NodeType::TimeSeriesDecomposition:
+        case gui::NodeType::ACFNode:
+        case gui::NodeType::PACFNode:
+        case gui::NodeType::StationarityTest:
+        case gui::NodeType::SeasonalityDetector:
+        case gui::NodeType::ARIMAForecaster:
+        case gui::NodeType::ExponentialSmoothing:
+            return ValidateSignalColumnInputSchema(table, node_type,
+                                                   parameters, error);
+        case gui::NodeType::TimeSeriesWindow:
+            return ValidateTimeSeriesWindowInputSchema(table, node_type,
+                                                       parameters, error);
+        case gui::NodeType::TimeSeriesFeatures:
+        case gui::NodeType::LogTransform:
+        case gui::NodeType::Differencing:
+            return ValidateValueColumnInputSchema(table, node_type,
+                                                  parameters, error);
+        case gui::NodeType::StandardScaler:
+        case gui::NodeType::MinMaxScaler:
+        case gui::NodeType::RobustScaler:
+            return ValidateNumericColumnsWithLabelInputSchema(
+                table, node_type, parameters, error);
+        case gui::NodeType::OutlierDetector:
+            return ValidateOutlierDetectorInputSchema(table, node_type,
+                                                      parameters, error);
+        case gui::NodeType::PCANode:
+            return ValidatePCAInputSchema(table, node_type, parameters,
+                                          error);
+        case gui::NodeType::KMeansCluster:
+        case gui::NodeType::DBSCANCluster:
+        case gui::NodeType::HierarchicalCluster:
+        case gui::NodeType::GMMCluster:
+            return ValidateFeatureColumnsWithLabelInputSchema(
+                table, node_type, parameters, error);
+        case gui::NodeType::LinearRegressionNode:
+            return ValidateLinearRegressionInputSchema(table, node_type,
+                                                       parameters, error);
+        case gui::NodeType::PolynomialRegressionNode:
+            return ValidatePolynomialRegressionInputSchema(
+                table, node_type, parameters, error);
+        case gui::NodeType::LabelEncoder:
+            return ValidateRequiredRoleColumnKind(
+                table, node_type, parameters, "column", "column",
+                "string/large_string", IsStringArrowType, error);
+        case gui::NodeType::OrdinalEncoder:
+            return ValidateCategoricalColumnsInputSchema(table, node_type,
+                                                         parameters, error);
+        case gui::NodeType::TargetEncoder:
+            return ValidateTargetEncoderInputSchema(table, node_type,
+                                                    parameters, error);
+        default:
+            return true;
+    }
+}
+
+} // namespace
 
 PipelineExecutor::PipelineExecutor()
     : executing_(false)
@@ -20,34 +3058,59 @@ PipelineExecutor::PipelineExecutor()
     , cancel_requested_(false)
     , deployment_ready_(false)
 {
-    // Create DuckDB connector for SQL transformations
-    duckdb_ = std::make_unique<DuckDBConnector>();
-    spdlog::info("[Data Studio] PipelineExecutor initialized with DuckDB");
+    // Steps that build SQL (FilterRows, SortRows, Join, GroupBy, ...) run it
+    // like the SQL step: RunStepSql, one restricted DuckDB per step.
 }
 
-PipelineExecutor::~PipelineExecutor() = default;
+PipelineExecutor::~PipelineExecutor() {
+    // Its copies of memory tables go with it; result files a dataset still
+    // uses stay until the next prune.
+    for (auto& entry : step_input_copies_) entry.second.table.reset();
+    RemoveUnusedStepFiles();
+}
 
 bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     if (executing_) {
-        last_error_ = "Pipeline is already executing";
+        Error() = errors::FormatError(
+            errors::Runtime::InvalidState,
+            "Pipeline is already executing");
         return false;
     }
+
+    // Operators compute on ArrayFire; run them on the selected device whichever
+    // thread executes the pipeline (a task worker starts on ArrayFire's default).
+    Device::ActivateProcessDeviceOnThisThread();
 
     executing_ = true;
     progress_ = 0.0f;
     stop_requested_ = false;
     cancel_requested_ = false;
-    last_error_ = "";
+    Error() = "";
     current_status_ = "Starting pipeline execution...";
     deployment_ready_ = false;
     deployment_dataset_.clear();
+    for (const auto& name : admitted_inputs_) DataRegistry::Instance().UnregisterTabularDataset(name);
+    admitted_inputs_.clear();
+    RemoveUnusedStepFiles();
 
-    spdlog::info("[Data Studio] Starting pipeline execution");
+    spdlog::info("[Pipeline] Starting pipeline execution");
 
     // Parse pipeline
     std::vector<Node> nodes;
     if (!ParsePipeline(pipeline_json, nodes)) {
-        ReportError("Failed to parse pipeline");
+        const std::string parse_error = Error().empty()
+            ? "Failed to parse pipeline"
+            : "Failed to parse pipeline: " + Error();
+        ReportError(parse_error);
+        executing_ = false;
+        NotifyCompletion(false);
+        return false;
+    }
+
+    if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
+        ReportError(Error().empty()
+                        ? "Failed to resolve preprocessing artifact paths"
+                        : Error());
         executing_ = false;
         NotifyCompletion(false);
         return false;
@@ -57,7 +3120,10 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
 
     // Validate pipeline
     if (!ValidatePipeline(nodes)) {
-        ReportError("Pipeline validation failed");
+        const std::string validation_error = Error().empty()
+            ? "Pipeline validation failed"
+            : "Pipeline validation failed: " + Error();
+        ReportError(validation_error);
         executing_ = false;
         NotifyCompletion(false);
         return false;
@@ -66,6 +3132,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     UpdateProgress(0.2f, "Pipeline validated");
 
     // Phase 8: Mark nodes that need execution (lazy evaluation)
+    RestoreRunCache(nodes);
     MarkDirtyNodes(nodes);
 
     int nodes_to_execute = 0;
@@ -75,7 +3142,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         }
     }
 
-    spdlog::info("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
+    spdlog::debug("[Pipeline] Lazy evaluation: {} of {} nodes need execution",
                  nodes_to_execute, nodes.size());
     UpdateProgress(0.25f, "Marked " + std::to_string(nodes_to_execute) + " nodes for execution");
 
@@ -92,19 +3159,79 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     // Deployment status is set inside ExecuteParallel
     NotifyCompletion(true);
 
-    spdlog::info("[Data Studio] Pipeline execution completed successfully");
+    spdlog::info("[Pipeline] Pipeline execution completed successfully");
     return true;
 }
 
 void PipelineExecutor::StopExecution() {
     if (executing_) {
         stop_requested_ = true;
-        spdlog::info("[Data Studio] Stop requested for pipeline execution");
+        spdlog::info("[Pipeline] Stop requested for pipeline execution");
     }
+}
+
+void PipelineExecutor::SetOperatorFiguresCallback(std::function<void(const OperatorFigures&)> callback) {
+    operator_figures_callback_ = std::move(callback);
 }
 
 void PipelineExecutor::SetProgressCallback(std::function<void(float, const std::string&)> callback) {
     progress_callback_ = callback;
+}
+
+void PipelineExecutor::SetNodeExecutionCallback(
+    std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback) {
+    node_execution_callback_ = std::move(callback);
+}
+
+std::map<int, PipelineNodeRunFacts> PipelineExecutor::GetNodeRunFacts() const {
+    std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+    return node_run_facts_;
+}
+
+void PipelineExecutor::RecordNodeRunFacts(const Node& node,
+                                          PipelineNodeExecutionEvent event,
+                                          const std::string& output_dataset,
+                                          const std::string& outcome,
+                                          const std::string& error,
+                                          const std::string& written_path) {
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+    if (event == PipelineNodeExecutionEvent::Executing) {
+        node_started_seconds_[node.id] = now;
+        return;
+    }
+    if (event != PipelineNodeExecutionEvent::Completed &&
+        event != PipelineNodeExecutionEvent::Error) {
+        return;
+    }
+    PipelineNodeRunFacts facts;
+    facts.output_dataset = output_dataset;
+    facts.outcome = outcome;
+    facts.error = error;
+    facts.written_path = written_path;
+    if (const auto started = node_started_seconds_.find(node.id);
+        started != node_started_seconds_.end()) {
+        facts.seconds = now - started->second;
+        node_started_seconds_.erase(started);
+    }
+    if (!output_dataset.empty()) {
+        if (const auto table = DataRegistry::Instance().GetTableRef(output_dataset)) {
+            facts.rows = table->rows;
+            facts.columns = table->columns;
+        }
+    }
+    const std::time_t wall = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &wall);
+#else
+    localtime_r(&wall, &local);
+#endif
+    std::ostringstream clock;
+    clock << std::put_time(&local, "%H:%M:%S");
+    facts.finished_at = clock.str();
+    node_run_facts_[node.id] = std::move(facts);
 }
 
 void PipelineExecutor::SetCompletionCallback(std::function<void(bool)> callback) {
@@ -113,7 +3240,63 @@ void PipelineExecutor::SetCompletionCallback(std::function<void(bool)> callback)
 
 void PipelineExecutor::RequestCancel() {
     cancel_requested_ = true;
-    spdlog::info("[Data Studio] Cancellation requested");
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        for (SqlTransform* sql : active_sql_) sql->Interrupt();
+    }
+    spdlog::info("[Pipeline] Cancellation requested");
+}
+
+bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& ctx) {
+    const auto param = [&node](const char* key) {
+        const auto it = node.parameters.find(key);
+        return it == node.parameters.end() ? std::string() : it->second;
+    };
+    if (param(kSqlContractParameter) != kSqlContractVersion) {
+        ReportError("SQLQuery '" + node.name + "' has no sql_contract_version=1: it is an older "
+                    "source-shaped SQL node and is not executed. Recreate it as a SQL step "
+                    "(one input table, read-only SELECT).");
+        return false;
+    }
+    // One named table per input pin, in pin order (C2). A single input keeps
+    // the older link form that carries no pin index.
+    const auto aliases = SqlStepInputAliases(node.parameters);
+    if (aliases.empty() || aliases.size() > kSqlMaxInputs) {
+        ReportError("SQL step '" + node.name + "': takes 1 to " + std::to_string(kSqlMaxInputs) +
+                    " named inputs, got " + std::to_string(aliases.size()));
+        return false;
+    }
+    std::vector<StepSqlInput> inputs;
+    int64_t input_rows = 0;
+    auto& registry = DataRegistry::Instance();
+    for (size_t pin = 0; pin < aliases.size(); ++pin) {
+        const std::string dataset_name = aliases.size() == 1
+            ? GetInputDatasetName(node, ctx)
+            : GetInputDatasetForPin(node, ctx, static_cast<int>(pin));
+        if (dataset_name.empty()) {
+            return false;
+        }
+        const auto table = registry.GetTableRef(dataset_name);
+        if (!table) {
+            ReportError("SQL step '" + node.name + "': input '" + aliases[pin] + "' dataset '" +
+                        dataset_name + "' is not a table");
+            return false;
+        }
+        input_rows += table->rows;
+        inputs.push_back({aliases[pin], dataset_name});
+    }
+
+    const std::string output_dataset_name = "ds_sql_" + std::to_string(node.id);
+    if (!RunStepSql(node, inputs, param(kSqlQueryParameter), output_dataset_name, true,
+                    "SQL step '" + node.name + "': ")) {
+        return false;
+    }
+    ctx.node_results[node.id] = output_dataset_name;
+    const auto output = registry.GetTableRef(output_dataset_name);
+    spdlog::info("[Pipeline] SQL step '{}': {} input(s), {} rows in -> {} rows, {} columns{}",
+                 node.name, inputs.size(), input_rows, output ? output->rows : 0, output ? output->columns : 0,
+                 output && output->kind == TableRef::Kind::Parquet ? " (on disk)" : "");
+    return true;
 }
 
 bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
@@ -121,12 +3304,26 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
     try {
         auto j = nlohmann::json::parse(pipeline_json);
 
+        struct PendingInputLink {
+            int start_node = -1;
+            std::optional<int> start_pin_index;
+            std::optional<int> end_pin_index;
+        };
+        std::map<int, std::vector<PendingInputLink>> pending_inputs;
+
+        graph_path_ = j.value("graph", std::string());
         for (const auto& node_json : j["nodes"]) {
             Node node;
             node.id = node_json["id"];
             node.type = node_json["type"];
+            node.runtime_type = ResolvePipelineRuntimeNodeType(node.type);
             node.name = node_json["name"];
             node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+            node.recipe = node_json.value("recipe", std::string());
+            if (node.runtime_type.has_value()) {
+                CanonicalizePipelineParameterAliases(
+                    *node.runtime_type, node.parameters);
+            }
             nodes.push_back(node);
         }
 
@@ -140,31 +3337,538 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             auto end_it = std::find_if(nodes.begin(), nodes.end(),
                                       [end_node](const Node& n) { return n.id == end_node; });
 
-            if (start_it != nodes.end() && end_it != nodes.end()) {
-                start_it->outputs.push_back(end_node);
-                end_it->inputs.push_back(start_node);
+            if (start_it == nodes.end()) {
+                Error() = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Link references missing start node id: " +
+                        std::to_string(start_node));
+                return false;
+            }
+            if (end_it == nodes.end()) {
+                Error() = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Link references missing end node id: " +
+                        std::to_string(end_node));
+                return false;
+            }
+
+            start_it->outputs.push_back(end_node);
+            PendingInputLink pending;
+            pending.start_node = start_node;
+            if (link_json.contains("start_pin_index") &&
+                link_json["start_pin_index"].is_number_integer()) {
+                pending.start_pin_index =
+                    link_json["start_pin_index"].get<int>();
+            }
+            if (link_json.contains("end_pin_index") &&
+                link_json["end_pin_index"].is_number_integer()) {
+                pending.end_pin_index =
+                    link_json["end_pin_index"].get<int>();
+            } else if (link_json.contains("end_pin") &&
+                       link_json["end_pin"].is_number_integer()) {
+                // Backward-compatible support for older headless snapshots.
+                pending.end_pin_index = link_json["end_pin"].get<int>();
+            }
+            pending_inputs[end_node].push_back(std::move(pending));
+        }
+
+        for (auto& [end_node, inputs] : pending_inputs) {
+            std::set<int> seen_pins;
+            bool all_pinned = !inputs.empty();
+            for (const auto& input : inputs) {
+                all_pinned = all_pinned && input.end_pin_index.has_value();
+                if (input.end_pin_index.has_value() &&
+                    !seen_pins.insert(*input.end_pin_index).second) {
+                    Error() = errors::FormatError(
+                        errors::Runtime::PipelineMalformed,
+                        "Node " + std::to_string(end_node) +
+                            " has multiple links targeting input pin " +
+                            std::to_string(*input.end_pin_index));
+                    return false;
+                }
+            }
+            if (all_pinned) {
+                std::stable_sort(
+                    inputs.begin(), inputs.end(),
+                    [](const PendingInputLink& lhs,
+                       const PendingInputLink& rhs) {
+                        return *lhs.end_pin_index < *rhs.end_pin_index;
+                    });
+            }
+
+            auto end_it = std::find_if(
+                nodes.begin(), nodes.end(),
+                [end_node](const Node& node) { return node.id == end_node; });
+            for (const auto& input : inputs) {
+                end_it->inputs.push_back(input.start_node);
+                end_it->input_links.push_back({
+                    input.start_node,
+                    input.start_pin_index,
+                    input.end_pin_index});
             }
         }
 
         return true;
 
     } catch (const std::exception& e) {
-        last_error_ = std::string("JSON parse error: ") + e.what();
+        Error() = errors::FormatError(
+            errors::Runtime::PipelineMalformed,
+            "JSON parse error",
+            e.what());
         return false;
     }
+}
+
+bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
+    std::vector<Node>& nodes) {
+    const auto now = std::chrono::system_clock::now();
+    const auto timestamp = std::chrono::system_clock::to_time_t(now);
+    const auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+    std::tm local_time{};
+#ifdef _WIN32
+    localtime_s(&local_time, &timestamp);
+#else
+    localtime_r(&timestamp, &local_time);
+#endif
+    std::ostringstream run_id;
+    run_id << "pipeline-"
+           << std::put_time(&local_time, "%Y%m%d-%H%M%S")
+           << '-' << std::setfill('0') << std::setw(3)
+           << milliseconds.count();
+
+    const std::filesystem::path artifact_root = artifact_root_.empty()
+        ? std::filesystem::current_path() / "artifacts"
+        : std::filesystem::path(artifact_root_);
+
+    const auto node_slug = [](const Node& node, const std::string& fallback) {
+        std::string slug = node.name.empty() ? node.type : node.name;
+        std::transform(slug.begin(), slug.end(), slug.begin(),
+                       [](unsigned char c) {
+                           return std::isalnum(c)
+                               ? static_cast<char>(std::tolower(c))
+                               : '_';
+                       });
+        while (!slug.empty() && slug.back() == '_') {
+            slug.pop_back();
+        }
+        return slug.empty() ? fallback : slug;
+    };
+
+    for (auto& node : nodes) {
+        if (node.type == "LinearRegressionNode" ||
+            node.type == "PolynomialRegressionNode") {
+            const std::string configured_path = TrimString(
+                ParameterOrDefault(node.parameters, "model_path", ""));
+            if (configured_path.empty()) {
+                const auto path = artifact_root / "regression" /
+                    run_id.str() /
+                    (std::to_string(node.id) + "_" +
+                     node_slug(node, "regression") +
+                     ".cyxregression.json");
+                node.parameters["model_path"] = path.string();
+                spdlog::info(
+                    "[Regression] Node '{}' will save its fitted Model "
+                    "artifact to '{}'.",
+                    node.name, path.string());
+            }
+            continue;
+        }
+        // Tree trainers: their Model output (TOFIX134 P4.7) is the saved
+        // tree model, so one is always written.
+        if (node.type == "DecisionTreeClassifier" ||
+            node.type == "RandomForestClassifier" ||
+            node.type == "GradientBoostingClassifier") {
+            const std::string configured_path = TrimString(
+                ParameterOrDefault(node.parameters, "model_path", ""));
+            if (configured_path.empty()) {
+                const auto path = artifact_root / "tree_model" /
+                    run_id.str() /
+                    (std::to_string(node.id) + "_" +
+                     node_slug(node, "tree") + ".cyxtree.json");
+                node.parameters["model_path"] = path.string();
+            }
+            continue;
+        }
+        // Word Embeddings (TOFIX152): the vectors are always saved, by
+        // default at one place per node in the artifacts, where an Embedding
+        // layer can load them run after run.
+        if (node.type == "WordEmbeddings") {
+            if (TrimString(ParameterOrDefault(node.parameters, "vectors_path", "")).empty()) {
+                const auto path = artifact_root / WordEmbeddingsOperator::DefaultVectorsFile(node.id, node.name);
+                node.parameters["vectors_path"] = path.string();
+            }
+            continue;
+        }
+        // Classic ML classifiers (TOFIX145): the Model output is the saved
+        // fitted model, so one is always written.
+        if (node.type == "NaiveBayesClassifier" ||
+            node.type == "KNNClassifier" ||
+            node.type == "LogisticRegressionNode" ||
+            node.type == "SVMClassifier" ||
+            node.type == "SVMRegressor") {
+            const std::string configured_path = TrimString(
+                ParameterOrDefault(node.parameters, "model_path", ""));
+            if (configured_path.empty()) {
+                const auto path = artifact_root / "classic_model" /
+                    run_id.str() /
+                    (std::to_string(node.id) + "_" +
+                     node_slug(node, "classic") + ".cyxclassic.json");
+                node.parameters["model_path"] = path.string();
+            }
+            continue;
+        }
+        if (node.type != "FillMissing" &&
+            node.type != "StandardScaler") {
+            continue;
+        }
+        const std::string operation_mode = ToLowerAscii(TrimString(
+            ParameterOrDefault(node.parameters, "operation_mode",
+                               "fit_transform")));
+        const bool save_state = OptionalBooleanParameterOrDefault(
+            node.parameters, "save_state", false);
+        const std::string configured_path = TrimString(
+            ParameterOrDefault(node.parameters, "state_path", ""));
+        if (operation_mode != "fit_transform" || !save_state ||
+            !configured_path.empty()) {
+            continue;
+        }
+
+        const auto path = artifact_root / "preprocessing" /
+            run_id.str() /
+            (std::to_string(node.id) + "_" +
+             node_slug(node, "preprocessing") +
+             ".cyxstate.json");
+        node.parameters["state_path"] = path.string();
+        spdlog::info(
+            "[Preprocessing] Node '{}' will save fitted state to the "
+            "engine-managed artifact '{}'.",
+            node.name, path.string());
+    }
+    return true;
+}
+
+PipelineRuntimeSupport
+PipelineExecutor::ResolveNodeRuntimeSupport(const Node& node) const {
+    if (node.runtime_type.has_value()) {
+        auto support = ResolvePipelineRuntimeSupport(*node.runtime_type);
+        if (support.mode != PipelineRuntimeSupportMode::Unknown) {
+            return support;
+        }
+    }
+    return ResolvePipelineRuntimeSupport(node.type);
 }
 
 bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
     // Check that there's at least one node
     if (nodes.empty()) {
-        last_error_ = "Pipeline is empty";
+        Error() = errors::FormatError(
+            errors::Runtime::PipelineMalformed,
+            "Pipeline is empty");
         return false;
     }
 
-    // TODO: Phase 1 Week 2 - More thorough validation
-    // - Check for disconnected nodes
-    // - Verify node parameters are valid
-    // - Check data type compatibility
+    std::set<int> ids;
+    for (const auto& node : nodes) {
+        if (!ids.insert(node.id).second) {
+            Error() = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Pipeline contains duplicate node id: " +
+                    std::to_string(node.id));
+            return false;
+        }
+    }
+
+    for (const auto& node : nodes) {
+        for (int input_id : node.inputs) {
+            if (ids.find(input_id) == ids.end()) {
+                Error() = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' has missing input node id: " +
+                        std::to_string(input_id));
+                return false;
+            }
+            if (input_id == node.id) {
+                Error() = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' cannot connect to itself");
+                return false;
+            }
+        }
+
+        for (int output_id : node.outputs) {
+            if (ids.find(output_id) == ids.end()) {
+                Error() = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' has missing output node id: " +
+                        std::to_string(output_id));
+                return false;
+            }
+            if (output_id == node.id) {
+                Error() = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' cannot connect to itself");
+                return false;
+            }
+        }
+
+        const auto runtime_support = ResolveNodeRuntimeSupport(node);
+        const bool is_source = runtime_support.source_node;
+        const bool is_data_convert = node.type == "DataConvert";
+        auto required_input_count = runtime_support.required_input_count;
+        if (node.type == "SQLQuery") {
+            // A SQL step takes one input per name in its alias list (C2).
+            required_input_count =
+                static_cast<int>(SqlStepInputAliases(node.parameters).size());
+        }
+        if (node.type == "ClassicModelPredictor") {
+            // Data, plus the Model input when it is connected (optional:
+            // without it the saved model file is used).
+            const bool model_linked = std::any_of(
+                node.input_links.begin(), node.input_links.end(),
+                [](const auto& link) { return link.target_pin_index == 1; });
+            required_input_count = model_linked ? 2 : 1;
+        }
+
+        if (is_data_convert && node.inputs.empty() &&
+            !HasNonEmptyParameter(node.parameters, "input_path")) {
+            Error() = errors::FormatError(
+                errors::Runtime::InputDatasetMissing,
+                "DataConvert node '" + node.name +
+                    "' requires either input_path or one input connection");
+            return false;
+        }
+
+        if (is_source && !node.inputs.empty() && !is_data_convert) {
+            Error() = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Source node '" + node.name +
+                    "' must not have input connections");
+            return false;
+        }
+
+        if (!is_source && node.inputs.empty()) {
+            Error() = errors::FormatError(
+                errors::Runtime::InputDatasetMissing,
+                "Node '" + node.name + "' requires an input connection");
+            return false;
+        }
+
+        if (required_input_count.has_value() &&
+            static_cast<int>(node.inputs.size()) != *required_input_count) {
+            Error() = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Node '" + node.name + "' requires exactly " +
+                    std::to_string(*required_input_count) +
+                    " input connections");
+            return false;
+        }
+
+        if (!required_input_count.has_value() && node.inputs.size() > 1) {
+            Error() = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Node '" + node.name +
+                    "' has multiple inputs, but node type '" + node.type +
+                    "' does not define multi-input execution");
+            return false;
+        }
+
+        if (const char* missing_parameter =
+                MissingRequiredParameter(node.type, node.parameters,
+                                         runtime_support.required_parameters);
+            missing_parameter != nullptr) {
+            Error() = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Node '" + node.name + "' of type '" + node.type +
+                    "' is missing required parameter '" + missing_parameter +
+                    "'");
+            return false;
+        }
+
+        std::string parameter_error;
+        if (!HasSupportedParameterValues(
+                node.type,
+                node.parameters,
+                runtime_support.allowed_parameter_values,
+                runtime_support.integer_parameters,
+                runtime_support.float_parameters,
+                parameter_error)) {
+            Error() = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Node '" + node.name + "': " + parameter_error);
+            return false;
+        }
+
+        if (runtime_support.mode == PipelineRuntimeSupportMode::Unknown) {
+            Error() = errors::FormatError(
+                errors::Runtime::UnsupportedNode,
+                "Node '" + node.name + "' has unsupported node type '" +
+                    node.type + "' for PipelineExecutor");
+            return false;
+        }
+
+        if (!runtime_support.pipeline_executor_supported) {
+            std::string message =
+                "Node '" + node.name + "' of type '" + node.type +
+                "' is not supported by PipelineExecutor";
+            if (runtime_support.fail_closed_reason != nullptr) {
+                message += ": ";
+                message += runtime_support.fail_closed_reason;
+            }
+            Error() = errors::FormatError(
+                errors::Runtime::UnsupportedNode,
+                message);
+            return false;
+        }
+    }
+
+    // Stateful preprocessing must never silently fit on validation, test, or
+    // inference inputs. Keep this graph-level so every execution surface gets
+    // the same guard and diagnostic.
+    std::map<int, const Node*> nodes_by_id;
+    for (const auto& node : nodes) {
+        nodes_by_id[node.id] = &node;
+    }
+    for (const auto& node : nodes) {
+        if (node.type != "FillMissing" &&
+            node.type != "StandardScaler") {
+            continue;
+        }
+
+        const std::string operation_mode = ToLowerAscii(TrimString(
+            ParameterOrDefault(node.parameters, "operation_mode",
+                               "fit_transform")));
+        const std::string state_path = TrimString(
+            ParameterOrDefault(node.parameters, "state_path", ""));
+        const bool save_state = OptionalBooleanParameterOrDefault(
+            node.parameters, "save_state", false);
+        if (operation_mode == "transform_only" && state_path.empty()) {
+            Error() = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Preprocessing node '" + node.name +
+                    "' is set to Transform Only but State artifact path is "
+                    "empty. Fit it on training data with Save fitted state "
+                    "enabled, then select that artifact.");
+            spdlog::error("[Preprocessing] {}", Error());
+            return false;
+        }
+        if (operation_mode == "fit_transform" && save_state &&
+            state_path.empty()) {
+            Error() = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Preprocessing node '" + node.name +
+                    "' has Save fitted state enabled but State artifact path "
+                    "is empty. Choose a .cyxstate.json path or disable "
+                    "saving.");
+            spdlog::error("[Preprocessing] {}", Error());
+            return false;
+        }
+
+        std::set<int> visited_upstream;
+        std::vector<int> pending_upstream(node.inputs.begin(),
+                                          node.inputs.end());
+        std::set<std::string> source_roles;
+        while (!pending_upstream.empty()) {
+            const int upstream_id = pending_upstream.back();
+            pending_upstream.pop_back();
+            if (!visited_upstream.insert(upstream_id).second) {
+                continue;
+            }
+            const auto upstream_it = nodes_by_id.find(upstream_id);
+            if (upstream_it == nodes_by_id.end()) {
+                continue;
+            }
+            const Node& upstream = *upstream_it->second;
+            if (upstream.type == "DataInput") {
+                source_roles.insert(ToLowerAscii(TrimString(
+                    ParameterOrDefault(upstream.parameters, "dataset_role",
+                                       "unspecified"))));
+            }
+            pending_upstream.insert(pending_upstream.end(),
+                                    upstream.inputs.begin(),
+                                    upstream.inputs.end());
+        }
+
+        if (operation_mode == "fit_transform") {
+            for (const auto& role : source_roles) {
+                if (role == "dev" || role == "validation" ||
+                    role == "test" || role == "inference") {
+                    Error() = errors::FormatError(
+                        errors::Runtime::InvalidParameter,
+                        "Preprocessing node '" + node.name +
+                            "' cannot Fit + Transform data whose Dataset role "
+                            "is '" + role +
+                            "'. This would leak evaluation data into fitted "
+                            "statistics. Change Mode to Transform Only and "
+                            "select the training state artifact.");
+                    spdlog::error("[Preprocessing] {}", Error());
+                    return false;
+                }
+            }
+            if (source_roles.empty() ||
+                source_roles.find("unspecified") != source_roles.end()) {
+                spdlog::warn(
+                    "[Preprocessing] Node '{}' will Fit + Transform, but its "
+                    "upstream Dataset role is unspecified. Set the Data Input "
+                    "role to Train so leakage protection can verify intent.",
+                    node.name);
+            }
+            if (!save_state) {
+                spdlog::warn(
+                    "[Preprocessing] Node '{}' will fit statistics without "
+                    "saving them. Validation/test data cannot reproduce this "
+                    "transform until Save fitted state and a state path are "
+                    "configured.",
+                    node.name);
+            }
+        } else {
+            spdlog::info(
+                "[Preprocessing] Node '{}' validated for Transform Only with "
+                "state artifact '{}'.",
+                node.name, state_path);
+        }
+    }
+
+    if (nodes.size() > 1) {
+        std::set<int> visited;
+        std::queue<int> pending;
+        pending.push(nodes.front().id);
+        visited.insert(nodes.front().id);
+
+        while (!pending.empty()) {
+            const int current = pending.front();
+            pending.pop();
+
+            auto current_it = std::find_if(
+                nodes.begin(), nodes.end(),
+                [current](const Node& node) { return node.id == current; });
+            if (current_it == nodes.end()) {
+                continue;
+            }
+
+            for (int input_id : current_it->inputs) {
+                if (visited.insert(input_id).second) {
+                    pending.push(input_id);
+                }
+            }
+            for (int output_id : current_it->outputs) {
+                if (visited.insert(output_id).second) {
+                    pending.push(output_id);
+                }
+            }
+        }
+
+        if (visited.size() != nodes.size()) {
+            Error() = "Pipeline contains disconnected nodes";
+            return false;
+        }
+    }
+
+    if (TopologicalSort(nodes).empty() && !nodes.empty()) {
+        Error() = "Pipeline contains a cycle";
+        return false;
+    }
 
     return true;
 }
@@ -176,7 +3880,7 @@ std::vector<int> PipelineExecutor::TopologicalSort(const std::vector<Node>& node
 
     // Build adjacency list and in-degree map
     for (const auto& node : nodes) {
-        in_degree[node.id] = node.inputs.size();
+        in_degree[node.id] = static_cast<int>(node.inputs.size());
         adj_list[node.id] = node.outputs;
     }
 
@@ -212,233 +3916,156 @@ std::vector<int> PipelineExecutor::TopologicalSort(const std::vector<Node>& node
 }
 
 bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
-    spdlog::debug("[Data Studio] Executing node: {} (type: {})", node.name, node.type);
+    spdlog::debug("[Pipeline] Executing node: {} (type: {})", node.name, node.type);
 
-    if (node.type == "FileInput") {
+    const auto support = ResolveNodeRuntimeSupport(node);
+    if (support.mode == PipelineRuntimeSupportMode::FailClosed &&
+        support.fail_closed_reason != nullptr) {
+        return FailUnsupportedNode(node, support.fail_closed_reason);
+    }
+
+    if (support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+        support.operator_type.has_value()) {
+        return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);
+    }
+
+    bool typed_legacy_handled = false;
+    if (ExecuteTypedLegacyNode(node, ctx, typed_legacy_handled)) {
+        return true;
+    }
+    if (typed_legacy_handled) {
+        return false;
+    }
+
+    ReportError("Unknown node type: " + node.type);
+    return false;
+}
+
+bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
+                                              ExecutionContext& ctx,
+                                              bool& handled) {
+    handled = false;
+    if (!node.runtime_type.has_value()) {
+        return false;
+    }
+
+    handled = true;
+    switch (*node.runtime_type) {
+    case gui::NodeType::CSVFile:
         return ExecuteFileInput(node, ctx);
-    } else if (node.type == "FilterRows") {
-        return ExecuteFilterRows(node, ctx);
-    } else if (node.type == "SelectColumns") {
-        return ExecuteSelectColumns(node, ctx);
-    } else if (node.type == "RemoveDuplicates") {
-        return ExecuteRemoveDuplicates(node, ctx);
-    } else if (node.type == "SaveDataset") {
-        return ExecuteSaveDataset(node, ctx);
-    } else if (node.type == "FillMissing") {
-        return ExecuteFillMissing(node, ctx);
-    } else if (node.type == "SortRows") {
-        return ExecuteSortRows(node, ctx);
-    } else if (node.type == "Join") {
-        return ExecuteJoin(node, ctx);
-    } else if (node.type == "GroupBy") {
-        return ExecuteGroupBy(node, ctx);
-    } else if (node.type == "DeployToNodeEditor") {
+    case gui::NodeType::DataInput:
+        return ExecuteDataInput(node, ctx);
+    case gui::NodeType::DataOutput:
+        if (node.type == "SaveDataset") {
+            return ExecuteSaveDataset(node, ctx);
+        }
+        return ExecuteDataOutput(node, ctx);
+    case gui::NodeType::DeployToNodeEditorNode:
         return ExecuteDeployToNodeEditor(node, ctx);
-    }
-    // Phase 6 Week 8-9 - Text Processing
-    else if (node.type == "TextClean") {
-        return ExecuteTextClean(node, ctx);
-    } else if (node.type == "TextTokenize") {
-        return ExecuteTextTokenize(node, ctx);
-    } else if (node.type == "TextVectorize") {
-        return ExecuteTextVectorize(node, ctx);
-    }
-    // Phase 6 Week 8-9 - Time-Series
-    else if (node.type == "TSWindow") {
-        return ExecuteTSWindow(node, ctx);
-    } else if (node.type == "TSFeatures") {
-        return ExecuteTSFeatures(node, ctx);
-    } else if (node.type == "TSLag") {
-        return ExecuteTSLag(node, ctx);
-    } else if (node.type == "TSDiff") {
-        return ExecuteTSDiff(node, ctx);
-    }
-    // Phase 6 Week 8-9 - Feature Engineering
-    else if (node.type == "PCA") {
-        return ExecutePCA(node, ctx);
-    } else if (node.type == "PolynomialFeatures") {
-        return ExecutePolynomialFeatures(node, ctx);
-    } else if (node.type == "Binning") {
+    case gui::NodeType::DataConvert:
+        return ExecuteDataConvert(node, ctx);
+    case gui::NodeType::FilterRows:
+        return ExecuteFilterRows(node, ctx);
+    case gui::NodeType::SQLQuery:
+        return ExecuteSqlTransform(node, ctx);
+    case gui::NodeType::SelectColumns:
+        return ExecuteSelectColumns(node, ctx);
+    case gui::NodeType::RemoveDuplicateRows:
+        return ExecuteRemoveDuplicates(node, ctx);
+    case gui::NodeType::BinningNode:
         return ExecuteBinning(node, ctx);
-    }
-    // KNIME-Style Table Manipulation Nodes
-    else if (node.type == "ExcelInput") {
-        return ExecuteExcelInput(node, ctx);
-    } else if (node.type == "ExportExcel") {
-        return ExecuteExportExcel(node, ctx);
-    } else if (node.type == "ExportCSV") {
+    case gui::NodeType::PolynomialFeaturesNode:
+        return ExecutePolynomialFeatures(node, ctx);
+    case gui::NodeType::TimeSeriesLag:
+        return ExecuteTSLag(node, ctx);
+    case gui::NodeType::TimeSeriesWindow:
+        return ExecuteTSWindow(node, ctx);
+    case gui::NodeType::TimeSeriesFeatures:
+        return ExecuteTSFeatures(node, ctx);
+    case gui::NodeType::Differencing:
+        return ExecuteTSDiff(node, ctx);
+    case gui::NodeType::FillMissingValues:
+        return ExecuteFillMissing(node, ctx);
+    case gui::NodeType::SortRows:
+        return ExecuteSortRows(node, ctx);
+    case gui::NodeType::JoinTables:
+        return ExecuteJoin(node, ctx);
+    case gui::NodeType::GroupByAggregate:
+        return ExecuteGroupBy(node, ctx);
+    case gui::NodeType::ExportCSV:
         return ExecuteExportCSV(node, ctx);
-    } else if (node.type == "ExportJSON") {
+    case gui::NodeType::ExportJSON:
         return ExecuteExportJSON(node, ctx);
-    } else if (node.type == "RowToColumnNames") {
-        return ExecuteRowToColumnNames(node, ctx);
-    } else if (node.type == "TableSplitter") {
-        return ExecuteTableSplitter(node, ctx);
-    } else if (node.type == "CellExtractor") {
-        return ExecuteCellExtractor(node, ctx);
-    } else if (node.type == "CellUpdater") {
-        return ExecuteCellUpdater(node, ctx);
-    } else if (node.type == "TableCropper") {
-        return ExecuteTableCropper(node, ctx);
-    } else if (node.type == "ColumnAppender") {
-        return ExecuteColumnAppender(node, ctx);
-    } else if (node.type == "RowAppender") {
-        return ExecuteRowAppender(node, ctx);
-    } else if (node.type == "Unpivot") {
-        return ExecuteUnpivot(node, ctx);
-    } else if (node.type == "StringManipulation") {
-        return ExecuteStringManipulation(node, ctx);
-    } else if (node.type == "MathFormula") {
-        return ExecuteMathFormula(node, ctx);
-    } else if (node.type == "RuleEngine") {
+    case gui::NodeType::ExportParquet:
+        return ExecuteExportParquet(node, ctx);
+    case gui::NodeType::RuleEngine:
         return ExecuteRuleEngine(node, ctx);
-    } else if (node.type == "RenameColumns") {
-        return ExecuteRenameColumns(node, ctx);
-    }
-    // ===== Phase 4: Machine Learning Algorithm Nodes =====
-    // Clustering
-    else if (node.type == "KMeansCluster") {
-        return ExecuteKMeans(node, ctx);
-    } else if (node.type == "DBSCANCluster") {
-        return ExecuteDBSCAN(node, ctx);
-    } else if (node.type == "HierarchicalCluster") {
-        return ExecuteHierarchical(node, ctx);
-    } else if (node.type == "GMMCluster") {
-        return ExecuteGMM(node, ctx);
-    }
-    // Dimensionality Reduction
-    else if (node.type == "TSNENode") {
-        return ExecuteTSNE(node, ctx);
-    } else if (node.type == "UMAPNode") {
-        return ExecuteUMAP(node, ctx);
-    }
-    // Classification
-    else if (node.type == "DecisionTreeClassifier") {
-        return ExecuteDecisionTree(node, ctx);
-    } else if (node.type == "RandomForestClassifier") {
-        return ExecuteRandomForest(node, ctx);
-    } else if (node.type == "GradientBoostingClassifier") {
-        return ExecuteGradientBoosting(node, ctx);
-    } else if (node.type == "SVMClassifier") {
-        return ExecuteSVM(node, ctx);
-    } else if (node.type == "KNNClassifier") {
-        return ExecuteKNN(node, ctx);
-    } else if (node.type == "NaiveBayesClassifier") {
-        return ExecuteNaiveBayes(node, ctx);
-    } else if (node.type == "LogisticRegressionNode") {
-        return ExecuteLogisticRegression(node, ctx);
-    }
-    // Regression
-    else if (node.type == "LinearRegressionNode") {
-        return ExecuteLinearRegression(node, ctx);
-    } else if (node.type == "PolynomialRegressionNode") {
-        return ExecutePolynomialRegression(node, ctx);
-    } else if (node.type == "SVMRegressor") {
-        return ExecuteSVMRegressor(node, ctx);
-    }
-    // ===== Phase 4: Model Evaluation Nodes =====
-    else if (node.type == "ConfusionMatrixNode") {
-        return ExecuteConfusionMatrix(node, ctx);
-    } else if (node.type == "ROCCurveNode") {
-        return ExecuteROCCurve(node, ctx);
-    } else if (node.type == "PRCurveNode") {
-        return ExecutePRCurve(node, ctx);
-    } else if (node.type == "LearningCurvesNode") {
-        return ExecuteLearningCurves(node, ctx);
-    } else if (node.type == "FeatureImportanceNode") {
-        return ExecuteFeatureImportance(node, ctx);
-    } else if (node.type == "CrossValidationNode") {
-        return ExecuteCrossValidation(node, ctx);
-    } else if (node.type == "RegressionMetricsNode") {
-        return ExecuteRegressionMetrics(node, ctx);
-    }
-    // ===== Phase 4: Data Preprocessing Nodes =====
-    else if (node.type == "StandardScaler") {
-        return ExecuteStandardScaler(node, ctx);
-    } else if (node.type == "MinMaxScaler") {
-        return ExecuteMinMaxScaler(node, ctx);
-    } else if (node.type == "RobustScaler") {
-        return ExecuteRobustScaler(node, ctx);
-    } else if (node.type == "LabelEncoder") {
-        return ExecuteLabelEncoder(node, ctx);
-    } else if (node.type == "OrdinalEncoder") {
-        return ExecuteOrdinalEncoder(node, ctx);
-    } else if (node.type == "TargetEncoder") {
-        return ExecuteTargetEncoder(node, ctx);
-    } else if (node.type == "TrainTestSplit") {
-        return ExecuteTrainTestSplit(node, ctx);
-    }
-    // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
-    else if (node.type == "OutlierDetector") {
-        return ExecuteOutlierDetector(node, ctx);
-    } else if (node.type == "ImagePreprocessor") {
-        return ExecuteImagePreprocessor(node, ctx);
-    } else if (node.type == "QualityAnalyzer") {
-        return ExecuteQualityAnalyzer(node, ctx);
-    } else if (node.type == "DataValidator") {
-        return ExecuteDataValidator(node, ctx);
-    }
-    // ===== Phase 8: Dataset Source Nodes (UI Consolidation) =====
-    else if (node.type == "ImageFolderDataset") {
-        return ExecuteImageFolderDataset(node, ctx);
-    } else if (node.type == "MNISTDataset") {
-        return ExecuteMNISTDataset(node, ctx);
-    } else if (node.type == "CIFAR10Dataset") {
-        return ExecuteCIFAR10Dataset(node, ctx);
-    } else if (node.type == "HuggingFaceDataset") {
-        return ExecuteHuggingFaceDataset(node, ctx);
-    } else if (node.type == "KaggleDataset") {
-        return ExecuteKaggleDataset(node, ctx);
-    }
-    // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
-    else if (node.type == "AugmentationPreset") {
-        return ExecuteAugmentationPreset(node, ctx);
-    } else if (node.type == "GeometricTransform") {
-        return ExecuteGeometricTransform(node, ctx);
-    } else if (node.type == "ColorTransform") {
-        return ExecuteColorTransform(node, ctx);
-    } else if (node.type == "MorphologyTransform") {
-        return ExecuteMorphologyTransform(node, ctx);
-    } else if (node.type == "AdvancedAugment") {
-        return ExecuteAdvancedAugment(node, ctx);
-    }
-    // ===== Phase 4: Signal Processing Nodes =====
-    else if (node.type == "FFTNode") {
-        return ExecuteFFT(node, ctx);
-    } else if (node.type == "IFFTNode") {
-        return ExecuteIFFT(node, ctx);
-    } else if (node.type == "FilterDesigner") {
-        return ExecuteFilterDesigner(node, ctx);
-    } else if (node.type == "Convolution1D") {
-        return ExecuteConvolution1D(node, ctx);
-    } else if (node.type == "WaveletTransform") {
-        return ExecuteWavelet(node, ctx);
-    }
-    // ===== Phase 4: Text Analytics Nodes =====
-    else if (node.type == "TFIDFVectorizer") {
-        return ExecuteTFIDF(node, ctx);
-    } else if (node.type == "CountVectorizer") {
-        return ExecuteCountVectorizer(node, ctx);
-    } else if (node.type == "WordEmbeddings") {
-        return ExecuteWordEmbeddings(node, ctx);
-    } else if (node.type == "SentimentAnalyzer") {
-        return ExecuteSentiment(node, ctx);
-    } else if (node.type == "NamedEntityRecognizer") {
-        return ExecuteNER(node, ctx);
-    }
-    // ===== Phase 4: Utility Nodes =====
-    else if (node.type == "CalculatorNode") {
-        return ExecuteCalculator(node, ctx);
-    } else if (node.type == "UnitConverter") {
+    case gui::NodeType::UnitConverter:
         return ExecuteUnitConverter(node, ctx);
-    } else if (node.type == "RegexTester") {
-        return ExecuteRegex(node, ctx);
-    } else if (node.type == "JSONPathExtractor") {
-        return ExecuteJSONPath(node, ctx);
-    } else if (node.type == "DataProfiler") {
+    case gui::NodeType::CalculatorNode:
+        return ExecuteCalculatorNode(node, ctx);
+    case gui::NodeType::JSONPathExtractor:
+        return ExecuteJSONPathExtractor(node, ctx);
+    case gui::NodeType::RegexTester:
+        return ExecuteRegexTester(node, ctx);
+    case gui::NodeType::DataProfiler:
         return ExecuteDataProfiler(node, ctx);
-    } else {
-        ReportError("Unknown node type: " + node.type);
+    case gui::NodeType::RegressionMetricsNode:
+        return ExecuteRegressionMetrics(node, ctx);
+    case gui::NodeType::ClassificationMetricsNode:
+        return ExecuteClassificationMetrics(node, ctx);
+    case gui::NodeType::TestEvaluationNode:
+        return ExecuteTestEvaluation(node, ctx);
+    case gui::NodeType::ConfusionMatrixNode:
+        return ExecuteConfusionMatrix(node, ctx);
+    case gui::NodeType::ROCCurveNode:
+        return ExecuteROCCurve(node, ctx);
+    case gui::NodeType::PRCurveNode:
+        return ExecutePRCurve(node, ctx);
+    case gui::NodeType::DataValidator:
+        return ExecuteDataValidator(node, ctx);
+    case gui::NodeType::SampleRows:
+        return ExecuteSampleRows(node, ctx);
+    case gui::NodeType::ValueCounts:
+        return ExecuteValueCounts(node, ctx);
+    case gui::NodeType::DescribeStats:
+        return ExecuteDescribeStats(node, ctx);
+    case gui::NodeType::CorrelationMatrix:
+        return ExecuteCorrelationMatrix(node, ctx);
+    case gui::NodeType::RowToColumnNames:
+        return ExecuteRowToColumnNames(node, ctx);
+    case gui::NodeType::TableCropper:
+        return ExecuteTableCropper(node, ctx);
+    case gui::NodeType::StringManipulation:
+        return ExecuteStringManipulation(node, ctx);
+    case gui::NodeType::MathFormula:
+        return ExecuteMathFormula(node, ctx);
+    case gui::NodeType::RenameColumns:
+        return ExecuteRenameColumns(node, ctx);
+    case gui::NodeType::CellExtractor:
+        return ExecuteCellExtractor(node, ctx);
+    case gui::NodeType::CellUpdater:
+        return ExecuteCellUpdater(node, ctx);
+    case gui::NodeType::RowAppender:
+        return ExecuteRowAppender(node, ctx);
+    case gui::NodeType::ColumnAppender:
+        return ExecuteColumnAppender(node, ctx);
+    case gui::NodeType::Unpivot:
+        return ExecuteUnpivot(node, ctx);
+    case gui::NodeType::CountVectorizer:
+        return ExecuteTextVectorize(node, ctx);
+    case gui::NodeType::TextTokenizer:
+        return ExecuteTextTokenize(node, ctx);
+    case gui::NodeType::TextCleanNode:
+        return ExecuteTextClean(node, ctx);
+    case gui::NodeType::NERSequenceBuilder:
+        return ExecuteNERSequenceBuilder(node, ctx);
+    case gui::NodeType::TokenVocabulary:
+    case gui::NodeType::POSVocabulary:
+    case gui::NodeType::NERTagVocabulary:
+        return ExecuteSequenceVocabulary(node, ctx);
+    default:
+        handled = false;
         return false;
     }
 }
@@ -450,15 +4077,29 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
         return false;
     }
 
-    const std::string& file_path = path_it->second;
+    const std::string file_path =
+        ResolveProjectDataPath(path_it->second, project_root_);
+    auto format_it = node.parameters.find("format");
+    const std::string format =
+        (format_it != node.parameters.end() && !format_it->second.empty())
+            ? NormalizeDataInputFileType(format_it->second)
+            : "auto";
     std::string dataset_name = "ds_input_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Loading file: {} as dataset '{}'", file_path, dataset_name);
+    spdlog::info("[Pipeline] Loading file: {} as dataset '{}' (format: {})",
+                 file_path, dataset_name, format);
 
     try {
         // Use DataRegistry's Arrow support to load the file
         auto& registry = DataRegistry::Instance();
-        auto arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+        std::shared_ptr<ArrowDataset> arrow_dataset;
+        if (format == "csv") {
+            arrow_dataset = registry.LoadCSVToArrow(file_path, dataset_name);
+        } else if (format == "parquet") {
+            arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
+        } else {
+            arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+        }
 
         if (!arrow_dataset) {
             ReportError(GetImprovedErrorMessage("FileInput", "invalid_path", file_path));
@@ -471,7 +4112,7 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
             ctx.input_dataset = dataset_name;
         }
 
-        spdlog::info("[Data Studio] FileInput loaded {} rows, {} columns",
+        spdlog::info("[Pipeline] FileInput loaded {} rows, {} columns",
                     arrow_dataset->GetNumRows(), arrow_dataset->GetNumColumns());
         return true;
 
@@ -481,17 +4122,408 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
     }
 }
 
-bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError(GetImprovedErrorMessage("FilterRows", "no_input"));
+bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx) {
+    // Universal DataInput node - supports multiple source types from DataInputDialog
+    // Parameters: source_type, file_path, folder_path, file_category, type, etc.
+
+    auto source_type_it = node.parameters.find("source_type");
+    std::string source_type =
+        (source_type_it != node.parameters.end() && !source_type_it->second.empty())
+            ? ToLowerAscii(TrimString(source_type_it->second))
+            : "file";
+
+    std::string dataset_name = "ds_datainput_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        std::shared_ptr<ArrowDataset> arrow_dataset;
+        // A table above the data budget's threshold stays a Parquet file;
+        // each step admits it (AdmitInputTable) or stops with the numbers.
+        bool disk_backed = false;
+
+        if (source_type == "file") {
+            // File input mode
+            auto path_it = node.parameters.find("file_path");
+            if (path_it == node.parameters.end() || path_it->second.empty()) {
+                ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "file_path"));
+                return false;
+            }
+            const std::string file_path =
+                ResolveProjectDataPath(path_it->second, project_root_);
+            spdlog::debug("[Pipeline] DataInput loading file: {}", file_path);
+
+            std::vector<std::string> selected_columns;
+            std::string projection_error;
+            if (!ResolveDataInputColumnProjection(
+                    node.parameters, selected_columns, projection_error)) {
+                ReportError(projection_error);
+                return false;
+            }
+            if (!selected_columns.empty()) {
+                spdlog::info(
+                    "[Pipeline] DataInput applying source column projection: {} column(s)",
+                    selected_columns.size());
+            }
+
+            // Get file type and options from parameters
+            std::string file_type =
+                NormalizeDataInputFileType(node.parameters);
+            if (node.type == "ParquetInput" && file_type == "auto") {
+                file_type = "parquet";
+            }
+            const bool auto_detected = file_type == "auto";
+            file_type = data_input::ResolveFormat(file_type, file_path);
+            if (!data_input::IsExecutable(file_type)) {
+                ReportError(data_input::UnsupportedReason(file_type, data_input::kHdf5BuildAvailable));
+                return false;
+            }
+
+            // Load based on file type
+            if (file_type == "csv" || file_type == "tsv") {
+                // Preserve the generic Auto reader's header default for saved graphs.
+                const auto header = node.parameters.find("has_header");
+                bool has_header =
+                    (auto_detected && (header == node.parameters.end() || header->second.empty())) ||
+                    OptionalBooleanParameterIsTrue(node.parameters, "has_header");
+                std::string delimiter = (file_type == "tsv") ? "\t" : ",";
+                auto delim_it = node.parameters.find("delimiter");
+                if (delim_it != node.parameters.end() && !delim_it->second.empty()) {
+                    delimiter = delim_it->second;
+                }
+                int skip_rows = 0;
+                auto skip_it = node.parameters.find("skip_rows");
+                if (skip_it != node.parameters.end()) {
+                    skip_rows = std::stoi(skip_it->second);
+                }
+                int64_t max_rows = 0;
+                auto max_rows_it = node.parameters.find("max_rows");
+                if (max_rows_it != node.parameters.end() &&
+                    !max_rows_it->second.empty()) {
+                    max_rows = std::stoll(max_rows_it->second);
+                }
+                auto missing_tokens = DefaultTabularMissingValueTokens();
+                auto missing_it = node.parameters.find("missing_value_tokens");
+                if (missing_it != node.parameters.end()) {
+                    missing_tokens = ParseMissingValueTokens(missing_it->second);
+                }
+                char decimal_point = '.';
+                auto decimal_it = node.parameters.find("decimal_point");
+                if (decimal_it != node.parameters.end() &&
+                    !decimal_it->second.empty()) {
+                    decimal_point = decimal_it->second[0];
+                }
+                const auto quote_it = node.parameters.find("quote_char");
+                const char quote_char = QuoteCharFromParameter(
+                    quote_it == node.parameters.end() ? nullptr : &quote_it->second);
+
+                const bool force_disk_backed =
+                    OptionalBooleanParameterIsTrue(
+                        node.parameters, "force_disk_backed");
+                std::string load_status;
+                const auto backend = registry.LoadTabularCSV(
+                    file_path, dataset_name, has_header, delimiter[0],
+                    skip_rows, max_rows, force_disk_backed,
+                    missing_tokens, selected_columns, decimal_point,
+                    false,
+                    [this](float, const std::string&) {
+                        return !cancel_requested_.load();
+                    },
+                    &load_status, ingestion_cache_root_, quote_char);
+                if (backend ==
+                    DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset =
+                        registry.GetArrowDataset(dataset_name);
+                    spdlog::info(
+                        "[Pipeline] DataInput CSV backend: {}",
+                        load_status.empty() ? "Loaded in memory"
+                                            : load_status);
+                } else if (
+                    backend ==
+                    DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                    spdlog::info("[Pipeline] DataInput CSV backend: {}",
+                                 load_status.empty() ? "on disk" : load_status);
+                }
+            } else if (file_type == "zip_text") {
+                const auto member = node.parameters.find("archive_member");
+                if (member == node.parameters.end() || member->second.empty()) {
+                    ReportError("DataInput ZIP text: set archive_member to an exact UTF-8 member path");
+                    return false;
+                }
+                auto table = LoadZipTextSelection(file_path, member->second, {},
+                    [this] { return cancel_requested_.load(); });
+                arrow_dataset = registry.RegisterArrowTable(table, dataset_name);
+                if (arrow_dataset && !selected_columns.empty()) {
+                    auto selected = arrow_dataset->SelectColumns(selected_columns);
+                    if (!selected || selected->GetNumColumns() != static_cast<int64_t>(selected_columns.size()))
+                        throw std::runtime_error("DataInput ZIP text: selected columns do not match document schema");
+                    arrow_dataset = registry.RegisterArrowTable(selected->GetArrowTable(), dataset_name);
+                }
+            } else if (file_type == "parquet") {
+                std::string load_status;
+                const auto backend = registry.LoadTabularParquet(
+                    file_path, dataset_name,
+                    OptionalBooleanParameterIsTrue(node.parameters, "force_disk_backed"),
+                    selected_columns, &load_status, ingestion_cache_root_);
+                if (backend == DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset = registry.GetArrowDataset(dataset_name);
+                } else if (backend == DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                }
+                spdlog::info("[Pipeline] DataInput Parquet backend: {}", load_status);
+            } else if (file_type == "json") {
+                const auto lines = node.parameters.find("json_lines");
+                const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||
+                    std::filesystem::path(file_path).extension() == ".jsonl";
+                if (!json_lines) {
+                    ReportError("DataInput JSON: only JSON Lines is supported; set json_lines=true or use a .jsonl file");
+                    return false;
+                }
+                arrow_dataset = registry.LoadJSONToArrow(file_path, dataset_name, true);
+            } else if (file_type == "auto" || file_type == "feather" ||
+                       file_type == "arrow" || file_type == "ipc") {
+                // Default: try auto-detect via LoadArrowTable
+                arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+            } else {
+                ReportError("DataInput: file type '" + file_type +
+                            "' is not supported by PipelineExecutor");
+                return false;
+            }
+
+        } else if (source_type == "folder") {
+            // Image folder mode
+            auto path_it = node.parameters.find("folder_path");
+            if (path_it == node.parameters.end() || path_it->second.empty()) {
+                ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "folder_path"));
+                return false;
+            }
+            const std::string& folder_path = path_it->second;
+            spdlog::info("[Pipeline] DataInput loading folder: {}", folder_path);
+
+            // For image folders, create a table with file paths and labels
+            arrow_dataset = registry.LoadImageFolderToArrow(folder_path, dataset_name);
+
+        } else {
+            ReportError("DataInput: Unknown source type: " + source_type);
+            return false;
+        }
+
+        // A time series keeps its rows in the order of its time column.
+        const auto category = node.parameters.find("file_category");
+        const auto time_column = node.parameters.find("time_column");
+        if (category != node.parameters.end() && category->second == "timeseries" &&
+            time_column != node.parameters.end() && !time_column->second.empty() &&
+            (arrow_dataset || disk_backed)) {
+            if (disk_backed) {
+                ReportError("DataInput: the table is kept on disk, so its rows cannot be put in time order; "
+                            "clear Time column or sort the file first");
+                return false;
+            }
+            std::string sort_error;
+            if (!registry.SortArrowTableByColumn(dataset_name, time_column->second, sort_error)) {
+                ReportError("DataInput: " + sort_error);
+                return false;
+            }
+            arrow_dataset = registry.GetArrowDataset(dataset_name);
+        }
+
+        const auto table = registry.GetTableRef(dataset_name);
+        if ((!arrow_dataset && !disk_backed) || !table) {
+            ReportError("DataInput: Failed to load dataset");
+            return false;
+        }
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = dataset_name;
+        if (ctx.input_dataset.empty()) {
+            ctx.input_dataset = dataset_name;
+        }
+
+        spdlog::info("[Pipeline] DataInput loaded {} rows, {} columns{}",
+                    table->rows, table->columns,
+                    table->kind == TableRef::Kind::Parquet ? " (on disk)" : "");
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("DataInput error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx) {
+    // Universal DataOutput node - exports data to various formats
+
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportMissingInput("DataOutput");
         return false;
     }
 
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("FilterRows: Input dataset not found");
+    std::string format = NormalizeDatasetOutputFormat(node.parameters);
+    std::string extension;
+    if (format == "csv") {
+        extension = ".csv";
+    } else if (format == "parquet") {
+        extension = ".parquet";
+    } else {
+        ReportError("DataOutput: Unsupported export format: " + format);
+        return false;
+    }
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, extension, export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
+
+    spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
+
+    try {
+        // In memory or on disk: written a piece at a time (TOFIX157).
+        auto& registry = DataRegistry::Instance();
+        TabularExport written;
+        bool success = false;
+        if (format == "csv") {
+            success = registry.ExportTableCSV(input_dataset_name, output_path, &written);
+        } else if (format == "parquet") {
+            success = registry.ExportTableParquet(input_dataset_name, output_path, &written);
+        }
+
+        if (!success) {
+            ReportError("DataOutput: Export failed");
+            return false;
+        }
+
+        // Pass through the dataset for any downstream nodes
+        ctx.node_results[node.id] = input_dataset_name;
+        ctx.output_dataset = output_path;
+        ctx.node_written[node.id] = output_path;
+        WriteExportLineage(node, ctx, written, output_path, format);
+
+        spdlog::info("[Pipeline] DataOutput successfully exported to {}", output_path);
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("DataOutput error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ctx) {
+    DataConvertOptions options;
+    options.input_path = ParameterOrDefault(node.parameters, "input_path");
+    options.output_path = ParameterOrDefault(node.parameters, "output_path");
+    options.input_format = ParameterOrDefault(node.parameters, "input_format", "auto");
+    options.output_format = ParameterOrDefault(node.parameters, "output_format", "auto");
+    options.excel_sheet = ParameterOrDefault(node.parameters, "excel_sheet");
+    options.excel_start_column = ParameterOrDefault(node.parameters, "excel_start_column", "A");
+
+    const std::string delimiter =
+        ToLowerAscii(TrimString(ParameterOrDefault(node.parameters,
+                                                  "delimiter", "auto")));
+    if (delimiter == "auto" || delimiter.empty()) {
+        options.auto_detect_delimiter = true;
+        options.delimiter = ',';
+    } else {
+        options.auto_detect_delimiter = false;
+        options.delimiter = delimiter.front();
+    }
+
+    options.has_header = OptionalBooleanParameterOrDefault(
+        node.parameters, "has_header",
+        OptionalBooleanParameterOrDefault(node.parameters, "header", true));
+    const std::string decimal_point = ParameterOrDefault(
+        node.parameters, "decimal_point", ".");
+    options.decimal_point = decimal_point.empty() ? '.' : decimal_point.front();
+    options.allow_newlines_in_values = OptionalBooleanParameterOrDefault(
+        node.parameters, "allow_newlines_in_values", true);
+    options.skip_rows = static_cast<int>(OptionalIntegerParameterOrDefault(
+        node.parameters, "skip_rows", 0));
+    options.parquet_compression = ParameterOrDefault(
+        node.parameters, "compression", "snappy");
+    options.row_group_size = OptionalIntegerParameterOrDefault(
+        node.parameters, "row_group_size", 1024 * 1024);
+    options.overwrite = OptionalBooleanParameterOrDefault(
+        node.parameters, "overwrite", false);
+    options.create_parent_dirs = OptionalBooleanParameterOrDefault(
+        node.parameters, "create_parent_dirs", true);
+    options.write_manifest = OptionalBooleanParameterOrDefault(
+        node.parameters, "write_manifest", true);
+    options.retain_output_table = true;
+
+    try {
+        std::string input_label = options.input_path;
+        if (!node.inputs.empty()) {
+            std::string input_dataset_name = GetInputDatasetName(node, ctx);
+            if (input_dataset_name.empty() && options.input_path.empty()) {
+                ReportError("DataConvert: input dataset connection could not be resolved");
+                return false;
+            }
+
+            if (!input_dataset_name.empty()) {
+                auto input_dataset =
+                    DataRegistry::Instance().GetArrowDataset(input_dataset_name);
+                if (!input_dataset) {
+                    ReportError("DataConvert: input dataset '" + input_dataset_name +
+                                "' is not an in-memory Arrow dataset");
+                    return false;
+                }
+
+                options.input_table = input_dataset->GetArrowTable();
+                if (!options.input_table) {
+                    ReportError("DataConvert: input dataset '" + input_dataset_name +
+                                "' has no Arrow table");
+                    return false;
+                }
+                input_label = input_dataset_name;
+            }
+        } else if (options.input_path.empty()) {
+            ReportError("DataConvert: missing input_path. Connect an upstream dataset or select an input file.");
+            return false;
+        }
+
+        spdlog::info("[Pipeline] DataConvert converting '{}' -> '{}'",
+                     input_label, options.output_path);
+
+        auto result = DataConvertService::Convert(options);
+        if (!result.ok) {
+            ReportError("DataConvert: " + result.error);
+            return false;
+        }
+
+        const std::string dataset_name = "ds_dataconvert_" + std::to_string(node.id);
+        auto output_dataset = result.output_table
+            ? std::make_shared<ArrowDataset>(result.output_table, dataset_name)
+            : LoadDataConvertOutputDataset(
+                  result.output_path, dataset_name, options.output_format);
+        if (!output_dataset || !output_dataset->GetArrowTable()) {
+            ReportError("DataConvert: conversion succeeded, but generated output could not be loaded: " +
+                        result.output_path);
+            return false;
+        }
+
+        auto registered = DataRegistry::Instance().RegisterArrowTable(
+            output_dataset->GetArrowTable(), dataset_name);
+        if (!registered) {
+            ReportError("DataConvert: conversion succeeded, but output dataset could not be registered");
+            return false;
+        }
+
+        ctx.node_results[node.id] = dataset_name;
+        if (ctx.input_dataset.empty()) {
+            ctx.input_dataset = dataset_name;
+        }
+        ctx.output_dataset = result.output_path;
+
+        spdlog::info("[Pipeline] DataConvert wrote {} rows, {} columns to {}",
+                     result.rows_written, result.columns, result.output_path);
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DataConvert error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -502,50 +4534,64 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& condition = condition_it->second;
     std::string output_dataset_name = "ds_filter_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Filtering rows from '{}' with condition: {}",
+    spdlog::info("[Pipeline] Filtering rows from '{}' with condition: {}",
                 input_dataset_name, condition);
 
     try {
         auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("FilterRows: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Register input table with DuckDB
-        std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("FilterRows: Failed to register table with DuckDB");
+        // The Arrow fast path reads rows: only for an input in memory.
+        const bool in_memory = registry.GetArrowDataset(input_dataset_name) != nullptr;
+        std::string filter_expression;
+        std::string filter_error;
+        std::vector<FilterConditionToken> validated_tokens;
+        if (!BuildFilterRowsConditionExpression(input_table, condition,
+                                                filter_expression,
+                                                filter_error,
+                                                &validated_tokens)) {
+            ReportError(filter_error);
             return false;
         }
 
-        // Execute WHERE query
-        std::string sql = "SELECT * FROM " + temp_table + " WHERE " + condition;
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("FilterRows: Query execution failed");
-            return false;
+        std::shared_ptr<arrow::Table> result_table;
+        const auto arrow_attempt = in_memory
+            ? TryApplyArrowEqualityFilter(input_table, validated_tokens, result_table)
+            : ArrowFilterRowsAttempt::Unsupported;
+        if (arrow_attempt == ArrowFilterRowsAttempt::Applied) {
+            if (!result_table) {
+                ReportError("FilterRows: Query execution failed");
+                return false;
+            }
+            registry.RegisterArrowTable(result_table, output_dataset_name);
+            spdlog::info(
+                "[Pipeline] FilterRows used Arrow-native numeric equality");
+        } else {
+            // Preserve the general SQL path for compound expressions,
+            // inequalities, and Arrow types/kernels outside the narrow fast
+            // path.
+            std::string temp_table = "temp_" + std::to_string(node.id);
+            std::string sql = "SELECT * FROM " + temp_table + " WHERE " +
+                              filter_expression;
+            if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                            "FilterRows: ")) {
+                return false;
+            }
+            spdlog::info(
+                "[Pipeline] FilterRows used DuckDB expression fallback");
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] FilterRows: {} -> {} rows",
-                    input_table->num_rows(), result_table->num_rows());
+        spdlog::info("[Pipeline] FilterRows: {} -> {} rows",
+                    DatasetRows(input_dataset_name), DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -555,16 +4601,8 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
 }
 
 bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("SelectColumns node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("SelectColumns: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -575,50 +4613,41 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
         return false;
     }
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& columns = columns_it->second;
     std::string output_dataset_name = "ds_select_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Selecting columns from '{}': {}",
+    spdlog::info("[Pipeline] Selecting columns from '{}': {}",
                 input_dataset_name, columns);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("SelectColumns: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Register input table with DuckDB
-        std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("SelectColumns: Failed to register table with DuckDB");
+        std::vector<std::string> selected_columns;
+        std::string schema_error;
+        if (!ResolveExistingColumns(input_table, "SelectColumns", columns,
+                                    selected_columns, schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_columns = JoinQuotedColumns(selected_columns);
+
+        // DuckDB reads the input under this name
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         // Execute SELECT columns query
-        std::string sql = "SELECT " + columns + " FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("SelectColumns: Query execution failed");
+        std::string sql = "SELECT " + quoted_columns + " FROM " + temp_table;
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "SelectColumns: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] SelectColumns: {} -> {} columns",
-                    input_table->num_columns(), result_table->num_columns());
+        spdlog::info("[Pipeline] SelectColumns: {} -> {} columns",
+                    input_table->num_columns(), selected_columns.size());
         return true;
 
     } catch (const std::exception& e) {
@@ -628,92 +4657,108 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
 }
 
 bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("RemoveDuplicates node has no input connection");
+    const std::string diagnostic_name =
+        node.type == "RemoveDuplicateRows" ? "RemoveDuplicateRows" :
+                                              "RemoveDuplicates";
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("RemoveDuplicates: Input dataset not found");
-        return false;
-    }
-
-    const std::string& input_dataset_name = result_it->second;
     std::string output_dataset_name = "ds_dedup_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Removing duplicates from '{}'", input_dataset_name);
+    spdlog::info("[Pipeline] Removing duplicates from '{}'", input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("RemoveDuplicates: Input dataset not found in registry");
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table || !input_table->schema()) {
+            ReportError(diagnostic_name + ": Input table schema is unavailable");
             return false;
         }
 
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Register input table with DuckDB
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("RemoveDuplicates: Failed to register table with DuckDB");
-            return false;
-        }
 
         // Execute DISTINCT query
         std::string sql = "SELECT DISTINCT * FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
+        auto columns_it = node.parameters.find("columns");
+        if (columns_it != node.parameters.end() &&
+            !TrimString(columns_it->second).empty()) {
+            std::vector<std::string> dedupe_columns;
+            std::string column_error;
+            if (!ResolveExistingColumns(input_table, diagnostic_name,
+                                        columns_it->second, dedupe_columns,
+                                        column_error)) {
+                ReportError(column_error);
+                return false;
+            }
 
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
+            std::vector<std::string> output_columns;
+            output_columns.reserve(input_table->schema()->num_fields());
+            for (const auto& field : input_table->schema()->fields()) {
+                output_columns.push_back(field->name());
+            }
 
-        if (!result_table) {
-            ReportError("RemoveDuplicates: Query execution failed");
+            std::string rank_column = "__cyxwiz_dedup_rank";
+            while (input_table->schema()->GetFieldIndex(rank_column) >= 0) {
+                rank_column += "_";
+            }
+
+            sql = "SELECT " + JoinQuotedColumns(output_columns) +
+                  " FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY " +
+                  JoinQuotedColumns(dedupe_columns) + ") AS " +
+                  QuoteSqlIdentifier(rank_column) + " FROM " + temp_table +
+                  ") WHERE " + QuoteSqlIdentifier(rank_column) + " = 1";
+        }
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        diagnostic_name + ": ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] RemoveDuplicates: {} -> {} rows",
-                    input_table->num_rows(), result_table->num_rows());
+        spdlog::info("[Pipeline] {}: {} -> {} rows",
+                    diagnostic_name, DatasetRows(input_dataset_name),
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("RemoveDuplicates error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }
 
 bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ctx) {
-    // Get the input dataset from the upstream node
-    if (node.inputs.empty()) {
-        ReportError("SaveDataset node has no input connection");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("SaveDataset: Input dataset not found");
-        return false;
-    }
-
-    const std::string& input_dataset_name = result_it->second;
 
     // Get the desired output name from parameters
     auto name_it = node.parameters.find("name");
     std::string output_name = (name_it != node.parameters.end() && !name_it->second.empty())
                               ? name_it->second
                               : "ds_output_" + std::to_string(node.id);
+    const std::string raw_output_path = NormalizeDataOutputPath(node.parameters);
+    const std::string format = NormalizeDatasetOutputFormat(node.parameters);
+    std::string output_path;
+    if (!raw_output_path.empty()) {
+        std::string extension;
+        if (format == "csv") {
+            extension = ".csv";
+        } else if (format == "parquet") {
+            extension = ".parquet";
+        } else {
+            ReportError("SaveDataset: Unsupported export format: " + format);
+            return false;
+        }
+        output_path = ResolveDatasetExportPath(
+            node.parameters, output_name, extension, export_root_, project_root_);
+    }
+    const auto writing = LockExportPath(output_path);
 
-    spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
+    spdlog::info("[Pipeline] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -731,10 +4776,26 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
             registry.RegisterArrowTable(arrow_table, output_name);
         }
 
-        // Store the output dataset name in context
-        ctx.output_dataset = output_name;
+        if (!output_path.empty()) {
+            bool success = false;
+            if (format == "csv") {
+                success = registry.ExportTableCSV(input_dataset_name, output_path);
+            } else if (format == "parquet") {
+                success = registry.ExportTableParquet(input_dataset_name, output_path);
+            }
 
-        spdlog::info("[Data Studio] Dataset saved successfully as '{}'", output_name);
+            if (!success) {
+                ReportError("SaveDataset: Export failed");
+                return false;
+            }
+        }
+
+        // Store the output dataset name in context
+        ctx.node_results[node.id] = output_name;
+        ctx.output_dataset = output_path.empty() ? output_name : output_path;
+
+        spdlog::info("[Pipeline] Dataset saved successfully as '{}'",
+                     ctx.output_dataset);
         return true;
 
     } catch (const std::exception& e) {
@@ -748,80 +4809,340 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
 // ============================================================================
 
 bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("FillMissing node has no input connection");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("FillMissing: Input dataset not found");
-        return false;
+    const std::string strategy = ToLowerAscii(TrimString(
+        ParameterOrDefault(node.parameters, "strategy", "mean")));
+    std::string fill_value =
+        ParameterOrDefault(node.parameters, "value", "");
+    if (fill_value.empty()) {
+        fill_value =
+            ParameterOrDefault(node.parameters, "fill_value", "0");
     }
+    const std::string operation_mode = ToLowerAscii(TrimString(
+        ParameterOrDefault(node.parameters, "operation_mode",
+                           "fit_transform")));
+    const std::string state_path = TrimString(
+        ParameterOrDefault(node.parameters, "state_path", ""));
+    const bool save_state = OptionalBooleanParameterOrDefault(
+        node.parameters, "save_state", false);
+    const bool state_overwrite = OptionalBooleanParameterOrDefault(
+        node.parameters, "state_overwrite", false);
+    const std::string label_col = TrimString(
+        ParameterOrDefault(node.parameters, "label_col", ""));
 
-    // Get parameters
-    auto strategy_it = node.parameters.find("strategy");
-    std::string strategy = (strategy_it != node.parameters.end()) ? strategy_it->second : "mean";
-
-    auto value_it = node.parameters.find("value");
-    std::string fill_value = (value_it != node.parameters.end()) ? value_it->second : "0";
-
-    const std::string& input_dataset_name = result_it->second;
     std::string output_dataset_name = "ds_fillmissing_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Filling missing values in '{}' with strategy: {}",
-                input_dataset_name, strategy);
+    spdlog::info(
+        "[Preprocessing] FillMissing starting mode={} strategy={} input='{}' "
+        "save_state={} state_path='{}'",
+        operation_mode, strategy, input_dataset_name, save_state, state_path);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("FillMissing: Input dataset not found in registry");
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError("FillMissing: Input table is null");
             return false;
         }
 
-        auto input_table = input_dataset->GetArrowTable();
+        if (operation_mode != "fit_transform" &&
+            operation_mode != "transform_only") {
+            ReportError(
+                "FillMissing: 'operation_mode' must be 'fit_transform' or "
+                "'transform_only' (got '" + operation_mode + "')");
+            return false;
+        }
+        if (operation_mode == "transform_only" && state_path.empty()) {
+            ReportError(
+                "FillMissing: Transform Only requires 'state_path'. Fit this "
+                "node on training data with 'Save fitted state' enabled, "
+                "then select that artifact.");
+            return false;
+        }
+        if (operation_mode == "fit_transform" && save_state &&
+            state_path.empty()) {
+            ReportError(
+                "FillMissing: 'Save fitted state' is enabled but "
+                "'state_path' is empty. Choose a .cyxstate.json path or "
+                "disable saving.");
+            return false;
+        }
+        if (strategy != "constant" && strategy != "mean" &&
+            strategy != "median" && strategy != "mode") {
+            ReportError("FillMissing: Unsupported strategy '" + strategy + "'");
+            return false;
+        }
 
-        // Register input table with DuckDB
+        std::vector<std::string> selected_columns = ParseCommaSeparatedNames(
+            ParameterOrDefault(node.parameters, "columns", ""));
+        if (selected_columns.empty()) {
+            for (const auto& field : input_table->schema()->fields()) {
+                if (field->name() != label_col) {
+                    selected_columns.push_back(field->name());
+                }
+            }
+        }
+        std::set<std::string> selected_set;
+        std::vector<std::string> deduplicated_columns;
+        for (const auto& column : selected_columns) {
+            if (column == label_col) {
+                spdlog::warn(
+                    "[Preprocessing] FillMissing excluded label column '{}' "
+                    "from fitted preprocessing",
+                    label_col);
+                continue;
+            }
+            if (input_table->schema()->GetFieldIndex(column) < 0) {
+                ReportError(
+                    "FillMissing: configured column '" + column +
+                    "' is not present. Update Columns or use a dataset with "
+                    "the training schema.");
+                return false;
+            }
+            if (selected_set.insert(column).second) {
+                deduplicated_columns.push_back(column);
+            }
+        }
+        selected_columns = std::move(deduplicated_columns);
+        if (selected_columns.empty()) {
+            ReportError(
+                "FillMissing: no feature columns remain after excluding the "
+                "label. Select at least one feature column.");
+            return false;
+        }
+
+        // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("FillMissing: Failed to register table with DuckDB");
-            return false;
-        }
 
-        // Build COALESCE query based on strategy
-        std::string sql;
-        if (strategy == "constant") {
-            // Replace NULL with constant value
-            sql = "SELECT * REPLACE (COALESCE(*, " + fill_value + ") AS *) FROM " + temp_table;
-        } else if (strategy == "mean" || strategy == "median" || strategy == "mode") {
-            // For MVP, use 0 as fallback (full implementation would compute statistics)
-            // TODO: Implement proper mean/median/mode calculation
-            sql = "SELECT * REPLACE (COALESCE(*, 0) AS *) FROM " + temp_table;
+        FittedPreprocessingState state;
+        if (operation_mode == "transform_only") {
+            std::string state_error;
+            if (!LoadFittedPreprocessingState(
+                    state_path, "FillMissing", state, state_error)) {
+                ReportError("FillMissing: " + state_error);
+                return false;
+            }
+            if (!ValidateFittedPreprocessingStateSchema(
+                    state, input_table->schema(), state_error)) {
+                ReportError(state_error);
+                return false;
+            }
+            const auto fitted_strategy =
+                state.configuration.find("strategy");
+            if (fitted_strategy == state.configuration.end() ||
+                fitted_strategy->second != strategy) {
+                ReportError(
+                    "FillMissing: node strategy '" + strategy +
+                    "' does not match the fitted artifact strategy '" +
+                    (fitted_strategy == state.configuration.end()
+                         ? std::string("unknown")
+                         : fitted_strategy->second) +
+                    "'. Select the matching artifact or update Strategy.");
+                return false;
+            }
+            selected_columns.clear();
+            selected_set.clear();
+            for (const auto& feature : state.features) {
+                selected_columns.push_back(feature.name);
+                selected_set.insert(feature.name);
+            }
+            spdlog::info(
+                "[Preprocessing] FillMissing Transform Only loaded '{}' "
+                "(fit_rows={}, features={}, schema={})",
+                state_path, state.fit_rows, state.features.size(),
+                state.input_schema_fingerprint);
         } else {
-            // Default to 0
-            sql = "SELECT * REPLACE (COALESCE(*, 0) AS *) FROM " + temp_table;
+            state.operator_name = "FillMissing";
+            state.fit_rows = DatasetRows(input_dataset_name);
+            state.input_schema_fingerprint =
+                FingerprintPreprocessingSchema(input_table->schema());
+            state.configuration["strategy"] = strategy;
+            state.configuration["label_col"] = label_col;
+
+            if (strategy == "constant") {
+                for (const auto& column : selected_columns) {
+                    const int field_index =
+                        input_table->schema()->GetFieldIndex(column);
+                    const auto& field =
+                        input_table->schema()->field(field_index);
+                    std::string ignored_expression;
+                    std::string constant_error;
+                    if (!BuildFillMissingConstantExpression(
+                            field, fill_value, ignored_expression,
+                            constant_error)) {
+                        ReportError(constant_error);
+                        return false;
+                    }
+                    PreprocessingFeatureState feature;
+                    feature.name = column;
+                    feature.data_type = field->type()->ToString();
+                    double numeric_value = 0.0;
+                    if (IsNumericArrowType(field->type()) &&
+                        TryParseFiniteDouble(fill_value, numeric_value)) {
+                        feature.numeric_values["fill_value"] = numeric_value;
+                    } else {
+                        feature.string_values["fill_value"] = fill_value;
+                    }
+                    state.features.push_back(std::move(feature));
+                }
+            } else {
+                std::string aggregate_sql = "SELECT ";
+                for (size_t i = 0; i < selected_columns.size(); ++i) {
+                    const std::string& column = selected_columns[i];
+                    const int field_index =
+                        input_table->schema()->GetFieldIndex(column);
+                    const auto& field =
+                        input_table->schema()->field(field_index);
+                    if ((strategy == "mean" || strategy == "median") &&
+                        !IsNumericArrowType(field->type())) {
+                        ReportError(
+                            "FillMissing: strategy '" + strategy +
+                            "' requires numeric column '" + column +
+                            "' (found " + field->type()->ToString() +
+                            "). Set Label column or explicitly choose numeric "
+                            "feature Columns.");
+                        return false;
+                    }
+                    if (i > 0) aggregate_sql += ", ";
+                    const std::string quoted = QuoteSqlIdentifier(column);
+                    const std::string aggregate =
+                        strategy == "mean"
+                            ? "AVG"
+                            : (strategy == "median" ? "MEDIAN" : "MODE");
+                    aggregate_sql += aggregate + "(" + quoted + ") AS " +
+                                     quoted;
+                }
+                aggregate_sql += " FROM " + temp_table;
+                auto fitted_table = FetchStepSql({{temp_table, input_dataset_name}}, aggregate_sql,
+                                                 "FillMissing: ");
+                if (!fitted_table || fitted_table->num_rows() != 1) {
+                    ReportError(
+                        "FillMissing: could not compute fitted " + strategy +
+                        " values from training data.");
+                    return false;
+                }
+                for (int i = 0; i < fitted_table->num_columns(); ++i) {
+                    const auto& column = selected_columns[static_cast<size_t>(i)];
+                    const int field_index =
+                        input_table->schema()->GetFieldIndex(column);
+                    const auto& field =
+                        input_table->schema()->field(field_index);
+                    auto scalar_result =
+                        fitted_table->column(i)->chunk(0)->GetScalar(0);
+                    if (!scalar_result.ok() ||
+                        !scalar_result.ValueOrDie()->is_valid) {
+                        ReportError(
+                            "FillMissing: column '" + column +
+                            "' has no non-null training values, so " +
+                            strategy +
+                            " cannot be fitted. Remove the column or use a "
+                            "constant fill value.");
+                        return false;
+                    }
+                    const std::string fitted_value =
+                        scalar_result.ValueOrDie()->ToString();
+                    PreprocessingFeatureState feature;
+                    feature.name = column;
+                    feature.data_type = field->type()->ToString();
+                    double numeric_value = 0.0;
+                    if (IsNumericArrowType(field->type()) &&
+                        TryParseFiniteDouble(fitted_value, numeric_value)) {
+                        feature.numeric_values["fill_value"] = numeric_value;
+                    } else {
+                        feature.string_values["fill_value"] = fitted_value;
+                    }
+                    state.features.push_back(std::move(feature));
+                }
+            }
         }
 
-        auto result_table = duckdb_->Query(sql);
+        std::map<std::string, const PreprocessingFeatureState*> feature_state;
+        for (const auto& feature : state.features) {
+            feature_state[feature.name] = &feature;
+        }
+        std::vector<std::string> select_exprs;
+        select_exprs.reserve(input_table->num_columns());
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto& field = input_table->schema()->field(i);
+            const std::string quoted_column = QuoteSqlIdentifier(field->name());
+            std::string expression = quoted_column;
 
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
+            const auto selected = feature_state.find(field->name());
+            if (selected != feature_state.end()) {
+                const auto* feature = selected->second;
+                std::string fitted_value;
+                const auto numeric =
+                    feature->numeric_values.find("fill_value");
+                if (numeric != feature->numeric_values.end()) {
+                    fitted_value =
+                        FormatPreprocessingNumericLiteral(numeric->second);
+                } else {
+                    const auto text =
+                        feature->string_values.find("fill_value");
+                    if (text == feature->string_values.end()) {
+                        ReportError(
+                            "FillMissing: state for column '" + field->name() +
+                            "' has no fill value. Refit the artifact.");
+                        return false;
+                    }
+                    fitted_value = text->second;
+                }
+                std::string constant_expression;
+                std::string constant_error;
+                if (!BuildFillMissingConstantExpression(
+                        field, fitted_value, constant_expression,
+                        constant_error)) {
+                    ReportError(constant_error);
+                    return false;
+                }
+                expression = "COALESCE(" + quoted_column + ", " +
+                             constant_expression + ")";
+            }
 
-        if (!result_table) {
-            ReportError("FillMissing: Query execution failed");
+            select_exprs.push_back(expression + " AS " + quoted_column);
+        }
+
+        std::string sql = "SELECT ";
+        for (size_t i = 0; i < select_exprs.size(); ++i) {
+            if (i > 0) {
+                sql += ", ";
+            }
+            sql += select_exprs[i];
+        }
+        sql += " FROM " + temp_table;
+
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        "FillMissing: ")) {
             return false;
         }
 
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
+        if (operation_mode == "fit_transform" && save_state) {
+            std::string state_error;
+            if (!SaveFittedPreprocessingState(
+                    state_path, state, state_overwrite, state_error)) {
+                ReportError(
+                    "FillMissing: failed to save fitted state: " +
+                    state_error);
+                return false;
+            }
+            spdlog::info(
+                "[Preprocessing] FillMissing saved fitted state '{}' "
+                "(fit_rows={}, features={}, strategy={}, schema={})",
+                state_path, state.fit_rows, state.features.size(), strategy,
+                state.input_schema_fingerprint);
+        }
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] FillMissing completed: {} rows", result_table->num_rows());
+        spdlog::info(
+            "[Preprocessing] FillMissing completed mode={} strategy={} "
+            "rows={} features={}",
+            operation_mode, strategy, DatasetRows(output_dataset_name),
+            state.features.size());
         return true;
 
     } catch (const std::exception& e) {
@@ -831,16 +5152,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
 }
 
 bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("SortRows node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("SortRows: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -851,52 +5164,43 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
         return false;
     }
 
-    auto order_it = node.parameters.find("order");
-    std::string order = (order_it != node.parameters.end()) ? order_it->second : "ASC";
+    const std::string order = NormalizeSortOrder(node.parameters);
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& sort_columns = columns_it->second;
     std::string output_dataset_name = "ds_sort_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Sorting '{}' by columns: {} {}",
+    spdlog::info("[Pipeline] Sorting '{}' by columns: {} {}",
                 input_dataset_name, sort_columns, order);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("SortRows: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Register input table with DuckDB
-        std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("SortRows: Failed to register table with DuckDB");
+        std::vector<std::string> selected_columns;
+        std::string schema_error;
+        if (!ResolveExistingColumns(input_table, "SortRows", sort_columns,
+                                    selected_columns, schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_columns = JoinQuotedColumns(selected_columns);
+
+        // DuckDB reads the input under this name
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         // Execute ORDER BY query
-        std::string sql = "SELECT * FROM " + temp_table + " ORDER BY " + sort_columns + " " + order;
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("SortRows: Query execution failed");
+        std::string sql = "SELECT * FROM " + temp_table +
+                          " ORDER BY " + quoted_columns + " " + order;
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "SortRows: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] SortRows completed: {} rows", result_table->num_rows());
+        spdlog::info("[Pipeline] SortRows completed: {} rows", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -906,89 +5210,84 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
 }
 
 bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
-    // Join node requires two inputs
-    if (node.inputs.size() < 2) {
-        ReportError("Join node requires two input connections");
-        return false;
-    }
-
-    // Get left and right datasets
-    int left_node_id = node.inputs[0];
-    int right_node_id = node.inputs[1];
-
-    auto left_it = ctx.node_results.find(left_node_id);
-    auto right_it = ctx.node_results.find(right_node_id);
-
-    if (left_it == ctx.node_results.end() || right_it == ctx.node_results.end()) {
-        ReportError("Join: One or both input datasets not found");
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 2);
+    if (input_dataset_names.empty()) {
         return false;
     }
 
     // Get parameters
     auto join_type_it = node.parameters.find("join_type");
-    std::string join_type = (join_type_it != node.parameters.end()) ? join_type_it->second : "INNER";
+    const std::string raw_join_type =
+        (join_type_it != node.parameters.end()) ? join_type_it->second : "inner";
+    const std::string join_type = NormalizeJoinTypeSql(raw_join_type);
 
-    auto on_column_it = node.parameters.find("on_column");
-    if (on_column_it == node.parameters.end() || on_column_it->second.empty()) {
-        ReportError("Join: Missing 'on_column' parameter");
+    auto left_on_it = node.parameters.find("left_on");
+    auto right_on_it = node.parameters.find("right_on");
+    if (left_on_it == node.parameters.end() || left_on_it->second.empty()) {
+        ReportError("Join: Missing 'left_on' parameter");
+        return false;
+    }
+    if (right_on_it == node.parameters.end() || right_on_it->second.empty()) {
+        ReportError("Join: Missing 'right_on' parameter");
         return false;
     }
 
-    const std::string& left_dataset_name = left_it->second;
-    const std::string& right_dataset_name = right_it->second;
-    const std::string& on_column = on_column_it->second;
+    const std::string& left_dataset_name = input_dataset_names[0];
+    const std::string& right_dataset_name = input_dataset_names[1];
+    const std::string left_on = TrimString(left_on_it->second);
+    const std::string right_on = TrimString(right_on_it->second);
+    if (left_on.empty()) {
+        ReportError("Join: Missing 'left_on' parameter");
+        return false;
+    }
+    if (right_on.empty()) {
+        ReportError("Join: Missing 'right_on' parameter");
+        return false;
+    }
     std::string output_dataset_name = "ds_join_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Joining '{}' and '{}' on column: {} ({})",
-                left_dataset_name, right_dataset_name, on_column, join_type);
+    spdlog::info(
+        "[Pipeline] Joining '{}' ({}) and '{}' ({}) using {} join",
+        left_dataset_name, left_on, right_dataset_name, right_on, join_type);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto left_dataset = registry.GetArrowDataset(left_dataset_name);
-        auto right_dataset = registry.GetArrowDataset(right_dataset_name);
-
-        if (!left_dataset || !right_dataset) {
+        auto left_table = InputSchemaTable(left_dataset_name);
+        auto right_table = InputSchemaTable(right_dataset_name);
+        if (!left_table || !right_table) {
             ReportError("Join: Input datasets not found in registry");
             return false;
         }
+        std::string schema_error;
+        if (!RequireColumnExists(left_table, "Join", left_on,
+                                 "left input", schema_error) ||
+            !RequireColumnExists(right_table, "Join", right_on,
+                                 "right input", schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_left_on = QuoteSqlIdentifier(left_on);
+        const std::string quoted_right_on = QuoteSqlIdentifier(right_on);
 
-        auto left_table = left_dataset->GetArrowTable();
-        auto right_table = right_dataset->GetArrowTable();
-
-        // Register both tables with DuckDB
+        // DuckDB reads both inputs under these names
         std::string left_temp = "temp_left_" + std::to_string(node.id);
         std::string right_temp = "temp_right_" + std::to_string(node.id);
 
-        if (!duckdb_->RegisterTable(left_temp, left_table) ||
-            !duckdb_->RegisterTable(right_temp, right_table)) {
-            ReportError("Join: Failed to register tables with DuckDB");
-            return false;
-        }
-
         // Execute JOIN query
         std::string sql = "SELECT * FROM " + left_temp + " " + join_type + " JOIN " +
-                         right_temp + " ON " + left_temp + "." + on_column +
-                         " = " + right_temp + "." + on_column;
+                         right_temp + " ON " + left_temp + "." + quoted_left_on +
+                         " = " + right_temp + "." + quoted_right_on;
 
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp tables
-        duckdb_->UnregisterTable(left_temp);
-        duckdb_->UnregisterTable(right_temp);
-
-        if (!result_table) {
-            ReportError("Join: Query execution failed");
+        if (!RunStepSql(node, {{left_temp, left_dataset_name}, {right_temp, right_dataset_name}}, sql,
+                        output_dataset_name, false, "Join: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
+        const auto result = DataRegistry::Instance().GetTableRef(output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] Join completed: {} rows, {} columns",
-                    result_table->num_rows(), result_table->num_columns());
+        spdlog::info("[Pipeline] Join completed: {} rows, {} columns",
+                    result ? result->rows : 0, result ? result->columns : 0);
         return true;
 
     } catch (const std::exception& e) {
@@ -998,16 +5297,8 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 }
 
 bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("GroupBy node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("GroupBy: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -1024,53 +5315,52 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& group_columns = group_columns_it->second;
     const std::string& aggregations = agg_it->second;
     std::string output_dataset_name = "ds_groupby_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] GroupBy on '{}': columns={}, agg={}",
+    spdlog::info("[Pipeline] GroupBy on '{}': columns={}, agg={}",
                 input_dataset_name, group_columns, aggregations);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("GroupBy: Input dataset not found in registry");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Register input table with DuckDB
-        std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("GroupBy: Failed to register table with DuckDB");
+        std::vector<std::string> selected_columns;
+        std::string schema_error;
+        if (!ResolveExistingColumns(input_table, "GroupBy", group_columns,
+                                    selected_columns, schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_group_columns = JoinQuotedColumns(selected_columns);
+        std::string aggregation_expressions;
+        if (!BuildGroupByAggregationExpressions(input_table, aggregations, node.parameters,
+                                                aggregation_expressions,
+                                                schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        // DuckDB reads the input under this name
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         // Execute GROUP BY query
         // Aggregations format: "COUNT(*) as count, SUM(amount) as total"
-        std::string sql = "SELECT " + group_columns + ", " + aggregations +
-                         " FROM " + temp_table + " GROUP BY " + group_columns;
+        std::string sql = "SELECT " + quoted_group_columns + ", " +
+                         aggregation_expressions +
+                         " FROM " + temp_table + " GROUP BY " + quoted_group_columns;
 
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("GroupBy: Query execution failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "GroupBy: ")) {
             return false;
         }
-
-        // Register result in DataRegistry
-        registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] GroupBy completed: {} groups", result_table->num_rows());
+        spdlog::info("[Pipeline] GroupBy completed: {} groups", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -1081,17 +5371,60 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
 
 void PipelineExecutor::UpdateProgress(float progress, const std::string& status) {
     progress_ = progress;
-    if (!status.empty()) {
-        current_status_ = status;
+    std::string shown;
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        if (!status.empty()) current_status_ = status;
+        shown = current_status_;
     }
     if (progress_callback_) {
-        progress_callback_(progress, current_status_);
+        progress_callback_(progress, shown);
     }
 }
 
+namespace {
+// The error slot of the node task on this thread (PipelineExecutor::Error).
+thread_local std::string* task_error = nullptr;
+
+struct TaskErrorScope {
+    explicit TaskErrorScope(std::string& error) { task_error = &error; }
+    ~TaskErrorScope() { task_error = nullptr; }
+};
+}  // namespace
+
+std::string& PipelineExecutor::Error() { return task_error ? *task_error : last_error_; }
+
+void PipelineExecutor::StartSql(SqlTransform& transform) {
+    std::lock_guard<std::mutex> lock(active_sql_mutex_);
+    active_sql_.insert(&transform);
+    if (cancel_requested_) transform.Interrupt();
+}
+
+void PipelineExecutor::EndSql(SqlTransform& transform) {
+    std::lock_guard<std::mutex> lock(active_sql_mutex_);
+    active_sql_.erase(&transform);
+}
+
 void PipelineExecutor::ReportError(const std::string& error) {
-    last_error_ = error;
-    spdlog::error("[Data Studio] Pipeline execution error: {}", error);
+    Error() = error;
+    spdlog::error("[Pipeline] Pipeline execution error: {}", error);
+}
+
+void PipelineExecutor::ReportMissingInput(const std::string& step) {
+    // The input lookups (GetInputDatasetName, AdmitInputTable) report why they
+    // failed, e.g. an input over the data budget; keep that reason and add the
+    // generic one only when none was given.
+    if (Error().empty()) ReportError(step + ": No input connection or dataset not found");
+}
+
+void PipelineExecutor::NotifyNodeExecution(
+    const Node& node,
+    PipelineNodeExecutionEvent event,
+    const std::string& status) {
+    if (node_execution_callback_) {
+        node_execution_callback_(node.id, event,
+                                 status.empty() ? node.name : status);
+    }
 }
 
 // Phase 7: Improved error message helper with actionable suggestions
@@ -1146,20 +5479,10 @@ void PipelineExecutor::NotifyCompletion(bool success) {
 // ============================================================================
 
 bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionContext& ctx) {
-    // Get the input dataset from the upstream node
-    if (node.inputs.empty()) {
-        ReportError("DeployToNodeEditor node has no input connection");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("DeployToNodeEditor: Input dataset not found");
-        return false;
-    }
-
-    const std::string& input_dataset_name = result_it->second;
 
     // Get the desired output name from parameters (optional)
     auto name_it = node.parameters.find("name");
@@ -1167,7 +5490,7 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
                                   ? name_it->second
                                   : "deployed_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Preparing dataset '{}' for Node Editor deployment as '{}'",
+    spdlog::info("[Pipeline] Preparing dataset '{}' for Node Editor deployment as '{}'",
                 input_dataset_name, deployment_name);
 
     try {
@@ -1191,9 +5514,10 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
         ctx.deployment_ready = true;
 
         // Also store in output_dataset for consistency
+        ctx.node_results[node.id] = deployment_name;
         ctx.output_dataset = deployment_name;
 
-        spdlog::info("[Data Studio] Dataset ready for deployment: '{}'", deployment_name);
+        spdlog::info("[Pipeline] Dataset ready for deployment: '{}'", deployment_name);
         return true;
 
     } catch (const std::exception& e) {
@@ -1206,16 +5530,724 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
 // Phase 6 Week 8-9: Advanced Nodes Implementation
 // ============================================================================
 
+const std::string* PipelineExecutor::ResultForOutput(const ExecutionContext& ctx, int node_id,
+                                                     std::optional<int> source_pin) {
+    if (source_pin.has_value() && *source_pin > 0) {
+        const auto pin_result = ctx.node_pin_results.find({node_id, *source_pin});
+        if (pin_result != ctx.node_pin_results.end() && !pin_result->second.empty()) return &pin_result->second;
+    }
+    const auto result = ctx.node_results.find(node_id);
+    if (result == ctx.node_results.end() || result->second.empty()) return nullptr;
+    return &result->second;
+}
+
 std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionContext& ctx) {
-    if (node.inputs.empty()) {
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 1);
+    if (input_dataset_names.empty()) {
         return "";
     }
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
+    return input_dataset_names.front();
+}
+
+bool PipelineExecutor::StepReadsInputFiles(const Node& node) {
+    using gui::NodeType;
+    static const std::set<NodeType> sql_steps = {
+        NodeType::FilterRows, NodeType::SelectColumns, NodeType::RemoveDuplicateRows,
+        NodeType::FillMissingValues, NodeType::SortRows, NodeType::JoinTables, NodeType::GroupByAggregate,
+        NodeType::TextCleanNode, NodeType::TextTokenizer, NodeType::CountVectorizer,
+        NodeType::TimeSeriesWindow, NodeType::TimeSeriesFeatures, NodeType::TimeSeriesLag,
+        NodeType::Differencing, NodeType::PolynomialFeaturesNode, NodeType::BinningNode,
+        NodeType::RuleEngine, NodeType::UnitConverter, NodeType::ValueCounts, NodeType::CellExtractor,
+        NodeType::CellUpdater, NodeType::RowAppender, NodeType::Unpivot, NodeType::StringManipulation,
+        NodeType::MathFormula};
+    if (node.type == "SQLQuery" || (node.runtime_type && sql_steps.count(*node.runtime_type) > 0)) return true;
+    // Exports write a table on disk a row group at a time (TOFIX157).
+    if (node.type == "DataOutput" || node.type == "ExportCSV" || node.type == "ExportJSON" || node.type == "ExportParquet")
+        return true;
+    // Operators that stream read their input a row group at a time.
+    auto& factory = PipelineOperatorFactory::Instance();
+    if (!node.runtime_type || !factory.HasOperator(*node.runtime_type)) return false;
+    const auto op = factory.Create(*node.runtime_type);
+    return op && op->SupportsStreaming();
+}
+
+std::filesystem::path PipelineExecutor::PipelineCacheRoot() const {
+    if (!project_root_.empty()) return std::filesystem::path(project_root_) / "cache" / "pipeline";
+    std::error_code error;
+    return std::filesystem::temp_directory_path(error) / "cyxwiz" / "pipeline";
+}
+
+std::shared_ptr<arrow::Table> PipelineExecutor::InputSchemaTable(const std::string& dataset) const {
+    auto& registry = DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(dataset)) return memory->GetArrowTable();
+    if (const auto disk = registry.GetParquetBackedDataset(dataset))
+        return arrow::Table::MakeEmpty(disk->GetSchema()).ValueOr(nullptr);
+    return nullptr;
+}
+
+int64_t PipelineExecutor::DatasetRows(const std::string& dataset) const {
+    const auto table = DataRegistry::Instance().GetTableRef(dataset);
+    return table ? table->rows : 0;
+}
+
+std::string PipelineExecutor::StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
+                                            uint64_t& bytes, bool& on_disk) {
+    auto& registry = DataRegistry::Instance();
+    if (const auto disk = registry.GetParquetBackedDataset(dataset)) {
+        schema = disk->GetSchema();
+        bytes = disk->GetInMemoryBytesEstimate();
+        on_disk = true;
+        return disk->GetFilePath();
+    }
+    const auto memory = registry.GetArrowDataset(dataset);
+    const auto table = memory ? memory->GetArrowTable() : nullptr;
+    if (!table) {
+        ReportError("input dataset '" + dataset + "' is not a table");
         return "";
     }
-    return result_it->second;
+    schema = table->schema();
+    bytes = memory->GetMemoryUsage();
+    on_disk = false;
+    // Written once per table: a step reads the same copy as the steps before
+    // it (or a sibling writing it now), and a table that changes is a new
+    // table object.
+    const auto name_lock = NameLock("input:" + dataset);
+    std::lock_guard<std::mutex> writing(*name_lock);
+    StepInputCopy* found = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        found = &step_input_copies_[dataset];  // map nodes stay put; erased only between runs
+    }
+    auto& copy = *found;
+    if (copy.table.lock() == table && std::filesystem::exists(copy.path)) return copy.path;
+    std::error_code error;
+    if (!copy.path.empty()) std::filesystem::remove(copy.path, error);
+    const auto folder = PipelineCacheRoot() / "inputs";
+    std::filesystem::create_directories(folder, error);
+    const auto path = (folder / (dataset + "_" + std::to_string(reinterpret_cast<uintptr_t>(table.get())) +
+                                 ".parquet")).string();
+    auto out = arrow::io::FileOutputStream::Open(path);
+    arrow::Status status = out.ok() ? parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 128 * 1024)
+                                    : out.status();
+    if (out.ok()) {
+        const auto closed = (*out)->Close();
+        if (status.ok()) status = closed;
+    }
+    if (!status.ok()) {
+        std::filesystem::remove(path, error);
+        ReportError("could not write '" + dataset + "' for DuckDB to read: " + status.ToString());
+        return "";
+    }
+    copy = {table, path};
+    return path;
+}
+
+std::shared_ptr<std::mutex> PipelineExecutor::NameLock(const std::string& key) {
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    auto& entry = name_locks_[key];
+    if (!entry) entry = std::make_shared<std::mutex>();
+    return entry;
+}
+
+std::unique_lock<std::mutex> PipelineExecutor::LockExportPath(const std::string& path) {
+    if (path.empty()) return {};
+    // The lock lives in name_locks_ until the next run starts.
+    return std::unique_lock<std::mutex>(*NameLock("export:" + path));
+}
+
+void PipelineExecutor::RemoveUnusedStepFiles() {
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    name_locks_.clear();
+    std::error_code error;
+    for (auto it = step_input_copies_.begin(); it != step_input_copies_.end();) {
+        if (it->second.table.expired()) {
+            std::filesystem::remove(it->second.path, error);
+            it = step_input_copies_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    auto& registry = DataRegistry::Instance();
+    for (auto it = step_result_files_.begin(); it != step_result_files_.end();) {
+        const auto disk = registry.GetParquetBackedDataset(it->first);
+        if (disk && disk->GetFilePath() == it->second) {
+            ++it;
+            continue;
+        }
+        std::filesystem::remove(it->second, error);
+        it = error ? std::next(it) : step_result_files_.erase(it);  // still mapped: next time
+    }
+}
+
+bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                                            std::vector<SqlTransformInput>& files, uint64_t& input_bytes,
+                                            bool& any_on_disk) {
+    // The time-series steps order rows by DuckDB's rowid, which a table has
+    // and a view on a file does not: their input is loaded into DuckDB.
+    static const std::regex rowid_pattern(R"(\browid\b)", std::regex::icase);
+    const bool needs_rowid = std::regex_search(sql, rowid_pattern);
+    input_bytes = 0;
+    any_on_disk = false;
+    for (const auto& input : inputs) {
+        SqlTransformInput file;
+        file.alias = input.alias;
+        uint64_t bytes = 0;
+        bool on_disk = false;
+        file.parquet_path = StepInputFile(input.dataset, file.schema, bytes, on_disk);
+        file.load_file = needs_rowid;
+        if (file.parquet_path.empty()) return false;
+        input_bytes += bytes;
+        any_on_disk = any_on_disk || on_disk;
+        files.push_back(std::move(file));
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> PipelineExecutor::FetchStepSql(const std::vector<StepSqlInput>& inputs,
+                                                             const std::string& sql,
+                                                             const std::string& error_prefix) {
+    std::vector<SqlTransformInput> files;
+    uint64_t input_bytes = 0;
+    bool any_on_disk = false;
+    if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return nullptr;
+    SqlTransform transform;
+    transform.AllowAnyTypes();
+    StartSql(transform);
+    const auto result = transform.Run(sql, files);
+    EndSql(transform);
+    if (!result.ok) {
+        ReportError(error_prefix + result.error);
+        return nullptr;
+    }
+    return result.table;
+}
+
+bool PipelineExecutor::RunStepSql(const Node& node, const std::vector<StepSqlInput>& inputs, const std::string& sql,
+                                  const std::string& output_name, bool exact_types, const std::string& error_prefix) {
+    std::vector<SqlTransformInput> files;
+    uint64_t input_bytes = 0;
+    bool any_on_disk = false;
+    if (!PrepareStepSqlInputs(inputs, sql, files, input_bytes, any_on_disk)) return false;
+    // A result from a large input may be large too: DuckDB writes it to a
+    // file instead of handing back a table (D1).
+    const bool to_file = any_on_disk || input_bytes > DataResultThresholdBytes();
+    const std::string result_path = NewStepResultPath(output_name);
+    std::error_code error;
+
+    SqlTransform transform;
+    if (!exact_types) transform.AllowAnyTypes();
+    if (to_file) transform.WriteResultTo(result_path);
+    StartSql(transform);
+    const auto result = transform.Run(sql, files);
+    EndSql(transform);
+    if (!result.ok) {
+        if (to_file) std::filesystem::remove(result_path, error);
+        ReportError(error_prefix + result.error);
+        return false;
+    }
+    if (!to_file) {
+        DataRegistry::Instance().RegisterArrowTable(result.table, output_name);
+        return true;
+    }
+    return RegisterStepResultFile(node, output_name, result_path, result.rows_written);
+}
+
+std::string PipelineExecutor::NewStepResultPath(const std::string& output_name) const {
+    const auto results = PipelineCacheRoot() / "results";
+    std::error_code error;
+    std::filesystem::create_directories(results, error);
+    return (results / (output_name + "_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".parquet")).string();
+}
+
+bool PipelineExecutor::RegisterStepResultFile(const Node& node, const std::string& output_name,
+                                              const std::string& path, int64_t rows) {
+    // A result up to the threshold is read back into memory (as before);
+    // a larger one stays a Parquet file.
+    auto& registry = DataRegistry::Instance();
+    std::error_code error;
+    auto written = ParquetBackedDataset::Open(path, output_name);
+    if (!written) {
+        ReportError(node.name + ": could not open its result '" + path + "'");
+        return false;
+    }
+    if (written->GetInMemoryBytesEstimate() <= DataResultThresholdBytes()) {
+        auto table = written->ReadAll();
+        written.reset();
+        if (!table) {
+            ReportError(node.name + ": could not read its result '" + path + "'");
+            return false;
+        }
+        registry.RegisterArrowTable(table, output_name);
+        std::filesystem::remove(path, error);
+        return true;
+    }
+    registry.UnregisterTabularDataset(output_name);
+    registry.RegisterParquetBacked(output_name, written);
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        step_result_files_[output_name] = path;
+    }
+    spdlog::info("[Pipeline] {}: {} rows kept on disk ({})", node.name, rows, path);
+    return true;
+}
+
+bool PipelineExecutor::PassInputThrough(const Node& node, const std::string& input_dataset,
+                                        const std::string& output_name) {
+    // A check's output is its input: the same table, or the same file.
+    auto& registry = DataRegistry::Instance();
+    const auto disk = registry.GetParquetBackedDataset(input_dataset);
+    if (!disk) {
+        const auto memory = registry.GetArrowDataset(input_dataset);
+        if (!memory) {
+            ReportError(node.type + ": input dataset '" + input_dataset + "' is not a table");
+            return false;
+        }
+        registry.RegisterArrowTable(memory->GetArrowTable(), output_name);
+        return true;
+    }
+    auto same = ParquetBackedDataset::Open(disk->GetFilePath(), output_name);
+    if (!same) {
+        ReportError(node.type + ": could not open '" + disk->GetFilePath() + "'");
+        return false;
+    }
+    registry.UnregisterTabularDataset(output_name);
+    registry.RegisterParquetBacked(output_name, same);
+    return true;
+}
+
+bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator& op,
+                                            const std::string& input_dataset, const std::string& output_name) {
+    auto& registry = DataRegistry::Instance();
+    const auto disk = registry.GetParquetBackedDataset(input_dataset);
+    const auto memory = disk ? nullptr : registry.GetArrowDataset(input_dataset);
+    const auto memory_table = memory ? memory->GetArrowTable() : nullptr;
+    if (!disk && !memory_table) {
+        ReportError(node.type + ": input dataset '" + input_dataset + "' is not a table");
+        return false;
+    }
+    // One row group of a file, or 128K rows of a table, at a time.
+    constexpr int64_t kBatchRows = 128 * 1024;
+    const int batches = disk ? disk->GetNumRowGroups()
+                             : static_cast<int>((memory_table->num_rows() + kBatchRows - 1) / kBatchRows);
+    auto batch_at = [&](int index) -> std::shared_ptr<arrow::Table> {
+        if (disk) return disk->ReadRowGroup(index);
+        return memory_table->Slice(static_cast<int64_t>(index) * kBatchRows, kBatchRows);
+    };
+    const auto schema = disk ? disk->GetSchema() : memory_table->schema();
+    auto fail = [&](const std::string& message) {
+        ReportError(node.type + ": " + message);
+        return false;
+    };
+    if (auto status = op.BeginStream(schema); !status.ok()) return fail(status.ToString());
+    if (op.PassesInputThrough()) {
+        // A check reads every batch; its output is its input, not copied.
+        for (int index = 0; index < batches; ++index) {
+            if (cancel_requested_) return fail("cancelled");
+            const auto batch = batch_at(index);
+            if (!batch) return fail("could not read rows of '" + input_dataset + "'");
+            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+        }
+        if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
+        if (auto status = op.EndStream(); !status.ok()) return fail(status.ToString());
+        return PassInputThrough(node, input_dataset, output_name);
+    }
+    if (op.NeedsFitPass()) {
+        for (int index = 0; index < batches; ++index) {
+            if (cancel_requested_) return fail("cancelled");
+            const auto batch = batch_at(index);
+            if (!batch) return fail("could not read rows of '" + input_dataset + "'");
+            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+        }
+        if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
+    }
+    const std::string path = NewStepResultPath(output_name);
+    std::shared_ptr<arrow::io::FileOutputStream> out;
+    std::unique_ptr<parquet::arrow::FileWriter> writer;
+    std::error_code error;
+    auto abandon = [&](const std::string& message) {
+        if (writer) (void)writer->Close();
+        if (out) (void)out->Close();
+        std::filesystem::remove(path, error);
+        return fail(message);
+    };
+    int64_t rows = 0;
+    for (int index = 0; index < batches; ++index) {
+        if (cancel_requested_) return abandon("cancelled");
+        const auto batch = batch_at(index);
+        if (!batch) return abandon("could not read rows of '" + input_dataset + "'");
+        auto applied = op.ApplyBatch(batch);
+        if (!applied.ok()) return abandon(applied.status().ToString());
+        const auto table = applied.ValueOrDie();
+        if (!writer) {
+            auto opened = arrow::io::FileOutputStream::Open(path);
+            if (!opened.ok()) return abandon(opened.status().ToString());
+            out = *opened;
+            auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
+            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props);
+            if (!made.ok()) return abandon(made.status().ToString());
+            writer = std::move(*made);
+        }
+        if (auto status = writer->WriteTable(*table, kBatchRows); !status.ok()) return abandon(status.ToString());
+        rows += table->num_rows();
+    }
+    if (!writer) {
+        // No rows: an empty table with the output's schema.
+        auto applied = op.ApplyBatch(arrow::Table::MakeEmpty(schema).ValueOr(nullptr));
+        if (!applied.ok()) return fail(applied.status().ToString());
+        registry.RegisterArrowTable(applied.ValueOrDie(), output_name);
+        auto status = op.EndStream();
+        return status.ok() || fail(status.ToString());
+    }
+    auto closed = writer->Close();
+    if (closed.ok()) closed = out->Close();
+    writer.reset();
+    out.reset();
+    if (!closed.ok()) return abandon(closed.ToString());
+    if (auto status = op.EndStream(); !status.ok()) return abandon(status.ToString());
+    spdlog::info("[Pipeline] {}: streamed {} rows in {} batches", node.name, rows, batches);
+    return RegisterStepResultFile(node, output_name, path, rows);
+}
+
+std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::string& name) {
+    // Steps read their input as an in-memory table (TOFIX154 step 2). An input
+    // kept on disk is read whole when that fits the data budget (reading needs
+    // about twice the table); otherwise the run stops here, before loading.
+    auto& registry = DataRegistry::Instance();
+    if (registry.GetArrowDataset(name)) return name;
+    const auto disk = registry.GetParquetBackedDataset(name);
+    if (!disk) return name;  // not a table (images, text): the step reports it
+    // One copy per run, shared by the steps that read it; a copy from another
+    // run or executor may be stale and is replaced.
+    const std::string admitted = name + "_in_memory";
+    // A sibling reading the same input now: wait for it, then share its copy.
+    const auto name_lock = NameLock("admit:" + name);
+    std::lock_guard<std::mutex> reading(*name_lock);
+    bool this_run = false;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        this_run = std::find(admitted_inputs_.begin(), admitted_inputs_.end(), admitted) != admitted_inputs_.end();
+    }
+    if (this_run && registry.GetArrowDataset(admitted)) return admitted;
+    registry.UnregisterTabularDataset(admitted);
+    const uint64_t table_bytes = disk->GetInMemoryBytesEstimate();
+    const uint64_t budget = DataBudgetShareBytes();  // siblings running now read theirs too
+    if (table_bytes * 2 > budget) {
+        ReportError(node.name + ": its input (" + sqlstep::FormatCount(disk->GetNumRows()) + " rows) is on disk and needs about " +
+                    FormatDataBytes(table_bytes * 2) + " of memory to read, over the data budget of " +
+                    FormatDataBytes(budget) + ". Select fewer columns in Data Input, or raise the data budget "
+                    "in Preferences > Data.");
+        return "";
+    }
+    spdlog::info("[Pipeline] {}: reading its input from disk ({} rows, about {})", node.name,
+                 disk->GetNumRows(), FormatDataBytes(table_bytes));
+    auto table = disk->ReadAll();
+    if (!table || !registry.RegisterArrowTable(table, admitted)) {
+        ReportError(node.name + ": could not read its input from '" + disk->GetFilePath() + "'");
+        return "";
+    }
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        admitted_inputs_.push_back(admitted);
+    }
+    return admitted;
+}
+
+std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
+    const Node& node,
+    ExecutionContext& ctx,
+    size_t expected_count) {
+    if (node.inputs.size() != expected_count) {
+        ReportError(node.type + ": expected " + std::to_string(expected_count) +
+                    " input dataset(s), got " + std::to_string(node.inputs.size()));
+        return {};
+    }
+
+    std::vector<std::string> dataset_names;
+    dataset_names.reserve(expected_count);
+    for (size_t i = 0; i < node.inputs.size(); ++i) {
+        const int input_node_id = node.inputs[i];
+        // input_links runs parallel to inputs; a link from output pin >= 1
+        // reads that pin's table.
+        const std::optional<int> source_pin =
+            i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
+        const std::string* name = ResultForOutput(ctx, input_node_id, source_pin);
+        if (name == nullptr) {
+            ReportError(node.type + ": input dataset from node " +
+                        std::to_string(input_node_id) + " not found");
+            return {};
+        }
+        // Steps that read files (SQL, streaming operators) are not admitted.
+        const std::string admitted = StepReadsInputFiles(node) ? *name : AdmitInputTable(node, *name);
+        if (admitted.empty()) return {};
+        dataset_names.push_back(admitted);
+    }
+    return dataset_names;
+}
+
+std::string PipelineExecutor::GetInputDatasetForPin(
+    const Node& node,
+    ExecutionContext& ctx,
+    int target_pin_index) {
+    for (const auto& link : node.input_links) {
+        if (link.target_pin_index != target_pin_index) {
+            continue;
+        }
+        const std::string* result = ResultForOutput(ctx, link.node_id, link.source_pin_index);
+        if (result == nullptr) {
+            ReportError(node.type + ": Data input on pin " +
+                        std::to_string(target_pin_index) +
+                        " is not available from node " +
+                        std::to_string(link.node_id));
+            return {};
+        }
+        return StepReadsInputFiles(node) ? *result : AdmitInputTable(node, *result);
+    }
+    ReportError(node.type + ": required Data input pin " +
+                std::to_string(target_pin_index) + " is not connected");
+    return {};
+}
+
+std::string PipelineExecutor::GetInputModelArtifactForPin(
+    const Node& node,
+    ExecutionContext& ctx,
+    int target_pin_index) {
+    for (const auto& link : node.input_links) {
+        if (link.target_pin_index != target_pin_index) {
+            continue;
+        }
+        if (link.source_pin_index.has_value() &&
+            *link.source_pin_index != 1) {
+            ReportError(node.type + ": Model input must come from the "
+                        "upstream Model output connector");
+            return {};
+        }
+        const auto artifact = ctx.model_artifacts.find(link.node_id);
+        if (artifact == ctx.model_artifacts.end() || artifact->second.empty()) {
+            ReportError(node.type + ": fitted Model artifact from node " +
+                        std::to_string(link.node_id) + " is not available");
+            return {};
+        }
+        return artifact->second;
+    }
+    ReportError(node.type + ": required Model input pin " +
+                std::to_string(target_pin_index) + " is not connected");
+    return {};
+}
+
+bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& reason) {
+    ReportError(node.type + " is not executable in the legacy Data Studio pipeline path: " +
+                reason);
+    return false;
+}
+
+bool PipelineExecutor::ExecutePipelineOperatorNode(
+    const Node& node,
+    ExecutionContext& ctx,
+    gui::NodeType type) {
+    const std::string output_dataset_name = OperatorOutputName(node.type, node.id);
+    std::map<std::string, std::string> operator_parameters = node.parameters;
+    // File parameters saved project-relative resolve against the project root,
+    // like Data Input and export paths (otherwise the process directory is used).
+    for (const char* file_parameter : {"vocab_file", "vectors_file", "vectors_path"}) {
+        auto file_it = operator_parameters.find(file_parameter);
+        if (file_it != operator_parameters.end() && !file_it->second.empty()) {
+            file_it->second = ResolveProjectDataPath(file_it->second, project_root_);
+        }
+    }
+    std::string input_dataset_name;
+    if (type == gui::NodeType::RegressionModelPredictor) {
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
+        const std::string model_path =
+            GetInputModelArtifactForPin(node, ctx, 1);
+        if (input_dataset_name.empty() || model_path.empty()) {
+            return false;
+        }
+        operator_parameters["model_path"] = model_path;
+    } else if (type == gui::NodeType::ClassicModelPredictor) {
+        // The Model input (this run's fitted model) wins; without it the saved
+        // model file, project-relative like Data Input files.
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
+        if (input_dataset_name.empty()) {
+            return false;
+        }
+        const bool model_linked = std::any_of(
+            node.input_links.begin(), node.input_links.end(),
+            [](const auto& link) { return link.target_pin_index == 1; });
+        if (model_linked) {
+            const std::string model_path =
+                GetInputModelArtifactForPin(node, ctx, 1);
+            if (model_path.empty()) {
+                return false;
+            }
+            operator_parameters["model_path"] = model_path;
+        } else {
+            auto saved = operator_parameters.find("model_path");
+            if (saved != operator_parameters.end() && !TrimString(saved->second).empty()) {
+                saved->second = ResolveProjectDataPath(TrimString(saved->second), project_root_);
+            }
+        }
+    } else {
+        input_dataset_name = GetInputDatasetName(node, ctx);
+    }
+    if (input_dataset_name.empty()) {
+        ReportMissingInput(node.type);
+        return false;
+    }
+
+    auto& registry = DataRegistry::Instance();
+    auto input_table = InputSchemaTable(input_dataset_name);
+    if (!input_table) {
+        ReportError(node.type + ": input dataset '" + input_dataset_name + "' is not a table");
+        return false;
+    }
+
+    auto& factory = PipelineOperatorFactory::Instance();
+    if (!factory.HasOperator(type)) {
+        ReportError(node.type + ": no PipelineOperatorFactory registration exists");
+        return false;
+    }
+
+    auto op = factory.Create(type);
+    if (!op) {
+        ReportError(node.type + ": PipelineOperatorFactory returned null operator");
+        return false;
+    }
+    PipelineOperatorExecutionContext operator_context;
+    operator_context.cancellation_requested =
+        [this]() { return cancel_requested_.load(); };
+    op->SetExecutionContext(std::move(operator_context));
+    // A long step (word2vec training, a vectorizer) reports its own progress:
+    // Task View shows it as the run's status, the run's share unchanged.
+    op->SetProgressCallback([this, id = node.id, name = node.name](const PipelineOperatorProgress& event) {
+        if (operator_figures_callback_ && (!event.figures.empty() || !event.notes.empty())) {
+            OperatorFigures figures = event.Figures();
+            figures.node_id = id;
+            figures.node_name = name;
+            operator_figures_callback_(figures);
+        }
+        if (event.message.empty()) return;
+        UpdateProgress(progress_.load(), name + ": " + event.message + " (" +
+                                             std::to_string(static_cast<int>(event.progress * 100.0f + 0.5f)) + "%)");
+    });
+
+    std::string configure_error;
+    if (!op->Configure(operator_parameters, configure_error)) {
+        ReportError(configure_error.empty()
+                        ? node.type + ": operator configuration failed"
+                        : configure_error);
+        return false;
+    }
+
+    std::string schema_error;
+    if (!ValidatePipelineOperatorInputSchema(input_table, node.type,
+                                             operator_parameters, type,
+                                             schema_error)) {
+        ReportError(schema_error);
+        return false;
+    }
+
+    // An operator that streams runs a row group at a time when its input is
+    // on disk or large (TOFIX154 step 4); the others read it whole (admitted).
+    const auto input_ref = registry.GetTableRef(input_dataset_name);
+    if (op->SupportsStreaming() && input_ref &&
+        (input_ref->kind == TableRef::Kind::Parquet || input_ref->bytes > DataResultThresholdBytes())) {
+        if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+            ctx.node_outcomes[node.id] = std::move(outcome);
+        }
+        return true;
+    }
+
+    // A check that needs every row judges an input on disk with one query.
+    if (input_ref && input_ref->kind == TableRef::Kind::Parquet && op->PassesInputThrough()) {
+        if (const auto sql = op->CheckSql(); !sql.empty()) {
+            const auto verdict = FetchStepSql({{"input", input_dataset_name}}, sql, node.type + ": ");
+            if (!verdict) return false;
+            if (auto status = op->JudgeSql(verdict); !status.ok()) {
+                ReportError(node.type + ": " + status.ToString());
+                return false;
+            }
+            if (!PassInputThrough(node, input_dataset_name, output_dataset_name)) return false;
+            ctx.node_results[node.id] = output_dataset_name;
+            ctx.output_dataset = output_dataset_name;
+            if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+                ctx.node_outcomes[node.id] = std::move(outcome);
+            }
+            return true;
+        }
+    }
+
+    // Not streaming (this configuration needs every row at once): an input
+    // on disk is admitted now, read whole or stopped with the numbers.
+    if (input_ref && input_ref->kind == TableRef::Kind::Parquet) {
+        input_dataset_name = AdmitInputTable(node, input_dataset_name);
+        if (input_dataset_name.empty()) return false;
+        input_table = InputSchemaTable(input_dataset_name);
+    }
+
+    WarnIfDenseTextVectorizerMaterializationIsLarge(
+        node.type, operator_parameters, input_table);
+
+    auto result = op->Apply(input_table);
+    if (!result.ok()) {
+        ReportError(node.type + ": operator execution failed: " +
+                    result.status().ToString());
+        return false;
+    }
+
+    auto output_table = result.ValueOrDie();
+    auto output_dataset = registry.RegisterArrowTable(output_table, output_dataset_name);
+    if (!output_dataset) {
+        ReportError(node.type + ": failed to register operator output dataset");
+        return false;
+    }
+
+    ctx.node_results[node.id] = output_dataset_name;
+    ctx.output_dataset = output_dataset_name;
+    const auto extra_outputs = op->ExtraOutputs();
+    for (size_t i = 0; i < extra_outputs.size(); ++i) {
+        if (!extra_outputs[i]) continue;
+        const int pin = static_cast<int>(i) + 1;
+        const std::string pin_dataset_name = output_dataset_name + "_pin" + std::to_string(pin);
+        if (!registry.RegisterArrowTable(extra_outputs[i], pin_dataset_name)) {
+            ReportError(node.type + ": failed to register output pin " + std::to_string(pin));
+            return false;
+        }
+        ctx.node_pin_results[{node.id, pin}] = pin_dataset_name;
+    }
+    if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+        ctx.node_outcomes[node.id] = std::move(outcome);
+    }
+
+    if (type == gui::NodeType::LinearRegressionNode ||
+        type == gui::NodeType::PolynomialRegressionNode ||
+        type == gui::NodeType::DecisionTreeClassifier ||
+        type == gui::NodeType::RandomForestClassifier ||
+        type == gui::NodeType::GradientBoostingClassifier ||
+        type == gui::NodeType::NaiveBayesClassifier ||
+        type == gui::NodeType::KNNClassifier ||
+        type == gui::NodeType::LogisticRegressionNode ||
+        type == gui::NodeType::SVMClassifier ||
+        type == gui::NodeType::SVMRegressor) {
+        const auto model_path = operator_parameters.find("model_path");
+        if (model_path == operator_parameters.end() ||
+            model_path->second.empty() ||
+            !std::filesystem::is_regular_file(model_path->second)) {
+            ReportError(node.type +
+                        ": fitted Model artifact was not produced");
+            return false;
+        }
+        ctx.model_artifacts[node.id] = model_path->second;
+        spdlog::info("[Pipeline] {} Model output registered: '{}'",
+                     node.type, model_path->second);
+    }
+
+    spdlog::debug("[Pipeline] {} routed through PipelineOperatorFactory: {} rows, {} columns",
+                 node.type, output_table->num_rows(), output_table->num_columns());
+    return true;
 }
 
 // ============================================================================
@@ -1223,45 +6255,67 @@ std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionCon
 // ============================================================================
 
 bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "TextCleanNode" ? "TextCleanNode" : "TextClean";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextClean: No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
     // Get parameters
-    bool lowercase = node.parameters.count("lowercase") && node.parameters.at("lowercase") == "true";
-    bool remove_html = node.parameters.count("remove_html") && node.parameters.at("remove_html") == "true";
-    bool remove_special_chars = node.parameters.count("remove_special_chars") && node.parameters.at("remove_special_chars") == "true";
-    // Note: remove_stopwords would require dictionary integration - not implemented in MVP
-    // bool remove_stopwords = node.parameters.count("remove_stopwords") && node.parameters.at("remove_stopwords") == "true";
+    bool lowercase = OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
+    bool remove_html = OptionalBooleanParameterIsTrue(node.parameters, "remove_html");
+    bool remove_special_chars =
+        OptionalBooleanParameterIsTrue(node.parameters,
+                                       "remove_special_chars");
+    // remove_stopwords=true is rejected by ValidateNodeRuntimeParameters
+    // until dictionary-backed stop-word removal is implemented.
 
     auto column_it = node.parameters.find("text_column");
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
 
     std::string output_dataset_name = "ds_textclean_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TextClean on column '{}' from '{}'", text_column, input_dataset_name);
+    spdlog::info("[Pipeline] {} on column '{}' from '{}'",
+                 diagnostic_name, text_column, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("TextClean: Input dataset not found");
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, diagnostic_name, text_column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        if (const auto mode = node.parameters.find("html_mode");
+            mode != node.parameters.end() && mode->second == "parsed_html") {
+            const auto parameter = [&](const char* key) {
+                const auto value = node.parameters.find(key);
+                return value == node.parameters.end() ? std::string{} : value->second;
+            };
+            auto table = CleanHtmlDocumentTable(input_table, text_column,
+                parameter("html_begin_comment"), parameter("html_end_comment"),
+                [this] { return cancel_requested_.load(); });
+            if (!registry.RegisterArrowTable(table, output_dataset_name))
+                throw std::runtime_error("Failed to register parsed HTML result");
+            ctx.node_results[node.id] = output_dataset_name;
+            spdlog::info("[Pipeline] {} parsed HTML completed: {} rows; original text and source fields preserved", diagnostic_name, table->num_rows());
+            return true;
+        }
+        const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
+        const std::string quoted_output_column =
+            QuoteSqlIdentifier(text_column + "_cleaned");
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TextClean: Failed to register table");
-            return false;
-        }
 
         // Build SQL transformation chain
         std::string sql = "SELECT *, ";
-        std::string transform = text_column;
+        std::string transform = quoted_text_column;
 
         if (remove_html) {
             transform = "regexp_replace(" + transform + ", '<[^>]*>', '', 'g')";
@@ -1276,24 +6330,19 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         transform = "regexp_replace(" + transform + ", '\\s+', ' ', 'g')";
         transform = "trim(" + transform + ")";
 
-        sql += transform + " AS " + text_column + "_cleaned FROM " + temp_table;
+        sql += transform + " AS " + quoted_output_column + " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TextClean: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextClean completed: {} rows", result_table->num_rows());
+        spdlog::info("[Pipeline] {} completed: {} rows",
+                     diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("TextClean error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }
@@ -1301,7 +6350,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextTokenize: No input connection or dataset not found");
+        ReportMissingInput("TextTokenize");
         return false;
     }
 
@@ -1309,59 +6358,57 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
 
     auto method_it = node.parameters.find("method");
-    std::string method = (method_it != node.parameters.end()) ? method_it->second : "word";
+    std::string method =
+        (method_it != node.parameters.end() && !method_it->second.empty())
+            ? ToLowerAscii(TrimString(method_it->second))
+            : "word";
 
     std::string output_dataset_name = "ds_texttokenize_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TextTokenize ({}) on column '{}' from '{}'",
+    spdlog::info("[Pipeline] TextTokenize ({}) on column '{}' from '{}'",
                 method, text_column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TextTokenize: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TextTokenize: Failed to register table");
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TextTokenize", text_column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
+        const std::string quoted_tokens_column =
+            QuoteSqlIdentifier(text_column + "_tokens");
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         std::string sql;
         if (method == "word") {
             // Split on whitespace and punctuation
-            sql = "SELECT *, string_split_regex(" + text_column + ", '\\s+') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split_regex(" + quoted_text_column +
+                  ", '\\s+') AS " + quoted_tokens_column + " FROM " + temp_table;
         } else if (method == "sentence") {
             // Split on sentence boundaries
-            sql = "SELECT *, string_split_regex(" + text_column + ", '[.!?]+') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split_regex(" + quoted_text_column +
+                  ", '[.!?]+') AS " + quoted_tokens_column + " FROM " + temp_table;
         } else if (method == "character") {
             // Split into characters (list of individual chars)
-            sql = "SELECT *, string_split(" + text_column + ", '') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split(" + quoted_text_column +
+                  ", '') AS " + quoted_tokens_column + " FROM " + temp_table;
         } else {
-            sql = "SELECT *, string_split(" + text_column + ", ' ') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split(" + quoted_text_column +
+                  ", ' ') AS " + quoted_tokens_column + " FROM " + temp_table;
         }
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TextTokenize: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TextTokenize: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextTokenize completed: {} rows", result_table->num_rows());
+        spdlog::info("[Pipeline] TextTokenize completed: {} rows", DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -1373,7 +6420,7 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
 bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextVectorize: No input connection or dataset not found");
+        ReportMissingInput("TextVectorize");
         return false;
     }
 
@@ -1381,54 +6428,198 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
 
     auto method_it = node.parameters.find("method");
-    std::string method = (method_it != node.parameters.end()) ? method_it->second : "count";
+    std::string method =
+        (method_it != node.parameters.end() && !method_it->second.empty())
+            ? ToLowerAscii(TrimString(method_it->second))
+            : "count";
 
     std::string output_dataset_name = "ds_textvectorize_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TextVectorize ({}) on column '{}' from '{}'",
+    spdlog::info("[Pipeline] TextVectorize ({}) on column '{}' from '{}'",
                 method, text_column, input_dataset_name);
+
+    try {
+        // For MVP: Create simple word count features
+        // Full implementation would use TF-IDF or embeddings from backend
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError("TextVectorize: Input dataset not found");
+            return false;
+        }
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TextVectorize", text_column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        // Create simple features: text length, word count
+        std::string sql = "SELECT *, "
+                         "length(" + quoted_text_column + ") AS " +
+                         QuoteSqlIdentifier("text_length") + ", "
+                         "length(" + quoted_text_column + ") - length(replace(" +
+                         quoted_text_column + ", ' ', '')) + 1 AS " +
+                         QuoteSqlIdentifier("word_count") + " "
+                         "FROM " + temp_table;
+
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TextVectorize: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Pipeline] TextVectorize completed: {} rows, basic features added",
+                    DatasetRows(output_dataset_name));
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TextVectorize error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteNERSequenceBuilder(const Node& node,
+                                                 ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError(
+            "NERSequenceBuilder: No input connection or input dataset not found");
+        return false;
+    }
 
     try {
         auto& registry = DataRegistry::Instance();
         auto input_dataset = registry.GetArrowDataset(input_dataset_name);
         if (!input_dataset) {
-            ReportError("TextVectorize: Input dataset not found");
+            ReportError("NERSequenceBuilder: Input dataset not found: " +
+                        input_dataset_name);
             return false;
         }
 
-        // For MVP: Create simple word count features
-        // Full implementation would use TF-IDF or embeddings from backend
         auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TextVectorize: Failed to register table");
+        std::vector<NERSequenceRow> rows;
+        std::string row_error;
+        if (!ExtractNERSequenceRowsFromTable(input_table, node.parameters,
+                                             rows, row_error)) {
+            ReportError(row_error);
             return false;
         }
 
-        // Create simple features: text length, word count
-        std::string sql = "SELECT *, "
-                         "length(" + text_column + ") AS text_length, "
-                         "length(" + text_column + ") - length(replace(" + text_column + ", ' ', '')) + 1 AS word_count "
-                         "FROM " + temp_table;
+        NERSequenceBuilderConfig config;
+        config.token_vocabulary.lowercase =
+            OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
+        const int64_t min_frequency = OptionalIntegerParameterOrDefault(
+            node.parameters, "min_frequency",
+            OptionalIntegerParameterOrDefault(node.parameters, "min_freq", 1));
+        const int64_t max_size = OptionalIntegerParameterOrDefault(
+            node.parameters, "max_size",
+            OptionalIntegerParameterOrDefault(node.parameters, "max_vocab_size",
+                                              0));
 
-        if (!result_table) {
-            ReportError("TextVectorize: Query failed");
-            return false;
-        }
+        config.token_vocabulary.min_frequency =
+            static_cast<size_t>(std::max<int64_t>(1, min_frequency));
+        config.pos_vocabulary.min_frequency =
+            static_cast<size_t>(std::max<int64_t>(1, min_frequency));
+        config.tag_vocabulary.min_frequency =
+            static_cast<size_t>(std::max<int64_t>(1, min_frequency));
+        config.token_vocabulary.max_size =
+            static_cast<size_t>(std::max<int64_t>(0, max_size));
+        config.pos_vocabulary.max_size =
+            static_cast<size_t>(std::max<int64_t>(0, max_size));
+        config.tag_vocabulary.max_size =
+            static_cast<size_t>(std::max<int64_t>(0, max_size));
 
-        registry.RegisterArrowTable(result_table, output_dataset_name);
+        config.batcher.max_sequence_length = static_cast<size_t>(
+            std::max<int64_t>(0, OptionalIntegerParameterOrDefault(
+                                     node.parameters, "max_sequence_length", 0)));
+        config.batcher.tag_ignore_index = OptionalIntegerParameterOrDefault(
+            node.parameters, "ignore_index", -100);
+        config.batcher.create_attention_mask =
+            OptionalBooleanParameterOrDefault(node.parameters,
+                                              "create_attention_mask", true);
+        config.use_pos_tags =
+            !ParameterOrDefault(node.parameters, "pos_column", "").empty();
+        config.require_tags = true;
+
+        const auto result = BuildNERSequenceData(rows, config);
+        auto output_table =
+            MakeNERSequenceTable(result, config.batcher.create_attention_mask);
+        const std::string output_dataset_name =
+            "ds_ner_sequence_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextVectorize completed: {} rows, basic features added",
-                    result_table->num_rows());
+        spdlog::info(
+            "NERSequenceBuilder node {} materialized {} encoded sequence rows",
+            node.id, output_table->num_rows());
         return true;
+    } catch (const std::exception& ex) {
+        ReportError(std::string("NERSequenceBuilder error: ") + ex.what());
+        return false;
+    }
+}
 
+bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportMissingInput(node.type);
+        return false;
+    }
+
+    const bool is_token = node.runtime_type == gui::NodeType::TokenVocabulary;
+    const bool is_pos = node.runtime_type == gui::NodeType::POSVocabulary;
+    const bool is_tag = node.runtime_type == gui::NodeType::NERTagVocabulary;
+    const char* default_column =
+        is_token ? "tokens" : (is_pos ? "pos_tags" : "ner_tags");
+    const std::string column =
+        ParameterOrDefault(node.parameters, "column", default_column);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError(node.type + ": Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::vector<std::vector<std::string>> sequences;
+        std::string sequence_error;
+        if (!ExtractStringSequencesFromColumn(input_table, node.type, column,
+                                              sequences, sequence_error)) {
+            ReportError(sequence_error);
+            return false;
+        }
+
+        SequenceVocabularyConfig config;
+        config.kind = is_tag ? SequenceVocabularyKind::Tag
+                    : (is_pos ? SequenceVocabularyKind::PartOfSpeech
+                              : SequenceVocabularyKind::Token);
+        config.lowercase =
+            OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
+        config.min_frequency = static_cast<size_t>(OptionalIntegerParameterOrDefault(
+            node.parameters, "min_frequency",
+            OptionalIntegerParameterOrDefault(node.parameters, "min_freq", 1)));
+        config.max_size = static_cast<size_t>(OptionalIntegerParameterOrDefault(
+            node.parameters, "max_size",
+            OptionalIntegerParameterOrDefault(node.parameters, "max_vocab_size", 0)));
+        config.pad_token = ParameterOrDefault(node.parameters, "pad_token", "[PAD]");
+        config.unk_token = ParameterOrDefault(node.parameters, "unk_token", "[UNK]");
+
+        const auto vocabulary = BuildSequenceVocabulary(sequences, config);
+        const auto vocabulary_table = MakeSequenceVocabularyTable(vocabulary);
+        const std::string output_dataset_name =
+            "ds_sequence_vocab_" + std::to_string(node.id);
+
+        registry.RegisterArrowTable(vocabulary_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        spdlog::info("[Pipeline] {} built {} entries from column '{}'",
+                     node.type, vocabulary.Size(), column);
+        return true;
     } catch (const std::exception& e) {
-        ReportError("TextVectorize error: " + std::string(e.what()));
+        ReportError(node.type + " error: " + std::string(e.what()));
         return false;
     }
 }
@@ -1440,61 +6631,63 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
 bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSWindow: No input connection or dataset not found");
+        ReportMissingInput("TSWindow");
         return false;
     }
 
-    auto window_it = node.parameters.find("window_size");
+    auto window_it = node.parameters.find("input_width");
+    if (window_it == node.parameters.end()) {
+        window_it = node.parameters.find("window_size");
+    }
     int window_size = (window_it != node.parameters.end()) ? std::stoi(window_it->second) : 10;
 
     auto stride_it = node.parameters.find("stride");
     int stride = (stride_it != node.parameters.end()) ? std::stoi(stride_it->second) : 1;
 
-    auto target_it = node.parameters.find("target_column");
+    auto target_it = node.parameters.find("value_col");
+    if (target_it == node.parameters.end()) {
+        target_it = node.parameters.find("target_column");
+    }
     std::string target_column = (target_it != node.parameters.end()) ? target_it->second : "value";
 
     std::string output_dataset_name = "ds_tswindow_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSWindow (size={}, stride={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] TSWindow (size={}, stride={}) on '{}' from '{}'",
                 window_size, stride, target_column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TSWindow: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSWindow: Failed to register table");
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSWindow", target_column,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_target_column = QuoteSqlIdentifier(target_column);
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         // Create windows using LAG function
         std::string sql = "SELECT *, ";
         for (int i = 0; i < window_size; i++) {
             if (i > 0) sql += ", ";
-            sql += "LAG(" + target_column + ", " + std::to_string(i) + ") OVER (ORDER BY rowid) AS window_t" + std::to_string(i);
+            sql += "LAG(" + quoted_target_column + ", " +
+                   std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
+                   QuoteSqlIdentifier("window_t" + std::to_string(i));
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSWindow: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TSWindow: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSWindow completed: {} rows with {} timestep windows",
-                    result_table->num_rows(), window_size);
+        spdlog::info("[Pipeline] TSWindow completed: {} rows with {} timestep windows",
+                    DatasetRows(output_dataset_name), window_size);
         return true;
 
     } catch (const std::exception& e) {
@@ -1506,66 +6699,72 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
 bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSFeatures: No input connection or dataset not found");
+        ReportMissingInput("TSFeatures");
         return false;
     }
 
-    auto column_it = node.parameters.find("columns");
+    auto column_it = node.parameters.find("value_col");
+    if (column_it == node.parameters.end()) {
+        column_it = node.parameters.find("columns");
+    }
     std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
 
-    auto window_it = node.parameters.find("rolling_window");
-    int rolling_window = (window_it != node.parameters.end()) ? std::stoi(window_it->second) : 7;
+    auto window_it = node.parameters.find("rolling_windows");
+    if (window_it == node.parameters.end()) {
+        window_it = node.parameters.find("rolling_window");
+    }
+    std::string rolling_window_value =
+        (window_it != node.parameters.end()) ? window_it->second : "7";
+    const size_t comma = rolling_window_value.find(',');
+    if (comma != std::string::npos) {
+        rolling_window_value = rolling_window_value.substr(0, comma);
+    }
+    int rolling_window = std::stoi(rolling_window_value);
 
     std::string output_dataset_name = "ds_tsfeatures_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSFeatures (window={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] TSFeatures (window={}) on '{}' from '{}'",
                 rolling_window, columns, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TSFeatures: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSFeatures: Failed to register table");
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSFeatures", columns,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_column = QuoteSqlIdentifier(columns);
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         // Create rolling statistics
         std::string sql = "SELECT *, "
-                         "AVG(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         "AVG(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_mean, "
-                         "STDDEV(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         QuoteSqlIdentifier(columns + "_rolling_mean") + ", "
+                         "STDDEV(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_std, "
-                         "MIN(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         QuoteSqlIdentifier(columns + "_rolling_std") + ", "
+                         "MIN(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_min, "
-                         "MAX(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         QuoteSqlIdentifier(columns + "_rolling_min") + ", "
+                         "MAX(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_max "
+                         QuoteSqlIdentifier(columns + "_rolling_max") + " "
                          "FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSFeatures: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TSFeatures: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSFeatures completed: {} rows with rolling statistics",
-                    result_table->num_rows());
+        spdlog::info("[Pipeline] TSFeatures completed: {} rows with rolling statistics",
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -1575,9 +6774,11 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
 }
 
 bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "TimeSeriesLag" ? "TimeSeriesLag" : "TSLag";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSLag: No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -1589,24 +6790,24 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_tslag_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSLag (periods={}) on '{}' from '{}'",
-                lag_periods, columns, input_dataset_name);
+    spdlog::info("[Pipeline] {} (periods={}) on '{}' from '{}'",
+                 diagnostic_name, lag_periods, columns, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("TSLag: Input dataset not found");
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, diagnostic_name, columns,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSLag: Failed to register table");
-            return false;
-        }
 
         // Parse lag periods (comma-separated)
         std::string sql = "SELECT *, ";
@@ -1617,30 +6818,25 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         while (std::getline(ss, lag_str, ',')) {
             int lag = std::stoi(lag_str);
             if (!first) sql += ", ";
-            sql += "LAG(" + columns + ", " + std::to_string(lag) + ") OVER (ORDER BY rowid) AS " +
-                   columns + "_lag" + std::to_string(lag);
+            sql += "LAG(" + quoted_column + ", " + std::to_string(lag) +
+                   ") OVER (ORDER BY rowid) AS " +
+                   QuoteSqlIdentifier(columns + "_lag" + std::to_string(lag));
             first = false;
         }
 
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSLag: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSLag completed: {} rows with lag features",
-                    result_table->num_rows());
+        spdlog::info("[Pipeline] {} completed: {} rows with lag features",
+                     diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("TSLag error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }
@@ -1648,7 +6844,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSDiff: No input connection or dataset not found");
+        ReportMissingInput("TSDiff");
         return false;
     }
 
@@ -1660,47 +6856,42 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_tsdiff_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSDiff (order={}) on '{}' from '{}'",
+    spdlog::info("[Pipeline] TSDiff (order={}) on '{}' from '{}'",
                 order, columns, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("TSDiff: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSDiff: Failed to register table");
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSDiff", columns,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        const std::string quoted_column = QuoteSqlIdentifier(columns);
+        std::string temp_table = "temp_" + std::to_string(node.id);
 
         // Create difference features
         std::string sql = "SELECT *, ";
         for (int i = 1; i <= order; i++) {
             if (i > 1) sql += ", ";
-            sql += columns + " - LAG(" + columns + ", " + std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
-                   columns + "_diff" + std::to_string(i);
+            sql += quoted_column + " - LAG(" + quoted_column + ", " +
+                   std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
+                   QuoteSqlIdentifier(columns + "_diff" + std::to_string(i));
         }
         sql += " FROM " + temp_table;
 
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("TSDiff: Query failed");
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "TSDiff: ")) {
             return false;
         }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSDiff completed: {} rows with difference features",
-                    result_table->num_rows());
+        spdlog::info("[Pipeline] TSDiff completed: {} rows with difference features",
+                    DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
@@ -1713,54 +6904,13 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
 // Feature Engineering Nodes
 // ============================================================================
 
-bool PipelineExecutor::ExecutePCA(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("PCA: No input connection or dataset not found");
-        return false;
-    }
-
-    auto n_components_it = node.parameters.find("n_components");
-    int n_components = (n_components_it != node.parameters.end()) ? std::stoi(n_components_it->second) : 2;
-
-    std::string output_dataset_name = "ds_pca_" + std::to_string(node.id);
-
-    spdlog::info("[Data Studio] PCA (n_components={}) from '{}'",
-                n_components, input_dataset_name);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("PCA: Input dataset not found");
-            return false;
-        }
-
-        // For MVP: PCA requires numerical linear algebra operations
-        // This is a placeholder that passes through the data
-        // Full implementation would use cyxwiz-backend's linear algebra
-        auto input_table = input_dataset->GetArrowTable();
-
-        spdlog::warn("[Data Studio] PCA: Full implementation requires backend integration. "
-                    "Passing through data unchanged for now.");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-
-        spdlog::info("[Data Studio] PCA completed (passthrough): {} rows",
-                    input_table->num_rows());
-        return true;
-
-    } catch (const std::exception& e) {
-        ReportError("PCA error: " + std::string(e.what()));
-        return false;
-    }
-}
-
 bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "PolynomialFeaturesNode" ? "PolynomialFeaturesNode"
+                                               : "PolynomialFeatures";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("PolynomialFeatures: No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -1768,134 +6918,149 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
     int degree = (degree_it != node.parameters.end()) ? std::stoi(degree_it->second) : 2;
 
     auto columns_it = node.parameters.find("columns");
-    std::string columns = (columns_it != node.parameters.end()) ? columns_it->second : "";
+    std::string column = (columns_it != node.parameters.end()) ? columns_it->second : "";
+    if (column.empty()) {
+        ReportError(diagnostic_name + ": Column name required");
+        return false;
+    }
 
     std::string output_dataset_name = "ds_poly_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] PolynomialFeatures (degree={}) on '{}' from '{}'",
-                degree, columns.empty() ? "all numeric" : columns, input_dataset_name);
+    spdlog::info("[Pipeline] {} (degree={}) on '{}' from '{}'",
+                 diagnostic_name, degree, column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("PolynomialFeatures: Input dataset not found");
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, diagnostic_name, column,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("PolynomialFeatures: Failed to register table");
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        std::string sql = "SELECT *";
+        for (int power = 2; power <= degree; ++power) {
+            std::string expr;
+            for (int factor = 0; factor < power; ++factor) {
+                if (!expr.empty()) {
+                    expr += " * ";
+                }
+                expr += quoted_column;
+            }
+
+            std::string suffix;
+            if (power == 2) {
+                suffix = "_squared";
+            } else if (power == 3) {
+                suffix = "_cubed";
+            } else {
+                suffix = "_pow" + std::to_string(power);
+            }
+            sql += ", " + expr + " AS " + QuoteSqlIdentifier(column + suffix);
+        }
+        sql += " FROM " + temp_table;
+
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
             return false;
         }
-
-        // For MVP: Create simple polynomial features for specified columns
-        // If no columns specified, this is a placeholder
-        std::string sql;
-        if (!columns.empty()) {
-            sql = "SELECT *, ";
-            if (degree >= 2) {
-                sql += columns + " * " + columns + " AS " + columns + "_squared";
-            }
-            if (degree >= 3) {
-                sql += ", " + columns + " * " + columns + " * " + columns + " AS " + columns + "_cubed";
-            }
-            sql += " FROM " + temp_table;
-        } else {
-            // Passthrough if no columns specified
-            sql = "SELECT * FROM " + temp_table;
-        }
-
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("PolynomialFeatures: Query failed");
-            return false;
-        }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] PolynomialFeatures completed: {} rows",
-                    result_table->num_rows());
+        spdlog::info("[Pipeline] {} completed: {} rows",
+                     diagnostic_name, DatasetRows(output_dataset_name));
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("PolynomialFeatures error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }
 
 bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "BinningNode" ? "BinningNode" : "Binning";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("Binning: No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
     auto column_it = node.parameters.find("columns");
-    std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
+    std::string column = (column_it != node.parameters.end()) ? column_it->second : "";
+    if (column.empty()) {
+        ReportError(diagnostic_name + ": Column name required");
+        return false;
+    }
 
     auto n_bins_it = node.parameters.find("n_bins");
     int n_bins = (n_bins_it != node.parameters.end()) ? std::stoi(n_bins_it->second) : 10;
 
     auto method_it = node.parameters.find("method");
-    std::string method = (method_it != node.parameters.end()) ? method_it->second : "equal_width";
+    std::string method =
+        (method_it != node.parameters.end())
+            ? NormalizeBinningMethod(method_it->second)
+            : "equal_width";
 
     std::string output_dataset_name = "ds_binning_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Binning (method={}, bins={}) on '{}' from '{}'",
-                method, n_bins, columns, input_dataset_name);
+    spdlog::info("[Pipeline] {} (method={}, bins={}) on '{}' from '{}'",
+                diagnostic_name, method, n_bins, column, input_dataset_name);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("Binning: Input dataset not found");
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, diagnostic_name, column,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("Binning: Failed to register table");
-            return false;
-        }
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        const std::string quoted_bin_column = QuoteSqlIdentifier(column + "_bin");
+        const std::string base_column = "base." + quoted_column;
 
-        // Use DuckDB's NTILE for equal frequency binning
         std::string sql;
         if (method == "equal_freq") {
             sql = "SELECT *, NTILE(" + std::to_string(n_bins) + ") OVER (ORDER BY " +
-                  columns + ") AS " + columns + "_bin FROM " + temp_table;
+                  quoted_column + ") AS " + quoted_bin_column + " FROM " + temp_table;
+        } else if (method == "equal_width") {
+            const std::string n_bins_text = std::to_string(n_bins);
+            sql = "SELECT base.*, CASE "
+                  "WHEN stats.min_value = stats.max_value THEN 1 "
+                  "ELSE LEAST(" + n_bins_text + ", GREATEST(1, CAST(FLOOR(((CAST(" +
+                  base_column + " AS DOUBLE) - stats.min_value) / "
+                  "NULLIF(stats.max_value - stats.min_value, 0)) * " +
+                  n_bins_text + ") + 1 AS BIGINT))) END AS " + quoted_bin_column +
+                  " FROM " + temp_table + " base CROSS JOIN (SELECT CAST(MIN(" +
+                  quoted_column + ") AS DOUBLE) AS min_value, CAST(MAX(" +
+                  quoted_column + ") AS DOUBLE) AS max_value FROM " + temp_table +
+                  ") stats";
         } else {
-            // Equal width binning using WIDTH_BUCKET
-            sql = "SELECT *, WIDTH_BUCKET(" + columns + ", "
-                  "(SELECT MIN(" + columns + ") FROM " + temp_table + "), "
-                  "(SELECT MAX(" + columns + ") FROM " + temp_table + "), "
-                  + std::to_string(n_bins) + ") AS " + columns + "_bin FROM " + temp_table;
-        }
-
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("Binning: Query failed");
+            ReportError(diagnostic_name + ": Unsupported method '" + method + "'");
             return false;
         }
 
-        registry.RegisterArrowTable(result_table, output_dataset_name);
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, diagnostic_name + ": ")) {
+            return false;
+        }
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] Binning completed: {} rows with {} bins",
-                    result_table->num_rows(), n_bins);
+        spdlog::info("[Pipeline] {} completed: {} rows with {} bins",
+                    diagnostic_name, DatasetRows(output_dataset_name), n_bins);
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("Binning error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }
@@ -1965,7 +7130,52 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         }
     }
 
+    // The wiring: which node and output pin feeds each input.
+    auto mix = [&hash, prime](const std::string& text) {
+        for (char c : text) {
+            hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+            hash *= prime;
+        }
+        hash ^= 0xffULL;
+        hash *= prime;
+    };
+    mix(node.recipe);
+    for (size_t i = 0; i < node.inputs.size(); ++i) {
+        const auto pin = i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
+        mix(std::to_string(node.inputs[i]) + ":" + (pin ? std::to_string(*pin) : std::string("-")));
+    }
+    // A parameter naming a file (a source, a vocabulary, a fitted state) makes
+    // the node depend on that file's size and time, so an edited file reruns.
+    for (const auto& [key, value] : sorted_params) {
+        if (value.empty() || value.size() > 1024) continue;
+        std::error_code error;
+        const std::filesystem::path path = ResolveProjectDataPath(value, project_root_);
+        if (!std::filesystem::is_regular_file(path, error)) continue;
+        const auto size = std::filesystem::file_size(path, error);
+        const auto time = static_cast<long long>(std::filesystem::last_write_time(path, error).time_since_epoch().count());
+        if (!error) mix(key + "@" + std::to_string(size) + "@" + std::to_string(time));
+    }
+
     return hash;
+}
+
+void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
+    auto& registry = DataRegistry::Instance();
+    for (auto& node : nodes) {
+        const auto it = run_cache_.find(node.id);
+        if (it == run_cache_.end()) continue;
+        const NodeRunCache& cache = it->second;
+        std::error_code error;
+        const bool output_kept = !cache.output.empty() && registry.GetTableRef(cache.output).has_value();
+        const bool artifact_kept = cache.model_artifact.empty() ||
+                                   std::filesystem::exists(cache.model_artifact, error);
+        if (!output_kept || !artifact_kept) {
+            run_cache_.erase(it);
+            continue;
+        }
+        node.last_execution_hash = cache.hash;
+        node.cached_output_dataset = cache.output;
+    }
 }
 
 void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
@@ -1975,10 +7185,10 @@ void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
         if (current_hash != node.last_execution_hash) {
             node.needs_execution = true;
             node.last_execution_hash = current_hash;
-            spdlog::debug("[Data Studio] Node {} marked dirty (parameters changed)", node.name);
+            spdlog::debug("[Pipeline] Node {} marked dirty (parameters changed)", node.name);
         } else {
             node.needs_execution = false;
-            spdlog::debug("[Data Studio] Node {} cache valid", node.name);
+            spdlog::debug("[Pipeline] Node {} cache valid", node.name);
         }
     }
 
@@ -1994,7 +7204,7 @@ void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
                     if (input_node && input_node->needs_execution) {
                         node.needs_execution = true;
                         changed = true;
-                        spdlog::debug("[Data Studio] Node {} marked dirty (upstream dependency changed)",
+                        spdlog::debug("[Pipeline] Node {} marked dirty (upstream dependency changed)",
                                      node.name);
                         break;
                     }
@@ -2039,27 +7249,72 @@ std::vector<int> PipelineExecutor::FindReadyNodes(
 }
 
 bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
+    run_nodes_ = &nodes;
+    struct ClearRunNodes {
+        const std::vector<Node>*& nodes;
+        ~ClearRunNodes() { nodes = nullptr; }
+    } clear_run_nodes{run_nodes_};
     std::set<int> completed;
-    std::set<int> executing;
     ExecutionContext ctx;
+
+    struct NodeExecutionResult {
+        bool success = false;
+        ExecutionContext ctx;
+        std::string error;  // why the node failed (its own, not a sibling's)
+    };
 
     int total_nodes_to_execute = 0;
     for (const auto& node : nodes) {
         if (node.needs_execution) {
             total_nodes_to_execute++;
+            // An operator node's result from an earlier run goes first: when
+            // this run fails at it, or before it, nothing stale is left that
+            // looks current (a check that no longer holds).
+            DataRegistry::Instance().UnregisterTabularDataset(OperatorOutputName(node.type, node.id));
+            // Its earlier output goes too (a pass-through output is another
+            // node's table and stays).
+            if (const auto cached = run_cache_.find(node.id); cached != run_cache_.end()) {
+                bool own_output = true;
+                for (const auto& [other_id, other] : run_cache_)
+                    if (other_id != node.id && other.output == cached->second.output) own_output = false;
+                if (own_output) DataRegistry::Instance().UnregisterTabularDataset(cached->second.output);
+                run_cache_.erase(cached);
+            }
+            {
+                // It reads "not run" until the run reaches it.
+                std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+                node_run_facts_.erase(node.id);
+            }
+            NotifyNodeExecution(node, PipelineNodeExecutionEvent::Pending);
         } else {
             // Node doesn't need execution, use cached result
             if (!node.cached_output_dataset.empty()) {
                 ctx.node_results[node.id] = node.cached_output_dataset;
-                spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
+                const NodeRunCache& cache = run_cache_.at(node.id);
+                for (const auto& [pin, dataset] : cache.pin_outputs) ctx.node_pin_results[{node.id, pin}] = dataset;
+                if (!cache.model_artifact.empty()) ctx.model_artifacts[node.id] = cache.model_artifact;
+                if (!cache.outcome.empty()) ctx.node_outcomes[node.id] = cache.outcome;
+                if (node.type == "DataInput" && ctx.input_dataset.empty()) ctx.input_dataset = cache.output;
+                spdlog::info("[Pipeline] Using cached result for node: {}", node.name);
+                completed.insert(node.id);
+                NotifyNodeExecution(node, PipelineNodeExecutionEvent::Completed,
+                                    "Using cached result for " + node.name);
+            } else {
+                ReportError("Cached node '" + node.name +
+                            "' has no cached output dataset and cannot be marked complete");
+                NotifyNodeExecution(node, PipelineNodeExecutionEvent::Error,
+                                    Error());
+                return false;
             }
-            completed.insert(node.id);
         }
     }
 
     if (total_nodes_to_execute == 0) {
-        spdlog::info("[Data Studio] All nodes up-to-date, using cached results");
+        spdlog::info("[Pipeline] All nodes up-to-date, using cached results");
         UpdateProgress(1.0f, "All nodes up-to-date");
+        last_node_results_ = ctx.node_results;
+        last_node_pin_results_ = ctx.node_pin_results;
+        last_model_artifacts_ = ctx.model_artifacts;
         return true;
     }
 
@@ -2067,90 +7322,167 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     float base_progress = 0.3f;
     float progress_range = 0.7f;
 
-    while (completed.size() < nodes.size()) {
-        // Check for cancellation
-        if (cancel_requested_) {
-            ReportError("Pipeline execution cancelled by user");
-            return false;
-        }
+    // Independent branches run at once (TOFIX157 A2): a node starts as soon
+    // as its inputs are done and a slot is free, whatever its siblings are
+    // doing. Each task works on its own copy of the context; results merge
+    // here, on this thread. After a failure or Cancel nothing new starts, and
+    // the nodes running finish and report their own outcome.
+    constexpr size_t kMaxRunningNodes = 4;
+    std::map<int, std::future<NodeExecutionResult>> running;
+    bool failed = false;
 
-        // Find nodes ready to execute
-        auto ready = FindReadyNodes(nodes, completed);
-
-        if (ready.empty() && executing.empty()) {
-            // Deadlock or cycle detected
-            ReportError("Pipeline execution stuck (possible cycle or missing dependencies)");
-            return false;
-        }
-
-        if (ready.empty()) {
-            // Wait a bit for executing nodes to complete
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        // Execute ready nodes in parallel (up to 4 concurrent for now)
-        const size_t max_parallel = std::min<size_t>(4, ready.size());
-        std::vector<std::future<bool>> futures;
-        std::vector<int> batch_node_ids;
-
-        for (size_t i = 0; i < max_parallel && i < ready.size(); i++) {
-            int node_id = ready[i];
-            auto* node = FindNodeById(nodes, node_id);
-            if (!node) continue;
-
-            batch_node_ids.push_back(node_id);
-            executing.insert(node_id);
-
-            // Execute node asynchronously
-            futures.push_back(std::async(std::launch::async,
-                [this, node, &ctx]() mutable {
-                    return ExecuteNode(*node, ctx);
-                }
-            ));
-
-            spdlog::info("[Data Studio] Started executing node: {} (parallel batch)", node->name);
-        }
-
-        // Wait for batch to complete
-        for (size_t i = 0; i < futures.size(); i++) {
-            bool success = futures[i].get();
-            int node_id = batch_node_ids[i];
-            auto* node = FindNodeById(nodes, node_id);
-
-            executing.erase(node_id);
-
-            if (success && node) {
-                completed.insert(node_id);
-                nodes_executed++;
-
-                // Cache the output dataset name
-                auto result_it = ctx.node_results.find(node_id);
-                if (result_it != ctx.node_results.end()) {
-                    node->cached_output_dataset = result_it->second;
-                }
-
-                float progress = base_progress +
-                    (progress_range * nodes_executed / total_nodes_to_execute);
-                UpdateProgress(progress,
-                    "Completed " + node->name + " (" +
-                    std::to_string(nodes_executed) + "/" +
-                    std::to_string(total_nodes_to_execute) + ")");
-
-                spdlog::info("[Data Studio] Completed node: {} ({}/{})",
-                           node->name, nodes_executed, total_nodes_to_execute);
-            } else {
-                // Execution failed
-                return false;
+    while (true) {
+        if (!failed && !cancel_requested_) {
+            for (const int node_id : FindReadyNodes(nodes, completed)) {
+                if (running.size() >= kMaxRunningNodes) break;
+                if (running.count(node_id)) continue;
+                auto* node = FindNodeById(nodes, node_id);
+                if (!node) continue;
+                ExecutionContext task_ctx;
+                task_ctx.node_results = ctx.node_results;
+                task_ctx.node_pin_results = ctx.node_pin_results;
+                task_ctx.model_artifacts = ctx.model_artifacts;
+                task_ctx.node_outcomes = ctx.node_outcomes;  // the checks above it (lineage)
+                running.emplace(node_id, std::async(std::launch::async,
+                    [this, node, task_ctx = std::move(task_ctx)]() mutable {
+                        NodeExecutionResult result;
+                        result.ctx = std::move(task_ctx);
+                        TaskErrorScope error_scope(result.error);
+                        // A new thread starts on ArrayFire's default device.
+                        Device::ActivateProcessDeviceOnThisThread();
+                        NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
+                                            "Executing " + node->name);
+                        RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Executing, "", "", "");
+                        DataBudgetShare budget_share;
+                        result.success = ExecuteNode(*node, result.ctx);
+                        return result;
+                    }));
+                spdlog::debug("[Pipeline] Started executing node: {} ({} running)", node->name, running.size());
             }
         }
+        if (running.empty()) break;
+
+        // The first node that finishes.
+        auto finished = running.end();
+        while (finished == running.end()) {
+            for (auto it = running.begin(); it != running.end(); ++it) {
+                if (it->second.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    finished = it;
+                    break;
+                }
+            }
+            if (finished == running.end())
+                running.begin()->second.wait_for(std::chrono::milliseconds(10));
+        }
+        const int node_id = finished->first;
+        NodeExecutionResult result = finished->second.get();
+        running.erase(finished);
+        auto* node = FindNodeById(nodes, node_id);
+
+        if (result.success && node) {
+            for (const auto& [result_node_id, dataset_name] : result.ctx.node_results) {
+                ctx.node_results[result_node_id] = dataset_name;
+            }
+            for (const auto& [result_pin, dataset_name] : result.ctx.node_pin_results) {
+                ctx.node_pin_results[result_pin] = dataset_name;
+            }
+            for (const auto& [result_node_id, artifact_path] :
+                 result.ctx.model_artifacts) {
+                ctx.model_artifacts[result_node_id] = artifact_path;
+            }
+            if (result.ctx.deployment_ready) {
+                ctx.deployment_ready = true;
+                ctx.deployment_dataset = result.ctx.deployment_dataset;
+            }
+            if (!result.ctx.output_dataset.empty()) {
+                ctx.output_dataset = result.ctx.output_dataset;
+            }
+            if (!result.ctx.deployment_dataset.empty()) {
+                ctx.deployment_dataset = result.ctx.deployment_dataset;
+            }
+
+            for (const auto& [result_node_id, outcome] : result.ctx.node_outcomes) {
+                ctx.node_outcomes[result_node_id] = outcome;
+            }
+
+            completed.insert(node_id);
+            nodes_executed++;
+            NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Completed,
+                                "Completed " + node->name);
+            {
+                const auto dataset = result.ctx.node_results.find(node_id);
+                const auto outcome = result.ctx.node_outcomes.find(node_id);
+                const auto written = result.ctx.node_written.find(node_id);
+                RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Completed,
+                                   dataset == result.ctx.node_results.end() ? "" : dataset->second,
+                                   outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "",
+                                   written == result.ctx.node_written.end() ? "" : written->second);
+            }
+
+            // Cache the output for the next run on this executor; a node
+            // that wrote a file or prepared a deployment always runs.
+            auto result_it = ctx.node_results.find(node_id);
+            if (result_it != ctx.node_results.end()) {
+                node->cached_output_dataset = result_it->second;
+                if (!result.ctx.node_written.count(node_id) && !result.ctx.deployment_ready) {
+                    NodeRunCache cache;
+                    cache.hash = node->last_execution_hash;
+                    cache.output = result_it->second;
+                    for (const auto& [key, dataset] : result.ctx.node_pin_results)
+                        if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
+                    if (const auto model = result.ctx.model_artifacts.find(node_id);
+                        model != result.ctx.model_artifacts.end())
+                        cache.model_artifact = model->second;
+                    if (const auto outcome = result.ctx.node_outcomes.find(node_id);
+                        outcome != result.ctx.node_outcomes.end())
+                        cache.outcome = outcome->second;
+                    run_cache_[node_id] = std::move(cache);
+                }
+            }
+
+            float progress = base_progress +
+                (progress_range * nodes_executed / total_nodes_to_execute);
+            UpdateProgress(progress,
+                "Completed " + node->name + " (" +
+                std::to_string(nodes_executed) + "/" +
+                std::to_string(total_nodes_to_execute) + ")");
+
+            spdlog::info("[Pipeline] Completed node: {} ({}/{})",
+                       node->name, nodes_executed, total_nodes_to_execute);
+        } else if (node) {
+            // The run stops at the first failure; it is the run's error.
+            const std::string error = result.error.empty()
+                ? "Pipeline node execution failed"
+                : result.error;
+            if (!failed) last_error_ = error;
+            failed = true;
+            NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Error, error);
+            RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Error, "", "", error);
+        } else {
+            failed = true;
+        }
     }
+
+    if (cancel_requested_) {
+        ReportError("Pipeline execution cancelled by user");
+        return false;
+    }
+    if (failed) return false;
+    if (completed.size() < nodes.size()) {
+        // Deadlock or cycle detected
+        ReportError("Pipeline execution stuck (possible cycle or missing dependencies)");
+        return false;
+    }
+
+    last_node_results_ = ctx.node_results;
+    last_node_pin_results_ = ctx.node_pin_results;
+    last_model_artifacts_ = ctx.model_artifacts;
 
     // Transfer deployment status from context to executor state
     if (ctx.deployment_ready) {
         deployment_ready_ = true;
         deployment_dataset_ = ctx.deployment_dataset;
-        spdlog::info("[Data Studio] Deployment ready: '{}'", deployment_dataset_);
+        spdlog::info("[Pipeline] Deployment ready: '{}'", deployment_dataset_);
     }
 
     return true;
@@ -2174,50 +7506,120 @@ const PipelineExecutor::Node* PipelineExecutor::FindNodeById(
 // KNIME-Style Table Manipulation Nodes
 // ============================================================================
 
-bool PipelineExecutor::ExecuteExcelInput(const Node& node, ExecutionContext& ctx) {
-    auto path_it = node.parameters.find("path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExcelInput: Missing file path parameter");
-        return false;
+namespace {
+
+// An input file for the lineage. Its SHA-256 is known when the file was
+// hashed before, by path, size and time (also while a large CSV was
+// converted); otherwise a file up to the data budget's result threshold is
+// hashed now, and a larger one (a Parquet file opened in place) is not read
+// again just for this: its size and write time identify it (TOFIX157).
+LineageFile LineageInput(const std::filesystem::path& path, const std::filesystem::path& digest_store) {
+    LineageFile input;
+    input.path = path.string();
+    const std::string stamp = FileStamp(path, &input.bytes);
+    if (stamp.empty()) return input;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (!ec) {
+        // file_time -> system_clock without clock_cast (missing from libstdc++
+        // and libc++ on the release runners), as the Asset Browser does.
+        const auto wall = std::chrono::system_clock::to_time_t(
+            std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()));
+        std::tm local{};
+#if defined(_WIN32)
+        localtime_s(&local, &wall);
+#else
+        localtime_r(&wall, &local);
+#endif
+        std::ostringstream text;
+        text << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+        input.modified = text.str();
     }
-
-    const std::string& file_path = path_it->second;
-    std::string dataset_name = "ds_excel_" + std::to_string(node.id);
-
-    spdlog::info("[Data Studio] Loading Excel file: {} as dataset '{}'", file_path, dataset_name);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
-        if (!arrow_dataset) {
-            ReportError("ExcelInput: Failed to load file");
-            return false;
-        }
-        ctx.node_results[node.id] = dataset_name;
-        if (ctx.input_dataset.empty()) ctx.input_dataset = dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("ExcelInput error: " + std::string(e.what()));
-        return false;
+    input.sha256 = KnownFileDigest(stamp, digest_store);
+    if (!input.sha256.empty()) return input;
+    if (input.bytes > DataResultThresholdBytes()) {
+        input.note = "not hashed: larger than the data budget's result threshold (" + FormatDataBytes(DataResultThresholdBytes()) +
+                     "); size and write time identify it";
+        return input;
     }
+    std::string error;
+    if (Sha256File(path, input.sha256, error)) RememberFileDigest(stamp, digest_store, input.sha256);
+    return input;
 }
 
-bool PipelineExecutor::ExecuteExportExcel(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("ExportExcel: No input dataset");
-        return false;
-    }
+}  // namespace
 
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExportExcel: Missing output file path");
-        return false;
-    }
+void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionContext& ctx, const TabularExport& written,
+                                          const std::string& output_path, const std::string& format) {
+    if (!run_nodes_) return;
+    // The steps above the export, in run order (inputs before the steps that read them).
+    std::vector<int> order;
+    std::set<int> seen;
+    std::function<void(int)> visit = [&](int id) {
+        if (!seen.insert(id).second) return;
+        const Node* n = FindNodeById(*run_nodes_, id);
+        if (!n) return;
+        for (int input : n->inputs) visit(input);
+        order.push_back(id);
+    };
+    for (int input : node.inputs) visit(input);
 
-    spdlog::info("[Data Studio] Exporting to Excel: {}", path_it->second);
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
+    DatasetLineage lineage;
+    {
+        const std::time_t wall = std::time(nullptr);
+        std::tm local{};
+#if defined(_WIN32)
+        localtime_s(&local, &wall);
+#else
+        localtime_r(&wall, &local);
+#endif
+        std::ostringstream clock;
+        clock << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+        lineage.written_at = clock.str();
+    }
+    lineage.engine = "CyxWiz Engine";
+    lineage.graph = graph_path_;
+    lineage.format = format;
+    for (int id : order) {
+        const Node* n = FindNodeById(*run_nodes_, id);
+        LineageStep step;
+        step.id = n->id;
+        step.type = n->type;
+        step.name = n->name;
+        step.recipe = n->recipe;
+        step.parameters = n->parameters;
+        step.inputs = n->inputs;
+        if (const auto o = ctx.node_outcomes.find(id); o != ctx.node_outcomes.end()) step.outcome = o->second;
+        if (n->type == "DataInput") {
+            const auto file = n->parameters.find("file_path");
+            if (file != n->parameters.end() && !file->second.empty()) {
+                const std::filesystem::path store =
+                    ingestion_cache_root_.empty() ? ParquetBackedDataset::GetCacheDir() : ingestion_cache_root_;
+                lineage.inputs.push_back(LineageInput(ResolveProjectDataPath(file->second, project_root_), store));
+            }
+        }
+        if (!n->recipe.empty()) lineage.recipe = n->recipe;  // the nearest recipe above the export wins
+        lineage.steps.push_back(std::move(step));
+    }
+    lineage.recipe_revision = RecipeRevision(lineage.steps, lineage.recipe);
+    lineage.checks = LineageChecks(lineage.steps);
+    // What the export wrote, hashed while it was written (TOFIX157).
+    lineage.rows = written.rows;
+    if (written.schema) {
+        lineage.columns = written.schema->num_fields();
+        for (const auto& field : written.schema->fields()) lineage.schema.emplace_back(field->name(), field->type()->ToString());
+    }
+    lineage.output.path = output_path;
+    lineage.output.bytes = written.bytes;
+    lineage.output.sha256 = written.sha256;
+    std::string error;
+    if (!WriteLineage(lineage, error)) {
+        spdlog::warn("Lineage of '{}' not written: {}", output_path, error);
+        return;
+    }
+    spdlog::info("Lineage written: {} ({} steps, {} checks)", LineagePathFor(output_path), lineage.steps.size(),
+                 lineage.checks.size());
 }
 
 bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx) {
@@ -2227,14 +7629,21 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
         return false;
     }
 
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExportCSV: Missing output file path");
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, ".csv", export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
+
+    spdlog::info("[Pipeline] Exporting to CSV: {}", output_path);
+    TabularExport written;
+    if (!DataRegistry::Instance().ExportTableCSV(input_dataset_name, output_path, &written)) {
+        ReportError("ExportCSV: Export failed (see the log)");
         return false;
     }
 
-    spdlog::info("[Data Studio] Exporting to CSV: {}", path_it->second);
     ctx.node_results[node.id] = input_dataset_name;
+    ctx.output_dataset = output_path;
+    ctx.node_written[node.id] = output_path;
+    WriteExportLineage(node, ctx, written, output_path, "csv");
     return true;
 }
 
@@ -2245,15 +7654,2371 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExportJSON: Missing output file path");
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, ".json", export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
+
+    spdlog::info("[Pipeline] Exporting to JSON: {}", output_path);
+    // An array of objects, written a piece at a time (a table on disk one
+    // row group at a time) and hashed as it is written (TOFIX157).
+    auto file = arrow::io::FileOutputStream::Open(output_path);
+    if (!file.ok()) {
+        ReportError("ExportJSON: Failed to open output file: " + file.status().ToString());
+        return false;
+    }
+    auto hashed = std::make_shared<HashingOutputStream>(*file);
+    auto buffered = arrow::io::BufferedOutputStream::Create(1 << 20, arrow::default_memory_pool(), hashed);
+    if (!buffered.ok()) {
+        ReportError("ExportJSON: " + buffered.status().ToString());
+        return false;
+    }
+    const auto output = *buffered;
+    TabularExport written;
+    std::string error;
+    const auto write = [&](const std::string& text, std::string& why) {
+        const auto status = output->Write(text.data(), static_cast<int64_t>(text.size()));
+        if (!status.ok()) why = "Failed to write output file: " + status.ToString();
+        return status.ok();
+    };
+    bool ok = write("[\n", error) &&
+              DataRegistry::Instance().VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+                  std::vector<std::string> names;
+                  for (const auto& field : piece->schema()->fields()) names.push_back(QuoteJsonString(field->name()) + ": ");
+                  std::string text;
+                  for (int64_t row = 0; row < piece->num_rows(); ++row) {
+                      text += written.rows + row > 0 ? ",\n  {" : "  {";
+                      for (int column = 0; column < piece->num_columns(); ++column) {
+                          auto scalar = piece->column(column)->GetScalar(row);
+                          if (!scalar.ok()) {
+                              why = "Failed to read scalar value";
+                              return false;
+                          }
+                          text += (column > 0 ? ", " : "") + names[static_cast<size_t>(column)] + ScalarToJsonValue(*scalar);
+                      }
+                      text += "}";
+                      if (text.size() > (1u << 20) && !write(text, why)) return false;
+                      if (text.size() > (1u << 20)) text.clear();
+                  }
+                  written.rows += piece->num_rows();
+                  return write(text, why);
+              }, &written.schema, error) &&
+              write(written.rows > 0 ? "\n]\n" : "]\n", error);
+    const auto closed = output->Close();
+    if (!ok || !closed.ok()) {
+        ReportError("ExportJSON: " + (ok ? closed.ToString() : error));
+        return false;
+    }
+    written.bytes = hashed->bytes();
+    written.sha256 = hashed->Finish();
+
+    ctx.node_results[node.id] = input_dataset_name;
+    ctx.output_dataset = output_path;
+    ctx.node_written[node.id] = output_path;
+    WriteExportLineage(node, ctx, written, output_path, "json");
+    return true;
+}
+
+bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ExportParquet: No input dataset");
         return false;
     }
 
-    spdlog::info("[Data Studio] Exporting to JSON: {}", path_it->second);
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, ".parquet", export_root_, project_root_);
+    const auto writing = LockExportPath(output_path);
+
+    spdlog::info("[Pipeline] Exporting to Parquet: {}", output_path);
+    TabularExport written;
+    if (!DataRegistry::Instance().ExportTableParquet(input_dataset_name, output_path, &written)) {
+        ReportError("ExportParquet: Export failed (see the log)");
+        return false;
+    }
+
     ctx.node_results[node.id] = input_dataset_name;
+    ctx.output_dataset = output_path;
+    ctx.node_written[node.id] = output_path;
+    WriteExportLineage(node, ctx, written, output_path, "parquet");
     return true;
+}
+
+bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("RuleEngine: No input dataset");
+        return false;
+    }
+
+    const auto rules_it = node.parameters.find("rules");
+    const std::string rules =
+        rules_it != node.parameters.end() ? rules_it->second : "";
+    const auto output_column_it = node.parameters.find("output_column");
+    const std::string output_column =
+        output_column_it != node.parameters.end() &&
+                !output_column_it->second.empty()
+            ? output_column_it->second
+            : "result";
+    const auto default_value_it = node.parameters.find("default_value");
+    const std::string default_value =
+        default_value_it != node.parameters.end() ? default_value_it->second
+                                                  : "NULL";
+    if (rules.empty()) {
+        ReportError("RuleEngine: rules are required");
+        return false;
+    }
+
+    const std::string output_dataset_name = "ds_ruleengine_" + std::to_string(node.id);
+    try {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError("RuleEngine: Input dataset not found");
+            return false;
+        }
+        std::string case_expression;
+        std::string rule_error;
+        if (!BuildRuleEngineCaseExpression(input_table, rules, default_value,
+                                           case_expression, rule_error)) {
+            ReportError(rule_error);
+            return false;
+        }
+
+        const std::string temp_table = "temp_rule_" + std::to_string(node.id);
+
+        const std::string sql = "SELECT *, " + case_expression + " AS " +
+                                QuoteSqlIdentifier(output_column) + " FROM " +
+                                temp_table;
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "RuleEngine: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RuleEngine error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("UnitConverter: No input dataset");
+        return false;
+    }
+
+    const std::string category =
+        ParameterOrDefault(node.parameters, "category", "length");
+    const std::string from_unit =
+        ParameterOrDefault(node.parameters, "from_unit", "m");
+    const std::string to_unit =
+        ParameterOrDefault(node.parameters, "to_unit", "ft");
+    const std::string output_dataset_name =
+        "ds_unitconverter_" + std::to_string(node.id);
+
+    try {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError("UnitConverter: Input dataset not found");
+            return false;
+        }
+        if (!input_table || !input_table->schema()) {
+            ReportError("UnitConverter: Input table is null");
+            return false;
+        }
+
+        std::vector<std::string> select_expressions;
+        select_expressions.reserve(input_table->num_columns());
+        bool converted_column = false;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            const std::string quoted_column = QuoteSqlIdentifier(field->name());
+            if (field && IsNumericArrowType(field->type())) {
+                std::string converted_expression;
+                std::string conversion_error;
+                if (!BuildUnitConverterExpression(
+                        category, from_unit, to_unit, quoted_column,
+                        converted_expression, conversion_error)) {
+                    ReportError(conversion_error);
+                    return false;
+                }
+                select_expressions.push_back(converted_expression + " AS " +
+                                             quoted_column);
+                converted_column = true;
+            } else {
+                select_expressions.push_back(quoted_column);
+            }
+        }
+
+        if (!converted_column) {
+            ReportError("UnitConverter: input table has no numeric columns");
+            return false;
+        }
+
+        const std::string temp_table = "temp_unit_" + std::to_string(node.id);
+
+        std::string sql = "SELECT ";
+        for (size_t i = 0; i < select_expressions.size(); ++i) {
+            if (i > 0) {
+                sql += ", ";
+            }
+            sql += select_expressions[i];
+        }
+        sql += " FROM " + temp_table;
+
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "UnitConverter: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("UnitConverter error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCalculatorNode(const Node& node, ExecutionContext& ctx) {
+    const std::string expression =
+        ParameterOrDefault(node.parameters, "expression", "2 + 2");
+    const int64_t precision =
+        OptionalIntegerParameterOrDefault(node.parameters, "precision", 6);
+    std::string calculator_expression;
+    std::string calculator_error;
+    if (!BuildCalculatorExpression(expression, calculator_expression,
+                                   calculator_error)) {
+        ReportError(calculator_error);
+        return false;
+    }
+
+    const std::string sql = "SELECT ROUND((" + calculator_expression + "), " +
+                            std::to_string(precision) + ") AS result";
+    try {
+        auto output_table = FetchStepSql({}, sql, "CalculatorNode: ");
+        if (!output_table) {
+            return false;
+        }
+
+        const std::string output_dataset_name =
+            "ds_calculator_" + std::to_string(node.id);
+        DataRegistry::Instance().RegisterArrowTable(output_table,
+                                                    output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CalculatorNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("JSONPathExtractor: No input dataset");
+        return false;
+    }
+
+    const std::string path = ParameterOrDefault(node.parameters, "path", "$");
+    std::vector<std::string> path_segments;
+    std::string path_error;
+    if (!ParseSimpleJsonPath(path, path_segments, path_error)) {
+        ReportError(path_error);
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("JSONPathExtractor: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("JSONPathExtractor: Input table is null");
+            return false;
+        }
+
+        std::string json_column =
+            ParameterOrDefault(node.parameters, "json_column", "");
+        if (json_column.empty()) {
+            json_column = ParameterOrDefault(node.parameters, "column", "");
+        }
+        int column_index = json_column.empty()
+                               ? -1
+                               : input_table->schema()->GetFieldIndex(json_column);
+        if (column_index < 0 && !json_column.empty()) {
+            ReportError("JSONPathExtractor: json column '" + json_column +
+                        "' not found");
+            return false;
+        }
+        if (column_index < 0) {
+            for (int i = 0; i < input_table->num_columns(); ++i) {
+                const auto field = input_table->schema()->field(i);
+                if (field && IsStringArrowType(field->type())) {
+                    column_index = i;
+                    json_column = field->name();
+                    break;
+                }
+            }
+        }
+        if (column_index < 0) {
+            ReportError("JSONPathExtractor: input table has no JSON string column");
+            return false;
+        }
+
+        arrow::StringBuilder result_builder;
+        const auto column = input_table->column(column_index);
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto scalar_result = column->GetScalar(row);
+            if (!scalar_result.ok()) {
+                ReportError("JSONPathExtractor: Failed to read JSON scalar");
+                return false;
+            }
+            const auto scalar = *scalar_result;
+            if (!scalar || !scalar->is_valid) {
+                auto status = result_builder.AppendNull();
+                if (!status.ok()) {
+                    ReportError("JSONPathExtractor: Failed to append null result");
+                    return false;
+                }
+                continue;
+            }
+
+            std::string json_text;
+            if (scalar->type->id() == arrow::Type::STRING) {
+                json_text = ScalarToColumnName(scalar);
+            } else if (scalar->type->id() == arrow::Type::LARGE_STRING) {
+                json_text = ScalarToColumnName(scalar);
+            } else {
+                ReportError("JSONPathExtractor: selected column must be string");
+                return false;
+            }
+
+            nlohmann::json document;
+            try {
+                document = nlohmann::json::parse(json_text);
+            } catch (const std::exception& e) {
+                ReportError("JSONPathExtractor: invalid JSON at row " +
+                            std::to_string(row) + ": " + e.what());
+                return false;
+            }
+
+            nlohmann::json value;
+            if (!ExtractJsonPathValue(document, path_segments, value) ||
+                value.is_null()) {
+                auto status = result_builder.AppendNull();
+                if (!status.ok()) {
+                    ReportError("JSONPathExtractor: Failed to append null result");
+                    return false;
+                }
+                continue;
+            }
+
+            auto status = result_builder.Append(JsonValueToDatasetString(value));
+            if (!status.ok()) {
+                ReportError("JSONPathExtractor: Failed to append extracted value");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> result_array;
+        auto finish_status = result_builder.Finish(&result_array);
+        if (!finish_status.ok()) {
+            ReportError("JSONPathExtractor: Failed to build result array");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("value", arrow::utf8())}),
+            {result_array});
+        const std::string output_dataset_name =
+            "ds_jsonpath_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("JSONPathExtractor error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteRegexTester(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("RegexTester: No input dataset");
+        return false;
+    }
+
+    const std::string pattern = ParameterOrDefault(node.parameters, "pattern", ".*");
+    if (pattern.empty()) {
+        ReportError("RegexTester: pattern is required");
+        return false;
+    }
+
+    std::regex::flag_type regex_options;
+    std::string flags_error;
+    if (!BuildRegexOptions(ParameterOrDefault(node.parameters, "flags", ""),
+                           regex_options, flags_error)) {
+        ReportError(flags_error);
+        return false;
+    }
+
+    try {
+        const std::regex regex_pattern(pattern, regex_options);
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("RegexTester: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("RegexTester: Input table is null");
+            return false;
+        }
+
+        std::string text_column =
+            ParameterOrDefault(node.parameters, "text_column", "");
+        if (text_column.empty()) {
+            text_column = ParameterOrDefault(node.parameters, "column", "");
+        }
+        int column_index = text_column.empty()
+                               ? -1
+                               : input_table->schema()->GetFieldIndex(text_column);
+        if (column_index < 0 && !text_column.empty()) {
+            ReportError("RegexTester: text column '" + text_column + "' not found");
+            return false;
+        }
+        if (column_index < 0) {
+            for (int i = 0; i < input_table->num_columns(); ++i) {
+                const auto field = input_table->schema()->field(i);
+                if (field && IsStringArrowType(field->type())) {
+                    column_index = i;
+                    text_column = field->name();
+                    break;
+                }
+            }
+        }
+        if (column_index < 0) {
+            ReportError("RegexTester: input table has no string column");
+            return false;
+        }
+
+        const auto field = input_table->schema()->field(column_index);
+        if (!field || !IsStringArrowType(field->type())) {
+            ReportError("RegexTester: selected column must be string");
+            return false;
+        }
+
+        arrow::StringBuilder text_builder;
+        arrow::BooleanBuilder matched_builder;
+        arrow::StringBuilder match_builder;
+        arrow::StringBuilder groups_builder;
+        const auto column = input_table->column(column_index);
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto scalar_result = column->GetScalar(row);
+            if (!scalar_result.ok()) {
+                ReportError("RegexTester: Failed to read text scalar");
+                return false;
+            }
+            const auto scalar = *scalar_result;
+            if (!scalar || !scalar->is_valid) {
+                if (!text_builder.AppendNull().ok() ||
+                    !matched_builder.Append(false).ok() ||
+                    !match_builder.AppendNull().ok() ||
+                    !groups_builder.Append("[]").ok()) {
+                    ReportError("RegexTester: Failed to append null result");
+                    return false;
+                }
+                continue;
+            }
+
+            std::string text;
+            if (scalar->type->id() == arrow::Type::STRING) {
+                text = ScalarToColumnName(scalar);
+            } else if (scalar->type->id() == arrow::Type::LARGE_STRING) {
+                text = ScalarToColumnName(scalar);
+            } else {
+                ReportError("RegexTester: selected column must be string");
+                return false;
+            }
+
+            std::smatch match;
+            const bool matched = std::regex_search(text, match, regex_pattern);
+            nlohmann::json groups = nlohmann::json::array();
+            if (matched) {
+                for (size_t i = 1; i < match.size(); ++i) {
+                    groups.push_back(match[i].matched ? match[i].str() : "");
+                }
+            }
+
+            if (!text_builder.Append(text).ok() ||
+                !matched_builder.Append(matched).ok()) {
+                ReportError("RegexTester: Failed to append match result");
+                return false;
+            }
+            if (matched) {
+                if (!match_builder.Append(match.str()).ok()) {
+                    ReportError("RegexTester: Failed to append match text");
+                    return false;
+                }
+            } else if (!match_builder.AppendNull().ok()) {
+                ReportError("RegexTester: Failed to append missing match");
+                return false;
+            }
+            if (!groups_builder.Append(groups.dump()).ok()) {
+                ReportError("RegexTester: Failed to append capture groups");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> text_array;
+        std::shared_ptr<arrow::Array> matched_array;
+        std::shared_ptr<arrow::Array> match_array;
+        std::shared_ptr<arrow::Array> groups_array;
+        if (!text_builder.Finish(&text_array).ok() ||
+            !matched_builder.Finish(&matched_array).ok() ||
+            !match_builder.Finish(&match_array).ok() ||
+            !groups_builder.Finish(&groups_array).ok()) {
+            ReportError("RegexTester: Failed to build output arrays");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("text", arrow::utf8()),
+                           arrow::field("matched", arrow::boolean()),
+                           arrow::field("match", arrow::utf8()),
+                           arrow::field("groups", arrow::utf8())}),
+            {text_array, matched_array, match_array, groups_array});
+        const std::string output_dataset_name =
+            "ds_regextester_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::regex_error& e) {
+        ReportError("RegexTester: invalid regex pattern: " + std::string(e.what()));
+        return false;
+    } catch (const std::exception& e) {
+        ReportError("RegexTester error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataProfiler(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DataProfiler: No input dataset");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DataProfiler: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("DataProfiler: Input table is null");
+            return false;
+        }
+
+        arrow::StringBuilder column_builder;
+        arrow::StringBuilder type_builder;
+        arrow::BooleanBuilder nullable_builder;
+        arrow::Int64Builder row_count_builder;
+        arrow::Int64Builder null_count_builder;
+        arrow::Int64Builder non_null_count_builder;
+        const int64_t row_count = input_table->num_rows();
+
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            const auto column = input_table->column(i);
+            const int64_t null_count = column ? column->null_count() : row_count;
+            const std::string type_name =
+                field && field->type() ? field->type()->ToString() : "unknown";
+
+            if (!column_builder.Append(field ? field->name() : "").ok() ||
+                !type_builder.Append(type_name).ok() ||
+                !nullable_builder.Append(field ? field->nullable() : true).ok() ||
+                !row_count_builder.Append(row_count).ok() ||
+                !null_count_builder.Append(null_count).ok() ||
+                !non_null_count_builder.Append(row_count - null_count).ok()) {
+                ReportError("DataProfiler: Failed to append profile row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> column_array;
+        std::shared_ptr<arrow::Array> type_array;
+        std::shared_ptr<arrow::Array> nullable_array;
+        std::shared_ptr<arrow::Array> row_count_array;
+        std::shared_ptr<arrow::Array> null_count_array;
+        std::shared_ptr<arrow::Array> non_null_count_array;
+        if (!column_builder.Finish(&column_array).ok() ||
+            !type_builder.Finish(&type_array).ok() ||
+            !nullable_builder.Finish(&nullable_array).ok() ||
+            !row_count_builder.Finish(&row_count_array).ok() ||
+            !null_count_builder.Finish(&null_count_array).ok() ||
+            !non_null_count_builder.Finish(&non_null_count_array).ok()) {
+            ReportError("DataProfiler: Failed to build profile table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("column", arrow::utf8()),
+                           arrow::field("type", arrow::utf8()),
+                           arrow::field("nullable", arrow::boolean()),
+                           arrow::field("row_count", arrow::int64()),
+                           arrow::field("null_count", arrow::int64()),
+                           arrow::field("non_null_count", arrow::int64())}),
+            {column_array, type_array, nullable_array, row_count_array,
+             null_count_array, non_null_count_array});
+        const std::string output_dataset_name =
+            "ds_dataprofiler_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DataProfiler error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("RegressionMetricsNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "ground_truth_col"});
+    const std::string predicted_col = get_parameter(
+        {"predicted_col", "y_pred_col", "prediction_col"});
+    if (actual_col.empty()) {
+        ReportError("RegressionMetricsNode: actual_col is required");
+        return false;
+    }
+    if (predicted_col.empty()) {
+        ReportError("RegressionMetricsNode: predicted_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("RegressionMetricsNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("RegressionMetricsNode: Input table is null");
+            return false;
+        }
+
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "RegressionMetricsNode", actual_col,
+                               "numeric", IsNumericArrowType, schema_error) ||
+            !RequireColumnKind(input_table, "RegressionMetricsNode", predicted_col,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        const int predicted_index = input_table->schema()->GetFieldIndex(predicted_col);
+        auto actual_column = input_table->column(actual_index);
+        auto predicted_column = input_table->column(predicted_index);
+        if (!actual_column || !predicted_column) {
+            ReportError("RegressionMetricsNode: metric columns are missing");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        int64_t count = 0;
+        double sum_abs_error = 0.0;
+        double sum_squared_error = 0.0;
+        double sum_actual = 0.0;
+        double sum_actual_squared = 0.0;
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto predicted_scalar_result = predicted_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !predicted_scalar_result.ok()) {
+                ReportError("RegressionMetricsNode: Failed to read metric column value");
+                return false;
+            }
+
+            double actual = 0.0;
+            double predicted = 0.0;
+            if (!scalar_to_double(*actual_scalar_result, actual) ||
+                !scalar_to_double(*predicted_scalar_result, predicted)) {
+                continue;
+            }
+
+            const double error = actual - predicted;
+            sum_abs_error += std::fabs(error);
+            sum_squared_error += error * error;
+            sum_actual += actual;
+            sum_actual_squared += actual * actual;
+            ++count;
+        }
+
+        if (count == 0) {
+            ReportError("RegressionMetricsNode: no non-null actual/predicted pairs");
+            return false;
+        }
+
+        const double mse = sum_squared_error / static_cast<double>(count);
+        const double rmse = std::sqrt(mse);
+        const double mae = sum_abs_error / static_cast<double>(count);
+        const double actual_mean = sum_actual / static_cast<double>(count);
+        const double ss_total =
+            sum_actual_squared - static_cast<double>(count) * actual_mean * actual_mean;
+        const double r2 =
+            (std::fabs(ss_total) <= 1e-12)
+                ? (std::fabs(sum_squared_error) <= 1e-12 ? 1.0 : 0.0)
+                : (1.0 - (sum_squared_error / ss_total));
+
+        spdlog::info(
+            "[Pipeline] RegressionMetricsNode: count={}, MSE={:.10g}, "
+            "RMSE={:.10g}, MAE={:.10g}, R2={:.10g}",
+            count, mse, rmse, mae, r2);
+
+        std::vector<std::string> metrics;
+        auto metrics_it = node.parameters.find("metrics");
+        if (metrics_it != node.parameters.end() &&
+            !TrimString(metrics_it->second).empty()) {
+            ParseCommaList(metrics_it->second, metrics);
+        }
+        if (metrics.empty()) {
+            metrics = {"mse", "rmse", "mae", "r2"};
+        }
+
+        arrow::StringBuilder metric_builder;
+        arrow::DoubleBuilder value_builder;
+        for (std::string metric : metrics) {
+            metric = ToLowerAscii(TrimString(metric));
+            double value = 0.0;
+            if (metric == "mse") {
+                value = mse;
+            } else if (metric == "rmse") {
+                value = rmse;
+            } else if (metric == "mae") {
+                value = mae;
+            } else if (metric == "r2" || metric == "r_squared") {
+                metric = "r2";
+                value = r2;
+            } else if (metric == "count" || metric == "n") {
+                metric = "count";
+                value = static_cast<double>(count);
+            } else {
+                ReportError("RegressionMetricsNode: unsupported metric '" + metric + "'");
+                return false;
+            }
+
+            if (!metric_builder.Append(metric).ok() ||
+                !value_builder.Append(value).ok()) {
+                ReportError("RegressionMetricsNode: Failed to append metric row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> metric_array;
+        std::shared_ptr<arrow::Array> value_array;
+        if (!metric_builder.Finish(&metric_array).ok() ||
+            !value_builder.Finish(&value_array).ok()) {
+            ReportError("RegressionMetricsNode: Failed to build metrics table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("metric", arrow::utf8()),
+                           arrow::field("value", arrow::float64())}),
+            {metric_array, value_array});
+        const std::string output_dataset_name =
+            "ds_regression_metrics_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RegressionMetricsNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteClassificationMetrics(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ClassificationMetricsNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string predicted_col = get_parameter(
+        {"predicted_col", "y_pred_col", "prediction_col"});
+    if (actual_col.empty()) {
+        ReportError("ClassificationMetricsNode: actual_col is required");
+        return false;
+    }
+    if (predicted_col.empty()) {
+        ReportError("ClassificationMetricsNode: predicted_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("ClassificationMetricsNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("ClassificationMetricsNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("ClassificationMetricsNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        const int predicted_index = input_table->schema()->GetFieldIndex(predicted_col);
+        if (predicted_index < 0) {
+            ReportError("ClassificationMetricsNode: column '" + predicted_col + "' not found");
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto predicted_column = input_table->column(predicted_index);
+        if (!actual_column || !predicted_column) {
+            ReportError("ClassificationMetricsNode: label columns are missing");
+            return false;
+        }
+
+        std::map<std::string, int64_t> true_positive;
+        std::map<std::string, int64_t> actual_totals;
+        std::map<std::string, int64_t> predicted_totals;
+        std::set<std::string> labels;
+        int64_t valid_count = 0;
+        int64_t correct_count = 0;
+
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto predicted_scalar_result = predicted_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !predicted_scalar_result.ok()) {
+                ReportError("ClassificationMetricsNode: Failed to read label column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            auto predicted_scalar = *predicted_scalar_result;
+            if (!actual_scalar || !predicted_scalar ||
+                !actual_scalar->is_valid || !predicted_scalar->is_valid) {
+                continue;
+            }
+
+            const std::string actual_label = actual_scalar->ToString();
+            const std::string predicted_label = predicted_scalar->ToString();
+            labels.insert(actual_label);
+            labels.insert(predicted_label);
+            ++actual_totals[actual_label];
+            ++predicted_totals[predicted_label];
+            if (actual_label == predicted_label) {
+                ++true_positive[actual_label];
+                ++correct_count;
+            }
+            ++valid_count;
+        }
+
+        if (valid_count == 0) {
+            ReportError("ClassificationMetricsNode: no non-null actual/predicted pairs");
+            return false;
+        }
+
+        double macro_precision = 0.0;
+        double macro_recall = 0.0;
+        double macro_f1 = 0.0;
+        double weighted_f1 = 0.0;
+        for (const std::string& label : labels) {
+            const double tp = static_cast<double>(true_positive[label]);
+            const double predicted_total = static_cast<double>(predicted_totals[label]);
+            const double actual_total = static_cast<double>(actual_totals[label]);
+            const double precision = predicted_total > 0.0 ? tp / predicted_total : 0.0;
+            const double recall = actual_total > 0.0 ? tp / actual_total : 0.0;
+            const double f1 =
+                (precision + recall) > 0.0
+                    ? (2.0 * precision * recall) / (precision + recall)
+                    : 0.0;
+            macro_precision += precision;
+            macro_recall += recall;
+            macro_f1 += f1;
+            weighted_f1 += f1 * actual_total;
+        }
+
+        const double class_count = static_cast<double>(labels.size());
+        if (class_count > 0.0) {
+            macro_precision /= class_count;
+            macro_recall /= class_count;
+            macro_f1 /= class_count;
+        }
+        weighted_f1 /= static_cast<double>(valid_count);
+        const double accuracy =
+            static_cast<double>(correct_count) / static_cast<double>(valid_count);
+
+        std::vector<std::string> metrics;
+        auto metrics_it = node.parameters.find("metrics");
+        if (metrics_it != node.parameters.end() &&
+            !TrimString(metrics_it->second).empty()) {
+            ParseCommaList(metrics_it->second, metrics);
+        }
+        if (metrics.empty()) {
+            metrics = {"accuracy", "precision", "recall", "f1", "weighted_f1", "count"};
+        }
+
+        arrow::StringBuilder metric_builder;
+        arrow::DoubleBuilder value_builder;
+        for (std::string metric : metrics) {
+            metric = ToLowerAscii(TrimString(metric));
+            double value = 0.0;
+            if (metric == "accuracy" || metric == "acc") {
+                metric = "accuracy";
+                value = accuracy;
+            } else if (metric == "precision" || metric == "macro_precision") {
+                metric = "precision";
+                value = macro_precision;
+            } else if (metric == "recall" || metric == "macro_recall") {
+                metric = "recall";
+                value = macro_recall;
+            } else if (metric == "f1" || metric == "macro_f1") {
+                metric = "f1";
+                value = macro_f1;
+            } else if (metric == "weighted_f1") {
+                value = weighted_f1;
+            } else if (metric == "count" || metric == "n") {
+                metric = "count";
+                value = static_cast<double>(valid_count);
+            } else if (metric == "classes" || metric == "class_count") {
+                metric = "class_count";
+                value = class_count;
+            } else {
+                ReportError("ClassificationMetricsNode: unsupported metric '" + metric + "'");
+                return false;
+            }
+
+            if (!metric_builder.Append(metric).ok() ||
+                !value_builder.Append(value).ok()) {
+                ReportError("ClassificationMetricsNode: Failed to append metric row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> metric_array;
+        std::shared_ptr<arrow::Array> value_array;
+        if (!metric_builder.Finish(&metric_array).ok() ||
+            !value_builder.Finish(&value_array).ok()) {
+            ReportError("ClassificationMetricsNode: Failed to build metrics table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("metric", arrow::utf8()),
+                           arrow::field("value", arrow::float64())}),
+            {metric_array, value_array});
+        const std::string output_dataset_name =
+            "ds_classification_metrics_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ClassificationMetricsNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTestEvaluation(const Node& node, ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Test Evaluation: no input; connect a test's predictions (a Data Input of a kept test)");
+        return false;
+    }
+    auto& registry = DataRegistry::Instance();
+    // The whole table, in memory or on disk (a test's rows are one per test sample).
+    std::vector<std::shared_ptr<arrow::Table>> pieces;
+    std::shared_ptr<arrow::Schema> schema;
+    std::string error;
+    if (!registry.VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string&) {
+            pieces.push_back(piece);
+            return true;
+        }, &schema, error)) {
+        ReportError("Test Evaluation: cannot read the input: " + error);
+        return false;
+    }
+    std::shared_ptr<arrow::Table> rows;
+    if (pieces.size() == 1) {
+        rows = pieces.front();
+    } else {
+        auto joined = arrow::ConcatenateTables(pieces);
+        if (!joined.ok()) {
+            ReportError("Test Evaluation: " + joined.status().ToString());
+            return false;
+        }
+        rows = *joined;
+    }
+    TestingMetrics run;
+    if (!rows || !MetricsFromPredictionsTable(*rows, run, error)) {
+        ReportError("Test Evaluation: the input is not a test's predictions: " + error);
+        return false;
+    }
+    size_t worst_rows = 20;
+    if (const auto it = node.parameters.find("worst_rows"); it != node.parameters.end()) {
+        try {
+            worst_rows = static_cast<size_t>(std::clamp(std::stoll(TrimString(it->second)), 1LL, 10000LL));
+        } catch (const std::exception&) {
+            ReportError("Test Evaluation: worst_rows must be a whole number");
+            return false;
+        }
+    }
+    TestEvaluationTables tables;
+    if (!BuildTestEvaluationTables(run, worst_rows, tables, error)) {
+        ReportError("Test Evaluation: " + error);
+        return false;
+    }
+    const std::string base = "ds_test_evaluation_" + std::to_string(node.id);
+    if (!registry.RegisterArrowTable(tables.metrics, base)) {
+        ReportError("Test Evaluation: cannot register its metrics");
+        return false;
+    }
+    ctx.node_results[node.id] = base;
+    const std::shared_ptr<arrow::Table> extra[] = {tables.confusion, tables.per_class, tables.worst_rows};
+    for (int pin = 1; pin <= 3; ++pin) {
+        const std::string name = base + "_pin" + std::to_string(pin);
+        if (!registry.RegisterArrowTable(extra[pin - 1], name)) {
+            ReportError("Test Evaluation: cannot register output " + std::to_string(pin + 1));
+            return false;
+        }
+        ctx.node_pin_results[{node.id, pin}] = name;
+    }
+    spdlog::info("Test Evaluation node {}: {} test rows{}", node.id, run.total_samples,
+                 run.regression_mode ? ", MAE " + std::to_string(run.test_mae)
+                                     : ", accuracy " + std::to_string(run.test_accuracy));
+    return true;
+}
+
+bool PipelineExecutor::ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ConfusionMatrixNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string predicted_col = get_parameter(
+        {"predicted_col", "y_pred_col", "prediction_col"});
+    if (actual_col.empty()) {
+        ReportError("ConfusionMatrixNode: actual_col is required");
+        return false;
+    }
+    if (predicted_col.empty()) {
+        ReportError("ConfusionMatrixNode: predicted_col is required");
+        return false;
+    }
+
+    std::string normalize = "none";
+    auto normalize_it = node.parameters.find("normalize");
+    if (normalize_it != node.parameters.end() &&
+        !TrimString(normalize_it->second).empty()) {
+        normalize = ToLowerAscii(TrimString(normalize_it->second));
+    }
+    if (normalize == "false") {
+        normalize = "none";
+    }
+    if (normalize != "none" && normalize != "true" &&
+        normalize != "pred" && normalize != "all") {
+        ReportError("ConfusionMatrixNode: normalize must be one of none, true, pred, all");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("ConfusionMatrixNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("ConfusionMatrixNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("ConfusionMatrixNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        const int predicted_index = input_table->schema()->GetFieldIndex(predicted_col);
+        if (predicted_index < 0) {
+            ReportError("ConfusionMatrixNode: column '" + predicted_col + "' not found");
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto predicted_column = input_table->column(predicted_index);
+        if (!actual_column || !predicted_column) {
+            ReportError("ConfusionMatrixNode: label columns are missing");
+            return false;
+        }
+
+        std::map<std::pair<std::string, std::string>, int64_t> counts;
+        std::map<std::string, int64_t> actual_totals;
+        std::map<std::string, int64_t> predicted_totals;
+        int64_t valid_count = 0;
+
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto predicted_scalar_result = predicted_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !predicted_scalar_result.ok()) {
+                ReportError("ConfusionMatrixNode: Failed to read label column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            auto predicted_scalar = *predicted_scalar_result;
+            if (!actual_scalar || !predicted_scalar ||
+                !actual_scalar->is_valid || !predicted_scalar->is_valid) {
+                continue;
+            }
+
+            const std::string actual_label = actual_scalar->ToString();
+            const std::string predicted_label = predicted_scalar->ToString();
+            ++counts[{actual_label, predicted_label}];
+            ++actual_totals[actual_label];
+            ++predicted_totals[predicted_label];
+            ++valid_count;
+        }
+
+        if (valid_count == 0) {
+            ReportError("ConfusionMatrixNode: no non-null actual/predicted pairs");
+            return false;
+        }
+
+        arrow::StringBuilder actual_builder;
+        arrow::StringBuilder predicted_builder;
+        arrow::Int64Builder count_builder;
+        arrow::DoubleBuilder value_builder;
+
+        for (const auto& entry : counts) {
+            const std::string& actual_label = entry.first.first;
+            const std::string& predicted_label = entry.first.second;
+            const int64_t count = entry.second;
+            double value = static_cast<double>(count);
+            if (normalize == "true") {
+                value = static_cast<double>(count) /
+                        static_cast<double>(actual_totals[actual_label]);
+            } else if (normalize == "pred") {
+                value = static_cast<double>(count) /
+                        static_cast<double>(predicted_totals[predicted_label]);
+            } else if (normalize == "all") {
+                value = static_cast<double>(count) /
+                        static_cast<double>(valid_count);
+            }
+
+            if (!actual_builder.Append(actual_label).ok() ||
+                !predicted_builder.Append(predicted_label).ok() ||
+                !count_builder.Append(count).ok() ||
+                !value_builder.Append(value).ok()) {
+                ReportError("ConfusionMatrixNode: Failed to append matrix row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> actual_array;
+        std::shared_ptr<arrow::Array> predicted_array;
+        std::shared_ptr<arrow::Array> count_array;
+        std::shared_ptr<arrow::Array> value_array;
+        if (!actual_builder.Finish(&actual_array).ok() ||
+            !predicted_builder.Finish(&predicted_array).ok() ||
+            !count_builder.Finish(&count_array).ok() ||
+            !value_builder.Finish(&value_array).ok()) {
+            ReportError("ConfusionMatrixNode: Failed to build matrix table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("actual_label", arrow::utf8()),
+                           arrow::field("predicted_label", arrow::utf8()),
+                           arrow::field("count", arrow::int64()),
+                           arrow::field("value", arrow::float64())}),
+            {actual_array, predicted_array, count_array, value_array});
+        const std::string output_dataset_name =
+            "ds_confusion_matrix_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ConfusionMatrixNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteROCCurve(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ROCCurveNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string score_col = get_parameter(
+        {"score_col", "y_score_col", "probability_col", "prediction_score_col"});
+    const std::string positive_label =
+        get_parameter({"positive_label", "positive_class"}).empty()
+            ? "1"
+            : get_parameter({"positive_label", "positive_class"});
+    if (actual_col.empty()) {
+        ReportError("ROCCurveNode: actual_col is required");
+        return false;
+    }
+    if (score_col.empty()) {
+        ReportError("ROCCurveNode: score_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("ROCCurveNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("ROCCurveNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("ROCCurveNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "ROCCurveNode", score_col,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto score_column = input_table->column(
+            input_table->schema()->GetFieldIndex(score_col));
+        if (!actual_column || !score_column) {
+            ReportError("ROCCurveNode: ROC columns are missing");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        struct RocPointInput {
+            std::string label;
+            double score = 0.0;
+            bool positive = false;
+        };
+        std::vector<RocPointInput> samples;
+        int64_t positive_count = 0;
+        int64_t negative_count = 0;
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto score_scalar_result = score_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !score_scalar_result.ok()) {
+                ReportError("ROCCurveNode: Failed to read ROC column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            if (!actual_scalar || !actual_scalar->is_valid) {
+                continue;
+            }
+            double score = 0.0;
+            if (!scalar_to_double(*score_scalar_result, score)) {
+                continue;
+            }
+
+            RocPointInput sample;
+            sample.label = actual_scalar->ToString();
+            sample.score = score;
+            sample.positive = sample.label == positive_label;
+            if (sample.positive) {
+                ++positive_count;
+            } else {
+                ++negative_count;
+            }
+            samples.push_back(sample);
+        }
+
+        if (samples.empty()) {
+            ReportError("ROCCurveNode: no non-null label/score pairs");
+            return false;
+        }
+        if (positive_count == 0 || negative_count == 0) {
+            ReportError("ROCCurveNode: ROC requires at least one positive and one negative sample");
+            return false;
+        }
+
+        // The curve itself comes from ModelEvaluation, on the device (one
+        // implementation for the node, the ROC panel and test results).
+        std::vector<int> y_true;
+        std::vector<double> y_scores;
+        y_true.reserve(samples.size());
+        y_scores.reserve(samples.size());
+        for (const auto& sample : samples) {
+            y_true.push_back(sample.positive ? 1 : 0);
+            y_scores.push_back(sample.score);
+        }
+        const ROCCurveData roc = ModelEvaluation::ComputeROC(y_true, y_scores);
+        if (!roc.success) {
+            ReportError("ROCCurveNode: " + roc.error_message);
+            return false;
+        }
+
+        struct RocPoint {
+            double threshold = 0.0;
+            double fpr = 0.0;
+            double tpr = 0.0;
+        };
+        // One row per distinct threshold, high to low (the curve's leading
+        // (0, 0) point at +infinity is not a threshold row).
+        std::vector<RocPoint> points;
+        for (size_t i = 1; i < roc.fpr.size(); ++i) {
+            points.push_back({roc.thresholds[i], roc.fpr[i], roc.tpr[i]});
+        }
+        const double auc = roc.auc;
+
+        arrow::DoubleBuilder threshold_builder;
+        arrow::DoubleBuilder fpr_builder;
+        arrow::DoubleBuilder tpr_builder;
+        arrow::DoubleBuilder auc_builder;
+        for (const auto& point : points) {
+            if (!threshold_builder.Append(point.threshold).ok() ||
+                !fpr_builder.Append(point.fpr).ok() ||
+                !tpr_builder.Append(point.tpr).ok() ||
+                !auc_builder.Append(auc).ok()) {
+                ReportError("ROCCurveNode: Failed to append ROC point");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> threshold_array;
+        std::shared_ptr<arrow::Array> fpr_array;
+        std::shared_ptr<arrow::Array> tpr_array;
+        std::shared_ptr<arrow::Array> auc_array;
+        if (!threshold_builder.Finish(&threshold_array).ok() ||
+            !fpr_builder.Finish(&fpr_array).ok() ||
+            !tpr_builder.Finish(&tpr_array).ok() ||
+            !auc_builder.Finish(&auc_array).ok()) {
+            ReportError("ROCCurveNode: Failed to build ROC table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("threshold", arrow::float64()),
+                           arrow::field("fpr", arrow::float64()),
+                           arrow::field("tpr", arrow::float64()),
+                           arrow::field("auc", arrow::float64())}),
+            {threshold_array, fpr_array, tpr_array, auc_array});
+        const std::string output_dataset_name =
+            "ds_roc_curve_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ROCCurveNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecutePRCurve(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("PRCurveNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string score_col = get_parameter(
+        {"score_col", "y_score_col", "probability_col", "prediction_score_col"});
+    const std::string positive_label =
+        get_parameter({"positive_label", "positive_class"}).empty()
+            ? "1"
+            : get_parameter({"positive_label", "positive_class"});
+    if (actual_col.empty()) {
+        ReportError("PRCurveNode: actual_col is required");
+        return false;
+    }
+    if (score_col.empty()) {
+        ReportError("PRCurveNode: score_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("PRCurveNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("PRCurveNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("PRCurveNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "PRCurveNode", score_col,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto score_column = input_table->column(
+            input_table->schema()->GetFieldIndex(score_col));
+        if (!actual_column || !score_column) {
+            ReportError("PRCurveNode: PR columns are missing");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        struct PRPointInput {
+            std::string label;
+            double score = 0.0;
+            bool positive = false;
+        };
+        std::vector<PRPointInput> samples;
+        int64_t positive_count = 0;
+        int64_t negative_count = 0;
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto score_scalar_result = score_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !score_scalar_result.ok()) {
+                ReportError("PRCurveNode: Failed to read PR column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            if (!actual_scalar || !actual_scalar->is_valid) {
+                continue;
+            }
+            double score = 0.0;
+            if (!scalar_to_double(*score_scalar_result, score)) {
+                continue;
+            }
+
+            PRPointInput sample;
+            sample.label = actual_scalar->ToString();
+            sample.score = score;
+            sample.positive = sample.label == positive_label;
+            if (sample.positive) {
+                ++positive_count;
+            } else {
+                ++negative_count;
+            }
+            samples.push_back(sample);
+        }
+
+        if (samples.empty()) {
+            ReportError("PRCurveNode: no non-null label/score pairs");
+            return false;
+        }
+        if (positive_count == 0 || negative_count == 0) {
+            ReportError("PRCurveNode: precision-recall requires at least one positive and one negative sample");
+            return false;
+        }
+
+        // The curve itself comes from ModelEvaluation, on the device.
+        std::vector<int> y_true;
+        std::vector<double> y_scores;
+        y_true.reserve(samples.size());
+        y_scores.reserve(samples.size());
+        for (const auto& sample : samples) {
+            y_true.push_back(sample.positive ? 1 : 0);
+            y_scores.push_back(sample.score);
+        }
+        const PRCurveData pr = ModelEvaluation::ComputePRCurve(y_true, y_scores);
+        if (!pr.success) {
+            ReportError("PRCurveNode: " + pr.error_message);
+            return false;
+        }
+
+        struct PRPoint {
+            double threshold = 0.0;
+            double precision = 0.0;
+            double recall = 0.0;
+        };
+        // One row per distinct threshold, high to low: ModelEvaluation reports
+        // thresholds ascending with a closing (precision 1, recall 0) point.
+        std::vector<PRPoint> points;
+        for (size_t i = pr.thresholds.size(); i-- > 0;) {
+            points.push_back({pr.thresholds[i], pr.precision[i], pr.recall[i]});
+        }
+        const double average_precision = pr.average_precision;
+
+        arrow::DoubleBuilder threshold_builder;
+        arrow::DoubleBuilder precision_builder;
+        arrow::DoubleBuilder recall_builder;
+        arrow::DoubleBuilder ap_builder;
+        for (const auto& point : points) {
+            if (!threshold_builder.Append(point.threshold).ok() ||
+                !precision_builder.Append(point.precision).ok() ||
+                !recall_builder.Append(point.recall).ok() ||
+                !ap_builder.Append(average_precision).ok()) {
+                ReportError("PRCurveNode: Failed to append PR point");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> threshold_array;
+        std::shared_ptr<arrow::Array> precision_array;
+        std::shared_ptr<arrow::Array> recall_array;
+        std::shared_ptr<arrow::Array> ap_array;
+        if (!threshold_builder.Finish(&threshold_array).ok() ||
+            !precision_builder.Finish(&precision_array).ok() ||
+            !recall_builder.Finish(&recall_array).ok() ||
+            !ap_builder.Finish(&ap_array).ok()) {
+            ReportError("PRCurveNode: Failed to build PR table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("threshold", arrow::float64()),
+                           arrow::field("precision", arrow::float64()),
+                           arrow::field("recall", arrow::float64()),
+                           arrow::field("average_precision", arrow::float64())}),
+            {threshold_array, precision_array, recall_array, ap_array});
+        const std::string output_dataset_name =
+            "ds_pr_curve_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("PRCurveNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataValidator(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DataValidator: No input dataset");
+        return false;
+    }
+
+    for (const char* unsupported_param : {"column_types", "value_ranges", "regex_patterns"}) {
+        auto it = node.parameters.find(unsupported_param);
+        if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+            ReportError("DataValidator: parameter '" + std::string(unsupported_param) +
+                        "' is not supported by PipelineExecutor yet");
+            return false;
+        }
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DataValidator: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("DataValidator: Input table is null");
+            return false;
+        }
+
+        struct ValidationIssue {
+            std::string rule;
+            std::string column;
+            int64_t row_index = -1;
+            std::string message;
+        };
+        std::vector<ValidationIssue> issues;
+
+        const auto parse_columns = [&](const char* parameter_name) {
+            std::vector<std::string> columns;
+            auto it = node.parameters.find(parameter_name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                ParseCommaList(it->second, columns);
+            }
+            return columns;
+        };
+
+        const auto required_columns = parse_columns("required_columns");
+        for (const auto& column : required_columns) {
+            if (input_table->schema()->GetFieldIndex(column) < 0) {
+                issues.push_back({"required_column", column, -1,
+                                  "required column '" + column + "' is missing"});
+            }
+        }
+
+        const auto not_null_columns = parse_columns("not_null_columns");
+        for (const auto& column : not_null_columns) {
+            const int column_index = input_table->schema()->GetFieldIndex(column);
+            if (column_index < 0) {
+                issues.push_back({"not_null", column, -1,
+                                  "not-null column '" + column + "' is missing"});
+                continue;
+            }
+            auto chunked = input_table->column(column_index);
+            if (!chunked) {
+                issues.push_back({"not_null", column, -1,
+                                  "not-null column '" + column + "' is unavailable"});
+                continue;
+            }
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = chunked->GetScalar(row);
+                if (!scalar_result.ok() || !*scalar_result ||
+                    !(*scalar_result)->is_valid) {
+                    issues.push_back({"not_null", column, row,
+                                      "column '" + column + "' contains null"});
+                }
+            }
+        }
+
+        const auto unique_columns = parse_columns("unique_columns");
+        for (const auto& column : unique_columns) {
+            const int column_index = input_table->schema()->GetFieldIndex(column);
+            if (column_index < 0) {
+                issues.push_back({"unique", column, -1,
+                                  "unique column '" + column + "' is missing"});
+                continue;
+            }
+            auto chunked = input_table->column(column_index);
+            if (!chunked) {
+                issues.push_back({"unique", column, -1,
+                                  "unique column '" + column + "' is unavailable"});
+                continue;
+            }
+            std::map<std::string, int64_t> first_seen_row_by_value;
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = chunked->GetScalar(row);
+                if (!scalar_result.ok() || !*scalar_result ||
+                    !(*scalar_result)->is_valid) {
+                    continue;
+                }
+                const std::string value = (*scalar_result)->ToString();
+                auto [it, inserted] = first_seen_row_by_value.emplace(value, row);
+                if (!inserted) {
+                    issues.push_back({"unique", column, row,
+                                      "column '" + column + "' duplicates row " +
+                                          std::to_string(it->second)});
+                }
+            }
+        }
+
+        arrow::StringBuilder rule_builder;
+        arrow::StringBuilder column_builder;
+        arrow::Int64Builder row_index_builder;
+        arrow::StringBuilder message_builder;
+        for (const auto& issue : issues) {
+            if (!rule_builder.Append(issue.rule).ok() ||
+                !column_builder.Append(issue.column).ok() ||
+                !row_index_builder.Append(issue.row_index).ok() ||
+                !message_builder.Append(issue.message).ok()) {
+                ReportError("DataValidator: Failed to append validation issue");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> rule_array;
+        std::shared_ptr<arrow::Array> column_array;
+        std::shared_ptr<arrow::Array> row_index_array;
+        std::shared_ptr<arrow::Array> message_array;
+        if (!rule_builder.Finish(&rule_array).ok() ||
+            !column_builder.Finish(&column_array).ok() ||
+            !row_index_builder.Finish(&row_index_array).ok() ||
+            !message_builder.Finish(&message_array).ok()) {
+            ReportError("DataValidator: Failed to build issue table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("rule", arrow::utf8()),
+                           arrow::field("column", arrow::utf8()),
+                           arrow::field("row_index", arrow::int64()),
+                           arrow::field("message", arrow::utf8())}),
+            {rule_array, column_array, row_index_array, message_array});
+        const std::string output_dataset_name =
+            "ds_datavalidator_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DataValidator error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteSampleRows(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("SampleRows: No input dataset");
+        return false;
+    }
+
+    int64_t count = 100;
+    auto count_it = node.parameters.find("count");
+    auto n_it = node.parameters.find("n");
+    const std::string count_value =
+        (count_it != node.parameters.end() && !TrimString(count_it->second).empty())
+            ? TrimString(count_it->second)
+            : ((n_it != node.parameters.end()) ? TrimString(n_it->second) : "");
+    if (!count_value.empty()) {
+        try {
+            size_t parsed = 0;
+            count = std::stoll(count_value, &parsed);
+            if (parsed != count_value.size()) {
+                ReportError("SampleRows: count must be an integer >= 0");
+                return false;
+            }
+        } catch (...) {
+            ReportError("SampleRows: count must be an integer >= 0");
+            return false;
+        }
+    }
+    if (count < 0) {
+        ReportError("SampleRows: count must be an integer >= 0");
+        return false;
+    }
+
+    auto random_state_it = node.parameters.find("random_state");
+    if (random_state_it != node.parameters.end() &&
+        !TrimString(random_state_it->second).empty()) {
+        spdlog::warn("SampleRows: random_state is accepted for UI compatibility but deterministic head sampling is used");
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("SampleRows: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table) {
+            ReportError("SampleRows: Input table is null");
+            return false;
+        }
+
+        const int64_t sample_count = std::min<int64_t>(count, input_table->num_rows());
+        auto output_table = input_table->Slice(0, sample_count);
+        const std::string output_dataset_name =
+            "ds_samplerows_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("SampleRows error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteValueCounts(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ValueCounts: No input dataset");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("column");
+    if (column_it == node.parameters.end() || TrimString(column_it->second).empty()) {
+        ReportError("ValueCounts: column is required");
+        return false;
+    }
+    const std::string column = TrimString(column_it->second);
+
+    try {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError("ValueCounts: Input dataset not found");
+            return false;
+        }
+        std::string schema_error;
+        if (!RequireColumnExists(input_table, "ValueCounts", column,
+                                 "input", schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        const std::string temp_table = "temp_valuecounts_" + std::to_string(node.id);
+        const std::string output_dataset_name =
+            "ds_valuecounts_" + std::to_string(node.id);
+
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        const std::string sql =
+            "SELECT " + quoted_column + " AS value, COUNT(*) AS count FROM " +
+            temp_table + " GROUP BY " + quoted_column +
+            " ORDER BY count DESC, value ASC";
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "ValueCounts: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ValueCounts error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDescribeStats(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DescribeStats: No input dataset");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DescribeStats: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("DescribeStats: Input table is null");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        arrow::StringBuilder column_builder;
+        arrow::Int64Builder count_builder;
+        arrow::DoubleBuilder mean_builder;
+        arrow::DoubleBuilder min_builder;
+        arrow::DoubleBuilder max_builder;
+
+        for (int column_index = 0; column_index < input_table->num_columns(); ++column_index) {
+            const auto field = input_table->schema()->field(column_index);
+            if (!field || !field->type() || !IsNumericArrowType(field->type())) {
+                continue;
+            }
+
+            auto column = input_table->column(column_index);
+            if (!column) {
+                continue;
+            }
+
+            int64_t count = 0;
+            double sum = 0.0;
+            double min_value = 0.0;
+            double max_value = 0.0;
+            bool have_value = false;
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = column->GetScalar(row);
+                if (!scalar_result.ok()) {
+                    ReportError("DescribeStats: Failed to read numeric value");
+                    return false;
+                }
+                double value = 0.0;
+                if (!scalar_to_double(*scalar_result, value)) {
+                    continue;
+                }
+                if (!have_value) {
+                    min_value = value;
+                    max_value = value;
+                    have_value = true;
+                } else {
+                    min_value = std::min(min_value, value);
+                    max_value = std::max(max_value, value);
+                }
+                sum += value;
+                ++count;
+            }
+
+            if (!have_value) {
+                continue;
+            }
+
+            if (!column_builder.Append(field->name()).ok() ||
+                !count_builder.Append(count).ok() ||
+                !mean_builder.Append(sum / static_cast<double>(count)).ok() ||
+                !min_builder.Append(min_value).ok() ||
+                !max_builder.Append(max_value).ok()) {
+                ReportError("DescribeStats: Failed to append summary row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> column_array;
+        std::shared_ptr<arrow::Array> count_array;
+        std::shared_ptr<arrow::Array> mean_array;
+        std::shared_ptr<arrow::Array> min_array;
+        std::shared_ptr<arrow::Array> max_array;
+        if (!column_builder.Finish(&column_array).ok() ||
+            !count_builder.Finish(&count_array).ok() ||
+            !mean_builder.Finish(&mean_array).ok() ||
+            !min_builder.Finish(&min_array).ok() ||
+            !max_builder.Finish(&max_array).ok()) {
+            ReportError("DescribeStats: Failed to build summary table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("column", arrow::utf8()),
+                           arrow::field("count", arrow::int64()),
+                           arrow::field("mean", arrow::float64()),
+                           arrow::field("min", arrow::float64()),
+                           arrow::field("max", arrow::float64())}),
+            {column_array, count_array, mean_array, min_array, max_array});
+        const std::string output_dataset_name =
+            "ds_describestats_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DescribeStats error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCorrelationMatrix(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("CorrelationMatrix: No input dataset");
+        return false;
+    }
+
+    std::string method = "pearson";
+    auto method_it = node.parameters.find("method");
+    if (method_it != node.parameters.end() && !TrimString(method_it->second).empty()) {
+        method = ToLowerAscii(TrimString(method_it->second));
+    }
+    if (method != "pearson") {
+        ReportError("CorrelationMatrix: only pearson correlation is supported by PipelineExecutor");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("CorrelationMatrix: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("CorrelationMatrix: Input table is null");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        struct NumericColumnValues {
+            std::string name;
+            std::vector<double> values;
+        };
+        std::vector<NumericColumnValues> numeric_columns;
+        for (int column_index = 0; column_index < input_table->num_columns(); ++column_index) {
+            const auto field = input_table->schema()->field(column_index);
+            if (!field || !field->type() || !IsNumericArrowType(field->type())) {
+                continue;
+            }
+            auto column = input_table->column(column_index);
+            if (!column) {
+                continue;
+            }
+
+            NumericColumnValues numeric_column;
+            numeric_column.name = field->name();
+            numeric_column.values.resize(static_cast<size_t>(input_table->num_rows()),
+                                         std::numeric_limits<double>::quiet_NaN());
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = column->GetScalar(row);
+                if (!scalar_result.ok()) {
+                    ReportError("CorrelationMatrix: Failed to read numeric value");
+                    return false;
+                }
+                double value = 0.0;
+                if (scalar_to_double(*scalar_result, value)) {
+                    numeric_column.values[static_cast<size_t>(row)] = value;
+                }
+            }
+            numeric_columns.push_back(std::move(numeric_column));
+        }
+
+        if (numeric_columns.empty()) {
+            ReportError("CorrelationMatrix: no numeric columns available");
+            return false;
+        }
+
+        const auto compute_correlation =
+            [](const std::vector<double>& x, const std::vector<double>& y) {
+                int64_t count = 0;
+                double sum_x = 0.0;
+                double sum_y = 0.0;
+                for (size_t i = 0; i < x.size() && i < y.size(); ++i) {
+                    if (std::isnan(x[i]) || std::isnan(y[i])) {
+                        continue;
+                    }
+                    sum_x += x[i];
+                    sum_y += y[i];
+                    ++count;
+                }
+                if (count < 2) {
+                    return std::numeric_limits<double>::quiet_NaN();
+                }
+
+                const double mean_x = sum_x / static_cast<double>(count);
+                const double mean_y = sum_y / static_cast<double>(count);
+                double numerator = 0.0;
+                double sum_x2 = 0.0;
+                double sum_y2 = 0.0;
+                for (size_t i = 0; i < x.size() && i < y.size(); ++i) {
+                    if (std::isnan(x[i]) || std::isnan(y[i])) {
+                        continue;
+                    }
+                    const double dx = x[i] - mean_x;
+                    const double dy = y[i] - mean_y;
+                    numerator += dx * dy;
+                    sum_x2 += dx * dx;
+                    sum_y2 += dy * dy;
+                }
+                const double denominator = std::sqrt(sum_x2 * sum_y2);
+                if (denominator <= 0.0) {
+                    return std::numeric_limits<double>::quiet_NaN();
+                }
+                return numerator / denominator;
+            };
+
+        arrow::StringBuilder column_x_builder;
+        arrow::StringBuilder column_y_builder;
+        arrow::DoubleBuilder correlation_builder;
+        for (const auto& left : numeric_columns) {
+            for (const auto& right : numeric_columns) {
+                const double correlation =
+                    compute_correlation(left.values, right.values);
+                if (!column_x_builder.Append(left.name).ok() ||
+                    !column_y_builder.Append(right.name).ok()) {
+                    ReportError("CorrelationMatrix: Failed to append correlation labels");
+                    return false;
+                }
+                if (std::isnan(correlation)) {
+                    if (!correlation_builder.AppendNull().ok()) {
+                        ReportError("CorrelationMatrix: Failed to append null correlation");
+                        return false;
+                    }
+                } else if (!correlation_builder.Append(correlation).ok()) {
+                    ReportError("CorrelationMatrix: Failed to append correlation");
+                    return false;
+                }
+            }
+        }
+
+        std::shared_ptr<arrow::Array> column_x_array;
+        std::shared_ptr<arrow::Array> column_y_array;
+        std::shared_ptr<arrow::Array> correlation_array;
+        if (!column_x_builder.Finish(&column_x_array).ok() ||
+            !column_y_builder.Finish(&column_y_array).ok() ||
+            !correlation_builder.Finish(&correlation_array).ok()) {
+            ReportError("CorrelationMatrix: Failed to build correlation table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("column_x", arrow::utf8()),
+                           arrow::field("column_y", arrow::utf8()),
+                           arrow::field("correlation", arrow::float64())}),
+            {column_x_array, column_y_array, correlation_array});
+        const std::string output_dataset_name =
+            "ds_correlationmatrix_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CorrelationMatrix error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& ctx) {
@@ -2264,13 +10029,19 @@ bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& 
     }
 
     auto rename_map_it = node.parameters.find("rename_map");
-    if (rename_map_it == node.parameters.end() || rename_map_it->second.empty()) {
-        ctx.node_results[node.id] = input_dataset_name;
-        return true;
+    auto mapping_it = node.parameters.find("mapping");
+    const std::string mapping =
+        (mapping_it != node.parameters.end() && !mapping_it->second.empty())
+            ? mapping_it->second
+            : ((rename_map_it != node.parameters.end()) ? rename_map_it->second : "");
+    const auto rename_map = ParseRenameMapping(mapping);
+    if (rename_map.empty()) {
+        ReportError("RenameColumns: mapping must contain old_name:new_name pairs");
+        return false;
     }
 
     std::string output_dataset_name = "ds_renamed_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] Renaming columns in '{}'", input_dataset_name);
+    spdlog::info("[Pipeline] Renaming columns in '{}'", input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -2280,11 +10051,469 @@ bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& 
             return false;
         }
         auto input_table = input_dataset->GetArrowTable();
-        registry.RegisterArrowTable(input_table, output_dataset_name);
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        fields.reserve(input_table->num_columns());
+        std::set<std::string> output_names;
+        std::set<std::string> matched_input_names;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            auto rename_it = rename_map.find(field->name());
+            const std::string output_name =
+                rename_it == rename_map.end() ? field->name() : rename_it->second;
+            if (!output_names.insert(output_name).second) {
+                ReportError("RenameColumns: duplicate output column name '" +
+                            output_name + "'");
+                return false;
+            }
+            if (rename_it != rename_map.end()) {
+                matched_input_names.insert(field->name());
+            }
+            fields.push_back(rename_it == rename_map.end()
+                                 ? field
+                                 : field->WithName(output_name));
+        }
+        if (matched_input_names.size() != rename_map.size()) {
+            for (const auto& [old_name, _] : rename_map) {
+                if (matched_input_names.find(old_name) == matched_input_names.end()) {
+                    ReportError("RenameColumns: input column '" + old_name +
+                                "' does not exist");
+                    return false;
+                }
+            }
+        }
+        auto renamed_table = arrow::Table::Make(
+            arrow::schema(fields), input_table->columns(), input_table->num_rows());
+        registry.RegisterArrowTable(renamed_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
         ReportError("RenameColumns error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("CellExtractor: No input dataset");
+        return false;
+    }
+
+    const auto column_it = node.parameters.find("column");
+    const std::string column =
+        (column_it != node.parameters.end()) ? column_it->second : "";
+    if (column.empty()) {
+        ReportError("CellExtractor: column is required");
+        return false;
+    }
+
+    const auto row_it = node.parameters.find("row");
+    const int row =
+        (row_it != node.parameters.end() && !row_it->second.empty())
+            ? std::stoi(row_it->second)
+            : 0;
+
+    std::string output_dataset_name = "ds_cell_" + std::to_string(node.id);
+    spdlog::info("[Pipeline] CellExtractor row={} column='{}' from '{}'",
+                 row, column, input_dataset_name);
+
+    try {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table || !input_table->schema()) {
+            ReportError("CellExtractor: Input table is null");
+            return false;
+        }
+        if (input_table->schema()->GetFieldIndex(column) < 0) {
+            ReportError("CellExtractor: column '" + column + "' not found");
+            return false;
+        }
+        if (row >= DatasetRows(input_dataset_name)) {
+            ReportError("CellExtractor: row index out of range");
+            return false;
+        }
+
+        const std::string temp_table = "temp_" + std::to_string(node.id);
+
+        const std::string sql =
+            "SELECT " + QuoteSqlIdentifier(column) + " AS value FROM " +
+            temp_table + " LIMIT 1 OFFSET " + std::to_string(row);
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        "CellExtractor: ")) {
+            return false;
+        }
+        if (DatasetRows(output_dataset_name) != 1) {
+            ReportError("CellExtractor: Query failed");
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CellExtractor error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("CellUpdater: No input dataset");
+        return false;
+    }
+
+    const auto column_it = node.parameters.find("column");
+    const std::string column =
+        (column_it != node.parameters.end()) ? column_it->second : "";
+    if (column.empty()) {
+        ReportError("CellUpdater: column is required");
+        return false;
+    }
+
+    const auto value_it = node.parameters.find("value");
+    const std::string value =
+        (value_it != node.parameters.end()) ? value_it->second : "";
+    if (value.empty()) {
+        ReportError("CellUpdater: value is required");
+        return false;
+    }
+
+    const auto row_it = node.parameters.find("row");
+    const int row =
+        (row_it != node.parameters.end() && !row_it->second.empty())
+            ? std::stoi(row_it->second)
+            : 0;
+    if (row < 0) {
+        ReportError("CellUpdater: row must be >= 0");
+        return false;
+    }
+
+    std::string output_dataset_name = "ds_cell_update_" + std::to_string(node.id);
+    spdlog::info("[Pipeline] CellUpdater row={} column='{}' from '{}'",
+                 row, column, input_dataset_name);
+
+    try {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table || !input_table->schema()) {
+            ReportError("CellUpdater: Input table is null");
+            return false;
+        }
+        const int column_index = input_table->schema()->GetFieldIndex(column);
+        if (column_index < 0) {
+            ReportError("CellUpdater: column '" + column + "' not found");
+            return false;
+        }
+        if (row >= DatasetRows(input_dataset_name)) {
+            ReportError("CellUpdater: row index out of range");
+            return false;
+        }
+
+        std::string update_value_expression;
+        std::string value_error;
+        if (!BuildFillMissingConstantExpression(
+                input_table->schema()->field(column_index), value,
+                update_value_expression, value_error)) {
+            ReportError("CellUpdater: unsupported value for column '" + column + "'");
+            return false;
+        }
+
+        const std::string temp_table = "temp_" + std::to_string(node.id);
+
+        std::vector<std::string> select_exprs;
+        select_exprs.reserve(input_table->num_columns());
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            const std::string quoted_column = QuoteSqlIdentifier(field->name());
+            if (field->name() == column) {
+                select_exprs.push_back(
+                    "CASE WHEN row_number() OVER () - 1 = " +
+                    std::to_string(row) + " THEN " + update_value_expression +
+                    " ELSE " + quoted_column + " END AS " + quoted_column);
+            } else {
+                select_exprs.push_back(quoted_column);
+            }
+        }
+
+        std::string sql = "SELECT ";
+        for (size_t i = 0; i < select_exprs.size(); ++i) {
+            if (i > 0) {
+                sql += ", ";
+            }
+            sql += select_exprs[i];
+        }
+        sql += " FROM " + temp_table;
+
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false,
+                        "CellUpdater: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CellUpdater error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ctx) {
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 2);
+    if (input_dataset_names.empty()) {
+        return false;
+    }
+
+    const std::string& top_dataset_name = input_dataset_names[0];
+    const std::string& bottom_dataset_name = input_dataset_names[1];
+    std::string output_dataset_name = "ds_row_append_" + std::to_string(node.id);
+
+    spdlog::info("[Pipeline] RowAppender appending '{}' and '{}'",
+                 top_dataset_name, bottom_dataset_name);
+
+    try {
+        auto top_table = InputSchemaTable(top_dataset_name);
+        auto bottom_table = InputSchemaTable(bottom_dataset_name);
+        if (!top_table || !bottom_table || !top_table->schema() ||
+            !bottom_table->schema()) {
+            ReportError("RowAppender: Input table is null");
+            return false;
+        }
+        if (top_table->num_columns() != bottom_table->num_columns()) {
+            ReportError("RowAppender: input schemas must have the same column count");
+            return false;
+        }
+        if (top_table->num_columns() == 0) {
+            ReportError("RowAppender: input tables must have at least one column");
+            return false;
+        }
+
+        std::vector<std::string> output_columns;
+        output_columns.reserve(top_table->num_columns());
+        for (int i = 0; i < top_table->num_columns(); ++i) {
+            const auto top_field = top_table->schema()->field(i);
+            const auto bottom_field = bottom_table->schema()->field(i);
+            if (top_field->name() != bottom_field->name()) {
+                ReportError("RowAppender: input column names differ at index " +
+                            std::to_string(i));
+                return false;
+            }
+            if (!top_field->type()->Equals(*bottom_field->type())) {
+                ReportError("RowAppender: input column type differs for '" +
+                            top_field->name() + "'");
+                return false;
+            }
+            output_columns.push_back(top_field->name());
+        }
+
+        const std::string top_table_name = "temp_top_" + std::to_string(node.id);
+        const std::string bottom_table_name =
+            "temp_bottom_" + std::to_string(node.id);
+
+        const std::string selected_columns = JoinQuotedColumns(output_columns);
+        const std::string sql = "SELECT " + selected_columns + " FROM " +
+                                top_table_name + " UNION ALL SELECT " +
+                                selected_columns + " FROM " +
+                                bottom_table_name;
+        if (!RunStepSql(node, {{top_table_name, top_dataset_name}, {bottom_table_name, bottom_dataset_name}}, sql,
+                        output_dataset_name, false, "RowAppender: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RowAppender error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteColumnAppender(const Node& node, ExecutionContext& ctx) {
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 2);
+    if (input_dataset_names.empty()) {
+        return false;
+    }
+
+    const std::string& left_dataset_name = input_dataset_names[0];
+    const std::string& right_dataset_name = input_dataset_names[1];
+    const auto suffix_it = node.parameters.find("suffix");
+    const std::string suffix =
+        (suffix_it != node.parameters.end() && !suffix_it->second.empty())
+            ? suffix_it->second
+            : "_right";
+    std::string output_dataset_name =
+        "ds_column_append_" + std::to_string(node.id);
+
+    spdlog::info("[Pipeline] ColumnAppender appending '{}' and '{}'",
+                 left_dataset_name, right_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto left_dataset = registry.GetArrowDataset(left_dataset_name);
+        auto right_dataset = registry.GetArrowDataset(right_dataset_name);
+        if (!left_dataset || !right_dataset) {
+            ReportError("ColumnAppender: Input datasets not found");
+            return false;
+        }
+
+        auto left_table = left_dataset->GetArrowTable();
+        auto right_table = right_dataset->GetArrowTable();
+        if (!left_table || !right_table || !left_table->schema() ||
+            !right_table->schema()) {
+            ReportError("ColumnAppender: Input table is null");
+            return false;
+        }
+        if (left_table->num_rows() != right_table->num_rows()) {
+            ReportError("ColumnAppender: input row counts must match");
+            return false;
+        }
+
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> columns;
+        fields.reserve(left_table->num_columns() + right_table->num_columns());
+        columns.reserve(left_table->num_columns() + right_table->num_columns());
+
+        std::set<std::string> output_names;
+        for (int i = 0; i < left_table->num_columns(); ++i) {
+            const auto field = left_table->schema()->field(i);
+            if (!output_names.insert(field->name()).second) {
+                ReportError("ColumnAppender: duplicate left column name '" +
+                            field->name() + "'");
+                return false;
+            }
+            fields.push_back(field);
+            columns.push_back(left_table->column(i));
+        }
+
+        for (int i = 0; i < right_table->num_columns(); ++i) {
+            const auto field = right_table->schema()->field(i);
+            std::string output_name = field->name();
+            if (output_names.find(output_name) != output_names.end()) {
+                output_name += suffix;
+            }
+            if (!output_names.insert(output_name).second) {
+                ReportError("ColumnAppender: duplicate output column name '" +
+                            output_name + "'");
+                return false;
+            }
+            fields.push_back(output_name == field->name()
+                                 ? field
+                                 : field->WithName(output_name));
+            columns.push_back(right_table->column(i));
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema(fields), columns, left_table->num_rows());
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ColumnAppender error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Unpivot: No input dataset");
+        return false;
+    }
+
+    const auto value_name_it = node.parameters.find("value_name");
+    const std::string value_name =
+        (value_name_it != node.parameters.end() && !value_name_it->second.empty())
+            ? TrimString(value_name_it->second)
+            : "value";
+    const auto variable_name_it = node.parameters.find("variable_name");
+    const std::string variable_name =
+        (variable_name_it != node.parameters.end() &&
+         !variable_name_it->second.empty())
+            ? TrimString(variable_name_it->second)
+            : "variable";
+    if (value_name.empty() || variable_name.empty()) {
+        ReportError("Unpivot: value_name and variable_name are required");
+        return false;
+    }
+    if (value_name == variable_name) {
+        ReportError("Unpivot: value_name and variable_name must differ");
+        return false;
+    }
+
+    const auto id_columns_it = node.parameters.find("id_columns");
+    const std::vector<std::string> requested_id_columns =
+        id_columns_it != node.parameters.end()
+            ? ParseCommaSeparatedNames(id_columns_it->second)
+            : std::vector<std::string>{};
+    const std::string output_dataset_name =
+        "ds_unpivot_" + std::to_string(node.id);
+
+    spdlog::info("[Pipeline] Unpivot '{}' with {} id columns",
+                 input_dataset_name, requested_id_columns.size());
+
+    try {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
+            ReportError("Unpivot: Input dataset not found");
+            return false;
+        }
+        if (!input_table || !input_table->schema()) {
+            ReportError("Unpivot: Input table is null");
+            return false;
+        }
+
+        std::set<std::string> id_column_names;
+        std::vector<std::string> id_columns;
+        id_columns.reserve(requested_id_columns.size());
+        for (const auto& column : requested_id_columns) {
+            if (input_table->schema()->GetFieldIndex(column) < 0) {
+                ReportError("Unpivot: id column '" + column + "' not found");
+                return false;
+            }
+            if (!id_column_names.insert(column).second) {
+                ReportError("Unpivot: duplicate id column '" + column + "'");
+                return false;
+            }
+            if (column == value_name || column == variable_name) {
+                ReportError("Unpivot: id column '" + column +
+                            "' conflicts with output column names");
+                return false;
+            }
+            id_columns.push_back(column);
+        }
+
+        std::vector<std::string> value_columns;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const std::string field_name = input_table->schema()->field(i)->name();
+            if (id_column_names.find(field_name) == id_column_names.end()) {
+                value_columns.push_back(field_name);
+            }
+        }
+        if (value_columns.empty()) {
+            ReportError("Unpivot: no value columns remain after id_columns");
+            return false;
+        }
+
+        const std::string temp_table = "temp_unpivot_" + std::to_string(node.id);
+
+        std::string sql;
+        for (size_t value_index = 0; value_index < value_columns.size();
+             ++value_index) {
+            if (value_index > 0) {
+                sql += " UNION ALL ";
+            }
+            sql += "SELECT ";
+            for (const auto& id_column : id_columns) {
+                sql += QuoteSqlIdentifier(id_column) + ", ";
+            }
+            sql += QuoteSqlStringLiteral(value_columns[value_index]) + " AS " +
+                   QuoteSqlIdentifier(variable_name) + ", CAST(" +
+                   QuoteSqlIdentifier(value_columns[value_index]) +
+                   " AS VARCHAR) AS " + QuoteSqlIdentifier(value_name) +
+                   " FROM " + temp_table;
+        }
+
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "Unpivot: ")) {
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Unpivot error: " + std::string(e.what()));
         return false;
     }
 }
@@ -2300,7 +10529,7 @@ bool PipelineExecutor::ExecuteRowToColumnNames(const Node& node, ExecutionContex
     int row_index = (row_idx_it != node.parameters.end()) ? std::stoi(row_idx_it->second) : 0;
 
     std::string output_dataset_name = "ds_newheaders_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] Promoting row {} to column names", row_index);
+    spdlog::info("[Pipeline] Promoting row {} to column names", row_index);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -2310,80 +10539,62 @@ bool PipelineExecutor::ExecuteRowToColumnNames(const Node& node, ExecutionContex
             return false;
         }
         auto input_table = input_dataset->GetArrowTable();
-        registry.RegisterArrowTable(input_table, output_dataset_name);
+        if (!input_table) {
+            ReportError("RowToColumnNames: Input table is null");
+            return false;
+        }
+        if (row_index < 0 || row_index >= input_table->num_rows()) {
+            ReportError("RowToColumnNames: Row index out of bounds");
+            return false;
+        }
+
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        fields.reserve(input_table->num_columns());
+        std::set<std::string> output_names;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            auto scalar_result = input_table->column(i)->GetScalar(row_index);
+            if (!scalar_result.ok()) {
+                ReportError("RowToColumnNames: Failed to read header cell");
+                return false;
+            }
+            const std::string column_name = ScalarToColumnName(scalar_result.ValueOrDie());
+            if (column_name.empty()) {
+                ReportError("RowToColumnNames: Header row contains an empty column name");
+                return false;
+            }
+            if (!output_names.insert(column_name).second) {
+                ReportError("RowToColumnNames: duplicate output column name '" +
+                            column_name + "'");
+                return false;
+            }
+            fields.push_back(input_table->schema()->field(i)->WithName(column_name));
+        }
+
+        std::shared_ptr<arrow::Table> data_table;
+        if (row_index == 0) {
+            data_table = input_table->Slice(1);
+        } else if (row_index == input_table->num_rows() - 1) {
+            data_table = input_table->Slice(0, row_index);
+        } else {
+            auto top = input_table->Slice(0, row_index);
+            auto bottom = input_table->Slice(row_index + 1);
+            auto concat_result = arrow::ConcatenateTables({top, bottom});
+            if (!concat_result.ok()) {
+                ReportError("RowToColumnNames: Failed to remove promoted row");
+                return false;
+            }
+            data_table = concat_result.ValueOrDie();
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema(fields), data_table->columns(), data_table->num_rows());
+        registry.RegisterArrowTable(output_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
         ReportError("RowToColumnNames error: " + std::string(e.what()));
         return false;
     }
-}
-
-bool PipelineExecutor::ExecuteTableSplitter(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("TableSplitter: No input dataset");
-        return false;
-    }
-
-    auto split_row_it = node.parameters.find("split_row");
-    int split_row = (split_row_it != node.parameters.end()) ? std::stoi(split_row_it->second) : 0;
-
-    spdlog::info("[Data Studio] Splitting table at row {}", split_row);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("TableSplitter: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
-        int64_t num_rows = input_table->num_rows();
-
-        if (split_row < 0 || split_row >= num_rows) {
-            ReportError("TableSplitter: Split row out of bounds");
-            return false;
-        }
-
-        auto top_table = input_table->Slice(0, split_row);
-        auto bottom_table = input_table->Slice(split_row);
-
-        std::string top_name = "ds_split_top_" + std::to_string(node.id);
-        std::string bottom_name = "ds_split_bottom_" + std::to_string(node.id);
-
-        registry.RegisterArrowTable(top_table, top_name);
-        registry.RegisterArrowTable(bottom_table, bottom_name);
-
-        ctx.node_results[node.id] = top_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("TableSplitter error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("CellExtractor: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Extracting cell value");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("CellUpdater: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Updating cell value");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
 }
 
 bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& ctx) {
@@ -2396,11 +10607,17 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
     auto start_row_it = node.parameters.find("start_row");
     auto end_row_it = node.parameters.find("end_row");
 
-    int start_row = (start_row_it != node.parameters.end()) ? std::stoi(start_row_it->second) : 0;
-    int end_row = (end_row_it != node.parameters.end()) ? std::stoi(end_row_it->second) : -1;
+    int64_t start_row =
+        (start_row_it != node.parameters.end() && !start_row_it->second.empty())
+            ? std::stoll(start_row_it->second)
+            : 0;
+    int64_t end_row =
+        (end_row_it != node.parameters.end() && !end_row_it->second.empty())
+            ? std::stoll(end_row_it->second)
+            : -1;
 
     std::string output_dataset_name = "ds_cropped_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] Cropping table rows {}:{}", start_row, end_row);
+    spdlog::info("[Pipeline] Cropping table rows {}:{}", start_row, end_row);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -2411,9 +10628,25 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        if (!input_table) {
+            ReportError("TableCropper: Input table is null");
+            return false;
+        }
         int64_t num_rows = input_table->num_rows();
 
         if (end_row < 0) end_row = num_rows;
+        if (start_row > num_rows) {
+            ReportError("TableCropper: start_row out of bounds");
+            return false;
+        }
+        if (end_row > num_rows) {
+            ReportError("TableCropper: end_row out of bounds");
+            return false;
+        }
+        if (end_row < start_row) {
+            ReportError("TableCropper: end_row must be >= start_row");
+            return false;
+        }
         int64_t length = end_row - start_row;
 
         auto cropped_table = input_table->Slice(start_row, length);
@@ -2424,39 +10657,6 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
         ReportError("TableCropper error: " + std::string(e.what()));
         return false;
     }
-}
-
-bool PipelineExecutor::ExecuteColumnAppender(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("ColumnAppender: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Appending columns");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("RowAppender: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Appending rows (UNION)");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Unpivot: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Unpivoting table");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
 }
 
 bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionContext& ctx) {
@@ -2470,7 +10670,10 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
     auto operation_it = node.parameters.find("operation");
 
     std::string column = (column_it != node.parameters.end()) ? column_it->second : "";
-    std::string operation = (operation_it != node.parameters.end()) ? operation_it->second : "trim";
+    std::string operation =
+        (operation_it != node.parameters.end() && !operation_it->second.empty())
+            ? ToLowerAscii(TrimString(operation_it->second))
+            : "trim";
 
     if (column.empty()) {
         ReportError("StringManipulation: Column name required");
@@ -2478,45 +10681,66 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
     }
 
     std::string output_dataset_name = "ds_string_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] String {} on column '{}'", operation, column);
+    spdlog::info("[Pipeline] String {} on column '{}'", operation, column);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("StringManipulation: Input dataset not found");
             return false;
         }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("StringManipulation: Failed to register table");
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "StringManipulation", column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
             return false;
         }
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        const std::string quoted_output = QuoteSqlIdentifier(column + "_modified");
 
         std::string expr;
         if (operation == "trim") {
-            expr = "TRIM(\"" + column + "\")";
+            expr = "TRIM(" + quoted_column + ")";
         } else if (operation == "upper") {
-            expr = "UPPER(\"" + column + "\")";
+            expr = "UPPER(" + quoted_column + ")";
         } else if (operation == "lower") {
-            expr = "LOWER(\"" + column + "\")";
+            expr = "LOWER(" + quoted_column + ")";
+        } else if (operation == "replace") {
+            const auto find_it = node.parameters.find("param1");
+            const auto replacement_it = node.parameters.find("param2");
+            const std::string find_value =
+                (find_it != node.parameters.end()) ? find_it->second : "";
+            const std::string replacement =
+                (replacement_it != node.parameters.end()) ? replacement_it->second : "";
+            if (find_value.empty()) {
+                ReportError("StringManipulation: replace requires param1");
+                return false;
+            }
+            expr = "REPLACE(" + quoted_column + ", " +
+                   QuoteSqlStringLiteral(find_value) + ", " +
+                   QuoteSqlStringLiteral(replacement) + ")";
+        } else if (operation == "substring") {
+            const auto start_it = node.parameters.find("param1");
+            const auto length_it = node.parameters.find("param2");
+            if (start_it == node.parameters.end() || length_it == node.parameters.end() ||
+                start_it->second.empty() || length_it->second.empty()) {
+                ReportError("StringManipulation: substring requires param1 and param2");
+                return false;
+            }
+            expr = "SUBSTRING(" + quoted_column + ", " + start_it->second +
+                   ", " + length_it->second + ")";
         } else {
-            expr = "\"" + column + "\"";
-        }
-
-        std::string sql = "SELECT *, " + expr + " AS " + column + "_modified FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("StringManipulation: Query failed");
+            ReportError("StringManipulation: Unsupported operation '" + operation + "'");
             return false;
         }
 
-        registry.RegisterArrowTable(result_table, output_dataset_name);
+        std::string sql =
+            "SELECT *, " + expr + " AS " + quoted_output + " FROM " + temp_table;
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "StringManipulation: ")) {
+            return false;
+        }
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
@@ -2536,1614 +10760,40 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
     auto formula_it = node.parameters.find("formula");
 
     std::string output_column = (output_col_it != node.parameters.end()) ? output_col_it->second : "result";
-    std::string formula = (formula_it != node.parameters.end()) ? formula_it->second : "0";
+    std::string formula = (formula_it != node.parameters.end()) ? formula_it->second : "";
+    if (formula.empty()) {
+        ReportError("MathFormula: Formula required");
+        return false;
+    }
 
     std::string output_dataset_name = "ds_math_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] MathFormula: {} = {}", output_column, formula);
+    spdlog::info("[Pipeline] MathFormula: {} = {}", output_column, formula);
 
     try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
+        auto input_table = InputSchemaTable(input_dataset_name);
+        if (!input_table) {
             ReportError("MathFormula: Input dataset not found");
             return false;
         }
+        std::string formula_expression;
+        std::string formula_error;
+        if (!BuildMathFormulaExpression(input_table, formula, formula_expression,
+                                        formula_error)) {
+            ReportError(formula_error);
+            return false;
+        }
 
-        auto input_table = input_dataset->GetArrowTable();
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("MathFormula: Failed to register table");
+        std::string sql = "SELECT *, (" + formula_expression + ") AS " +
+                          QuoteSqlIdentifier(output_column) + " FROM " + temp_table;
+        if (!RunStepSql(node, {{temp_table, input_dataset_name}}, sql, output_dataset_name, false, "MathFormula: ")) {
             return false;
         }
-
-        std::string sql = "SELECT *, (" + formula + ") AS \"" + output_column + "\" FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("MathFormula: Query failed");
-            return false;
-        }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
         ReportError("MathFormula error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("RuleEngine: No input dataset");
-        return false;
-    }
-
-    auto output_col_it = node.parameters.find("output_column");
-    auto default_it = node.parameters.find("default_value");
-
-    std::string output_column = (output_col_it != node.parameters.end()) ? output_col_it->second : "result";
-    std::string default_value = (default_it != node.parameters.end()) ? default_it->second : "NULL";
-
-    std::string output_dataset_name = "ds_rule_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] RuleEngine: {}", output_column);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("RuleEngine: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("RuleEngine: Failed to register table");
-            return false;
-        }
-
-        std::string sql = "SELECT *, " + default_value + " AS \"" + output_column + "\" FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("RuleEngine: Query failed");
-            return false;
-        }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("RuleEngine error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-
-
-// ============================================================
-// Phase 4: Machine Learning Algorithm Executors
-// ============================================================
-
-bool PipelineExecutor::ExecuteKMeans(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("K-Means: No input connection or dataset not found");
-        return false;
-    }
-
-    auto n_clusters_it = node.parameters.find("n_clusters");
-    int n_clusters = (n_clusters_it != node.parameters.end()) ? std::stoi(n_clusters_it->second) : 8;
-
-    std::string output_dataset_name = "ds_kmeans_" + std::to_string(node.id);
-
-    spdlog::info("[Data Studio] K-Means (n_clusters={}) from '{}'", n_clusters, input_dataset_name);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("K-Means: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] K-Means: Full implementation requires backend integration. "
-                    "Passing through data unchanged for now.");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-
-    } catch (const std::exception& e) {
-        ReportError("K-Means error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteDBSCAN(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("DBSCAN: No input connection or dataset not found");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_dbscan_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] DBSCAN: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("DBSCAN error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteHierarchical(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Hierarchical Clustering: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_hierarchical_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Hierarchical Clustering: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Hierarchical error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteGMM(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("GMM: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_gmm_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] GMM: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("GMM error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteTSNE(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("t-SNE: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_tsne_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] t-SNE: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("t-SNE error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteUMAP(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("UMAP: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_umap_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] UMAP: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("UMAP error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteDecisionTree(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Decision Tree: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_dtree_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Decision Tree: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Decision Tree error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteRandomForest(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Random Forest: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_rf_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Random Forest: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Random Forest error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteGradientBoosting(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Gradient Boosting: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_gb_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Gradient Boosting: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Gradient Boosting error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteSVM(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("SVM: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_svm_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] SVM: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("SVM error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteKNN(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("KNN: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_knn_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] KNN: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("KNN error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteNaiveBayes(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Naive Bayes: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_nb_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Naive Bayes: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Naive Bayes error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteLogisticRegression(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Logistic Regression: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_logreg_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Logistic Regression: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Logistic Regression error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteLinearRegression(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Linear Regression: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_linreg_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Linear Regression: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Linear Regression error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecutePolynomialRegression(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Polynomial Regression: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_polyreg_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Polynomial Regression: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Polynomial Regression error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteSVMRegressor(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("SVM Regressor: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_svr_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] SVM Regressor: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("SVM Regressor error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 4: Model Evaluation Executors
-// ============================================================
-
-bool PipelineExecutor::ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_confmat_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Confusion Matrix: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteROCCurve(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_roc_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] ROC Curve: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecutePRCurve(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_pr_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] PR Curve: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteLearningCurves(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_learning_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Learning Curves: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteFeatureImportance(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_importance_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Feature Importance: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteCrossValidation(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_cv_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Cross-Validation: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx) {
-    std::string output_name = "ds_reg_metrics_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto metrics_it = node.parameters.find("metrics");
-        std::string metrics = (metrics_it != node.parameters.end()) ? metrics_it->second : "mse,rmse,mae,r2";
-
-        spdlog::info("[Model Evaluation] RegressionMetrics: Computing {}", metrics);
-
-        // TODO: Compute regression metrics
-        // MSE: Mean Squared Error = mean((pred - truth)^2)
-        // RMSE: Root Mean Squared Error = sqrt(MSE)
-        // MAE: Mean Absolute Error = mean(|pred - truth|)
-        // R²: Coefficient of Determination = 1 - SS_res/SS_tot
-        spdlog::warn("[Model Evaluation] RegressionMetrics: Placeholder implementation");
-
-        ctx.node_results[node.id] = output_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("RegressionMetrics error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 4: Data Preprocessing Executors
-// ============================================================
-
-bool PipelineExecutor::ExecuteStandardScaler(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Standard Scaler: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_stdscale_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Standard Scaler: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Standard Scaler error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteMinMaxScaler(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("MinMax Scaler: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_minmax_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] MinMax Scaler: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("MinMax Scaler error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteRobustScaler(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Robust Scaler: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_robust_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Robust Scaler: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Robust Scaler error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteLabelEncoder(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Label Encoder: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_labelenc_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Label Encoder: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Label Encoder error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteOrdinalEncoder(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Ordinal Encoder: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_ordenc_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Ordinal Encoder: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Ordinal Encoder error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteTargetEncoder(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Target Encoder: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_targetenc_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Target Encoder: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Target Encoder error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteTrainTestSplit(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Train/Test Split: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_split_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Train/Test Split: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Train/Test Split error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 8: Advanced Preprocessing Executors (UI Consolidation)
-// ============================================================
-
-bool PipelineExecutor::ExecuteOutlierDetector(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Outlier Detector: No input dataset");
-        return false;
-    }
-
-    std::string clean_output = "ds_outlier_clean_" + std::to_string(node.id);
-    std::string outliers_output = "ds_outliers_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Get parameters
-        auto method_it = node.parameters.find("method");
-        std::string method = (method_it != node.parameters.end()) ? method_it->second : "iqr";
-
-        auto threshold_it = node.parameters.find("threshold");
-        float threshold = (threshold_it != node.parameters.end()) ? std::stof(threshold_it->second) : 1.5f;
-
-        auto action_it = node.parameters.find("action");
-        std::string action = (action_it != node.parameters.end()) ? action_it->second : "remove";
-
-        spdlog::info("[Preprocessing] Outlier Detector: method={}, threshold={}, action={}",
-                     method, threshold, action);
-
-        // TODO: Implement actual outlier detection using IQR/Z-score
-        // For now, pass through data as placeholder
-        spdlog::warn("[Preprocessing] Outlier Detector: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, clean_output);
-        ctx.node_results[node.id] = clean_output;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Outlier Detector error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteImagePreprocessor(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Image Preprocessor: No input dataset");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_imgprep_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Get parameters
-        auto resize_mode_it = node.parameters.find("resize_mode");
-        std::string resize_mode = (resize_mode_it != node.parameters.end()) ? resize_mode_it->second : "aspect_fit";
-
-        auto target_width_it = node.parameters.find("target_width");
-        int target_width = (target_width_it != node.parameters.end()) ? std::stoi(target_width_it->second) : 224;
-
-        auto target_height_it = node.parameters.find("target_height");
-        int target_height = (target_height_it != node.parameters.end()) ? std::stoi(target_height_it->second) : 224;
-
-        auto normalize_it = node.parameters.find("normalize");
-        bool normalize = (normalize_it != node.parameters.end()) ? (normalize_it->second == "true") : true;
-
-        auto interpolation_it = node.parameters.find("interpolation");
-        std::string interpolation = (interpolation_it != node.parameters.end()) ? interpolation_it->second : "bilinear";
-
-        spdlog::info("[Preprocessing] Image Preprocessor: resize_mode={}, target={}x{}, normalize={}, interpolation={}",
-                     resize_mode, target_width, target_height, normalize, interpolation);
-
-        // TODO: Implement actual image preprocessing using OpenCV
-        // For now, pass through data as placeholder
-        spdlog::warn("[Preprocessing] Image Preprocessor: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Image Preprocessor error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteQualityAnalyzer(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Quality Analyzer: No input dataset");
-        return false;
-    }
-
-    std::string passed_output = "ds_quality_passed_" + std::to_string(node.id);
-    std::string rejected_output = "ds_quality_rejected_" + std::to_string(node.id);
-    std::string report_output = "ds_quality_report_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Get parameters
-        auto blur_it = node.parameters.find("blur_threshold");
-        float blur_threshold = (blur_it != node.parameters.end()) ? std::stof(blur_it->second) : 100.0f;
-
-        auto brightness_min_it = node.parameters.find("brightness_min");
-        int brightness_min = (brightness_min_it != node.parameters.end()) ? std::stoi(brightness_min_it->second) : 30;
-
-        auto brightness_max_it = node.parameters.find("brightness_max");
-        int brightness_max = (brightness_max_it != node.parameters.end()) ? std::stoi(brightness_max_it->second) : 220;
-
-        auto contrast_it = node.parameters.find("contrast_threshold");
-        float contrast_threshold = (contrast_it != node.parameters.end()) ? std::stof(contrast_it->second) : 0.2f;
-
-        auto duplicate_it = node.parameters.find("duplicate_check");
-        bool duplicate_check = (duplicate_it != node.parameters.end()) ? (duplicate_it->second == "true") : true;
-
-        spdlog::info("[Preprocessing] Quality Analyzer: blur_threshold={}, brightness=[{},{}], contrast={}, duplicate_check={}",
-                     blur_threshold, brightness_min, brightness_max, contrast_threshold, duplicate_check);
-
-        // TODO: Implement actual quality analysis using dataset_analyzer.cpp logic
-        // For now, pass through data as placeholder
-        spdlog::warn("[Preprocessing] Quality Analyzer: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, passed_output);
-        ctx.node_results[node.id] = passed_output;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Quality Analyzer error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteDataValidator(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Data Validator: No input dataset");
-        return false;
-    }
-
-    std::string valid_output = "ds_valid_" + std::to_string(node.id);
-    std::string invalid_output = "ds_invalid_" + std::to_string(node.id);
-    std::string issues_output = "ds_issues_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-
-        // Get parameters
-        auto required_it = node.parameters.find("required_columns");
-        std::string required_columns = (required_it != node.parameters.end()) ? required_it->second : "";
-
-        auto unique_it = node.parameters.find("unique_columns");
-        std::string unique_columns = (unique_it != node.parameters.end()) ? unique_it->second : "";
-
-        auto not_null_it = node.parameters.find("not_null_columns");
-        std::string not_null_columns = (not_null_it != node.parameters.end()) ? not_null_it->second : "";
-
-        spdlog::info("[Preprocessing] Data Validator: required={}, unique={}, not_null={}",
-                     required_columns, unique_columns, not_null_columns);
-
-        // TODO: Implement actual data validation
-        // For now, pass through data as placeholder
-        spdlog::warn("[Preprocessing] Data Validator: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, valid_output);
-        ctx.node_results[node.id] = valid_output;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Data Validator error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 8: Dataset Source Node Executors (UI Consolidation)
-// ============================================================
-
-bool PipelineExecutor::ExecuteImageFolderDataset(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_imagefolder_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto path_it = node.parameters.find("path");
-        std::string path = (path_it != node.parameters.end()) ? path_it->second : "";
-
-        auto ext_it = node.parameters.find("extensions");
-        std::string extensions = (ext_it != node.parameters.end()) ? ext_it->second : ".jpg,.png,.bmp";
-
-        auto class_mode_it = node.parameters.find("class_mode");
-        std::string class_mode = (class_mode_it != node.parameters.end()) ? class_mode_it->second : "folder";
-
-        auto recursive_it = node.parameters.find("recursive");
-        bool recursive = (recursive_it != node.parameters.end()) && (recursive_it->second == "true");
-
-        if (path.empty()) {
-            ReportError("Image Folder Dataset: Path not specified");
-            return false;
-        }
-
-        spdlog::info("[Data Sources] ImageFolderDataset: path={}, extensions={}, class_mode={}, recursive={}",
-                     path, extensions, class_mode, recursive);
-
-        // TODO: Implement actual image folder scanning
-        // This would scan the folder, extract image paths, and build an Arrow table
-        // For now, create placeholder metadata
-        spdlog::warn("[Data Sources] ImageFolderDataset: Placeholder - full implementation pending");
-
-        // Create empty placeholder dataset
-        auto& registry = DataRegistry::Instance();
-        auto schema = arrow::schema({
-            arrow::field("path", arrow::utf8()),
-            arrow::field("label", arrow::int64()),
-            arrow::field("class_name", arrow::utf8())
-        });
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
-        auto empty_table = arrow::Table::Make(schema, empty_columns);
-        registry.RegisterArrowTable(empty_table, output_dataset_name);
-
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Image Folder Dataset error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteMNISTDataset(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_mnist_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto split_it = node.parameters.find("split");
-        std::string split = (split_it != node.parameters.end()) ? split_it->second : "train";
-
-        auto path_it = node.parameters.find("path");
-        std::string path = (path_it != node.parameters.end()) ? path_it->second : "";
-
-        auto download_it = node.parameters.find("download");
-        bool download = (download_it == node.parameters.end()) || (download_it->second == "true");
-
-        auto flatten_it = node.parameters.find("flatten");
-        bool flatten = (flatten_it != node.parameters.end()) && (flatten_it->second == "true");
-
-        spdlog::info("[Data Sources] MNISTDataset: split={}, download={}, flatten={}", split, download, flatten);
-
-        // TODO: Implement actual MNIST loading
-        // This would download/load MNIST and create an Arrow table with image data
-        spdlog::warn("[Data Sources] MNISTDataset: Placeholder - full implementation pending");
-
-        // Create placeholder metadata (would contain actual image tensors in full impl)
-        auto& registry = DataRegistry::Instance();
-        auto schema = arrow::schema({
-            arrow::field("image_id", arrow::int64()),
-            arrow::field("label", arrow::int64())
-        });
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
-        auto empty_table = arrow::Table::Make(schema, empty_columns);
-        registry.RegisterArrowTable(empty_table, output_dataset_name);
-
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("MNIST Dataset error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteCIFAR10Dataset(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_cifar10_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto split_it = node.parameters.find("split");
-        std::string split = (split_it != node.parameters.end()) ? split_it->second : "train";
-
-        auto download_it = node.parameters.find("download");
-        bool download = (download_it == node.parameters.end()) || (download_it->second == "true");
-
-        spdlog::info("[Data Sources] CIFAR10Dataset: split={}, download={}", split, download);
-
-        // TODO: Implement actual CIFAR-10 loading
-        spdlog::warn("[Data Sources] CIFAR10Dataset: Placeholder - full implementation pending");
-
-        // Create placeholder metadata
-        auto& registry = DataRegistry::Instance();
-        auto schema = arrow::schema({
-            arrow::field("image_id", arrow::int64()),
-            arrow::field("label", arrow::int64()),
-            arrow::field("class_name", arrow::utf8())
-        });
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
-        auto empty_table = arrow::Table::Make(schema, empty_columns);
-        registry.RegisterArrowTable(empty_table, output_dataset_name);
-
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("CIFAR-10 Dataset error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteHuggingFaceDataset(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_huggingface_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto dataset_id_it = node.parameters.find("dataset_id");
-        std::string dataset_id = (dataset_id_it != node.parameters.end()) ? dataset_id_it->second : "";
-
-        auto split_it = node.parameters.find("split");
-        std::string split = (split_it != node.parameters.end()) ? split_it->second : "train";
-
-        auto subset_it = node.parameters.find("subset");
-        std::string subset = (subset_it != node.parameters.end()) ? subset_it->second : "";
-
-        auto streaming_it = node.parameters.find("streaming");
-        bool streaming = (streaming_it != node.parameters.end()) && (streaming_it->second == "true");
-
-        if (dataset_id.empty()) {
-            ReportError("HuggingFace Dataset: Dataset ID not specified");
-            return false;
-        }
-
-        spdlog::info("[Data Sources] HuggingFaceDataset: id={}, split={}, subset={}, streaming={}",
-                     dataset_id, split, subset, streaming);
-
-        // TODO: Implement HuggingFace datasets API integration
-        // This would use the HuggingFace Python API or direct HTTP API
-        spdlog::warn("[Data Sources] HuggingFaceDataset: Placeholder - full implementation pending");
-
-        // Create placeholder metadata
-        auto& registry = DataRegistry::Instance();
-        auto schema = arrow::schema({
-            arrow::field("row_id", arrow::int64()),
-            arrow::field("dataset_source", arrow::utf8())
-        });
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
-        auto empty_table = arrow::Table::Make(schema, empty_columns);
-        registry.RegisterArrowTable(empty_table, output_dataset_name);
-
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("HuggingFace Dataset error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteKaggleDataset(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_kaggle_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto dataset_id_it = node.parameters.find("dataset_id");
-        std::string dataset_id = (dataset_id_it != node.parameters.end()) ? dataset_id_it->second : "";
-
-        auto path_it = node.parameters.find("path");
-        std::string path = (path_it != node.parameters.end()) ? path_it->second : "";
-
-        auto unzip_it = node.parameters.find("unzip");
-        bool unzip = (unzip_it == node.parameters.end()) || (unzip_it->second == "true");
-
-        if (dataset_id.empty()) {
-            ReportError("Kaggle Dataset: Dataset ID not specified");
-            return false;
-        }
-
-        spdlog::info("[Data Sources] KaggleDataset: id={}, path={}, unzip={}", dataset_id, path, unzip);
-
-        // TODO: Implement Kaggle API integration
-        // This would use the Kaggle CLI or API to download datasets
-        spdlog::warn("[Data Sources] KaggleDataset: Placeholder - full implementation pending");
-
-        // Create placeholder metadata
-        auto& registry = DataRegistry::Instance();
-        auto schema = arrow::schema({
-            arrow::field("file_path", arrow::utf8()),
-            arrow::field("file_size", arrow::int64())
-        });
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
-        auto empty_table = arrow::Table::Make(schema, empty_columns);
-        registry.RegisterArrowTable(empty_table, output_dataset_name);
-
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Kaggle Dataset error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 6: Advanced Augmentation Executors (UI Consolidation)
-// ============================================================
-
-bool PipelineExecutor::ExecuteAugmentationPreset(const Node& node, ExecutionContext& ctx) {
-    std::string output_name = "ds_aug_preset_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto preset_it = node.parameters.find("preset");
-        std::string preset = (preset_it != node.parameters.end()) ? preset_it->second : "ImageNet";
-
-        auto normalize_it = node.parameters.find("normalize");
-        bool normalize = (normalize_it == node.parameters.end()) || (normalize_it->second == "true");
-
-        auto resize_it = node.parameters.find("resize");
-        std::string resize = (resize_it != node.parameters.end()) ? resize_it->second : "224,224";
-
-        spdlog::info("[Augmentation] Preset: {} (normalize={}, resize={})", preset, normalize, resize);
-
-        // TODO: Apply preset augmentation pipeline based on selected preset
-        // ImageNet: Resize(256), CenterCrop(224), Normalize(ImageNet mean/std)
-        // CIFAR: RandomCrop(32, padding=4), RandomHorizontalFlip, Normalize(CIFAR mean/std)
-        // Medical: Resize, RandomRotate90, ElasticDeformation, Normalize
-        // SelfSupervised: RandomResizedCrop, ColorJitter, GaussianBlur, RandomGrayscale
-        spdlog::warn("[Augmentation] AugmentationPreset: Placeholder - preset pipeline execution pending");
-
-        ctx.node_results[node.id] = output_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("AugmentationPreset error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteGeometricTransform(const Node& node, ExecutionContext& ctx) {
-    std::string output_name = "ds_geo_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto transform_it = node.parameters.find("transform");
-        std::string transform = (transform_it != node.parameters.end()) ? transform_it->second : "rotate";
-
-        auto angle_it = node.parameters.find("angle_range");
-        std::string angle_range = (angle_it != node.parameters.end()) ? angle_it->second : "-30,30";
-
-        auto flip_prob_it = node.parameters.find("flip_prob");
-        std::string flip_prob = (flip_prob_it != node.parameters.end()) ? flip_prob_it->second : "0.5";
-
-        spdlog::info("[Augmentation] GeometricTransform: {} (angle={}, flip_prob={})",
-                     transform, angle_range, flip_prob);
-
-        // TODO: Apply geometric transform using OpenCV or similar
-        // rotate: cv::getRotationMatrix2D, cv::warpAffine
-        // flip_h/flip_v: cv::flip
-        // crop: cv::Rect, ROI extraction
-        // perspective: cv::getPerspectiveTransform, cv::warpPerspective
-        spdlog::warn("[Augmentation] GeometricTransform: Placeholder implementation");
-
-        ctx.node_results[node.id] = output_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("GeometricTransform error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteColorTransform(const Node& node, ExecutionContext& ctx) {
-    std::string output_name = "ds_color_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto brightness_it = node.parameters.find("brightness_range");
-        std::string brightness = (brightness_it != node.parameters.end()) ? brightness_it->second : "0.8,1.2";
-
-        auto contrast_it = node.parameters.find("contrast_range");
-        std::string contrast = (contrast_it != node.parameters.end()) ? contrast_it->second : "0.8,1.2";
-
-        auto saturation_it = node.parameters.find("saturation_range");
-        std::string saturation = (saturation_it != node.parameters.end()) ? saturation_it->second : "0.8,1.2";
-
-        auto hue_it = node.parameters.find("hue_range");
-        std::string hue = (hue_it != node.parameters.end()) ? hue_it->second : "-0.1,0.1";
-
-        spdlog::info("[Augmentation] ColorTransform: brightness={}, contrast={}, saturation={}, hue={}",
-                     brightness, contrast, saturation, hue);
-
-        // TODO: Apply color transforms using OpenCV
-        // brightness: alpha * pixel + beta
-        // contrast: (pixel - mean) * factor + mean
-        // saturation: Convert to HSV, scale S channel
-        // hue: Convert to HSV, shift H channel
-        spdlog::warn("[Augmentation] ColorTransform: Placeholder implementation");
-
-        ctx.node_results[node.id] = output_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("ColorTransform error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteMorphologyTransform(const Node& node, ExecutionContext& ctx) {
-    std::string output_name = "ds_morph_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto op_it = node.parameters.find("operation");
-        std::string operation = (op_it != node.parameters.end()) ? op_it->second : "blur";
-
-        auto kernel_it = node.parameters.find("kernel_size");
-        int kernel_size = (kernel_it != node.parameters.end()) ? std::stoi(kernel_it->second) : 3;
-
-        auto sigma_it = node.parameters.find("sigma");
-        float sigma = (sigma_it != node.parameters.end()) ? std::stof(sigma_it->second) : 1.0f;
-
-        spdlog::info("[Augmentation] MorphologyTransform: {} (kernel={}, sigma={})",
-                     operation, kernel_size, sigma);
-
-        // TODO: Apply morphological operations using OpenCV
-        // blur: cv::GaussianBlur or cv::blur
-        // sharpen: Unsharp mask (original + alpha * (original - blurred))
-        // dilate: cv::dilate
-        // erode: cv::erode
-        // edge: cv::Canny or cv::Laplacian
-        spdlog::warn("[Augmentation] MorphologyTransform: Placeholder implementation");
-
-        ctx.node_results[node.id] = output_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("MorphologyTransform error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteAdvancedAugment(const Node& node, ExecutionContext& ctx) {
-    std::string output_name = "ds_adv_aug_" + std::to_string(node.id);
-
-    try {
-        // Get parameters
-        auto method_it = node.parameters.find("method");
-        std::string method = (method_it != node.parameters.end()) ? method_it->second : "Cutout";
-
-        auto cutout_it = node.parameters.find("cutout_size");
-        int cutout_size = (cutout_it != node.parameters.end()) ? std::stoi(cutout_it->second) : 16;
-
-        auto alpha_it = node.parameters.find("mixup_alpha");
-        float mixup_alpha = (alpha_it != node.parameters.end()) ? std::stof(alpha_it->second) : 0.2f;
-
-        auto num_ops_it = node.parameters.find("num_ops");
-        int num_ops = (num_ops_it != node.parameters.end()) ? std::stoi(num_ops_it->second) : 2;
-
-        auto mag_it = node.parameters.find("magnitude");
-        int magnitude = (mag_it != node.parameters.end()) ? std::stoi(mag_it->second) : 9;
-
-        spdlog::info("[Augmentation] AdvancedAugment: {} (cutout={}, alpha={}, ops={}, mag={})",
-                     method, cutout_size, mixup_alpha, num_ops, magnitude);
-
-        // TODO: Apply advanced augmentation techniques
-        // Cutout: Random rectangular cutout with black/noise fill
-        // MixUp: Convex combination of two images and labels
-        // CutMix: Cut region from one image, paste to another
-        // RandAugment: Random selection of N augmentation ops at magnitude M
-        // AutoAugment: Learned augmentation policy
-        spdlog::warn("[Augmentation] AdvancedAugment: Placeholder implementation");
-
-        ctx.node_results[node.id] = output_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("AdvancedAugment error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 4: Signal Processing Executors
-// ============================================================
-
-bool PipelineExecutor::ExecuteFFT(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_fft_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] FFT: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteIFFT(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_ifft_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] IFFT: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteFilterDesigner(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_filter_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Filter Designer: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteConvolution1D(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_conv1d_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Convolution1D: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteWavelet(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_wavelet_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Wavelet Transform: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-// ============================================================
-// Phase 4: Text Analytics Executors
-// ============================================================
-
-bool PipelineExecutor::ExecuteTFIDF(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("TF-IDF: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_tfidf_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] TF-IDF: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("TF-IDF error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteCountVectorizer(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Count Vectorizer: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_countvec_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Count Vectorizer: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Count Vectorizer error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteWordEmbeddings(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_embed_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Word Embeddings: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteSentiment(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Sentiment Analyzer: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_sentiment_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Sentiment Analyzer: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Sentiment Analyzer error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteNER(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("NER: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_ner_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] NER: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("NER error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// ============================================================
-// Phase 4: Utility Executors
-// ============================================================
-
-bool PipelineExecutor::ExecuteCalculator(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_calc_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Calculator: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& ctx) {
-    std::string output_dataset_name = "ds_unit_" + std::to_string(node.id);
-    spdlog::warn("[Data Studio] Unit Converter: Placeholder implementation");
-    ctx.node_results[node.id] = output_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteRegex(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Regex Tester: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_regex_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] Regex Tester: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Regex Tester error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteJSONPath(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("JSONPath Extractor: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_jsonpath_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::warn("[Data Studio] JSONPath Extractor: Placeholder - passing through data");
-
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("JSONPath Extractor error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteDataProfiler(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Data Profiler: No input");
-        return false;
-    }
-
-    std::string output_dataset_name = "ds_profile_" + std::to_string(node.id);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) return false;
-
-        auto input_table = input_dataset->GetArrowTable();
-        spdlog::info("[Data Studio] Data Profiler: {} rows, {} columns",
-                    input_table->num_rows(), input_table->num_columns());
-
-        // For now, pass through data
-        registry.RegisterArrowTable(input_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("Data Profiler error: " + std::string(e.what()));
         return false;
     }
 }

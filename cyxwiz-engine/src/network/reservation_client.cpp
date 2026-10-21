@@ -107,7 +107,6 @@ void ReservationClient::AddAuthMetadata(grpc::ClientContext& context) {
 
 std::optional<ReservationInfo> ReservationClient::ReserveNode(
     const std::string& node_id,
-    const std::string& user_wallet,
     int32_t duration_minutes,
     const cyxwiz::protocol::JobConfig& job_config) {
 
@@ -124,7 +123,6 @@ std::optional<ReservationInfo> ReservationClient::ReserveNode(
 
     cyxwiz::protocol::ReserveNodeRequest request;
     request.set_node_id(node_id);
-    request.set_user_wallet(user_wallet);
     request.set_duration_minutes(duration_minutes);
     *request.mutable_job_config() = job_config;
 
@@ -169,7 +167,6 @@ std::optional<ReservationInfo> ReservationClient::ReserveNode(
 
 void ReservationClient::ReserveNodeAsync(
     const std::string& node_id,
-    const std::string& user_wallet,
     int32_t duration_minutes,
     const cyxwiz::protocol::JobConfig& job_config,
     ReservationCallback callback) {
@@ -181,13 +178,13 @@ void ReservationClient::ReserveNodeAsync(
         async_reserve_thread_.join();
     }
 
-    async_reserve_thread_ = std::thread([this, node_id, user_wallet, duration_minutes, job_config, callback]() {
+    async_reserve_thread_ = std::thread([this, node_id, duration_minutes, job_config, callback]() {
         if (shutdown_requested_.load()) {
             callback(false, ReservationInfo{}, "Shutdown requested");
             return;
         }
 
-        auto result = ReserveNode(node_id, user_wallet, duration_minutes, job_config);
+        auto result = ReserveNode(node_id, duration_minutes, job_config);
 
         if (shutdown_requested_.load()) return;
 
@@ -257,7 +254,8 @@ bool ReservationClient::ExtendReservation(
     const std::string& reservation_id,
     int32_t additional_minutes,
     int64_t& new_expires,
-    int64_t& additional_escrow) {
+    int64_t& additional_escrow,
+    std::string& p2p_auth_token) {
 
     if (!connected_ || !stub_) {
         last_error_ = "Not connected";
@@ -291,65 +289,14 @@ bool ReservationClient::ExtendReservation(
 
     new_expires = response.new_expires();
     additional_escrow = response.additional_escrow();
+    p2p_auth_token = response.p2p_auth_token();
 
     // Update current reservation
     current_reservation_.end_time = new_expires;
     current_reservation_.escrow_amount += additional_escrow;
+    current_reservation_.p2p_auth_token = p2p_auth_token;
 
     spdlog::info("Reservation extended! New end time: {}", new_expires);
-    return true;
-}
-
-bool ReservationClient::ReleaseReservation(
-    const std::string& reservation_id,
-    const std::string& reason,
-    int64_t& time_used,
-    int64_t& payment_released,
-    int64_t& refund_amount) {
-
-    if (!connected_ || !stub_) {
-        last_error_ = "Not connected";
-        return false;
-    }
-
-    spdlog::info("Releasing reservation {} early...", reservation_id);
-
-    grpc::ClientContext context;
-    AddAuthMetadata(context);
-    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
-
-    cyxwiz::protocol::ReleaseReservationRequest request;
-    request.set_reservation_id(reservation_id);
-    request.set_reason(reason);
-
-    cyxwiz::protocol::ReleaseReservationResponse response;
-    grpc::Status status = stub_->ReleaseReservation(&context, request, &response);
-
-    if (!status.ok()) {
-        last_error_ = "gRPC error: " + status.error_message();
-        spdlog::error("ReleaseReservation failed: {}", last_error_);
-        return false;
-    }
-
-    if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
-        last_error_ = response.error().message();
-        spdlog::error("ReleaseReservation rejected: {}", last_error_);
-        return false;
-    }
-
-    time_used = response.time_used_seconds();
-    payment_released = response.payment_released();
-    refund_amount = response.refund_amount();
-
-    spdlog::info("Reservation released!");
-    spdlog::info("  Time used: {} seconds", time_used);
-    spdlog::info("  Payment to node: {} lamports", payment_released);
-    spdlog::info("  Refund: {} lamports", refund_amount);
-
-    // Clear current reservation
-    current_reservation_ = ReservationInfo{};
-    StopHeartbeat();
-
     return true;
 }
 
@@ -387,7 +334,6 @@ bool ReservationClient::GetReservation(
 }
 
 bool ReservationClient::GetActiveReservations(
-    const std::string& user_wallet,
     std::vector<cyxwiz::protocol::ActiveReservationInfo>& out_reservations) {
 
     if (!connected_ || !stub_) {
@@ -395,14 +341,13 @@ bool ReservationClient::GetActiveReservations(
         return false;
     }
 
-    spdlog::info("Checking for active reservations for wallet: {}", user_wallet);
+    spdlog::info("Checking for the signed-in user's active reservations");
 
     grpc::ClientContext context;
     AddAuthMetadata(context);
     context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
 
     cyxwiz::protocol::GetActiveReservationsRequest request;
-    request.set_user_wallet(user_wallet);
 
     cyxwiz::protocol::GetActiveReservationsResponse response;
     grpc::Status status = stub_->GetActiveReservations(&context, request, &response);
@@ -432,7 +377,6 @@ bool ReservationClient::GetActiveReservations(
 
 bool ReservationClient::GetReconnectionToken(
     const std::string& reservation_id,
-    const std::string& user_wallet,
     std::string& out_p2p_token,
     int64_t& out_token_expires,
     std::string& out_node_endpoint,
@@ -451,7 +395,6 @@ bool ReservationClient::GetReconnectionToken(
 
     cyxwiz::protocol::GetReconnectionTokenRequest request;
     request.set_reservation_id(reservation_id);
-    request.set_user_wallet(user_wallet);
 
     cyxwiz::protocol::GetReconnectionTokenResponse response;
     grpc::Status status = stub_->GetReconnectionToken(&context, request, &response);
@@ -577,12 +520,22 @@ bool ReservationClient::SendHeartbeat() {
 
     if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
         spdlog::warn("Heartbeat rejected: {}", response.message());
+        // The central server answered but does not know the reservation
+        // (error 404): it is over for the Engine too.
+        if (heartbeat_callback_ && response.has_error() && response.error().code() == 404) {
+            HeartbeatReport report;
+            report.gone = true;
+            report.message = response.message().empty() ? response.error().message() : response.message();
+            heartbeat_callback_(report);
+        }
         return false;
     }
 
-    // Notify callback
     if (heartbeat_callback_) {
-        heartbeat_callback_(response.time_remaining_seconds(), response.should_extend());
+        HeartbeatReport report;
+        report.time_remaining = response.time_remaining_seconds();
+        report.should_extend = response.should_extend();
+        heartbeat_callback_(report);
     }
 
     // Log if time is running low

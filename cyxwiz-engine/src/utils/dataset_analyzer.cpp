@@ -1,6 +1,7 @@
 #include "dataset_analyzer.h"
 #include "../core/data_registry.h"
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -148,7 +149,7 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
 
             if (progress_callback && images.size() % 100 == 0) {
                 float prog = 0.4f + 0.3f * (static_cast<float>(images.size()) / sample_size);
-                progress_callback(prog, std::format("Loaded {}/{} samples", images.size(), sample_size));
+                progress_callback(prog, fmt::format("Loaded {}/{} samples", images.size(), sample_size));
             }
         }
 
@@ -198,8 +199,10 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
 
         float var_brightness = 0.0f, var_contrast = 0.0f;
         for (size_t i = 0; i < brightness_values.size(); ++i) {
-            var_brightness += std::pow(brightness_values[i] - analytics.mean_brightness, 2);
-            var_contrast += std::pow(contrast_values[i] - analytics.mean_contrast, 2);
+            const float brightness_delta = brightness_values[i] - analytics.mean_brightness;
+            const float contrast_delta = contrast_values[i] - analytics.mean_contrast;
+            var_brightness += brightness_delta * brightness_delta;
+            var_contrast += contrast_delta * contrast_delta;
         }
         analytics.std_brightness = std::sqrt(var_brightness / brightness_values.size());
         analytics.std_contrast = std::sqrt(var_contrast / contrast_values.size());
@@ -208,7 +211,7 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
         if (progress_callback) {
             progress_callback(0.9f, "Detecting outliers...");
         }
-        analytics.outliers = DetectOutliers(images, sampled_labels, width, height, channels);
+        analytics.outliers = DetectOutliers(images, channels);
 
         if (progress_callback) {
             progress_callback(1.0f, "Analytics complete!");
@@ -335,8 +338,7 @@ DimensionStatistics DatasetAnalyzer::ComputeDimensionStats(
 
 OutlierInfo DatasetAnalyzer::DetectOutliers(
     const std::vector<std::vector<float>>& images,
-    const std::vector<int>& labels,
-    int width, int height, int channels,
+    int channels,
     float iqr_multiplier
 ) {
     OutlierInfo outliers;
@@ -414,7 +416,8 @@ float DatasetAnalyzer::ComputeContrast(const std::vector<float>& image) {
 
     float variance = 0.0f;
     for (float val : image) {
-        variance += std::pow(val - mean, 2);
+        const float delta = val - mean;
+        variance += delta * delta;
     }
     variance /= image.size();
 

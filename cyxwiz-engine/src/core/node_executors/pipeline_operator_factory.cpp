@@ -1,0 +1,239 @@
+#include "pipeline_operator_factory.h"
+#include "clustering_operators.h"
+#include "count_vectorizer_operator.h"
+#include "decision_tree_operator.h"
+#include "differencing_operator.h"
+#include "gradient_boosting_operator.h"
+#include "identity_operator.h"
+#include "log_transform_operator.h"
+#include "pca_operator.h"
+#include "preprocessing_operators.h"
+#include "random_forest_operator.h"
+#include "naive_bayes_operator.h"
+#include "knn_operator.h"
+#include "logistic_regression_operator.h"
+#include "svm_operators.h"
+#include "classic_model_predictor_operator.h"
+#include "regression_model_predictor_operator.h"
+#include "regression_operators.h"
+#include "sentiment_analyzer_operator.h"
+#include "signal_processing_operators.h"
+#include "text_tokenizer_operator.h"
+#include "word_embeddings_operator.h"
+#include "tfidf_vectorizer_operator.h"
+#include "tree_model_predictor_operator.h"
+#include "time_series_analysis_operators.h"
+#include "time_series_features_operator.h"
+#include "time_series_segment_operator.h"
+#include "row_count_check_operator.h"
+#include "time_series_split_operator.h"
+#include "time_series_window_operator.h"
+
+namespace cyxwiz {
+
+PipelineOperatorFactory& PipelineOperatorFactory::Instance() {
+    static PipelineOperatorFactory instance;
+    return instance;
+}
+
+PipelineOperatorFactory::PipelineOperatorFactory() {
+    RegisterDefaults();
+}
+
+void PipelineOperatorFactory::RegisterDefaults() {
+    RegisterCreator(gui::NodeType::Identity, []() {
+        return std::make_unique<IdentityOperator>();
+    });
+    // Phase 4 Time-Series operators.
+    RegisterCreator(gui::NodeType::TimeSeriesWindow, []() {
+        return std::make_unique<TimeSeriesWindowOperator>();
+    });
+    RegisterCreator(gui::NodeType::TimeSeriesSegment, []() {
+        return std::make_unique<TimeSeriesSegmentOperator>();
+    });
+    RegisterCreator(gui::NodeType::RowCountCheck, []() {
+        return std::make_unique<RowCountCheckOperator>();
+    });
+    RegisterCreator(gui::NodeType::TimeSeriesSplit, []() {
+        return std::make_unique<TimeSeriesSplitOperator>();
+    });
+    RegisterCreator(gui::NodeType::LogTransform, []() {
+        return std::make_unique<LogTransformOperator>();
+    });
+    RegisterCreator(gui::NodeType::Differencing, []() {
+        return std::make_unique<DifferencingOperator>();
+    });
+    RegisterCreator(gui::NodeType::TimeSeriesFeatures, []() {
+        return std::make_unique<TimeSeriesFeaturesOperator>();
+    });
+    // Text: Data Input registers the raw text as an Arrow table; these
+    // operators turn it into numbers (TOFIX129 B-8).
+    RegisterCreator(gui::NodeType::WordEmbeddings, []() {
+        return std::make_unique<WordEmbeddingsOperator>();
+    });
+    RegisterCreator(gui::NodeType::TextTokenizer, []() {
+        return std::make_unique<TextTokenizerOperator>();
+    });
+    // Tool-to-Node text analytics: TFIDFVectorizer.
+    RegisterCreator(gui::NodeType::TFIDFVectorizer, []() {
+        return std::make_unique<TFIDFVectorizerOperator>();
+    });
+    RegisterCreator(gui::NodeType::CountVectorizer, []() {
+        return std::make_unique<CountVectorizerOperator>();
+    });
+    // Tool-to-Node linear algebra: PCA (only Cat-1 fit from this block —
+    // SVD/QR/Cholesky/Eigen are multi-output decompositions better as
+    // Cat-2 introspection panels).
+    RegisterCreator(gui::NodeType::PCANode, []() {
+        return std::make_unique<PCAOperator>();
+    });
+    // Tool-to-Node text analytics: SentimentAnalyzer (lexicon-based,
+    // zero-dependency; pretrained BERT-style models deferred to tofix).
+    RegisterCreator(gui::NodeType::SentimentAnalyzer, []() {
+        return std::make_unique<SentimentAnalyzerOperator>();
+    });
+    // Tool-to-Node clustering block (all four algorithms). Each emits
+    // input + cluster_id(int32), so downstream viz/training sees the
+    // original columns plus the cluster annotation.
+    RegisterCreator(gui::NodeType::KMeansCluster, []() {
+        return std::make_unique<KMeansOperator>();
+    });
+    RegisterCreator(gui::NodeType::DBSCANCluster, []() {
+        return std::make_unique<DBSCANOperator>();
+    });
+    RegisterCreator(gui::NodeType::HierarchicalCluster, []() {
+        return std::make_unique<HierarchicalOperator>();
+    });
+    RegisterCreator(gui::NodeType::GMMCluster, []() {
+        return std::make_unique<GMMOperator>();
+    });
+    // Tool-to-Node signal processing block. IFFT + WaveletTransform
+    // deferred to tofix (complex inputs / variable-length outputs
+    // don't fit Arrow column schema cleanly).
+    RegisterCreator(gui::NodeType::FFTNode, []() {
+        return std::make_unique<FFTOperator>();
+    });
+    RegisterCreator(gui::NodeType::Convolution1D, []() {
+        return std::make_unique<Convolve1DOperator>();
+    });
+    RegisterCreator(gui::NodeType::FilterDesigner, []() {
+        return std::make_unique<FilterDesignerOperator>();
+    });
+    // Tool-to-Node classical models: regression, the tree family, and the
+    // classic ML classifiers on the device (TOFIX145 Group C).
+    RegisterCreator(gui::NodeType::LinearRegressionNode, []() {
+        return std::make_unique<LinearRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::PolynomialRegressionNode, []() {
+        return std::make_unique<PolynomialRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::RegressionModelPredictor, []() {
+        return std::make_unique<RegressionModelPredictorOperator>();
+    });
+    RegisterCreator(gui::NodeType::DecisionTreeClassifier, []() {
+        return std::make_unique<DecisionTreeClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::RandomForestClassifier, []() {
+        return std::make_unique<RandomForestClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::GradientBoostingClassifier, []() {
+        return std::make_unique<GradientBoostingClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::ClassicModelPredictor, []() {
+        return std::make_unique<ClassicModelPredictorOperator>();
+    });
+    RegisterCreator(gui::NodeType::TreeModelPredictor, []() {
+        return std::make_unique<TreeModelPredictorOperator>();
+    });
+    RegisterCreator(gui::NodeType::NaiveBayesClassifier, []() {
+        return std::make_unique<NaiveBayesClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::KNNClassifier, []() {
+        return std::make_unique<KNNClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::LogisticRegressionNode, []() {
+        return std::make_unique<LogisticRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMClassifier, []() {
+        return std::make_unique<SVMClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMRegressor, []() {
+        return std::make_unique<SVMRegressorOperator>();
+    });
+    // Tool-to-Node data preprocessing block (closes Phase 4).
+    RegisterCreator(gui::NodeType::StandardScaler, []() {
+        return std::make_unique<StandardScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::MinMaxScaler, []() {
+        return std::make_unique<MinMaxScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::RobustScaler, []() {
+        return std::make_unique<RobustScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::LabelEncoder, []() {
+        return std::make_unique<LabelEncoderOperator>();
+    });
+    RegisterCreator(gui::NodeType::OrdinalEncoder, []() {
+        return std::make_unique<OrdinalEncoderOperator>();
+    });
+    RegisterCreator(gui::NodeType::TargetEncoder, []() {
+        return std::make_unique<TargetEncoderOperator>();
+    });
+    RegisterCreator(gui::NodeType::OutlierDetector, []() {
+        return std::make_unique<OutlierDetectorOperator>();
+    });
+    // Phase 5 time-series analysis block (in-sample fit only;
+    // future-rows forecasting deferred to tofix for schema reasons).
+    RegisterCreator(gui::NodeType::TimeSeriesDecomposition, []() {
+        return std::make_unique<TimeSeriesDecompositionOperator>();
+    });
+    RegisterCreator(gui::NodeType::ACFNode, []() {
+        return std::make_unique<ACFOperator>();
+    });
+    RegisterCreator(gui::NodeType::PACFNode, []() {
+        return std::make_unique<PACFOperator>();
+    });
+    RegisterCreator(gui::NodeType::StationarityTest, []() {
+        return std::make_unique<StationarityTestOperator>();
+    });
+    RegisterCreator(gui::NodeType::SeasonalityDetector, []() {
+        return std::make_unique<SeasonalityDetectorOperator>();
+    });
+    RegisterCreator(gui::NodeType::SeasonalNaive, []() {
+        return std::make_unique<SeasonalNaiveOperator>();
+    });
+    RegisterCreator(gui::NodeType::ARIMAForecaster, []() {
+        return std::make_unique<ARIMAOperator>();
+    });
+    RegisterCreator(gui::NodeType::ExponentialSmoothing, []() {
+        return std::make_unique<ExponentialSmoothingOperator>();
+    });
+}
+
+std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
+    gui::NodeType type) const {
+    auto it = creators_.find(type);
+    if (it == creators_.end()) {
+        return nullptr;
+    }
+    return it->second();
+}
+
+void PipelineOperatorFactory::RegisterCreator(gui::NodeType type, Creator creator) {
+    creators_[type] = std::move(creator);
+}
+
+bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
+    return creators_.find(type) != creators_.end();
+}
+
+std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
+    std::vector<gui::NodeType> out;
+    out.reserve(creators_.size());
+    for (const auto& kv : creators_) {
+        out.push_back(kv.first);
+    }
+    return out;
+}
+
+} // namespace cyxwiz

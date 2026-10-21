@@ -1,4 +1,5 @@
 #include "arrow_converters.h"
+#include "algorithms/arrayfire_host_materialization.h"
 #include <arrow/compute/api.h>
 #include <arrow/type.h>
 #include <spdlog/spdlog.h>
@@ -6,9 +7,7 @@
 #include <cmath>
 
 // ArrayFire header (from backend)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace arrow_converters {
@@ -146,11 +145,6 @@ std::shared_ptr<af::array> ArrowToTensor(
     std::shared_ptr<arrow::Table> table,
     const ConversionOptions& options) {
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("ArrowToTensor: ArrayFire not available in this build");
-    return nullptr;
-#else
-
     if (!table) {
         spdlog::error("ArrowToTensor: null table");
         return nullptr;
@@ -203,7 +197,7 @@ std::shared_ptr<af::array> ArrowToTensor(
         // ArrayFire uses column-major by default
         // Shape: [num_rows, num_cols]
         auto tensor = std::make_shared<::af::array>(
-            static_cast<::af::dim4>(num_rows, num_cols),
+            ::af::dim4(num_rows, num_cols),
             data.data()
         );
 
@@ -214,18 +208,12 @@ std::shared_ptr<af::array> ArrowToTensor(
         spdlog::error("ArrayFire error in ArrowToTensor: {}", e.what());
         return nullptr;
     }
-#endif
 }
 
 std::shared_ptr<af::array> ArrowColumnToTensor(
     std::shared_ptr<arrow::Table> table,
     const std::string& column_name,
     const ConversionOptions& options) {
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("ArrowColumnToTensor: ArrayFire not available");
-    return nullptr;
-#else
 
     if (!table) {
         spdlog::error("ArrowColumnToTensor: null table");
@@ -256,18 +244,12 @@ std::shared_ptr<af::array> ArrowColumnToTensor(
         spdlog::error("ArrayFire error in ArrowColumnToTensor: {}", e.what());
         return nullptr;
     }
-#endif
 }
 
 std::shared_ptr<arrow::Table> TensorToArrow(
     const ::af::array& tensor,
     const std::vector<std::string>& column_names,
     const std::string& table_name) {
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("TensorToArrow: ArrayFire not available");
-    return nullptr;
-#else
 
     try {
         // Get tensor dimensions
@@ -283,7 +265,12 @@ std::shared_ptr<arrow::Table> TensorToArrow(
 
         // Copy data from device to host
         std::vector<float> host_data(num_rows * num_cols);
-        tensor.host(host_data.data());
+        MaterializeArrayFireToHost(
+            tensor,
+            host_data.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "ArrowConverters::ArrayFireToRecordBatch",
+            "arrayfire_column_major");
 
         // Build Arrow arrays for each column
         arrow::FieldVector fields;
@@ -327,17 +314,11 @@ std::shared_ptr<arrow::Table> TensorToArrow(
         spdlog::error("ArrayFire error in TensorToArrow: {}", e.what());
         return nullptr;
     }
-#endif
 }
 
 std::shared_ptr<af::array> ArrowBatchesToTensor(
     const std::vector<std::shared_ptr<arrow::Table>>& batches,
     const ConversionOptions& options) {
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("ArrowBatchesToTensor: ArrayFire not available");
-    return nullptr;
-#else
 
     if (batches.empty()) {
         spdlog::error("ArrowBatchesToTensor: empty batch list");
@@ -354,7 +335,6 @@ std::shared_ptr<af::array> ArrowBatchesToTensor(
 
     auto combined_table = concat_result.ValueOrDie();
     return ArrowToTensor(combined_table, options);
-#endif
 }
 
 // =============================================================================
@@ -496,10 +476,27 @@ std::shared_ptr<arrow::Table> EncodeCategorical(
         auto string_array = std::static_pointer_cast<arrow::StringArray>(chunk);
         for (int64_t i = 0; i < string_array->length(); ++i) {
             if (string_array->IsNull(i)) {
-                builder.AppendNull();
+                const auto append_status = builder.AppendNull();
+                if (!append_status.ok()) {
+                    spdlog::error("Failed to append null encoded value: {}",
+                                  append_status.ToString());
+                    return nullptr;
+                }
             } else {
                 std::string value = string_array->GetString(i);
-                builder.Append(value_to_code[value]);
+                const auto code = value_to_code.find(value);
+                if (code == value_to_code.end()) {
+                    spdlog::error(
+                        "Categorical value '{}' is missing from the vocabulary",
+                        value);
+                    return nullptr;
+                }
+                const auto append_status = builder.Append(code->second);
+                if (!append_status.ok()) {
+                    spdlog::error("Failed to append encoded value: {}",
+                                  append_status.ToString());
+                    return nullptr;
+                }
             }
         }
     }
@@ -553,9 +550,20 @@ std::shared_ptr<arrow::Table> OneHotEncode(
             auto int_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
             for (int64_t i = 0; i < int_array->length(); ++i) {
                 if (int_array->IsNull(i)) {
-                    builder.AppendNull();
+                    const auto append_status = builder.AppendNull();
+                    if (!append_status.ok()) {
+                        spdlog::error("Failed to append null one-hot value: {}",
+                                      append_status.ToString());
+                        return nullptr;
+                    }
                 } else {
-                    builder.Append(int_array->Value(i) == static_cast<int32_t>(cat));
+                    const auto append_status = builder.Append(
+                        int_array->Value(i) == static_cast<int32_t>(cat));
+                    if (!append_status.ok()) {
+                        spdlog::error("Failed to append one-hot value: {}",
+                                      append_status.ToString());
+                        return nullptr;
+                    }
                 }
             }
         }

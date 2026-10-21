@@ -1,0 +1,178 @@
+# The GUI-free compile-and-train path shared by every host (TOFIX118 P2).
+#
+# cyxwiz-training-hooks: the plugin training-hook manager and extension node
+# registry, shared by the plugin SDK and the core (linked once per exe).
+# cyxwiz-training-core: graph loader and compiler, launch preparation, model
+# builder, training/test executors, Arrow/Parquet/sequence/sparse batchers,
+# checkpoints, trace, route qualification and the headless graph training job.
+#
+# Included by the Engine and the Server Node (whichever is configured first
+# defines the targets). Also sets CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
+# (absolute paths) for the Engine's harness tests.
+
+set(_cyxwiz_engine_src "${CMAKE_SOURCE_DIR}/cyxwiz-engine/src")
+
+set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
+    ${_cyxwiz_engine_src}/core/training_executor.cpp
+    ${_cyxwiz_engine_src}/core/metric_learning_sampling.cpp
+    ${_cyxwiz_engine_src}/core/metric_learning_evaluation.cpp
+    ${_cyxwiz_engine_src}/core/metric_learning_metrics.cpp
+    ${_cyxwiz_engine_src}/core/training_generation_preview.cpp
+    ${_cyxwiz_engine_src}/core/training_generation_preview_settings.cpp
+    ${_cyxwiz_engine_src}/core/generation_preview_presentation.cpp
+    ${_cyxwiz_engine_src}/core/language_model_generation.cpp
+    ${_cyxwiz_engine_src}/core/training_scheduler_controller.cpp
+    ${_cyxwiz_engine_src}/core/regression_target_transform.cpp
+    ${_cyxwiz_engine_src}/core/preprocessing_state.cpp
+    ${_cyxwiz_engine_src}/core/training_batcher_setup.cpp
+    ${_cyxwiz_engine_src}/core/sparse_training_batcher_setup.cpp
+    ${_cyxwiz_engine_src}/core/sparse_feature_dataset.cpp
+    ${_cyxwiz_engine_src}/core/sparse_feature_dataset_batcher.cpp
+    ${_cyxwiz_engine_src}/core/sparse_feature_dataset_batcher_balancing.cpp
+    ${_cyxwiz_engine_src}/core/classification_decision.cpp
+    ${_cyxwiz_engine_src}/core/arrow_dataset.cpp
+    ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
+    ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
+    ${_cyxwiz_engine_src}/core/model_builder.cpp
+    ${_cyxwiz_engine_src}/core/guarded_extension_module.cpp
+    ${_cyxwiz_engine_src}/core/stacked_metric_loss.cpp
+    ${_cyxwiz_engine_src}/core/metric_learning_mining.cpp
+    ${_cyxwiz_engine_src}/core/spatial_batch_layout.cpp
+    ${_cyxwiz_engine_src}/core/executable_model.cpp
+    ${_cyxwiz_engine_src}/core/graph_executable_model.cpp
+    ${_cyxwiz_engine_src}/core/parquet_backed_dataset.cpp
+    ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
+    ${_cyxwiz_engine_src}/core/dataset_base.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_tokenizer.cpp
+    ${_cyxwiz_engine_src}/core/crash_run_recorder.cpp
+    ${_cyxwiz_engine_src}/core/training_trace_collector.cpp
+    ${_cyxwiz_engine_src}/core/route_qualification_snapshot.cpp
+    ${_cyxwiz_engine_src}/core/runtime_log_store.cpp
+    ${_cyxwiz_engine_src}/core/runtime_log_category.cpp
+)
+
+# Precompiled header (build speed): standard and third-party headers that
+# most engine sources include and that rarely change. C sources in a target
+# are left alone. cyxwiz_enable_pch(target [extra headers...]).
+set(CYXWIZ_PCH_HEADERS
+    "$<$<COMPILE_LANGUAGE:CXX>:<string>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<vector>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<algorithm>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<memory>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<cmath>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<cstdint>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<filesystem>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<map>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<sstream>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<functional>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<utility>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<fstream>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<chrono>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<mutex>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<optional>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<thread>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<atomic>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<stdexcept>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<limits>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<set>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<array>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<unordered_map>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<string_view>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<spdlog/spdlog.h>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<nlohmann/json.hpp>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<arrow/api.h>>"
+)
+function(cyxwiz_enable_pch target)
+    target_precompile_headers(${target} PRIVATE ${CYXWIZ_PCH_HEADERS} ${ARGN})
+endfunction()
+
+if(TARGET cyxwiz-training-core)
+    return()
+endif()
+
+find_package(spdlog CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(Arrow CONFIG REQUIRED)
+find_package(Parquet CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+# The macOS vcpkg triplet builds Arrow and Parquet statically. Keep the
+# training-core link contract portable by providing the shared-target names
+# when only static targets are available. This module is the canonical owner
+# of Arrow/Parquet discovery because both the Engine and Server Node include it.
+if(NOT TARGET Arrow::arrow_shared AND TARGET Arrow::arrow_static)
+    add_library(Arrow::arrow_shared ALIAS Arrow::arrow_static)
+endif()
+if(NOT TARGET Parquet::parquet_shared AND TARGET Parquet::parquet_static)
+    add_library(Parquet::parquet_shared ALIAS Parquet::parquet_static)
+endif()
+
+# Definitions only: node_metadata_registry lists data-convert formats by the
+# same flags as the Engine (the adapters stay in their own targets).
+find_package(OpenXLSX CONFIG QUIET)
+find_package(HighFive CONFIG QUIET)
+
+add_library(cyxwiz-training-hooks STATIC
+    ${_cyxwiz_engine_src}/plugin/registries/plugin_training_hook_manager.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
+    ${_cyxwiz_engine_src}/core/python_node_bundle.cpp
+    ${_cyxwiz_engine_src}/core/python_node_approvals.cpp
+)
+target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
+target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
+set_target_properties(cyxwiz-training-hooks PROPERTIES CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+    target_compile_definitions(cyxwiz-training-hooks PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+
+# Hosts adapt their own datasets to IBatchers and install a dataset catalog
+# (graph_compiler_dataset_hooks.h); RunGraphTrainingJob installs its own.
+add_library(cyxwiz-training-core STATIC
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    ${_cyxwiz_engine_src}/core/graph_compiler.cpp
+    ${_cyxwiz_engine_src}/core/sequence_fusion_presentation.cpp
+    ${_cyxwiz_engine_src}/core/graph_compiler_dataset_hooks.cpp
+    ${_cyxwiz_engine_src}/core/graph_node_factory.cpp
+    ${_cyxwiz_engine_src}/core/graph_document.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_document.cpp
+    ${_cyxwiz_engine_src}/core/graph_training_prep.cpp
+    ${_cyxwiz_engine_src}/core/graph_training_job.cpp
+    ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp
+    ${_cyxwiz_engine_src}/core/graph_topology_utils.cpp
+    ${_cyxwiz_engine_src}/core/node_metadata_registry.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_metadata.cpp
+    ${_cyxwiz_engine_src}/core/pipeline_runtime_capabilities.cpp
+    ${_cyxwiz_engine_src}/core/sequence_arrow_batcher.cpp
+    ${_cyxwiz_engine_src}/core/sha256_digest.cpp
+    ${_cyxwiz_engine_src}/core/compute_runtime_config.cpp
+    ${_cyxwiz_engine_src}/core/training_benchmark.cpp
+    ${_cyxwiz_engine_src}/core/machine_capability.cpp
+    ${_cyxwiz_engine_src}/core/graph_job_memory_probe.cpp
+    ${_cyxwiz_engine_src}/core/training_resume_checkpoint.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_manifest.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_payload_io.cpp
+)
+target_include_directories(cyxwiz-training-core PUBLIC ${_cyxwiz_engine_src})
+cyxwiz_enable_pch(cyxwiz-training-core)
+target_link_libraries(cyxwiz-training-core PUBLIC
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+    cyxwiz-training-hooks
+    OpenSSL::Crypto
+)
+set_target_properties(cyxwiz-training-core PROPERTIES CXX_STANDARD 20)
+if(WIN32)
+    target_compile_definitions(cyxwiz-training-core PUBLIC _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+if(TARGET OpenXLSX::OpenXLSX)
+    target_compile_definitions(cyxwiz-training-core PRIVATE CYXWIZ_HAS_XLSX)
+endif()
+if(HighFive_FOUND)
+    target_compile_definitions(cyxwiz-training-core PRIVATE CYXWIZ_HAS_HDF5)
+endif()

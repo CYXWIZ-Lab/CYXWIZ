@@ -1,0 +1,353 @@
+{
+    "annotations": [],
+    "classical_tree_table_contract_version": 2,
+    "data_boundary_version": 2,
+    "data_validator_contract_version": 2,
+    "evaluation_table_contract_version": 2,
+    "execution_mode": 0,
+    "framework": 0,
+    "groups": [],
+    "links": [
+        {
+            "from_node": 1,
+            "from_pin": 150,
+            "from_pin_index": 0,
+            "id": 1,
+            "link_type": 0,
+            "to_node": 7,
+            "to_pin": 700,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 7,
+            "from_pin": 750,
+            "from_pin_index": 0,
+            "id": 2,
+            "link_type": 0,
+            "to_node": 8,
+            "to_pin": 800,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 8,
+            "from_pin": 850,
+            "from_pin_index": 0,
+            "id": 3,
+            "link_type": 0,
+            "to_node": 9,
+            "to_pin": 900,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 8,
+            "from_pin": 850,
+            "from_pin_index": 0,
+            "id": 4,
+            "link_type": 0,
+            "to_node": 10,
+            "to_pin": 1000,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 9,
+            "from_pin": 950,
+            "from_pin_index": 0,
+            "id": 5,
+            "link_type": 0,
+            "to_node": 11,
+            "to_pin": 1100,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 10,
+            "from_pin": 1050,
+            "from_pin_index": 0,
+            "id": 6,
+            "link_type": 0,
+            "to_node": 11,
+            "to_pin": 1101,
+            "to_pin_index": 1
+        },
+        {
+            "from_node": 11,
+            "from_pin": 1150,
+            "from_pin_index": 0,
+            "id": 7,
+            "link_type": 0,
+            "to_node": 12,
+            "to_pin": 1200,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 12,
+            "from_pin": 1250,
+            "from_pin_index": 0,
+            "id": 8,
+            "link_type": 0,
+            "to_node": 13,
+            "to_pin": 1300,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 13,
+            "from_pin": 1350,
+            "from_pin_index": 0,
+            "id": 9,
+            "link_type": 0,
+            "to_node": 14,
+            "to_pin": 1400,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 14,
+            "from_pin": 1450,
+            "from_pin_index": 0,
+            "id": 10,
+            "link_type": 0,
+            "to_node": 15,
+            "to_pin": 1500,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 8,
+            "from_pin": 851,
+            "from_pin_index": 1,
+            "id": 11,
+            "link_type": 0,
+            "to_node": 15,
+            "to_pin": 1501,
+            "to_pin_index": 1
+        },
+        {
+            "from_node": 15,
+            "from_pin": 1550,
+            "from_pin_index": 0,
+            "id": 12,
+            "link_type": 0,
+            "to_node": 16,
+            "to_pin": 1600,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 14,
+            "from_pin": 1450,
+            "from_pin_index": 0,
+            "id": 13,
+            "link_type": 0,
+            "to_node": 18,
+            "to_pin": 1800,
+            "to_pin_index": 0
+        }
+    ],
+    "nodes": [
+        {
+            "category": 0,
+            "description": "",
+            "id": 1,
+            "name": "NER Sentence CSV",
+            "parameters": {
+                "chunk_size": "10000",
+                "columns": "*",
+                "configured": "false",
+                "create_attention_mask": "true",
+                "delimiter": ",",
+                "enable_streaming": "false",
+                "feature_columns": "*",
+                "file_category": "sequence_text",
+                "file_path": "examples/cyxgraph/NER/generated/ner_sentences.csv",
+                "file_type": "auto",
+                "hdf5_key": "",
+                "header": "true",
+                "label_column": "",
+                "max_rows": "",
+                "max_sequence_length": "96",
+                "pos_column": "pos_tags",
+                "raw_source_path": "examples/cyxgraph/NER/sample_ner.csv",
+                "sentence_id_column": "sentence_id",
+                "sheet_name": "",
+                "skip_rows": "0",
+                "source_type": "file",
+                "tag_column": "ner_tags",
+                "token_column": "tokens",
+                "where_clause": ""
+            },
+            "pos_x": 169.00003051757812,
+            "pos_y": 305.0,
+            "type": 157
+        },
+        {
+            "category": 21,
+            "description": "",
+            "id": 7,
+            "name": "Split 80/10/10",
+            "parameters": {
+                "seed": "42",
+                "stratified": "false",
+                "test_ratio": "0.1",
+                "train_ratio": "0.8",
+                "val_ratio": "0.1"
+            },
+            "pos_x": 723.0,
+            "pos_y": 170.0,
+            "type": 106
+        },
+        {
+            "category": 21,
+            "description": "",
+            "id": 8,
+            "name": "Sequence DataLoader",
+            "parameters": {
+                "batch_layout": "batch_first",
+                "batch_size": "32",
+                "checkpoint_dir": "",
+                "drop_last": "false",
+                "early_stopping_patience": "5",
+                "epochs": "8",
+                "grad_accum_steps": "1",
+                "log_interval": "10",
+                "num_workers": "4",
+                "pin_memory": "false",
+                "prefetch_factor": "2",
+                "save_best_checkpoint": "true",
+                "seed": "42",
+                "shuffle": "true",
+                "validation_freq": "1"
+            },
+            "pos_x": 659.0,
+            "pos_y": 527.0,
+            "type": 104
+        },
+        {
+            "category": 11,
+            "description": "",
+            "id": 9,
+            "name": "Word Embedding",
+            "parameters": {
+                "embedding_dim": "100",
+                "num_embeddings": "30000",
+                "padding_idx": "0"
+            },
+            "pos_x": 800.0,
+            "pos_y": 380.0,
+            "type": 21
+        },
+        {
+            "category": 11,
+            "description": "",
+            "id": 10,
+            "name": "POS Embedding",
+            "parameters": {
+                "embedding_dim": "16",
+                "num_embeddings": "128",
+                "padding_idx": "0"
+            },
+            "pos_x": 813.0,
+            "pos_y": 607.0,
+            "type": 21
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 11,
+            "name": "Concat Word + POS",
+            "parameters": {
+                "dim": "-1"
+            },
+            "pos_x": 900.0,
+            "pos_y": 487.0000305175781,
+            "type": 46
+        },
+        {
+            "category": 11,
+            "description": "",
+            "id": 12,
+            "name": "BiLSTM Sequence Encoder",
+            "parameters": {
+                "batch_first": "true",
+                "bidirectional": "true",
+                "dropout": "0.0",
+                "hidden_size": "128",
+                "input_size": "116",
+                "num_layers": "2",
+                "return_sequences": "true"
+            },
+            "pos_x": 853.0,
+            "pos_y": 246.0,
+            "type": 17
+        },
+        {
+            "category": 16,
+            "description": "",
+            "id": 13,
+            "name": "Dropout",
+            "parameters": {
+                "rate": "0.3"
+            },
+            "pos_x": 1056.0,
+            "pos_y": 595.0,
+            "type": 14
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 14,
+            "name": "Token Classifier",
+            "parameters": {
+                "units": "19"
+            },
+            "pos_x": 1008.0,
+            "pos_y": 363.0,
+            "type": 20
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 15,
+            "name": "Token CrossEntropy",
+            "parameters": {
+                "class_weight": "none",
+                "class_weights": "",
+                "ignore_index": "0",
+                "label_smoothing": "0.0",
+                "reduction": "mean"
+            },
+            "pos_x": 1132.0,
+            "pos_y": 447.0,
+            "type": 73
+        },
+        {
+            "category": 15,
+            "description": "",
+            "id": 16,
+            "name": "Adam",
+            "parameters": {
+                "beta1": "0.9",
+                "beta2": "0.999",
+                "epsilon": "1e-8",
+                "learning_rate": "0.001",
+                "lr_schedule": "none",
+                "min_lr_ratio": "0.1",
+                "warmup_ratio": "0.02"
+            },
+            "pos_x": 1195.0,
+            "pos_y": 383.0,
+            "type": 81
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 18,
+            "name": "NER Output",
+            "parameters": {
+                "decode_scheme": "BIO",
+                "num_tags": "19",
+                "tag_vocab_file": "examples/cyxgraph/NER/generated/ner_tag_vocab.txt"
+            },
+            "pos_x": 1293.0,
+            "pos_y": 300.0,
+            "type": 326
+        }
+    ],
+    "version": "2.1",
+    "workflow_description": ""
+}

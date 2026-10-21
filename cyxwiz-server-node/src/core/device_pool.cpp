@@ -4,9 +4,7 @@
 #include <chrono>
 #include <algorithm>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::servernode::core {
 
@@ -80,6 +78,7 @@ void DevicePool::Refresh() {
         state.name = info.name;
         state.total_memory = info.memory_total;
         state.available_memory = info.memory_available;
+        state.available_memory_known = info.memory_available_known;
         state.used_memory = info.memory_total - info.memory_available;
         state.utilization = 0.0f;
         state.in_use = false;
@@ -265,7 +264,6 @@ void DevicePool::UpdateDeviceMetrics(int device_id) {
     // Note: This requires backend-level access to device metrics
     // For now, we'll use ArrayFire directly if available
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Temporarily switch to this device to get metrics
         int current_device = af::getDevice();
@@ -279,6 +277,7 @@ void DevicePool::UpdateDeviceMetrics(int device_id) {
             if (dev.device_id == device_id) {
                 dev.used_memory = alloc_bytes;
                 dev.available_memory = dev.total_memory - alloc_bytes;
+                dev.available_memory_known = dev.total_memory > 0;
 
                 // Estimate utilization based on lock ratio
                 if (dev.total_memory > 0) {
@@ -294,7 +293,6 @@ void DevicePool::UpdateDeviceMetrics(int device_id) {
     } catch (const af::exception& e) {
         spdlog::warn("Failed to update metrics for device {}: {}", device_id, e.what());
     }
-#endif
 }
 
 DevicePool::PoolStats DevicePool::GetStats() const {
@@ -410,6 +408,10 @@ int DevicePool::SelectFirstAvailable(size_t required_memory_mb) {
 }
 
 bool DevicePool::MeetsRequirements(const DeviceState& state, size_t required_memory_mb) const {
+    // Unknown free memory is not "no free memory": a device whose backend
+    // cannot report it would otherwise never take a job (queued forever).
+    if (!state.available_memory_known) return true;
+
     // Check minimum available memory config
     size_t min_available_bytes = config_.min_available_memory_mb * 1024 * 1024;
     if (state.available_memory < min_available_bytes) {
@@ -435,7 +437,6 @@ ScopedDeviceContext::ScopedDeviceContext(int device_id)
     : device_id_(device_id)
     , previous_device_id_(-1)
     , valid_(false) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Save current device
         previous_device_id_ = af::getDevice();
@@ -451,15 +452,9 @@ ScopedDeviceContext::ScopedDeviceContext(int device_id)
     } catch (const af::exception& e) {
         spdlog::error("ScopedDeviceContext: failed to set device {}: {}", device_id_, e.what());
     }
-#else
-    // Without ArrayFire, just mark as valid (CPU-only mode)
-    valid_ = true;
-    previous_device_id_ = 0;
-#endif
 }
 
 ScopedDeviceContext::~ScopedDeviceContext() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (valid_ && previous_device_id_ >= 0) {
         try {
             af::setDevice(previous_device_id_);
@@ -469,7 +464,6 @@ ScopedDeviceContext::~ScopedDeviceContext() {
                           previous_device_id_, e.what());
         }
     }
-#endif
 }
 
 } // namespace cyxwiz::servernode::core

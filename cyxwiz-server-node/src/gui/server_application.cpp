@@ -1,5 +1,6 @@
 // server_application.cpp - GUI application implementation
 #include "gui/server_application.h"
+#include "gui/ui_watchdog.h"
 #include "gui/server_main_window.h"
 #include "gui/theme.h"
 #include "gui/icons.h"
@@ -40,6 +41,11 @@
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
+#ifdef __APPLE__
+    (void)window;
+    spdlog::debug("macOS uses the application bundle icon for regular windows");
+    return true;
+#else
     std::vector<std::string> icon_paths = {
         "./cyxwiz-server-node/resources/servernode.png",
         "./resources/servernode.png",
@@ -77,6 +83,7 @@ static bool load_window_icon(GLFWwindow* window) {
 
     spdlog::info("Window icon loaded from: {}", icon_path);
     return true;
+#endif
 }
 
 namespace cyxwiz::servernode::gui {
@@ -336,7 +343,12 @@ void ServerApplication::MainLoop() {
     int last_width = 0, last_height = 0;
     glfwGetWindowSize(window_, &last_width, &last_height);
 
+    // Logs the UI thread's stack when no frame is drawn for 3 s (TOFIX139 hang).
+    UiWatchdog watchdog;
+    watchdog.Start();
+
     while (!glfwWindowShouldClose(window_) && running_) {
+        watchdog.Frame();
         // Calculate delta time
         float current_time = static_cast<float>(glfwGetTime());
         float delta_time = current_time - last_frame_time_;

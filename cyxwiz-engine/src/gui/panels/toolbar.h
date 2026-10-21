@@ -1,34 +1,36 @@
 #pragma once
 
 #include "../panel.h"
-#include "plot_window.h"
+#include "python_settings_panel.h"
 #include "auth/auth_client.h"
+#include "../../core/backend_pack_manager_model.h"
+#include "../../core/menu_presentation.h"
+#include "../dialogs/create_project_dialog.h"
+#include "../dialogs/new_file_dialog.h"
+#include "../dialogs/about_dialog.h"
+#include <algorithm>
+#include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
+#include <unordered_map>
 #include <memory>
 #include <future>
+#include <filesystem>
 
 // Forward declarations to avoid including device.h (which pulls in CUDA/OpenCL headers)
 namespace cyxwiz {
     enum class DeviceType;
     struct DeviceInfo;
+    class RouteQualificationService;
+    namespace runtime {
+        class BackendPackLifecycleService;
+    }
 }
 
 namespace cyxwiz {
-
-// Tool entry for command palette search
-struct ToolEntry {
-    std::string name;           // Display name (e.g., "K-Means Clustering")
-    std::string category;       // Category (e.g., "Clustering", "Statistics")
-    std::string keywords;       // Search keywords (e.g., "cluster kmeans machine learning")
-    std::string icon;           // FontAwesome icon code
-    std::string shortcut;       // Keyboard shortcut if any (e.g., "Ctrl+P")
-    std::function<void()> callback;  // Action to execute
-
-    // Fuzzy match score (used during search)
-    mutable int match_score = 0;
-};
 
 /**
  * Top Toolbar Panel
@@ -43,17 +45,16 @@ public:
 
     // Command Palette (Ctrl+P)
     void OpenCommandPalette();
-    void HandleGlobalShortcuts();  // Call this from main window to handle Ctrl+P
+    // One FontAwesome icon per action meaning; empty when the action has none.
+    static const char* IconForAction(const std::string& id);
     bool IsCommandPaletteOpen() const { return show_command_palette_; }
 
     // User profile popup (for custom title bar integration)
-    void ToggleUserProfilePopup() { show_user_profile_popup_ = !show_user_profile_popup_; }
 
     // Callbacks
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
     void SetSaveLayoutCallback(std::function<void()> callback) { save_layout_callback_ = callback; }
     void SetSaveProjectSettingsCallback(std::function<void()> callback) { save_project_settings_callback_ = callback; }
-    void SetTogglePlotTestControlCallback(std::function<void()> callback) { toggle_plot_test_control_callback_ = callback; }
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
@@ -62,8 +63,13 @@ public:
     void SetTokenizeDatasetCallback(std::function<void()> callback) { tokenize_dataset_callback_ = callback; }
     void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
     void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
+    void SetCompileGraphCallback(std::function<void()> callback) { compile_graph_callback_ = callback; }
+    void SetLocalDebugCallback(std::function<void()> callback) { local_debug_callback_ = callback; }
     void SetStartTrainingCallback(std::function<void()> callback) { start_training_callback_ = callback; }
     void SetPauseTrainingCallback(std::function<void()> callback) { pause_training_callback_ = callback; }
+    void SetResumeTrainingCallback(std::function<void()> callback) { resume_training_callback_ = callback; }
+    // File > Save: project settings, open scripts and the graph (TOFIX129 G4).
+    void SetSaveProjectCallback(std::function<void()> callback) { save_project_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
@@ -89,14 +95,35 @@ public:
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
     void SetOpenMemoryMonitorCallback(std::function<void()> callback) { open_memory_monitor_callback_ = callback; }
     void SetOpenMemoryPanelCallback(std::function<void()> callback) { open_memory_panel_callback_ = callback; }
-    void SetNewScriptCallback(std::function<void()> callback) { new_script_callback_ = callback; }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
     void SetOpenPythonConsoleCallback(std::function<void()> callback) { open_python_console_callback_ = callback; }
+    void SetRunScriptCallback(std::function<void()> callback) { run_script_callback_ = callback; }
+    void SetStopScriptCallback(std::function<void()> callback) { stop_script_callback_ = callback; }
+
+    // Menu bar state (TOFIX129): the menus, palette and shortcut handler read
+    // the same snapshot every frame.
+    struct MenuStateSnapshot {
+        menu::Context focus = menu::Context::Any;
+        int selected_nodes = 0;
+        menu::TrainingState training = menu::TrainingState::Idle;
+        bool script_open = false;
+        bool script_running = false;
+    };
+    void SetMenuStateProvider(std::function<MenuStateSnapshot()> provider) { menu_state_provider_ = provider; }
+    void SetFrameOverlayPtr(bool* ptr) { frame_overlay_ptr_ = ptr; }
+    // One sentence about the hovered menu item, for the status bar. Empty
+    // when no menu item is hovered this frame.
+    const std::string& StatusHint() const { return status_hint_; }
+    void OpenPreferences(const std::string& tab = "") {
+        show_preferences_dialog_ = true;
+        preferences_select_tab_ = tab;
+    }
+    // Run one menu action by id (the Command Palette and shortcuts use this).
+    void Dispatch(const std::string& id, const std::string& argument = "");
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
-    void SetHasUnsavedChangesCallback(std::function<bool()> callback) { has_unsaved_changes_callback_ = callback; }
     void SetOnLoginSuccessCallback(std::function<void(const std::string&)> callback) { on_login_success_callback_ = callback; }
     void SetOnLogoutCallback(std::function<void()> callback) { on_logout_callback_ = callback; }
 
@@ -110,10 +137,12 @@ public:
     void SetSelectAllCallback(std::function<void()> callback) { select_all_callback_ = callback; }
     void SetToggleLineCommentCallback(std::function<void()> callback) { toggle_line_comment_callback_ = callback; }
     void SetToggleBlockCommentCallback(std::function<void()> callback) { toggle_block_comment_callback_ = callback; }
-    void SetFindCallback(std::function<void(const std::string&, bool, bool, bool)> callback) { find_callback_ = callback; }
-    void SetFindNextCallback(std::function<void()> callback) { find_next_callback_ = callback; }
-    void SetReplaceCallback(std::function<void(const std::string&, const std::string&, bool, bool, bool)> callback) { replace_callback_ = callback; }
-    void SetReplaceAllCallback(std::function<void(const std::string&, const std::string&, bool, bool, bool)> callback) { replace_all_callback_ = callback; }
+    // Edit > Find / Replace open the Script Editor's inline widget (replace = true for Replace).
+    void SetOpenFindCallback(std::function<void(bool)> callback) { open_find_callback_ = callback; }
+    // Replace in Files: files open in the editor with unsaved edits are skipped;
+    // open unmodified files are reloaded after the write.
+    void SetFileHasUnsavedChangesCallback(std::function<bool(const std::string&)> callback) { file_has_unsaved_changes_callback_ = callback; }
+    void SetReloadOpenFileCallback(std::function<void(const std::string&)> callback) { reload_open_file_callback_ = callback; }
 
     // New Edit menu callbacks
     void SetGoToLineCallback(std::function<void(int)> callback) { go_to_line_callback_ = callback; }
@@ -130,13 +159,10 @@ public:
     void SetJoinLinesCallback(std::function<void()> callback) { join_lines_callback_ = callback; }
 
     // Find dialog visibility
-    bool IsFindDialogOpen() const { return show_find_dialog_; }
-    bool IsReplaceDialogOpen() const { return show_replace_dialog_; }
     bool IsFindInFilesDialogOpen() const { return show_find_in_files_dialog_; }
     bool IsReplaceInFilesDialogOpen() const { return show_replace_in_files_dialog_; }
 
-    void OpenFindDialog() { show_find_dialog_ = true; }
-    void OpenReplaceDialog() { show_replace_dialog_ = true; }
+    void OpenGoToLineDialog() { show_go_to_line_dialog_ = true; }
     void OpenFindInFilesDialog() { show_find_in_files_dialog_ = true; }
     void OpenReplaceInFilesDialog() { show_replace_in_files_dialog_ = true; }
 
@@ -145,7 +171,6 @@ public:
     void SetAutoSaveEnabled(bool enabled) { auto_save_enabled_ = enabled; }
 
     // Editor settings callbacks (for Preferences -> Script Editor synchronization)
-    void SetEditorThemeCallback(std::function<void(int)> callback) { editor_theme_callback_ = callback; }
     void SetEditorTabSizeCallback(std::function<void(int)> callback) { editor_tab_size_callback_ = callback; }
     void SetEditorFontScaleCallback(std::function<void(float)> callback) { editor_font_scale_callback_ = callback; }
     void SetEditorShowWhitespaceCallback(std::function<void(bool)> callback) { editor_show_whitespace_callback_ = callback; }
@@ -160,9 +185,7 @@ public:
     void SetViewTestResultsCallback(std::function<void()> callback) { view_test_results_callback_ = callback; }
 
     // Tools menu callbacks
-    void SetResumeCheckpointCallback(std::function<void()> cb) { resume_checkpoint_callback_ = cb; }
-    void SetSaveCheckpointCallback(std::function<void()> cb) { save_checkpoint_callback_ = cb; }
-    void SetSaveModelCallback(std::function<void()> cb) { save_model_callback_ = cb; }
+    void SetLoadCheckpointCallback(std::function<void()> cb) { load_checkpoint_callback_ = cb; }
     void SetRunQuickTestCallback(std::function<void()> cb) { run_quick_test_callback_ = cb; }
     void SetCompareTestResultsCallback(std::function<void()> cb) { compare_test_results_callback_ = cb; }
     void SetExportTestReportCallback(std::function<void()> cb) { export_test_report_callback_ = cb; }
@@ -179,7 +202,6 @@ public:
     void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
 
     // Data Science callbacks (Phase 3)
-    void SetOpenDataProfilerCallback(std::function<void()> cb) { open_data_profiler_callback_ = cb; }
     void SetOpenCorrelationMatrixCallback(std::function<void()> cb) { open_correlation_matrix_callback_ = cb; }
     void SetOpenMissingValuePanelCallback(std::function<void()> cb) { open_missing_value_callback_ = cb; }
     void SetOpenOutlierDetectionCallback(std::function<void()> cb) { open_outlier_detection_callback_ = cb; }
@@ -197,6 +219,8 @@ public:
     void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
     void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
+    // Apps > a loaded plugin: show its nodes in the Node Browser (TOFIX125).
+    void SetShowPluginNodesCallback(std::function<void(const std::string&)> cb) { show_plugin_nodes_callback_ = std::move(cb); }
     void SetOpenDNNInferenceCallback(std::function<void()> cb) { open_dnn_inference_callback_ = cb; }
 
     // Clustering callbacks (Phase 6A)
@@ -255,6 +279,7 @@ public:
     void SetOpenTFIDFCallback(std::function<void()> cb) { open_tfidf_callback_ = cb; }
     void SetOpenEmbeddingsCallback(std::function<void()> cb) { open_embeddings_callback_ = cb; }
     void SetOpenSentimentCallback(std::function<void()> cb) { open_sentiment_callback_ = cb; }
+    void SetOpenLanguageModelGenerationCallback(std::function<void()> cb) { open_language_model_generation_callback_ = cb; }
 
     // Utilities callbacks (Phase 12)
     void SetOpenCalculatorCallback(std::function<void()> cb) { open_calculator_callback_ = cb; }
@@ -280,7 +305,6 @@ public:
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
 
     // Initialize editor settings from script editor's current values
-    void SetEditorTheme(int theme) { editor_theme_ = theme; }
     void SetEditorTabSize(int size) { editor_tab_size_ = size; }
     void SetEditorFontScale(float scale);  // Converts scale to font size
     void SetEditorShowWhitespace(bool show) { editor_show_whitespace_ = show; }
@@ -288,35 +312,50 @@ public:
     void SetEditorAutoIndent(bool indent) { editor_auto_indent_ = indent; }
 
     // Compute device selection callback
-    void SetComputeDeviceChangedCallback(std::function<void(DeviceType, int)> cb) { compute_device_changed_callback_ = cb; }
+    void SetComputeDeviceChangedCallback(
+        std::function<bool(DeviceType,
+                           int,
+                           const std::string&,
+                           std::string&)> cb) {
+        compute_device_changed_callback_ = std::move(cb);
+    }
 
     // Access to created plot windows
-    const std::vector<std::shared_ptr<PlotWindow>>& GetPlotWindows() const { return plot_windows_; }
 
 private:
-    void RenderFileMenu();
-    void RenderEditMenu();
-    void RenderViewMenu();
-    void RenderNodesMenu();
-    void RenderTrainMenu();
-    void RenderSimulationMenu();
-    void RenderDatasetMenu();
-    void RenderScriptMenu();
-    void RenderDeployMenu();
-    void RenderToolsMenu();
-    void RenderProfileMenu();
+    // Menu bar from the presentation model (toolbar_menus.cpp).
+    menu::MenuInputs BuildMenuInputs() const;
+    void RenderMenuBar();
+    void RenderMenuItems(const std::vector<menu::MenuItem>& items);
+    void BuildActionHandlers();
+    // File > Open Script... and Script > Open Script...: one action.
+    void OpenScriptFromDialog();
 
     // File search functionality
     void SearchInFiles(const std::string& search_text, const std::string& search_path,
                        const std::string& file_patterns, bool case_sensitive,
                        bool whole_word, bool use_regex);
-    void RenderAppsMenu();
-    void RenderHelpMenu();
-    void RenderUserAvatar();
-    void RenderUserProfilePopup();
+    void RenderProjectDialogs();
+    void HandleAutoSaveTimer();
+    void RenderEditorDialogs();
+    void RenderSearchDialogs();
+    void RenderAccountDialogs();
+    void RenderPreferencesDialog();
+    void RenderAppearancePreferences();  // Preferences > Appearance
+    void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
+    bool RenderBackendManagerSection(bool training_active);
+    // Compute devices: one card per physical device (tofix119 C).
+    struct ComputeDeviceCardsContext {
+        bool training_active = false;
+        bool verification_running = false;
+        std::function<bool(size_t)> is_active;
+        std::function<bool(size_t)> is_pending;
+        std::function<bool(size_t)> is_saved;
+        std::function<void(size_t)> request_device;
+    };
+    void RenderComputeDeviceCards(const ComputeDeviceCardsContext& context);
 
     // Command Palette functionality
-    void InitializeToolEntries();
     void RenderCommandPalette();
     void UpdateSearchResults(const std::string& query);
     int FuzzyMatch(const std::string& pattern, const std::string& text) const;
@@ -325,12 +364,8 @@ private:
     // Helper functions
     std::string OpenFolderDialog();
     std::string OpenFileDialog(const char* filter, const char* title);
-    void CreatePlotWindow(const std::string& title, PlotWindow::PlotWindowType type);
 
-    bool show_new_project_dialog_;
-    bool show_about_dialog_;
     bool show_account_settings_dialog_ = false;
-    bool show_exit_confirmation_dialog_ = false;
     bool auto_save_enabled_ = false;
     float auto_save_interval_ = 60.0f;  // Auto save every 60 seconds
     float auto_save_timer_ = 0.0f;      // Current timer countdown
@@ -339,7 +374,6 @@ private:
     bool is_logged_in_ = false;
     bool is_logging_in_ = false;
     bool session_restore_pending_ = true;
-    bool show_user_profile_popup_ = false;
     bool show_login_required_popup_ = false;
     std::string login_required_action_;  // What action requires login (for popup message)
     int popup_open_frames_ = 0;  // Track frames since popup opened (for click-away delay)
@@ -352,21 +386,10 @@ private:
     std::string login_success_message_;
     std::future<auth::AuthResult> login_future_;
 
-    // Wallet connection state
-    bool show_wallet_connect_dialog_ = false;
-    int wallet_connect_step_ = 0;  // 0 = enter address, 1 = sign message, 2 = verifying
-    char wallet_address_buffer_[128] = "";
-    char wallet_signature_buffer_[512] = "";  // Base58 signatures can be long
-    std::string wallet_nonce_;
-    std::string wallet_sign_message_;  // Full message to sign from server
-    std::string wallet_error_message_;
-    std::future<auth::WalletNonceResult> wallet_nonce_future_;
-    std::future<auth::WalletVerifyResult> wallet_link_future_;
 
     std::function<void()> reset_layout_callback_;
     std::function<void()> save_layout_callback_;
     std::function<void()> save_project_settings_callback_;
-    std::function<void()> toggle_plot_test_control_callback_;
     std::function<void()> connect_to_server_callback_;
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
@@ -375,8 +398,12 @@ private:
     std::function<void()> tokenize_dataset_callback_;
     std::function<void()> augment_dataset_callback_;
     std::function<void()> dataset_statistics_callback_;
+    std::function<void()> compile_graph_callback_;
+    std::function<void()> local_debug_callback_;
     std::function<void()> start_training_callback_;
     std::function<void()> pause_training_callback_;
+    std::function<void()> resume_training_callback_;
+    std::function<void()> save_project_callback_;
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
     std::function<void()> optimizer_settings_callback_;
@@ -402,20 +429,25 @@ private:
     std::function<void()> open_profiler_callback_;
     std::function<void()> open_memory_monitor_callback_;
     std::function<void()> open_memory_panel_callback_;
-    std::function<void()> new_script_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;
     std::function<void()> open_python_console_callback_;
+    std::function<void()> run_script_callback_;
+    std::function<void()> stop_script_callback_;
+    std::function<MenuStateSnapshot()> menu_state_provider_;
+    bool* frame_overlay_ptr_ = nullptr;
+    std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
+    std::string status_hint_;
     std::function<void()> save_all_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
-    std::function<bool()> has_unsaved_changes_callback_;
     std::function<void(const std::string&)> on_login_success_callback_;
     std::function<void()> on_logout_callback_;
 
     // Project creation state
-    char project_name_buffer_[256];
-    char project_path_buffer_[512];
+    CreateProjectDialog create_project_dialog_;  // File > New Project
+    NewFileDialog new_script_dialog_;            // File / Script > New Script
+    AboutDialog about_dialog_;                   // Help > About CyxWiz
 
     // Save As dialog state
     bool show_save_as_dialog_ = false;
@@ -423,12 +455,8 @@ private:
     char save_as_path_buffer_[512] = "";
 
     // New script dialog state
-    bool show_new_script_dialog_ = false;
-    char new_script_name_[256] = "";
-    int new_script_type_ = 0;  // 0 = .cyx, 1 = .py
 
     // Plot windows management
-    std::vector<std::shared_ptr<PlotWindow>> plot_windows_;
 
     // Edit menu callbacks
     std::function<void()> undo_callback_;
@@ -440,10 +468,9 @@ private:
     std::function<void()> select_all_callback_;
     std::function<void()> toggle_line_comment_callback_;
     std::function<void()> toggle_block_comment_callback_;
-    std::function<void(const std::string&, bool, bool, bool)> find_callback_;  // text, case_sensitive, whole_word, regex
-    std::function<void()> find_next_callback_;  // Find next occurrence
-    std::function<void(const std::string&, const std::string&, bool, bool, bool)> replace_callback_;  // find, replace, case_sensitive, whole_word, regex
-    std::function<void(const std::string&, const std::string&, bool, bool, bool)> replace_all_callback_;
+    std::function<void(bool)> open_find_callback_;
+    std::function<bool(const std::string&)> file_has_unsaved_changes_callback_;
+    std::function<void(const std::string&)> reload_open_file_callback_;
 
     // New Edit menu callbacks
     std::function<void(int)> go_to_line_callback_;
@@ -460,21 +487,20 @@ private:
     std::function<void()> join_lines_callback_;
 
     // Find/Replace dialog state
-    bool show_find_dialog_ = false;
-    bool show_replace_dialog_ = false;
     bool show_find_in_files_dialog_ = false;
+    // Find in Files / Replace in Files text and options
+    char find_text_buffer_[512] = "";
+    char replace_text_buffer_[512] = "";
+    bool find_case_sensitive_ = false;
+    bool find_whole_word_ = false;
+    bool find_use_regex_ = false;
     bool show_replace_in_files_dialog_ = false;
 
     // Find/Replace buffers
-    char find_text_buffer_[512] = "";
-    char replace_text_buffer_[512] = "";
     char find_in_files_pattern_[256] = "*.py;*.cyx";  // File filter pattern
     char find_in_files_path_[512] = "";  // Search path
 
     // Find/Replace options
-    bool find_case_sensitive_ = false;
-    bool find_whole_word_ = false;
-    bool find_use_regex_ = false;
 
     // Find in Files results
     struct SearchResult {
@@ -486,13 +512,20 @@ private:
     };
     std::vector<SearchResult> search_results_;
     bool search_in_progress_ = false;
+    std::string replace_in_files_summary_;  // shown after Replace All
+    void ReplaceInFiles(const std::string& search_text, const std::string& replace_text,
+                        const std::string& search_path, const std::string& file_patterns,
+                        bool case_sensitive, bool whole_word, bool use_regex);
 
     // Preferences dialog state
     bool show_preferences_dialog_ = false;
+    bool preferences_open_appearance_ = false;
+    std::string preferences_select_tab_;  // tab to select when the dialog opens
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
     // Python/Scripting preferences
     bool python_settings_changed_ = false;  // Track if restart needed
+    gui::PythonSettingsPanel python_settings_panel_;
     char python_interpreter_path_[512] = "";
     char python_startup_script_[512] = "";
     bool python_auto_import_numpy_ = true;
@@ -502,36 +535,91 @@ private:
     std::string python_diagnostics_text_;
 
     // Keyboard shortcuts (action name -> shortcut string)
-    struct ShortcutEntry {
-        std::string category;     // Category name (e.g., "General", "Script Editor", "Node Editor")
-        std::string action;
-        std::string shortcut;
-        std::string description;
-        bool editable;
-    };
-    std::vector<ShortcutEntry> shortcuts_;
-    int editing_shortcut_index_ = -1;
-    char shortcut_edit_buffer_[64] = "";
+    int shortcuts_context_ = 0;        // Preferences > Shortcuts: selected window
+    char shortcuts_search_[128] = "";
 
     // Device preferences
-    int selected_device_index_ = 0;  // Index into cached_devices_
+    int selected_device_index_ = -1;  // Active index into cached_devices_
+    int selected_backend_type_ = -1;
+    bool show_oneapi_training_warning_ = false;
+    int pending_oneapi_device_index_ = -1;
+    bool device_selection_dirty_ = false;
+    bool show_device_selection_error_ = false;
+    std::string device_selection_error_;
+    std::vector<int> device_selection_recommendation_indices_;
     bool devices_initialized_ = false;
     struct CachedDevice {
-        int type;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan
-        int device_id;
+        int type = -1;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan, 5=oneAPI
+        int device_id = -1;
         std::string name;
-        size_t memory_total;
-        size_t memory_available;
+        size_t memory_total = 0;
+        size_t memory_available = 0;
+        int kind = 0;
+        int identity_confidence = 0;
+        std::string provider;
+        std::string driver_version;
+        std::string physical_fingerprint;
+        uint32_t hardware_vendor_id = 0;
+        bool hardware_vendor_id_known = false;
+        bool provider_known = false;
+        bool driver_version_known = false;
+        bool pci_location_known = false;
+        int pci_domain = 0;
+        int pci_bus = 0;
+        int pci_device = 0;
+        int pci_function = 0;
+        bool physical_fingerprint_known = false;
+        int metadata_status = 0;
+        bool device_selectable = false;
+        bool execution_validated = false;
+        bool name_is_fallback = false;
+        bool memory_total_known = false;
+        bool memory_available_known = false;
+        bool name_from_qualification = false;
+        std::string identity_source;
+        bool qualification_evidence_available = false;
+        bool matrix_qualified = false;
+        bool training_authorized = false;
+        int training_authorization_status = 0;
+        std::string qualification_matrix_id;
+        std::string qualification_message;
+        std::string training_authorization_message;
+        std::string failure_category;
+        std::string failed_operation;
+        std::string observed_failure;
+        std::string failure_interpretation;
+        std::string recommended_action;
     };
     std::vector<CachedDevice> cached_devices_;
+    std::shared_ptr<RouteQualificationService> route_qualification_service_;
+    uint64_t route_qualification_task_id_ = 0;
+    bool route_qualification_task_refreshed_ = true;
+    std::string backend_pack_details_id_;
+    // Set by a route's Verify or a pack's "Verify routes"; consumed where the
+    // verification service is started (single route or one backend, merged).
+    int pending_route_verify_index_ = -1;
+    std::string backend_pack_verify_backend_;
+    std::set<std::string> compute_route_details_open_;
+    bool show_backend_pack_maintenance_confirm_ = false;
+    int backend_pack_maintenance_action_ = 0;
+    std::string backend_pack_maintenance_backend_;
+    std::string backend_pack_maintenance_pack_id_;
+    std::string backend_pack_maintenance_message_;
+    bool backend_pack_maintenance_queued_ = false;
+    std::filesystem::path backend_pack_runtime_root_;
+    std::shared_ptr<runtime::BackendPackLifecycleService>
+        backend_pack_lifecycle_service_;
+    std::vector<BackendPackManagerRecord> backend_pack_catalog_records_;
+    bool backend_pack_catalog_loaded_ = false;
+    bool backend_pack_catalog_available_ = false;
+    std::string backend_pack_catalog_message_;
 
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;
     int go_to_line_number_ = 1;
 
     // Editor preferences
-    int editor_theme_ = 3;  // Default to Monokai (index 3)
-    int editor_font_size_ = 16;  // Maps to font_scale: 8=1.0, 12=1.3, 16=1.6, 20=2.0
+    int editor_font_size_ = 16;  // Maps to editor atlas sizes: 14, 16, 20, 24 px
     int editor_tab_size_ = 4;
     bool editor_word_wrap_ = false;
     bool editor_show_line_numbers_ = true;
@@ -541,7 +629,6 @@ private:
     bool editor_show_minimap_ = false;
 
     // Editor settings callbacks
-    std::function<void(int)> editor_theme_callback_;
     std::function<void(int)> editor_tab_size_callback_;
     std::function<void(float)> editor_font_scale_callback_;
     std::function<void(bool)> editor_show_whitespace_callback_;
@@ -556,9 +643,7 @@ private:
     std::function<void()> view_test_results_callback_;
 
     // Tools menu callbacks
-    std::function<void()> resume_checkpoint_callback_;
-    std::function<void()> save_checkpoint_callback_;
-    std::function<void()> save_model_callback_;
+    std::function<void()> load_checkpoint_callback_;
     std::function<void()> run_quick_test_callback_;
     std::function<void()> compare_test_results_callback_;
     std::function<void()> export_test_report_callback_;
@@ -575,7 +660,6 @@ private:
     std::function<void()> open_lr_finder_callback_;
 
     // Data Science callbacks (Phase 3)
-    std::function<void()> open_data_profiler_callback_;
     std::function<void()> open_correlation_matrix_callback_;
     std::function<void()> open_missing_value_callback_;
     std::function<void()> open_outlier_detection_callback_;
@@ -593,6 +677,7 @@ private:
     std::function<void()> open_nas_callback_;
     std::function<void()> open_hyperparam_search_callback_;
     std::function<void()> open_serving_callback_;
+    std::function<void(const std::string&)> show_plugin_nodes_callback_;
     std::function<void()> open_dnn_inference_callback_;
 
     // Clustering callbacks (Phase 6A)
@@ -651,6 +736,7 @@ private:
     std::function<void()> open_tfidf_callback_;
     std::function<void()> open_embeddings_callback_;
     std::function<void()> open_sentiment_callback_;
+    std::function<void()> open_language_model_generation_callback_;
 
     // Utilities callbacks (Phase 12)
     std::function<void()> open_calculator_callback_;
@@ -671,9 +757,6 @@ private:
     bool general_confirm_on_exit_ = true;
 
     // Appearance preferences
-    float appearance_ui_scale_ = 1.0f;
-    bool appearance_smooth_scrolling_ = true;
-    int appearance_sidebar_position_ = 0;  // 0 = Left, 1 = Right
 
     // Minimap visibility pointers
     bool* node_editor_minimap_ptr_ = nullptr;
@@ -693,13 +776,16 @@ private:
     int compute_device_index_ = 0;
     std::vector<cyxwiz::DeviceInfo> compute_devices_;
     bool compute_devices_initialized_ = false;
-    std::function<void(cyxwiz::DeviceType, int)> compute_device_changed_callback_;
+    std::function<bool(cyxwiz::DeviceType,
+                       int,
+                       const std::string&,
+                       std::string&)> compute_device_changed_callback_;
 
     // Command Palette state
     bool show_command_palette_ = false;
     char search_buffer_[256] = "";
-    std::vector<ToolEntry> all_tools_;           // All available tools
-    std::vector<const ToolEntry*> filtered_tools_;  // Filtered results (pointers to all_tools_)
+    std::vector<menu::PaletteEntry> palette_entries_;  // rebuilt when the palette opens
+    std::vector<int> filtered_entries_;                // indices into palette_entries_, best first
     int selected_index_ = 0;                     // Currently selected item in list
     bool focus_search_input_ = false;            // Flag to focus input on open
 };

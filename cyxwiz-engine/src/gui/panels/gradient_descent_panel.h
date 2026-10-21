@@ -96,7 +96,6 @@ private:
     bool contour_generated_ = false;
 
     // Step-by-step mode
-    bool step_mode_ = false;
     int current_step_ = 0;
     std::vector<double> current_x_;
     std::vector<double> velocity_;  // For momentum

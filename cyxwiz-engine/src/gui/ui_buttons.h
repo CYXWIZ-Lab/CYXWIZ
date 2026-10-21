@@ -1,0 +1,70 @@
+#pragma once
+
+// CyxWiz button styles for Engine and Installer screens. Use these instead of
+// ImGui::Button / ImGui::SmallButton so actions share one look: filled primary,
+// bordered secondary, text link, and danger. Each returns true when clicked
+// while enabled; a disabled button still shows `disabled_reason` on hover.
+
+struct ImVec4;
+
+namespace cyxwiz::ui {
+
+enum class ButtonSize { Small, Regular };
+
+bool PrimaryButton(const char* label, bool enabled = true,
+                   const char* disabled_reason = nullptr,
+                   ButtonSize size = ButtonSize::Regular, float width = 0.0f);
+bool SecondaryButton(const char* label, bool enabled = true,
+                     const char* disabled_reason = nullptr,
+                     ButtonSize size = ButtonSize::Small, float width = 0.0f);
+bool LinkButton(const char* label, bool enabled = true);
+// A link at text height, for a figure inside a table row (LinkButton's
+// padding makes the row taller than its neighbours).
+bool InlineLink(const char* label);
+// Toolbar action: no fill until hovered; `on` gives it the secondary fill
+// (a panel that is shown, a toggle that is set). `text` (optional) colours
+// the label, e.g. a green run arrow.
+bool GhostButton(const char* label, bool enabled = true, const char* disabled_reason = nullptr,
+                 bool on = false, ButtonSize size = ButtonSize::Small, const ImVec4* text = nullptr);
+bool DangerButton(const char* label, bool enabled = true,
+                  const char* disabled_reason = nullptr,
+                  ButtonSize size = ButtonSize::Small);
+
+// Pill toggle with a label in `accent_rgba` (0xAABBGGRR, as ImU32) and a
+// muted count; dimmed when off. Returns true when clicked. `id` keeps the
+// widget identity stable while the count text changes.
+bool ToggleChip(const char* id, const char* label, const char* count, bool on,
+                unsigned int accent_rgba, bool emphasise = false);
+// Pill-shaped action (quick commands): monospace-friendly label, bordered.
+bool ChipButton(const char* label);
+float ChipButtonWidth(const char* label);
+
+// Segmented choice (one of several options side by side). Returns true when
+// the selection changed; `selected` is updated.
+bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
+
+// Rounded status pill with a coloured dot (a kernel or service state).
+// Returns true when clicked.
+bool StatusPill(const char* id, const char* text, const ImVec4& dot);
+float StatusPillWidth(const char* text);
+
+// Width a ToggleChip will take.
+float ToggleChipWidth(const char* label, const char* count);
+
+// One of a row of filter chips where exactly one is chosen (Variable
+// Explorer: All, Tables, ...): accent fill when chosen, faint fill
+// otherwise, the count muted. Returns true when clicked.
+bool FilterChip(const char* id, const char* label, const char* count, bool chosen);
+float FilterChipWidth(const char* label, const char* count);
+
+// A tab of a row of jobs (Data Studio): the name, a dim caption under it, an
+// accent line under the chosen one; no fill. Returns true when clicked.
+bool JobTab(const char* id, const char* label, const char* caption, bool chosen);
+float JobTabWidth(const char* label, const char* caption);
+
+// Width a button will take, for sizing fixed table columns.
+float ButtonWidth(const char* label, ButtonSize size);
+// Height a button will take, for reserving room below a growing widget.
+float ButtonHeight(ButtonSize size);
+
+}  // namespace cyxwiz::ui

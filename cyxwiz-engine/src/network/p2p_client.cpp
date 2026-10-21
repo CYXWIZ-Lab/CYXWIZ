@@ -1,7 +1,11 @@
 #include "p2p_client.h"
+#include "../core/project_manager.h"
+#include "../core/training_failure.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
+#include <cctype>
 #include <filesystem>
+#include <limits>
 
 namespace network {
 
@@ -180,10 +184,12 @@ bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
     }
 
     if (response.status() != cyxwiz::protocol::STATUS_SUCCESS || !response.accepted()) {
+        last_rejection_reason_ = response.rejection_reason();
         last_error_ = "Job rejected: " + response.rejection_reason();
         spdlog::error("P2PClient: {}", last_error_);
         return false;
     }
+    last_rejection_reason_.clear();
 
     spdlog::debug("P2PClient: Job {} accepted, estimated start time: {}",
                  config.job_id(),
@@ -220,10 +226,12 @@ bool P2PClient::SendJobWithDatasetURI(const cyxwiz::protocol::JobConfig& config,
     }
 
     if (response.status() != cyxwiz::protocol::STATUS_SUCCESS || !response.accepted()) {
+        last_rejection_reason_ = response.rejection_reason();
         last_error_ = "Job rejected: " + response.rejection_reason();
         spdlog::error("P2PClient: {}", last_error_);
         return false;
     }
+    last_rejection_reason_.clear();
 
     spdlog::debug("P2PClient: Job {} accepted", config.job_id());
     return true;
@@ -367,6 +375,11 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             progress.progress_percentage = prog.progress_percentage();
             progress.gpu_usage = prog.gpu_usage();
             progress.memory_usage = prog.memory_usage();
+            progress.eta_seconds = prog.estimated_time_remaining() > 0 ? prog.estimated_time_remaining() : -1;
+            progress.elapsed_seconds = prog.elapsed_time() > 0 ? prog.elapsed_time() : -1;
+            progress.samples_per_second = prog.samples_per_second();
+            progress.gpu_memory_used = prog.gpu_memory_used();
+            progress.gpu_memory_total = prog.gpu_memory_total();
 
             // Copy metrics map
             for (const auto& [key, value] : prog.metrics()) {
@@ -382,8 +395,15 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             CheckpointInfo checkpoint;
             checkpoint.epoch = ckpt.epoch();
             checkpoint.checkpoint_hash = ckpt.checkpoint_hash();
-            checkpoint.storage_uri = "";  // Not in proto, use empty string
+            checkpoint.storage_uri = "";  // the node keeps the files under its data dir
             checkpoint.size_bytes = ckpt.weights_size();
+            for (const auto& [key, value] : ckpt.metrics_at_checkpoint()) {
+                if (key == "next_batch") {
+                    checkpoint.next_batch = static_cast<int64_t>(value);
+                } else {
+                    checkpoint.metrics[key] = value;
+                }
+            }
 
             if (checkpoint_callback_) {
                 checkpoint_callback_(checkpoint);
@@ -396,6 +416,13 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             complete.total_training_time = comp.total_training_time();
             complete.result_hash = comp.result_hash();
             complete.model_uri = comp.weights_location();  // Use weights_location instead
+            complete.total_epochs_completed = comp.total_epochs_completed();
+            complete.final_weights_size = comp.final_weights_size();
+            if (comp.has_timing()) {
+                complete.train_seconds = comp.timing().train_seconds();
+                complete.wall_seconds = comp.timing().wall_seconds();
+                complete.samples_per_second = comp.timing().samples_per_second();
+            }
 
             // Copy final metrics
             for (const auto& [key, value] : comp.final_metrics()) {
@@ -405,6 +432,8 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             if (completion_callback_) {
                 completion_callback_(complete);
             }
+            // The node has trained; its dataset files are no longer needed.
+            dataset_files_.UnregisterJob(update.job_id());
 
             // Job complete, but reservation may still be active
             // Set waiting flag - UI can submit new job or wait for timer
@@ -413,7 +442,7 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
 
             // DON'T stop streaming - keep connection open for new jobs
             // The stream will be closed when:
-            // 1. SendReservationEnd() is called (timer expires)
+            // 1. The node ends the reservation (its deadline)
             // 2. Server Node closes the stream
             // 3. User explicitly disconnects
 
@@ -421,15 +450,25 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
         }
         else if (update.has_error()) {
             const auto& err = update.error();
-            spdlog::error("P2PClient: Training error: {}", err.error_message());
+            // The node's category (TOFIX118 P4a) in front of its message, so
+            // "fix the graph" reads differently from "the device failed".
+            const std::string message =
+                std::string(cyxwiz::TrainingFailureLabel(err.error_code())) + ": " + err.error_message();
+            spdlog::error("P2PClient: Training error ({}): {}", err.error_code(), err.error_message());
 
             bool is_fatal = !err.recoverable();  // If not recoverable, it's fatal
 
+            if (failure_callback_) {
+                failure_callback_(TrainingFailureReport{
+                    err.error_code(), err.error_message(), err.epoch_at_error(), err.recoverable()});
+            }
+
             if (error_callback_) {
-                error_callback_(err.error_message(), is_fatal);
+                error_callback_(message, is_fatal);
             }
 
             if (is_fatal) {
+                dataset_files_.UnregisterJob(update.job_id());
                 streaming_ = false;
                 break;
             }
@@ -443,8 +482,13 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             }
         }
         // Handle dataset streaming requests from Server Node
+        else if (update.has_dataset_file_request()) {
+            HandleDatasetFileRequest(update.dataset_file_request());
+        }
         else if (update.has_dataset_info_request() || update.has_batch_request()) {
-            HandleDatasetRequest(update);
+            // Per-batch streaming was retired (TOFIX118 P2): nodes fetch files.
+            spdlog::warn("P2PClient: node asked for per-batch data; this Engine only ships dataset files "
+                         "(update the Server Node)");
         }
     }
 
@@ -544,72 +588,40 @@ bool P2PClient::SendNewJobConfig(const cyxwiz::protocol::JobConfig& config) {
     return success;
 }
 
-bool P2PClient::SendReservationEnd() {
-    spdlog::debug("P2PClient: Sending reservation end signal");
-
+bool P2PClient::SendReservationExtension(const std::string& p2p_auth_token) {
     cyxwiz::protocol::TrainingCommand cmd;
-    cmd.set_reservation_end(true);
-
-    bool success = SendTrainingCommand(cmd);
-    if (success) {
-        waiting_for_new_job_ = false;
-        streaming_ = false;
-        spdlog::debug("P2PClient: Reservation end sent successfully");
-    } else {
-        spdlog::error("P2PClient: Failed to send reservation end");
-    }
+    cmd.set_reservation_extension_token(p2p_auth_token);
+    const bool success = SendTrainingCommand(cmd);
+    if (!success) spdlog::error("P2PClient: Failed to send the reservation extension");
     return success;
 }
 
-void P2PClient::RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset) {
-    dataset_provider_.RegisterDataset(job_id, dataset);
-    spdlog::debug("P2PClient: Registered dataset for job {}", job_id);
+bool P2PClient::RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, std::string& error) {
+    auto& projects = cyxwiz::ProjectManager::Instance();
+    const std::filesystem::path root = projects.HasActiveProject()
+        ? std::filesystem::path(projects.GetProjectRoot()) / ".cyxwiz" / "remote-datasets"
+        : std::filesystem::temp_directory_path() / "cyxwiz-remote-datasets";
+    std::string folder;
+    for (const char c : job_id) folder.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+    return dataset_files_.RegisterJob(job_id, graph_json, root / (folder.empty() ? std::string("job") : folder),
+                                      error);
 }
 
-void P2PClient::UnregisterDatasetForJob(const std::string& job_id) {
-    dataset_provider_.UnregisterDataset(job_id);
-    spdlog::debug("P2PClient: Unregistered dataset for job {}", job_id);
+void P2PClient::UnregisterJobDatasets(const std::string& job_id) {
+    dataset_files_.UnregisterJob(job_id);
 }
 
-void P2PClient::HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update) {
-    // Lock mutex to ensure stream is valid during write operations
-    std::lock_guard<std::mutex> lock(stream_mutex_);
-
-    if (!stream_) {
-        spdlog::error("P2PClient: Cannot handle dataset request - stream not active");
-        return;
-    }
-
-    cyxwiz::protocol::TrainingCommand response_cmd;
-
-    if (update.has_dataset_info_request()) {
-        const auto& request = update.dataset_info_request();
-        spdlog::info("P2PClient: Received DatasetInfoRequest for job {}", request.job_id());
-
-        auto info_response = dataset_provider_.HandleDatasetInfoRequest(request);
-        *response_cmd.mutable_dataset_info_response() = info_response;
-
-        if (!stream_->Write(response_cmd)) {
-            spdlog::error("P2PClient: Failed to send DatasetInfoResponse");
-        } else {
-            spdlog::debug("P2PClient: Sent DatasetInfoResponse");
-        }
-    }
-    else if (update.has_batch_request()) {
-        const auto& request = update.batch_request();
-        spdlog::debug("P2PClient: Received BatchRequest for job {}, {} indices",
-                      request.job_id(), request.sample_indices_size());
-
-        auto batch_response = dataset_provider_.HandleBatchRequest(request);
-        *response_cmd.mutable_batch_response() = batch_response;
-
-        if (!stream_->Write(response_cmd)) {
-            spdlog::error("P2PClient: Failed to send BatchResponse");
-        } else {
-            spdlog::debug("P2PClient: Sent BatchResponse ({} bytes)",
-                          batch_response.images().size());
-        }
-    }
+void P2PClient::HandleDatasetFileRequest(const cyxwiz::protocol::DatasetFileRequest& request) {
+    spdlog::info("P2PClient: node requested dataset '{}' for job {} (offset {})", request.dataset_name(),
+                 request.job_id(), request.offset());
+    const bool sent = dataset_files_.HandleRequest(request, [this](const cyxwiz::protocol::DatasetFileChunk& chunk) {
+        std::lock_guard<std::mutex> lock(stream_mutex_);
+        if (!stream_) return false;
+        cyxwiz::protocol::TrainingCommand command;
+        *command.mutable_dataset_file_chunk() = chunk;
+        return stream_->Write(command);
+    });
+    if (!sent) spdlog::error("P2PClient: sending dataset '{}' to the node failed", request.dataset_name());
 }
 
 bool P2PClient::DownloadWeights(const std::string& job_id,
@@ -628,13 +640,25 @@ bool P2PClient::DownloadWeightsWithOffset(const std::string& job_id,
         return false;
     }
 
+    if (offset > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+        last_error_ = "Download offset exceeds the protocol limit";
+        spdlog::error("P2PClient: {}", last_error_);
+        return false;
+    }
+    if (chunk_size == 0 ||
+        chunk_size > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        last_error_ = "Download chunk size must be between 1 and INT32_MAX bytes";
+        spdlog::error("P2PClient: {}", last_error_);
+        return false;
+    }
+
     spdlog::info("P2PClient: Downloading weights for job {} to {}", job_id, output_path);
 
     // Prepare download request
     cyxwiz::protocol::DownloadRequest request;
     request.set_job_id(job_id);
-    request.set_offset(offset);
-    request.set_chunk_size(chunk_size);
+    request.set_offset(static_cast<int64_t>(offset));
+    request.set_chunk_size(static_cast<int32_t>(chunk_size));
 
     grpc::ClientContext context;
     AddAuthMetadata(context);

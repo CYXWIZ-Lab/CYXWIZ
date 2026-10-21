@@ -1,0 +1,842 @@
+// DataInputDialog Apply and async load result handling.
+
+#include "node_config_dialog.h"
+#include "loaders/data_loader.h"
+#include "../core/data_registry.h"
+#include "../core/project_data_path.h"
+#include "../core/project_manager.h"
+
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <unordered_set>
+
+#include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
+
+namespace fs = std::filesystem;
+
+namespace gui {
+void DataInputDialog::Apply() {
+    if (!node_) return;
+    if (IsHdf5Source()) {
+        apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
+        apply_success_ = false;
+        return;
+    }
+
+    // Apply also acts as confirmation. Reuse a valid registration when no
+    // setting changed instead of parsing the same source again.
+    if (!has_changes_ && !is_loading_async_) {
+        const auto existing = node_->parameters.find("dataset_name");
+        if (existing != node_->parameters.end() && !existing->second.empty()) {
+            auto* existing_loader =
+                cyxwiz::loaders::GetByRegisteredDataset(existing->second);
+            cyxwiz::loaders::RestoreState restored;
+            if (existing_loader &&
+                existing_loader->RestoreFromRegistry(
+                    existing->second, *node_, restored) && restored.found) {
+                loaded_dataset_name_ = existing->second;
+                loaded_rows_ = restored.rows;
+                loaded_cols_ = restored.cols;
+                loaded_classes_ = restored.classes;
+                loaded_memory_bytes_ = restored.bytes;
+                loaded_backend_ = restored.backend;
+                loaded_memory_is_estimate_ = restored.memory_is_estimate;
+                data_load_state_ = DataLoadState::InMemory;
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                if (restored.backend == 1 || restored.backend == 2) {
+                    node_->parameters["memory_bytes"] =
+                        std::to_string(loaded_memory_bytes_);
+                }
+                apply_success_ = true;
+                apply_status_message_ = "Already loaded - reused " +
+                    existing->second;
+                apply_in_progress_ = false;
+                spdlog::info(
+                    "DataInputDialog: unchanged Apply reused registered dataset '{}'",
+                    existing->second);
+                return;
+            }
+        }
+    }
+
+    // Data Input reads files and folders; the pipeline executor refuses any
+    // other source type.
+    node_->parameters["source_type"] = "file";
+    node_->parameters["file_category"] = data_input::FileCategoryParam(file_category_);
+
+    // Prune stale per-category params when the user switched category
+    // since the last Apply. Without this, switching Tabular → Image
+    // would leave `label_column`, `delimiter`, `has_header` etc. in
+    // node->parameters forever — they'd show up in saved .cyxgraph
+    // files and could mislead the compile gate on the next load.
+    //
+    // Algorithm: union all keys across all registered loaders (those
+    // are the "per-category" keys). Remove any such key that's not in
+    // the current loader's schema. Common params (dataset_name,
+    // file_path, source_type, etc.) are never in any loader's schema
+    // and thus never pruned.
+    if (auto* current_loader = cyxwiz::loaders::GetByCategory(file_category_)) {
+        std::unordered_set<std::string> all_known;
+        for (auto* l : cyxwiz::loaders::All()) {
+            for (const auto& p : l->NodeParams()) all_known.insert(p.name);
+        }
+        std::unordered_set<std::string> current_keys;
+        for (const auto& p : current_loader->NodeParams()) current_keys.insert(p.name);
+
+        for (auto it = node_->parameters.begin(); it != node_->parameters.end(); ) {
+            if (all_known.count(it->first) && !current_keys.count(it->first)) {
+                it = node_->parameters.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // Common parameters
+    // Sources inside the project are saved project-relative so the graph is
+    // portable; loaders resolve them back (core/project_data_path.h).
+    const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    node_->parameters["file_path"] = cyxwiz::MakeProjectRelativePath(file_path_, project_root);
+    node_->parameters["folder_path"] = cyxwiz::MakeProjectRelativePath(folder_path_, project_root);
+    node_->parameters["configured"] = "true";
+    // Data Input owns physical loading only. Remove the former role hint so
+    // saved graphs cannot override the named Training/Validation/Test inputs
+    // on Data Split. The compiler still reports legacy values until a node is
+    // reapplied, but never uses them as runtime authority.
+    node_->parameters.erase("dataset_role");
+    // Persist the Force disk-backed toggle so reopening the dialog (or
+    // reopening the project) keeps the user's choice. Without this, the
+    // checkbox silently resets to false and the next Apply falls back to
+    // auto-detect, surprising users who explicitly asked for disk-backed.
+    node_->parameters["force_disk_backed"] = force_disk_backed_ ? "true" : "false";
+
+    // Persist audio layout + FlatWithCSV fields so reopen restores them.
+    // Without this, picking FlatWithCSV and a labels CSV, closing the dialog,
+    // and reopening would silently reset to ClassSubdirs and lose the CSV
+    // path, causing the next Apply to fail with "no class subdirectories".
+    node_->parameters["audio_layout"] =
+        std::to_string(static_cast<int>(audio_layout_));
+    node_->parameters["audio_labels_csv"] = audio_labels_csv_;
+    node_->parameters["audio_filename_col"] = audio_filename_col_;
+    node_->parameters["audio_label_col"] = audio_label_col_;
+
+    // Source-specific parameters
+    {
+        node_->parameters["file_type"] =
+            data_input::FileTypeParam(detected_type_);
+        node_->parameters.erase("type");
+        node_->parameters["archive_member"] = archive_member_;
+        node_->parameters["has_header"] = has_header_ ? "true" : "false";
+        node_->parameters["delimiter"] = custom_delimiter_;
+        node_->parameters["decimal_point"] = std::string(1, decimal_point_);
+        node_->parameters["quote_char"] = std::string(quote_char_, quote_char_[0] ? 1 : 0);
+        node_->parameters["missing_value_tokens"] = missing_value_tokens_;
+        node_->parameters["skip_rows"] = std::to_string(skip_rows_);
+        node_->parameters["max_rows"] = std::to_string(max_rows_);
+        // Files are read as UTF-8; the encoding choice it saved was never read.
+        node_->parameters.erase("encoding");
+        // A time series keeps its rows in the order of its time column.
+        if (file_category_ == FileCategory::TimeSeries && time_column_[0] != '\0')
+            node_->parameters["time_column"] = time_column_;
+        else
+            node_->parameters.erase("time_column");
+
+        if (file_category_ == FileCategory::Image) {
+            // The size and normalizing are the Resize / Normalize nodes'
+            // (TOFIX129 B-9); the settings Data Input kept, unused, go.
+            for (const char* key : {"target_width", "target_height", "normalize", "rgb"})
+                node_->parameters.erase(key);
+            node_->parameters["labels_csv"] = labels_csv_;
+            node_->parameters["image_layout"] = std::to_string(static_cast<int>(image_layout_));
+        } else if (file_category_ == FileCategory::Audio) {
+            node_->parameters["sample_rate"] = std::to_string(sample_rate_);
+            node_->parameters["max_duration"] = std::to_string(duration_sec_);
+            // Audio is always mixed to mono; the checkbox did nothing.
+            node_->parameters.erase("mono");
+        } else if (file_category_ == FileCategory::Text) {
+            // Persist text dialog state so reopening the dialog restores
+            // the layout choice and column mapping. Tokenizing is the Text
+            // Tokenizer node's (TOFIX129 B-8): the settings Data Input kept
+            // for it are dropped.
+            node_->parameters["text_layout"] =
+                std::to_string(static_cast<int>(text_layout_));
+            node_->parameters["text_column"] = text_column_;
+            node_->parameters["text_label_column"] = text_label_column_;
+            for (const char* key : {"text_tokenizer_type", "text_max_length", "text_lowercase", "text_min_freq",
+                                    "text_max_vocab_size"})
+                node_->parameters.erase(key);
+        }
+
+        // Excel specific
+        if (detected_type_ == 5) {
+            node_->parameters["sheet_idx"] = std::to_string(sheet_idx_);
+            node_->parameters["sheet_range"] = sheet_range_;
+        }
+        // HDF5 specific
+        if (detected_type_ == 6) {
+            node_->parameters["hdf5_dataset"] = hdf5_dataset_;
+        }
+        // JSON specific
+        if (detected_type_ == 3) {
+            node_->parameters["json_lines"] = json_lines_ ? "true" : "false";
+            node_->parameters["json_path"] = json_path_;
+        }
+
+        // Label column for ML training. Disk-backed and other asynchronous
+        // sources may not have populated available_columns_ yet. In that
+        // state, preserve a previously selected label instead of silently
+        // replacing it with an empty string. A populated selector with
+        // index -1 still means the user deliberately chose "(None)".
+        std::string effective_label_column;
+        if (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size())) {
+            effective_label_column = available_columns_[label_column_idx_];
+        } else if (available_columns_.empty()) {
+            auto existing_label = node_->parameters.find("label_column");
+            if (existing_label != node_->parameters.end()) {
+                effective_label_column = existing_label->second;
+            }
+        }
+        node_->parameters["label_column"] = effective_label_column;
+        ApplySequenceSettings();
+
+        // Description under the node: the source it names, not a status
+        // ("Reading helix.csv" read like a load still running).
+        if (strlen(file_path_) > 0) {
+            fs::path p(file_path_);
+            std::string desc = p.filename().string();
+            if (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size())) {
+                desc += " \xC2\xB7 label " + available_columns_[label_column_idx_];
+            }
+            node_->description = desc;
+        } else if (strlen(folder_path_) > 0) {
+            fs::path p(folder_path_);
+            node_->description = p.filename().string() + "/";
+        }
+    }
+
+    // === NEW: Actually load data and provide feedback ===
+    apply_in_progress_ = true;
+    apply_success_ = false;
+    apply_status_message_.clear();
+    apply_started_at_ = std::chrono::steady_clock::now();
+    last_load_elapsed_ms_ = -1.0f;
+
+    // Guard: Image category with a single file (not a folder) is not a
+    // valid training use case. The user probably used the top-level file
+    // picker instead of the Image Loading Options folder picker.
+    if (file_category_ == FileCategory::Image &&
+        strlen(file_path_) > 0 && strlen(folder_path_) == 0) {
+        apply_status_message_ = "Image training requires a folder of images, "
+            "not a single file. Set the Folder path in the Image Loading "
+            "Options section above.";
+        apply_success_ = false;
+        node_->parameters["data_loaded"] = "false";
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        spdlog::warn("DataInputDialog: Image category with single file - need folder instead");
+        return;
+    }
+
+    // Text loading (Phase 3).
+    //
+    // Takes priority over the tabular CSV branch since both can trigger
+    // on a non-empty file_path_. We dispatch explicitly by file_category_
+    // to route the user's intent: Text now goes through the SAME async
+    // AsyncTaskManager worker pattern that Arrow/Parquet uses, because
+    // the original assumption ("text files are small, a sync probe is
+    // fine") was wrong — 52k-row CSVs with word tokenization take 1.5-2
+    // seconds of UI-thread freeze during TextDataset construction, and
+    // the user sees no feedback.
+    //
+    // Two sub-paths, picked by text_layout_:
+    //   - SingleFile:    uses file_path_, handles CSV/JSON/TXT
+    //   - CorpusSubdirs: uses folder_path_, handles folder/<class>/*.txt
+    //
+    // TextDataset's constructor auto-detects file vs directory from the
+    // path itself, so the only thing differing between the two paths is
+    // which field we pull the source from. The worker body reads the
+    // texts and labels, then calls RegisterTextDataset under its own
+    // lock. PollAsyncLoadResult drains the result onto the UI thread
+    // on the next frame.
+    const bool text_single_ready =
+        file_category_ == FileCategory::Text &&
+        text_layout_ == TextLayout::SingleFile &&
+        strlen(file_path_) > 0;
+    const bool text_corpus_ready =
+        file_category_ == FileCategory::Text &&
+        text_layout_ == TextLayout::CorpusSubdirs &&
+        strlen(folder_path_) > 0;
+    if ((text_single_ready || text_corpus_ready)) {
+        // Text load — routes through TextLoader. Branch takes priority
+        // over the tabular branch below because a CSV file with Text
+        // category selected registers text metadata, not just the plain
+        // Arrow path. TextDataset auto-detects file vs
+        // directory from the source path, so we just pick the right
+        // field (file_path_ for SingleFile, folder_path_ for
+        // CorpusSubdirs) and the loader forwards it.
+        if (is_loading_async_) {
+            spdlog::warn("DataInputDialog: Text Apply ignored - load already in progress");
+            apply_in_progress_ = false;
+            return;
+        }
+
+        auto* loader = cyxwiz::loaders::GetByCategory(
+            cyxwiz::loaders::FileCategory::Text);
+        if (!loader) {
+            apply_status_message_ = "No loader registered for Text";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: TextLoader not registered");
+            return;
+        }
+
+        const std::string text_source_path = cyxwiz::ResolveProjectDataPath(
+            text_corpus_ready ? std::string(folder_path_)
+                              : std::string(file_path_),
+            cyxwiz::ProjectManager::Instance().GetProjectRoot());
+
+        std::string previous_dataset_name;
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
+        }
+        loaded_dataset_name_ = GenerateDatasetName();
+
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name          = loaded_dataset_name_;
+        ctx.source_path           = text_source_path;
+        ctx.previous_dataset_name = previous_dataset_name;
+        ctx.text_column           = text_column_;
+        ctx.text_label_column     = text_label_column_;
+        // has_labels: always true for corpus-subdirs layout (label =
+        // parent folder name); for single-file layout, true only when
+        // the user picked a label column.
+        ctx.text_has_labels       = text_corpus_ready ||
+                                    (strlen(text_label_column_) > 0);
+
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: text validate - {}", err);
+            return;
+        }
+
+        auto state = std::make_shared<AsyncLoadState>();
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = text_source_path;
+        async_load_state_   = state;
+        is_loading_async_   = true;
+
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
+
+        apply_status_message_ = std::string("Reading ") +
+            fs::path(text_source_path).filename().string() + "...";
+
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
+
+        spdlog::info("DataInputDialog: queued async text load (task {}, name '{}')",
+                     loading_task_id_, loaded_dataset_name_);
+
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        return;
+    } else if (strlen(file_path_) > 0 &&
+               (file_category_ == FileCategory::Tabular ||
+                file_category_ == FileCategory::TimeSeries)) {
+        // Tabular / TimeSeries load. All sub-formats (CSV / TSV / TXT /
+        // ARFF, Parquet, JSON, Excel, auto-detect) route through
+        // TabularLoader, which runs the work on an AsyncTaskManager
+        // worker and writes the outcome into AsyncLoadState.
+        // PollAsyncLoadResult on the UI thread finalizes the node +
+        // status message on the next frame.
+        //
+        // Behavior change vs pre-refactor: Parquet / JSON / Excel used
+        // to run synchronously on the UI thread and would freeze the
+        // dialog on large files. They're now async too, matching the
+        // CSV path — consistent UX, one code path.
+        //
+        // The category gate (Tabular || TimeSeries) still lives here
+        // because Image / Audio / Text all have stale file_path_
+        // values from older sessions and we don't want to mis-dispatch
+        // them through the tabular loader.
+        if (is_loading_async_) {
+            spdlog::warn("DataInputDialog: Apply ignored - load already in progress");
+            apply_in_progress_ = false;
+            return;
+        }
+
+        auto* loader = cyxwiz::loaders::GetByCategory(file_category_);
+        if (!loader) {
+            // Defensive — TabularLoader is registered at startup and
+            // GetByCategory also routes TimeSeries back to Tabular, so
+            // this should never fire in practice.
+            apply_status_message_ = "No loader registered for this category";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: no loader for tabular category");
+            return;
+        }
+
+        // Capture the OLD dataset_name before GenerateDatasetName
+        // overwrites it. The loader clears the old registry entry on
+        // re-Apply so a rename (e.g., user picks a different file)
+        // doesn't leak the prior dataset.
+        std::string previous_dataset_name;
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
+        }
+        loaded_dataset_name_ = GenerateDatasetName();
+
+        std::vector<std::string> included_columns;
+        if (!select_all_columns_) {
+            for (std::size_t i = 0;
+                 i < available_columns_.size() && i < selected_columns_.size();
+                 ++i) {
+                if (selected_columns_[i]) {
+                    included_columns.push_back(available_columns_[i]);
+                }
+            }
+            if (included_columns.empty()) {
+                apply_status_message_ =
+                    "Select at least one column in the Transformation tab";
+                apply_success_ = false;
+                apply_in_progress_ = false;
+                spdlog::warn("DataInputDialog: column projection is empty");
+                return;
+            }
+
+            const std::string& label_column = node_->parameters["label_column"];
+            if (!label_column.empty() &&
+                std::find(included_columns.begin(), included_columns.end(),
+                          label_column) == included_columns.end()) {
+                apply_status_message_ =
+                    "The selected label column must remain included";
+                apply_success_ = false;
+                apply_in_progress_ = false;
+                spdlog::warn(
+                    "DataInputDialog: selected label column '{}' was excluded",
+                    label_column);
+                return;
+            }
+        }
+        if (file_category_ == FileCategory::TimeSeries && time_column_[0] != '\0' && !included_columns.empty() &&
+            std::find(included_columns.begin(), included_columns.end(), time_column_) == included_columns.end()) {
+            apply_status_message_ = "The time column must remain included";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            return;
+        }
+        node_->parameters["selected_columns"] =
+            nlohmann::json(included_columns).dump();
+
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name          = loaded_dataset_name_;
+        ctx.source_path           = cyxwiz::ResolveProjectDataPath(
+            file_path_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        ctx.previous_dataset_name = previous_dataset_name;
+
+        ctx.detected_file_type = data_input::FileTypeParam(detected_type_);
+        ctx.archive_member = archive_member_;
+        ctx.has_header         = has_header_;
+        ctx.delimiter          = custom_delimiter_[0];
+        ctx.decimal_point      = decimal_point_;
+        ctx.quote_char         = quote_char_[0];
+        ctx.missing_value_tokens = missing_value_tokens_;
+        ctx.skip_rows          = skip_rows_;
+        ctx.max_rows           = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
+        ctx.selected_columns   = included_columns;
+        ctx.force_disk_backed  = force_disk_backed_;
+        ctx.json_lines         = json_lines_;
+        ctx.excel_sheet_idx    = sheet_idx_;
+        ctx.label_column       = node_->parameters["label_column"];
+        ctx.time_column        = file_category_ == FileCategory::TimeSeries ? time_column_ : "";
+
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: tabular validate - {}", err);
+            return;
+        }
+
+        auto state = std::make_shared<AsyncLoadState>();
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = ctx.source_path;
+        async_load_state_   = state;
+        is_loading_async_   = true;
+
+        // Provisional node params: mark NOT loaded until the worker
+        // finishes. If the user clicks Train mid-load, the compile gate
+        // sees data_loaded=false and refuses, instead of trying to
+        // train on a dataset that isn't in the registry yet.
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
+
+        apply_status_message_ = std::string("Loading ") +
+            fs::path(file_path_).filename().string() + "...";
+
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
+
+        spdlog::info("DataInputDialog: queued async tabular load (task {}, name '{}')",
+                     loading_task_id_, loaded_dataset_name_);
+
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        return;
+    } else if (strlen(folder_path_) > 0 &&
+               file_category_ == FileCategory::Audio) {
+        // Audio folder load — routes through AudioLoader. Feature
+        // extraction still runs lazily inside AudioDataset::GetItem
+        // at training time; the loader only scans to surface invalid
+        // folders early and stash num_samples / num_classes /
+        // feature shape in the registry.
+        if (is_loading_async_) {
+            spdlog::warn("DataInputDialog: Audio Apply ignored - load already in progress");
+            apply_in_progress_ = false;
+            return;
+        }
+
+        auto* loader = cyxwiz::loaders::GetByCategory(
+            cyxwiz::loaders::FileCategory::Audio);
+        if (!loader) {
+            apply_status_message_ = "No loader registered for Audio";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: AudioLoader not registered");
+            return;
+        }
+
+        std::string previous_dataset_name;
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
+        }
+        loaded_dataset_name_ = GenerateDatasetName();
+
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name           = loaded_dataset_name_;
+        ctx.source_path            = cyxwiz::ResolveProjectDataPath(
+            folder_path_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        ctx.previous_dataset_name  = previous_dataset_name;
+        ctx.audio_labels_csv       = audio_labels_csv_;
+        ctx.audio_filename_col     = audio_filename_col_;
+        ctx.audio_label_col        = audio_label_col_;
+        ctx.audio_labeled_subdirs  = (audio_layout_ == AudioLayout::ClassSubdirs);
+        ctx.audio_target_sr        = sample_rate_;
+        ctx.audio_max_duration     = duration_sec_;
+
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: audio validate - {}", err);
+            return;
+        }
+
+        auto state = std::make_shared<AsyncLoadState>();
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = ctx.source_path;
+        async_load_state_   = state;
+        is_loading_async_   = true;
+
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
+
+        apply_status_message_ = std::string("Scanning ") +
+            fs::path(folder_path_).filename().string() + "...";
+
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
+
+        spdlog::info("DataInputDialog: queued async audio load (task {}, name '{}')",
+                     loading_task_id_, loaded_dataset_name_);
+
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        return;
+    } else if (strlen(folder_path_) > 0 &&
+               file_category_ == FileCategory::Image) {
+        // Image folder load — routes through ImageLoader. Previously
+        // this branch was unguarded (`strlen(folder_path_) > 0`) and
+        // relied on process-of-elimination after the earlier
+        // audio/text branches; the explicit category gate matches the
+        // other refactored branches and makes intent obvious.
+        //
+        // Pixels are loaded lazily at training time by
+        // ImageDatasetBatcher — the loader only scans the folder to
+        // populate num_samples / num_classes and surface invalid
+        // layouts.
+        if (is_loading_async_) {
+            spdlog::warn("DataInputDialog: Image Apply ignored - load already in progress");
+            apply_in_progress_ = false;
+            return;
+        }
+
+        auto* loader = cyxwiz::loaders::GetByCategory(
+            cyxwiz::loaders::FileCategory::Image);
+        if (!loader) {
+            apply_status_message_ = "No loader registered for Image";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: ImageLoader not registered");
+            return;
+        }
+
+        std::string previous_dataset_name;
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
+        }
+        loaded_dataset_name_ = GenerateDatasetName();
+
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name          = loaded_dataset_name_;
+        ctx.source_path           = cyxwiz::ResolveProjectDataPath(
+            folder_path_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        ctx.previous_dataset_name = previous_dataset_name;
+        ctx.image_labels_csv      = labels_csv_;
+        ctx.image_layout          = static_cast<int>(image_layout_);
+
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: image validate - {}", err);
+            return;
+        }
+
+        auto state = std::make_shared<AsyncLoadState>();
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = ctx.source_path;
+        async_load_state_   = state;
+        is_loading_async_   = true;
+
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
+
+        apply_status_message_ = std::string("Scanning ") +
+            fs::path(folder_path_).filename().string() + "...";
+
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
+
+        spdlog::info("DataInputDialog: queued async image load (task {}, name '{}')",
+                     loading_task_id_, loaded_dataset_name_);
+
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        return;
+    }
+
+    apply_in_progress_ = false;  // Show for 5 seconds
+
+    has_changes_ = false;
+    spdlog::info("DataInputDialog: Applied settings");
+}
+
+void DataInputDialog::PollAsyncLoadResult() {
+    // Cheap fast path: nothing pending.
+    if (!is_loading_async_ || !async_load_state_) return;
+
+    // Worker hasn't published yet — keep showing the loading UI.
+    if (!async_load_state_->done.load()) return;
+
+    // === Worker finished. Drain the result onto the UI thread. ===
+    auto state = async_load_state_;
+    async_load_state_.reset();
+    is_loading_async_ = false;
+    loading_task_id_ = 0;
+
+    if (!node_) return;
+
+    auto restore_previous_node_state = [&]() {
+        if (state->previous_dataset_name.empty()) return false;
+        auto* previous_loader = cyxwiz::loaders::GetByRegisteredDataset(
+            state->previous_dataset_name);
+        if (!previous_loader) return false;
+
+        cyxwiz::loaders::RestoreState restored;
+        if (!previous_loader->RestoreFromRegistry(
+                state->previous_dataset_name, *node_, restored) ||
+            !restored.found) {
+            return false;
+        }
+        loaded_dataset_name_ = state->previous_dataset_name;
+        loaded_rows_ = restored.rows;
+        loaded_cols_ = restored.cols;
+        loaded_classes_ = restored.classes;
+        loaded_memory_bytes_ = restored.bytes;
+        loaded_backend_ = restored.backend;
+        loaded_memory_is_estimate_ = restored.memory_is_estimate;
+        data_load_state_ = DataLoadState::InMemory;
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"] = "true";
+        node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+        node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+        if (restored.backend == 1 || restored.backend == 2) {
+            node_->parameters["memory_bytes"] =
+                std::to_string(loaded_memory_bytes_);
+        }
+        return true;
+    };
+
+    if (state->success) {
+        loaded_rows_ = state->rows;
+        loaded_cols_ = state->cols;
+        // Image, audio and text loads count their classes; a table's label
+        // column is counted in Profile.
+        loaded_classes_ = state->backend >= 3 ? static_cast<int64_t>(state->num_classes) : -1;
+        loaded_memory_bytes_ = state->bytes;
+        loaded_backend_ = state->backend;
+        loaded_dataset_name_ = state->dataset_name;
+        data_load_state_ = DataLoadState::InMemory;
+        ResetPreviewPaging();
+        preview_loaded_ = false;
+        apply_success_ = true;
+
+        node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+        node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+        node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"] = "true";
+
+        // Per-backend description format lives in the owning loader
+        // via DescribeCompletedLoad. Tabular returns the "N rows, M
+        // cols" shape (with a "(disk-backed)" suffix for Parquet);
+        // Image / Audio / Text format class + vocab counts instead.
+        fs::path p(state->source_path);
+        auto* loader = cyxwiz::loaders::GetByBackendTag(state->backend);
+        if (loader) {
+            auto desc = loader->DescribeCompletedLoad(*state);
+            loaded_memory_is_estimate_ = desc.memory_is_estimate;
+            node_->description = p.filename().string() + "\n" + desc.node_description_suffix;
+            apply_status_message_ = state->message.empty()
+                ? desc.default_status_message
+                : state->message;
+        } else {
+            // Defensive — every loader we register exposes a BackendTag
+            // that maps back here. If we ever hit this, the backend
+            // field in AsyncLoadState was set to a value no loader
+            // claims.
+            loaded_memory_is_estimate_ = false;
+            node_->description = p.filename().string();
+            apply_status_message_ = state->message.empty()
+                ? std::string("Loaded ") + p.filename().string()
+                : state->message;
+            spdlog::warn("DataInputDialog: no loader for backend tag {}",
+                         state->backend);
+        }
+        if (!state->audit_message.empty()) {
+            apply_status_message_ += " " + state->audit_message;
+            node_->parameters["audit_errors"] = std::to_string(state->audit_errors);
+            node_->parameters["audit_warnings"] = std::to_string(state->audit_warnings);
+            audit_issue_lines_ = state->audit_issue_lines;
+            if (state->audit_errors > 0) {
+                if (loader) {
+                    loader->Unregister(state->dataset_name);
+                }
+                if (state->previous_dataset_name == state->dataset_name &&
+                    (state->previous_arrow_dataset ||
+                     state->previous_parquet_dataset)) {
+                    cyxwiz::DataRegistry::Instance().RestoreTabularDataset(
+                        state->previous_dataset_name,
+                        state->previous_arrow_dataset,
+                        state->previous_parquet_dataset,
+                        state->previous_source_path);
+                }
+                const bool restored_previous = restore_previous_node_state();
+                if (!restored_previous) {
+                    node_->parameters["data_loaded"] = "false";
+                    data_load_state_ = DataLoadState::NotLoaded;
+                }
+                apply_success_ = false;
+                apply_status_message_ =
+                    "Apply refused by dataset audit. " + state->audit_message;
+                if (restored_previous) {
+                    apply_status_message_ +=
+                        " Previous loaded dataset remains active.";
+                }
+            }
+        } else {
+            node_->parameters.erase("audit_errors");
+            node_->parameters.erase("audit_warnings");
+            audit_issue_lines_.clear();
+        }
+
+        // A renamed replacement owns the node only after it has loaded and
+        // passed audit. Until now the previous registration is the rollback.
+        if (apply_success_ && !state->previous_dataset_name.empty() &&
+            state->previous_dataset_name != state->dataset_name) {
+            if (auto* previous_loader = cyxwiz::loaders::GetByRegisteredDataset(
+                    state->previous_dataset_name)) {
+                previous_loader->Unregister(state->previous_dataset_name);
+            }
+        }
+
+        spdlog::info("DataInputDialog: async load complete - {}", apply_status_message_);
+    } else {
+        apply_success_ = false;
+        loaded_backend_ = 0;
+        node_->parameters["data_loaded"] = "false";
+        apply_status_message_ = state->message.empty()
+            ? std::string("Failed to load data")
+            : state->message;
+
+        // A load under the same name that failed after registering (the time
+        // order) gives the registry back its earlier table first.
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        if (state->previous_dataset_name == state->dataset_name && !registry.GetArrowDataset(state->dataset_name) &&
+            !registry.GetParquetBackedDataset(state->dataset_name) &&
+            (state->previous_arrow_dataset || state->previous_parquet_dataset)) {
+            registry.RestoreTabularDataset(state->previous_dataset_name, state->previous_arrow_dataset,
+                                           state->previous_parquet_dataset, state->previous_source_path);
+        }
+        // Failed replacements leave the prior registration intact. Restore
+        // the node's runtime state so it remains usable.
+        if (restore_previous_node_state()) {
+            apply_status_message_ +=
+                " Previous loaded dataset remains active.";
+        } else {
+            // Nothing stays loaded: the strip and Memory tab say so.
+            data_load_state_ = DataLoadState::NotLoaded;
+            loaded_dataset_name_.clear();
+            loaded_rows_ = 0;
+            loaded_cols_ = 0;
+            loaded_classes_ = -1;
+            loaded_memory_bytes_ = 0;
+        }
+        spdlog::error("DataInputDialog: async load failed - {}", apply_status_message_);
+    }
+
+    // A failed Apply keeps the time of the load that stays.
+    if (apply_success_ && apply_started_at_ != std::chrono::steady_clock::time_point{}) {
+        const auto elapsed = std::chrono::steady_clock::now() - apply_started_at_;
+        last_load_elapsed_ms_ =
+            std::chrono::duration<float, std::milli>(elapsed).count();
+    }
+    apply_in_progress_ = false;
+}
+} // namespace gui

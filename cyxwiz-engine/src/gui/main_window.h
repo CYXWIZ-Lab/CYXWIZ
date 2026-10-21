@@ -1,21 +1,34 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <functional>
+#include <map>
+#include <utility>
+#include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
+#include "../core/compile_report_presentation.h"
 
 namespace cyxwiz {
+class ProjectManager;
 class TaskProgressPanel;
+class AsyncTask;
+struct DebugArtifactConsistencyInput;
 } // namespace cyxwiz
+
+namespace cyxwiz {
+class LiveGraphCompile;
+class PythonNodeProvider;
+}  // namespace cyxwiz
 
 namespace gui {
 
 class NodeEditor;
+class DataInputDialog;
 class Console;
 class Viewport;
 class Properties;
-// class TrainingEvaluationPanel;  // Phase 5: Removed - functionality moved to node-based workflow
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
@@ -31,19 +44,14 @@ namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingPlotPanel;
-class PlotTestControlPanel;
-class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
-class DataExplorerPanel;
 class AnnotationEditorPanel;
-class VisualizationPanel;
 class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
 class QueryConsolePanel;
-class ProfilingPanel;
 class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
@@ -55,13 +63,8 @@ class DeploymentDialog;
 class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
-class DataProfilerPanel;
-class CorrelationMatrixPanel;
-class MissingValuePanel;
-class OutlierDetectionPanel;
-class DescriptiveStatsPanel;
+class StudioDebuggerPanel;
 class HypothesisTestPanel;
-class DistributionFitterPanel;
 class RegressionPanel;
 class DimReductionPanel;
 class GradCAMPanel;
@@ -87,7 +90,6 @@ class StandardizationPanel;
 class LogTransformPanel;
 class BoxCoxPanel;
 class FeatureScalingPanel;
-class OptimizerSettingsPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -119,6 +121,7 @@ class WordFrequencyPanel;
 class TFIDFPanel;
 class EmbeddingsPanel;
 class SentimentPanel;
+class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
 class CalculatorPanel;
 class UnitConverterPanel;
@@ -132,6 +135,10 @@ class PluginManagerPanel;
 class DataStudioPanel;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
+struct StudioDebuggerSnapshot;
+struct StudioDebuggerRunControl;
+struct StudioDebuggerRunInputs;
+enum class StudioDebuggerRunMode;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -155,9 +162,9 @@ public:
     void Render();
     void ResetDockLayout();
     Console* GetConsole() { return console_.get(); }
-    cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
     NodeEditor* GetNodeEditor() { return node_editor_.get(); }
+    bool OpenGraphInNodeEditor(const std::string& path);
 
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);
@@ -192,6 +199,8 @@ public:
     // Exit request callback (set by Application to trigger window close)
     using ExitRequestCallback = std::function<void()>;
     void SetExitRequestCallback(ExitRequestCallback callback) { exit_request_callback_ = callback; }
+    // Opens a .py or .cyx file in the Script Editor and shows the editor.
+    void OpenScriptFile(const std::string& file_path);
 
     // Debug logging pointers (set by Application)
     void SetIdleLogPtr(bool* ptr);
@@ -200,7 +209,6 @@ public:
     void SaveProjectSettings();      // Save current editor settings and layout to project
     void LoadProjectSettings();      // Load editor settings and layout from project
     void SaveLayout();               // Save only ImGui layout to project
-    void LoadLayout();               // Load only ImGui layout from project
 
     // Called when project is opened/closed
     void OnProjectOpened(const std::string& project_root);
@@ -208,13 +216,22 @@ public:
     void OnProjectVenvReady(const std::string& project_root);
 
 private:
+    // The Export Model dialog for the trained model (a layer stack or a graph
+    // with branches); format_index is a ModelFormat.
+    void OpenModelExport(int format_index);
     void RenderDockSpace();
     void BuildInitialDockLayout();
-    void ShowAboutDialog();
     void RegisterPanelsWithSidebar();
-    void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
+    void SetDefaultPanelVisibility(bool force = false);  // Hide tool panels, show only core panels
+    std::map<std::string, bool> default_panel_visibility_;  // registered panels before any saved state
     void RenderSidebar();
     void RenderStatusBar();
+    // Renders a panel under a frame-metrics timer (Tools > Diagnostics > Frame Time Overlay).
+    template <class PanelPtr>
+    void TimedRender(const char* name, PanelPtr& panel);
+    // Status bar height follows the interface text size (TOFIX129).
+    static float StatusBarHeight();
+    void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
@@ -223,25 +240,128 @@ private:
 
     // Testing from node graph
     void StartTestingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void StartTestingWithConfig(const std::vector<MLNode>& nodes,
+        const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
+    std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
+    std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
+
+
+    // Compile the current graph as a dry-run (no training) and show results in a popup
+    void CompileGraphAndReport();
+    void RenderCompileResultPopup();
+    // Opens the compile report (main_window_compile_report.cpp) for what the
+    // compile found, or for why Train / Local Debug / a checkpoint load
+    // stopped (`stop_reason`, empty when the findings say it).
+    void ShowCompileReport(cyxwiz::compile_report::Mode mode, std::string stop_reason = {});
+    // User-facing failure for an action that has no result panel of its own
+    // (checkpoint load, Run Test refusals): shown on screen, also logged.
+    void ShowOperationError(std::string title, std::string message);
+    void LoadCheckpointForTesting();
+    void RenderOperationErrorPopup();
+    void RenderMaterializationMemoryConfirmationPopup();
+    bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
+                                    cyxwiz::StudioDebuggerRunMode mode,
+                                    int sample_index);
+    bool BuildStudioDebuggerSessionFromSnapshot(cyxwiz::StudioDebuggerSnapshot& session,
+                                                cyxwiz::StudioDebuggerRunMode mode,
+                                                int sample_index,
+                                                std::vector<MLNode> nodes,
+                                                std::vector<NodeLink> links,
+                                                int explain_node_id = -1,
+                                                const cyxwiz::StudioDebuggerRunControl* control = nullptr,
+                                                const cyxwiz::StudioDebuggerRunInputs* inputs = nullptr);
+    void RecordArtifactConsistencyTrace(
+        const cyxwiz::DebugArtifactConsistencyInput& input);
+
+    // Run Local Debug (F6) as a background Studio Debugger run: compile
+    // gate, preflight, then one synthetic forward/backward pass.
+    void LocalDebugGraphAndReport();
+
+    // Shared compile pass used by both the explicit Compile button and
+    // the Train button's pre-flight gate. Populates compile_result_*
+    // members from a fresh GraphCompiler::Compile call.
+    void BuildCompileResult(const std::vector<MLNode>& nodes,
+                            const std::vector<NodeLink>& links);
+
+    // The compile report (TOFIX129 B3): the findings, placements and
+    // configuration of the last compile, and the report built from them when
+    // the popup opens (core/compile_report_presentation).
+    bool show_compile_result_popup_ = false;
+    bool show_operation_error_popup_ = false;
+    std::string operation_error_title_;
+    std::string operation_error_message_;
+    bool compile_result_success_ = false;
+    bool compile_result_has_config_ = false;
+    cyxwiz::compile_report::ConfigFacts compile_result_config_;
+    std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
+    std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
+    cyxwiz::compile_report::Report compile_report_;
+
+    // Main-thread confirmation state for a warning/risky operator estimate.
+    // The worker is not queued until the user accepts this frozen graph copy.
+    bool show_materialization_memory_confirmation_popup_ = false;
+    bool materialization_memory_confirmation_accepted_once_ = false;
+    int materialization_memory_confirmation_node_id_ = -1;
+    uint64_t materialization_memory_confirmation_estimated_bytes_ = 0;
+    uint64_t materialization_memory_confirmation_available_bytes_ = 0;
+    uint64_t materialization_memory_confirmation_budget_bytes_ = 0;
+    std::string materialization_memory_confirmation_detail_;
+    std::string materialization_memory_confirmation_risk_;
+    std::string materialization_memory_confirmation_node_;
+    int accepted_materialization_memory_node_id_ = -1;
+    uint64_t accepted_materialization_memory_estimated_bytes_ = 0;
+    std::string accepted_materialization_memory_risk_;
+    std::vector<MLNode> pending_memory_confirmation_nodes_;
+    std::vector<NodeLink> pending_memory_confirmation_links_;
+
+    // Train on a reopened project: the Data Inputs it has not loaded load
+    // first, each through an unshown Data Input dialog (the same Apply as its
+    // OK), then training starts with the loaded graph.
+    struct DataInputLoad {
+        int node_id = -1;
+        std::string node_name;
+        std::unique_ptr<DataInputDialog> dialog;
+    };
+    std::vector<DataInputLoad> data_input_loads_;
+    std::string data_input_loads_project_;
+    bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void PollDataInputLoads();
+
+    // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
+    // fingerprint of the (nodes, links) tuple at the moment of the last
+    // *successful* Local Debug run. `have_last_debug_result_` gates the
+    // cache (0 is a valid hash and "no prior run" needs to be
+    // distinguishable). StartTrainingFromGraph checks these to warn the
+    // user if the graph has drifted since the last debug — or, under
+    // EngineConfig::RequireDebugBeforeTrain(), blocks training outright.
+    uint64_t last_debug_graph_hash_ = 0;
+    bool have_last_debug_result_ = false;
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
-    // std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;  // Phase 5: Removed
+    // Background compile of the canvas graph (TOFIX123): Properties AS
+    // COMPILED card, link colours and tooltips follow it.
+    std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
+    uint64_t live_compile_serial_seen_ = 0;
+    void UpdateLiveCompile();
+    // Python node bundles (TOFIX125 P4): registered from <project>/nodes,
+    // the user nodes folder and plugin nodes/ folders; Python is started
+    // here, on the UI thread, when a Python node needs it.
+    std::unique_ptr<cyxwiz::PythonNodeProvider> python_node_provider_;
+    double python_nodes_checked_at_ = -1.0;
+    std::string python_start_error_logged_;
+    void UpdatePythonNodes();
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
-    std::unique_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
-    std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
-    std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
+    std::shared_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
-    std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
     std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
-    std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
@@ -251,7 +371,6 @@ private:
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
-    std::unique_ptr<cyxwiz::ProfilingPanel> profiling_panel_;
     std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
@@ -260,22 +379,15 @@ private:
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
     std::unique_ptr<cyxwiz::DeploymentDialog> deployment_dialog_;
+    std::unique_ptr<cyxwiz::StudioDebuggerPanel> studio_debugger_panel_;
 
     // Model Analysis panels (Phase 2)
     std::unique_ptr<cyxwiz::ModelSummaryPanel> model_summary_panel_;
     std::unique_ptr<cyxwiz::ArchitectureDiagram> architecture_diagram_;
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
-    // Data Science panels (Phase 3)
-    std::unique_ptr<cyxwiz::DataProfilerPanel> data_profiler_panel_;
-    std::unique_ptr<cyxwiz::CorrelationMatrixPanel> correlation_matrix_panel_;
-    std::unique_ptr<cyxwiz::MissingValuePanel> missing_value_panel_;
-    std::unique_ptr<cyxwiz::OutlierDetectionPanel> outlier_detection_panel_;
-
     // Statistics panels (Phase 4)
-    std::unique_ptr<cyxwiz::DescriptiveStatsPanel> descriptive_stats_panel_;
     std::unique_ptr<cyxwiz::HypothesisTestPanel> hypothesis_test_panel_;
-    std::unique_ptr<cyxwiz::DistributionFitterPanel> distribution_fitter_panel_;
     std::unique_ptr<cyxwiz::RegressionPanel> regression_panel_;
 
     // Advanced Tools panels (Phase 5)
@@ -307,7 +419,6 @@ private:
     std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
     std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
     std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
-    std::unique_ptr<cyxwiz::OptimizerSettingsPanel> optimizer_settings_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
@@ -344,6 +455,7 @@ private:
     std::unique_ptr<cyxwiz::TFIDFPanel> tfidf_panel_;
     std::unique_ptr<cyxwiz::EmbeddingsPanel> embeddings_panel_;
     std::unique_ptr<cyxwiz::SentimentPanel> sentiment_panel_;
+    std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;
 
     // Utilities panels (Phase 12)
     std::unique_ptr<cyxwiz::CalculatorPanel> calculator_panel_;
@@ -371,9 +483,9 @@ private:
     // Startup script manager
     std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
-    bool show_about_dialog_;
-    bool show_demo_window_;
     bool first_time_layout_;
+    bool reset_layout_requested_ = false;
+    int front_tabs_countdown_ = 0;  // frames until the default tabs come to the front
 
     // Network components
     network::JobManager* job_manager_ = nullptr;

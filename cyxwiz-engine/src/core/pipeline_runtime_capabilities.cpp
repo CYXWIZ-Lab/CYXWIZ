@@ -1,0 +1,2000 @@
+#include "pipeline_runtime_capabilities.h"
+#include "data_input_formats.h"
+#include "data_convert_formats.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <charconv>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <sstream>
+
+namespace cyxwiz {
+namespace {
+
+std::string TrimRuntimeValue(const std::string& value) {
+    const auto first = std::find_if_not(value.begin(), value.end(),
+        [](unsigned char c) { return std::isspace(c) != 0; });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(),
+        [](unsigned char c) { return std::isspace(c) != 0; }).base();
+    if (first >= last) {
+        return {};
+    }
+    return std::string(first, last);
+}
+
+std::string ToLowerRuntimeValue(const std::string& value) {
+    std::string lowered = TrimRuntimeValue(value);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lowered;
+}
+
+bool TryParseRuntimeInteger(const std::string& value, int64_t& parsed) {
+    const std::string trimmed = TrimRuntimeValue(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    const char* begin = trimmed.data();
+    const char* end = trimmed.data() + trimmed.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    return ec == std::errc() && ptr == end;
+}
+
+bool IsForbiddenRuntimeIntegerValue(
+    int64_t value,
+    const std::vector<int64_t>& forbidden_values) {
+    return std::find(forbidden_values.begin(), forbidden_values.end(), value) !=
+           forbidden_values.end();
+}
+
+bool IsRuntimeIntegerInBounds(
+    const std::string& value,
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    int64_t parsed = 0;
+    return TryParseRuntimeInteger(value, parsed) && parsed >= minimum &&
+           !IsForbiddenRuntimeIntegerValue(parsed, forbidden_values);
+}
+
+std::string DescribeRuntimeIntegerBounds(
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    std::string description = "integer >= " + std::to_string(minimum);
+    if (!forbidden_values.empty()) {
+        description += " except";
+        for (size_t i = 0; i < forbidden_values.size(); ++i) {
+            description += (i == 0 ? " " : ", ") +
+                           std::to_string(forbidden_values[i]);
+        }
+    }
+    return description;
+}
+
+std::string DescribeRuntimeCommaIntegerBounds(
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    if (forbidden_values.empty()) {
+        return "integers >= " + std::to_string(minimum);
+    }
+    return DescribeRuntimeIntegerBounds(minimum, forbidden_values);
+}
+
+bool IsRuntimeFloatInBounds(const std::string& value,
+                            const std::optional<double>& minimum,
+                            const std::optional<double>& maximum,
+                            bool minimum_inclusive,
+                            bool maximum_inclusive) {
+    const std::string trimmed = TrimRuntimeValue(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    double parsed = 0.0;
+    errno = 0;
+    char* end = nullptr;
+    parsed = std::strtod(trimmed.c_str(), &end);
+    if (errno == ERANGE || end != trimmed.c_str() + trimmed.size() ||
+        !std::isfinite(parsed)) {
+        return false;
+    }
+
+    if (minimum.has_value()) {
+        if (minimum_inclusive) {
+            if (parsed < *minimum) {
+                return false;
+            }
+        } else if (parsed <= *minimum) {
+            return false;
+        }
+    }
+    if (maximum.has_value()) {
+        if (maximum_inclusive) {
+            if (parsed > *maximum) {
+                return false;
+            }
+        } else if (parsed >= *maximum) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::string DescribeRuntimeFloatBounds(
+    const std::optional<double>& minimum,
+    const std::optional<double>& maximum,
+    bool minimum_inclusive,
+    bool maximum_inclusive) {
+    if (minimum.has_value() && maximum.has_value()) {
+        return "between " + std::to_string(*minimum) + " and " +
+               std::to_string(*maximum);
+    }
+    if (minimum.has_value()) {
+        return std::string(minimum_inclusive ? "greater than or equal to "
+                                             : "greater than ") +
+               std::to_string(*minimum);
+    }
+    if (maximum.has_value()) {
+        return std::string(maximum_inclusive ? "less than or equal to "
+                                             : "less than ") +
+               std::to_string(*maximum);
+    }
+    return "finite";
+}
+
+bool IsRuntimeAllowedParameterValue(
+    const PipelineAllowedParameterValuesRuntimeCapability& capability,
+    const std::string& value) {
+    const std::string normalized_value = ToLowerRuntimeValue(value);
+    return std::find_if(capability.allowed_values.begin(),
+                        capability.allowed_values.end(),
+                        [&normalized_value](const char* allowed) {
+                            return allowed != nullptr &&
+                                   normalized_value ==
+                                       ToLowerRuntimeValue(allowed);
+                        }) != capability.allowed_values.end();
+}
+
+} // namespace
+
+bool ValidatePipelineRuntimeParameterCapabilities(
+    const std::string& subject,
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+        allowed_parameter_values,
+    const std::vector<PipelineIntegerParameterRuntimeCapability>&
+        integer_parameters,
+    const std::vector<PipelineFloatParameterRuntimeCapability>&
+        float_parameters,
+    const char* unsupported_context,
+    std::string& error) {
+    const std::string context =
+        unsupported_context != nullptr ? unsupported_context : "runtime";
+
+    for (const auto& capability : allowed_parameter_values) {
+        auto it = parameters.find(capability.parameter_name);
+        const std::string value =
+            (it != parameters.end() && !it->second.empty())
+                ? it->second
+                : capability.default_value;
+        if (!IsRuntimeAllowedParameterValue(capability, value)) {
+            error = subject + " " + capability.parameter_name + " '" + value +
+                    "' is not supported by " + context;
+            return false;
+        }
+    }
+
+    for (const auto& capability : integer_parameters) {
+        const auto it = parameters.find(capability.parameter_name);
+        if (it == parameters.end()) {
+            continue;
+        }
+        if (it->second.empty()) {
+            error = subject + " " + capability.parameter_name +
+                    " must not be empty";
+            return false;
+        }
+
+        const auto bounds = DescribeRuntimeIntegerBounds(
+            capability.minimum, capability.forbidden_values);
+        if (capability.comma_separated) {
+            const auto comma_bounds = DescribeRuntimeCommaIntegerBounds(
+                capability.minimum, capability.forbidden_values);
+            std::stringstream values(it->second);
+            std::string value;
+            while (std::getline(values, value, ',')) {
+                if (!IsRuntimeIntegerInBounds(
+                        value, capability.minimum,
+                        capability.forbidden_values)) {
+                    error = subject + " " + capability.parameter_name +
+                            " must be a comma-separated list of " +
+                            comma_bounds;
+                    return false;
+                }
+            }
+            continue;
+        }
+
+        if (!IsRuntimeIntegerInBounds(
+                it->second, capability.minimum,
+                capability.forbidden_values)) {
+            error = subject + " " + capability.parameter_name +
+                    " must be an " + bounds;
+            return false;
+        }
+    }
+
+    for (const auto& capability : float_parameters) {
+        const auto it = parameters.find(capability.parameter_name);
+        if (it == parameters.end() || it->second.empty()) {
+            continue;
+        }
+        if (!IsRuntimeFloatInBounds(it->second,
+                                    capability.minimum,
+                                    capability.maximum,
+                                    capability.minimum_inclusive,
+                                    capability.maximum_inclusive)) {
+            error = subject + " " + capability.parameter_name +
+                    " must be a number " +
+                    DescribeRuntimeFloatBounds(capability.minimum,
+                                               capability.maximum,
+                                               capability.minimum_inclusive,
+                                               capability.maximum_inclusive);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void CanonicalizePipelineParameterAliases(
+    gui::NodeType node_type,
+    std::map<std::string, std::string>& parameters,
+    bool prefer_legacy) {
+    if (node_type == gui::NodeType::GroupNorm ||
+        node_type == gui::NodeType::InstanceNorm) {
+        const auto legacy = parameters.find("epsilon");
+        if (legacy == parameters.end()) {
+            return;
+        }
+
+        const auto canonical = parameters.find("eps");
+        if (!TrimRuntimeValue(legacy->second).empty() &&
+            (prefer_legacy || canonical == parameters.end() ||
+             TrimRuntimeValue(canonical->second).empty())) {
+            parameters["eps"] = legacy->second;
+        }
+        parameters.erase("epsilon");
+        return;
+    }
+
+    if (node_type == gui::NodeType::JoinTables) {
+        const auto shared_key = parameters.find("on_column");
+        if (shared_key == parameters.end()) {
+            return;
+        }
+
+        if (!TrimRuntimeValue(shared_key->second).empty()) {
+            for (const char* canonical_key : {"left_on", "right_on"}) {
+                const auto canonical = parameters.find(canonical_key);
+                if (prefer_legacy || canonical == parameters.end() ||
+                    TrimRuntimeValue(canonical->second).empty()) {
+                    parameters[canonical_key] = shared_key->second;
+                }
+            }
+        }
+        parameters.erase("on_column");
+        return;
+    }
+
+    if (node_type != gui::NodeType::GroupByAggregate) {
+        return;
+    }
+
+    const auto legacy = parameters.find("group_by");
+    if (legacy == parameters.end() ||
+        TrimRuntimeValue(legacy->second).empty()) {
+        return;
+    }
+
+    const auto canonical = parameters.find("group_columns");
+    if (prefer_legacy || canonical == parameters.end() ||
+        TrimRuntimeValue(canonical->second).empty()) {
+        parameters["group_columns"] = legacy->second;
+    }
+    parameters.erase("group_by");
+}
+
+const std::vector<PipelineOperatorRuntimeCapability>&
+GetPipelineOperatorRuntimeCapabilities() {
+    static const std::vector<PipelineOperatorRuntimeCapability> capabilities = {
+        {"Identity", gui::NodeType::Identity},
+        {"TimeSeriesWindow", gui::NodeType::TimeSeriesWindow},
+        {"TimeSeriesSegment", gui::NodeType::TimeSeriesSegment},
+        {"RowCountCheck", gui::NodeType::RowCountCheck},
+        {"TimeSeriesSplit", gui::NodeType::TimeSeriesSplit},
+        {"TimeSeriesFeatures", gui::NodeType::TimeSeriesFeatures},
+        {"LogTransform", gui::NodeType::LogTransform},
+        {"Differencing", gui::NodeType::Differencing},
+        {"TextTokenizer", gui::NodeType::TextTokenizer},
+        {"TFIDFVectorizer", gui::NodeType::TFIDFVectorizer},
+        {"CountVectorizer", gui::NodeType::CountVectorizer},
+        {"SentimentAnalyzer", gui::NodeType::SentimentAnalyzer},
+        {"WordEmbeddings", gui::NodeType::WordEmbeddings},
+        {"PCANode", gui::NodeType::PCANode},
+        {"PCA", gui::NodeType::PCANode},
+        {"KMeansCluster", gui::NodeType::KMeansCluster},
+        {"DBSCANCluster", gui::NodeType::DBSCANCluster},
+        {"HierarchicalCluster", gui::NodeType::HierarchicalCluster},
+        {"GMMCluster", gui::NodeType::GMMCluster},
+        {"FFTNode", gui::NodeType::FFTNode},
+        {"Convolution1D", gui::NodeType::Convolution1D},
+        {"FilterDesigner", gui::NodeType::FilterDesigner},
+        {"LinearRegressionNode", gui::NodeType::LinearRegressionNode},
+        {"PolynomialRegressionNode", gui::NodeType::PolynomialRegressionNode},
+        {"RegressionModelPredictor", gui::NodeType::RegressionModelPredictor},
+        {"ClassicModelPredictor", gui::NodeType::ClassicModelPredictor},
+        {"DecisionTreeClassifier", gui::NodeType::DecisionTreeClassifier},
+        {"RandomForestClassifier", gui::NodeType::RandomForestClassifier},
+        {"GradientBoostingClassifier", gui::NodeType::GradientBoostingClassifier},
+        {"TreeModelPredictor", gui::NodeType::TreeModelPredictor},
+        {"NaiveBayesClassifier", gui::NodeType::NaiveBayesClassifier},
+        {"KNNClassifier", gui::NodeType::KNNClassifier},
+        {"LogisticRegressionNode", gui::NodeType::LogisticRegressionNode},
+        {"SVMClassifier", gui::NodeType::SVMClassifier},
+        {"SVMRegressor", gui::NodeType::SVMRegressor},
+        {"StandardScaler", gui::NodeType::StandardScaler},
+        {"MinMaxScaler", gui::NodeType::MinMaxScaler},
+        {"RobustScaler", gui::NodeType::RobustScaler},
+        {"LabelEncoder", gui::NodeType::LabelEncoder},
+        {"OrdinalEncoder", gui::NodeType::OrdinalEncoder},
+        {"TargetEncoder", gui::NodeType::TargetEncoder},
+        {"OutlierDetector", gui::NodeType::OutlierDetector},
+        {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
+        {"ACFNode", gui::NodeType::ACFNode},
+        {"PACFNode", gui::NodeType::PACFNode},
+        {"StationarityTest", gui::NodeType::StationarityTest},
+        {"SeasonalityDetector", gui::NodeType::SeasonalityDetector},
+        {"SeasonalNaive", gui::NodeType::SeasonalNaive},
+        {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
+        {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineFailClosedRuntimeCapability>&
+GetPipelineFailClosedRuntimeCapabilities() {
+    static const std::vector<PipelineFailClosedRuntimeCapability> capabilities = {
+        {"TSNENode", "legacy t-SNE graph execution is not implemented; old passthrough behavior is disabled",
+         gui::NodeType::TSNENode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"UMAPNode", "legacy UMAP graph execution is not implemented; old passthrough behavior is disabled",
+         gui::NodeType::UMAPNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"LearningCurvesNode", "learning-curve graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::LearningCurvesNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"FeatureImportanceNode", "feature-importance graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::FeatureImportanceNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"CrossValidationNode", "cross-validation graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::CrossValidationNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"Resize", "Resize is a training preprocessing contract node: the image batcher decodes to its width and height and the compiler takes the model's [H,W,C] input shape from it (TOFIX140 A1); PipelineExecutor image resizing is not implemented",
+         gui::NodeType::Resize, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"CenterCrop", "Center Crop is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::CenterCrop, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"RandomCrop", "Random Crop is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::RandomCrop, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"HorizontalFlip", "Horizontal Flip is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::HorizontalFlip, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"VerticalFlip", "Vertical Flip is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::VerticalFlip, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageRotate", "Image Rotate is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageRotate, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ColorJitter", "Color Jitter is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ColorJitter, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageGaussianBlur", "Image Gaussian Blur is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageGaussianBlur, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"Grayscale", "Grayscale is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::Grayscale, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"AudioAugmentation", "audio DSP helpers exist, but noise_level units conflict with AddNoise SNR-dB semantics and stretch/pitch ranges lack a deterministic node contract",
+         gui::NodeType::AudioAugmentation, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {"Normalize", "Normalize is a training preprocessing contract node; PipelineExecutor tensor normalization is not implemented",
+         gui::NodeType::Normalize, std::nullopt, false},
+        {"OneHotEncode", "OneHotEncode is a training preprocessing contract node; PipelineExecutor label one-hot encoding is not implemented",
+         gui::NodeType::OneHotEncode, std::nullopt, false},
+        {"AudioInput", "AudioInput is a training audio dataset contract node; PipelineExecutor audio tensor loading is not implemented",
+         gui::NodeType::AudioInput, std::nullopt, false},
+        {"Spectrogram", "Spectrogram is a training audio preprocessing contract node; PipelineExecutor audio tensor transforms are not implemented",
+         gui::NodeType::Spectrogram, std::nullopt, false},
+        {"MelSpectrogram", "MelSpectrogram is a training audio preprocessing contract node; PipelineExecutor audio tensor transforms are not implemented",
+         gui::NodeType::MelSpectrogram, std::nullopt, false},
+        {"MFCC", "MFCC is a training audio preprocessing contract node; PipelineExecutor audio tensor transforms are not implemented",
+         gui::NodeType::MFCC, std::nullopt, false},
+        {"ReLU", "ReLU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::ReLU, std::nullopt, false},
+        {"Sigmoid", "Sigmoid is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Sigmoid, std::nullopt, false},
+        {"Tanh", "Tanh is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Tanh, std::nullopt, false},
+        {"Softmax", "Softmax is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Softmax, std::nullopt, false},
+        {"GELU", "GELU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::GELU, std::nullopt, false},
+        {"LeakyReLU", "LeakyReLU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::LeakyReLU, std::nullopt, false},
+        {"ELU", "ELU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::ELU, std::nullopt, false},
+        {"SELU", "SELU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::SELU, std::nullopt, false},
+        {"PReLU", "PReLU is a training model layer (learned slopes); PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::PReLU, std::nullopt, false},
+        {"Swish", "Swish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Swish, std::nullopt, false},
+        {"Mish", "Mish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Mish, std::nullopt, false},
+        {"MSELoss", "MSELoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::MSELoss, std::nullopt, false},
+        {"CrossEntropyLoss", "CrossEntropyLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::CrossEntropyLoss, std::nullopt, false},
+        {"FocalLoss", "FocalLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::FocalLoss, std::nullopt, false},
+        {"SoftDiceLoss", "SoftDiceLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::SoftDiceLoss, std::nullopt, false},
+        {"TverskyLoss", "TverskyLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::TverskyLoss, std::nullopt, false},
+        {"JaccardLoss", "JaccardLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::JaccardLoss, std::nullopt, false},
+        {"BCELoss", "BCELoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::BCELoss, std::nullopt, false},
+        {"BCEWithLogits", "BCEWithLogits is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::BCEWithLogits, std::nullopt, false},
+        {"L1Loss", "L1Loss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::L1Loss, std::nullopt, false},
+        {"SmoothL1Loss", "SmoothL1Loss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::SmoothL1Loss, std::nullopt, false},
+        {"HuberLoss", "HuberLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::HuberLoss, std::nullopt, false},
+        {"NLLLoss", "NLLLoss is a training loss node; PipelineExecutor loss execution is not implemented",
+         gui::NodeType::NLLLoss, std::nullopt, false},
+        {"SGD", "SGD is a training optimizer node; PipelineExecutor optimizer execution is not implemented",
+         gui::NodeType::SGD, std::nullopt, false},
+        {"Adam", "Adam is a training optimizer node; PipelineExecutor optimizer execution is not implemented",
+         gui::NodeType::Adam, std::nullopt, false},
+        {"AdamW", "AdamW is a training optimizer node; PipelineExecutor optimizer execution is not implemented",
+         gui::NodeType::AdamW, std::nullopt, false},
+        {"Add", "Add is a tensor graph utility node; PipelineExecutor tensor arithmetic execution is not implemented",
+         gui::NodeType::Add, std::nullopt, false},
+        {"Multiply", "Multiply is a tensor graph utility node; PipelineExecutor tensor arithmetic execution is not implemented",
+         gui::NodeType::Multiply, std::nullopt, false},
+        {"Average", "Average is a tensor graph utility node; PipelineExecutor tensor arithmetic execution is not implemented",
+         gui::NodeType::Average, std::nullopt, false},
+        {"Constant", "Constant belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute simulation sources",
+         gui::NodeType::Constant, std::nullopt, false},
+        {"Lambda", "Lambda has no expression evaluator, model layer, PipelineExecutor operator, or sandboxed execution owner",
+         gui::NodeType::Lambda, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
+        {"Parameter", "Parameter has no model-registration, initialization, gradient, optimizer, checkpoint, or graph execution owner",
+         gui::NodeType::Parameter, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
+        {"Reshape", "Reshape is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
+         gui::NodeType::Reshape, std::nullopt, false},
+        {"View", "View is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
+         gui::NodeType::View, std::nullopt, false},
+        {"Permute", "Permute is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
+         gui::NodeType::Permute, std::nullopt, false},
+        {"Split", "Split is a tensor graph utility node; PipelineExecutor tensor split execution is not implemented",
+         gui::NodeType::Split, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"Squeeze", "Squeeze is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
+         gui::NodeType::Squeeze, std::nullopt, false},
+        {"Unsqueeze", "Unsqueeze is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
+         gui::NodeType::Unsqueeze, std::nullopt, false},
+        {"TensorAbs", "TensorAbs is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorAbs, std::nullopt, false},
+        {"TensorClip", "TensorClip is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorClip, std::nullopt, false},
+        {"TensorExp", "TensorExp is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorExp, std::nullopt, false},
+        {"TensorLog", "TensorLog is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorLog, std::nullopt, false},
+        {"TensorPow", "TensorPow is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorPow, std::nullopt, false},
+        {"TensorSign", "TensorSign is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorSign, std::nullopt, false},
+        {"TensorSqrt", "TensorSqrt is a tensor graph math node; PipelineExecutor tensor math execution is not implemented",
+         gui::NodeType::TensorSqrt, std::nullopt, false},
+        {"TensorMean", "TensorMean is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorMean, std::nullopt, false},
+        {"TensorSum", "TensorSum is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorSum, std::nullopt, false},
+        {"TensorMax", "TensorMax is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorMax, std::nullopt, false},
+        {"TensorMin", "TensorMin is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorMin, std::nullopt, false},
+        {"TensorProd", "TensorProd is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorProd, std::nullopt, false},
+        {"TensorStd", "TensorStd is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorStd, std::nullopt, false},
+        {"TensorVar", "TensorVar is a tensor graph reduction node; PipelineExecutor tensor reduction execution is not implemented",
+         gui::NodeType::TensorVar, std::nullopt, false},
+        {"TensorDot", "TensorDot is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
+         gui::NodeType::TensorDot, std::nullopt, false},
+        {"TensorBatchMatMul", "TensorBatchMatMul is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
+         gui::NodeType::TensorBatchMatMul, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"TensorBroadcastTo", "TensorBroadcastTo is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
+         gui::NodeType::TensorBroadcastTo, std::nullopt, false},
+        {"TensorExpand", "TensorExpand is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
+         gui::NodeType::TensorExpand, std::nullopt, false},
+        {"TensorIndexSelect", "TensorIndexSelect is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
+         gui::NodeType::TensorIndexSelect, std::nullopt, false},
+        {"TensorLogicalMask", "TensorLogicalMask is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
+         gui::NodeType::TensorLogicalMask, std::nullopt, false},
+        {"Embedding", "Embedding is a training model layer node; PipelineExecutor embedding-layer execution is not implemented",
+         gui::NodeType::Embedding, std::nullopt, false},
+        {"SignalSlider", "SignalSlider belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute interactive simulation sources",
+         gui::NodeType::SignalSlider, std::nullopt, false},
+        {"SineWave", "SineWave belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute time-varying simulation sources",
+         gui::NodeType::SineWave, std::nullopt, false},
+        {"StepSignal", "StepSignal belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute time-varying simulation sources",
+         gui::NodeType::StepSignal, std::nullopt, false},
+        {"RampSignal", "RampSignal belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute time-varying simulation sources",
+         gui::NodeType::RampSignal, std::nullopt, false},
+        {"SignalScope", "SignalScope belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute interactive simulation sinks",
+         gui::NodeType::SignalScope, std::nullopt, false},
+        {"TrainTestSplit", "legacy TrainTestSplit graph execution is not implemented; old passthrough behavior is disabled"},
+        {"QualityAnalyzer", "Quality Analyzer is a training dataset filter: the compiler judges its cached analysis and the image batcher leaves the rejected files out (TOFIX140); PipelineExecutor image filtering is not implemented",
+         gui::NodeType::QualityAnalyzer, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageFolderDataset", "legacy ImageFolderDataset graph execution is not implemented; placeholder metadata creation is disabled",
+         gui::NodeType::ImageFolderDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"MNISTDataset", "legacy MNISTDataset graph execution is not implemented; placeholder metadata creation is disabled",
+         gui::NodeType::MNISTDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"CIFAR10Dataset", "legacy CIFAR10Dataset graph execution is not implemented; placeholder metadata creation is disabled",
+         gui::NodeType::CIFAR10Dataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"HuggingFaceDataset", "legacy HuggingFaceDataset graph execution is not implemented; placeholder metadata creation is disabled",
+         gui::NodeType::HuggingFaceDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"KaggleDataset", "legacy KaggleDataset graph execution is not implemented; placeholder metadata creation is disabled",
+         gui::NodeType::KaggleDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"AugmentationPreset", "Augmentation Preset is a training image transform: it compiles into image transform ops the image batcher runs on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::AugmentationPreset, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"MorphologyTransform", "Morphology Transform is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::MorphologyTransform, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"AdvancedAugment", "Advanced Augment is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::AdvancedAugment, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"IFFTNode", "legacy IFFT graph execution is not implemented",
+         gui::NodeType::IFFTNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"WaveletTransform", "legacy WaveletTransform graph execution is not implemented",
+         gui::NodeType::WaveletTransform, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"NamedEntityRecognizer", "NER graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::NamedEntityRecognizer, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {"DNNModelLoad", "DNN model loading is not implemented in PipelineExecutor",
+         gui::NodeType::DNNModelLoad, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"DNNDetect", "DNN object detection is not implemented in PipelineExecutor",
+         gui::NodeType::DNNDetect, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"PretrainedYOLO", "pretrained YOLO execution is not implemented in PipelineExecutor",
+         gui::NodeType::PretrainedYOLO, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"GymEnvironment", "RL environment graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::GymEnvironment, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ReplayBuffer", "RL replay-buffer graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::ReplayBufferNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"PolicyNetwork", "RL policy-network graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::PolicyNetwork},
+        {"ValueNetwork", "RL value-network graph execution is not implemented in PipelineExecutor",
+         gui::NodeType::ValueNetwork},
+        {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node",
+         gui::NodeType::TableSplitter, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {"ExportSQL", "SQL database export is not implemented in PipelineExecutor; fake success is disabled",
+         gui::NodeType::ExportSQL, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
+        {"ExportExcel", "legacy ExportExcel graph execution is not implemented; fake success is disabled",
+         gui::NodeType::ExportExcel, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
+        {"ExcelInput", "Excel input loading is not implemented; use DataInput with csv, parquet, feather, arrow, or ipc until a real Excel Arrow loader exists",
+         gui::NodeType::ExcelFile},
+        {"JSONFile", "JSON file loading is not implemented in PipelineExecutor; use a supported tabular file type until a real JSON Arrow loader exists",
+         gui::NodeType::JSONFile},
+        {"HDF5Dataset", "HDF5 loading is not implemented in PipelineExecutor; use supported tabular file types until a real HDF5 Arrow loader exists",
+         gui::NodeType::HDF5Dataset},
+        {"RESTAPISource", "REST API loading is not implemented in PipelineExecutor; use imported files until a real HTTP source loader exists",
+         gui::NodeType::RESTAPISource},
+        {"TSVFile", "dedicated TSVFile source execution is not implemented in PipelineExecutor; use DataInput with type=tsv",
+         gui::NodeType::TSVFile},
+        {"TXTFile", "dedicated TXTFile source execution is not implemented in PipelineExecutor; import text through supported text operators until a real text file source exists",
+         gui::NodeType::TXTFile},
+        {"ARFFFile", "ARFF loading is not implemented in PipelineExecutor; use supported DataInput tabular formats until a real ARFF loader exists",
+         gui::NodeType::ARFFFile},
+        {"FeatherFile", "dedicated FeatherFile source execution is not implemented in PipelineExecutor; use DataInput with type=feather",
+         gui::NodeType::FeatherFile},
+        {"ArrowIPCFile", "dedicated ArrowIPCFile source execution is not implemented in PipelineExecutor; use DataInput with type=arrow or ipc",
+         gui::NodeType::ArrowIPCFile},
+        {"NumPyFile", "NumPy array loading is not implemented in PipelineExecutor; use supported DataInput tabular formats until a real tensor source exists",
+         gui::NodeType::NumPyFile},
+        {"ImageCSVDataset", "Image+CSV dataset loading is not implemented in PipelineExecutor; use image dataset batchers until a real graph source exists",
+         gui::NodeType::ImageCSVDataset},
+        {"StreamingDataset", "streaming dataset loading is not implemented in PipelineExecutor; use supported eager DataInput sources until a real streaming graph source exists",
+         gui::NodeType::StreamingDataset},
+        {"FashionMNISTDataset", "Fashion-MNIST loading is not implemented in PipelineExecutor; use dataset/batcher training paths until a real graph source exists",
+         gui::NodeType::FashionMNISTDataset},
+        {"CIFAR100Dataset", "CIFAR-100 loading is not implemented in PipelineExecutor; use dataset/batcher training paths until a real graph source exists",
+         gui::NodeType::CIFAR100Dataset},
+        {"AudioFolderDataset", "audio folder dataset loading is not implemented in PipelineExecutor; use audio dataset batchers until a real graph source exists",
+         gui::NodeType::AudioFolderDataset},
+        {"TimeSeriesCSV", "dedicated TimeSeriesCSV source execution is not implemented in PipelineExecutor; use DataInput plus time-series operators",
+         gui::NodeType::TimeSeriesCSV},
+        {"TextCorpusDataset", "text corpus dataset loading is not implemented in PipelineExecutor; use supported text operators until a real corpus graph source exists",
+         gui::NodeType::TextCorpusDataset},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineLegacyRuntimeCapability>&
+GetPipelineLegacyRuntimeCapabilities() {
+    static const std::vector<PipelineLegacyRuntimeCapability> capabilities = {
+        {"FileInput", gui::NodeType::CSVFile},
+        {"DataInput", gui::NodeType::DataInput},
+        {"ParquetInput", gui::NodeType::DataInput},
+        {"DataOutput", gui::NodeType::DataOutput},
+        {"DataConvert", gui::NodeType::DataConvert},
+        {"FilterRows", gui::NodeType::FilterRows},
+        {"SQLQuery", gui::NodeType::SQLQuery},
+        {"SelectColumns", gui::NodeType::SelectColumns},
+        {"RemoveDuplicateRows", gui::NodeType::RemoveDuplicateRows},
+        {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
+        {"BinningNode", gui::NodeType::BinningNode},
+        {"PolynomialFeaturesNode", gui::NodeType::PolynomialFeaturesNode},
+        {"TimeSeriesLag", gui::NodeType::TimeSeriesLag},
+        {"SaveDataset", gui::NodeType::DataOutput},
+        {"DeployToNodeEditorNode", gui::NodeType::DeployToNodeEditorNode},
+        {"FillMissing", gui::NodeType::FillMissingValues},
+        {"SortRows", gui::NodeType::SortRows},
+        {"Join", gui::NodeType::JoinTables},
+        {"GroupBy", gui::NodeType::GroupByAggregate},
+        {"DeployToNodeEditor", gui::NodeType::DeployToNodeEditorNode},
+        {"TextCleanNode", gui::NodeType::TextCleanNode},
+        {"TextClean", gui::NodeType::TextCleanNode},
+        {"TextTokenize", gui::NodeType::TextTokenizer},
+        {"TextVectorize", gui::NodeType::CountVectorizer},
+        {"TokenVocabulary", gui::NodeType::TokenVocabulary},
+        {"POSVocabulary", gui::NodeType::POSVocabulary},
+        {"NERTagVocabulary", gui::NodeType::NERTagVocabulary},
+        {"NERSequenceBuilder", gui::NodeType::NERSequenceBuilder},
+        {"TSWindow", gui::NodeType::TimeSeriesWindow},
+        {"TSFeatures", gui::NodeType::TimeSeriesFeatures},
+        {"TSLag", gui::NodeType::TimeSeriesLag},
+        {"TSDiff", gui::NodeType::Differencing},
+        {"PolynomialFeatures", gui::NodeType::PolynomialFeaturesNode},
+        {"Binning", gui::NodeType::BinningNode},
+        {"ExportCSV", gui::NodeType::ExportCSV},
+        {"ExportJSON", gui::NodeType::ExportJSON},
+        {"ExportParquet", gui::NodeType::ExportParquet},
+        {"RuleEngine", gui::NodeType::RuleEngine},
+        {"UnitConverter", gui::NodeType::UnitConverter},
+        {"CalculatorNode", gui::NodeType::CalculatorNode},
+        {"JSONPathExtractor", gui::NodeType::JSONPathExtractor},
+        {"RegexTester", gui::NodeType::RegexTester},
+        {"DataProfiler", gui::NodeType::DataProfiler},
+        {"RegressionMetricsNode", gui::NodeType::RegressionMetricsNode},
+        {"ClassificationMetricsNode", gui::NodeType::ClassificationMetricsNode},
+        {"TestEvaluationNode", gui::NodeType::TestEvaluationNode},
+        {"ConfusionMatrixNode", gui::NodeType::ConfusionMatrixNode},
+        {"ROCCurveNode", gui::NodeType::ROCCurveNode},
+        {"PRCurveNode", gui::NodeType::PRCurveNode},
+        {"DataValidator", gui::NodeType::DataValidator},
+        {"SampleRows", gui::NodeType::SampleRows},
+        {"ValueCounts", gui::NodeType::ValueCounts},
+        {"DescribeStats", gui::NodeType::DescribeStats},
+        {"CorrelationMatrix", gui::NodeType::CorrelationMatrix},
+        {"RowToColumnNames", gui::NodeType::RowToColumnNames},
+        {"TableCropper", gui::NodeType::TableCropper},
+        {"StringManipulation", gui::NodeType::StringManipulation},
+        {"MathFormula", gui::NodeType::MathFormula},
+        {"RenameColumns", gui::NodeType::RenameColumns},
+        {"CellExtractor", gui::NodeType::CellExtractor},
+        {"CellUpdater", gui::NodeType::CellUpdater},
+        {"RowAppender", gui::NodeType::RowAppender},
+        {"ColumnAppender", gui::NodeType::ColumnAppender},
+        {"Unpivot", gui::NodeType::Unpivot},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineLegacyAliasDecisionCapability>&
+GetPipelineLegacyAliasDecisionCapabilities() {
+    static const std::vector<PipelineLegacyAliasDecisionCapability> capabilities = {
+        {"SaveDataset",
+         "DataOutput",
+         gui::NodeType::DataOutput,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "SaveDataset preserves legacy in-memory dataset publishing and optional export semantics"},
+        {"DeployToNodeEditor",
+         "DeployToNodeEditorNode",
+         gui::NodeType::DeployToNodeEditorNode,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "DeployToNodeEditor remains a legacy workflow alias until deployment parameters are typed"},
+        {"TextClean",
+         "TextCleanNode",
+         gui::NodeType::TextCleanNode,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "TextClean shares the TextCleanNode executor and parameter contract"},
+        {"TextTokenize",
+         "TextTokenizer",
+         gui::NodeType::TextTokenizer,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TextTokenize has a legacy text_column/token-feature contract that differs from TextTokenizer"},
+        {"TextVectorize",
+         "CountVectorizer",
+         gui::NodeType::CountVectorizer,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TextVectorize has a legacy text_column vectorization contract that differs from CountVectorizer"},
+        {"TSWindow",
+         "TimeSeriesWindow",
+         gui::NodeType::TimeSeriesWindow,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TSWindow keeps legacy target_column/window_size parameters until they are migrated"},
+        {"TSFeatures",
+         "TimeSeriesFeatures",
+         gui::NodeType::TimeSeriesFeatures,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TSFeatures keeps legacy columns/rolling_window parameters until they are migrated"},
+        {"TSLag",
+         "TimeSeriesLag",
+         gui::NodeType::TimeSeriesLag,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "TSLag shares the TimeSeriesLag executor and parameter contract"},
+        {"TSDiff",
+         "Differencing",
+         gui::NodeType::Differencing,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TSDiff keeps legacy columns/order parameters until they are migrated"},
+        {"PolynomialFeatures",
+         "PolynomialFeaturesNode",
+         gui::NodeType::PolynomialFeaturesNode,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "PolynomialFeatures shares the PolynomialFeaturesNode executor and parameter contract"},
+        {"Binning",
+         "BinningNode",
+         gui::NodeType::BinningNode,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "Binning shares the BinningNode executor and parameter contract"},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineSourceRuntimeCapability>&
+GetPipelineSourceRuntimeCapabilities() {
+    static const std::vector<PipelineSourceRuntimeCapability> capabilities = {
+        {"FileInput"},
+        {"DataInput"},
+        {"DataConvert"},
+        {"ExcelInput"},
+        {"JSONFile"},
+        {"HDF5Dataset"},
+        {"RESTAPISource"},
+        {"ImageFolderDataset"},
+        {"MNISTDataset"},
+        {"CIFAR10Dataset"},
+        {"HuggingFaceDataset"},
+        {"KaggleDataset"},
+        {"ParquetInput"},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineInputArityRuntimeCapability>&
+GetPipelineInputArityRuntimeCapabilities() {
+    static const std::vector<PipelineInputArityRuntimeCapability> capabilities = {
+        {"Join", 2},
+        {"RowAppender", 2},
+        {"ColumnAppender", 2},
+        {"RegressionModelPredictor", 2},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineRequiredParameterRuntimeCapability>&
+GetPipelineRequiredParameterRuntimeCapabilities() {
+    static const std::vector<PipelineRequiredParameterRuntimeCapability> capabilities = {
+        {"FileInput", {"path"}},
+        {"DataConvert", {"output_path"}},
+        {"ParquetInput", {"file_path"}},
+        {"RuleEngine", {"rules"}},
+        {"JSONPathExtractor", {"path"}},
+        {"RegexTester", {"pattern"}},
+        {"RegressionMetricsNode", {"actual_col", "predicted_col"}},
+        {"ClassificationMetricsNode", {"actual_col", "predicted_col"}},
+        {"ConfusionMatrixNode", {"actual_col", "predicted_col"}},
+        {"ROCCurveNode", {"actual_col", "score_col"}},
+        {"PRCurveNode", {"actual_col", "score_col"}},
+        {"FilterRows", {"condition"}},
+        {"SQLQuery", {"query", "sql_contract_version"}},
+        {"ValueCounts", {"column"}},
+        {"SelectColumns", {"columns"}},
+        {"SortRows", {"columns"}},
+        {"Join", {"left_on", "right_on"}},
+        {"GroupBy", {"group_columns", "aggregations"}},
+        {"TextCleanNode", {"text_column"}},
+        {"TextClean", {"text_column"}},
+        {"TextTokenize", {"text_column"}},
+        {"TextVectorize", {"text_column"}},
+        {"TSWindow", {"target_column"}},
+        {"TSFeatures", {"columns"}},
+        {"TimeSeriesLag", {"columns"}},
+        {"TSLag", {"columns"}},
+        {"TSDiff", {"columns"}},
+        {"PolynomialFeaturesNode", {"columns"}},
+        {"PolynomialFeatures", {"columns"}},
+        {"BinningNode", {"columns"}},
+        {"Binning", {"columns"}},
+        {"StringManipulation", {"column"}},
+        {"MathFormula", {"formula"}},
+        {"RenameColumns", {"mapping"}},
+        {"CellExtractor", {"column"}},
+        {"CellUpdater", {"column", "value"}},
+        {"TimeSeriesWindow", {"value_col"}},
+        {"TimeSeriesSegment",
+         {"timestamp_col", "gap_threshold_seconds"}},
+        {"TimeSeriesFeatures", {"value_col"}},
+        {"LogTransform", {"value_col"}},
+        {"Differencing", {"value_col"}},
+        {"TextTokenizer", {"text_col"}},
+        {"TFIDFVectorizer", {"text_col"}},
+        {"CountVectorizer", {"text_col"}},
+        {"SentimentAnalyzer", {"text_col"}},
+        {"FFTNode", {"signal_col"}},
+        {"Convolution1D", {"signal_col", "kernel"}},
+        {"FilterDesigner", {"signal_col"}},
+        {"LinearRegressionNode", {"feature_cols", "target_col"}},
+        {"PolynomialRegressionNode", {"feature_col", "target_col"}},
+        {"DecisionTreeClassifier", {"target_col"}},
+        {"RandomForestClassifier", {"target_col"}},
+        {"GradientBoostingClassifier", {"target_col"}},
+        {"TreeModelPredictor", {"model_path"}},
+        {"NaiveBayesClassifier", {"target_col"}},
+        {"KNNClassifier", {"target_col"}},
+        {"LogisticRegressionNode", {"target_col"}},
+        {"SVMClassifier", {"target_col"}},
+        {"SVMRegressor", {"target_col"}},
+        {"LabelEncoder", {"column"}},
+        {"OrdinalEncoder", {"columns"}},
+        {"TargetEncoder", {"columns", "target_col"}},
+        {"TimeSeriesDecomposition", {"signal_col", "period"}},
+        {"ACFNode", {"signal_col"}},
+        {"PACFNode", {"signal_col"}},
+        {"StationarityTest", {"signal_col"}},
+        {"SeasonalityDetector", {"signal_col"}},
+        {"ARIMAForecaster", {"signal_col"}},
+        {"ExponentialSmoothing", {"signal_col"}},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+GetPipelineAllowedParameterValuesRuntimeCapabilities() {
+    static const std::vector<PipelineAllowedParameterValuesRuntimeCapability> capabilities = {
+        {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
+        {"DataInput", "source_type", "file", {"file", "folder"}},
+        {"DataInput", "dataset_role", "train", {"train", "dev", "validation", "test", "inference", "unspecified"}},
+        {"DataInput", "type", "auto", data_input::AllowedNames()},
+        {"DataInput", "file_type", "auto", data_input::AllowedNames()},
+        {"DataOutput", "format", "csv", {"csv", "parquet"}},
+        {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
+        {"DataConvert", "input_format", "auto", data_convert::AllowedNames(data_convert::Direction::Input, data_convert::kBuildFeatures)},
+        {"DataConvert", "output_format", "auto", data_convert::AllowedNames(data_convert::Direction::Output, data_convert::kBuildFeatures)},
+        {"DataConvert", "decimal_point", ".", {".", ","}},
+        {"DataConvert", "compression", "snappy", {"none", "snappy", "gzip", "zstd", "brotli"}},
+        {"SaveDataset", "format", "csv", {"csv", "parquet"}},
+        {"SaveDataset", "file_type", "csv", {"csv", "parquet"}},
+        {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
+        {"FillMissing", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"FillMissing", "save_state", "false", {"true", "false"}},
+        {"FillMissing", "state_overwrite", "false", {"true", "false"}},
+        {"StandardScaler", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"StandardScaler", "transform_role", "features", {"features", "regression_target"}},
+        {"StandardScaler", "save_state", "false", {"true", "false"}},
+        {"StandardScaler", "state_overwrite", "false", {"true", "false"}},
+        {"SortRows", "order", "asc", {"asc", "desc"}},
+        {"SortRows", "ascending", "true", {"true", "false"}},
+        {"Join", "join_type", "inner", {"inner", "left", "right", "outer"}},
+        {"BinningNode", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
+        {"Binning", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
+        {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
+        {"TextTokenizer", "tokenizer_type", "1", {"0", "1", "2", "3", "4", "5", "6"}},
+        {"TextTokenizer", "output_mode", "wide", {"wide", "causal_windows", "decode", "roundtrip"}},
+        {"WordEmbeddings", "source", "pretrained", {"pretrained", "word2vec", "glove", "fasttext"}},
+        {"WordEmbeddings", "missing", "zeros", {"zeros", "random"}},
+        {"WordEmbeddings", "unknown", "mean", {"mean", "missing"}},
+        {"WordEmbeddings", "architecture", "skipgram", {"skipgram", "cbow"}},
+        {"WordEmbeddings", "unseen_words", "pieces", {"pieces", "missing"}},
+        {"TextVectorize", "method", "count", {"count"}},
+        {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
+        {"CountVectorizer", "norm", "l2", {"l1", "l2", "none"}},
+        {"CountVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}},
+        {"CountVectorizer", "stop_words", "english", {"english", "none"}},
+        {"CountVectorizer", "binary", "false", {"false", "true"}},
+        {"CountVectorizer", "output_format", "dense", {"dense", "sparse"}},
+        {"CountVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"CountVectorizer", "save_state", "false", {"true", "false"}},
+        {"CountVectorizer", "state_overwrite", "false", {"true", "false"}},
+        {"TFIDFVectorizer", "norm", "l2", {"l1", "l2", "none"}},
+        {"TFIDFVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}},
+        {"TFIDFVectorizer", "stop_words", "english", {"english", "none"}},
+        {"TFIDFVectorizer", "output_format", "dense", {"dense", "sparse"}},
+        {"TFIDFVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"TFIDFVectorizer", "save_state", "false", {"true", "false"}},
+        {"TFIDFVectorizer", "state_overwrite", "false", {"true", "false"}},
+        {"SentimentAnalyzer", "method", "vader", {"simple", "vader", "afinn"}},
+        {"DecisionTreeClassifier", "criterion", "gini", {"gini", "entropy"}},
+        {"KNNClassifier", "weights", "uniform", {"uniform", "distance"}},
+        {"KNNClassifier", "metric", "euclidean", {"euclidean", "manhattan", "cosine"}},
+        {"SVMClassifier", "kernel", "rbf", {"rbf", "linear", "poly", "sigmoid"}},
+        {"SVMRegressor", "kernel", "rbf", {"rbf", "linear", "poly", "sigmoid"}},
+        {"RandomForestClassifier", "criterion", "gini", {"gini", "entropy"}},
+        {"RandomForestClassifier", "max_features", "sqrt", {"sqrt", "log2", "all"}},
+        {"KMeansCluster", "init", "kmeans++", {"random", "kmeans++"}},
+        {"DBSCANCluster", "metric", "euclidean", {"euclidean", "manhattan", "cosine"}},
+        {"HierarchicalCluster", "linkage", "ward", {"ward", "complete", "average", "single"}},
+        {"HierarchicalCluster", "metric", "euclidean", {"euclidean", "manhattan", "cosine"}},
+        {"GMMCluster", "covariance_type", "full", {"full", "tied", "diag", "spherical"}},
+        {"OrdinalEncoder", "categories", "auto", {"auto"}},
+        {"OutlierDetector", "method", "iqr", {"iqr", "zscore"}},
+        {"FilterDesigner", "filter_type", "lowpass", {"lowpass", "highpass", "bandpass", "bandstop"}},
+        {"TimeSeriesDecomposition", "method", "additive", {"additive", "multiplicative"}},
+        {"TimeSeriesDecomposition", "algorithm", "classical", {"classical", "stl"}},
+        {"ExponentialSmoothing", "method", "simple", {"simple", "holt", "holt_winters"}},
+        {"TimeSeriesSplit", "boundary_policy", "targets_within_partition",
+         {"targets_within_partition", "window_rows"}},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineIntegerParameterRuntimeCapability>&
+GetPipelineIntegerParameterRuntimeCapabilities() {
+    static const std::vector<PipelineIntegerParameterRuntimeCapability> capabilities = {
+        {"TSWindow", "window_size", 1, false},
+        {"TestEvaluationNode", "worst_rows", 1, false},
+        {"TSWindow", "stride", 1, false},
+        {"TSFeatures", "rolling_window", 1, false},
+        {"TimeSeriesLag", "lag_periods", 1, true},
+        {"TSLag", "lag_periods", 1, true},
+        {"TSDiff", "order", 1, false},
+        {"CalculatorNode", "precision", 0, false},
+        {"PolynomialFeaturesNode", "degree", 2, false},
+        {"PolynomialFeatures", "degree", 2, false},
+        {"BinningNode", "n_bins", 1, false},
+        {"Binning", "n_bins", 1, false},
+        {"RowToColumnNames", "row_index", 0, false},
+        {"TableCropper", "start_row", 0, false},
+        {"TableCropper", "end_row", -1, false},
+        {"CellExtractor", "row", 0, false},
+        {"CellUpdater", "row", 0, false},
+        {"TimeSeriesWindow", "input_width", 1, false},
+        {"TimeSeriesWindow", "label_width", 1, false},
+        {"TimeSeriesWindow", "shift", 1, false},
+        {"TimeSeriesSplit", "train_end_source_row", -1, false},
+        {"TimeSeriesSplit", "val_end_source_row", -1, false},
+        {"TimeSeriesFeatures", "lag_values", 1, true},
+        {"TimeSeriesFeatures", "rolling_windows", 1, true},
+        {"Differencing", "lag", 1, false},
+        {"Differencing", "order", 1, false},
+        {"TextTokenizer", "max_length", 1, false},
+        {"WordEmbeddings", "max_words", 0, false},
+        {"WordEmbeddings", "seed", 0, false},
+        {"WordEmbeddings", "vector_size", 1, false},
+        {"WordEmbeddings", "window", 1, false},
+        {"WordEmbeddings", "min_count", 1, false},
+        {"WordEmbeddings", "negative", 1, false},
+        {"WordEmbeddings", "epochs", 1, false},
+        {"WordEmbeddings", "batch_size", 1, false},
+        {"WordEmbeddings", "train_seed", 0, false},
+        {"WordEmbeddings", "min_n", 1, false},
+        {"WordEmbeddings", "max_n", 1, false},
+        {"WordEmbeddings", "bucket", 0, false},
+        {"TextTokenizer", "min_word_freq", 1, false},
+        {"TextTokenizer", "max_vocab_size", 1, false},
+        {"TextTokenizer", "pad_value", 0, false},
+        {"CountVectorizer", "max_features", 1, false},
+        {"TFIDFVectorizer", "max_features", 1, false},
+        {"TokenVocabulary", "min_frequency", 1, false},
+        {"TokenVocabulary", "max_size", 0, false},
+        {"TokenVocabulary", "min_freq", 1, false},
+        {"TokenVocabulary", "max_vocab_size", 0, false},
+        {"POSVocabulary", "min_frequency", 1, false},
+        {"POSVocabulary", "max_size", 0, false},
+        {"POSVocabulary", "min_freq", 1, false},
+        {"POSVocabulary", "max_vocab_size", 0, false},
+        {"NERTagVocabulary", "min_frequency", 1, false},
+        {"NERTagVocabulary", "max_size", 0, false},
+        {"NERTagVocabulary", "min_freq", 1, false},
+        {"NERTagVocabulary", "max_vocab_size", 0, false},
+        {"NERSequenceBuilder", "min_frequency", 1, false},
+        {"NERSequenceBuilder", "max_size", 0, false},
+        {"NERSequenceBuilder", "min_freq", 1, false},
+        {"NERSequenceBuilder", "max_vocab_size", 0, false},
+        {"NERSequenceBuilder", "max_sequence_length", 0, false},
+        {"PCANode", "n_components", 1, false},
+        {"KMeansCluster", "n_clusters", 1, false},
+        {"KMeansCluster", "max_iter", 1, false},
+        {"KMeansCluster", "n_init", 1, false},
+        {"DBSCANCluster", "min_samples", 1, false},
+        {"HierarchicalCluster", "n_clusters", 1, false},
+        {"GMMCluster", "n_components", 1, false},
+        {"GMMCluster", "max_iter", 1, false},
+        {"GMMCluster", "n_init", 1, false},
+        {"FilterDesigner", "order", 1, false},
+        {"PolynomialRegressionNode", "degree", 1, false},
+        {"DecisionTreeClassifier", "max_depth", 1, false},
+        {"KNNClassifier", "n_neighbors", 1, false},
+        {"LogisticRegressionNode", "max_iter", 1, false},
+        {"SVMClassifier", "degree", 0, false},
+        {"SVMClassifier", "random_state", 0, false},
+        {"SVMRegressor", "degree", 0, false},
+        {"DecisionTreeClassifier", "min_samples_split", 2, false},
+        {"DecisionTreeClassifier", "min_samples_leaf", 1, false},
+        {"RandomForestClassifier", "n_estimators", 1, false},
+        {"RandomForestClassifier", "max_depth", 1, false},
+        {"RandomForestClassifier", "min_samples_split", 2, false},
+        {"RandomForestClassifier", "min_samples_leaf", 1, false},
+        {"RandomForestClassifier", "seed", 0, false},
+        {"GradientBoostingClassifier", "n_estimators", 1, false},
+        {"GradientBoostingClassifier", "max_depth", 1, false},
+        {"GradientBoostingClassifier", "min_samples_split", 2, false},
+        {"GradientBoostingClassifier", "min_samples_leaf", 1, false},
+        {"TimeSeriesDecomposition", "period", 2, false},
+        {"ACFNode", "max_lag", -1, false, {0}},
+        {"PACFNode", "max_lag", -1, false, {0}},
+        {"StationarityTest", "max_lags", -1, false},
+        {"SeasonalityDetector", "min_period", 2, false},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineFloatParameterRuntimeCapability>&
+GetPipelineFloatParameterRuntimeCapabilities() {
+    static const std::vector<PipelineFloatParameterRuntimeCapability> capabilities = {
+        {"TimeSeriesSplit", "train_ratio", 0.0, 1.0},
+        {"TimeSeriesSplit", "val_ratio", 0.0, 1.0},
+        {"TimeSeriesSplit", "test_ratio", 0.0, 1.0},
+        {"RobustScaler", "quantile_min", 0.0, 100.0},
+        {"RobustScaler", "quantile_max", 0.0, 100.0},
+        {"TargetEncoder", "smoothing", 0.0, std::nullopt},
+        {"OutlierDetector", "threshold", 0.0, std::nullopt, false},
+        {"TimeSeriesSegment", "gap_threshold_seconds",
+         0.0, std::nullopt, false},
+        {"GradientBoostingClassifier", "learning_rate", 0.0, std::nullopt, false},
+        {"NaiveBayesClassifier", "var_smoothing", 0.0, std::nullopt},
+        {"LogisticRegressionNode", "C", 0.0, std::nullopt, false},
+        {"LogisticRegressionNode", "tol", 0.0, std::nullopt, false},
+        {"SVMClassifier", "C", 0.0, std::nullopt, false},
+        {"SVMClassifier", "tol", 0.0, std::nullopt, false},
+        {"SVMRegressor", "C", 0.0, std::nullopt, false},
+        {"SVMRegressor", "tol", 0.0, std::nullopt, false},
+        {"SVMRegressor", "epsilon", 0.0, std::nullopt},
+        {"DBSCANCluster", "eps", 0.0, std::nullopt, false},
+        {"FFTNode", "sample_rate", 0.0, std::nullopt, false},
+        {"FilterDesigner", "cutoff", 0.0, std::nullopt, false},
+        // Zero is the inactive sentinel for lowpass/highpass. Band filters
+        // impose the stronger cutoff_high > cutoff relation during validation.
+        {"FilterDesigner", "cutoff_high", 0.0, std::nullopt},
+        {"FilterDesigner", "sample_rate", 0.0, std::nullopt, false},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedSequentialModelLayerCapabilities() {
+    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
+        {gui::NodeType::PolicyNetwork,
+         "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
+         PipelineBackendPrimitiveEvidence::Missing},
+        {gui::NodeType::ValueNetwork,
+         "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet",
+         PipelineBackendPrimitiveEvidence::Missing},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineSupportedTrainingNodeCapability>&
+GetPipelineSupportedTrainingBackendCapabilities() {
+    static const std::vector<PipelineSupportedTrainingNodeCapability>
+        capabilities = [] {
+            std::vector<PipelineSupportedTrainingNodeCapability> result;
+            const auto& roles = GetPipelineSupportedTrainingRoleCapabilities();
+            result.reserve(roles.size());
+            for (const auto& role : roles) {
+                if (role.role != PipelineTrainingSupportRole::ModelLayer &&
+                    role.role != PipelineTrainingSupportRole::Activation) {
+                    continue;
+                }
+                result.push_back({role.node_type, role.reason});
+            }
+            return result;
+        }();
+    return capabilities;
+}
+
+const std::vector<PipelineSupportedTrainingRoleCapability>&
+GetPipelineSupportedTrainingRoleCapabilities() {
+    static const std::vector<PipelineSupportedTrainingRoleCapability> capabilities = {
+        {gui::NodeType::Dense, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable model layer"},
+        {gui::NodeType::Dropout, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable model layer"},
+        {gui::NodeType::BatchNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable model layer"},
+        // The CNN stack (TOFIX140 A1): [H,W,C,N] layers between the image
+        // Data Input and the Flatten; PyTorch fixtures in computation_truth.
+        {gui::NodeType::Conv2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire convolution layer"},
+        {gui::NodeType::DepthwiseConv2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire depthwise convolution (one kernel set per channel)"},
+        {gui::NodeType::MaxPool2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire pooling layer"},
+        {gui::NodeType::Conv1D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire 1-D convolution on [L,C,N] sequences (input rows or after an Embedding)"},
+        {gui::NodeType::Conv3D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire 3-D convolution on [D,H,W,C] volume rows (TOFIX140 Group C)"},
+        {gui::NodeType::AdaptiveAvgPool, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire adaptive average pool inside the spatial section"},
+        {gui::NodeType::GlobalMaxPool, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as the ArrayFire global max pool that ends a spatial or sequence section with [N,C] rows"},
+        {gui::NodeType::GlobalAvgPool, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as the ArrayFire global average pool that ends the spatial section with [N,C] rows"},
+        {gui::NodeType::AvgPool2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire pooling layer"},
+        {gui::NodeType::ConvTranspose2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire transposed-convolution layer"},
+        {gui::NodeType::Upsample, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire upsampling layer"},
+        {gui::NodeType::PixelShuffle, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire depth-to-space layer"},
+        {gui::NodeType::GroupNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable group-normalisation layer"},
+        {gui::NodeType::InstanceNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable instance-normalisation layer"},
+        {gui::NodeType::LayerNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable CPU-backed transformer normalization layer"},
+        {gui::NodeType::CrossAttention, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable two-input attention layer (Query over Key / Value) in the graph runtime"},
+        {gui::NodeType::MultiHeadAttention, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable CPU-backed self-attention layer"},
+        {gui::NodeType::LinearAttention, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable linear (kernel) self-attention layer built on tensor ops"},
+        {gui::NodeType::LSTM, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable recurrent model layer"},
+        {gui::NodeType::GRU, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable recurrent model layer"},
+        {gui::NodeType::RNN, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable simple recurrent model layer"},
+        {gui::NodeType::Embedding, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable token embedding layer"},
+        {gui::NodeType::TransformerEncoder, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable transformer encoder layer"},
+        {gui::NodeType::PositionalEncoding, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a deterministic sequence-position model layer"},
+        {gui::NodeType::TransformerDecoder, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable causal decoder layer for tested language-model stacks"},
+        {gui::NodeType::Flatten, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a shape-preserving model layer"},
+        {gui::NodeType::Reshape, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved tensor reshape layer"},
+        {gui::NodeType::View, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved tensor view layer"},
+        {gui::NodeType::Permute, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor dimension permutation layer"},
+        {gui::NodeType::Squeeze, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved singleton-dimension removal layer"},
+        {gui::NodeType::Unsqueeze, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved singleton-dimension insertion layer"},
+        {gui::NodeType::TensorBroadcastTo, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor broadcast layer"},
+        {gui::NodeType::TensorExpand, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a materialized tensor expansion layer"},
+        {gui::NodeType::TensorIndexSelect, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an indexed tensor selection layer"},
+        {gui::NodeType::TensorSum, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorMean, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorMax, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorMin, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorProd, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorVar, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorStd, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorPow, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorSqrt, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorExp, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorLog, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorAbs, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorSign, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorClip, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::Concatenate, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Split, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-out tensor op"},
+        {gui::NodeType::Add, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Multiply, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Average, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::TensorDot, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::TensorBatchMatMul, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in batched matrix product"},
+        {gui::NodeType::TensorCompare, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a scalar tensor mask or graph fan-in comparison layer"},
+        {gui::NodeType::TensorLogicalMask, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a unary tensor mask or graph fan-in logical layer"},
+        {gui::NodeType::TimeDistributed, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a per-timestep dense projection"},
+
+        {gui::NodeType::ReLU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Sigmoid, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Tanh, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Softmax, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::LeakyReLU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::ELU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::SELU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::PReLU, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a trainable activation layer (learned slopes)"},
+        {gui::NodeType::GELU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Swish, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Mish, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+
+        {gui::NodeType::MSELoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::CrossEntropyLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::FocalLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::SoftDiceLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::TverskyLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::JaccardLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::BCELoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::BCEWithLogits, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::L1Loss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::SmoothL1Loss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::HuberLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::NLLLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        // Metric learning (TOFIX140 A5): the loss splits the stacked
+        // [anchors; positives; negatives] embeddings of one model pass.
+        {gui::NodeType::TripletLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked triplet embeddings"},
+        {gui::NodeType::ContrastiveLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked pair embeddings"},
+        {gui::NodeType::CosineEmbeddingLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked pair embeddings"},
+
+        {gui::NodeType::SGD, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::Adam, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::AdamW, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::RMSprop, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::Adagrad, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::NAdam, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+
+        {gui::NodeType::Normalize, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training preprocessing configuration"},
+        {gui::NodeType::OneHotEncode, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training label preprocessing configuration"},
+        {gui::NodeType::PairDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training batcher: each batch becomes stacked in-batch pairs by class id"},
+        {gui::NodeType::TripletDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training batcher: each batch becomes stacked in-batch triplets by class id"},
+        {gui::NodeType::Resize, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's decode size and the model's [H,W,C] input shape"},
+        {gui::NodeType::CenterCrop, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::RandomCrop, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::HorizontalFlip, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::VerticalFlip, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ImageRotate, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ColorJitter, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ImageGaussianBlur, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::Grayscale, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::MorphologyTransform, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::AdvancedAugment, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::AugmentationPreset, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::QualityAnalyzer, PipelineTrainingSupportRole::Preprocessing,
+         "its cached analysis is judged at compile time; the image batcher leaves the rejected files out"},
+        {gui::NodeType::AudioInput, PipelineTrainingSupportRole::DataSource,
+         "compiled as the source contract for the training audio batcher"},
+        {gui::NodeType::Spectrogram, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training audio feature configuration"},
+        {gui::NodeType::MelSpectrogram, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training mel-feature configuration"},
+        {gui::NodeType::MFCC, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training MFCC feature configuration"},
+        {gui::NodeType::DataInput, PipelineTrainingSupportRole::DataSource,
+         "compiled as the configured project dataset source for training"},
+
+        {gui::NodeType::DataLoader, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into batching, epoch, balancing, and checkpoint controls"},
+        {gui::NodeType::DataSplit, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into train, validation, and held-out test partition policy"},
+        {gui::NodeType::Output, PipelineTrainingSupportRole::TrainingControl,
+         "compiled as a terminal training-graph marker without adding a module"},
+        {gui::NodeType::StepLR, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::CosineAnnealing, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::ReduceOnPlateau, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped on the validation loss after each validated epoch"},
+        {gui::NodeType::ExponentialLR, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::WarmupScheduler, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::L1Regularization, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        {gui::NodeType::L2Regularization, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        {gui::NodeType::ElasticNet, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        // Metric learning (TOFIX140 A5): side nodes on the encoder output.
+        {gui::NodeType::PairMetrics, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
+        {gui::NodeType::RetrievalMetrics, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
+        {gui::NodeType::EmbeddingOutput, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the embeddings file written after training"},
+        {gui::NodeType::PairScoreOutput, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the pair-score defaults saved with the trained model"},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineMaterializerStorageBackendCapability>&
+GetPipelineMaterializerStorageBackendCapabilities() {
+    static const std::vector<PipelineMaterializerStorageBackendCapability> capabilities = {
+        {PipelineStorageBackend::ArrowTable,
+         PipelineMaterializerStorageSupport::ArrowTableOnly,
+         true,
+         "in-memory Arrow tables are the only PipelineMaterializer storage backend"},
+        {PipelineStorageBackend::ParquetBacked,
+         PipelineMaterializerStorageSupport::StreamingOperatorsOnly,
+         true,
+         "a table on disk runs through operators that stream, one row group at a time"},
+        {PipelineStorageBackend::ImageDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer only applies Arrow-table operators; image datasets use domain batchers"},
+        {PipelineStorageBackend::AudioDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer only applies Arrow-table operators; audio datasets use domain batchers"},
+        {PipelineStorageBackend::TextDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer only applies Arrow-table operators; text datasets use domain batchers"},
+        {PipelineStorageBackend::SparseFeatureDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer does not apply table operators to an already materialized sparse CSR artifact"},
+    };
+    return capabilities;
+}
+
+PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
+    const auto with_validation_axes =
+        [&legacy_type_name](PipelineRuntimeSupport support) {
+            support.source_node = IsPipelineSourceRuntimeNode(legacy_type_name);
+            support.required_input_count =
+                ResolvePipelineRequiredInputCount(legacy_type_name);
+            support.required_parameters =
+                ResolvePipelineRequiredParameters(legacy_type_name);
+            support.allowed_parameter_values =
+                ResolvePipelineAllowedParameterValues(legacy_type_name);
+            support.integer_parameters =
+                ResolvePipelineIntegerParameters(legacy_type_name);
+            support.float_parameters =
+                ResolvePipelineFloatParameters(legacy_type_name);
+            return support;
+        };
+
+    if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
+        operator_type.has_value()) {
+        auto support = with_validation_axes({
+            PipelineRuntimeSupportMode::OperatorBacked,
+            PipelineRuntimeFailMode::Real,
+            operator_type,
+            operator_type,
+            nullptr,
+            PipelineMaterializerStorageSupport::ArrowTableOnly,
+            true,
+            true});
+        support.implementation_owner =
+            PipelineRuntimeImplementationOwner::PipelineOperatorFactory;
+        return support;
+    }
+
+    const auto& fail_closed_capabilities =
+        GetPipelineFailClosedRuntimeCapabilities();
+    auto fail_closed_it = std::find_if(
+        fail_closed_capabilities.begin(),
+        fail_closed_capabilities.end(),
+        [&legacy_type_name](
+            const PipelineFailClosedRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (fail_closed_it != fail_closed_capabilities.end()) {
+        auto support = PipelineRuntimeSupport{
+            PipelineRuntimeSupportMode::FailClosed,
+            PipelineRuntimeFailMode::HardFail,
+            fail_closed_it->node_type,
+            std::nullopt,
+            fail_closed_it->reason,
+            PipelineMaterializerStorageSupport::None,
+            false,
+            false};
+        support.metadata_node_type = fail_closed_it->metadata_node_type;
+        if (!support.metadata_node_type.has_value()) {
+            support.metadata_node_type = fail_closed_it->node_type;
+        }
+        support.implementation_owner = PipelineRuntimeImplementationOwner::None;
+        support.primitive_evidence = fail_closed_it->primitive_evidence;
+        return with_validation_axes(std::move(support));
+    }
+
+    const auto& legacy_capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto legacy_it = std::find_if(
+        legacy_capabilities.begin(),
+        legacy_capabilities.end(),
+        [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (legacy_it != legacy_capabilities.end()) {
+        auto support = with_validation_axes({
+            PipelineRuntimeSupportMode::LegacyExecutor,
+            PipelineRuntimeFailMode::Real,
+            legacy_it->node_type,
+            std::nullopt,
+            nullptr,
+            PipelineMaterializerStorageSupport::None,
+            false,
+            true});
+        support.implementation_owner =
+            PipelineRuntimeImplementationOwner::PipelineExecutor;
+        return support;
+    }
+
+    return {};
+}
+
+PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type) {
+    const char* legacy_type_name = ResolvePipelineRuntimeLegacyTypeName(node_type);
+    if (legacy_type_name == nullptr) {
+        return {};
+    }
+    return ResolvePipelineRuntimeSupport(legacy_type_name);
+}
+
+const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
+    switch (backend) {
+    case PipelineStorageBackend::ArrowTable:
+        return "ArrowTable";
+    case PipelineStorageBackend::ParquetBacked:
+        return "ParquetBacked";
+    case PipelineStorageBackend::ImageDataset:
+        return "ImageDataset";
+    case PipelineStorageBackend::AudioDataset:
+        return "AudioDataset";
+    case PipelineStorageBackend::TextDataset:
+        return "TextDataset";
+    case PipelineStorageBackend::SparseFeatureDataset:
+        return "SparseFeatureDataset";
+    case PipelineStorageBackend::Unknown:
+        return "Unknown";
+    }
+    return "Unknown";
+}
+
+const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode) {
+    switch (mode) {
+    case PipelineRuntimeSupportMode::LegacyExecutor:
+        return "legacy_executor";
+    case PipelineRuntimeSupportMode::OperatorBacked:
+        return "operator_backed";
+    case PipelineRuntimeSupportMode::FailClosed:
+        return "fail_closed";
+    case PipelineRuntimeSupportMode::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode) {
+    switch (fail_mode) {
+    case PipelineRuntimeFailMode::Real:
+        return "real";
+    case PipelineRuntimeFailMode::HardFail:
+        return "hard_fail";
+    case PipelineRuntimeFailMode::Simulated:
+        return "simulated";
+    case PipelineRuntimeFailMode::Passthrough:
+        return "passthrough";
+    case PipelineRuntimeFailMode::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineRuntimeImplementationOwnerName(
+    PipelineRuntimeImplementationOwner owner) {
+    switch (owner) {
+    case PipelineRuntimeImplementationOwner::None:
+        return "none";
+    case PipelineRuntimeImplementationOwner::PipelineExecutor:
+        return "pipeline_executor";
+    case PipelineRuntimeImplementationOwner::PipelineOperatorFactory:
+        return "pipeline_operator_factory";
+    case PipelineRuntimeImplementationOwner::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineLegacyAliasDecisionName(
+    PipelineLegacyAliasDecision decision) {
+    switch (decision) {
+    case PipelineLegacyAliasDecision::NormalizeToCanonical:
+        return "normalize_to_canonical";
+    case PipelineLegacyAliasDecision::HiddenCompatibilityAlias:
+        return "hidden_compatibility_alias";
+    case PipelineLegacyAliasDecision::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineMaterializerStorageSupportName(
+    PipelineMaterializerStorageSupport support) {
+    switch (support) {
+    case PipelineMaterializerStorageSupport::None:
+        return "none";
+    case PipelineMaterializerStorageSupport::ArrowTableOnly:
+        return "arrow_table_only";
+    }
+    return "unknown";
+}
+
+const char* PipelineTrainingBackendSupportModeName(
+    PipelineTrainingBackendSupportMode mode) {
+    switch (mode) {
+    case PipelineTrainingBackendSupportMode::Allowed:
+        return "allowed";
+    case PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer:
+        return "unsupported_sequential_model_layer";
+    }
+    return "unknown";
+}
+
+const char* PipelineBackendPrimitiveEvidenceName(
+    PipelineBackendPrimitiveEvidence evidence) {
+    switch (evidence) {
+    case PipelineBackendPrimitiveEvidence::NotApplicable:
+        return "not_applicable";
+    case PipelineBackendPrimitiveEvidence::ProvenNodePrimitive:
+        return "proven_node_primitive";
+    case PipelineBackendPrimitiveEvidence::RelatedHelperOnly:
+        return "related_helper_only";
+    case PipelineBackendPrimitiveEvidence::Missing:
+        return "missing";
+    }
+    return "not_applicable";
+}
+
+const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
+    switch (role) {
+    case PipelineTrainingSupportRole::ModelLayer:
+        return "model_layer";
+    case PipelineTrainingSupportRole::Activation:
+        return "activation";
+    case PipelineTrainingSupportRole::Loss:
+        return "loss";
+    case PipelineTrainingSupportRole::Optimizer:
+        return "optimizer";
+    case PipelineTrainingSupportRole::DataSource:
+        return "data_source";
+    case PipelineTrainingSupportRole::Preprocessing:
+        return "preprocessing";
+    case PipelineTrainingSupportRole::TrainingControl:
+        return "training_control";
+    case PipelineTrainingSupportRole::TrainingWorkflow:
+        return "training_workflow";
+    }
+    return "unknown";
+}
+
+PipelineMaterializerStorageBackendCapability
+ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend) {
+    const auto& capabilities = GetPipelineMaterializerStorageBackendCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [backend](const PipelineMaterializerStorageBackendCapability& capability) {
+            return capability.backend == backend;
+        });
+    if (it != capabilities.end()) {
+        return *it;
+    }
+    return {backend,
+            PipelineMaterializerStorageSupport::None,
+            false,
+            "storage backend is unknown to PipelineMaterializer"};
+}
+
+std::optional<gui::NodeType>
+ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineOperatorRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineOperatorRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return std::nullopt;
+    }
+    return it->node_type;
+}
+
+bool IsPipelineOperatorRuntimeNode(const std::string& legacy_type_name) {
+    return ResolvePipelineOperatorRuntimeType(legacy_type_name).has_value();
+}
+
+std::optional<gui::NodeType>
+ResolvePipelineRuntimeNodeType(const std::string& legacy_type_name) {
+    if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
+        operator_type.has_value()) {
+        return operator_type;
+    }
+
+    const auto& fail_closed_capabilities =
+        GetPipelineFailClosedRuntimeCapabilities();
+    auto fail_closed_it = std::find_if(
+        fail_closed_capabilities.begin(),
+        fail_closed_capabilities.end(),
+        [&legacy_type_name](
+            const PipelineFailClosedRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (fail_closed_it != fail_closed_capabilities.end()) {
+        if (fail_closed_it->node_type.has_value()) {
+            return fail_closed_it->node_type;
+        }
+        return fail_closed_it->metadata_node_type;
+    }
+
+    const auto& legacy_capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto legacy_it = std::find_if(
+        legacy_capabilities.begin(),
+        legacy_capabilities.end(),
+        [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (legacy_it == legacy_capabilities.end()) {
+        return std::nullopt;
+    }
+    return legacy_it->node_type;
+}
+
+const char* ResolvePipelineRuntimeLegacyTypeName(gui::NodeType node_type) {
+    const auto& operator_capabilities = GetPipelineOperatorRuntimeCapabilities();
+    auto operator_it = std::find_if(
+        operator_capabilities.begin(),
+        operator_capabilities.end(),
+        [node_type](const PipelineOperatorRuntimeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (operator_it != operator_capabilities.end()) {
+        return operator_it->legacy_type_name;
+    }
+
+    const auto& fail_closed_capabilities =
+        GetPipelineFailClosedRuntimeCapabilities();
+    auto fail_closed_it = std::find_if(
+        fail_closed_capabilities.begin(),
+        fail_closed_capabilities.end(),
+        [node_type](const PipelineFailClosedRuntimeCapability& capability) {
+            return capability.node_type == node_type ||
+                   capability.metadata_node_type == node_type;
+        });
+    if (fail_closed_it != fail_closed_capabilities.end()) {
+        return fail_closed_it->legacy_type_name;
+    }
+
+    const auto& legacy_capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto legacy_it = std::find_if(
+        legacy_capabilities.begin(),
+        legacy_capabilities.end(),
+        [node_type](const PipelineLegacyRuntimeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (legacy_it == legacy_capabilities.end()) {
+        return nullptr;
+    }
+    return legacy_it->legacy_type_name;
+}
+
+const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineFailClosedRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineFailClosedRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return nullptr;
+    }
+    return it->reason;
+}
+
+bool IsPipelineFailClosedRuntimeNode(const std::string& legacy_type_name) {
+    return ResolvePipelineFailClosedReason(legacy_type_name) != nullptr;
+}
+
+bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    return it != capabilities.end();
+}
+
+const PipelineLegacyAliasDecisionCapability*
+ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name) {
+    const auto& capabilities = GetPipelineLegacyAliasDecisionCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&alias_type_name](
+            const PipelineLegacyAliasDecisionCapability& capability) {
+            return alias_type_name == capability.alias_type_name;
+        });
+    if (it == capabilities.end()) {
+        return nullptr;
+    }
+    return &*it;
+}
+
+bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineSourceRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineSourceRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    return it != capabilities.end();
+}
+
+std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineInputArityRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineInputArityRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return std::nullopt;
+    }
+    return it->required_input_count;
+}
+
+std::vector<const char*>
+ResolvePipelineRequiredParameters(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineRequiredParameterRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineRequiredParameterRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return {};
+    }
+    return it->required_parameters;
+}
+
+std::vector<PipelineAllowedParameterValuesRuntimeCapability>
+ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineAllowedParameterValuesRuntimeCapabilities();
+    std::vector<PipelineAllowedParameterValuesRuntimeCapability> result;
+    for (const auto& capability : capabilities) {
+        if (legacy_type_name == capability.legacy_type_name) {
+            result.push_back(capability);
+        }
+    }
+    return result;
+}
+
+std::vector<PipelineIntegerParameterRuntimeCapability>
+ResolvePipelineIntegerParameters(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineIntegerParameterRuntimeCapabilities();
+    std::vector<PipelineIntegerParameterRuntimeCapability> result;
+    for (const auto& capability : capabilities) {
+        if (legacy_type_name == capability.legacy_type_name) {
+            result.push_back(capability);
+            // PACF still consumes this serialized alias. Validate it with the
+            // canonical bounds without exposing a second GUI property.
+            if (legacy_type_name == "PACFNode" &&
+                std::string(capability.parameter_name) == "max_lag") {
+                auto alias = capability;
+                alias.parameter_name = "lags";
+                result.push_back(alias);
+            }
+        }
+    }
+    return result;
+}
+
+std::vector<PipelineFloatParameterRuntimeCapability>
+ResolvePipelineFloatParameters(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineFloatParameterRuntimeCapabilities();
+    std::vector<PipelineFloatParameterRuntimeCapability> result;
+    for (const auto& capability : capabilities) {
+        if (legacy_type_name == capability.legacy_type_name) {
+            result.push_back(capability);
+        }
+    }
+    return result;
+}
+
+const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type) {
+    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
+    return support.mode ==
+               PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer
+        ? support.reason
+        : nullptr;
+}
+
+bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
+    return ResolvePipelineUnsupportedSequentialModelLayerReason(node_type) != nullptr;
+}
+
+bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
+    const auto& capabilities = GetPipelineSupportedTrainingBackendCapabilities();
+    auto it = std::find_if(
+        capabilities.begin(),
+        capabilities.end(),
+        [node_type](const PipelineSupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    return it != capabilities.end();
+}
+
+bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type) {
+    const auto& capabilities = GetPipelineSupportedTrainingRoleCapabilities();
+    auto it = std::find_if(
+        capabilities.begin(),
+        capabilities.end(),
+        [node_type](const PipelineSupportedTrainingRoleCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    return it != capabilities.end();
+}
+
+PipelineTrainingBackendSupport
+ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
+    const auto& layer_capabilities =
+        GetPipelineUnsupportedSequentialModelLayerCapabilities();
+    auto layer_it = std::find_if(
+        layer_capabilities.begin(),
+        layer_capabilities.end(),
+        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (layer_it != layer_capabilities.end()) {
+        return {PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer,
+                false,
+                false,
+                layer_it->reason,
+                layer_it->primitive_evidence};
+    }
+
+    const auto& supported_capabilities =
+        GetPipelineSupportedTrainingBackendCapabilities();
+    auto supported_it = std::find_if(
+        supported_capabilities.begin(),
+        supported_capabilities.end(),
+        [node_type](const PipelineSupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (supported_it != supported_capabilities.end()) {
+        return {PipelineTrainingBackendSupportMode::Allowed,
+                true,
+                true,
+                supported_it->reason};
+    }
+
+    return {};
+}
+
+bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
+    bool has_source = false;
+    bool has_model = false;
+    bool has_loss = false;
+    const auto& roles = GetPipelineSupportedTrainingRoleCapabilities();
+    for (const auto& node : nodes) {
+        has_source |= node.type == gui::NodeType::DataInput ||
+                      node.type == gui::NodeType::DatasetInput;
+        for (const auto& capability : roles) {
+            if (capability.node_type != node.type) continue;
+            has_model |= capability.role == PipelineTrainingSupportRole::ModelLayer;
+            has_loss |= capability.role == PipelineTrainingSupportRole::Loss;
+        }
+        if (has_source && has_model && has_loss) return true;
+    }
+    return false;
+}
+
+} // namespace cyxwiz
