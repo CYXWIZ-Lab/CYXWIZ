@@ -16,7 +16,7 @@
 
 #include "../dataset_contract.h"
 #include "../plot/plot_model.h"
-#include "../session_query_engine.h"
+#include "../query_param.h"
 
 #include <map>
 #include <optional>
