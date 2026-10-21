@@ -173,6 +173,7 @@ set(ENGINE_SOURCES
     src/core/data_registry_publication.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
+    src/core/loaded_data_report.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -3057,6 +3058,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/pipeline_type_names.cpp
     src/core/preparation_recipe.cpp
     src/core/data_registry.cpp
+    src/core/loaded_data_report.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
@@ -5952,6 +5954,22 @@ set_target_properties(test_table_grid_rows PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME table_grid_rows COMMAND test_table_grid_rows)
+
+# ===== Test: what loaded data holds, shared buffers counted once (TOFIX160 P1) =====
+add_executable(test_loaded_data_report
+    tests/test_loaded_data_report.cpp
+    src/core/loaded_data_report.cpp
+)
+target_include_directories(test_loaded_data_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_loaded_data_report PRIVATE Arrow::arrow_shared)
+if(WIN32)
+    target_compile_definitions(test_loaded_data_report PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_loaded_data_report PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME loaded_data_report COMMAND test_loaded_data_report)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE

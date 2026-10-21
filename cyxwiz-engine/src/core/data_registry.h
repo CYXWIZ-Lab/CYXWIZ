@@ -12,6 +12,7 @@
 #include <cstdint>
 
 #include "dataset_base.h"
+#include "loaded_data_report.h"
 
 // Forward declarations for Arrow
 namespace arrow {
@@ -657,10 +658,17 @@ public:
     static std::string TypeToString(DatasetType type);
 
     // Memory management
+    // The legacy Dataset map only (what TrimMemory can evict); every loaded
+    // dataset is LoadedData().
     size_t GetTotalMemoryUsage() const;
     void SetMemoryLimit(size_t bytes);
     size_t GetMemoryLimit() const { return memory_limit_; }
+    // total_allocated and datasets_count cover every loaded dataset
+    // (LoadedData), each shared buffer once.
     MemoryStats GetMemoryStats() const;
+    // Every dataset held, its memory (shared buffers counted once) and disk,
+    // and the Arrow pool (TOFIX160 P1).
+    LoadedDataReport LoadedData() const;
     void ResetCacheStats();
 
     // Memory optimization
@@ -760,6 +768,7 @@ private:
     std::string GenerateUniqueName(const std::string& base_name);
 
     // Dataset storage
+    LoadedDataReport LoadedDataUnlocked() const;  // mutex_ held
     std::map<std::string, std::shared_ptr<Dataset>> datasets_;
 
     // Arrow dataset storage (separate for Data Studio columnar data)
