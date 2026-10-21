@@ -60,6 +60,9 @@ void NodeEditor::Undo() {
     undo_stack_.pop_back();
 
     if (properties_panel_) properties_panel_->ClearNodeReferences();
+    std::vector<MLNode> before = nodes_;
+    for (const auto& data : subgraphs_)
+        if (!data.expanded) before.insert(before.end(), data.internal_nodes.begin(), data.internal_nodes.end());
     nodes_ = previous.nodes;
     subgraphs_ = previous.subgraphs;
     cached_node_positions_ = previous.positions;
@@ -75,6 +78,7 @@ void NodeEditor::Undo() {
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
+    SyncDataAfterSwap(before);
 
     // Clear selection
     ImNodes::ClearNodeSelection();
@@ -109,6 +113,9 @@ void NodeEditor::Redo() {
     redo_stack_.pop_back();
 
     if (properties_panel_) properties_panel_->ClearNodeReferences();
+    std::vector<MLNode> before = nodes_;
+    for (const auto& data : subgraphs_)
+        if (!data.expanded) before.insert(before.end(), data.internal_nodes.begin(), data.internal_nodes.end());
     nodes_ = next.nodes;
     subgraphs_ = next.subgraphs;
     cached_node_positions_ = next.positions;
@@ -124,6 +131,7 @@ void NodeEditor::Redo() {
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
+    SyncDataAfterSwap(before);
 
     // Clear selection
     ImNodes::ClearNodeSelection();

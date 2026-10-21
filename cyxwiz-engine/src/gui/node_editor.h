@@ -1282,6 +1282,10 @@ private:
     void ReleaseRunData(const std::set<int>& node_ids);
     void ReleaseAllRunData();
     void ApplyPendingRunRelease();
+    // After undo / redo swapped the graph (TOFIX160 P3): datasets no Data
+    // Input names any more are unregistered (with their run data), and a
+    // restored Data Input whose data is gone reads Not loaded.
+    void SyncDataAfterSwap(const std::vector<MLNode>& before);
     std::set<int> pending_run_release_;
     bool pending_run_release_all_ = false;
     bool pipeline_facts_final_ = true;

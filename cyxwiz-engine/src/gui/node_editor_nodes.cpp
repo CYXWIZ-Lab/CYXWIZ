@@ -6,6 +6,7 @@
 #include "../core/extension_node_registry.h"
 #include "../core/data_registry.h"
 #include "../core/pipeline_executor.h"
+#include "loaders/data_loader.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -76,6 +77,45 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     reg.UnregisterImageDataset(it->second);
     reg.UnregisterAudioDataset(it->second);
     reg.UnregisterTextDataset(it->second);
+}
+
+void NodeEditor::SyncDataAfterSwap(const std::vector<MLNode>& before) {
+    // Every node now on the canvas or inside a collapsed subgraph.
+    std::vector<const MLNode*> after;
+    for (const auto& node : nodes_) after.push_back(&node);
+    for (const auto& data : subgraphs_)
+        if (!data.expanded) for (const auto& node : data.internal_nodes) after.push_back(&node);
+    const auto dataset_of = [](const MLNode& node) -> std::string {
+        if (node.type != NodeType::DataInput) return "";
+        const auto it = node.parameters.find("dataset_name");
+        return it == node.parameters.end() ? "" : it->second;
+    };
+    std::map<int, std::string> now;  // id -> its dataset name
+    std::set<std::string> named;
+    for (const MLNode* node : after) {
+        now[node->id] = dataset_of(*node);
+        if (!now[node->id].empty()) named.insert(now[node->id]);
+    }
+    // Gone: a node no longer in the graph, or a Data Input whose undo went
+    // back to another file. Its data and its run results go.
+    std::set<int> released;
+    for (const auto& node : before) {
+        const auto it = now.find(node.id);
+        const std::string was = dataset_of(node);
+        if (it == now.end() || it->second != was) released.insert(node.id);
+        if (!was.empty() && !named.count(was)) UnregisterNodeDatasetIfOwned(node);
+    }
+    ReleaseRunData(released);
+    // Back: a Data Input whose data is not held reads Not loaded (its Apply
+    // reloads it), not the "loaded" its snapshot remembered.
+    for (auto& node : nodes_) {
+        const std::string name = dataset_of(node);
+        if (name.empty() || cyxwiz::loaders::GetByRegisteredDataset(name)) continue;
+        if (node.parameters["data_loaded"] != "false") {
+            node.parameters["data_loaded"] = "false";
+            spdlog::info("{}: its data was released; Apply loads it again", node.name);
+        }
+    }
 }
 
 void NodeEditor::ReleaseRunData(const std::set<int>& node_ids) {
