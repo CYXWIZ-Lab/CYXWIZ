@@ -48,6 +48,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
 # ========== Shared Core Sources (Used by both daemon and client) ==========
 set(SHARED_CORE_SOURCES
     src/core/backend_manager.cpp
+    src/core/allocation_device_type.cpp
     src/core/state_manager.cpp
     src/core/config_manager.cpp
     src/core/metrics_collector.cpp
@@ -118,6 +119,10 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/server_panel.cpp
         src/gui/theme.cpp
         src/gui/dock_style.cpp
+        src/gui/ui_widgets.cpp
+        src/gui/texture.cpp
+        src/gui/window_frame.cpp
+        src/gui/ui_watchdog.cpp
         src/gui/panels/dashboard_panel.cpp
         src/gui/panels/hardware_panel.cpp
         src/gui/panels/allocation_panel.cpp
@@ -133,6 +138,7 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/panels/analytics_panel.cpp
         src/gui/panels/fine_tuning_panel.cpp
         src/gui/panels/login_panel.cpp
+        src/core/sign_in_presentation.cpp
         src/gui/panels/account_settings_panel.cpp
         # Authentication
         src/auth/auth_manager.cpp
@@ -274,6 +280,12 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     # cpp-httplib is header-only: every file that includes it must agree on TLS
     # support, or the program holds two layouts of the same class (TOFIX136).
     target_compile_definitions(cyxwiz-server-gui PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    # Symbols beside the Release executable, so the UI watchdog names the
+    # function a hang sits in (TOFIX139); no effect on code generation.
+    if(MSVC)
+        target_compile_options(cyxwiz-server-gui PRIVATE /Zi)
+        target_link_options(cyxwiz-server-gui PRIVATE /DEBUG)
+    endif()
     target_link_libraries(cyxwiz-server-gui PRIVATE
         fmt::fmt
         spdlog::spdlog
@@ -423,6 +435,29 @@ if(CYXWIZ_BUILD_TESTS)
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     endif()
+
+    # Sign-in screen words and states (TOFIX139): pure presentation model
+    add_executable(test_sign_in_presentation
+        tests/test_sign_in_presentation.cpp
+        src/core/sign_in_presentation.cpp
+    )
+    target_include_directories(test_sign_in_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_sign_in_presentation PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_sign_in_presentation PRIVATE cxx_std_17)
+    add_test(NAME test_sign_in_presentation COMMAND test_sign_in_presentation)
+
+    # The runtime behind a lent GPU (TOFIX139 P8): pure mapping
+    add_executable(test_allocation_device_type
+        tests/test_allocation_device_type.cpp
+        src/core/allocation_device_type.cpp
+    )
+    target_include_directories(test_allocation_device_type PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    )
+    target_link_libraries(test_allocation_device_type PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_allocation_device_type PRIVATE cxx_std_17)
+    add_test(NAME test_allocation_device_type COMMAND test_allocation_device_type)
 
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client

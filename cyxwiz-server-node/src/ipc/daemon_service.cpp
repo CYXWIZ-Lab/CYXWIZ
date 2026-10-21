@@ -10,6 +10,9 @@
 #include "core/metrics_collector.h"
 #include "core/state_manager.h"
 #include "core/config_manager.h"
+#include "core/allocation_device_type.h"
+
+#include <cyxwiz/device.h>
 
 #include <spdlog/spdlog.h>
 #include <chrono>
@@ -773,15 +776,23 @@ grpc::Status DaemonServiceImpl::SetAllocations(
         spdlog::info("Setting auth token on NodeClient (token length: {})", jwt.length());
         node_client_->SetAuthToken(jwt);
 
-        // Convert protocol allocations to C++ DeviceAllocation structs
+        // Convert protocol allocations to C++ DeviceAllocation structs. The
+        // GUI only says GPU or CPU; the backend knows which runtime drives
+        // each GPU, and the central server routes jobs by that.
+        std::vector<core::KnownDevice> known_devices;
+        for (const auto& info : cyxwiz::Device::GetAvailableDevices()) {
+            known_devices.push_back({info.type, info.device_id, info.name});
+        }
         std::vector<cyxwiz::servernode::DeviceAllocation> device_allocations;
+        int gpu_position = 0;
         for (const auto& alloc : request->allocations()) {
             cyxwiz::servernode::DeviceAllocation da;
-            // Map daemon DeviceType to our int: CPU=0, CUDA=1, OPENCL=2
             switch (alloc.device_type()) {
-                case daemon::DEVICE_TYPE_CPU: da.device_type = 0; break;
-                case daemon::DEVICE_TYPE_GPU: da.device_type = 1; break;  // Treat GPU as CUDA
-                default: da.device_type = -1; break;
+                case daemon::DEVICE_TYPE_CPU: da.device_type = core::kAllocCpu; break;
+                case daemon::DEVICE_TYPE_GPU:
+                    da.device_type = core::ResolveGpuAllocationType(alloc.device_name(), gpu_position++, known_devices);
+                    break;
+                default: da.device_type = core::kAllocNone; break;
             }
             da.device_id = alloc.device_id();
             da.device_name = alloc.device_name();

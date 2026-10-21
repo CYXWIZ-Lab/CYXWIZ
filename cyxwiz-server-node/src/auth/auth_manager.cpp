@@ -286,6 +286,7 @@ AuthResult AuthManager::DoLogin(const std::string& endpoint, const std::string& 
 
             result.success = true;
             result.user_info = user_info_;
+            remembered_email_ = user_info_.email;
             spdlog::info("Login successful for user: {}", user_info_.email);
 
         } else {
@@ -302,6 +303,7 @@ AuthResult AuthManager::DoLogin(const std::string& endpoint, const std::string& 
                     default: result.error = "Server error (" + std::to_string(res->status) + ")";
                 }
             }
+            result.http_status = res->status;
             spdlog::error("Login failed: {} (HTTP {})", result.error, res->status);
         }
 
@@ -364,6 +366,7 @@ bool AuthManager::FetchUserProfile() {
         };
 
         auto res = client.Get(("/api/users/" + user_id).c_str(), headers);
+        last_profile_status_ = res ? res->status : 0;
 
         if (res && res->status == 200) {
             auto j = json::parse(res->body);
@@ -475,6 +478,7 @@ bool AuthManager::LoadSavedSession() {
             jwt_token_ = j.value("jwt_token", "");
             node_token_ = j.value("node_token", "");
             user_info_.id = j.value("user_id", "");
+            remembered_email_ = j.value("email", "");
 
             // Load node registration data
             node_id_ = j.value("node_id", "");
@@ -493,10 +497,15 @@ bool AuthManager::LoadSavedSession() {
                     spdlog::info("Restored saved session for user: {}", user_info_.email);
                 }
                 return true;
+            } else if (last_profile_status_ == 0 || last_profile_status_ >= 500) {
+                // No verdict: the service did not answer. The session stays for
+                // the next start; the user may sign in again meanwhile.
+                spdlog::warn("Could not verify the saved session (service answered {}); kept", last_profile_status_);
             } else {
-                // Token might be expired
-                spdlog::warn("Saved session token is invalid or expired");
+                spdlog::warn("Saved session token is invalid or expired (HTTP {})", last_profile_status_);
                 ClearSavedSession();
+                last_session_expired_ = true;
+                RememberEmailOnly();
             }
         }
     } catch (const std::exception& e) {
@@ -516,6 +525,7 @@ bool AuthManager::SaveSession() {
             j["jwt_token"] = jwt_token_;
             j["node_token"] = node_token_;
             j["user_id"] = user_info_.id;
+            j["email"] = user_info_.email;
             j["remember_me"] = true;
 
             // Save node registration data
@@ -553,8 +563,74 @@ void AuthManager::ClearSavedSession() {
     }
 }
 
-void AuthManager::OpenRegistrationPage() {
-    const char* url = "https://cyxwiz.com/register";
+void AuthManager::RememberEmailOnly() {
+    std::string email;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        email = remembered_email_;
+    }
+    if (email.empty()) return;
+    try {
+        json j;
+        j["email"] = email;
+        std::ofstream file(GetTokenStoragePath());
+        file << j.dump(2);
+    } catch (const std::exception& e) {
+        spdlog::warn("Could not keep the sign-in email: {}", e.what());
+    }
+}
+
+std::string AuthManager::GetRememberedEmail() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return remembered_email_;
+}
+
+bool AuthManager::LastSessionExpired() const { return last_session_expired_; }
+
+std::future<bool> AuthManager::ProbeService(std::string api_url) {
+    return std::async(std::launch::async, [api_url]() {
+        try {
+            std::string host = api_url;
+            bool use_ssl = false;
+            int port = 80;
+            if (host.rfind("https://", 0) == 0) {
+                host = host.substr(8);
+                use_ssl = true;
+                port = 443;
+            } else if (host.rfind("http://", 0) == 0) {
+                host = host.substr(7);
+            }
+            const auto slash = host.find('/');
+            if (slash != std::string::npos) host = host.substr(0, slash);
+            const auto colon = host.find(':');
+            if (colon != std::string::npos) {
+                port = std::stoi(host.substr(colon + 1));
+                host = host.substr(0, colon);
+            }
+            if (host.empty()) return false;
+            httplib::Result res;
+            if (use_ssl) {
+                httplib::SSLClient client(host, port);
+                client.set_connection_timeout(3);
+                client.set_read_timeout(3);
+                client.enable_server_certificate_verification(true);
+                res = client.Get("/health");
+            } else {
+                httplib::Client client(host, port);
+                client.set_connection_timeout(3);
+                client.set_read_timeout(3);
+                res = client.Get("/health");
+            }
+            return res && res->status == 200;
+        } catch (const std::exception& e) {
+            spdlog::debug("Service probe failed: {}", e.what());
+            return false;
+        }
+    });
+}
+
+void AuthManager::OpenWebsite(const std::string& url_text) {
+    const char* url = url_text.c_str();
 
 #ifdef _WIN32
     ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
@@ -566,7 +642,7 @@ void AuthManager::OpenRegistrationPage() {
     std::system(cmd.c_str());
 #endif
 
-    spdlog::info("Opened registration page in browser");
+    spdlog::info("Opened {} in the browser", url_text);
 }
 
 const char* AuthStateToString(AuthState state) {
@@ -947,6 +1023,7 @@ std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
 
             if (!res) {
                 result.error = "Network error: Failed to connect to API";
+                result.unreachable = true;
                 spdlog::error("Node registration failed: {}", result.error);
                 SetState(AuthState::Authenticated);
                 return result;
