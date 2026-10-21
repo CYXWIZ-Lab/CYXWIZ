@@ -10,6 +10,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -671,6 +672,17 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
         step.initial_pos_x = at.x + 160.0f;
         step.initial_pos_y = at.y + height + 80.0f;
+        // Below any node already there (an earlier branch of the same step), not on top of it.
+        for (bool moved = true; moved;) {
+            moved = false;
+            for (const auto& other : nodes_) {
+                const ImVec2 p = place(other.id, other);
+                if (std::fabs(p.x - step.initial_pos_x) < 120.0f && std::fabs(p.y - step.initial_pos_y) < 90.0f) {
+                    step.initial_pos_y = p.y + 130.0f;
+                    moved = true;
+                }
+            }
+        }
         step.has_initial_position = true;
         if (step.inputs.empty()) {
             spdlog::error("A new {} node has no input pin; nothing added", kind);
