@@ -118,6 +118,12 @@ bool StatusPill(const char* id, const char* text, const ImVec4& dot) {
     return clicked;
 }
 
+bool InlineLink(const char* label) {
+    const bool clicked = ImGui::TextLink(label);
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
 bool LinkButton(const char* label, bool enabled) {
     RefreshColors();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 4.0f));

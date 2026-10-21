@@ -92,7 +92,8 @@ std::string FileStamp(const std::filesystem::path& path, uint64_t* bytes) {
     if (bytes) *bytes = size;
     const auto absolute = std::filesystem::absolute(path, ec);
     return (ec ? path : absolute).lexically_normal().string() + "|" + std::to_string(size) + "|" +
-           std::to_string(time.time_since_epoch().count());
+           // long long: libc++'s file clock counts in __int128.
+           std::to_string(static_cast<long long>(time.time_since_epoch().count()));
 }
 
 std::string KnownFileDigest(const std::string& stamp, const std::filesystem::path& store_dir) {

@@ -258,7 +258,8 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     }
 
     // Create PluginContext for this plugin
-    auto ctx = std::make_unique<PluginContext>(plugin_id, plugin->instance, plugin->plugin_dir);
+    auto ctx = std::make_unique<EnginePluginContext>(plugin_id, plugin->manifest.version.ToString(),
+                                                     plugin->instance, plugin->plugin_dir);
 
     // Share engine's ImGui context with the DLL so plugin UI rendering works
     plugin->instance->SetImGuiContext(ImGui::GetCurrentContext());

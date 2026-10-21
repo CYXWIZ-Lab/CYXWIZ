@@ -34,6 +34,7 @@ struct UserInfo {
 struct AuthResult {
     bool success = false;
     std::string error;
+    int http_status = 0;  // the service's answer on failure; 0 = no answer
     UserInfo user_info;
 };
 
@@ -43,6 +44,7 @@ struct NodeRegistrationResult {
     std::string node_id;
     std::string api_key;
     std::string error;
+    bool unreachable = false;  // the service could not be reached at all
 };
 
 // Hardware specifications for node registration (legacy format)
@@ -135,13 +137,24 @@ public:
     bool LoadSavedSession();
     bool SaveSession();
     void ClearSavedSession();
+    // Keeps only the email in the session file after a sign-out or expiry.
+    void RememberEmailOnly();
 
     // Callbacks
     using AuthStateCallback = std::function<void(AuthState)>;
     void SetOnAuthStateChanged(AuthStateCallback callback);
 
     // Open registration page in browser
-    static void OpenRegistrationPage();
+    // Opens a web page in the user's browser (the sign-in service's website).
+    static void OpenWebsite(const std::string& url);
+
+    // Answers whether a sign-in service answers at its /health route (3 s).
+    static std::future<bool> ProbeService(std::string api_url);
+
+    // The email of the last sign-in, kept even when the session expired.
+    std::string GetRememberedEmail() const;
+    // True when a saved session existed at startup but was no longer accepted.
+    bool LastSessionExpired() const;
 
 private:
     AuthManager();
@@ -169,6 +182,9 @@ private:
     std::string node_id_;
     std::string node_api_key_;
     bool node_registered_ = false;
+    std::string remembered_email_;
+    bool last_session_expired_ = false;
+    int last_profile_status_ = 0;  // the service's answer to the last profile fetch; 0 = none
 };
 
 // Helper to get auth state as string

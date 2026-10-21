@@ -469,12 +469,13 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
         // Create device capability locally to avoid arena allocation issues
         protocol::DeviceCaps device;
 
-        // Map device type (0=CPU, 1=CUDA, 2=OpenCL in DeviceAllocation)
-        // Protocol uses: DEVICE_CPU=0, DEVICE_CUDA=1, DEVICE_OPENCL=2
+        // DeviceAllocation::device_type: 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal
+        // (core/allocation_device_type.h); the protocol has its own values.
         switch (alloc.device_type) {
             case 0: device.set_device_type(protocol::DEVICE_CPU); break;
             case 1: device.set_device_type(protocol::DEVICE_CUDA); break;
             case 2: device.set_device_type(protocol::DEVICE_OPENCL); break;
+            case 3: device.set_device_type(protocol::DEVICE_METAL); break;
             default: device.set_device_type(protocol::DEVICE_UNKNOWN); break;
         }
 
@@ -485,7 +486,7 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
         device.set_compute_units(alloc.compute_units);
 
         // For GPU devices, set GPU-specific fields
-        if (alloc.device_type == 1 || alloc.device_type == 2) {
+        if (alloc.device_type >= 1) {
             device.set_gpu_model(alloc.device_name);
             device.set_vram_total(static_cast<int64_t>(alloc.vram_total_mb) * 1024 * 1024);
             device.set_vram_available(static_cast<int64_t>(alloc.vram_allocated_mb) * 1024 * 1024);

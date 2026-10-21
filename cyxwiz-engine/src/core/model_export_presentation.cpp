@@ -6,7 +6,7 @@
 
 namespace cyxwiz::model_export {
 
-std::vector<FormatChoice> AvailableFormats(bool onnx_built, bool layer_stack) {
+std::vector<FormatChoice> AvailableFormats(bool onnx_built, bool onnx_writable) {
     std::vector<FormatChoice> out = {
         {ModelFormat::CyxModel, "CyxWiz package (.cyxmodel)",
          "Weights with the graph, configuration and training history, as you choose below. Its graph opens again "
@@ -14,13 +14,13 @@ std::vector<FormatChoice> AvailableFormats(bool onnx_built, bool layer_stack) {
         {ModelFormat::Safetensors, "Weights only (.safetensors)",
          "The parameter tensors only, readable by other frameworks; no graph or training package."},
     };
-    if (onnx_built && layer_stack)
+    if (onnx_built && onnx_writable)
         out.push_back({ModelFormat::ONNX, "ONNX (.onnx)", "A model for inference in other runtimes."});
     return out;
 }
 
-bool IsAvailable(ModelFormat format, bool onnx_built, bool layer_stack) {
-    for (const auto& choice : AvailableFormats(onnx_built, layer_stack))
+bool IsAvailable(ModelFormat format, bool onnx_built, bool onnx_writable) {
+    for (const auto& choice : AvailableFormats(onnx_built, onnx_writable))
         if (choice.format == format) return true;
     return false;
 }

@@ -773,6 +773,7 @@ private:
 
     // Check if node is a model layer (trainable)
     bool IsModelLayer(gui::NodeType type) const;
+    bool IsTrainableExtensionLayer(const gui::MLNode& node) const;
 
     // Check if node is an activation function
     bool IsActivation(gui::NodeType type) const;

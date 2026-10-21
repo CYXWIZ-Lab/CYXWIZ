@@ -7152,7 +7152,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         const std::filesystem::path path = ResolveProjectDataPath(value, project_root_);
         if (!std::filesystem::is_regular_file(path, error)) continue;
         const auto size = std::filesystem::file_size(path, error);
-        const auto time = std::filesystem::last_write_time(path, error).time_since_epoch().count();
+        const auto time = static_cast<long long>(std::filesystem::last_write_time(path, error).time_since_epoch().count());
         if (!error) mix(key + "@" + std::to_string(size) + "@" + std::to_string(time));
     }
 
@@ -7521,7 +7521,11 @@ LineageFile LineageInput(const std::filesystem::path& path, const std::filesyste
     std::error_code ec;
     const auto time = std::filesystem::last_write_time(path, ec);
     if (!ec) {
-        const auto wall = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
+        // file_time -> system_clock without clock_cast (missing from libstdc++
+        // and libc++ on the release runners), as the Asset Browser does.
+        const auto wall = std::chrono::system_clock::to_time_t(
+            std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()));
         std::tm local{};
 #if defined(_WIN32)
         localtime_s(&local, &wall);

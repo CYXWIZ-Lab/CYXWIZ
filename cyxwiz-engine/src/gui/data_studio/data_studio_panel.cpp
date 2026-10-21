@@ -6,6 +6,8 @@
 #include "../separate_windows.h"
 
 #include "../../core/data_studio_publish.h"
+#include "../../core/explore_presentation.h"
+#include "../../core/guided_sql.h"
 #include "../../core/dataset_catalog.h"
 #include "../../core/sql_editing.h"
 #include "../../core/dataset_picker_presentation.h"
@@ -20,6 +22,25 @@ namespace cyxwiz {
 DataStudioPanel::DataStudioPanel() {
     query_editor_ = std::make_unique<QueryEditor>();
     profile_ = std::make_unique<ProfileView>();
+    profile_->on_missing = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Missing, column); };
+    profile_->on_outliers = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Outliers, column); };
+    profile_->on_distribution = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Distribution, column); };
+    profile_->on_correlation = [this] { ShowExplore(active_dataset_, ExploreTab::Correlation); };
+    missing_ = std::make_unique<MissingView>();
+    missing_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
+    missing_->on_open_profile = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Profile, column); };
+    missing_->drop_blocker = [this]() -> std::string {
+        if (!node_editor_) return "No graph is open";
+        if (!NodeOfDataset(active_dataset_)) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list";
+        return "";
+    };
+    outliers_ = std::make_unique<OutliersView>();
+    correlation_ = std::make_unique<CorrelationView>();
+    distribution_ = std::make_unique<DistributionView>();
+    outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
+    missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
+        return AddKeepRowsStep(column, texts);
+    };
     visualizer_ = std::make_unique<Visualizer>();
     prepare_ = std::make_unique<PrepareView>();
     prepare_->raise_canvas = [this] {
@@ -77,6 +98,52 @@ void DataStudioPanel::ShowProfile(const std::string& dataset_name) {
     ::gui::BringToFront("Data Studio");
     job_ = studio::Job::Explore;
     explore_tab_ = ExploreTab::Profile;
+}
+
+void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column) {
+    SetActiveDataset(dataset_name);
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Explore;
+    explore_tab_ = tab;
+    if (column.empty()) return;
+    if (tab == ExploreTab::Profile && profile_) profile_->SelectColumn(column);
+    if (tab == ExploreTab::Missing && missing_) missing_->Select(column);
+    if (tab == ExploreTab::Outliers && outliers_) outliers_->Select(column);
+    if (tab == ExploreTab::Distribution && distribution_) distribution_->Select(column);
+}
+
+ExploreContext DataStudioPanel::MakeExploreContext() const {
+    ExploreContext c;
+    c.dataset = active_dataset_;
+    if (!profile_ || active_dataset_.empty()) return c;
+    c.shown = profile_->Shown();
+    c.profile = profile_->Current();
+    c.missing_texts = profile_->MissingTexts();
+    c.profiling = profile_->IsRunning();
+    c.error = profile_->Error();
+    return c;
+}
+
+std::string DataStudioPanel::AddKeepRowsStep(const std::string& column, const std::vector<std::string>& texts) {
+    const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+    if (!from || !node_editor_) return "The data's node is no longer in the graph.";
+    guided::GuidedStep step = explore_view::KeepRowsWithValue(column, texts);
+    step.saved_context.inputs = {"input"};
+    if (const auto profile = profile_ ? profile_->Current() : nullptr) {
+        for (const auto& c : profile->columns) step.saved_context.columns["input"].push_back(c.facts.name);
+    }
+    const guided::SavedStep saved = guided::SaveStep(step);
+    if (!saved.generated.ok) {
+        std::string why;
+        for (const auto& e : saved.generated.errors)
+            if (!e.empty()) why += (why.empty() ? "" : "; ") + e;
+        return "Could not write the step: " + why;
+    }
+    const std::string name = "Keep rows with " + column;
+    node_editor_->RequestStepAfter(from->id, ::gui::NodeType::SQLQuery, name,
+                                   {{guided::kGuidedOpsParameter, guided::ToJson(saved.step)}, {"query", saved.generated.sql}});
+    return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it).";
 }
 
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {

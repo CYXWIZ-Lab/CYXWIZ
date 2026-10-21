@@ -8,6 +8,7 @@
 #include "node_metadata.h"
 
 #include <optional>
+#include <string>
 
 namespace cyxwiz {
 
@@ -16,5 +17,19 @@ namespace cyxwiz {
 // built from the node's own pins, badged "Not installed". Empty only for a
 // built-in type the catalog does not know.
 std::optional<NodeMetadata> ResolveNodeMetadata(const gui::MLNode& node);
+
+// Why generated code (PyTorch, TensorFlow, Keras, pycyxwiz) cannot contain
+// this node, or nothing. A trainable extension node's computation is the
+// extension's own code, and a node whose extension is not installed has no
+// code at all: a script without them would leave the layer out and still run
+// (TOFIX125 P6). Built-in nodes and signal nodes: nothing.
+std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node);
+
+// A simulation node (a plugin's signal node) in generated code: never a
+// layer, since it is not part of a trained model (declaring one shifted every
+// later self.layerN in the forward pass). A comment line, with the plugin's
+// code text for `framework` ("pytorch", "tensorflow", "keras", "pycyxwiz")
+// as further comment lines, each starting with `indent` (TOFIX125 P6).
+std::string SimulationNodeCodeComment(const gui::MLNode& node, const char* framework, const std::string& indent);
 
 }  // namespace cyxwiz

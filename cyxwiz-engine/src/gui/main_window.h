@@ -64,12 +64,7 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class CorrelationMatrixPanel;
-class MissingValuePanel;
-class OutlierDetectionPanel;
-class DescriptiveStatsPanel;
 class HypothesisTestPanel;
-class DistributionFitterPanel;
 class RegressionPanel;
 class DimReductionPanel;
 class GradCAMPanel;
@@ -391,15 +386,8 @@ private:
     std::unique_ptr<cyxwiz::ArchitectureDiagram> architecture_diagram_;
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
-    // Data Science panels (Phase 3)
-    std::unique_ptr<cyxwiz::CorrelationMatrixPanel> correlation_matrix_panel_;
-    std::unique_ptr<cyxwiz::MissingValuePanel> missing_value_panel_;
-    std::unique_ptr<cyxwiz::OutlierDetectionPanel> outlier_detection_panel_;
-
     // Statistics panels (Phase 4)
-    std::unique_ptr<cyxwiz::DescriptiveStatsPanel> descriptive_stats_panel_;
     std::unique_ptr<cyxwiz::HypothesisTestPanel> hypothesis_test_panel_;
-    std::unique_ptr<cyxwiz::DistributionFitterPanel> distribution_fitter_panel_;
     std::unique_ptr<cyxwiz::RegressionPanel> regression_panel_;
 
     // Advanced Tools panels (Phase 5)

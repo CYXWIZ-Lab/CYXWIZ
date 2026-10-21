@@ -10,6 +10,7 @@
 #include "../ui_platform.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "../../core/guarded_extension_module.h"
 #include "../../core/model_export_presentation.h"
 #include "../../core/project_manager.h"
 #include <algorithm>
@@ -45,7 +46,7 @@ void ExportDialog::Open(ModelFormat initial_format) {
     show_result_ = false;
     export_progress_ = 0;
     export_total_ = 0;
-    selected_format_ = model_export::IsAvailable(initial_format, kOnnxBuilt, LayerStack()) ? initial_format
+    selected_format_ = model_export::IsAvailable(initial_format, kOnnxBuilt, OnnxWritable()) ? initial_format
                                                                                          : ModelFormat::CyxModel;
     include_training_history_ = true;
     include_graph_ = true;
@@ -82,6 +83,21 @@ void ExportDialog::SetModelData(
 
 bool ExportDialog::LayerStack() const {
     return !model_ || model_->AsSequentialModel() != nullptr;
+}
+
+bool ExportDialog::HasExtensionModules() const {
+    const SequentialModel* stack = model_ ? model_->AsSequentialModel() : nullptr;
+    if (!stack) return false;
+    for (size_t i = 0; i < stack->Size(); ++i)
+        if (dynamic_cast<const GuardedExtensionModule*>(stack->GetModule(i))) return true;
+    return false;
+}
+
+// ONNX is written from a stack of built-in layers: not for a graph with
+// branches, nor when a layer is an extension node, whose computation is the
+// extension's own code (TOFIX125 P6).
+bool ExportDialog::OnnxWritable() const {
+    return LayerStack() && !HasExtensionModules();
 }
 
 void ExportDialog::Render() {
@@ -151,7 +167,7 @@ void ExportDialog::Render() {
 
 void ExportDialog::RenderFormatSelection() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const auto choices = model_export::AvailableFormats(kOnnxBuilt, LayerStack());
+    const auto choices = model_export::AvailableFormats(kOnnxBuilt, OnnxWritable());
     std::vector<const char*> labels;
     int selected = 0;
     for (size_t i = 0; i < choices.size(); ++i) {
@@ -194,14 +210,17 @@ void ExportDialog::RenderOptions() {
     ImGui::Spacing();
     if (selected_format_ == ModelFormat::CyxModel) {
         ImGui::TextColored(t.text_dim, "Include");
-        // A graph with branches is rebuilt from its graph: always included.
-        if (!LayerStack()) include_graph_ = true;
-        ImGui::BeginDisabled(!LayerStack());
+        // A graph with branches, and an extension node, are rebuilt from
+        // the graph: always included.
+        const bool graph_required = !LayerStack() || HasExtensionModules();
+        if (graph_required) include_graph_ = true;
+        ImGui::BeginDisabled(graph_required);
         ImGui::Checkbox("Graph", &include_graph_);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip(LayerStack() ? "The node graph, to open and edit it in CyxWiz."
-                                           : "Always included: a graph with branches is rebuilt from its graph.");
+            ImGui::SetTooltip(!graph_required ? "The node graph, to open and edit it in CyxWiz."
+                              : LayerStack()  ? "Always included: extension nodes are rebuilt from the graph."
+                                              : "Always included: a graph with branches is rebuilt from its graph.");
         ImGui::SameLine();
         ImGui::Checkbox("Training history", &include_training_history_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loss and accuracy per epoch.");

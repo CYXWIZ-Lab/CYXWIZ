@@ -7,15 +7,18 @@ Everything else reads what Data Input nodes loaded.
   Input node and open its dialog.
 - **Data > Dataset Statistics** opens Data Studio's Profile tab (row counts,
   columns, value summaries) for the dataset picked there.
+- **Data > Explore** (Missing Value Analysis, Outlier Detection, Correlation
+  Matrix) and **Tools > Statistics > Summary Statistics / Distribution
+  Fitter** open Data Studio's Missing, Outliers, Correlation and
+  Distribution tabs on that dataset; they are no longer separate windows.
 
 ## The Dataset dropdown
 
 Every analysis tool has the same Dataset dropdown as Data Studio:
 - Data > Transform
 - Tools > Clustering and Projection
-- Tools > Statistics
+- Tools > Statistics (Hypothesis Testing, Regression)
 - Tools > Evaluation
-- Data > Explore
 
 It lists:
 - datasets loaded by Data Input nodes, shown with the node's name
@@ -32,4 +35,5 @@ its dialog and apply it, or run the pipeline (Execute Pipeline, or double-click
 a Plot node).
 
 The Data Explorer, which opened files directly, has been removed. Data Studio
-covers querying, profiling and visualizing datasets.
+covers querying, profiling, exploring (missing values, outliers, correlation,
+distributions) and visualizing datasets.

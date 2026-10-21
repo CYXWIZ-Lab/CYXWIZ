@@ -1,0 +1,16 @@
+{
+    "id": "com.example.my-nodes",
+    "name": "My Nodes",
+    "version": "1.0.0",
+    "api_version": "1.2.0",
+    "description": "A trainable activation written in C++: Bent Identity",
+    "author": "",
+    "license": "",
+    "capabilities": ["ProvidesTensorNodes"],
+    "permissions": ["Training"],
+    "platforms": {
+        "windows": { "library": "bin/my_nodes.dll" },
+        "linux": { "library": "bin/libmy_nodes.so" },
+        "macos": { "library": "bin/libmy_nodes.dylib" }
+    }
+}

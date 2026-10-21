@@ -217,6 +217,7 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
+          cyxwiz-plugin-check
           pycyxwiz
           -- -k 0
 

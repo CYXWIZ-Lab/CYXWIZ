@@ -25,133 +25,7 @@ enum class ColumnDataType {
     Mixed           // Mixed types in column
 };
 
-/**
- * Correlation result between two columns
- */
-struct CorrelationResult {
-    std::string col1;
-    std::string col2;
-    double pearson = 0.0;
-    double spearman = 0.0;     // Not implemented initially
-    size_t sample_count = 0;   // Number of valid pairs used
-};
-
-/**
- * Full correlation matrix
- */
-struct CorrelationMatrix {
-    std::vector<std::string> column_names;
-    std::vector<std::vector<double>> matrix;  // N x N matrix of Pearson correlations
-    size_t row_count = 0;                     // Original data rows used
-
-    // Get correlation between two columns
-    double Get(size_t i, size_t j) const {
-        if (i < matrix.size() && j < matrix[i].size()) {
-            return matrix[i][j];
-        }
-        return 0.0;
-    }
-
-    double Get(const std::string& col1, const std::string& col2) const;
-};
-
-/**
- * Missing value analysis result
- */
-struct MissingValueAnalysis {
-    std::string source_name;
-    size_t total_cells = 0;
-    size_t total_missing = 0;
-    float missing_percentage = 0.0f;
-
-    // Per-column missing info
-    struct ColumnMissing {
-        std::string name;
-        size_t missing_count = 0;
-        float missing_percentage = 0.0f;
-        std::vector<size_t> missing_indices;  // Row indices with missing values (limited to first 1000)
-    };
-    std::vector<ColumnMissing> columns;
-
-    // Rows with any missing values
-    size_t rows_with_missing = 0;
-    float rows_with_missing_percentage = 0.0f;
-
-    // Complete rows (no missing values)
-    size_t complete_rows = 0;
-};
-
-/**
- * Outlier detection methods
- */
-enum class OutlierMethod {
-    IQR,            // Interquartile range (default factor: 1.5)
-    ZScore,         // Z-score (default threshold: 3.0)
-    ModifiedZScore  // Modified Z-score using MAD (default threshold: 3.5)
-};
-
-/**
- * Single outlier entry
- */
-struct OutlierEntry {
-    size_t row_index = 0;
-    double value = 0.0;
-    double score = 0.0;  // Z-score or IQR distance
-    bool is_low = false; // Below lower bound (vs above upper bound)
-};
-
-/**
- * Outlier detection result for a column
- */
-struct OutlierResult {
-    std::string column_name;
-    OutlierMethod method = OutlierMethod::IQR;
-    double parameter = 1.5;  // IQR factor or Z-score threshold
-
-    // Bounds used for detection
-    double lower_bound = 0.0;
-    double upper_bound = 0.0;
-
-    // Statistics used
-    double mean = 0.0;
-    double std_dev = 0.0;
-    double median = 0.0;
-    double mad = 0.0;  // Median Absolute Deviation
-    double q1 = 0.0;
-    double q3 = 0.0;
-
-    // Outliers found
-    std::vector<OutlierEntry> outliers;
-    size_t outlier_count = 0;
-    float outlier_percentage = 0.0f;
-    size_t total_valid = 0;  // Non-null values analyzed
-};
-
 // ========== Phase 4: Statistical Tools ==========
-
-/**
- * Extended descriptive statistics result
- */
-struct DescriptiveStats {
-    size_t count = 0;
-    double mean = 0.0;
-    double median = 0.0;
-    double mode = 0.0;
-    double std_dev = 0.0;
-    double variance = 0.0;
-    double min = 0.0;
-    double max = 0.0;
-    double range = 0.0;
-    double q1 = 0.0;
-    double q3 = 0.0;
-    double iqr = 0.0;
-    double skewness = 0.0;
-    double kurtosis = 0.0;
-    double sum = 0.0;
-    double sem = 0.0;  // Standard Error of Mean
-    double cv = 0.0;   // Coefficient of Variation
-    std::vector<double> percentiles;  // 5, 10, 25, 50, 75, 90, 95
-};
 
 /**
  * Hypothesis test types
@@ -275,53 +149,15 @@ inline const char* DistributionTypeToString(DistributionType type) {
 }
 
 /**
- * DataAnalyzer - Core statistics engine for data analysis
- *
- * Provides comprehensive data profiling, correlation analysis,
- * missing value detection, and outlier identification.
+ * DataAnalyzer - statistics for the Tools panels (hypothesis tests,
+ * regression, distribution fits). Exploring a dataset (missing values,
+ * outliers, correlation, distribution) is Data Studio's Explore job, in SQL
+ * (core/data_explore); it uses the distribution fits here.
  */
 class DataAnalyzer {
 public:
     DataAnalyzer() = default;
     ~DataAnalyzer() = default;
-
-    // ========== Correlation Analysis ==========
-
-    /**
-     * Compute correlation matrix for all numeric columns
-     */
-    CorrelationMatrix ComputeCorrelationMatrix(const DataTable& table);
-
-    /**
-     * Compute correlation between two specific columns
-     */
-    CorrelationResult ComputeCorrelation(const DataTable& table,
-                                          const std::string& col1,
-                                          const std::string& col2);
-
-    // ========== Missing Value Analysis ==========
-
-    /**
-     * Analyze missing values in the table
-     * @param max_indices_per_column Maximum missing indices to store per column
-     */
-    MissingValueAnalysis AnalyzeMissingValues(const DataTable& table,
-                                               size_t max_indices_per_column = 1000);
-
-    // ========== Outlier Detection ==========
-
-    /**
-     * Detect outliers in a column using specified method
-     */
-    OutlierResult DetectOutliers(const DataTable& table,
-                                  const std::string& column_name,
-                                  OutlierMethod method = OutlierMethod::IQR,
-                                  double parameter = 0.0);  // 0 = use default
-
-    OutlierResult DetectOutliers(const DataTable& table,
-                                  size_t column_index,
-                                  OutlierMethod method = OutlierMethod::IQR,
-                                  double parameter = 0.0);
 
     // ========== Utility Functions ==========
 
@@ -348,35 +184,9 @@ public:
     // ========== Statistical Functions ==========
 
     static double Mean(const std::vector<double>& values);
-    static double Median(std::vector<double> values);  // Note: modifies input
     static double StdDev(const std::vector<double>& values, double mean);
     static double Variance(const std::vector<double>& values, double mean);
     static double Percentile(std::vector<double> values, double p);  // p in [0, 100]
-    static double Skewness(const std::vector<double>& values, double mean, double std_dev);
-    static double Kurtosis(const std::vector<double>& values, double mean, double std_dev);
-    static double MAD(std::vector<double> values, double median);  // Median Absolute Deviation
-
-    /**
-     * Compute Pearson correlation coefficient
-     */
-    static double PearsonCorrelation(const std::vector<double>& x, const std::vector<double>& y);
-
-    // ========== Phase 4: Statistical Methods ==========
-
-    /**
-     * Compute extended descriptive statistics
-     */
-    static DescriptiveStats ComputeDescriptiveStats(const std::vector<double>& data);
-
-    /**
-     * Calculate mode (most frequent value)
-     */
-    static double Mode(const std::vector<double>& data);
-
-    /**
-     * Calculate Standard Error of Mean
-     */
-    static double SEM(const std::vector<double>& data);
 
     // ========== Hypothesis Testing ==========
 
@@ -471,12 +281,6 @@ public:
      */
     static double NormalCDF(double x, double mu = 0.0, double sigma = 1.0);
 
-    /**
-     * Generate theoretical quantiles for QQ-plot
-     */
-    static std::vector<double> TheoreticalQuantiles(size_t n, DistributionType type,
-                                                     const std::map<std::string, double>& params);
-
     // ========== Regression Analysis ==========
 
     /**
@@ -500,17 +304,5 @@ public:
                                                       const std::vector<std::string>& predictor_names = {});
 
 };
-
-/**
- * Get string representation of outlier detection method
- */
-inline const char* OutlierMethodToString(OutlierMethod method) {
-    switch (method) {
-        case OutlierMethod::IQR: return "IQR";
-        case OutlierMethod::ZScore: return "Z-Score";
-        case OutlierMethod::ModifiedZScore: return "Modified Z-Score";
-        default: return "Unknown";
-    }
-}
 
 } // namespace cyxwiz

@@ -57,6 +57,10 @@ if(NOT mujoco_FOUND)
         # Copy MuJoCo DLL to output directory
         get_filename_component(MUJOCO_LIB_DIR "${MUJOCO_LIBRARY}" DIRECTORY)
         file(GLOB MUJOCO_DLLS "${MUJOCO_LIB_DIR}/../bin/mujoco*.dll" "${MUJOCO_LIB_DIR}/mujoco*.dll")
+        # mujoco*.dll also matches this plugin's own mujoco_plugin.dll in that
+        # bin folder: copying it would put an older plugin build (another
+        # checkout's, when MuJoCo is found there) over the one just linked.
+        list(FILTER MUJOCO_DLLS EXCLUDE REGEX "mujoco_plugin[^/]*\\.dll$")
 
         set(mujoco_FOUND TRUE)
     else()
@@ -95,10 +99,14 @@ target_include_directories(mujoco_plugin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# cyxwiz-plugin-sdk provides spdlog, nlohmann_json, imgui
+# cyxwiz-plugin-sdk is headers only; this plugin logs, draws and reads JSON,
+# so it links spdlog, ImGui and nlohmann_json itself
 # We additionally need glad (OpenGL loader) and glfw (context management)
 target_link_libraries(mujoco_plugin PRIVATE
     cyxwiz-plugin-sdk
+    spdlog::spdlog
+    imgui::imgui
+    nlohmann_json::nlohmann_json
     mujoco::mujoco
     glad::glad
     glfw

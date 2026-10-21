@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of the CyxWiz plugin SDK examples (see cmake/sdk/NOTICE).
 """Imports the pycyxwiz under test for the scripts in this folder.
 
     python <test>.py <folder holding pycyxwiz> [<folder of its DLLs>]

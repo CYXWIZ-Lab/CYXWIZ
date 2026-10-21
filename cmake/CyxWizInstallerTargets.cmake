@@ -484,6 +484,9 @@ if(CYXWIZ_BUILD_TESTS)
     )
     target_link_libraries(test_plot_export PRIVATE nlohmann_json::nlohmann_json)
     # Plot source from a DataTable: numeric columns, aligned rows (TOFIX134 P1).
+    # DataTable logs through spdlog, which the installer-only build (vcpkg-
+    # installer.json) does not have; the test is built with the Engine.
+    if(TARGET spdlog::spdlog AND TARGET fmt::fmt)
     add_executable(test_plot_table_source
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_table_source.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_table_source.cpp"
@@ -502,6 +505,12 @@ if(CYXWIZ_BUILD_TESTS)
     if(MSVC)
         target_compile_options(test_plot_table_source PRIVATE /utf-8)
         target_compile_definitions(test_plot_table_source PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    endif()
+    set_target_properties(test_plot_table_source PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(NAME test_plot_table_source_contract COMMAND test_plot_table_source)
     endif()
     # Plot node result lane plan: closure only, staleness, unavailable (TOFIX134 P2).
     add_executable(test_node_result_plan
@@ -587,7 +596,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_language_results test_variables_presentation test_breakpoint_lines
             test_paired_columns test_plot_script test_plot_inbox test_series_decimation
             test_plot_model test_plot_prepare test_plot_export test_plot_graph test_plot_tree_model test_python_plot_request test_sparse_summary
-            test_plot_table_source test_node_result_plan)
+            test_node_result_plan)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

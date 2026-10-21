@@ -21,6 +21,8 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <cerrno>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -50,8 +52,19 @@ std::vector<std::string_view> SplitSpaces(std::string_view line) {
 }
 
 bool ParseFloat(std::string_view text, float& value) {
+#if defined(_LIBCPP_VERSION)
+    // libc++ (macOS) has no floating-point from_chars: strtof on a
+    // terminated copy, accepting the whole token only.
+    if (text.empty()) return false;
+    const std::string copy(text);
+    char* end = nullptr;
+    errno = 0;
+    value = std::strtof(copy.c_str(), &end);
+    return errno != ERANGE && end == copy.c_str() + copy.size();
+#else
     const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
     return result.ec == std::errc() && result.ptr == text.data() + text.size();
+#endif
 }
 
 bool ParseCount(std::string_view text, long long& value) {

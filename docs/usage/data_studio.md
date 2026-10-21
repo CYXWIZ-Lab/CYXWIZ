@@ -54,9 +54,15 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has three views: **Query**, **Profile** and **Visualize**. A
-dashboard's "Open in Data Studio", "Edit roles", the Asset Browser's "Open
-in Data Studio" and Data > Dataset Statistics open the right one.
+Explore has seven views: **Query**, **Profile**, **Missing**, **Outliers**,
+**Correlation**, **Distribution** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Browser's "Open in Data Studio" and Data > Dataset Statistics open the
+right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
+Correlation Matrix) and Tools > Statistics > Summary Statistics and
+Distribution Fitter. In Profile, a column's missing or outlier count opens
+Missing or Outliers on it, "More about this column" opens Distribution, and
+"See the matrix" opens Correlation. The views wrap to a second line in a
+narrow dock.
 
 ## Query
 
@@ -186,6 +192,111 @@ looks like one, the panel suggests it. Spotify's artist_genres has `N/A` in
 
 The strongest correlations between number columns (Pearson) are listed
 under the details (Spotify: artist_popularity and artist_followers +0.64).
+
+## Missing
+
+Where the picked table has no value. It counts as Profile does: empty cells,
+plus the texts marked as missing for a column (**Treat as missing** in
+Profile; the link under the summary goes there).
+
+- **Summary**: missing cells and their share, complete rows and incomplete
+  rows. Penguins (344 rows, 7 columns): 19 of 2,408 cells missing (0.8%),
+  333 complete rows, 11 incomplete (3.2%).
+- **Columns**: every column with its missing count, share and a bar; sort by
+  name or count with the headers. Columns with none are listed faint.
+- **Missing together**: which columns are empty in the same rows, the most
+  common mixes first. Penguins: 9 rows lack only sex; 2 rows lack bill
+  length, bill depth, flipper length, body mass and sex together.
+- **The picked column** (click a row): its count, advice for how much is
+  missing, and its rows 50 at a time, numbered from 1 like the Table Viewer
+  (Previous / Next).
+  - **Drop these rows in Prepare** adds a guided step "Keep rows with
+    <column>" after the dataset's node (Keep rows where the column is not
+    empty and is not one of its missing texts). Prepare lists it; Ctrl+Z on
+    the canvas undoes it. It needs the table to be a Data Input or a node
+    result of the open graph.
+  - **Open in Query** puts the SQL for these rows in Query and runs it.
+  - **General recommendations** (folded) lists ways to fill values by kind
+    of data. Prepare has no "fill missing values" step yet.
+
+The counts come from Profile's profile, so switching tabs does not compute
+them again; complete rows, the mixes and the row pages are SQL on the
+dataset (tables kept on disk work the same way) and show in Task View.
+
+## Outliers
+
+Values far from the rest of a number column.
+
+- **Column** (searchable, for wide tables), **Rule** and **Factor**. The
+  count follows a change at once (the factor when you leave the field or
+  press - / +).
+  - **IQR** (factor 1.5): outside Q1 - k x IQR and Q3 + k x IQR; the score
+    is how many IQRs past the box.
+  - **Z-score** (3): outside mean +- k x std; the score is z.
+  - **Modified Z** (3.5): outside median +- k x MAD / 0.6745, robust to the
+    outliers themselves; the score is 0.6745 x (x - median) / MAD.
+  - A rule with no spread on the column (Q1 = Q3, all values equal, or
+    MAD = 0) says so instead of counting every value.
+- **Summary**: how many outliers, low and high, and the bounds.
+- **Distribution**: the column's histogram with the bounds dashed and the
+  bins past them in orange; a note says when a bound lies beyond the values.
+- **Rows**: row number, score, low or high, the column checked, then the
+  others; largest score first, 50 a page. **Open in Query** puts the SQL for
+  these rows in Query.
+- **Figures**: the bounds, mean, median, std, MAD (Modified Z), Q1, Q3,
+  values and missing, and what the rule does.
+
+Penguins: no outliers at IQR 1.5 in any column. Z-score 2 finds 9 in
+body_mass_g (all male Gentoo from Biscoe, 5,850 to 6,300 g); Modified Z 2
+finds 8 in flipper_length_mm (MAD 11, above 229.6). Tables profiled
+approximately use estimated quartiles and say so.
+
+## Correlation
+
+How the number columns move together: Pearson r of every pair, over the rows
+where both values are present.
+
+- **The matrix**: the profile's first 30 number columns (more need picking in
+  **Columns**, a searchable list with chips). Each cell shows r; hover for
+  the pair, r, its strength in words and how many rows it used; click to
+  pick it.
+- **The picked pair** (right): r, a sentence ("very strong positive: when
+  one is larger, so is the other"), and the rows it used.
+- **Strongest pairs**: every pair by |r|, strongest first; click one to pick
+  it.
+- **Display**: cell size, values in the cells, the -1 .. +1 legend.
+- **Export CSV...** saves the matrix (a header of the columns, one row each).
+
+Penguins: flipper length and body mass +0.87; bill depth and flipper length
+-0.58; every pair uses 342 of 344 rows (2 rows have no measurements).
+
+## Distribution
+
+How one number column is spread, and which distribution it follows.
+
+- **Column**, **Bins** (5 to 100; the histogram follows when you leave the
+  field) and **Export CSV...** (the figures, percentiles and fits).
+- **Summary**: values, missing, skewness in words, and whether any
+  distribution fits.
+- **Histogram** with the chosen fit drawn over it (expected count per bin),
+  a **box plot** (box Q1 to Q3, line the median, diamond the mean, whiskers
+  to the last value within 1.5 IQR, dots beyond) and a **Q-Q plot** against
+  the chosen fit (points on the line: the values follow it).
+- **Figures**: count, mean, median, mode (and how often), std, variance,
+  SEM, min, max, range, sum, Q1, Q3, IQR, skewness, kurtosis (excess) and
+  CV; hover a name for what it means. **Percentiles** 5 to 95.
+- **Fits**: Normal, Uniform, and for columns of positive values Exponential
+  and Log-Normal, best AIC first, with BIC, the KS statistic and its
+  p-value; a check mark when p is above 0.05. Click a fit to draw it; its
+  parameters and log-likelihood show below.
+
+The figures are SQL on the dataset (approximate quantiles on tables the
+profile reads approximately). The fits use the column's values; a column of
+more than 200,000 values is fitted on a 200,000-value sample and says so.
+
+Penguins: bill_length_mm fits Normal (KS p 0.066); body_mass_g fits nothing
+(best Log-Normal, p 0.018): the three species mixed give it more than one
+hump. Its mode is 3,800 g (12 birds), skewness 0.47, excess kurtosis -0.72.
 
 ## Visualize
 

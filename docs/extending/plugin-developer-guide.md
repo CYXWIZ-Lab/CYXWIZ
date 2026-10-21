@@ -2,9 +2,10 @@
 
 How to write a C++ plugin whose nodes train inside CyxWiz. Start with the
 [quickstart](plugin-quickstart.md) if you have not built the example yet.
+Every type, field and CMake name is listed in the
+[API reference](plugin-api-reference.md).
 
-> Checked 2026-10-16 against plugin API 1.1.0. This guide grows as the
-> feature is built; sections marked *Later* describe what is planned.
+> Checked 2026-10-17 against plugin API 1.2.0.
 
 Code in this guide is taken from
 `plugins/examples/activation_nodes/activation_nodes_plugin.cpp`, which the
@@ -27,7 +28,7 @@ my_nodes/
     "id": "com.cyxwiz.examples.activation-nodes",
     "name": "Example Activation Nodes",
     "version": "1.0.0",
-    "api_version": "1.1.0",
+    "api_version": "1.2.0",
     "description": "Trainable example nodes written in C++: Softsign, and Snake with a learnable frequency",
     "author": "CyxWiz Lab",
     "license": "MIT",
@@ -44,7 +45,7 @@ my_nodes/
 | Field | Rule |
 |---|---|
 | `id` | Unique. `a-z`, `0-9`, `.`, `-`, `_` only. It becomes the first half of every node's type id, so do not change it once graphs use your nodes |
-| `api_version` | The plugin API you built against. The Engine loads the plugin when the major number equals its own and the minor number is not higher. Trainable nodes need 1.1 |
+| `api_version` | The plugin API you built against. The Engine loads the plugin when the major number equals its own and the minor number is not higher. Trainable nodes need 1.1; the build fingerprint (section 9) came with 1.2 |
 | `capabilities` | `ProvidesTensorNodes` for trainable nodes |
 | `permissions` | `Training` for trainable nodes. File system, network, system commands and Python are dangerous permissions: the user is asked to approve them |
 | `platforms` | The library path per platform, relative to the folder |
@@ -55,9 +56,9 @@ A plugin implements `IPlugin` and, for trainable nodes,
 `ITensorNodeProvider`, and exports itself with `CYXWIZ_PLUGIN_ENTRY`:
 
 ```cpp
-#include "../../../cyxwiz-engine/src/plugin/plugin_types.h"
-#include "../../../cyxwiz-engine/src/plugin/plugin_context.h"
-#include "../../../cyxwiz-engine/src/plugin/interfaces/i_tensor_node_provider.h"
+#include "plugin/plugin_types.h"
+#include "plugin/plugin_context.h"
+#include "plugin/interfaces/i_tensor_node_provider.h"
 
 #include <cyxwiz/sequential.h>
 
@@ -89,8 +90,30 @@ add_library(my_nodes SHARED my_nodes_plugin.cpp)
 target_link_libraries(my_nodes PRIVATE cyxwiz-plugin-sdk cyxwiz-backend)
 ```
 
+`cyxwiz-plugin-sdk` is headers only: it brings the plugin headers, which
+need only the C++ standard library, and no library. Its include folder holds only the public
+headers (`plugin/...` and the three `core/` headers they use), not the
+Engine's sources, so include them as `"plugin/plugin_types.h"`. A plugin that logs with spdlog, draws
+ImGui panels or reads JSON links `spdlog::spdlog`, `imgui::imgui` or
+`nlohmann_json::nlohmann_json` itself (see the `image_nodes` example).
+
 Write the library into `bin/` beside `plugin.json` (see the example's
 `CMakeLists.txt`).
+
+### The context
+
+The `PluginContext&` passed to each lifecycle call is an interface the
+Engine implements. Every call on it runs in the Engine:
+
+| Call | What it does |
+|---|---|
+| `GetPluginId()`, `GetPluginDir()` | Your manifest id and your plugin folder |
+| `LogInfo`, `LogWarn`, `LogError`, `LogDebug` | Write to the Engine's log, prefixed with your id |
+| `RegisterNodeProvider`, `RegisterPanelProvider`, `RegisterDataProvider`, `RegisterTrainingHook`, `RegisterAnalyticsProvider` | Register with the Engine's own registries, after checking your permissions; returns `false` when a permission is missing |
+
+Keep the reference only for the plugin's lifetime: the Engine destroys the
+context after `OnUnload`. Tensor nodes need none of the `Register*` calls;
+the Engine finds them through `QueryInterface("ITensorNodeProvider")`.
 
 ## 3. Describing your nodes: `GetTensorNodes`
 
@@ -312,6 +335,18 @@ compile (*Extension node '...' is not installed. Install and approve the
 extension that provides it, or remove the node.*); off the path it is a
 warning.
 
+### Trained models
+
+| Path | What happens |
+|---|---|
+| Export a CyxWiz package (`.cyxmodel`) | Your module's `GetParameters` are saved with the other weights; the graph is always included; the manifest's `extensions` lists your node types with their versions |
+| Import the package | Your plugin builds the module again (`CreateModule`) and `SetParameters` gets the saved weights. Plugin not loaded: refused, "is not installed". Another version: loads, with a warning |
+| ONNX export, generated code | Refused with the node's name: they cannot contain your module's code |
+| Server Node deployment | Refused: the Server Node does not load plugins yet |
+
+So keep your parameter keys stable across versions of a node: a weight
+saved under one key is loaded only under the same key.
+
 ## 9. Loading, unloading and startup
 
 - **Install...** in the Plugin Manager loads one plugin from its folder; **Refresh** loads every plugin in the two plugin folders (see the [quickstart](plugin-quickstart.md#3-load-it-in-the-engine)).
@@ -324,6 +359,36 @@ warning.
 - **Apps > Loaded plugins** lists your plugin with what it adds
   (*2 nodes*); choosing it opens the Node Browser on your nodes.
 
+### Build fingerprint
+
+A trainable node's module is a real `cyxwiz::Module` that the Engine calls
+directly, so your plugin must be built the way the Engine was. Since plugin
+API 1.2, `CYXWIZ_PLUGIN_ENTRY` also exports your build's fingerprint, for
+example
+
+```
+sdk=0.2;api=1.2;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=3.10
+```
+
+The Engine compares it with its own before it runs any of your code:
+
+| Item | Must match |
+|---|---|
+| `sdk` | The CyxWiz SDK major and minor version (0.2) |
+| `api` | Same major; your minor not newer than the Engine's |
+| `compiler` | Compiler family and major version (MSVC 19 covers Visual Studio 2015-2022) |
+| `stdlib` | The C++ standard library |
+| `build` | Release or Debug: build your plugin in **Release** for a Release Engine |
+| `ptr` | 64-bit |
+| `arrayfire` | The ArrayFire version, when your plugin includes the backend |
+
+A difference refuses the load with both values, for example *The plugin was
+built with build=debug; this Engine with build=release. Rebuild the plugin
+against the CyxWiz SDK 0.2 with the same settings.* A plugin built before
+API 1.2 has no fingerprint and is refused with *The plugin has no build
+fingerprint*: rebuild it. You do not write anything for this: rebuilding
+with the current SDK is enough.
+
 ## 10. Threads, crashes and limits
 
 | Topic | Rule |
@@ -332,13 +397,4 @@ warning.
 | Crash isolation | Plugin lifecycle calls, `InferOutputShape` and `CreateModule` run inside the Engine's crash guard. During training, C++ exceptions from `Forward` and `Backward` are caught by the guard above; a memory fault in your code is not, and can close the Engine |
 | Tensors | Use `cyxwiz::Tensor` operations. Do not mix in raw ArrayFire arrays: they are column-major, `Tensor` is row-major |
 | Remote training | Graphs with extension nodes do not train on a Server Node yet; the Engine refuses with a message |
-| Export | Models with extension nodes cannot be exported yet |
-
-## 11. Later
-
-| Topic | Stage |
-|---|---|
-| A packaged SDK: headers, libraries, `find_package(CyxWizSDK)`, a template project, an installer component | P5 |
-| Build fingerprint, so the Engine refuses a plugin built for another Engine build | P5 |
-| API reference for every interface | P5 |
-| Python nodes | P3, P4 |
+| Export | ONNX export and generated code refuse a model with extension nodes, naming the node (see troubleshooting) |

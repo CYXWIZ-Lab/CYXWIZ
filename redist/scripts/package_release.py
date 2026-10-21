@@ -452,6 +452,12 @@ def copy_build_payload(
         paths.build / f"cyxwiz-installer{exe_suffix}",
         "standalone CyxWiz component manager",
     )
+    # Loads a C++ plugin folder the way the Engine does and gradient-checks
+    # its nodes (TOFIX125 P5); the plugin SDK's docs point at it.
+    plugin_check = require_file(
+        paths.build / f"cyxwiz-plugin-check{exe_suffix}",
+        "C++ plugin check tool",
+    )
     helpers = [
         require_file(
             paths.build / f"cyxwiz-backend-pack-installer{exe_suffix}",
@@ -476,6 +482,7 @@ def copy_build_payload(
     copy_file(engine, stage / engine.name)
     copy_file(route_probe, stage / route_probe.name)
     copy_file(installer, stage / installer.name)
+    copy_file(plugin_check, stage / plugin_check.name)
     for helper in helpers:
         copy_file(helper, stage / helper.name)
     if backend.parent.resolve() != paths.build.resolve():
@@ -504,6 +511,31 @@ def copy_build_payload(
     copy_file(require_file(paths.root / "LICENSE", "CyxWiz LICENSE"), stage / "LICENSE")
     copy_file(require_file(paths.root / "KNOWN_ISSUES.md", "CyxWiz KNOWN_ISSUES.md"), stage / "KNOWN_ISSUES.md")
     copy_vcpkg_notices(paths, stage, system)
+    install_plugin_sdk(paths, stage / "sdk")
+
+
+def cmake_build_root(build: Path) -> Path:
+    """The CMake build folder above --build-dir (which is <build>/bin/Release)."""
+    for candidate in (build, *build.parents):
+        if (candidate / "CMakeCache.txt").is_file():
+            return candidate
+    raise PackageError(f"No CMakeCache.txt above {build}: cannot install the plugin SDK")
+
+
+def install_plugin_sdk(paths: PackagePaths, destination: Path) -> None:
+    """The C++ plugin SDK (TOFIX125 P5, Apache-2.0) under sdk/ of the base."""
+    if destination.exists():
+        shutil.rmtree(destination)
+    command = [
+        "cmake", "--install", str(cmake_build_root(paths.build)), "--config", "Release",
+        "--component", "plugin_sdk", "--prefix", str(destination),
+    ]
+    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    if result.returncode != 0:
+        raise PackageError(f"Installing the plugin SDK failed:\n{result.stdout}")
+    for required in ("LICENSE", "NOTICE", "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake",
+                     "include/plugin/plugin_types.h", "template/plugin.json"):
+        require_file(destination / required, f"plugin SDK {required}")
 
 
 def arrayfire_library_dir(root: Path) -> Path:
@@ -865,6 +897,8 @@ def classify_source(relative_path: Path) -> str:
         return "cyxwiz-resources"
     if value.startswith("python_tools/"):
         return "python-tools"
+    if value.startswith("sdk/"):
+        return "cyxwiz-plugin-sdk"
     if value in ("README.md", "LICENSE", "KNOWN_ISSUES.md", "start_cyxwiz.bat", "cyxwiz"):
         return "cyxwiz-package"
     return "cyxwiz-build"
@@ -957,6 +991,7 @@ def create_deterministic_zip(stage: Path, destination: Path) -> Path:
                     "cyxwiz-runtime-bootstrapper",
                     "cyxwiz-product-removal-finalizer",
                     "cyxwiz-route-probe",
+                    "cyxwiz-plugin-check",
                 }
             )
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
@@ -1051,7 +1086,7 @@ def write_pack_contract(
         {"component": component.source, "path": component.path}
         for component in components
         if component.path.startswith("THIRD_PARTY_LICENSES/")
-        or component.path == "LICENSE"
+        or component.path in ("LICENSE", "sdk/LICENSE", "sdk/NOTICE")
     ]
     signed = {
         "pack_id": pack_id,

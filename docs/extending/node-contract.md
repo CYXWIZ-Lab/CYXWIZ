@@ -4,7 +4,7 @@ What every extension node must guarantee, whichever route it comes from (C++
 plugin now, Python node later). The Engine relies on these rules; where it
 can, it checks them and stops with a message that names the node.
 
-> Checked 2026-10-16 against plugin API 1.1.0.
+> Checked 2026-10-16 against plugin API 1.2.0.
 
 ## Identity
 

@@ -1,5 +1,7 @@
 #include "model_analyzer.h"
 #include "spatial_layer_shapes.h"
+#include "extension_node_registry.h"
+#include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -106,6 +108,10 @@ std::vector<int> ParseIntListText(const std::string& value) {
         }
     }
     return out;
+}
+
+std::string GetLayerTypeName(const LayerAnalysis& layer) {
+    return layer.type_label.empty() ? GetNodeTypeName(layer.type) : layer.type_label;
 }
 
 std::string GetNodeTypeName(gui::NodeType type) {
@@ -254,6 +260,25 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
 
         // Compute output shape
         std::vector<size_t> output_shape = InferOutputShape(*node, current_shape);
+        // An extension node answers for itself (TOFIX125 P6): its own shape
+        // function, and the parameters of a module built once here (the
+        // summary runs on Refresh, on the UI thread, where Python nodes may
+        // run). Not installed: shape passes through, 0 parameters.
+        if (node->type == gui::NodeType::PluginCustom) {
+            const auto descriptor = ExtensionNodeRegistry::Instance().Find(node->extension_type_id);
+            layer_analysis.type_label = (descriptor ? descriptor->metadata.name : std::string("Not installed")) +
+                                        " (" + node->extension_type_id + ")";
+            output_shape = current_shape;
+            if (const auto factory = ExtensionNodeRegistry::Instance().TensorFactory(node->extension_type_id)) {
+                const auto shape = factory->InferOutputShape(current_shape, node->parameters);
+                if (shape.ok) output_shape = shape.output_shape;
+                std::string error;
+                if (auto module = factory->CreateModule(current_shape, node->parameters, error)) {
+                    for (const auto& [name, tensor] : module->GetParameters())
+                        layer_analysis.parameters += static_cast<int64_t>(tensor.NumElements());
+                }
+            }
+        }
         layer_analysis.output_shape = output_shape;
 
         // Compute parameters

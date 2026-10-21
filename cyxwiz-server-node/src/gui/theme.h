@@ -87,6 +87,14 @@ public:
     void SetAccentColor(const ImVec4& color);
     ImVec4 GetAccentColor() const { return accent_color_; }
 
+    // Meaning colours (status strips, step icons); set by the preset.
+    struct SemanticColors {
+        ImVec4 success;
+        ImVec4 warning;
+        ImVec4 error;
+    };
+    const SemanticColors& Semantic() const { return semantic_; }
+
     // Apply matching dock style for current theme
     void ApplyDockStyle();
 
@@ -108,6 +116,8 @@ private:
     ThemePreset current_preset_ = ThemePreset::CyxWizDark;
     ThemeConfig config_;
     ImVec4 accent_color_ = ImVec4(0.26f, 0.59f, 0.98f, 1.0f);  // Default blue accent
+    SemanticColors semantic_{ImVec4(0.20f, 0.70f, 0.40f, 1.0f), ImVec4(0.90f, 0.70f, 0.20f, 1.0f),
+                             ImVec4(0.85f, 0.30f, 0.30f, 1.0f)};
 };
 
 // Global theme instance
