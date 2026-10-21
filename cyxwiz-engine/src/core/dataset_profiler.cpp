@@ -331,25 +331,20 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
         p.duplicate_rows = p.rows - std::min(p.rows, distinct_rows);
     }
 
-    // 6. The strongest correlations among the first numbers.
-    std::vector<size_t> corr_cols;
+    // 6. Correlations among the first numbers: the whole matrix, and the strongest pairs.
+    std::vector<std::string> corr_cols;
     for (size_t i = 0; i < p.columns.size() && corr_cols.size() < kCorrelationColumns; ++i)
-        if (p.columns[i].numeric && p.columns[i].max > p.columns[i].min) corr_cols.push_back(i);
+        if (p.columns[i].numeric && p.columns[i].max > p.columns[i].min) corr_cols.push_back(p.columns[i].facts.name);
     if (corr_cols.size() >= 2 && !stop()) {
         progress(0.96f, "Correlations");
-        std::string sql = "SELECT 1 AS one";
+        p.correlation = Correlate(table, corr_cols, run);
+        if (!p.correlation.ok()) {
+            if (p.error.empty()) p.error = p.correlation.error;
+            return p;
+        }
         for (size_t a = 0; a < corr_cols.size(); ++a)
             for (size_t b = a + 1; b < corr_cols.size(); ++b)
-                sql += ", corr(CAST(" + Q::QuoteIdentifier(p.columns[corr_cols[a]].facts.name) + " AS DOUBLE), CAST(" +
-                       Q::QuoteIdentifier(p.columns[corr_cols[b]].facts.name) + " AS DOUBLE)) AS r" + std::to_string(a) + "_" + std::to_string(b);
-        QueryResult r = query(sql + from);
-        if (!r.ok) return p;
-        for (size_t a = 0; a < corr_cols.size(); ++a)
-            for (size_t b = a + 1; b < corr_cols.size(); ++b) {
-                const double v = AsDouble(Cell(r.table, "r" + std::to_string(a) + "_" + std::to_string(b)));
-                if (std::isfinite(v))
-                    p.correlations.emplace_back(p.columns[corr_cols[a]].facts.name, p.columns[corr_cols[b]].facts.name, v);
-            }
+                if (std::isfinite(p.correlation.At(a, b))) p.correlations.emplace_back(corr_cols[a], corr_cols[b], p.correlation.At(a, b));
         std::stable_sort(p.correlations.begin(), p.correlations.end(),
                          [](const auto& x, const auto& y) { return std::fabs(std::get<2>(x)) > std::fabs(std::get<2>(y)); });
         if (p.correlations.size() > 10) p.correlations.resize(10);
@@ -357,6 +352,54 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
     p.elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     progress(1.0f, "Profiled");
     return p;
+}
+
+CorrelationMatrix Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run, bool cache) {
+    CorrelationMatrix m;
+    m.columns = columns;
+    const size_t n = columns.size();
+    m.r.assign(n * n, NAN);
+    m.pairs.assign(n * n, 0);
+    for (size_t i = 0; i < n; ++i) m.r[i * n + i] = 1.0;
+    if (n < 2) return m;
+    std::string sql = "SELECT 1 AS one";
+    for (size_t a = 0; a < n; ++a)
+        for (size_t b = a + 1; b < n; ++b) {
+            const std::string ca = Q::QuoteIdentifier(columns[a]), cb = Q::QuoteIdentifier(columns[b]);
+            const std::string k = std::to_string(a) + "_" + std::to_string(b);
+            sql += ", corr(CAST(" + ca + " AS DOUBLE), CAST(" + cb + " AS DOUBLE)) AS r" + k;
+            sql += ", count_if(" + ca + " IS NOT NULL AND " + cb + " IS NOT NULL) AS n" + k;
+        }
+    QueryRequest req;
+    req.sql = sql + " FROM " + Q::QuoteIdentifier(table);
+    req.inputs = {table};
+    req.label = "Correlations";
+    req.cache = cache;
+    QueryResult r = run(req);
+    if (!r.ok) {
+        m.error = r.cancelled ? "Cancelled." : r.error;
+        return m;
+    }
+    for (size_t a = 0; a < n; ++a)
+        for (size_t b = a + 1; b < n; ++b) {
+            const std::string k = std::to_string(a) + "_" + std::to_string(b);
+            const double v = AsDouble(Cell(r.table, "r" + k));
+            const size_t rows = AsCount(Cell(r.table, "n" + k));
+            m.r[a * n + b] = m.r[b * n + a] = std::isfinite(v) ? v : NAN;
+            m.pairs[a * n + b] = m.pairs[b * n + a] = rows;
+        }
+    for (size_t i = 0; i < n; ++i) m.pairs[i * n + i] = 0;
+    return m;
+}
+
+const char* CorrelationStrength(double r) {
+    const double a = std::fabs(r);
+    if (!std::isfinite(a)) return "unknown";
+    if (a >= 0.8) return "very strong";
+    if (a >= 0.6) return "strong";
+    if (a >= 0.4) return "moderate";
+    if (a >= 0.2) return "weak";
+    return "none";
 }
 
 DatasetProfile ProfileArrow(const std::shared_ptr<arrow::Table>& table, const ProfileOptions& options) {

@@ -174,6 +174,7 @@ set(ENGINE_SOURCES
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
+    src/core/data_explore.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -1494,6 +1495,23 @@ if(WIN32)
 endif()
 set_target_properties(test_dataset_profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
+
+# ===== Test: Data Studio Explore queries (TOFIX129 D1) =====
+add_executable(test_data_explore
+    tests/test_data_explore.cpp
+    src/core/data_explore.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+)
+target_include_directories(test_data_explore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_data_explore PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_data_explore PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME data_explore_contract COMMAND test_data_explore)
 
 # ===== Test: Arrow <-> DataTable (TOFIX148) =====
 add_executable(test_arrow_data_table

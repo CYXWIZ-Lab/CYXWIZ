@@ -11,7 +11,7 @@
 // missing, e.g. N/A), distinct values, min / max / mean / std / quartiles,
 // outliers (1.5 x IQR), a 20-bin histogram, the top 10 values, text length,
 // and the share of values that read as dates or file paths (for roles). Per
-// table: duplicate rows and the strongest correlations.
+// table: duplicate rows and the correlations of the first 30 numbers.
 // Wide tables (more than kExactColumns columns), and tables whose values
 // take more than a quarter of the data budget (exact distinct counts,
 // quartiles, top values and duplicate rows hold every value, and DuckDB
@@ -48,13 +48,28 @@ struct ProfiledColumn {
     std::string min_text, max_text;     // dates and text: first and last in order
 };
 
+// Pearson r of every pair of `columns` (rows where both are present), and
+// how many rows each pair used. Row-major n x n; the diagonal is 1; NaN when
+// a pair has no spread.
+struct CorrelationMatrix {
+    std::vector<std::string> columns;
+    std::vector<double> r;
+    std::vector<size_t> pairs;
+    std::string error;
+    bool ok() const { return error.empty(); }
+    size_t size() const { return columns.size(); }
+    double At(size_t i, size_t j) const { return r[i * columns.size() + j]; }
+    size_t PairRows(size_t i, size_t j) const { return pairs[i * columns.size() + j]; }
+};
+
 struct DatasetProfile {
     std::string table;                  // the name it was queried by
     size_t rows = 0;
     std::vector<ProfiledColumn> columns;
     bool duplicates_known = false;
     size_t duplicate_rows = 0;
-    std::vector<std::tuple<std::string, std::string, double>> correlations;  // strongest |r| first
+    std::vector<std::tuple<std::string, std::string, double>> correlations;  // strongest |r| first (10)
+    CorrelationMatrix correlation;      // every pair of the first kCorrelationColumns numbers
     bool exact = true;
     double elapsed_ms = 0;
     std::string error;
@@ -78,6 +93,13 @@ constexpr size_t kExactColumns = 64;      // beyond this many columns: approxima
 constexpr size_t kExactBytesPerValue = 16; // what an exact count holds per value, plus a text's own bytes
 constexpr size_t kDetailColumns = 200;    // histograms, top values: the first this many columns
 constexpr size_t kCorrelationColumns = 30;
+
+// The correlation matrix of chosen columns (Explore > Correlation asks for
+// columns beyond the profile's first kCorrelationColumns).
+CorrelationMatrix Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run,
+                            bool cache = true);
+// Words for |r|: "very strong" (>= .8), "strong" (.6), "moderate" (.4), "weak" (.2), "none".
+const char* CorrelationStrength(double r);
 
 // Its queries ask to be saved (QueryRequest::cache): through the session
 // query service, a table profiled before (by Data Studio or a dashboard, in
