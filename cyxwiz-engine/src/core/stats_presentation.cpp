@@ -45,6 +45,8 @@ std::string P(double p) {
     return buf;
 }
 
+std::string PairP(double p) { return std::isfinite(p) && p < 1e-15 ? std::string("< 1e-15") : P(p); }
+
 std::string Num(double v) { return explore_view::Figure(v); }
 
 std::string Range(double lo, double hi) { return Num(lo) + " .. " + Num(hi); }

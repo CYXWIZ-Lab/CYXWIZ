@@ -14,6 +14,8 @@ namespace cyxwiz::stats_view {
 
 // A p-value in two significant digits: 4.8e-16, 0.23, 0.0064; "< 1e-300" below that.
 std::string P(double p);
+// A Tukey pair's p: the studentized-range tail is accurate to about 1e-15, so "< 1e-15" below that.
+std::string PairP(double p);
 // A figure in a few digits (explore_view::Figure).
 std::string Num(double v);
 // "526.2 .. 840.6".

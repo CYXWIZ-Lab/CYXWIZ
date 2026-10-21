@@ -89,6 +89,11 @@ GroupFigures Figures(std::string name, std::vector<double> values) {
     if (!values.empty()) {
         const ColumnStats s = DataTransform::ComputeColumnStats(values);
         g.mean = s.mean;
+        g.min = s.min;
+        g.q1 = s.q1;
+        g.median = s.median;
+        g.q3 = s.q3;
+        g.max = s.max;
         // ComputeColumnStats gives the population SD; the tests use the sample SD.
         g.sd = values.size() > 1 ? s.std_dev * std::sqrt(static_cast<double>(values.size()) / (values.size() - 1.0)) : NAN;
         const NormalityTestResult t = DataTransform::DAgostinoPearsonTest(values);

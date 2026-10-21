@@ -17,6 +17,7 @@
 #include "outliers_view.h"
 #include "correlation_view.h"
 #include "distribution_view.h"
+#include "tests_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -39,7 +40,7 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Visualize };
+    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -99,6 +100,7 @@ private:
     std::unique_ptr<OutliersView> outliers_;
     std::unique_ptr<CorrelationView> correlation_;
     std::unique_ptr<DistributionView> distribution_;
+    std::unique_ptr<TestsView> tests_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

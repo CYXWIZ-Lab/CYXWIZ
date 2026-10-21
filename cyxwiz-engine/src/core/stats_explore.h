@@ -39,6 +39,7 @@ struct GroupFigures {
     std::string name;
     int64_t n = 0;
     double mean = NAN, sd = NAN;
+    double min = NAN, q1 = NAN, median = NAN, q3 = NAN, max = NAN;  // the box plot
     double normal_p = NAN;  // D'Agostino-Pearson; NaN below 20 values
     std::vector<double> values;
 };

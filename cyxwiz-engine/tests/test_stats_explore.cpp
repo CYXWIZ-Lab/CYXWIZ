@@ -176,7 +176,15 @@ int main() {
     w.request.groups = "sex";
     w.rows = 344;
     w.left_out = 11;
-    stats::GroupFigures male{"MALE", 168, 4545.68, 787.63, 1.4e-17, {}}, female{"FEMALE", 165, 3862.27, 666.17, 3.7e-12, {}};
+    stats::GroupFigures male, female;
+    male.name = "MALE";
+    male.n = 168;
+    male.mean = 4545.68;
+    male.normal_p = 1.4e-17;
+    female.name = "FEMALE";
+    female.n = 165;
+    female.mean = 3862.27;
+    female.normal_p = 3.7e-12;
     w.groups = {male, female};
     w.main.ok = true;
     w.main.p = 4.793891255051459e-16;
@@ -208,7 +216,11 @@ int main() {
     one.request.question = stats::Question::OneValue;
     one.request.values = "flipper_length_mm";
     one.request.value = 200;
-    one.groups = {{"flipper_length_mm", 342, 200.9152, 14.06, 1e-5, {}}};
+    stats::GroupFigures flipper;
+    flipper.name = "flipper_length_mm";
+    flipper.n = 342;
+    flipper.mean = 200.9152;
+    one.groups = {flipper};
     one.main.ok = true;
     one.main.p = 0.2295674765105476;
     one.main.ci_low = 199.4196;
@@ -233,7 +245,9 @@ int main() {
           stats_view::Answer(cat).text);
     Check(stats_view::Checks(cat).front().find("5 or more (smallest 10.28)") != std::string::npos, stats_view::Checks(cat).front());
 
-    Check(stats_view::P(2.9e-82) == "2.9e-82" && stats_view::P(0.0064) == "0.0064" && stats_view::P(0.0) == "< 1e-300", "p words");
+    Check(stats_view::P(2.9e-82) == "2.9e-82" && stats_view::P(0.0064) == "0.0064" && stats_view::P(0.0) == "< 1e-300" &&
+              stats_view::PairP(0.0) == "< 1e-15" && stats_view::PairP(0.0089) == "0.0089",
+          "p words");
     Check(std::string(stats_view::DWords(0.94)) == "large" && std::string(stats_view::EtaWords(0.67)) == "large" &&
               std::string(stats_view::VWords(0.2)) == "weak",
           "effect words");
