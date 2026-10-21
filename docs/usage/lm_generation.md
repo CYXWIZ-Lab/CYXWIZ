@@ -21,24 +21,28 @@ With no model loaded, the panel offers three sources (the same three are in
 | **A training checkpoint** | A saved run of a graph in the project. Pick the **graph** it was trained from and a **run** (newest first, with its weights, epoch, validation loss and date). **Choose a folder...** lists the runs of another checkpoint folder. |
 | **A model package (.cyxmodel)** | An exported model. It carries its tokenizer. |
 
-A checkpoint is built from its graph: the model from the graph's layers, the
-tokenizer from the graph's training data (its Data Input files are loaded in
-the background; relative paths are relative to the project), then the
-weights. Loading runs on the device selected in **Preferences > Devices**,
+A checkpoint is built from its graph: the model from the graph's layers
+(its Data Input files are loaded in the background; relative paths are
+relative to the project), the tokenizer the checkpoint keeps (see
+[the tokenizer in every checkpoint](fine_tuning_language_models.md#the-tokenizer-is-kept-in-every-checkpoint);
+an older checkpoint rebuilds it from the training data), then the weights. Loading runs on the device selected in **Preferences > Devices**,
 shows each step, and can be cancelled. The session's active model (Test,
 Inference) is not replaced.
 
 While loading, the Engine checks that:
 
 - the model gives next-token scores for every token of its tokenizer;
-- the tokenizer is the one the checkpoint was trained with (when the
-  checkpoint records it);
+- the tokenizer is the one the checkpoint was trained with: the one it
+  keeps, or one rebuilt from the training data that matches the
+  `tokenizer_sha256` it records;
 - the graph's Data Loader has generation settings (otherwise defaults are
   used).
 
 The dialog opens on the newest graph with a saved run. A graph's own
 generation settings that an older Engine saved are not used (Details says
-so) and the defaults are; the model still loads.
+so) and the defaults are; the model still loads. **Save to the graph** then rewrites
+them in the current form; the previews are off until prompts are added on
+the Data Loader's Generation tab.
 
 The bar at the top then shows the model's name, where it came from (*checkpoint ·
 best of train-1791984271862*), a summary (epoch, validation loss, context,

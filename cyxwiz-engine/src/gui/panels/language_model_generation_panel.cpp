@@ -806,11 +806,20 @@ void LanguageModelGenerationPanel::RenderSettingsRail() {
         ImGui::SameLine(0.0f, 14.0f);
         if (ui::LinkButton("Save to the graph")) {
             std::string error;
-            note_is_error_ = !SaveGenerationSettingsToGraph(model_->graph_path, model_->loader_node_id, settings_, error);
+            bool replaced_old = false;
+            note_is_error_ = !SaveGenerationSettingsToGraph(model_->graph_path, model_->loader_node_id, settings_, error,
+                                                            &replaced_old);
+            const std::string graph = std::filesystem::path(model_->graph_path).filename().string();
             note_ = note_is_error_ ? "Not saved: " + error
-                                   : "Saved to " + std::filesystem::path(model_->graph_path).filename().string() +
-                                         " (reopen it on the canvas to see the change)";
-            if (!note_is_error_) model_->settings = settings_;
+                    : replaced_old ? "Saved to " + graph + " in the current form: the older Engine's generation settings "
+                                     "were replaced; its previews are off until prompts are added on the Data Loader's "
+                                     "Generation tab (reopen the graph on the canvas)"
+                                   : "Saved to " + graph + " (reopen it on the canvas to see the change)";
+            if (!note_is_error_) {
+                model_->settings = settings_;
+                model_->settings_from_graph = true;
+                model_->warnings.clear();
+            }
         }
     }
     ImGui::Spacing();

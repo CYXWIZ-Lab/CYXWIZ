@@ -116,7 +116,9 @@ std::string LanguageModelSummary(int epoch, std::optional<double> validation_los
 }
 
 bool SaveGenerationSettingsToGraph(const std::string& graph_path, int loader_node_id,
-                                   const TrainingGenerationPreviewSettings& settings, std::string& error) {
+                                   const TrainingGenerationPreviewSettings& settings, std::string& error,
+                                   bool* replaced_old) {
+    if (replaced_old) *replaced_old = false;
     try {
         auto document = nlohmann::json::parse(ReadFile(graph_path));
         for (auto& node : document.at("nodes")) {
@@ -126,7 +128,17 @@ bool SaveGenerationSettingsToGraph(const std::string& graph_path, int loader_nod
             for (auto it = parameters.begin(); it != parameters.end(); ++it)
                 if (it.value().is_string()) current[it.key()] = it.value().get<std::string>();
             // Keep on/off, prompts, cadence and weights; take the rest from `settings`.
-            auto merged = ParseTrainingGenerationPreview(current);
+            TrainingGenerationPreviewSettings merged;
+            try {
+                (void)ParseTrainingGenerationPreview(current);  // what training reads must read
+                merged = ParseGenerationSettings(current);
+            } catch (const std::exception&) {
+                // Saved by an older Engine: rewritten in the current form, its
+                // unreadable keys removed (previews off, no prompts).
+                for (auto it = parameters.begin(); it != parameters.end();)
+                    it = it.key().rfind("generation_preview_", 0) == 0 ? parameters.erase(it) : std::next(it);
+                if (replaced_old) *replaced_old = true;
+            }
             const bool enabled = merged.enabled;
             const auto prompts = merged.prompts;
             const int every = merged.every;

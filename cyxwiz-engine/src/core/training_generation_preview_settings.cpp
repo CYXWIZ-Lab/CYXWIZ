@@ -174,16 +174,9 @@ void AddGenerationDecodingFields(const TrainingGenerationPreviewSettings& s, nlo
     report["no_repeat_ngram"] = s.no_repeat_ngram;
 }
 
-TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
-    const std::map<std::string, std::string>& params) {
-    TrainingGenerationPreviewSettings value;
-    const auto* enabled = Find(params, "enabled");
-    if (!enabled || !ParseBool(*enabled, "enabled")) return value;
-    value.enabled = true;
-    if (Find(params, "prompts") || Find(params, "every_epochs"))
-        Fail("Generation previews: this Data Loader was saved before the Generation tab existed. Open the "
-             "Data Loader, set the prompts on its Generation tab and apply");
-
+namespace {
+// Every stored setting but the on/off switch, without validating the whole.
+void ParseGenerationFields(const std::map<std::string, std::string>& params, TrainingGenerationPreviewSettings& value) {
     if (const auto* text = Find(params, "mode")) value.mode = ParseChoice(*text, "mode", kModes);
     if (const auto* text = Find(params, "template")) value.chat_template = ParseChoice(*text, "template", kTemplates);
     if (const auto* text = Find(params, "system_prompt")) value.system_prompt = *text;
@@ -233,8 +226,27 @@ TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
     if (const auto* text = Find(params, "after_last")) value.after_last = ParseBool(*text, "after last");
     if (const auto* text = Find(params, "weights")) value.weights = ParseChoice(*text, "weights", kWeights);
     if (const auto* text = Find(params, "prompt_set")) value.prompts = ParsePromptSet(*text);
+}
+}  // namespace
 
+TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
+    const std::map<std::string, std::string>& params) {
+    TrainingGenerationPreviewSettings value;
+    const auto* enabled = Find(params, "enabled");
+    if (!enabled || !ParseBool(*enabled, "enabled")) return value;
+    value.enabled = true;
+    if (Find(params, "prompts") || Find(params, "every_epochs"))
+        Fail("Generation previews: this Data Loader was saved before the Generation tab existed. Open the "
+             "Data Loader, set the prompts on its Generation tab and apply");
+    ParseGenerationFields(params, value);
     if (const auto error = ValidateTrainingGenerationPreview(value); !error.empty()) Fail(error);
+    return value;
+}
+
+TrainingGenerationPreviewSettings ParseGenerationSettings(const std::map<std::string, std::string>& params) {
+    TrainingGenerationPreviewSettings value;
+    if (const auto* enabled = Find(params, "enabled")) value.enabled = ParseBool(*enabled, "enabled");
+    ParseGenerationFields(params, value);
     return value;
 }
 

@@ -92,6 +92,12 @@ void AddGenerationDecodingFields(const TrainingGenerationPreviewSettings& settin
 TrainingGenerationPreviewSettings ParseTrainingGenerationPreview(
     const std::map<std::string, std::string>& params);
 
+// The stored settings whether previews are on or off (the Generation tab,
+// the LM Generation panel and saving to the graph: a template or stop texts
+// set with previews off still count). Throws std::invalid_argument for a
+// value it cannot read; the whole is not validated (no prompts is fine).
+TrainingGenerationPreviewSettings ParseGenerationSettings(const std::map<std::string, std::string>& params);
+
 // The parameters that ParseTrainingGenerationPreview reads back (the resolved
 // dataset fields are not stored).
 std::map<std::string, std::string> SerializeTrainingGenerationPreview(

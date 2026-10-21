@@ -259,9 +259,45 @@ void TestCheckpointHelpers() {
                 back.max_new_tokens == 128 && back.stop_texts == std::vector<std::string>({"</answer>"}) &&
                 params["learning_rate"] == "0.001",
             "the panel's settings written, other parameters untouched");
+    // With previews off, the graph's own prompts survive a save and its
+    // settings read back (they are not reset to the defaults).
+    write(dir / "off.cyxgraph", R"({"nodes":[{"id":3,"parameters":{"generation_preview_enabled":"false",)"
+                                R"("generation_preview_prompt_set":"[{\"text\":\"kept\"}]"}}],"links":[]})");
+    Require(cyxwiz::SaveGenerationSettingsToGraph((dir / "off.cyxgraph").string(), 3, settings, error), error);
+    nlohmann::json off;
+    std::ifstream(dir / "off.cyxgraph") >> off;
+    std::map<std::string, std::string> off_params;
+    for (auto& [key, value] : off["nodes"][0]["parameters"].items()) off_params[key] = value.get<std::string>();
+    const auto off_back = cyxwiz::ParseGenerationSettings(off_params);
+    Require(!off_back.enabled && off_back.prompts.size() == 1 && off_back.prompts[0].text == "kept" &&
+                off_back.max_new_tokens == 128 && off_back.label_assistant == "Bot:",
+            "previews off: prompts kept, settings read back");
+    Require(!cyxwiz::ParseTrainingGenerationPreview(off_params).enabled, "training still sees previews off");
+
     Require(!cyxwiz::SaveGenerationSettingsToGraph((dir / "g.cyxgraph").string(), 9, settings, error) &&
                 error.find("Data Loader") != std::string::npos,
             "an unknown Data Loader is refused");
+
+    // A graph an older Engine saved (prompts in the old keys): its settings are
+    // replaced in the current form, previews off, other parameters untouched.
+    write(dir / "old.cyxgraph", R"({"nodes":[{"id":3,"parameters":{"generation_preview_enabled":"true",)"
+                                R"("generation_preview_prompts":"In the beginning","generation_preview_every_epochs":"1",)"
+                                R"("learning_rate":"0.001"}}],"links":[]})");
+    bool replaced = false;
+    Require(cyxwiz::SaveGenerationSettingsToGraph((dir / "old.cyxgraph").string(), 3, settings, error, &replaced) &&
+                replaced,
+            "an older Engine's settings are replaced: " + error);
+    nlohmann::json rewritten;
+    std::ifstream(dir / "old.cyxgraph") >> rewritten;
+    std::map<std::string, std::string> fresh;
+    for (auto& [key, value] : rewritten["nodes"][0]["parameters"].items()) fresh[key] = value.get<std::string>();
+    Require(!fresh.count("generation_preview_prompts") && !fresh.count("generation_preview_every_epochs") &&
+                fresh["learning_rate"] == "0.001",
+            "the old keys are gone, the rest kept");
+    const auto now = cyxwiz::ParseGenerationSettings(fresh);
+    Require(!now.enabled && now.prompts.empty() && now.max_new_tokens == 128 &&
+                now.mode == cyxwiz::GenerationPreviewMode::Chat,
+            "the graph reads in the current form: the panel's settings, previews off");
     fs::remove_all(dir);
 }
 

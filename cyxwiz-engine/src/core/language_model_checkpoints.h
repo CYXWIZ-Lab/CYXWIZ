@@ -38,8 +38,12 @@ std::string LanguageModelSummary(int epoch, std::optional<double> validation_los
                                  const std::string& tokenizer_kind);
 
 // Writes the generation settings into the graph's Data Loader (the other
-// generation_preview_* keys, such as on/off and prompts, are kept).
+// generation_preview_* keys, such as on/off and prompts, are kept). Settings
+// an older Engine saved, which cannot be read, are replaced in the current
+// form with the previews off until prompts are added on the Generation tab;
+// `replaced_old` (optional) says so.
 bool SaveGenerationSettingsToGraph(const std::string& graph_path, int loader_node_id,
-                                   const TrainingGenerationPreviewSettings& settings, std::string& error);
+                                   const TrainingGenerationPreviewSettings& settings, std::string& error,
+                                   bool* replaced_old = nullptr);
 
 }  // namespace cyxwiz

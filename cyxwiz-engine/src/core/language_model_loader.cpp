@@ -171,13 +171,13 @@ LoadedLanguageModel LoadFromCheckpoint(const LanguageModelLoadRequest& request, 
     std::string settings_problem;
     TrainingGenerationPreviewSettings graph_settings;
     try {
-        graph_settings = ParseTrainingGenerationPreview(loader_parameters);
+        graph_settings = ParseGenerationSettings(loader_parameters);
     } catch (const std::exception& exception) {
         settings_problem = exception.what();
     }
     RequireNotCancelled(cancel);
 
-    if (progress) progress("Loading the training data for the tokenizer", 2, 3);
+    if (progress) progress("Loading the graph's training data", 2, 3);
     PreparedGraphJob prepared;
     if (const auto failure = PrepareGraphJob(job, prepared); !failure.error.empty())
         throw std::runtime_error("The graph cannot be prepared: " + failure.error);

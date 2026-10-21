@@ -124,9 +124,8 @@ void DataLoaderGenerationTab::Load(const std::map<std::string, std::string>& par
         return;
     }
     // Read the stored settings even when previews are off, so turning them on keeps them.
-    own["generation_preview_enabled"] = "true";
     try {
-        settings_ = cyxwiz::ParseTrainingGenerationPreview(own);
+        settings_ = cyxwiz::ParseGenerationSettings(own);
     } catch (const std::exception&) {
         settings_ = {};
         // Keep what parses on its own: the prompts and the mode.
@@ -136,7 +135,7 @@ void DataLoaderGenerationTab::Load(const std::map<std::string, std::string>& par
                                     "generation_preview_temperature", "generation_preview_top_k",
                                     "generation_preview_top_p", "generation_preview_every"})
                 only.erase(key);
-            settings_ = cyxwiz::ParseTrainingGenerationPreview(only);
+            settings_ = cyxwiz::ParseGenerationSettings(only);
         } catch (const std::exception&) {
             settings_ = {};
         }
