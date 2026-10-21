@@ -118,6 +118,7 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/server_panel.cpp
         src/gui/theme.cpp
         src/gui/dock_style.cpp
+        src/gui/ui_widgets.cpp
         src/gui/panels/dashboard_panel.cpp
         src/gui/panels/hardware_panel.cpp
         src/gui/panels/allocation_panel.cpp

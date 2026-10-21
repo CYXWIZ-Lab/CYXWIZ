@@ -1,4 +1,5 @@
 // account_settings_panel.cpp
+#include "core/sign_in_presentation.h"
 #include "gui/panels/account_settings_panel.h"
 #include "gui/icons.h"
 #include "auth/auth_manager.h"
@@ -224,7 +225,7 @@ void AccountSettingsPanel::RenderLoginForm() {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
     if (ImGui::SmallButton("Create one")) {
-        auth::AuthManager::OpenRegistrationPage();
+        auth::AuthManager::OpenWebsite(core::WebsiteOf(auth::AuthManager::Instance().GetApiBaseUrl()) + "/register");
     }
     ImGui::PopStyleColor(3);
 }
