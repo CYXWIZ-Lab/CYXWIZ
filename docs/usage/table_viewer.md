@@ -16,7 +16,11 @@ four.
   than 200,000 rows opens its first 200,000 and says so in the tab name.
 - **View data** on a Python value in the Variable Explorer: the tab shows
   where the value comes from, **Read again**, and for arrays with more than
-  two axes which slice is shown (Up / Down step the first index).
+  two axes which slice is shown (Up / Down step the first index). The read
+  runs on the Python worker and is listed in the Task viewer as *Read <name>
+  from Python* (200,000 rows of a list: 0.7 s); **Save as CSV** is listed as
+  *Save <name> as CSV*. A Python call cannot be stopped part way, so neither
+  has Cancel.
 - A notebook or script that shows a table.
 
 Each table opens in its own tab and comes to the front. Opening the same

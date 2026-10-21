@@ -136,6 +136,8 @@ private:
     static std::atomic<uint64_t> next_id_;
 };
 
+class LambdaTask;
+
 // Thread pool for executing async tasks
 class AsyncTaskManager {
 public:
@@ -206,7 +208,14 @@ public:
                       CompletionCallback completion_cb = nullptr,
                       std::weak_ptr<const void> owner = {});
 
+    // Runs `func` now on the calling thread, listed in the Task viewer like
+    // any task: for work that must stay on a thread of its own (the Python
+    // worker's variable reads). Returns how it ended.
+    TaskState RunHere(const std::string& name, std::function<void(LambdaTask&)> func, bool cancellable = true);
+
 private:
+    // Runs a task on this thread: the cancel gate, the body, its end state.
+    void ExecuteTask(const std::shared_ptr<AsyncTask>& task);
     AsyncTaskManager() = default;
     ~AsyncTaskManager();
 

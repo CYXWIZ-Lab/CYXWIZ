@@ -1,12 +1,26 @@
 #include "variables_service.h"
 
 #include "scripting_engine.h"
+#include "../core/async_task_manager.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 
 namespace scripting {
+
+namespace {
+// The variable a path names, for the Task viewer: its last key (`df`, `x[3]`
+// shows as `3`), or "a value".
+std::string PathLabel(const std::string& path_json) {
+    const auto path = nlohmann::json::parse(path_json.empty() ? "[]" : path_json, nullptr, false);
+    if (path.is_array() && !path.empty() && path.back().is_array() && path.back().size() >= 2) {
+        const auto& key = path.back()[1];
+        return key.is_string() ? key.get<std::string>() : key.dump();
+    }
+    return "a value";
+}
+}  // namespace
 
 const char* VariablesFunctionName(VariablesService::Kind kind) {
     switch (kind) {
@@ -79,7 +93,18 @@ void VariablesService::Run() {
         result.scope = request.scope;
         if (request.kind == Kind::Table) {
             ScriptingEngine::VariableTable table;
-            engine_->ReadVariableTable(request.scope, request.path_json, request.max_rows, request.index, &table, &result.busy);
+            // A table read can take a while: the Task viewer lists it (it runs
+            // here, on the Python worker; a Python call cannot be stopped).
+            cyxwiz::AsyncTaskManager::Instance().RunHere(
+                "Read " + PathLabel(request.path_json) + " from Python",
+                [&](cyxwiz::LambdaTask& task) {
+                    engine_->ReadVariableTable(request.scope, request.path_json, request.max_rows, request.index,
+                                               &table, &result.busy);
+                    if (result.busy) task.MarkCancelled("A run was active; read again when it ends");
+                    else if (!table.error.empty()) task.MarkFailed(table.error);
+                    else task.MarkCompleted(std::to_string(table.shown) + " rows");
+                },
+                false);
             result.table = std::move(table.table);
             result.table_kind = std::move(table.kind);
             result.shape = std::move(table.shape);
@@ -100,7 +125,21 @@ void VariablesService::Run() {
                 args["path"] = path.is_discarded() ? nlohmann::json::array() : path;
             }
             if (request.kind == Kind::SaveCsv) args["file_path"] = request.file;
-            result.json = engine_->CallVariablesTool(VariablesFunctionName(request.kind), args.dump(), request.scope, &result.busy);
+            const auto call = [&] {
+                result.json = engine_->CallVariablesTool(VariablesFunctionName(request.kind), args.dump(), request.scope,
+                                                         &result.busy);
+            };
+            if (request.kind == Kind::SaveCsv) {
+                cyxwiz::AsyncTaskManager::Instance().RunHere(
+                    "Save " + PathLabel(request.path_json) + " as CSV",
+                    [&](cyxwiz::LambdaTask& task) {
+                        call();
+                        if (result.busy) task.MarkCancelled("A run was active; save again when it ends");
+                    },
+                    false);
+            } else {
+                call();
+            }
         }
         std::lock_guard<std::mutex> lock(mutex_);
         if (stop_) return;
