@@ -51,6 +51,13 @@ std::string Num(double v) { return explore_view::Figure(v); }
 
 std::string Range(double lo, double hi) { return Num(lo) + " .. " + Num(hi); }
 
+std::string Aic(double v) {
+    if (!std::isfinite(v)) return "-";
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.1f", v);
+    return buf;
+}
+
 std::string Level(double confidence) {
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%g%%", confidence * 100.0);
@@ -251,11 +258,11 @@ std::string ComparisonSentence(const stats::RegressionAnswer& a) {
     if (!a.ok()) return {};
     if (a.request.polynomial && a.line.ok)
         return std::string(a.fit.aic < a.line.aic ? "The curve fits better than the line (lower AIC: " : "The curve fits no better than the line (AIC ") +
-               Num(a.fit.aic) + " vs " + Num(a.line.aic) + "; R² " + Num(a.fit.r2) + " vs " + Num(a.line.r2) + ").";
+               Aic(a.fit.aic) + " vs " + Aic(a.line.aic) + "; R² " + Num(a.fit.r2) + " vs " + Num(a.line.r2) + ").";
     if (a.reduced.ok) {
         std::string names;
         for (const auto& n : a.reduced_names) names += (names.empty() ? "" : ", ") + n;
-        return names + " alone gives R² " + Num(a.reduced.r2) + " (AIC " + Num(a.reduced.aic) + " vs " + Num(a.fit.aic) + ")" +
+        return names + " alone gives R² " + Num(a.reduced.r2) + " (AIC " + Aic(a.reduced.aic) + " vs " + Aic(a.fit.aic) + ")" +
                (a.reduced.aic <= a.fit.aic ? ": the simpler model is as good." : ".");
     }
     return {};

@@ -407,7 +407,7 @@ void DataStudioPanel::RenderExplore() {
     static const std::pair<const char*, ExploreTab> kTabs[] = {
         {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
-        {"Tests", ExploreTab::Tests}, {"Visualize", ExploreTab::Visualize}};
+        {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression}, {"Visualize", ExploreTab::Visualize}};
     const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     bool first = true;
     for (const auto& [label, tab] : kTabs) {
@@ -425,6 +425,7 @@ void DataStudioPanel::RenderExplore() {
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;
         case ExploreTab::Distribution: if (distribution_) distribution_->Render(MakeExploreContext()); break;
         case ExploreTab::Tests: if (tests_) tests_->Render(MakeExploreContext()); break;
+        case ExploreTab::Regression: if (regression_) regression_->Render(MakeExploreContext()); break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
     }
 }
@@ -439,6 +440,7 @@ void DataStudioPanel::RenderStatusBar() {
     else if (correlation_ && correlation_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Computing correlations");
     else if (distribution_ && distribution_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting distributions");
     else if (tests_ && tests_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Testing");
+    else if (regression_ && regression_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting");
     else if (readiness_ && readiness_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Comparing splits");
     else if (validate_ && validate_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Data Pipeline running");
     else ImGui::TextColored(t.success, ICON_FA_CIRCLE " Ready");

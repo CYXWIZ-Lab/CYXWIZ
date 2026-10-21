@@ -756,6 +756,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/explore_tab.cpp
     src/gui/data_studio/transform_step_view.cpp
     src/gui/data_studio/tests_view.cpp
+    src/gui/data_studio/regression_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp
@@ -1040,6 +1041,7 @@ set(ENGINE_HEADERS
     src/gui/data_studio/explore_tab.h
     src/gui/data_studio/transform_step_view.h
     src/gui/data_studio/tests_view.h
+    src/gui/data_studio/regression_view.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)

@@ -270,7 +270,7 @@ int main() {
     Check(stats_view::RegressionSentence(r) == "flipper_length_mm carries the model: each extra 1 adds 50.27 to body_mass_g. "
                                                "bill_length_mm and bill_depth_mm add little once the others are known (their CIs include 0).",
           stats_view::RegressionSentence(r));
-    Check(stats_view::ComparisonSentence(r) == "flipper_length_mm alone gives R² 0.759 (AIC 5061 vs 5061): the simpler model is as good.",
+    Check(stats_view::ComparisonSentence(r) == "flipper_length_mm alone gives R² 0.759 (AIC 5060.9 vs 5061.3): the simpler model is as good.",
           stats_view::ComparisonSentence(r));
     Check(stats_view::Equation(r) == "body_mass_g = -6425 + 50.27 x flipper_length_mm + 4.162 x bill_length_mm + 20.05 x bill_depth_mm",
           stats_view::Equation(r));

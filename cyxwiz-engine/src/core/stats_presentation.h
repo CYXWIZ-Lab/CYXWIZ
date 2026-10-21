@@ -20,6 +20,8 @@ std::string PairP(double p);
 std::string Num(double v);
 // "526.2 .. 840.6".
 std::string Range(double lo, double hi);
+// An AIC with one decimal (two models' AICs often differ in the first): "5060.9".
+std::string Aic(double v);
 // The confidence as a percent: 0.95 -> "95%".
 std::string Level(double confidence);
 
