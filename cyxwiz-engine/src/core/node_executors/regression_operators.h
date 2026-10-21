@@ -11,7 +11,7 @@ namespace cyxwiz {
  * LinearRegressionOperator — Cat-1 Band 1 pipeline operator.
  *
  * Fits a multiple linear regression on the input table via
- * `DataAnalyzer::MultipleLinearRegression` and appends two columns
+ * `cyxwiz::StatisticalTests::FitLinear` and appends two columns
  * to the output: `prediction` (float32) and `residual` (float32 =
  * target - prediction).
  *

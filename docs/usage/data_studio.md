@@ -54,12 +54,13 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has seven views: **Query**, **Profile**, **Missing**, **Outliers**,
-**Correlation**, **Distribution** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Explore has nine views: **Query**, **Profile**, **Missing**, **Outliers**,
+**Correlation**, **Distribution**, **Tests**, **Regression** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
-Correlation Matrix) and Tools > Statistics > Summary Statistics and
-Distribution Fitter. In Profile, a column's missing or outlier count opens
+Correlation Matrix) and Tools > Statistics (Summary Statistics and
+Distribution Fitter open Distribution; Hypothesis Testing opens Tests; Linear /
+Polynomial Regression opens Regression). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -297,6 +298,21 @@ more than 200,000 values is fitted on a 200,000-value sample and says so.
 Penguins: bill_length_mm fits Normal (KS p 0.066); body_mass_g fits nothing
 (best Log-Normal, p 0.018): the three species mixed give it more than one
 hump. Its mode is 3,800 g (12 birds), skewness 0.47, excess kurtosis -0.72.
+
+## Tests
+
+A question about the data: two groups (Welch by default), paired columns,
+several groups (with Tukey HSD), one column vs a value, two categories
+(chi-square). The answer shows the groups and box plots, the figures with
+effect sizes in words, a sentence, and its checks; **Keep as a node** adds a
+Hypothesis Test node. See [statistics](statistics.md#tests).
+
+## Regression
+
+Predict a number column from others, or a curve (degree 1 to 6) in one:
+coefficients with CIs, the equation, R², AIC, what the fit says, and the
+residual plots; **Add to the graph** adds a Linear or Polynomial Regression
+node. See [statistics](statistics.md#regression).
 
 ## Visualize
 

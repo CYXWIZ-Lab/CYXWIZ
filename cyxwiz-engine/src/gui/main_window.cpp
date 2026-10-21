@@ -80,8 +80,6 @@
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/hypothesis_test_panel.h"
-#include "panels/regression_panel.h"
 #include "panels/dim_reduction_panel.h"
 #include "panels/gradcam_panel.h"
 #include "panels/feature_importance_panel.h"
@@ -671,8 +669,6 @@ MainWindow::MainWindow()
     lr_finder_panel_->SetNodeEditor(node_editor_.get());
 
     // Statistics panels (Phase 4)
-    hypothesis_test_panel_ = std::make_unique<cyxwiz::HypothesisTestPanel>();
-    regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
 
     // Advanced Tools panels (Phase 5)
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
@@ -1766,10 +1762,8 @@ MainWindow::MainWindow()
     });
 
     toolbar_->SetOpenHypothesisTestCallback([this]() {
-        if (hypothesis_test_panel_) {
-            hypothesis_test_panel_->Toggle();
-            spdlog::info("Toggled Hypothesis Testing panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Tests);
     });
 
     toolbar_->SetOpenDistributionFitterCallback([this]() {
@@ -1778,10 +1772,8 @@ MainWindow::MainWindow()
     });
 
     toolbar_->SetOpenRegressionCallback([this]() {
-        if (regression_panel_) {
-            regression_panel_->Toggle();
-            spdlog::info("Toggled Regression Analysis panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Regression);
     });
 
     // Advanced Tools callbacks (Phase 5)
@@ -2711,10 +2703,6 @@ MainWindow::~MainWindow() {
     gradcam_panel_.reset();
     spdlog::info("~MainWindow: dim_reduction_panel_");
     dim_reduction_panel_.reset();
-    spdlog::info("~MainWindow: regression_panel_");
-    regression_panel_.reset();
-    spdlog::info("~MainWindow: hypothesis_test_panel_");
-    hypothesis_test_panel_.reset();
     spdlog::info("~MainWindow: lr_finder_panel_");
     lr_finder_panel_.reset();
     spdlog::info("~MainWindow: architecture_diagram_");
@@ -3107,8 +3095,6 @@ void MainWindow::Render() {
     TimedRender("lr finder", lr_finder_panel_);
 
     // Render Statistics panels (Phase 4)
-    TimedRender("hypothesis test", hypothesis_test_panel_);
-    TimedRender("regression", regression_panel_);
 
     // Render Advanced Tools panels (Phase 5)
     TimedRender("dim reduction", dim_reduction_panel_);
@@ -3598,8 +3584,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
 
     // Statistics panels (Phase 4)
-    if (hypothesis_test_panel_) hypothesis_test_panel_->SetVisible(false);
-    if (regression_panel_) regression_panel_->SetVisible(false);
 
     // Advanced Tools panels (Phase 5)
     if (dim_reduction_panel_) dim_reduction_panel_->SetVisible(false);

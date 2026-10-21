@@ -639,8 +639,6 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/hypothesis_test_panel.cpp
-    src/gui/panels/regression_panel.cpp
     src/gui/panels/dim_reduction_panel.cpp
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
@@ -943,8 +941,6 @@ set(ENGINE_HEADERS
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
-    src/gui/panels/hypothesis_test_panel.h
-    src/gui/panels/regression_panel.h
     src/gui/panels/dim_reduction_panel.h
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h

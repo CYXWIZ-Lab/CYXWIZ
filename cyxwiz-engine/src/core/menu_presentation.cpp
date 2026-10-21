@@ -627,8 +627,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Tool(f, "tools.dim_reduction", "PCA / t-SNE / UMAP")}));
         i.push_back(Sub("tools.statistics", "Statistics", "Describe and test data.",
                         {Action(f, "tools.descriptive_stats", "Summary Statistics", "Opens Data Studio's Distribution tab: a column's figures, percentiles and box plot."),
-                         Tool(f, "tools.hypothesis_test", "Hypothesis Testing"),
-                         Tool(f, "tools.regression", "Linear / Polynomial Regression"),
+                         Action(f, "tools.hypothesis_test", "Hypothesis Testing", "Opens Data Studio's Tests tab: two groups, paired columns, several groups, one value, two categories."),
+                         Action(f, "tools.regression", "Linear / Polynomial Regression", "Opens Data Studio's Regression tab: predict a number column from others, or a curve in one."),
                          Action(f, "tools.distribution_fitter", "Distribution Fitter", "Opens Data Studio's Distribution tab: Normal, Uniform, Exponential and Log-Normal fits.")}));
         i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrix tools.",
                         {Tool(f, "tools.matrix_calculator", "Matrix Calculator"),

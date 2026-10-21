@@ -1,7 +1,7 @@
-// Distribution functions behind the hypothesis tests and regression p-values
-// (normal, Student t, F, chi-square CDFs, the t critical value), the
-// one-sample t-test and the Distribution Fitter's fits (maximum-likelihood
-// parameters, AIC, BIC, Kolmogorov-Smirnov), against scipy
+// The normal CDF and the Distribution tab's fits (maximum-likelihood
+// parameters, AIC, BIC, Kolmogorov-Smirnov), against scipy. The t, F and
+// chi-square functions and the tests are cyxwiz::StatisticalTests
+// (test_computation_truth_statistical_tests)
 // (tests/fixtures/generate_distribution_fixtures.py, scipy 1.17.1).
 #include "../src/core/data_analyzer.h"
 
@@ -34,39 +34,6 @@ void Near(double got, double want, double tol, const std::string& what) {
 struct Case {
     double args[3];
     double want;
-};
-
-const Case kTCdf[] = {
-    {{0.5, 3.0}, 0.67427601757592448},
-    {{1.96, 10.0}, 0.96078187987615016},
-    {{2.5, 30.0}, 0.99094217546596663},
-    {{-1.2, 5.0}, 0.14194552835305124},
-    {{4.0, 2.0}, 0.97140452079103168},
-    {{0.0, 7.0}, 0.5},
-    {{-3.5, 120.0}, 0.00032690386993093818},
-};
-const Case kFCdf[] = {
-    {{2.5, 3.0, 20.0}, 0.91115624806231066},
-    {{0.8, 5.0, 10.0}, 0.42579902202690123},
-    {{10.0, 1.0, 246.0}, 0.99823796107092844},
-    {{1.0, 12.0, 4.0}, 0.4449462890625},
-    {{4.2, 2.0, 60.0}, 0.98037297571184578},
-};
-const Case kChi2Cdf[] = {
-    {{3.84, 1.0}, 0.94995647875129485},
-    {{10.0, 4.0}, 0.95957231800548726},
-    {{30.0, 10.0}, 0.99914335878922467},
-    {{250.0, 200.0}, 0.99062086833117391},
-    {{0.5, 3.0}, 0.081108588345324181},
-    {{180.0, 150.0}, 0.95217543085657064},
-};
-// {alpha, df}: two-tailed critical value t.ppf(1 - alpha / 2, df).
-const Case kTInv[] = {
-    {{0.05, 1.0}, 12.706204736174694},
-    {{0.05, 5.0}, 2.570581835636315},
-    {{0.01, 30.0}, 2.7499956535672254},
-    {{0.05, 247.0}, 1.9696147551832692},
-    {{0.1, 12.0}, 1.782287555649319},
 };
 
 const Case kNormalCdf[] = {
@@ -119,11 +86,6 @@ std::string Args(const Case& c, int n) {
 }  // namespace
 
 int main() {
-    constexpr double kTol = 1e-10;
-    for (const Case& c : kTCdf) Near(DataAnalyzer::StudentTCDF(c.args[0], c.args[1]), c.want, kTol, "t cdf" + Args(c, 2));
-    for (const Case& c : kFCdf) Near(DataAnalyzer::FCDF(c.args[0], c.args[1], c.args[2]), c.want, kTol, "f cdf" + Args(c, 3));
-    for (const Case& c : kChi2Cdf) Near(DataAnalyzer::ChiSquareCDF(c.args[0], c.args[1]), c.want, kTol, "chi2 cdf" + Args(c, 2));
-    for (const Case& c : kTInv) Near(DataAnalyzer::TInv(c.args[0], c.args[1]), c.want, 1e-8, "t inv" + Args(c, 2));
     for (const Case& c : kNormalCdf) {
         Near(DataAnalyzer::NormalCDF(c.args[0], c.args[1], c.args[2]), c.want, 1e-15, "normal cdf" + Args(c, 3));
     }
@@ -141,19 +103,10 @@ int main() {
         Near(r.ks_p_value, c.ks_p_value, 1e-12, r.name + " KS p-value");
     }
 
-    // One-sample t-test: statistic, p-value and the 95% interval of the mean.
-    const std::vector<double> sample = {4.2, 5.1, 3.9, 6.3, 4.8, 5.5, 4.1, 5.9, 4.4, 5.0, 3.7, 6.1};
-    const auto r = DataAnalyzer::OneSampleTTest(sample, 4.0, 0.05);
-    Near(r.test_statistic, 3.5836478399792639, 1e-10, "one-sample t statistic");
-    Near(r.p_value, 0.0042911305189685198, 1e-10, "one-sample p-value");
-    Near(r.confidence_interval_low, 4.3536733648204464, 1e-8, "one-sample 95% interval low");
-    Near(r.confidence_interval_high, 5.4796599685128875, 1e-8, "one-sample 95% interval high");
-    Check(r.reject_null, "one-sample t-test rejects H0 at 0.05");
-
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
     }
-    std::printf("distributions: CDFs, t critical value, one-sample t-test and distribution fits match scipy. OK\n");
+    std::printf("distributions: the normal CDF and the distribution fits match scipy. OK\n");
     return 0;
 }

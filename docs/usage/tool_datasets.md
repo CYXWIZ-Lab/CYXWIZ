@@ -10,7 +10,9 @@ Everything else reads what Data Input nodes loaded.
 - **Data > Explore** (Missing Value Analysis, Outlier Detection, Correlation
   Matrix) and **Tools > Statistics > Summary Statistics / Distribution
   Fitter** open Data Studio's Missing, Outliers, Correlation and
-  Distribution tabs on that dataset; they are no longer separate windows.
+  Distribution tabs on that dataset, and **Tools > Statistics > Hypothesis
+  Testing / Linear / Polynomial Regression** its Tests and Regression tabs
+  (see [statistics](statistics.md)); they are no longer separate windows.
 - **Data > Transform** adds a scaling, log or power step after that dataset
   in Data Studio's Prepare (see [scaling and transforms](data_transforms.md));
   the Transform windows are gone.
@@ -19,7 +21,6 @@ Everything else reads what Data Input nodes loaded.
 
 Every analysis tool has the same Dataset dropdown as Data Studio:
 - Tools > Clustering and Projection
-- Tools > Statistics (Hypothesis Testing, Regression)
 - Tools > Evaluation
 
 It lists:

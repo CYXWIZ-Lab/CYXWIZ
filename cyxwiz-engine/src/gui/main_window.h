@@ -64,8 +64,6 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class HypothesisTestPanel;
-class RegressionPanel;
 class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
@@ -381,8 +379,6 @@ private:
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Statistics panels (Phase 4)
-    std::unique_ptr<cyxwiz::HypothesisTestPanel> hypothesis_test_panel_;
-    std::unique_ptr<cyxwiz::RegressionPanel> regression_panel_;
 
     // Advanced Tools panels (Phase 5)
     std::unique_ptr<cyxwiz::DimReductionPanel> dim_reduction_panel_;
