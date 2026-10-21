@@ -54,8 +54,8 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has four views: **Query**, **Profile**, **Missing** and
-**Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Explore has five views: **Query**, **Profile**, **Missing**, **Outliers**
+and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one. The views wrap to a second line in a narrow dock.
 
@@ -215,6 +215,34 @@ Profile; the link under the summary goes there).
 The counts come from Profile's profile, so switching tabs does not compute
 them again; complete rows, the mixes and the row pages are SQL on the
 dataset (tables kept on disk work the same way) and show in Task View.
+
+## Outliers
+
+Values far from the rest of a number column.
+
+- **Column** (searchable, for wide tables), **Rule** and **Factor**. The
+  count follows a change at once (the factor when you leave the field or
+  press - / +).
+  - **IQR** (factor 1.5): outside Q1 - k x IQR and Q3 + k x IQR; the score
+    is how many IQRs past the box.
+  - **Z-score** (3): outside mean +- k x std; the score is z.
+  - **Modified Z** (3.5): outside median +- k x MAD / 0.6745, robust to the
+    outliers themselves; the score is 0.6745 x (x - median) / MAD.
+  - A rule with no spread on the column (Q1 = Q3, all values equal, or
+    MAD = 0) says so instead of counting every value.
+- **Summary**: how many outliers, low and high, and the bounds.
+- **Distribution**: the column's histogram with the bounds dashed and the
+  bins past them in orange; a note says when a bound lies beyond the values.
+- **Rows**: row number, score, low or high, the column checked, then the
+  others; largest score first, 50 a page. **Open in Query** puts the SQL for
+  these rows in Query.
+- **Figures**: the bounds, mean, median, std, MAD (Modified Z), Q1, Q3,
+  values and missing, and what the rule does.
+
+Penguins: no outliers at IQR 1.5 in any column. Z-score 2 finds 9 in
+body_mass_g (all male Gentoo from Biscoe, 5,850 to 6,300 g); Modified Z 2
+finds 8 in flipper_length_mm (MAD 11, above 229.6). Tables profiled
+approximately use estimated quartiles and say so.
 
 ## Visualize
 

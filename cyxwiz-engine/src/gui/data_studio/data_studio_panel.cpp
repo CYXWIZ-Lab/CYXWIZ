@@ -30,6 +30,8 @@ DataStudioPanel::DataStudioPanel() {
         if (!NodeOfDataset(active_dataset_)) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list";
         return "";
     };
+    outliers_ = std::make_unique<OutliersView>();
+    outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);
     };
@@ -101,6 +103,7 @@ void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab ta
     if (column.empty()) return;
     if (tab == ExploreTab::Profile && profile_) profile_->SelectColumn(column);
     if (tab == ExploreTab::Missing && missing_) missing_->Select(column);
+    if (tab == ExploreTab::Outliers && outliers_) outliers_->Select(column);
 }
 
 ExploreContext DataStudioPanel::MakeExploreContext() const {

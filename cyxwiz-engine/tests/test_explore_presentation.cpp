@@ -4,6 +4,7 @@
 
 #include "../src/core/explore_presentation.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -41,6 +42,12 @@ int main() {
     Check(ev::MissingRowsSql("t", "a\"b", {"N/A", "it's"}) ==
               "SELECT *\nFROM \"t\"\nWHERE \"a\"\"b\" IS NULL OR CAST(\"a\"\"b\" AS VARCHAR) IN ('N/A', 'it''s')",
           "quoted names and texts");
+
+    Check(ev::Figure(4201.754) == "4202" && ev::Figure(0.18772859) == "0.1877" && ev::Figure(2700) == "2700", "figures");
+    Check(ev::Figure(1437000) == "1.437e+06" && ev::Figure(-0.4719) == "-0.4719" && ev::Figure(NAN).empty(), "large, negative, NaN");
+    Check(ev::OutlierRowsSql("Penguins", "body_mass_g", 2597.5, 5805.75) ==
+              "SELECT *\nFROM \"Penguins\"\nWHERE \"body_mass_g\" < 2597.5 OR \"body_mass_g\" > 5805.75",
+          "outlier rows SQL: " + ev::OutlierRowsSql("Penguins", "body_mass_g", 2597.5, 5805.75));
 
     // Drop these rows: a guided Keep rows step whose SQL keeps the rows with a value.
     guided::GuidedStep plain = ev::KeepRowsWithValue("sex", {});

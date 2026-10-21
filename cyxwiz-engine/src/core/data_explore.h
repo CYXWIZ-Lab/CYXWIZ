@@ -59,6 +59,7 @@ enum class OutlierRule { Iqr, ZScore, ModifiedZ };
 const char* OutlierRuleName(OutlierRule rule);   // "IQR", "Z-score", "Modified Z"
 const char* OutlierScoreName(OutlierRule rule);  // what the score column measures
 double DefaultOutlierFactor(OutlierRule rule);   // 1.5, 3, 3.5
+const char* OutlierRuleExplain(OutlierRule rule); // the bounds and the score in words
 
 struct OutlierBounds {
     double lo = 0, hi = 0;
@@ -77,11 +78,30 @@ struct OutlierCounts {
     size_t low = 0, high = 0;
     size_t total() const { return low + high; }
     std::string error;
+    bool ok() const { return error.empty(); }
 };
 OutlierCounts CountOutliers(const std::string& table, const ProfiledColumn& column, const OutlierBounds& bounds,
                             const QueryRunner& run);
 // Rows outside the bounds, the largest |score| first.
 RowPage OutlierRows(const std::string& table, const ProfiledColumn& column, OutlierRule rule,
                     const OutlierBounds& bounds, size_t offset, const QueryRunner& run, size_t limit = kRowPage);
+
+// A column's values counted in `bins` equal bins from `min` to `max` (the
+// profile keeps 20 for its first 200 columns; other columns and other bin
+// counts ask here). edges has bins + 1 values.
+struct Bins {
+    std::vector<double> edges;
+    std::vector<size_t> counts;
+    std::string error;
+    bool ok() const { return error.empty(); }
+};
+Bins CountBins(const std::string& table, const std::string& column, double min, double max, int bins, const QueryRunner& run);
+
+// The median absolute deviation as a job's answer.
+struct Mad {
+    double value = 0;
+    std::string error;
+    bool ok() const { return error.empty(); }
+};
 
 }  // namespace cyxwiz::explore

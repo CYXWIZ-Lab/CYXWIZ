@@ -27,6 +27,14 @@ struct ExploreContext {
     std::string error;                                // why there is no profile
 };
 
+// Draws why there is nothing to show yet (no dataset, profiling, an error);
+// true when the profile is there to show.
+bool ExploreProfileReady(const ExploreContext& context, const char* empty_hint);
+
+// Label / value pairs, two to a line when the width allows, with no lines
+// around them (the old KeyValueTable draws an outline and cut the labels).
+void ExploreFigures(const char* id, const std::vector<std::pair<std::string, std::string>>& rows);
+
 // One background answer of type T for a key (dataset + choices).
 template <typename T>
 class ExploreJob {

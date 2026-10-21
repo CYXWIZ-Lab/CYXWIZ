@@ -1,5 +1,6 @@
 #include "explore_presentation.h"
 
+#include <cmath>
 #include <cstdio>
 
 namespace cyxwiz::explore_view {
@@ -79,6 +80,24 @@ std::string MissingRowsSql(const std::string& table, const std::string& column, 
         where += " OR CAST(" + Ident(column) + " AS VARCHAR) IN (" + in + ")";
     }
     return "SELECT *\nFROM " + Ident(table) + "\nWHERE " + where;
+}
+
+std::string Figure(double v) {
+    if (!std::isfinite(v)) return "";
+    char buf[32];
+    if (std::fabs(v) >= 1e6) std::snprintf(buf, sizeof(buf), "%.4g", v);
+    else if (std::fabs(v - std::round(v)) < 1e-9) std::snprintf(buf, sizeof(buf), "%.0f", v);
+    else std::snprintf(buf, sizeof(buf), "%.4g", v);
+    return buf;
+}
+
+std::string OutlierRowsSql(const std::string& table, const std::string& column, double lo, double hi) {
+    const auto exact = [](double v) {
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%.17g", v);
+        return std::string(buf);
+    };
+    return "SELECT *\nFROM " + Ident(table) + "\nWHERE " + Ident(column) + " < " + exact(lo) + " OR " + Ident(column) + " > " + exact(hi);
 }
 
 guided::GuidedStep KeepRowsWithValue(const std::string& column, const std::vector<std::string>& texts) {

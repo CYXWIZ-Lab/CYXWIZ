@@ -710,6 +710,8 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
     src/gui/data_studio/missing_view.cpp
+    src/gui/data_studio/explore_tab.cpp
+    src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/prepare_view.cpp
     src/gui/data_studio/validate_view.cpp
     src/gui/data_studio/publish_view.cpp
@@ -996,6 +998,7 @@ set(ENGINE_HEADERS
     src/gui/data_studio/query_editor.h
     src/gui/data_studio/profile_view.h
     src/gui/data_studio/missing_view.h
+    src/gui/data_studio/outliers_view.h
     src/gui/data_studio/explore_tab.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h

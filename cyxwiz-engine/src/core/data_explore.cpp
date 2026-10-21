@@ -171,6 +171,16 @@ const char* OutlierScoreName(OutlierRule rule) {
     return "";
 }
 
+const char* OutlierRuleExplain(OutlierRule rule) {
+    switch (rule) {
+        case OutlierRule::Iqr: return "IQR: outside Q1 - k x IQR and Q3 + k x IQR. Score: how many IQRs past the box.";
+        case OutlierRule::ZScore: return "Z-score: outside mean +- k x std. Score: z.";
+        case OutlierRule::ModifiedZ:
+            return "Modified Z: outside median +- k x MAD / 0.6745, robust to the outliers themselves. Score: 0.6745 x (x - median) / MAD.";
+    }
+    return "";
+}
+
 double DefaultOutlierFactor(OutlierRule rule) {
     switch (rule) {
         case OutlierRule::Iqr: return 1.5;
@@ -269,6 +279,32 @@ RowPage OutlierRows(const std::string& table, const ProfiledColumn& c, OutlierRu
     if (!r.ok) page.error = ErrorOf(r);
     else page.rows = r.table;
     return page;
+}
+
+Bins CountBins(const std::string& table, const std::string& column, double min, double max, int bins, const QueryRunner& run) {
+    Bins b;
+    if (bins < 1 || !std::isfinite(min) || !std::isfinite(max) || max <= min) {
+        b.error = "No range to count in.";
+        return b;
+    }
+    const double width = (max - min) / bins;
+    for (int i = 0; i <= bins; ++i) b.edges.push_back(min + width * i);
+    b.counts.assign(static_cast<size_t>(bins), 0);
+    const std::string col = Q::QuoteIdentifier(column);
+    QueryResult r = Run(run, table,
+                        "SELECT least(greatest(CAST(floor((CAST(" + col + " AS DOUBLE) - " + Num(min) + ") / " + Num(width) +
+                            ") AS BIGINT), 0), " + std::to_string(bins - 1) + ") AS b, count(*) AS n FROM " +
+                            Q::QuoteIdentifier(table) + " WHERE " + col + " IS NOT NULL GROUP BY 1",
+                        {}, "Histogram");
+    if (!r.ok) {
+        b.error = ErrorOf(r);
+        return b;
+    }
+    for (int64_t row = 0; r.table && row < r.table->num_rows(); ++row) {
+        const double i = Value(r.table, "b", row);
+        if (std::isfinite(i) && i >= 0 && i < bins) b.counts[static_cast<size_t>(i)] += Count(r.table, "n", row);
+    }
+    return b;
 }
 
 }  // namespace cyxwiz::explore

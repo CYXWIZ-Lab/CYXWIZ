@@ -34,6 +34,13 @@ std::string MissingRule(size_t texts_columns);
 // `table` (texts as quoted literals; the Query tab takes no parameters).
 std::string MissingRowsSql(const std::string& table, const std::string& column, const std::vector<std::string>& texts);
 
+// A figure in a few significant digits: 4201.754 -> "4202", 0.18772 -> "0.1877",
+// 1437000 -> "1.437e+06"; "" for NaN.
+std::string Figure(double v);
+
+// SQL for the Query tab listing the rows of `column` outside lo .. hi.
+std::string OutlierRowsSql(const std::string& table, const std::string& column, double lo, double hi);
+
 // The Preparation Recipe step "Drop these rows": a guided Keep rows step
 // keeping the rows where the column is not empty and (with texts marked as
 // missing) is not one of them.

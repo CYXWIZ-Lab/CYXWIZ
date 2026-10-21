@@ -270,7 +270,7 @@ View Build(const Input& in) {
             case Job::BringIn:
                 jv.state = inputs ? Plural(inputs, "Data Input", "Data Inputs") : count ? Plural(count, "source", "sources") : "none yet";
                 break;
-            case Job::Explore: jv.state = "query, profile, missing, plot"; break;
+            case Job::Explore: jv.state = "query, profile, missing, outliers, plot"; break;
             case Job::Prepare:
                 jv.state = recipes ? Plural(recipes, "recipe", "recipes") : count ? Plural(count, "step", "steps") : "none yet";
                 break;

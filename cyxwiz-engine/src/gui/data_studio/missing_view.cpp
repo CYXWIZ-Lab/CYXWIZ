@@ -73,19 +73,7 @@ void ShareBar(float share, float width) {
 
 void MissingView::Render(const ExploreContext& context) {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (context.dataset.empty()) {
-        ui::EmptyState(ICON_FA_TABLE, "Pick a dataset", "Choose a table in the list to see its missing values.");
-        return;
-    }
-    if (!context.profile) {
-        if (context.profiling) ImGui::TextColored(t.info, ICON_FA_SPINNER " Profiling %s (Task View shows the steps)", context.shown.c_str());
-        else if (!context.error.empty()) {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(t.error, "%s", context.error.c_str());
-            ImGui::PopTextWrapPos();
-        }
-        return;
-    }
+    if (!ExploreProfileReady(context, "Choose a table in the list to see its missing values.")) return;
     const DatasetProfile& p = *context.profile;
     if (seen_ != context.profile) {
         // A new profile (another dataset, or the data re-loaded): ask again.

@@ -143,6 +143,11 @@ int main() {
         const double mad_c = explore::MedianAbsoluteDeviation("t", *c, run);
         Check(!explore::BoundsFor(*c, explore::OutlierRule::ModifiedZ, 3.5, mad_c).ok(), "constant: Modified Z unavailable");
 
+        // Bins: 1..10 in the first of three bins from 1 to 100, 100 (the maximum) in the last.
+        const explore::Bins bins = explore::CountBins("t", "a", 1.0, 100.0, 3, run);
+        Check(bins.ok() && bins.edges.size() == 4 && bins.counts == std::vector<size_t>{10, 0, 1}, "three bins: 10, 0, 1");
+        Check(!explore::CountBins("t", "c", 7.0, 7.0, 20, run).ok(), "no range: no bins");
+
         // Correlation: a and b over the rows where both are present (1, 2, 4..10, 12).
         Check(p.correlation.ok() && p.correlation.columns == std::vector<std::string>{"a", "b"}, "profile keeps the matrix of a, b (c has no spread)");
         std::vector<double> xs, ys;
