@@ -23,6 +23,7 @@ numerically. Both follow one [node contract](node-contract.md).
 
 | Page | Read it to |
 |---|---|
+| [../usage/extension_nodes.md](../usage/extension_nodes.md) | Use extension nodes in the Engine: install, approve, the ten example layers, save and export |
 | [python-modules.md](python-modules.md) | Write a trainable module in Python and train it with pycyxwiz |
 | [python-nodes.md](python-nodes.md) | Describe a Python module as a node, bundle it, approve and use it in the Engine; ten built-in layers as Python example nodes |
 | [plugin-quickstart.md](plugin-quickstart.md) | Build the example plugin, load it and train with its nodes; build your own against the SDK |
