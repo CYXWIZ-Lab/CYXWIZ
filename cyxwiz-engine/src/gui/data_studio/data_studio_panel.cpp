@@ -32,6 +32,7 @@ DataStudioPanel::DataStudioPanel() {
     };
     outliers_ = std::make_unique<OutliersView>();
     correlation_ = std::make_unique<CorrelationView>();
+    distribution_ = std::make_unique<DistributionView>();
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);
@@ -105,6 +106,7 @@ void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab ta
     if (tab == ExploreTab::Profile && profile_) profile_->SelectColumn(column);
     if (tab == ExploreTab::Missing && missing_) missing_->Select(column);
     if (tab == ExploreTab::Outliers && outliers_) outliers_->Select(column);
+    if (tab == ExploreTab::Distribution && distribution_) distribution_->Select(column);
 }
 
 ExploreContext DataStudioPanel::MakeExploreContext() const {

@@ -1,5 +1,6 @@
 #include "explore_tab.h"
 
+#include "../../core/explore_presentation.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
@@ -45,6 +46,8 @@ void ExploreFigures(const char* id, const std::vector<std::pair<std::string, std
         if (i % static_cast<size_t>(pairs) == 0) ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::TextColored(t.text_dim, "%s", rows[i].first.c_str());
+        if (const char* hint = explore_view::FigureHint(rows[i].first); *hint && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", hint);
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(rows[i].second.c_str());
     }

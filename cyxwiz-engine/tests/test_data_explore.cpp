@@ -143,6 +143,60 @@ int main() {
         const double mad_c = explore::MedianAbsoluteDeviation("t", *c, run);
         Check(!explore::BoundsFor(*c, explore::OutlierRule::ModifiedZ, 3.5, mad_c).ok(), "constant: Modified Z unavailable");
 
+        // Figures of a (1..10, 100): the old Summary Statistics table, in SQL.
+        {
+            const explore::ColumnFigures f = explore::Figures("t", "a", true, run);
+            Check(f.ok(), "figures: " + f.error);
+            const std::vector<double> xs{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100};
+            const double n = static_cast<double>(xs.size());
+            double mu = 0, m2 = 0, m3 = 0, m4 = 0;
+            for (double x : xs) mu += x / n;
+            for (double x : xs) m2 += (x - mu) * (x - mu);
+            const double s = std::sqrt(m2 / (n - 1));
+            for (double x : xs) {
+                const double u = (x - mu) / s;
+                m3 += u * u * u;
+                m4 += u * u * u * u;
+            }
+            const double skew = n / ((n - 1) * (n - 2)) * m3;  // adjusted Fisher-Pearson, as pandas
+            const double kurt = n * (n + 1) / ((n - 1) * (n - 2) * (n - 3)) * m4 - 3 * (n - 1) * (n - 1) / ((n - 2) * (n - 3));
+            const auto pct = [&](double p) {  // linear interpolation, as quantile_cont and numpy
+                const double at = p * (n - 1);
+                const size_t lo = static_cast<size_t>(std::floor(at));
+                return xs[lo] + (at - static_cast<double>(lo)) * (xs[std::min(lo + 1, xs.size() - 1)] - xs[lo]);
+            };
+            Check(f.count == 11 && Near(f.mean, mu) && Near(f.std, s) && Near(f.variance, s * s) && Near(f.sum, 155), "count, mean, std, var, sum");
+            Check(Near(f.min, 1) && Near(f.max, 100) && Near(f.range, 99) && Near(f.sem, s / std::sqrt(n)) && Near(f.cv, 100 * s / mu), "range, sem, cv");
+            Check(Near(f.skewness, skew, 1e-9) && Near(f.kurtosis, kurt, 1e-9),
+                  "skewness " + std::to_string(f.skewness) + " vs " + std::to_string(skew) + ", kurtosis " + std::to_string(f.kurtosis) + " vs " + std::to_string(kurt));
+            Check(f.percentiles.size() == 7 && Near(f.percentiles[0], pct(0.05)) && Near(f.percentiles[5], pct(0.90)) && Near(f.percentiles[6], pct(0.95)),
+                  "percentiles 5 .. 95");
+            Check(Near(f.q1, 3.5) && Near(f.median, 6) && Near(f.q3, 8.5) && Near(f.iqr, 5), "quartiles");
+            Check(Near(f.mode, 1) && f.mode_count == 1, "mode: every value once, the smallest");
+            Check(Near(f.whisker_lo, 1) && Near(f.whisker_hi, 10), "whiskers stop at 1 and 10 (100 is past 16)");
+            const explore::ColumnFigures b = explore::Figures("t", "b", true, run);
+            Check(b.ok() && b.count == 10, "b: 10 values");
+
+            // Fits on the values (DataAnalyzer's, tested against scipy), sorted, best AIC first.
+            const explore::ColumnFit fit = explore::FitColumn("t", "a", 11, run);
+            Check(fit.ok() && fit.values.size() == 11 && !fit.sampled && fit.values.front() == 1 && fit.values.back() == 100, "values sorted");
+            Check(fit.fits.size() == 4, "all positive: four fits");
+            for (size_t i = 1; i < fit.fits.size(); ++i) Check(fit.fits[i - 1].aic <= fit.fits[i].aic, "best AIC first");
+            for (const auto& d : fit.fits) {
+                // The density integrates to about 1 over a wide range.
+                double area = 0;
+                const double lo = -200, hi = 400, step = 0.05;
+                for (double x = lo; x < hi; x += step) area += explore::FitDensity(d, x + step / 2) * step;
+                Check(std::fabs(area - 1) < 0.02, d.name + " density integrates to 1: " + std::to_string(area));
+                Check(std::isfinite(explore::FitQuantile(d, 0.5)), d.name + " median");
+            }
+            Check(Near(explore::NormalQuantile(0.975), 1.959963984540054, 1e-12) && Near(explore::NormalQuantile(0.5), 0.0, 1e-12) &&
+                      Near(explore::NormalQuantile(0.001), -3.090232306167813, 1e-12),
+                  "normal quantile");
+            const auto qq = explore::QqPoints(fit, fit.fits.front(), 5);
+            Check(qq.size() == 5 && qq.front().second == 1 && qq.back().second == 100, "Q-Q: 5 points from the smallest to the largest value");
+        }
+
         // Bins: 1..10 in the first of three bins from 1 to 100, 100 (the maximum) in the last.
         const explore::Bins bins = explore::CountBins("t", "a", 1.0, 100.0, 3, run);
         Check(bins.ok() && bins.edges.size() == 4 && bins.counts == std::vector<size_t>{10, 0, 1}, "three bins: 10, 0, 1");

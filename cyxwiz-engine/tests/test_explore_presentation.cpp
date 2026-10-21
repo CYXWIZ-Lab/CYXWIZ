@@ -44,6 +44,7 @@ int main() {
           "quoted names and texts");
 
     Check(ev::Figure(4201.754) == "4202" && ev::Figure(0.18772859) == "0.1877" && ev::Figure(2700) == "2700", "figures");
+    Check(ev::Figure(15021.6) == "15022" && ev::Figure(43.9219) == "43.92", "plain digits under a million");
     Check(ev::Figure(1437000) == "1.437e+06" && ev::Figure(-0.4719) == "-0.4719" && ev::Figure(NAN).empty(), "large, negative, NaN");
     Check(ev::OutlierRowsSql("Penguins", "body_mass_g", 2597.5, 5805.75) ==
               "SELECT *\nFROM \"Penguins\"\nWHERE \"body_mass_g\" < 2597.5 OR \"body_mass_g\" > 5805.75",
@@ -57,6 +58,14 @@ int main() {
     Check(ev::CorrelationCsv({"a", "b,c"}, {1.0, -0.5, -0.5, 1.0}) == "column,a,\"b,c\"\na,1.000000,-0.500000\n\"b,c\",-0.500000,1.000000\n",
           "CSV: " + ev::CorrelationCsv({"a", "b,c"}, {1.0, -0.5, -0.5, 1.0}));
     Check(ev::CorrelationCsv({"a", "k"}, {1.0, NAN, NAN, 1.0}) == "column,a,k\na,1.000000,\nk,,1.000000\n", "NaN is an empty cell");
+
+    Check(std::string(ev::SkewWords(0.47)) == "longer right tail" && std::string(ev::SkewWords(-0.14)) == "about symmetric" &&
+              std::string(ev::SkewWords(-0.9)) == "longer left tail",
+          "skew words");
+    Check(std::string(ev::FigureHint("SEM")).find("sqrt(count)") != std::string::npos && std::string(ev::FigureHint("nope")).empty(), "hints");
+    Check(ev::Csv({{"figure", "value"}, {"Mode", "3800 (12 times)"}, {"a,b", "say \"hi\""}}) ==
+              "figure,value\nMode,3800 (12 times)\n\"a,b\",\"say \"\"hi\"\"\"\n",
+          "CSV rows");
 
     // Drop these rows: a guided Keep rows step whose SQL keeps the rows with a value.
     guided::GuidedStep plain = ev::KeepRowsWithValue("sex", {});

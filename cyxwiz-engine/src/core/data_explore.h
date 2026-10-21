@@ -10,6 +10,7 @@
 // use the rows where both values are present. Everything runs as SQL through
 // a QueryRunner, so tables kept on disk are explored the same way.
 
+#include "data_analyzer.h"
 #include "dataset_profiler.h"
 
 #include <cstddef>
@@ -103,5 +104,43 @@ struct Mad {
     std::string error;
     bool ok() const { return error.empty(); }
 };
+
+// A number column's figures (the Distribution tab; the old Summary
+// Statistics window's table): SQL on the dataset. `exact` false uses
+// approximate quantiles (wide or large tables, as the profile does).
+struct ColumnFigures {
+    size_t count = 0;
+    double mean = 0, median = 0, mode = 0, std = 0, variance = 0, sem = 0, min = 0, max = 0, range = 0, sum = 0;
+    size_t mode_count = 0;
+    double q1 = 0, q3 = 0, iqr = 0, skewness = 0, kurtosis = 0, cv = 0;  // kurtosis: excess; cv: percent
+    std::vector<double> percentiles;        // 5, 10, 25, 50, 75, 90, 95
+    double whisker_lo = 0, whisker_hi = 0;  // the last values within 1.5 IQR of the box
+    std::string error;
+    bool ok() const { return error.empty(); }
+};
+inline constexpr double kPercentiles[] = {0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95};
+ColumnFigures Figures(const std::string& table, const std::string& column, bool exact, const QueryRunner& run);
+
+// The column's values (a reservoir sample of kFitValues past that), sorted,
+// and the distributions fitted to them, best AIC first (DataAnalyzer's
+// fits: Normal, Uniform, and for positive values Exponential, Log-Normal).
+inline constexpr size_t kFitValues = 200000;
+struct ColumnFit {
+    std::vector<double> values;  // sorted
+    bool sampled = false;
+    std::vector<DistributionFitResult> fits;
+    std::string error;
+    bool ok() const { return error.empty(); }
+};
+ColumnFit FitColumn(const std::string& table, const std::string& column, size_t non_null, const QueryRunner& run);
+
+// The fitted distribution's density at x, and its value at probability p.
+double FitDensity(const DistributionFitResult& fit, double x);
+double FitQuantile(const DistributionFitResult& fit, double p);
+// The standard normal's value at probability p (0 < p < 1).
+double NormalQuantile(double p);
+// Q-Q points against `fit`: (the fit's quantile, the value) at evenly
+// spaced ranks, at most `points` of them.
+std::vector<std::pair<double, double>> QqPoints(const ColumnFit& column, const DistributionFitResult& fit, size_t points = 200);
 
 }  // namespace cyxwiz::explore

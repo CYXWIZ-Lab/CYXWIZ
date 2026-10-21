@@ -34,8 +34,8 @@ std::string MissingRule(size_t texts_columns);
 // `table` (texts as quoted literals; the Query tab takes no parameters).
 std::string MissingRowsSql(const std::string& table, const std::string& column, const std::vector<std::string>& texts);
 
-// A figure in a few significant digits: 4201.754 -> "4202", 0.18772 -> "0.1877",
-// 1437000 -> "1.437e+06"; "" for NaN.
+// A figure in a few significant digits: 4201.754 -> "4202", 15021.6 ->
+// "15022", 0.18772 -> "0.1877", 1437000 -> "1.437e+06"; "" for NaN.
 std::string Figure(double v);
 
 // SQL for the Query tab listing the rows of `column` outside lo .. hi.
@@ -49,6 +49,14 @@ std::string CorrelationSentence(double r);
 // The matrix as CSV: a header of the columns, then one row per column
 // (row-major r, n x n; NaN as an empty cell).
 std::string CorrelationCsv(const std::vector<std::string>& columns, const std::vector<double>& r);
+
+// Skewness in words: "about symmetric" (|s| <= 0.2), "longer right tail",
+// "longer left tail".
+const char* SkewWords(double skewness);
+// What a figure of the Distribution tab means (hover text); "" when unknown.
+const char* FigureHint(const std::string& label);
+// Rows of cells as CSV (quoted where needed).
+std::string Csv(const std::vector<std::vector<std::string>>& rows);
 
 // The Preparation Recipe step "Drop these rows": a guided Keep rows step
 // keeping the rows where the column is not empty and (with texts marked as

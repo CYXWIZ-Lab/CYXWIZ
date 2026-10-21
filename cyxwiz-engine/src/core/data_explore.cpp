@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 
 namespace cyxwiz::explore {
 
@@ -305,6 +306,163 @@ Bins CountBins(const std::string& table, const std::string& column, double min, 
         if (std::isfinite(i) && i >= 0 && i < bins) b.counts[static_cast<size_t>(i)] += Count(r.table, "n", row);
     }
     return b;
+}
+
+ColumnFigures Figures(const std::string& table, const std::string& column, bool exact, const QueryRunner& run) {
+    ColumnFigures f;
+    const std::string col = "CAST(" + Q::QuoteIdentifier(column) + " AS DOUBLE)";
+    const std::string from = " FROM " + Q::QuoteIdentifier(table);
+    const std::string q = exact ? "quantile_cont(" : "approx_quantile(";
+    std::string sql = "SELECT count(" + col + ") AS n, avg(" + col + ") AS mean, stddev_samp(" + col + ") AS sd, var_samp(" + col +
+                      ") AS var, min(" + col + ") AS lo, max(" + col + ") AS hi, sum(" + col + ") AS total, skewness(" + col +
+                      ") AS skew, kurtosis(" + col + ") AS kurt";
+    for (size_t i = 0; i < std::size(kPercentiles); ++i)
+        sql += ", CAST(" + q + col + ", " + Num(kPercentiles[i]) + ") AS DOUBLE) AS p" + std::to_string(i);
+    QueryResult r = Run(run, table, sql + from, {}, "Distribution");
+    if (!r.ok) {
+        f.error = ErrorOf(r);
+        return f;
+    }
+    f.count = Count(r.table, "n");
+    f.mean = Value(r.table, "mean");
+    f.std = Value(r.table, "sd");
+    f.variance = Value(r.table, "var");
+    f.min = Value(r.table, "lo");
+    f.max = Value(r.table, "hi");
+    f.sum = Value(r.table, "total");
+    f.skewness = Value(r.table, "skew");
+    f.kurtosis = Value(r.table, "kurt");
+    for (size_t i = 0; i < std::size(kPercentiles); ++i) f.percentiles.push_back(Value(r.table, "p" + std::to_string(i)));
+    f.q1 = f.percentiles[2];
+    f.median = f.percentiles[3];
+    f.q3 = f.percentiles[4];
+    f.iqr = f.q3 - f.q1;
+    f.range = f.max - f.min;
+    f.sem = f.count > 1 ? f.std / std::sqrt(static_cast<double>(f.count)) : NAN;
+    f.cv = f.mean != 0 ? 100.0 * f.std / std::fabs(f.mean) : NAN;
+
+    // The most frequent value (the smallest of a tie) and the whiskers.
+    const double lo = f.q1 - 1.5 * f.iqr, hi = f.q3 + 1.5 * f.iqr;
+    QueryResult m = Run(run, table,
+                        "SELECT " + col + " AS v, count(*) AS n" + from + " WHERE " + Q::QuoteIdentifier(column) +
+                            " IS NOT NULL GROUP BY 1 ORDER BY n DESC, v LIMIT 1",
+                        {}, "Distribution");
+    QueryResult w = Run(run, table,
+                        "SELECT min(" + col + ") FILTER (WHERE " + col + " >= " + Num(lo) + ") AS lo, max(" + col + ") FILTER (WHERE " +
+                            col + " <= " + Num(hi) + ") AS hi" + from,
+                        {}, "Distribution");
+    if (!m.ok || !w.ok) {
+        f.error = ErrorOf(m.ok ? w : m);
+        return f;
+    }
+    f.mode = Value(m.table, "v");
+    f.mode_count = Count(m.table, "n");
+    f.whisker_lo = Value(w.table, "lo");
+    f.whisker_hi = Value(w.table, "hi");
+    return f;
+}
+
+ColumnFit FitColumn(const std::string& table, const std::string& column, size_t non_null, const QueryRunner& run) {
+    ColumnFit c;
+    const std::string col = Q::QuoteIdentifier(column);
+    c.sampled = non_null > kFitValues;
+    std::string sql = "SELECT CAST(" + col + " AS DOUBLE) AS v FROM " + Q::QuoteIdentifier(table) + " WHERE " + col + " IS NOT NULL";
+    if (c.sampled) sql = "SELECT v FROM (" + sql + ") USING SAMPLE reservoir(" + std::to_string(kFitValues) + " ROWS) REPEATABLE (42)";
+    QueryResult r = Run(run, table, sql, {}, "Distribution fits");
+    if (!r.ok) {
+        c.error = ErrorOf(r);
+        return c;
+    }
+    auto values = r.table ? r.table->GetColumnByName("v") : nullptr;
+    for (int k = 0; values && k < values->num_chunks(); ++k) {
+        auto chunk = std::static_pointer_cast<arrow::DoubleArray>(values->chunk(k));
+        for (int64_t i = 0; i < chunk->length(); ++i)
+            if (chunk->IsValid(i) && std::isfinite(chunk->Value(i))) c.values.push_back(chunk->Value(i));
+    }
+    std::sort(c.values.begin(), c.values.end());
+    if (c.values.size() < 3) {
+        c.error = "Too few values to fit a distribution.";
+        return c;
+    }
+    c.fits = DataAnalyzer::FitAllDistributions(c.values);
+    return c;
+}
+
+namespace {
+double Param(const DistributionFitResult& fit, const char* name) {
+    auto it = fit.parameters.find(name);
+    return it == fit.parameters.end() ? NAN : it->second;
+}
+}  // namespace
+
+double NormalQuantile(double p) {
+    if (!(p > 0 && p < 1)) return NAN;
+    // Acklam's rational approximation, then one Newton step on the CDF.
+    static const double a[] = {-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239};
+    static const double b[] = {-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572};
+    static const double c[] = {-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783};
+    static const double d[] = {0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416};
+    const auto tail = [&](double q) {
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+    };
+    double x;
+    if (p < 0.02425) x = tail(std::sqrt(-2 * std::log(p)));
+    else if (p > 1 - 0.02425) x = -tail(std::sqrt(-2 * std::log(1 - p)));
+    else {
+        const double q = p - 0.5, r = q * q;
+        x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q /
+            (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+    }
+    const double e = 0.5 * std::erfc(-x / std::sqrt(2.0)) - p;
+    const double u = e * std::sqrt(2 * 3.14159265358979323846) * std::exp(x * x / 2);
+    return x - u / (1 + x * u / 2);
+}
+
+double FitDensity(const DistributionFitResult& fit, double x) {
+    constexpr double kTwoPi = 2 * 3.14159265358979323846;
+    switch (fit.type) {
+        case DistributionType::Normal: {
+            const double mu = Param(fit, "mu"), s = Param(fit, "sigma");
+            return std::exp(-0.5 * std::pow((x - mu) / s, 2)) / (s * std::sqrt(kTwoPi));
+        }
+        case DistributionType::LogNormal: {
+            if (x <= 0) return 0;
+            const double mu = Param(fit, "mu"), s = Param(fit, "sigma");
+            return std::exp(-0.5 * std::pow((std::log(x) - mu) / s, 2)) / (x * s * std::sqrt(kTwoPi));
+        }
+        case DistributionType::Uniform: {
+            const double a = Param(fit, "a"), b = Param(fit, "b");
+            return x >= a && x <= b && b > a ? 1 / (b - a) : 0;
+        }
+        case DistributionType::Exponential: {
+            const double l = Param(fit, "lambda");
+            return x < 0 ? 0 : l * std::exp(-l * x);
+        }
+        default: return NAN;
+    }
+}
+
+double FitQuantile(const DistributionFitResult& fit, double p) {
+    switch (fit.type) {
+        case DistributionType::Normal: return Param(fit, "mu") + Param(fit, "sigma") * NormalQuantile(p);
+        case DistributionType::LogNormal: return std::exp(Param(fit, "mu") + Param(fit, "sigma") * NormalQuantile(p));
+        case DistributionType::Uniform: return Param(fit, "a") + p * (Param(fit, "b") - Param(fit, "a"));
+        case DistributionType::Exponential: return -std::log(1 - p) / Param(fit, "lambda");
+        default: return NAN;
+    }
+}
+
+std::vector<std::pair<double, double>> QqPoints(const ColumnFit& column, const DistributionFitResult& fit, size_t points) {
+    std::vector<std::pair<double, double>> out;
+    const size_t n = column.values.size();
+    if (n == 0 || points == 0) return out;
+    const size_t k = std::min(n, points);
+    for (size_t i = 0; i < k; ++i) {
+        const size_t rank = k == 1 ? 0 : i * (n - 1) / (k - 1);
+        const double p = (static_cast<double>(rank) + 0.5) / static_cast<double>(n);
+        out.emplace_back(FitQuantile(fit, p), column.values[rank]);
+    }
+    return out;
 }
 
 }  // namespace cyxwiz::explore

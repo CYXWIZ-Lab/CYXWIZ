@@ -86,7 +86,7 @@ std::string Figure(double v) {
     if (!std::isfinite(v)) return "";
     char buf[32];
     if (std::fabs(v) >= 1e6) std::snprintf(buf, sizeof(buf), "%.4g", v);
-    else if (std::fabs(v - std::round(v)) < 1e-9) std::snprintf(buf, sizeof(buf), "%.0f", v);
+    else if (std::fabs(v) >= 1000 || std::fabs(v - std::round(v)) < 1e-9) std::snprintf(buf, sizeof(buf), "%.0f", v);
     else std::snprintf(buf, sizeof(buf), "%.4g", v);
     return buf;
 }
@@ -119,30 +119,71 @@ std::string CorrelationSentence(double r) {
 }
 
 std::string CorrelationCsv(const std::vector<std::string>& columns, const std::vector<double>& r) {
-    const auto field = [](const std::string& text) {
-        if (text.find_first_of(",\"\n") == std::string::npos) return text;
-        std::string out = "\"";
-        for (char c : text) out += c == '"' ? std::string("\"\"") : std::string(1, c);
-        return out + "\"";
-    };
     const size_t n = columns.size();
-    std::string csv = "column";
-    for (const auto& c : columns) csv += "," + field(c);
-    csv += "\n";
+    std::vector<std::vector<std::string>> rows;
+    rows.push_back({"column"});
+    for (const auto& c : columns) rows.back().push_back(c);
     for (size_t i = 0; i < n; ++i) {
-        csv += field(columns[i]);
+        rows.push_back({columns[i]});
         for (size_t j = 0; j < n; ++j) {
-            csv += ",";
             const double v = i * n + j < r.size() ? r[i * n + j] : NAN;
-            if (std::isfinite(v)) {
-                char buf[32];
-                std::snprintf(buf, sizeof(buf), "%.6f", v);
-                csv += buf;
-            }
+            char buf[32] = "";
+            if (std::isfinite(v)) std::snprintf(buf, sizeof(buf), "%.6f", v);
+            rows.back().push_back(buf);
         }
-        csv += "\n";
     }
-    return csv;
+    return Csv(rows);
+}
+
+const char* SkewWords(double skewness) {
+    if (!std::isfinite(skewness)) return "";
+    if (skewness > 0.2) return "longer right tail";
+    if (skewness < -0.2) return "longer left tail";
+    return "about symmetric";
+}
+
+const char* FigureHint(const std::string& label) {
+    static const std::pair<const char*, const char*> kHints[] = {
+        {"Count", "values present"},
+        {"Mean", "the average"},
+        {"Median", "the middle value"},
+        {"Mode", "the most frequent value (the smallest of a tie)"},
+        {"Std", "typical distance from the mean (sample)"},
+        {"Variance", "std squared"},
+        {"SEM", "how precisely the mean is known: std / sqrt(count)"},
+        {"Min", "the smallest value"},
+        {"Max", "the largest value"},
+        {"Range", "max - min"},
+        {"Sum", "all values added"},
+        {"Q1", "25% of the values are below it"},
+        {"Q3", "75% of the values are below it"},
+        {"IQR", "Q3 - Q1: the middle half"},
+        {"Skewness", "0 = symmetric; positive = a longer right tail"},
+        {"Kurtosis", "excess: 0 = like a normal; negative = flatter, fewer extremes"},
+        {"CV", "std as a share of the mean"},
+    };
+    for (const auto& [name, hint] : kHints)
+        if (label == name) return hint;
+    return "";
+}
+
+std::string Csv(const std::vector<std::vector<std::string>>& rows) {
+    std::string out;
+    for (const auto& row : rows) {
+        for (size_t i = 0; i < row.size(); ++i) {
+            if (i) out += ",";
+            const std::string& cell = row[i];
+            if (cell.find_first_of(",\"\n") == std::string::npos) {
+                out += cell;
+                continue;
+            }
+            out += "\"";
+            for (char c : cell) out += c == '"' ? std::string("\"\"") : std::string(1, c);
+            out += "\"";
+        }
+        out += "\n";
+    }
+    return out;
 }
 
 guided::GuidedStep KeepRowsWithValue(const std::string& column, const std::vector<std::string>& texts) {

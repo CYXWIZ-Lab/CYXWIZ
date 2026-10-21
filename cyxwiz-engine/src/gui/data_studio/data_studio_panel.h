@@ -2,7 +2,7 @@
 
 // Data Studio (TOFIX148, approved mockup v8): the open graph's data work in
 // one place, as seven jobs: Bring in, Explore (Query, Profile, Missing, Outliers, Correlation,
-// Visualize),
+// Distribution, Visualize),
 // Prepare, Validate, ML readiness, Publish, Results. A rail lists the data
 // (the graph's Data Inputs, node results, published files, other datasets),
 // each job shows the graph nodes that do it ("In the graph", Show on
@@ -16,6 +16,7 @@
 #include "missing_view.h"
 #include "outliers_view.h"
 #include "correlation_view.h"
+#include "distribution_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -38,7 +39,7 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Visualize };
+    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -90,6 +91,7 @@ private:
     std::unique_ptr<MissingView> missing_;
     std::unique_ptr<OutliersView> outliers_;
     std::unique_ptr<CorrelationView> correlation_;
+    std::unique_ptr<DistributionView> distribution_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

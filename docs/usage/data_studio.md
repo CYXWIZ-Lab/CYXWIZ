@@ -54,8 +54,8 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has six views: **Query**, **Profile**, **Missing**, **Outliers**,
-**Correlation** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Explore has seven views: **Query**, **Profile**, **Missing**, **Outliers**,
+**Correlation**, **Distribution** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one. The views wrap to a second line in a narrow dock.
 
@@ -262,6 +262,34 @@ where both values are present.
 
 Penguins: flipper length and body mass +0.87; bill depth and flipper length
 -0.58; every pair uses 342 of 344 rows (2 rows have no measurements).
+
+## Distribution
+
+How one number column is spread, and which distribution it follows.
+
+- **Column**, **Bins** (5 to 100; the histogram follows when you leave the
+  field) and **Export CSV...** (the figures, percentiles and fits).
+- **Summary**: values, missing, skewness in words, and whether any
+  distribution fits.
+- **Histogram** with the chosen fit drawn over it (expected count per bin),
+  a **box plot** (box Q1 to Q3, line the median, diamond the mean, whiskers
+  to the last value within 1.5 IQR, dots beyond) and a **Q-Q plot** against
+  the chosen fit (points on the line: the values follow it).
+- **Figures**: count, mean, median, mode (and how often), std, variance,
+  SEM, min, max, range, sum, Q1, Q3, IQR, skewness, kurtosis (excess) and
+  CV; hover a name for what it means. **Percentiles** 5 to 95.
+- **Fits**: Normal, Uniform, and for columns of positive values Exponential
+  and Log-Normal, best AIC first, with BIC, the KS statistic and its
+  p-value; a check mark when p is above 0.05. Click a fit to draw it; its
+  parameters and log-likelihood show below.
+
+The figures are SQL on the dataset (approximate quantiles on tables the
+profile reads approximately). The fits use the column's values; a column of
+more than 200,000 values is fitted on a 200,000-value sample and says so.
+
+Penguins: bill_length_mm fits Normal (KS p 0.066); body_mass_g fits nothing
+(best Log-Normal, p 0.018): the three species mixed give it more than one
+hump. Its mode is 3,800 g (12 birds), skewness 0.47, excess kurtosis -0.72.
 
 ## Visualize
 

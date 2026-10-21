@@ -713,6 +713,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/explore_tab.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
+    src/gui/data_studio/distribution_view.cpp
     src/gui/data_studio/prepare_view.cpp
     src/gui/data_studio/validate_view.cpp
     src/gui/data_studio/publish_view.cpp
@@ -1001,6 +1002,7 @@ set(ENGINE_HEADERS
     src/gui/data_studio/missing_view.h
     src/gui/data_studio/outliers_view.h
     src/gui/data_studio/correlation_view.h
+    src/gui/data_studio/distribution_view.h
     src/gui/data_studio/explore_tab.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
@@ -1509,6 +1511,9 @@ add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
 add_executable(test_data_explore
     tests/test_data_explore.cpp
     src/core/data_explore.cpp
+    src/core/data_analyzer.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/core/dataset_profiler.cpp
     src/core/dataset_contract.cpp
     src/core/session_query_engine.cpp
