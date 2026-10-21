@@ -133,4 +133,55 @@ Tensor GuardedExtensionModule::ForwardIncremental(const Tensor& input, size_t po
 
 void GuardedExtensionModule::ResetIncrementalState() { inner_->ResetIncrementalState(); }
 
+GuardedExtensionLoss::GuardedExtensionLoss(std::unique_ptr<Loss> inner, int node_id,
+                                           std::string node_name, std::string type_id,
+                                           std::shared_ptr<void> lease)
+    : Loss(inner ? inner->GetReduction() : Reduction::Mean),
+      inner_(std::move(inner)),
+      node_id_(node_id),
+      node_name_(std::move(node_name)),
+      type_id_(std::move(type_id)),
+      lease_(std::move(lease)) {
+    if (!inner_) {
+        throw std::invalid_argument("extension loss '" + node_name_ + "' (" + type_id_ + ") has no loss");
+    }
+}
+
+void GuardedExtensionLoss::Fail(const std::string& what) const {
+    throw std::runtime_error("Extension loss '" + node_name_ + "' (" + type_id_ + "): " + what);
+}
+
+Tensor GuardedExtensionLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    Tensor loss;
+    try {
+        loss = inner_->Forward(predictions, targets);
+    } catch (const std::exception& e) {
+        Fail(std::string("forward failed: ") + e.what());
+    }
+    if (loss.NumElements() != 1) {
+        Fail("forward must return one value, got shape " + FormatTensorShape(loss.Shape()));
+    }
+    return loss;
+}
+
+Tensor GuardedExtensionLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    Tensor gradient;
+    try {
+        gradient = inner_->Backward(predictions, targets);
+    } catch (const std::exception& e) {
+        Fail(std::string("backward failed: ") + e.what());
+    }
+    if (gradient.Shape() != predictions.Shape()) {
+        Fail("backward returned gradient shape " + FormatTensorShape(gradient.Shape()) +
+             ", expected the predictions' shape " + FormatTensorShape(predictions.Shape()));
+    }
+    return gradient;
+}
+
+std::string GuardedExtensionLoss::GetName() const { return inner_->GetName(); }
+
+const Tensor* GuardedExtensionLoss::GetLastMeanReductionDenominator() const {
+    return inner_->GetLastMeanReductionDenominator();
+}
+
 }  // namespace cyxwiz
