@@ -55,13 +55,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 }
 
 #ifndef CYXWIZ_NODE_FACTORY_ONLY
-// Helper: if this node owns a dataset (DataInput / DatasetInput with a
-// non-empty dataset_name parameter), drop it from every registry so the
-// next graph rebuild doesn't see a stale entry under the same name.
-// Defined locally because it's only used by DeleteNode and ClearGraph.
+// Helper: if this node owns a dataset (a Data Input with a non-empty
+// dataset_name parameter: its dialog loaded it), drop it from every registry
+// so the next graph rebuild doesn't see a stale entry under the same name.
+// A Dataset Input only names a dataset something else loaded (Data Studio),
+// so removing the node leaves it. Used by DeleteNode and ClearGraph.
 static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
-    if (node.type != NodeType::DataInput &&
-        node.type != NodeType::DatasetInput) {
+    if (node.type != NodeType::DataInput) {
         return;
     }
     auto it = node.parameters.find("dataset_name");
