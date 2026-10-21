@@ -80,6 +80,16 @@ MNIST test, `mnist_test.csv` (17.4 MB, 10,000 x 785):
 
 If a run is still going when you delete or clear, its data goes as soon as the run ends.
 
+**Undo and redo** follow the data:
+
+- A dataset no Data Input names any more is released.
+- A Data Input that comes back reads **not loaded**, and its Apply loads it again.
+
+**A Table Viewer tab of a removed dataset** stays open as a frozen copy of the
+rows it shows. A line over the tab says so: "'mnist_test' was removed (its
+Data Input or graph is gone). This tab is a frozen copy of the 10000 rows it
+shows." The tab lets go of the dataset's own memory and keeps only its rows.
+
 Two Data Inputs reading files with the same name in different folders get
 different dataset names (`mnist`, `mnist_2`). Two Data Inputs reading the
 same file still share one table, so nothing is copied.

@@ -32,6 +32,19 @@ namespace cyxwiz {
 TableViewerPanel::TableViewerPanel()
     : Panel("Table Viewer", false)  // Start hidden
 {
+    // A removed dataset leaves its tabs as frozen copies of the rows they
+    // show; they let go of its Arrow buffers so its memory is freed.
+    catalog_subscription_ = DatasetCatalog::Instance().Subscribe(alive_, [this](const DatasetChange& change) {
+        if (change.kind != DatasetChange::Kind::Removed) return;
+        for (auto& tab : tabs_) {
+            if (tab->removed || tab->origin != change.name) continue;
+            tab->removed = true;
+            tab->source.reset();
+            tab->dataset.clear();
+            spdlog::info("Table Viewer: '{}' was removed; tab '{}' keeps a frozen copy of its {} rows", change.name,
+                         tab->filename, tab->GetRowCount());
+        }
+    });
 }
 
 void TableViewerPanel::Render() {
@@ -77,6 +90,7 @@ void TableViewerPanel::Render() {
         // Tab bar at top, the live-value line (Data Viewer), the toolbar.
         RenderTabBar();
         RenderLiveHeader(GetActiveTab());
+        RenderRemovedHeader(GetActiveTab());
         RenderToolbar();
         RenderOpening();
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
@@ -125,6 +139,27 @@ void TableViewerPanel::Render() {
 
     // Render modal dialogs (must be outside main window)
     RenderFindDialog();
+}
+
+void TableViewerPanel::RenderRemovedHeader(TableTab* tab) {
+    if (!tab || !tab->removed) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const std::string text = "'" + tab->origin + "' was removed (its Data Input or graph is gone). This tab is a frozen "
+                             "copy of the " + std::to_string(tab->GetRowCount()) + " rows it shows.";
+    // A tinted line, like the live-value line; the text wraps.
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float wrap = w - 36.0f;
+    const float h = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap).y + 10.0f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ui::ToU32(ui::Mix(t.bg_window, t.warning, 0.10f)), 4.0f);
+    dl->AddCircleFilled(ImVec2(p.x + 14.0f, p.y + 5.0f + ImGui::GetTextLineHeight() * 0.5f), 3.5f, ui::ToU32(t.warning));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 26.0f, p.y + 5.0f));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+    ImGui::TextColored(t.text, "%s", text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 4.0f));
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
 }
 
 void TableViewerPanel::RenderLiveHeader(TableTab* tab) {
@@ -539,6 +574,7 @@ void TableViewerPanel::StartOpen(const std::string& name, const std::string& dat
                                      std::to_string(slice.total_rows) + " rows");
             status_note_.clear();
             TableTab* tab = AddTab(slice.table, std::move(result->kinds), slice.source);
+            if (tab) tab->origin = dataset;
             if (tab && static_cast<int64_t>(shown) == slice.total_rows) tab->dataset = dataset;
             visible_ = true;
         },
