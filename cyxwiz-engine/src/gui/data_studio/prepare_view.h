@@ -15,6 +15,7 @@
 #include "../guided_editor.h"
 #include "../sql_editor_pane.h"
 #include "../table_grid.h"
+#include "transform_step_view.h"
 
 #include <cstdint>
 #include <functional>
@@ -86,6 +87,7 @@ private:
     std::string message_;
     bool message_error_ = false;
 
+    TransformStepView transform_;    // a scale, power or log step (TOFIX129 D2)
     TableGrid grid_;
     std::string grid_key_;           // dataset + finish time shown
     std::shared_ptr<PartCounts> parts_;

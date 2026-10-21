@@ -130,6 +130,8 @@ void PrepareView::SetGraph(::gui::NodeEditor* editor, const std::vector<studio::
         // A run puts the inputs in memory: the operations see their columns.
         guided_.SetInputs(StepInputs(loaded_));
     }
+    // A step replaced (a method switch) stays picked as its new node.
+    if (selected_ >= 0 && !NodeById(selected_) && editor_ && editor_->ReplacedBy(selected_) >= 0) selected_ = editor_->ReplacedBy(selected_);
     const bool still_there = std::any_of(steps_.begin(), steps_.end(), [&](const studio::StepRow& r) { return r.id == selected_; });
     if (!still_there) {
         selected_ = -1;
@@ -665,6 +667,14 @@ void PrepareView::RenderOtherStep(const studio::GraphNode& node) {
         loaded_ = node.id;
         message_.clear();
         guided_.Load({});  // no operations: this step is not an SQL step
+    }
+    // A scale, power or log step: its own view (settings, before / after).
+    if (transform_step::KindOf(node.type) != transform_step::Kind::None) {
+        const auto context = editor_->GetDataStepContext(node.id);
+        const studio::GraphNode* input = context.inputs.empty() ? nullptr : NodeById(context.inputs.front().id);
+        transform_.Render(editor_, node, input);
+        RenderResult(node);
+        return;
     }
     // Its settings, as saved in the graph.
     if (step && !step->parameters.empty() &&
