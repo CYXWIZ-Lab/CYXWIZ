@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 JSONViewerPanel::JSONViewerPanel() {
     LoadSample();
-    spdlog::info("JSONViewerPanel initialized");
+    spdlog::debug("JSONViewerPanel initialized");
 }
 
 JSONViewerPanel::~JSONViewerPanel() {

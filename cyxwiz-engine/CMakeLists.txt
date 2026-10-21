@@ -80,9 +80,47 @@ if(MSVC)
     target_compile_options(cyxwiz-implot3d PRIVATE /W0)
 endif()
 
-# Plugin SDK static library (shared between engine and plugins)
-add_library(cyxwiz-plugin-sdk STATIC
-    src/plugin/plugin_context.cpp
+# Plugin SDK: headers only (TOFIX125 P5 step 5.2). PluginContext is an
+# interface the Engine implements and the fingerprint is computed inline, so a
+# plugin links no CyxWiz library, and the headers need only the standard
+# library and the backend: a plugin that logs, draws or reads JSON links
+# spdlog, ImGui or nlohmann_json itself.
+#
+# The public headers are copied into one folder (paths relative to src/,
+# included as "plugin/plugin_types.h"); plugins see that folder and not the
+# Engine's src/, so a plugin that reaches into the Engine fails to build.
+set(CYXWIZ_PLUGIN_SDK_HEADERS
+    plugin/plugin_types.h
+    plugin/plugin_context.h
+    plugin/plugin_fingerprint.h
+    plugin/interfaces/i_analytics_provider.h
+    plugin/interfaces/i_assistant_provider.h
+    plugin/interfaces/i_data_provider.h
+    plugin/interfaces/i_node_provider.h
+    plugin/interfaces/i_panel_provider.h
+    plugin/interfaces/i_tensor_node_provider.h
+    plugin/interfaces/i_training_hook.h
+    core/extension_node_contract.h
+    core/node_metadata.h
+    core/graph_model.h
+)
+set(CYXWIZ_PLUGIN_SDK_INCLUDE_DIR "${CMAKE_BINARY_DIR}/sdk/include")
+foreach(_sdk_header ${CYXWIZ_PLUGIN_SDK_HEADERS})
+    configure_file(src/${_sdk_header} "${CYXWIZ_PLUGIN_SDK_INCLUDE_DIR}/${_sdk_header}" COPYONLY)
+endforeach()
+add_library(cyxwiz-plugin-sdk INTERFACE)
+target_include_directories(cyxwiz-plugin-sdk INTERFACE "${CYXWIZ_PLUGIN_SDK_INCLUDE_DIR}")
+# plugin_fingerprint.h reads the SDK version (cyxwiz/version.h) and, when a
+# plugin includes the backend, the ArrayFire version.
+target_include_directories(cyxwiz-plugin-sdk INTERFACE $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_features(cyxwiz-plugin-sdk INTERFACE cxx_std_20)
+# CyxWiz::PluginSDK, the plugin helpers and the SDK install rules.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
+
+# The Engine's side of the plugin system: registries, permissions,
+# signatures, crash isolation and the fingerprint check. Linked by the Engine
+# and its tests, never by a plugin.
+add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
@@ -91,15 +129,19 @@ add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/security/plugin_signature.cpp
     src/plugin/security/safe_execute.cpp
     src/plugin/security/tweetnacl.c
+    src/plugin/plugin_fingerprint.cpp
 )
-target_include_directories(cyxwiz-plugin-sdk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(cyxwiz-plugin-sdk PUBLIC
+# The Engine reads the same headers from src/ (never also from the SDK copy).
+target_include_directories(cyxwiz-plugin-host PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(cyxwiz-plugin-host PUBLIC
     cyxwiz-training-hooks
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     imgui::imgui
 )
-set_target_properties(cyxwiz-plugin-sdk PROPERTIES
+set_target_properties(cyxwiz-plugin-host PROPERTIES
     CXX_STANDARD 20
     POSITION_INDEPENDENT_CODE ON
 )
@@ -171,6 +213,7 @@ set(ENGINE_SOURCES
     src/core/query_result_cache.cpp
     src/core/asset_preview.cpp
     src/core/dataset_table_slice.cpp
+    src/core/table_grid_rows.cpp
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
@@ -286,9 +329,10 @@ set(ENGINE_SOURCES
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
     src/core/node_executors/time_series_analysis_operators.cpp  # Phase 5 Band 1
-    # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
+    # Plugin system (loader/manager only; host sources in cyxwiz-plugin-host)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp
@@ -444,6 +488,9 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
+    src/gui/data_loader_generation_tab.cpp
+    src/gui/generation_settings_widgets.cpp
+    src/gui/generation_preview_view.cpp
     src/core/data_convert_task.cpp
     src/core/hdf5_inspection_task.cpp
     src/core/hdf5_source_identity.cpp
@@ -578,6 +625,9 @@ set(ENGINE_SOURCES
     src/inference/language_model_inference_contract.cpp
     src/inference/metric_learning_inference_input.cpp
     src/inference/text_inference_input.cpp
+    src/core/language_model_chat.cpp
+    src/core/language_model_checkpoints.cpp
+    src/core/language_model_loader.cpp
     # DNN inference (Phase 3)
     src/inference/dnn_models.cpp
     src/inference/dnn_preprocessor.cpp
@@ -634,6 +684,7 @@ set(ENGINE_SOURCES
     src/gui/panels/embeddings_panel.cpp
     src/gui/panels/sentiment_panel.cpp
     src/gui/panels/language_model_generation_panel.cpp
+    src/gui/panels/language_model_load_dialog.cpp
     src/gui/panels/calculator_panel.cpp
     src/gui/panels/unit_converter_panel.cpp
     src/gui/panels/random_generator_panel.cpp
@@ -933,7 +984,7 @@ set(ENGINE_HEADERS
     src/gui/panels/embeddings_panel.h
     src/gui/panels/sentiment_panel.h
     src/gui/panels/language_model_generation_panel.h
-    src/gui/panels/language_model_generation_panel_metadata.h
+    src/gui/panels/language_model_load_dialog.h
     src/gui/panels/calculator_panel.h
     src/gui/panels/unit_converter_panel.h
     src/gui/panels/random_generator_panel.h
@@ -1066,7 +1117,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     OpenSSL::Crypto
     cyxwiz-backend
     cyxwiz-protocol
-    cyxwiz-plugin-sdk
+    cyxwiz-plugin-host
     nfd::nfd
     libvterm::vterm
     Arrow::arrow_shared
@@ -2291,7 +2342,7 @@ add_executable(test_language_model_generation
 )
 target_link_libraries(test_language_model_generation PRIVATE cyxwiz-training-core)
 
-target_sources(test_language_model_generation PRIVATE tests/test_training_generation_preview.cpp src/core/training_generation_preview.cpp)
+target_sources(test_language_model_generation PRIVATE tests/test_training_generation_preview.cpp)
 target_link_libraries(test_language_model_generation PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json)
 
 target_include_directories(test_language_model_generation PRIVATE
@@ -2312,6 +2363,21 @@ endif()
 set_target_properties(test_language_model_generation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Language Model Chat (LM Generation panel core, TOFIX159) =====
+add_executable(test_language_model_chat
+    tests/test_language_model_chat.cpp
+    src/core/language_model_chat.cpp
+    src/core/language_model_checkpoints.cpp
+    src/inference/text_inference_input.cpp
+)
+target_include_directories(test_language_model_chat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_language_model_chat PRIVATE
+    cyxwiz-training-core cyxwiz-backend spdlog::spdlog nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_language_model_chat PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_language_model_chat PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Language Model Inference Contract =====
 add_executable(test_language_model_inference_contract
@@ -2879,6 +2945,37 @@ endif()
 set_target_properties(test_extension_node_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: model files, code generation and export with extension nodes (TOFIX125 P6) =====
+add_executable(test_extension_model_files
+    tests/test_extension_model_files.cpp
+    src/core/model_analyzer.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/inference/text_inference_input.cpp
+)
+target_link_libraries(test_extension_model_files PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_extension_model_files PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+target_include_directories(test_extension_model_files PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_extension_model_files PRIVATE
+    Arrow::arrow_shared Parquet::parquet_shared imgui::imgui nlohmann_json::nlohmann_json
+    spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_extension_model_files PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_extension_model_files PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Properties of an installed extension node (TOFIX125 step 2.8) =====
 add_executable(test_extension_properties_presentation
     tests/test_extension_properties_presentation.cpp
@@ -2904,14 +3001,39 @@ target_link_libraries(test_plugin_presentation PRIVATE nlohmann_json::nlohmann_j
 set_target_properties(test_plugin_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: plugin build fingerprint (TOFIX125 P5 step 5.1) =====
+foreach(_fingerprint_kind ok other missing)
+    add_library(fingerprint_${_fingerprint_kind}_plugin SHARED tests/plugin_fingerprint_test_plugin.cpp)
+    target_link_libraries(fingerprint_${_fingerprint_kind}_plugin PRIVATE cyxwiz-plugin-sdk)
+    set_target_properties(fingerprint_${_fingerprint_kind}_plugin PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test_plugins/${_fingerprint_kind}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test_plugins/${_fingerprint_kind}")
+endforeach()
+target_compile_definitions(fingerprint_other_plugin PRIVATE FINGERPRINT_TEST_OTHER)
+target_compile_definitions(fingerprint_missing_plugin PRIVATE FINGERPRINT_TEST_NO_FINGERPRINT)
+add_executable(test_plugin_fingerprint
+    tests/test_plugin_fingerprint.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_plugin_fingerprint PRIVATE cyxwiz-plugin-host cyxwiz-backend spdlog::spdlog)
+target_compile_definitions(test_plugin_fingerprint PRIVATE
+    OK_PLUGIN="$<TARGET_FILE:fingerprint_ok_plugin>"
+    OTHER_PLUGIN="$<TARGET_FILE:fingerprint_other_plugin>"
+    MISSING_PLUGIN="$<TARGET_FILE:fingerprint_missing_plugin>"
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_dependencies(test_plugin_fingerprint fingerprint_ok_plugin fingerprint_other_plugin fingerprint_missing_plugin)
+set_target_properties(test_plugin_fingerprint PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME plugin_fingerprint COMMAND test_plugin_fingerprint)
+
 # ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
 add_executable(test_plugin_unload_registrations
     tests/test_plugin_unload_registrations.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
     src/plugin/plugin_loader.cpp
 )
 target_include_directories(test_plugin_unload_registrations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk cyxwiz-backend imgui::imgui spdlog::spdlog)
+target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-host cyxwiz-backend imgui::imgui spdlog::spdlog)
 if(WIN32)
     target_compile_definitions(test_plugin_unload_registrations PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -3632,6 +3754,8 @@ add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -3752,6 +3876,8 @@ add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -3891,6 +4017,7 @@ set_target_properties(test_cyxmodel_generation_metadata PROPERTIES
 add_executable(test_cyxmodel_exporter_generation_metadata
     tests/test_cyxmodel_exporter_generation_metadata.cpp
     src/core/model_exporter.cpp
+    src/core/guarded_extension_module.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
 )
@@ -5018,6 +5145,13 @@ add_executable(test_warm_start_checkpoint
 configure_training_executor_harness(test_warm_start_checkpoint)
 add_test(NAME WarmStartCheckpoint COMMAND test_warm_start_checkpoint)
 
+# ===== Test: the tokenizer kept in every checkpoint (TOFIX159) =====
+add_executable(test_checkpoint_tokenizer
+    tests/test_checkpoint_tokenizer.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_checkpoint_tokenizer)
+add_test(NAME CheckpointTokenizer COMMAND test_checkpoint_tokenizer)
+
 add_executable(test_training_executor_arrow_parquet
     tests/test_training_executor_arrow_parquet.cpp
 )
@@ -5073,6 +5207,8 @@ add_executable(test_training_manager_session
     src/core/training_manager.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -5786,11 +5922,12 @@ add_test(NAME asset_preview COMMAND test_asset_preview)
 add_executable(test_dataset_table_slice
     tests/test_dataset_table_slice.cpp
     src/core/dataset_table_slice.cpp
+    src/data/arrow_data_table.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
 )
 target_include_directories(test_dataset_table_slice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_dataset_table_slice PRIVATE spdlog::spdlog fmt::fmt)
+target_link_libraries(test_dataset_table_slice PRIVATE Arrow::arrow_shared spdlog::spdlog fmt::fmt)
 if(WIN32)
     target_compile_definitions(test_dataset_table_slice PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -5799,6 +5936,24 @@ set_target_properties(test_dataset_table_slice PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME dataset_table_slice COMMAND test_dataset_table_slice)
+
+# ===== Test: the Table Viewer grid's sort, filter and Find counts off the UI thread (TOFIX159) =====
+add_executable(test_table_grid_rows
+    tests/test_table_grid_rows.cpp
+    src/core/table_grid_rows.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_table_grid_rows PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_table_grid_rows PRIVATE spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_table_grid_rows PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_table_grid_rows PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME table_grid_rows COMMAND test_table_grid_rows)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
@@ -6966,7 +7121,7 @@ add_test(NAME TransformStepPresentation COMMAND test_transform_step_presentation
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
-    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp)
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp src/core/runtime_log_category.cpp)
 target_link_libraries(test_async_task_cancellation PRIVATE cyxwiz-training-core)
 target_include_directories(test_async_task_cancellation PRIVATE src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
@@ -6981,7 +7136,7 @@ set_target_properties(test_async_task_cancellation PROPERTIES RUNTIME_OUTPUT_DIR
 # tofix94: atomic crash heartbeat under concurrent reads.
 add_executable(test_crash_heartbeat_atomic tests/test_crash_heartbeat_atomic.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
-    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp)
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp src/core/runtime_log_category.cpp)
 target_link_libraries(test_crash_heartbeat_atomic PRIVATE cyxwiz-training-core)
 target_include_directories(test_crash_heartbeat_atomic PRIVATE src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
@@ -6995,7 +7150,7 @@ set_target_properties(test_crash_heartbeat_atomic PROPERTIES RUNTIME_OUTPUT_DIRE
 
 add_executable(test_async_task_lifecycle tests/test_async_task_lifecycle.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
-    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp)
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp src/core/runtime_log_category.cpp)
 target_link_libraries(test_async_task_lifecycle PRIVATE cyxwiz-training-core)
 target_include_directories(test_async_task_lifecycle PRIVATE src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
@@ -7022,11 +7177,24 @@ target_link_libraries(test_extension_gradient_check PRIVATE cyxwiz-training-core
 add_executable(test_plugin_tensor_nodes
     tests/test_plugin_tensor_nodes.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
     src/plugin/plugin_loader.cpp
 )
-target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui)
+target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
 target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_dependencies(test_plugin_tensor_nodes activation_nodes)
+
+# ===== Tool: load plugin folders and check their nodes (TOFIX125 P5 step 5.3) =====
+add_executable(cyxwiz-plugin-check
+    tests/tool_plugin_check.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(cyxwiz-plugin-check PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+if(WIN32)
+    target_compile_definitions(cyxwiz-plugin-check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)
@@ -7104,15 +7272,31 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
     add_dependencies(test_python_node_training pycyxwiz)
     add_test(NAME python_node_training COMMAND test_python_node_training)
 
+    # The SDK's Python example layers trained from a Data Input (TOFIX125).
+    add_executable(test_python_builtin_layers
+        tests/test_python_builtin_layers.cpp
+        src/extension/python/python_node_factory.cpp
+    )
+    target_link_libraries(test_python_builtin_layers PRIVATE cyxwiz-training-core pybind11::embed)
+    target_compile_definitions(test_python_builtin_layers PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
+        CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_builtin_layers>"
+        CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
+    add_dependencies(test_python_builtin_layers pycyxwiz)
+    add_test(NAME python_builtin_layers COMMAND test_python_builtin_layers)
+
     # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
     add_executable(bench_python_node_cost
         tests/bench_python_node_cost.cpp
         src/extension/python/python_node_factory.cpp
         src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
         src/plugin/plugin_loader.cpp
     )
     target_link_libraries(bench_python_node_cost PRIVATE
-        cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui pybind11::embed)
+        cyxwiz-training-core cyxwiz-plugin-host imgui::imgui pybind11::embed)
     target_compile_definitions(bench_python_node_cost PRIVATE
         CYXWIZ_HAS_PYTHON
         CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
@@ -7131,6 +7315,8 @@ add_executable(test_engine_node_parity
     src/core/training_manager.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/generation_preview_view.cpp
+    src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp

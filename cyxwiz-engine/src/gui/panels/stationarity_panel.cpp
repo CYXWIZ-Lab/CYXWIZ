@@ -12,7 +12,7 @@ namespace cyxwiz {
 
 StationarityPanel::StationarityPanel() {
     GenerateData();
-    spdlog::info("StationarityPanel initialized");
+    spdlog::debug("StationarityPanel initialized");
 }
 
 StationarityPanel::~StationarityPanel() {

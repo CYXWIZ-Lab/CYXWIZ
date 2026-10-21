@@ -21,19 +21,26 @@ struct Frame {
     const cyxwiz::properties_view::View* view = nullptr;
     std::set<std::string>* shown = nullptr;
     bool details = false;
+    bool narrow = false;  // the panel is too narrow for chips beside a value
 };
 Frame g_frame;
+
+// Below this the rows give the value the room: a smaller label share and the
+// status as a coloured mark (its text on hover) instead of a chip. A chip and
+// an 84 px label left a name one letter per line in a 200 px panel.
+constexpr float kNarrowPanel = 320.0f;
 
 // The label column: a share of the panel, never narrower than a short label.
 float LabelWidth() {
     const float avail = ImGui::GetContentRegionAvail().x;
+    if (g_frame.narrow) return std::clamp(avail * 0.30f, 52.0f, 84.0f);
     return std::clamp(avail * 0.38f, 84.0f, 220.0f);
 }
 
-// The status column fits the widest chip this view will show.
+// The status column fits the widest chip this view will show (a mark when narrow).
 float StatusWidth() {
     float width = ImGui::CalcTextSize(ICON_FA_CIRCLE_CHECK).x;
-    if (!g_frame.view) return width;
+    if (!g_frame.view || g_frame.narrow) return width;
     for (const auto& truth : g_frame.view->truths) {
         if (!truth.chips.empty() && truth.chips.front().kind != ChipKind::Ok)
             width = std::max(width, cyxwiz::ui::ChipWidth(truth.chips.front().text.c_str()));
@@ -58,14 +65,14 @@ void TruthTooltip(const Truth& truth) {
     ImGui::EndTooltip();
 }
 
-// A file path breaks after its folder separators, not letter by letter
-// (ImGui wraps at spaces only, so a long path in a narrow column split
-// mid-name). A part wider than the column still wraps.
-void PathText(const std::string& path, const ImVec4& colour) {
+// A path or a name breaks after its separators, not letter by letter
+// (ImGui wraps at spaces only, so a long name in a narrow column split
+// mid-word). A part wider than the column still wraps.
+void BreakableText(const std::string& path, const ImVec4& colour) {
     const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     size_t start = 0;
     while (start < path.size()) {
-        const size_t separator = path.find_first_of("/\\", start);
+        const size_t separator = path.find_first_of("/\\_-.", start);
         const size_t end = separator == std::string::npos ? path.size() : separator + 1;
         const std::string part = path.substr(start, end - start);
         if (start > 0) {
@@ -79,9 +86,11 @@ void PathText(const std::string& path, const ImVec4& colour) {
     }
 }
 
-bool LooksLikePath(const std::string& value) {
-    return value.size() > 1 && value.find_first_of("/\\") != std::string::npos &&
-           value.find('\n') == std::string::npos;
+// One run of characters a line break can only split mid-word: a path or a
+// name such as sft_train_windows.parquet.
+bool Breakable(const std::string& value) {
+    return value.size() > 1 && value.find_first_of("/\\_-.") != std::string::npos &&
+           value.find_first_of(" \n") == std::string::npos;
 }
 
 void DetailsRow(const Truth& truth) {
@@ -107,6 +116,7 @@ void BeginFrame(const cyxwiz::properties_view::View* view, std::set<std::string>
 
 Rows::Rows(const char* id) {
     const auto& t = cyxwiz::ui::CurrentTokens();
+    g_frame.narrow = ImGui::GetContentRegionAvail().x < kNarrowPanel;
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(t.space_sm, t.space_xs));
     ok = ImGui::BeginTable(id, 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX);
     if (ok) {
@@ -160,6 +170,9 @@ void Status(const char* key) {
         if (chip.kind == ChipKind::Ok) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ChipColour(ChipKind::Ok), "%s", ICON_FA_CIRCLE_CHECK);
+        } else if (g_frame.narrow) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ChipColour(chip.kind), "%s", ICON_FA_CIRCLE);
         } else {
             Chip(chip);
         }
@@ -172,14 +185,18 @@ void ReadOnly(const char* label, const std::string& value, const char* key) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     Label(label);
     ImGui::AlignTextToFramePadding();
-    if (LooksLikePath(value)) {
-        PathText(value, t.text_bright);
-    } else {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_bright, "%s", value.empty() ? "(not set)" : value.c_str());
-        ImGui::PopTextWrapPos();
-    }
+    Value(value.empty() ? "(not set)" : value, t.text_bright);
     Status(key);
+}
+
+void Value(const std::string& text, const ImVec4& colour) {
+    if (Breakable(text)) {
+        BreakableText(text, colour);
+        return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", text.c_str());
+    ImGui::PopTextWrapPos();
 }
 
 bool Disclosure(const char* label, bool open) {

@@ -39,7 +39,7 @@ void AsyncTask::RequestCancel() {
             progress_.load(),
             "cancel requested",
             "cancel_requested");
-        spdlog::info("Cancel requested for task '{}' (ID: {})", name_, id_);
+        spdlog::debug("Cancel requested for task '{}' (ID: {})", name_, id_);
     }
 }
 
@@ -189,8 +189,12 @@ LambdaTask::LambdaTask(const std::string& name, TaskFunction func, bool cancella
 }
 
 void LambdaTask::Execute() {
-    if (func_) {
-        func_(*this);
+    // Run once, then drop the function: what it captured (a table, a loaded
+    // dataset) is not kept alive by the task history's last 100 tasks.
+    TaskFunction func = std::move(func_);
+    func_ = nullptr;
+    if (func) {
+        func(*this);
     }
 }
 
@@ -217,7 +221,7 @@ void AsyncTaskManager::Initialize(size_t num_threads) {
         num_threads = std::max(2u, std::thread::hardware_concurrency());
     }
 
-    spdlog::info("Initializing AsyncTaskManager with {} worker threads", num_threads);
+    spdlog::debug("Initializing AsyncTaskManager with {} worker threads", num_threads);
 
     shutdown_.store(false);
     shutting_down_.store(false);
@@ -577,6 +581,62 @@ void AsyncTaskManager::PostToMainThread(std::weak_ptr<const void> owner,
     EnqueueMainThread(std::move(entry), generation_.load());
 }
 
+void AsyncTaskManager::ExecuteTask(const std::shared_ptr<AsyncTask>& task) {
+    const uint64_t task_id = task->GetId();
+
+    // Dispatch time bounds the duration of a skipped task. A cancellation
+    // observed here must never invoke the user body or emit TaskStarted.
+    // Cancellation after this gate remains cooperative, as for running tasks.
+    task->start_time_ = std::chrono::steady_clock::now();
+    if (task->IsCancelRequested()) {
+        task->MarkCancelled("Cancelled before execution");
+        return;
+    }
+    task->state_.store(TaskState::Running);
+
+    TrainingTraceCollector::Instance().RecordTaskProgress(
+        task_id,
+        task->GetName(),
+        "TaskStarted",
+        task->GetProgress(),
+        "started",
+        "running");
+    spdlog::debug("Starting task '{}' (ID: {})", task->GetName(), task_id);
+
+    try {
+        task->Execute();
+
+        // Check if task was cancelled
+        if (task->IsCancelRequested() && task->GetState() == TaskState::Running) {
+            task->MarkCancelled();
+        }
+    } catch (const std::exception& e) {
+        task->MarkFailed(e.what());
+    } catch (...) {
+        task->MarkFailed("Unknown error");
+    }
+}
+
+TaskState AsyncTaskManager::RunHere(const std::string& name, LambdaTask::TaskFunction func, bool cancellable) {
+    auto task = std::make_shared<LambdaTask>(name, [f = std::move(func)](LambdaTask& t) {
+        f(t);
+        if (!t.IsCancelRequested() && t.GetState() == TaskState::Running) t.MarkCompleted();
+    }, cancellable);
+    if (shutting_down_.load()) {
+        task->start_time_ = std::chrono::steady_clock::now();
+        task->MarkCancelled("Rejected: task manager is shutting down");
+        RetireTask(task);
+        return task->GetState();
+    }
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        active_tasks_[task->GetId()] = task;
+    }
+    ExecuteTask(task);
+    RetireTask(task);
+    return task->GetState();
+}
+
 void AsyncTaskManager::WorkerThread() {
     const uint64_t generation = generation_.load();
     // Counts this worker out of ITS generation only: a worker released by a
@@ -622,41 +682,7 @@ void AsyncTaskManager::WorkerThread() {
             continue;
         }
 
-        // Execute the task
-        uint64_t task_id = task->GetId();
-
-        // Dispatch time bounds the duration of a skipped task. A cancellation
-        // observed here must never invoke the user body or emit TaskStarted.
-        // Cancellation after this gate remains cooperative, as for running tasks.
-        task->start_time_ = std::chrono::steady_clock::now();
-        if (task->IsCancelRequested()) {
-            task->MarkCancelled("Cancelled before execution");
-        } else {
-            task->state_.store(TaskState::Running);
-
-            TrainingTraceCollector::Instance().RecordTaskProgress(
-                task_id,
-                task->GetName(),
-                "TaskStarted",
-                task->GetProgress(),
-                "started",
-                "running");
-            spdlog::debug("Starting task '{}' (ID: {})", task->GetName(), task_id);
-
-            try {
-                task->Execute();
-
-                // Check if task was cancelled
-                if (task->IsCancelRequested() && task->GetState() == TaskState::Running) {
-                    task->MarkCancelled();
-                }
-            } catch (const std::exception& e) {
-                task->MarkFailed(e.what());
-            } catch (...) {
-                task->MarkFailed("Unknown error");
-            }
-
-        }
+        ExecuteTask(task);
 
         // Move from active to completed
         RetireTask(task);

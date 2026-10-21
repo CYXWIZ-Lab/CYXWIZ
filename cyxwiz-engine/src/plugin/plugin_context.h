@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 #include "plugin_types.h"
-#include <mutex>
+#include <filesystem>
 #include <string>
-#include <spdlog/spdlog.h>
 
 namespace cyxwiz::plugin {
 
@@ -29,97 +30,52 @@ struct AssistantContextSnapshot {
 
 // ============================================================================
 // PluginContext - The sole API surface for plugins to interact with the engine.
-// Phase 1: Logging + identity.
-// Phase 2: Registration methods for 5 subsystems.
+//
+// An interface the Engine implements (EnginePluginContext): every call runs
+// the Engine's code, so a plugin needs no library of its own to call it, and
+// registrations reach the Engine's registries, not a copy inside the plugin
+// (TOFIX125 P5 step 5.2).
 // ============================================================================
 
 class PluginContext {
 public:
-    PluginContext(const std::string& plugin_id, IPlugin* plugin,
-                  std::filesystem::path plugin_dir = {})
-        : plugin_id_(plugin_id), plugin_(plugin), plugin_dir_(std::move(plugin_dir)) {}
-
-    ~PluginContext() = default;
-
-    // Move-only: prevent accidental copies
-    PluginContext(const PluginContext&) = delete;
-    PluginContext& operator=(const PluginContext&) = delete;
-    PluginContext(PluginContext&& other) noexcept
-        : plugin_id_(std::move(other.plugin_id_)),
-          plugin_(other.plugin_),
-          plugin_dir_(std::move(other.plugin_dir_)) {
-        std::lock_guard lock(other.assistant_context_mutex_);
-        assistant_context_ = std::move(other.assistant_context_);
-        other.plugin_ = nullptr;
-    }
-    PluginContext& operator=(PluginContext&& other) noexcept {
-        if (this != &other) {
-            std::scoped_lock lock(
-                assistant_context_mutex_, other.assistant_context_mutex_);
-            plugin_id_ = std::move(other.plugin_id_);
-            plugin_ = other.plugin_;
-            plugin_dir_ = std::move(other.plugin_dir_);
-            assistant_context_ = std::move(other.assistant_context_);
-            other.plugin_ = nullptr;
-        }
-        return *this;
-    }
+    virtual ~PluginContext() = default;
 
     // === Identity ===
-    const std::string& GetPluginId() const { return plugin_id_; }
-    const std::filesystem::path& GetPluginDir() const { return plugin_dir_; }
+    virtual const std::string& GetPluginId() const = 0;
+    virtual const std::filesystem::path& GetPluginDir() const = 0;
 
     // === Assistant context ===
-    void SetAssistantContextSnapshot(const AssistantContextSnapshot& snapshot) {
-        std::lock_guard lock(assistant_context_mutex_);
-        assistant_context_ = snapshot;
-    }
-    AssistantContextSnapshot GetAssistantContextSnapshot() const {
-        std::lock_guard lock(assistant_context_mutex_);
-        return assistant_context_;
-    }
+    virtual AssistantContextSnapshot GetAssistantContextSnapshot() const = 0;
 
-    // === Logging ===
-    void LogInfo(const std::string& message) {
-        spdlog::info("[Plugin:{}] {}", plugin_id_, message);
-    }
-    void LogWarn(const std::string& message) {
-        spdlog::warn("[Plugin:{}] {}", plugin_id_, message);
-    }
-    void LogError(const std::string& message) {
-        spdlog::error("[Plugin:{}] {}", plugin_id_, message);
-    }
-    void LogDebug(const std::string& message) {
-        spdlog::debug("[Plugin:{}] {}", plugin_id_, message);
-    }
+    // === Logging (the Engine's log, prefixed with the plugin id) ===
+    virtual void LogInfo(const std::string& message) = 0;
+    virtual void LogWarn(const std::string& message) = 0;
+    virtual void LogError(const std::string& message) = 0;
+    virtual void LogDebug(const std::string& message) = 0;
 
-    // === Phase 2: Registration APIs ===
-    // Each checks permissions before delegating to the appropriate registry.
+    // === Registration ===
+    // Each checks the plugin's declared and approved permissions first.
 
     // Register custom node types (requires UIModify permission)
-    bool RegisterNodeProvider(INodeProvider* provider);
+    virtual bool RegisterNodeProvider(INodeProvider* provider) = 0;
 
     // Register custom ImGui panels (requires UIModify permission)
-    bool RegisterPanelProvider(IPanelProvider* provider);
+    virtual bool RegisterPanelProvider(IPanelProvider* provider) = 0;
 
     // Register custom dataset loaders (requires DataRegistry permission)
-    bool RegisterDataProvider(IDataProvider* provider);
+    virtual bool RegisterDataProvider(IDataProvider* provider) = 0;
 
     // Register training lifecycle hooks (requires Training permission)
-    bool RegisterTrainingHook(ITrainingHook* hook);
+    virtual bool RegisterTrainingHook(ITrainingHook* hook) = 0;
 
     // Register custom analytics computations (requires DataRegistry permission)
-    bool RegisterAnalyticsProvider(IAnalyticsProvider* provider);
+    virtual bool RegisterAnalyticsProvider(IAnalyticsProvider* provider) = 0;
 
-private:
-    std::string plugin_id_;
-    IPlugin* plugin_;  // Non-owning
-    std::filesystem::path plugin_dir_;
-    AssistantContextSnapshot assistant_context_;
-    mutable std::mutex assistant_context_mutex_;
-
-    // Permission check helper
-    bool CheckPermission(PluginPermission required, const char* action) const;
+protected:
+    PluginContext() = default;
+    PluginContext(const PluginContext&) = delete;
+    PluginContext& operator=(const PluginContext&) = delete;
 };
 
 } // namespace cyxwiz::plugin

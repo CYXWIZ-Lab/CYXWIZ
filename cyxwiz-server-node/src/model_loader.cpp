@@ -1696,6 +1696,18 @@ bool CyxWizLoader::LoadDirectoryFormat(const std::string& dir_path) {
         return false;
     }
 
+    // An extension node (a user's plugin or Python node) runs the extension's
+    // own code, which this Server Node does not have: refuse the model instead
+    // of loading it without that layer (TOFIX125 P6). Engine packages list
+    // them in the manifest; older ones only in the graph (checked below).
+    if (impl_->metadata.contains("extensions") && impl_->metadata["extensions"].is_array() &&
+        !impl_->metadata["extensions"].empty()) {
+        const std::string type_id = impl_->metadata["extensions"][0].value("type_id", "");
+        spdlog::error("CyxWizLoader: the model uses the extension node {}; the Server Node cannot run "
+                      "extension nodes yet, so it does not load this model", type_id);
+        return false;
+    }
+
     // If metadata doesn't have modules, try to build from graph.cyxgraph
     if (!impl_->metadata.contains("modules") || impl_->metadata["modules"].empty()) {
         if (fs::exists(graph_path)) {
@@ -1710,6 +1722,12 @@ bool CyxWizLoader::LoadDirectoryFormat(const std::string& dir_path) {
                         for (const auto& node : graph["nodes"]) {
                             int node_type = node.value("type", -1);
                             std::string name = node.value("name", "");
+                            if (node.contains("extension") && node["extension"].is_object()) {
+                                spdlog::error("CyxWizLoader: the model has the extension node '{}' ({}); the "
+                                              "Server Node cannot run extension nodes yet, so it does not load "
+                                              "this model", name, node["extension"].value("type_id", ""));
+                                return false;
+                            }
 
                             // Skip non-layer nodes (Input=77, Output=50, Loss=52, Optimizer=60)
                             if (node_type == 77 || node_type == 50 || node_type >= 52) {

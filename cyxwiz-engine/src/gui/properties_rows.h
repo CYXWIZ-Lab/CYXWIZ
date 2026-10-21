@@ -15,6 +15,8 @@
 
 #include "../core/properties_presentation.h"
 
+#include <imgui.h>
+
 #include <set>
 #include <string>
 
@@ -47,6 +49,9 @@ void Note(const char* text);
 void Status(const char* key);
 // A read-only value row: label, value text, the status of `key`.
 void ReadOnly(const char* label, const std::string& value, const char* key);
+// A value in the editor cell, wrapped at the cell: a path or a name without
+// spaces breaks after / \ _ - . instead of letter by letter.
+void Value(const std::string& text, const ImVec4& colour);
 
 // "> Details" as the Engine's other tree rows: returns the new open state
 // (the caller keeps it, so it can be per node). Draws nothing below itself.

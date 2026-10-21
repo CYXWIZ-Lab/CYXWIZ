@@ -20,3 +20,9 @@ runtime state. Hardware drivers remain host prerequisites.
 
 Known problems in the GPU runtimes CyxWiz uses, and what to do about them, are listed in
 `KNOWN_ISSUES.md` in this package.
+
+The `sdk/` folder is the CyxWiz plugin SDK for C++ plugins with trainable
+nodes: headers, the backend's import library, `find_package(CyxWizSDK)` and a
+template plugin, under the Apache License 2.0 (`sdk/LICENSE`, `sdk/NOTICE`).
+`cyxwiz-plugin-check` loads a plugin folder the way the Engine does and checks
+its nodes. Start with `sdk/template/README.md`.

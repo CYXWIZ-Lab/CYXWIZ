@@ -12,7 +12,7 @@ namespace cyxwiz {
 
 EmbeddingsPanel::EmbeddingsPanel() {
     GenerateSampleVocabulary();
-    spdlog::info("EmbeddingsPanel initialized");
+    spdlog::debug("EmbeddingsPanel initialized");
 }
 
 EmbeddingsPanel::~EmbeddingsPanel() {

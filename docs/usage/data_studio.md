@@ -138,6 +138,8 @@ shows its first line, and **Details** the rest.
 Profile (it replaced Analyze) describes the picked table and decides what
 each column is. It runs in the background as soon as a dataset is picked,
 and again when the dataset is re-loaded; **Profile again** runs it by hand.
+The Table Viewer's Stats use the same profile: a dataset profiled in either
+one opens in the other from the saved answers (MNIST: 62 s, then 1.3 s).
 
 The first line: rows, columns, when it was profiled and how long it took,
 *exact* (or *approximate* on very wide tables, beyond 64 columns, where
@@ -528,31 +530,16 @@ rail (or the last step); its format and file are set in its dialog.
 
 ## Results
 
-A model's results next to the data. Pick **Language model previews** or
-**Test run**. The job's line counts what there is to show (*test: 72 rows ·
-2 preview runs*, and any evaluation nodes in the graph).
+A model's results next to the data. Pick **Generations** or **Test run**.
+The job's line counts what there is to show (*test: 72 rows · 2 preview
+runs*, and any evaluation nodes in the graph).
 
-**Language model previews** reads the generation previews a causal language
-model's training writes each epoch (`checkpoints/<graph>/<run>/
-generation_previews/epoch_<n>.json`). **Run** lists every run of the project
-that wrote previews, newest first; **Epoch** picks one of its epochs.
-
-- The line under them: the number of preview prompts, the sampling, the token
-  limit.
-- Tiles: **Right book**, **Right chapter**, **Right verse** (when the prompts
-  carry a `<reference>` such as *Psalm 34:13*: the model's first *Book C:V*
-  citation is compared with it) and **Stopped by itself** (*1 of 4*; how many
-  hit the token limit and how many loop).
-- One row per prompt: the **question** (the prompt's `<question>`, else its
-  last *User:* text), the **evidence** reference, what the model **cited**,
-  book / chapter / verse marks, and how it **stopped** (*end*, *token limit*;
-  *loops* when a three-word phrase repeats three times or more). Click a row to
-  read the question and the full answer under the table.
-- **Where it goes wrong (slices)**: rows and right verses per stop reason and
-  for the looping answers.
-
-These are the run's few preview prompts; the full table of an evaluation set
-comes from batch evaluation (TOFIX149 item 4).
+**Generations** shows the generation previews a language model's training
+writes (set on the Data Loader's Generation tab). **Run** lists every run of
+the project that wrote previews, newest first; under it is the same
+Generations view as the Training Dashboard's: the latest pass with one card
+per prompt, two passes compared, or one prompt over time. See
+[Generation previews](generation_previews.md).
 
 **Test run** shows the latest test in a few lines: its headline (*Accuracy
 94.44%*, *MAE 0.1234*), how many rows it tested and its other figures, read

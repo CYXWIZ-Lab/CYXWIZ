@@ -7,29 +7,39 @@
 namespace cyxwiz {
 
 void TableViewerPanel::SetTable(std::shared_ptr<DataTable> table) {
-    if (!table) return;
+    AddTab(std::move(table), {}, nullptr);
+}
+
+TableViewerPanel::TableTab* TableViewerPanel::AddTab(std::shared_ptr<DataTable> table,
+                                                      std::vector<TableColumnKind> kinds,
+                                                      std::shared_ptr<arrow::Table> source) {
+    if (!table) return nullptr;
 
     // The same in-memory table opened again (a step's output after a rerun)
     // refreshes its tab instead of adding a second one.
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
         auto& open = tabs_[i];
         if (open->filepath.empty() && !open->live.on && open->filename == table->GetName()) {
-            open = MakeTab(table, table->GetName());
+            open = MakeTab(table, table->GetName(), std::move(kinds), std::move(source));
             active_tab_index_ = i;
             select_tab_ = i;
-            return;
+            return open.get();
         }
     }
 
-    tabs_.push_back(MakeTab(table, table->GetName()));  // in memory: no file path
+    tabs_.push_back(MakeTab(table, table->GetName(), std::move(kinds), std::move(source)));  // in memory: no file path
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
     select_tab_ = active_tab_index_;  // bring the new tab to the front
+    return tabs_.back().get();
 }
 
-std::unique_ptr<TableViewerPanel::TableTab> TableViewerPanel::MakeTab(std::shared_ptr<DataTable> table, std::string filename) {
+std::unique_ptr<TableViewerPanel::TableTab> TableViewerPanel::MakeTab(std::shared_ptr<DataTable> table, std::string filename,
+                                                                      std::vector<TableColumnKind> kinds,
+                                                                      std::shared_ptr<arrow::Table> source) {
     auto tab = std::make_unique<TableTab>();
     tab->filename = std::move(filename);
-    tab->grid.SetTable(std::move(table));
+    tab->source = std::move(source);
+    tab->grid.SetTable(std::move(table), std::move(kinds));
     TableTab* t = tab.get();
     tab->grid.on_plot = [this, t](int column, plot::Kind kind) { OpenPlot(t, kind, column); };
     return tab;

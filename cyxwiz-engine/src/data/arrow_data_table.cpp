@@ -49,6 +49,11 @@ std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const s
     std::vector<std::string> headers;
     for (const auto& field : table.schema()->fields()) headers.push_back(field->name());
     out->SetHeaders(headers);
+    AppendArrowRows(table, *out, max_rows);
+    return out;
+}
+
+void AppendArrowRows(const arrow::Table& table, DataTable& out, int64_t max_rows) {
     const int64_t rows = max_rows < 0 ? table.num_rows() : std::min(max_rows, table.num_rows());
     const int columns = table.num_columns();
     // Walk each column's chunks once, filling the rows column by column.
@@ -62,8 +67,7 @@ std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const s
             if (row >= rows) break;
         }
     }
-    for (auto& r : data) out->AddRow(std::move(r));
-    return out;
+    for (auto& r : data) out.AddRow(std::move(r));
 }
 
 std::shared_ptr<arrow::Table> ArrowFromDataTable(const DataTable& table) {

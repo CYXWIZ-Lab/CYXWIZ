@@ -11,9 +11,7 @@
 namespace cyxwiz {
 
 DecompositionPanel::DecompositionPanel() {
-    // Generate initial data
-    GenerateData();
-    spdlog::info("DecompositionPanel initialized");
+    spdlog::debug("DecompositionPanel initialized");
 }
 
 DecompositionPanel::~DecompositionPanel() {
@@ -24,6 +22,8 @@ DecompositionPanel::~DecompositionPanel() {
 
 void DecompositionPanel::Render() {
     if (!visible_) return;
+    // The demo signal is made when the panel is first shown, not at startup (TOFIX159 D5).
+    if (time_series_.empty()) GenerateData();
 
     ImGui::SetNextWindowSize(ImVec2(1000, 700), ImGuiCond_FirstUseEver);
 
@@ -495,7 +495,7 @@ void DecompositionPanel::GenerateData() {
         time_axis_[i] = static_cast<double>(i);
     }
 
-    spdlog::info("Generated {} samples of type {}",
+    spdlog::debug("Generated {} samples of type {}",
                  num_samples_, static_cast<int>(signal_type_));
 }
 

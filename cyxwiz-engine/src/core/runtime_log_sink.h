@@ -1,5 +1,6 @@
 #pragma once
 
+#include "runtime_log_category.h"
 #include "runtime_log_store.h"
 
 #include <spdlog/details/null_mutex.h>
@@ -21,12 +22,12 @@ protected:
             RuntimeLogEvent event;
             event.timestamp_utc = message.time;
             event.level = ToRuntimeLevel(message.level);
-            event.category = "system";
             event.source.assign(
                 message.logger_name.data(), message.logger_name.size());
             event.event_name = "spdlog";
             event.thread_id = std::to_string(message.thread_id);
             event.message.assign(message.payload.data(), message.payload.size());
+            event.category = ClassifyLogCategory(event.source, event.message);
 
             if (const auto code = ExtractLegacyDiagnosticCode(event.message)) {
                 event.primary_error_code = *code;

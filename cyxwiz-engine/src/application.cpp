@@ -119,7 +119,7 @@ static void enable_dark_title_bar(GLFWwindow* window) {
     }
 
     if (SUCCEEDED(hr)) {
-        spdlog::info("Dark title bar enabled");
+        spdlog::debug("Dark title bar enabled");
     } else {
         spdlog::debug("Dark title bar not available on this Windows version");
     }
@@ -160,7 +160,7 @@ static bool load_window_icon(GLFWwindow* window) {
     glfwSetWindowIcon(window, 1, &image);
     stbi_image_free(pixels);
 
-    spdlog::info("Window icon loaded successfully ({}x{})", width, height);
+    spdlog::debug("Window icon loaded successfully ({}x{})", width, height);
     return true;
 #endif
 }
@@ -225,6 +225,7 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         if (startup_project_path_.empty()) {
             if (auto resolved = ResolveProjectArg(arg)) {
                 startup_project_path_ = resolved->string();
+                startup_project_from_command_line_ = true;
                 spdlog::info("Startup project detected: {}", startup_project_path_);
                 continue;
             }
@@ -251,12 +252,15 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
         return;
     }
 
+    // The start page opens its pick itself; OpenProject then sees the same
+    // project and does nothing. Only a command-line project is opened here.
     auto& pm = cyxwiz::ProjectManager::Instance();
     if (pm.OpenProject(startup_project_path_)) {
-        spdlog::info("Opened project from command line: {}", startup_project_path_);
+        if (startup_project_from_command_line_)
+            spdlog::debug("Opened project from the command line: {}", startup_project_path_);
         UpdateWindowTitle();  // Update window title with project name
     } else {
-        spdlog::error("Failed to open project from command line: {}", startup_project_path_);
+        spdlog::error("Failed to open project {}", startup_project_path_);
     }
 }
 
@@ -378,7 +382,7 @@ bool CyxWizApp::Initialize() {
         ShowWindow(hwnd, SW_RESTORE);
         SetWindowPos(hwnd, HWND_TOP, 100, 100, 1280, 720, SWP_SHOWWINDOW);
         SetForegroundWindow(hwnd);
-        spdlog::info("Native Windows window shown: HWND={}", reinterpret_cast<void*>(hwnd));
+        spdlog::debug("Native Windows window shown: HWND={}", reinterpret_cast<void*>(hwnd));
     } else {
         spdlog::error("GLFW window was created but no native HWND is available");
     }
@@ -392,7 +396,7 @@ bool CyxWizApp::Initialize() {
         spdlog::error("Failed to initialize GLAD");
         return false;
     }
-    spdlog::info("OpenGL {}.{} initialized", GLVersion.major, GLVersion.minor);
+    spdlog::info("Window ready: OpenGL {}.{}", GLVersion.major, GLVersion.minor);
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -456,7 +460,7 @@ bool CyxWizApp::Initialize() {
 
     GLint max_texture_size = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
-    spdlog::info("Font atlas dimensions: {}x{} (GPU maximum texture size: {})",
+    spdlog::debug("Font atlas dimensions: {}x{} (GPU maximum texture size: {})",
                  io.Fonts->TexWidth, io.Fonts->TexHeight, max_texture_size);
     if (io.Fonts->TexWidth > max_texture_size ||
         io.Fonts->TexHeight > max_texture_size) {
@@ -467,7 +471,7 @@ bool CyxWizApp::Initialize() {
         spdlog::error("Failed to upload initial font atlas texture");
         return false;
     }
-    spdlog::info("Initial font atlas texture uploaded successfully");
+    spdlog::debug("Initial font atlas texture uploaded successfully");
 
 #ifdef CYXWIZ_HAS_PYTHON
     // The Python scan runs on a worker while the start page is up (TOFIX129
@@ -782,8 +786,9 @@ void CyxWizApp::Render() {
             auto result = start_page_->GetResult();
 
             if (result == cyxwiz::StartPage::Result::ProjectSelected) {
-                spdlog::info("Project selected from start page");
+                spdlog::debug("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
+                startup_project_from_command_line_ = false;
                 startup_graph_path_.clear();
                 project_selected_ = true;
                 start_page_.reset();
@@ -809,7 +814,7 @@ void CyxWizApp::Render() {
 
     // Create main window once Python is configured and project is selected
     if (python_configured_ && project_selected_ && !main_window_) {
-        spdlog::info("Creating main window with project: {}", startup_project_path_);
+        spdlog::debug("Creating main window with project: {}", startup_project_path_);
 
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
@@ -834,7 +839,7 @@ void CyxWizApp::Render() {
 
         // Runtime startup evidence is already captured by the core spdlog
         // sink. The Commands transcript is reserved for interactive output.
-        spdlog::info("Console panel initialized; runtime logs available");
+        spdlog::debug("Console panel initialized; runtime logs available");
 
         // Restore saved auth session
         auto& auth = cyxwiz::auth::AuthClient::Instance();
@@ -981,7 +986,7 @@ float CyxWizApp::DetectFontRasterizerDensity(bool log_metrics) const {
 #endif
 
     if (log_metrics) {
-        spdlog::info(
+        spdlog::debug(
             "Display metrics: logical={}x{} framebuffer={}x{} font_density={:.2f}x",
             window_width, window_height, framebuffer_width, framebuffer_height,
             density);
@@ -1094,7 +1099,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 font_base_path += '/';
             }
             resolved_font_base_path_ = font_base_path;
-            spdlog::info("Found fonts at: {}", font_base_path);
+            spdlog::debug("Found fonts at: {}", font_base_path);
             break;
         }
     }
@@ -1106,7 +1111,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         return;
     }
 
-    spdlog::info("Loading fonts from: {}", font_base_path);
+    spdlog::debug("Loading fonts from: {}", font_base_path);
 
     // Define font sizes (scaled for high DPI)
     // Interface text size (Preferences > Appearance): 13, 15, 17 or 20 px.
@@ -1172,42 +1177,42 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(inter_regular)) {
         font_regular_ = io.Fonts->AddFontFromFileTTF(inter_regular.c_str(), base_font_size, &font_config);
         if (font_regular_) {
-            spdlog::info("Loaded Inter-Regular ({}px)", base_font_size);
+            spdlog::debug("Loaded Inter-Regular ({}px)", base_font_size);
 
             // Merge FontAwesome icons into regular font
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
-                spdlog::info("Merged FontAwesome icons into regular font");
+                spdlog::debug("Merged FontAwesome icons into regular font");
             }
 
             // Merge Tabler icons into regular font (POC for node icon themes)
             if (std::filesystem::exists(tabler_icons)) {
                 io.Fonts->AddFontFromFileTTF(tabler_icons.c_str(), base_font_size - 1.0f, &icon_config, tabler_icon_ranges);
-                spdlog::info("Merged Tabler icons into regular font");
+                spdlog::debug("Merged Tabler icons into regular font");
             }
 
             // Merge Remix icons into regular font
             if (std::filesystem::exists(remix_icons)) {
                 io.Fonts->AddFontFromFileTTF(remix_icons.c_str(), base_font_size - 1.0f, &icon_config, remix_icon_ranges);
-                spdlog::info("Merged Remix icons into regular font");
+                spdlog::debug("Merged Remix icons into regular font");
             }
 
             // Merge Lucide icons into regular font
             if (std::filesystem::exists(lucide_icons)) {
                 io.Fonts->AddFontFromFileTTF(lucide_icons.c_str(), base_font_size - 1.0f, &icon_config, lucide_icon_ranges);
-                spdlog::info("Merged Lucide icons into regular font");
+                spdlog::debug("Merged Lucide icons into regular font");
             }
 
             // Merge Iconoir icons into regular font
             if (std::filesystem::exists(iconoir_icons)) {
                 io.Fonts->AddFontFromFileTTF(iconoir_icons.c_str(), base_font_size - 1.0f, &icon_config, iconoir_icon_ranges);
-                spdlog::info("Merged Iconoir icons into regular font");
+                spdlog::debug("Merged Iconoir icons into regular font");
             }
 
             // Merge Phosphor icons into regular font
             if (std::filesystem::exists(phosphor_icons)) {
                 io.Fonts->AddFontFromFileTTF(phosphor_icons.c_str(), base_font_size - 1.0f, &icon_config, phosphor_icon_ranges);
-                spdlog::info("Merged Phosphor icons into regular font");
+                spdlog::debug("Merged Phosphor icons into regular font");
             }
         }
     }
@@ -1216,7 +1221,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(inter_medium)) {
         font_medium_ = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), base_font_size, &font_config);
         if (font_medium_) {
-            spdlog::info("Loaded Inter-Medium ({}px)", base_font_size);
+            spdlog::debug("Loaded Inter-Medium ({}px)", base_font_size);
 
             // Merge FontAwesome icons
             if (std::filesystem::exists(fa_solid)) {
@@ -1231,7 +1236,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(inter_medium)) {
         ImFont* heading = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), heading_font_size, &font_config);
         if (heading) {
-            spdlog::info("Loaded Inter-Medium heading ({}px)", heading_font_size);
+            spdlog::debug("Loaded Inter-Medium heading ({}px)", heading_font_size);
             if (std::filesystem::exists(fa_solid)) {
                 icon_config.GlyphMinAdvanceX = heading_font_size;
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), heading_font_size - 1.0f, &icon_config, icon_ranges);
@@ -1245,7 +1250,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(inter_bold)) {
         font_bold_ = io.Fonts->AddFontFromFileTTF(inter_bold.c_str(), base_font_size, &font_config);
         if (font_bold_) {
-            spdlog::info("Loaded Inter-Bold ({}px)", base_font_size);
+            spdlog::debug("Loaded Inter-Bold ({}px)", base_font_size);
 
             // Merge FontAwesome icons
             if (std::filesystem::exists(fa_solid)) {
@@ -1278,7 +1283,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 if (i == 0) {
                     font_mono_ = mono_font;
                 }
-                spdlog::info("Loaded JetBrainsMono-Regular ({}px) for editor scale {}", pixel_size, scale);
+                spdlog::debug("Loaded JetBrainsMono-Regular ({}px) for editor scale {}", pixel_size, scale);
                 merge_code_icons(pixel_size);
             }
         }
@@ -1288,7 +1293,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (std::filesystem::exists(mono_bold)) {
         font_mono_bold_ = io.Fonts->AddFontFromFileTTF(mono_bold.c_str(), mono_font_size, &font_config);
         if (font_mono_bold_) {
-            spdlog::info("Loaded JetBrainsMono-Bold ({}px)", mono_font_size);
+            spdlog::debug("Loaded JetBrainsMono-Bold ({}px)", mono_font_size);
 
             // Merge FontAwesome icons
             if (std::filesystem::exists(fa_solid)) {
@@ -1310,9 +1315,9 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Bold, font_bold_);
 
     // Build font atlas
-    spdlog::info("Building font atlas...");
+    spdlog::debug("Building font atlas...");
     spdlog::default_logger()->flush();  // Force flush before potential crash
     io.Fonts->Build();
-    spdlog::info("Font atlas built successfully at {:.2f}x rasterizer density",
+    spdlog::debug("Font atlas built successfully at {:.2f}x rasterizer density",
                  font_rasterizer_density_);
 }

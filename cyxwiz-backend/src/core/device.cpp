@@ -609,7 +609,7 @@ std::vector<DeviceInfo> Device::GetAvailableDevices() {
         LogDeviceProbeFailureOnce(failure);
     }
 
-    spdlog::info("Total devices found: {}", devices.size());
+    spdlog::debug("Total devices found: {}", devices.size());
     return devices;
 }
 

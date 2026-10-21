@@ -197,19 +197,19 @@ int main() {
     // Preview settings participate in real graph compilation and parameter persistence.
     seeded_nodes.back().parameters["model_seed"] = "52";
     seeded_nodes.back().parameters["generation_preview_enabled"] = "false";
-    seeded_nodes.back().parameters["generation_preview_every_epochs"] = "invalid";
+    seeded_nodes.back().parameters["generation_preview_every"] = "invalid";
     Check(compiler.Compile(seeded_nodes, seeded_links, true).is_valid,
-          "disabled previews must preserve legacy graph behavior");
+          "disabled previews ignore their other settings");
     seeded_nodes.back().parameters["generation_preview_enabled"] = "true";
-    seeded_nodes.back().parameters["generation_preview_prompts"] = "one\ntwo";
+    seeded_nodes.back().parameters["generation_preview_prompt_set"] = R"([{"text":"one\ntwo"}])";
     const auto bad_preview = compiler.Compile(seeded_nodes, seeded_links, true);
-    Check(!bad_preview.is_valid && HasErrorText(bad_preview, "Generation preview:"),
+    Check(!bad_preview.is_valid && HasErrorText(bad_preview, "Generation previews:"),
           "invalid enabled preview cadence must fail graph compilation");
-    seeded_nodes.back().parameters["generation_preview_every_epochs"] = "20";
+    seeded_nodes.back().parameters["generation_preview_every"] = "20";
     const nlohmann::json saved_preview = seeded_nodes.back().parameters;
     seeded_nodes.back().parameters = nlohmann::json::parse(saved_preview.dump()).get<decltype(loader.parameters)>();
-    Check(seeded_nodes.back().parameters.at("generation_preview_prompts") == "one\ntwo",
-          "fixed multiline prompts must survive graph parameter serialization");
+    Check(seeded_nodes.back().parameters.at("generation_preview_prompt_set") == R"([{"text":"one\ntwo"}])",
+          "multi-line prompts must survive graph parameter serialization");
     const auto noncausal = compiler.Compile(seeded_nodes, seeded_links, true);
     Check(!noncausal.is_valid && HasErrorText(noncausal, "causal next-token targets"),
           "previews must reject a noncausal training contract");

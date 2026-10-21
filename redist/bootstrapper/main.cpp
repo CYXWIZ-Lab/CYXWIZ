@@ -250,6 +250,16 @@ int wmain(int argc, wchar_t** argv) {
         installer_mode = true;
         ++first_forwarded_argument;
     }
+    // Runs the base's plugin check tool with the active runtime's DLL path,
+    // in the caller's folder so relative plugin paths work (TOFIX125 P5).
+    bool plugin_check_mode = false;
+    if (!installer_mode && argc > first_forwarded_argument &&
+        std::wstring_view(argv[first_forwarded_argument]) == L"--plugin-check") {
+        plugin_check_mode = true;
+        ++first_forwarded_argument;
+    }
+    std::error_code caller_directory_error;
+    const auto caller_directory = std::filesystem::current_path(caller_directory_error);
 
     cyxwiz::runtime::ActiveRuntime runtime;
     std::string error;
@@ -305,14 +315,18 @@ int wmain(int argc, wchar_t** argv) {
     const auto launched_executable = installer_mode
         ? runtime.base_directory /
               cyxwiz::runtime::CurrentInstallerManagerExecutableName()
+        : plugin_check_mode
+        ? runtime.base_directory / cyxwiz::runtime::CurrentPluginCheckExecutableName()
         : runtime.engine_executable;
     if (!std::filesystem::is_regular_file(launched_executable)) {
         return Fail(
             runtime.runtime_root,
-            installer_mode
-                ? "active base does not contain the CyxWiz Installer"
-                : "active base does not contain the CyxWiz Engine");
+            installer_mode    ? "active base does not contain the CyxWiz Installer"
+            : plugin_check_mode ? "active base does not contain cyxwiz-plugin-check"
+                              : "active base does not contain the CyxWiz Engine");
     }
+    const std::filesystem::path working_directory =
+        plugin_check_mode && !caller_directory_error ? caller_directory : runtime.base_directory;
     std::wstring command_line = QuoteArgument(launched_executable.native());
     if (installer_mode) {
         command_line += L" --runtime-root ";
@@ -338,7 +352,7 @@ int wmain(int argc, wchar_t** argv) {
     // launcher. Engine mode also inherits the shared product-ownership handle.
     const BOOL created = ::CreateProcessW(
         launched_executable.c_str(), mutable_command.data(), nullptr, nullptr,
-        TRUE, 0, nullptr, runtime.base_directory.c_str(), &startup, &process);
+        TRUE, 0, nullptr, working_directory.c_str(), &startup, &process);
     if (!created) {
         return Fail(runtime.runtime_root,
                     "CreateProcessW failed for the active base; Win32 error " +
@@ -347,8 +361,9 @@ int wmain(int argc, wchar_t** argv) {
     ::CloseHandle(process.hThread);
     cyxwiz::runtime::AppendBootstrapDiagnostic(
         runtime.runtime_root,
-        std::string(installer_mode ? "launched installer runtime_set="
-                                   : "launched runtime_set=") +
+        std::string(installer_mode      ? "launched installer runtime_set="
+                    : plugin_check_mode ? "launched plugin check runtime_set="
+                                        : "launched runtime_set=") +
             runtime.runtime_set_id +
             " generation=" + std::to_string(runtime.generation) +
             " base=" + runtime.base_pack_id);
@@ -372,7 +387,7 @@ int wmain(int argc, wchar_t** argv) {
     engine_ownership.reset();
     if (::_putenv_s("CYXWIZ_RUNTIME_USE_TOKEN", "") != 0)
         return Fail(runtime.runtime_root, "Cannot clear completed Engine ownership metadata");
-    if (wait_result == WAIT_OBJECT_0 && !installer_mode) {
+    if (wait_result == WAIT_OBJECT_0 && !installer_mode && !plugin_check_mode) {
         const auto maintenance =
             cyxwiz::runtime::ApplyPendingBackendPackMaintenance(
                 runtime.runtime_root, launched_runtime,

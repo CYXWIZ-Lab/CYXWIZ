@@ -126,9 +126,7 @@ bool FindPreparationNode(const GraphDocument& graph, std::string& error) {
 
 }  // namespace
 
-GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& request,
-                                           const GraphTrainingJobCallbacks& callbacks) {
-    const auto job_start = std::chrono::steady_clock::now();
+GraphTrainingJobResult PrepareGraphJob(const GraphTrainingJobRequest& request, PreparedGraphJob& prepared) {
     GraphDocument graph;
     std::string error;
     if (!ParseGraphDocument(request.graph_json, graph, error)) return Fail(TrainingFailureKind::Refused, error);
@@ -136,12 +134,12 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     // Refuse data-path steps this runner cannot perform.
     if (FindPreparationNode(graph, error)) return Fail(TrainingFailureKind::Refused, error);
 
+    auto& datasets = prepared.datasets;
+    auto& disk_datasets = prepared.disk_datasets;
+    auto& source_paths = prepared.source_paths;
     // Load every Data Input file. A Parquet file larger than a quarter of the
     // data budget stays on disk and is read a row group at a time (TOFIX154),
     // as in the Engine.
-    std::map<std::string, std::shared_ptr<ArrowDataset>> datasets;
-    std::map<std::string, std::shared_ptr<ParquetBackedDataset>> disk_datasets;
-    std::map<std::string, std::string> source_paths;
     for (const auto& node : graph.nodes) {
         if (node.type != gui::NodeType::DataInput) continue;
         const std::string name = Parameter(node, "dataset_name");
@@ -199,7 +197,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
 
     // Compile and prepare against the job's datasets (the Engine launcher's
     // steps, for inputs that are already materialized).
-    TrainingConfiguration config;
+    auto& config = prepared.config;
     {
         ScopedJobCatalog catalog(datasets, disk_datasets, source_paths);
         GraphCompiler compiler;
@@ -243,6 +241,18 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         }
         config.dataset_name = dataset_name;
     }
+    return {};
+}
+
+GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& request,
+                                           const GraphTrainingJobCallbacks& callbacks) {
+    const auto job_start = std::chrono::steady_clock::now();
+    PreparedGraphJob prepared;
+    if (auto failure = PrepareGraphJob(request, prepared); !failure.error.empty()) return failure;
+    auto& datasets = prepared.datasets;
+    auto& disk_datasets = prepared.disk_datasets;
+    auto& source_paths = prepared.source_paths;
+    auto& config = prepared.config;
     if (request.epochs_override > 0) config.epochs = request.epochs_override;
     if (request.batch_size_override > 0) config.batch_size = request.batch_size_override;
     if (!request.checkpoint_dir_override.empty()) config.checkpoint_dir = request.checkpoint_dir_override;

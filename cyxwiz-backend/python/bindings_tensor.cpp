@@ -187,7 +187,10 @@ py::class_<cyxwiz::Tensor>(m, "Tensor",
             : self - other.cast<float>();
     }, py::arg("other"), "Element-wise subtraction")
     .def("__rsub__", [](const cyxwiz::Tensor& self, float scalar) {
-        return (-self) + scalar;
+        // self * -1 + scalar, not (-self) + scalar: negating an unsigned
+        // tensor (a comparison mask is uint8) wraps 1 to 255, so 1.0 - mask
+        // gave 256. The scalar product is float32 for every input type.
+        return self * -1.0f + scalar;
     }, py::arg("scalar"), "Scalar subtraction")
     .def("__mul__", [](const cyxwiz::Tensor& self, py::object other) {
         return py::isinstance<cyxwiz::Tensor>(other)

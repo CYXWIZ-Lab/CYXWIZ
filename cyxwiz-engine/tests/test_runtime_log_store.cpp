@@ -143,8 +143,8 @@ void TestSpdlogSinkAndDiagnosticExtraction() {
     const auto& event = snapshot.events.front();
     Check(event.level == cyxwiz::RuntimeLogLevel::Warning,
           "spdlog warning should retain severity");
-    Check(event.category == "system" && event.source == "runtime-test",
-          "legacy logs should retain canonical category and logger source");
+    Check(event.category == "runtime_test" && event.source == "runtime-test",
+          "a logger other than the Engine's own names the category");
     Check(event.primary_error_code == "CW-G-0501",
           "legacy diagnostic prefix should be extracted once at ingestion");
     Check(event.message == "[CW-G-0501] Kernel execution failed",
@@ -164,7 +164,41 @@ void TestSpdlogSinkAndDiagnosticExtraction() {
 
 } // namespace
 
+// Lines from the Engine's own logger get their subsystem's category (TOFIX159 B4),
+// checked with lines from a real startup and training run.
+void TestLogCategories() {
+    const std::pair<const char*, const char*> lines[] = {
+        {"Starting CyxWiz Engine v0.2.0", "engine"},
+        {"Backend initialization: CUDA activated in 1.6 s", "compute"},
+        {"Saved compute choice not applied: the file was written by an older Engine", "compute"},
+        {"oneAPI device 0 discovered; detailed device properties are unsupported", "compute"},
+        {"Total devices found: 7", "device"},
+        {"Font atlas built successfully at 1.00x rasterizer density", "ui"},
+        {"DecompositionPanel initialized", "ui"},
+        {"PluginManager: Failed to load plugin from D:/x: API version mismatch", "plugin"},
+        {"Plugin 'com.cyxwiz.simulation.mujoco' crashed during OnLoad", "plugin"},
+        {"Python 3.12.8 in use: C:\\Python312\\python.exe", "python"},
+        {"  Python: D:\\Project\\python\\Scripts\\python.exe", "python"},
+        {"Project opened: Berean from D:\\Berean", "project"},
+        {"Task 'Scanning project files' (ID: 3) completed: Completed", "project"},
+        {"Saved sign-in for user@test has expired; sign in again", "account"},
+        {"ReservationClient: Connection to localhost:50051 timed out", "network"},
+        {"GraphCompiler: Node[1] 'SFT v2 train' type=157", "graph"},
+        {"TrainingExecutor: Starting training for 1 epochs", "training"},
+        {"Generation \xC2\xB7 epoch 1/1 \xC2\xB7 chat (role lines)", "training"},
+        {"DuckDB connector initialized (in-memory)", "data"},
+        {"Something nobody classified", "system"},
+    };
+    for (const auto& [message, category] : lines) {
+        const auto got = cyxwiz::ClassifyLogCategory("cyxwiz", message);
+        Check(got == category, std::string(message) + " -> " + got + ", want " + category);
+    }
+    Check(cyxwiz::ClassifyLogCategory("mujoco", "Loaded model") == "mujoco", "another logger keeps its name");
+    Check(cyxwiz::ClassifyLogCategory("MuJoCo-Sim", "x") == "mujoco_sim", "a logger name in the store's form");
+}
+
 int main() {
+    TestLogCategories();
     TestCapacityValidation();
     TestRetentionAndSnapshots();
     TestValidationAndCounters();

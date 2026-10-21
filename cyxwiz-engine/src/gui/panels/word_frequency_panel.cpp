@@ -11,7 +11,7 @@ namespace cyxwiz {
 
 WordFrequencyPanel::WordFrequencyPanel() {
     GenerateSampleText();
-    spdlog::info("WordFrequencyPanel initialized");
+    spdlog::debug("WordFrequencyPanel initialized");
 }
 
 WordFrequencyPanel::~WordFrequencyPanel() {

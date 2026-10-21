@@ -320,13 +320,11 @@ bool TrainingManager::HasTrainedModel() const {
     return last_trained_model_ != nullptr;
 }
 
-CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
-    const TrainingConfiguration& config,
-    std::shared_ptr<ArrowDataset> dataset,
-    const std::string& checkpoint_path,
-    const std::string& graph_fingerprint,
-    std::function<bool()> cancel_requested) {
-    CheckpointEvaluationLoadResult result;
+CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
+                                         std::shared_ptr<ArrowDataset> dataset,
+                                         const std::string& checkpoint_path,
+                                         const std::function<bool()>& cancel_requested) {
+    CheckpointModel result;
     namespace fs = std::filesystem;
 
     // Build the model on the selected device, as training does; this runs
@@ -348,15 +346,8 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     const auto was_cancelled = [&cancel_requested]() {
         return cancel_requested && cancel_requested();
     };
-
     if (was_cancelled()) {
         result.error_message = "Checkpoint loading was cancelled.";
-        return result;
-    }
-
-    if (IsTrainingActive()) {
-        result.error_message =
-            "Cannot load a checkpoint while training is active.";
         return result;
     }
     if (!config.is_valid) {
@@ -388,17 +379,29 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     }
 
     // Generic for any causal-LM sequence graph: compiling a graph does not
-    // produce the frozen token vocabulary; training obtains it by building the
-    // sequence batcher from its prepared dataset (token-window metadata). Do the
-    // same here so Run Test can verify that test data uses the model's vocabulary.
-    TrainingConfiguration prepared = config;
-    if (!PrepareSequenceEvaluationVocabulary(prepared, dataset, result.error_message)) {
+    // produce the frozen token vocabulary. A checkpoint keeps the tokenizer
+    // it was trained with (TOFIX159): use it. An older checkpoint rebuilds it
+    // as training did, from the sequence batcher of the prepared dataset
+    // (token-window metadata), so Run Test can verify that test data uses the
+    // model's vocabulary.
+    result.prepared = config;
+    std::string tokenizer_error;
+    const auto stored = ReadCheckpointTokenizer(resolved, tokenizer_error);
+    if (!tokenizer_error.empty()) {
+        result.error_message = "The checkpoint's tokenizer cannot be read: " + tokenizer_error;
+        return result;
+    }
+    if (stored && config.sequence_batch.enabled) {
+        ApplyCheckpointTokenizer(*stored, result.prepared);
+        result.tokenizer_from_checkpoint = true;
+    }
+    if (!PrepareSequenceEvaluationVocabulary(result.prepared, dataset, result.error_message)) {
         return result;
     }
 
     // The graph's own model: a layer stack, or a graph with branches
     // (TOFIX157; its layers alone were tested as a stack before).
-    auto built = BuildExecutableFromConfig(prepared);
+    auto built = BuildExecutableFromConfig(result.prepared);
     if (!built.ok() || !built.model) {
         result.error_message = built.error_message.empty()
             ? "The active graph could not build a model for this checkpoint."
@@ -420,6 +423,39 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
             : manager.GetLastError();
         return result;
     }
+    if (stored && !metadata->tokenizer_sha256.empty() && stored->Sha256() != metadata->tokenizer_sha256) {
+        result.error_message = "The checkpoint's stored tokenizer is not the one its metadata names.";
+        return result;
+    }
+    result.model = std::move(built.model);
+    result.resolved_checkpoint_path = resolved.string();
+    result.metadata = *metadata;
+    return result;
+}
+
+CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
+    const TrainingConfiguration& config,
+    std::shared_ptr<ArrowDataset> dataset,
+    const std::string& checkpoint_path,
+    const std::string& graph_fingerprint,
+    std::function<bool()> cancel_requested) {
+    CheckpointEvaluationLoadResult result;
+    const auto was_cancelled = [&cancel_requested]() {
+        return cancel_requested && cancel_requested();
+    };
+    if (IsTrainingActive()) {
+        result.error_message =
+            "Cannot load a checkpoint while training is active.";
+        return result;
+    }
+    auto built = BuildModelFromCheckpoint(config, dataset, checkpoint_path, cancel_requested);
+    if (!built.model) {
+        result.error_message = built.error_message;
+        return result;
+    }
+    const auto& prepared = built.prepared;
+    const std::filesystem::path resolved(built.resolved_checkpoint_path);
+    const std::optional<CheckpointMetadata> metadata = built.metadata;
 
     if (was_cancelled()) {
         result.error_message =
@@ -1060,6 +1096,7 @@ void TrainingManager::TrainingThreadFunc(
                     exec->GetConfig().log_interval);
                 panel->SetBatchComposition(exec->GetConfig().batch_size,
                                            exec->GetConfig().grad_accum_steps);
+                panel->SetGenerationPreviewFolder({});
             }
             // Per-batch callback — keeps the Training Dashboard responsive during
             // the epoch. Without this, the dashboard stays on "Epoch 0/N" for the
@@ -1068,7 +1105,10 @@ void TrainingManager::TrainingThreadFunc(
             // epoch x-axis (epoch - 1 + batch/total) so the loss curve draws
             // smoothly during long epochs (e.g. audio at 8 min/epoch) instead
             // of staying empty until the first epoch finishes.
-            auto batch_callback = [this, plot_panel, &exec](int epoch, int batch, int total_batches,
+            // The generation previews folder exists once Train has bound the
+            // previews: the first batch tells the Dashboard (TOFIX159 A4).
+            auto preview_folder_sent = std::make_shared<bool>(false);
+            auto batch_callback = [this, plot_panel, &exec, preview_folder_sent](int epoch, int batch, int total_batches,
                                                        float batch_loss, float batch_acc) {
                 const bool regression_mode =
                     exec && UsesRegressionMetrics(exec->GetConfig());
@@ -1089,6 +1129,11 @@ void TrainingManager::TrainingThreadFunc(
                         TrainingTraceStage::UIPlotUpdate, epoch, batch,
                         total_batches, batch_loss, batch_acc);
                     panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
+                    if (!*preview_folder_sent && exec) {
+                        *preview_folder_sent = true;
+                        if (const auto folder = exec->GenerationPreviewDir(); !folder.empty())
+                            panel->SetGenerationPreviewFolder(folder);
+                    }
 
                     // Progressive curve: x = (epoch - 1) + batch / total_batches
                     // gives a smooth 0..N x-axis where each integer is an epoch

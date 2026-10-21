@@ -22,6 +22,7 @@
 #include <vector>
 #include <imgui.h>
 #include "node_editor.h"
+#include "data_loader_generation_tab.h"
 #include "data_input_capabilities.h"
 #include "data_preview_page_cache.h"
 #include "data_preview_table_renderer.h"
@@ -623,7 +624,7 @@ public:
     DataLoaderDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(620, 680); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(1080, 780); }
 
 protected:
     void RenderContent() override;
@@ -650,10 +651,9 @@ private:
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
     char initialize_from_checkpoint_[512] = "";
-    bool generation_preview_enabled_ = false;
-    int generation_preview_every_epochs_ = 20;
-    int generation_preview_max_new_tokens_ = 32;
-    char generation_preview_prompts_[8193] = "";
+    DataLoaderGenerationTab generation_tab_;
+    GenerationTabDataset generation_dataset_;
+    bool generation_dataset_resolved_ = false;
 };
 
 /**

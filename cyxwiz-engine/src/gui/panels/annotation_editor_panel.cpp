@@ -17,7 +17,7 @@ AnnotationEditorPanel::AnnotationEditorPanel()
     polygon_tool_ = std::make_unique<PolygonTool>();
     point_tool_ = std::make_unique<PointMarkerTool>();
 
-    spdlog::info("AnnotationEditorPanel initialized");
+    spdlog::debug("AnnotationEditorPanel initialized");
 }
 
 AnnotationEditorPanel::~AnnotationEditorPanel() {

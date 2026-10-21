@@ -75,20 +75,26 @@ bool LoadsAtStartup(const std::string& plugin_id) {
 
 size_t LoadStartupPlugins(PluginManager& manager) {
     size_t loaded = 0;
-    for (const auto& entry : PluginsToLoadAtStartup(ReadPluginStartupList())) {
+    const auto entries = PluginsToLoadAtStartup(ReadPluginStartupList());
+    for (const auto& entry : entries) {
         if (manager.GetLoadedPlugin(entry.id)) continue;
         if (!std::filesystem::exists(std::filesystem::path(entry.folder) / "plugin.json")) {
             spdlog::warn("Plugin {} was not loaded at startup: {} has no plugin.json", entry.id, entry.folder);
             continue;
         }
         if (!manager.LoadPlugin(entry.folder)) {
-            spdlog::warn("Plugin {} could not be loaded at startup from {}", entry.id, entry.folder);
+            spdlog::debug("Plugin {} could not be loaded at startup from {} (the loader said why)", entry.id, entry.folder);
             continue;
         }
-        manager.InitializePlugin(entry.id);
+        // A plugin whose OnLoad fails (or crashes) is not counted as loaded.
+        if (!manager.InitializePlugin(entry.id)) {
+            spdlog::debug("Plugin {} did not start: its OnLoad failed", entry.id);
+            continue;
+        }
         ++loaded;
     }
-    if (loaded > 0) spdlog::info("Plugin system: {} plugin(s) loaded at startup", loaded);
+    if (!entries.empty())
+        spdlog::info("Plugins: {} of {} loaded at startup", loaded, entries.size());
     return loaded;
 }
 

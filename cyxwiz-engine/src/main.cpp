@@ -24,6 +24,7 @@
 #endif
 #include <iostream>
 #include <filesystem>
+#include <map>
 #include <cstdlib>
 #include <exception>
 #include <cmath>
@@ -262,6 +263,18 @@ int main(int argc, char** argv) {
         // Get executable directory for log file
         std::filesystem::path exe_path = std::filesystem::current_path();
         std::filesystem::path log_path = exe_path / "engine_log.txt";
+        // Keep the last five launches (TOFIX159 D7): engine_log.txt is this one,
+        // engine_log.1.txt the one before, ... engine_log.4.txt the oldest. A
+        // crashed launch's log survives the restart that follows it.
+        {
+            std::error_code ec;
+            const auto numbered = [&exe_path](int n) {
+                return exe_path / ("engine_log." + std::to_string(n) + ".txt");
+            };
+            std::filesystem::remove(numbered(4), ec);
+            for (int n = 3; n >= 1; --n) std::filesystem::rename(numbered(n), numbered(n + 1), ec);
+            std::filesystem::rename(log_path, numbered(1), ec);
+        }
 
         auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path.string(), true);
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -301,11 +314,11 @@ int main(int argc, char** argv) {
     });
 
     if (cwd_set) {
-        spdlog::info("Working directory set to executable directory: {}", exe_dir.string());
+        spdlog::debug("Working directory set to executable directory: {}", exe_dir.string());
     }
-    spdlog::info("Launch working directory: {}", launch_cwd.string());
+    spdlog::debug("Launch working directory: {}", launch_cwd.string());
 
-    spdlog::info("Starting CyxWiz Engine v{}", cyxwiz::GetVersionString());
+    spdlog::info("Starting CyxWiz Engine {} from {}", cyxwiz::GetVersionString(), exe_dir.string());
 
     const auto qualification_cache =
         cyxwiz::GetRouteQualificationCachePath();
@@ -339,7 +352,7 @@ int main(int argc, char** argv) {
         }
     }
     if (qualification.loaded) {
-        spdlog::info(
+        spdlog::debug(
             "Loaded route qualification evidence for {} routes",
             qualification.route_count);
     } else {
@@ -393,10 +406,17 @@ int main(int argc, char** argv) {
                     ? "backend_local"
                     : preferred.physical_fingerprint);
         }
+    } else if (runtime_config.older_schema) {
+        spdlog::warn(
+            "Saved compute choice not applied: {}. Automatic device selection "
+            "is in use; choose the device again in Preferences > Devices to "
+            "save it ({})",
+            runtime_config.message, runtime_config_path.string());
     } else if (runtime_config.file_exists) {
         spdlog::warn(
-            "Machine compute runtime configuration was not applied: {}",
-            runtime_config.message);
+            "Saved compute choice not applied: {}. Automatic device selection "
+            "is in use ({})",
+            runtime_config.message, runtime_config_path.string());
     } else {
         std::string config_error;
         if (!cyxwiz::SaveComputeRuntimeConfigAtomic(
@@ -407,12 +427,19 @@ int main(int argc, char** argv) {
         }
     }
 
-    // List available devices
+    // The devices: one line each at Debug with its backend and index (the
+    // number used to be the backend's enum value); one count per backend at Info.
     auto devices = cyxwiz::Device::GetAvailableDevices();
-    spdlog::info("Available compute devices:");
+    std::map<std::string, int> per_backend;
     for (const auto& device : devices) {
-        spdlog::info("  - {} ({})", device.name, static_cast<int>(device.type));
+        const std::string backend = cyxwiz::ExecutionDeviceSelectionBackendName(device.type);
+        spdlog::debug("Compute device: {} ({} device {})", device.name, backend, device.device_id);
+        ++per_backend[backend];
     }
+    std::string counts;
+    for (const auto& [backend, count] : per_backend)
+        counts += (counts.empty() ? "" : ", ") + backend + " " + std::to_string(count);
+    spdlog::info("Compute devices: {} ({})", devices.size(), counts);
 
     // Create and run application
     try {
@@ -434,7 +461,7 @@ int main(int argc, char** argv) {
             search_paths.push_back(plugin_base_dir / "plugins");
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
-            spdlog::info("Plugin system: {} search paths configured", search_paths.size());
+            spdlog::debug("Plugin system: {} search paths configured", search_paths.size());
             // Plugins loaded in an earlier session and set to load at startup
             // (TOFIX125 step 2.9); others load from the Plugin Manager.
             cyxwiz::plugin::LoadStartupPlugins(pm);

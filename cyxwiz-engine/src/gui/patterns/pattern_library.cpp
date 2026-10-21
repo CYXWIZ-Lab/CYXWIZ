@@ -82,13 +82,13 @@ PatternLibrary::PatternLibrary() {
 void PatternLibrary::Initialize() {
     if (initialized_) return;
 
-    spdlog::info("Initializing Pattern Library...");
+    spdlog::debug("Initializing Pattern Library...");
 
     LoadBuiltinPatterns();
     LoadUserPatterns(user_patterns_dir_);
 
     initialized_ = true;
-    spdlog::info("Pattern Library initialized with {} patterns", patterns_.size());
+    spdlog::debug("Pattern Library initialized with {} patterns", patterns_.size());
 }
 
 void PatternLibrary::LoadBuiltinPatterns() {
@@ -116,7 +116,7 @@ void PatternLibrary::LoadBuiltinPatterns() {
 
     for (const auto& path : search_paths) {
         if (fs::exists(path) && fs::is_directory(path)) {
-            spdlog::info("Loading builtin patterns from: {}", path);
+            spdlog::debug("Loading builtin patterns from: {}", path);
             for (const auto& entry : fs::directory_iterator(path)) {
                 if (entry.path().extension() == ".cyxgraph") {
                     LoadPatternFromFile(entry.path().string());

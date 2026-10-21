@@ -86,8 +86,9 @@ public:
         if (results_) results_->on_open_kept = std::move(cb);
     }
 
-    // Query results open in the Table Viewer through this (MainWindow).
-    void SetOpenTableCallback(std::function<void(std::shared_ptr<class DataTable>)> cb) {
+    // Query results open in the Table Viewer through this (MainWindow): the
+    // result and its tab's name.
+    void SetOpenTableCallback(std::function<void(std::shared_ptr<arrow::Table>, const std::string&)> cb) {
         if (query_editor_) query_editor_->on_open_table = std::move(cb);
     }
 

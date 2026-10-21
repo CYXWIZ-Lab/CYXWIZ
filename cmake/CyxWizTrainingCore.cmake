@@ -18,6 +18,8 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/metric_learning_evaluation.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_metrics.cpp
     ${_cyxwiz_engine_src}/core/training_generation_preview.cpp
+    ${_cyxwiz_engine_src}/core/training_generation_preview_settings.cpp
+    ${_cyxwiz_engine_src}/core/generation_preview_presentation.cpp
     ${_cyxwiz_engine_src}/core/language_model_generation.cpp
     ${_cyxwiz_engine_src}/core/training_scheduler_controller.cpp
     ${_cyxwiz_engine_src}/core/regression_target_transform.cpp
@@ -42,10 +44,12 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/dataset_base.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_tokenizer.cpp
     ${_cyxwiz_engine_src}/core/crash_run_recorder.cpp
     ${_cyxwiz_engine_src}/core/training_trace_collector.cpp
     ${_cyxwiz_engine_src}/core/route_qualification_snapshot.cpp
     ${_cyxwiz_engine_src}/core/runtime_log_store.cpp
+    ${_cyxwiz_engine_src}/core/runtime_log_category.cpp
 )
 
 # Precompiled header (build speed): standard and third-party headers that

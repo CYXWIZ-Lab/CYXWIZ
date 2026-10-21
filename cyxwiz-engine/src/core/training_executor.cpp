@@ -9,6 +9,7 @@
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
+#include "sequence_arrow_batcher.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
 #include "algorithms/arrayfire_backend_utils.h"
@@ -1226,14 +1227,28 @@ void TrainingExecutor::Train(
     checkpoint_manager->SetProvenance(tokenizer_sha256,
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
                                       initialized_from);
+    checkpoint_manager->SetTokenizer(CheckpointTokenizerFromConfig(config_));
 
-    std::unique_ptr<TrainingGenerationPreview> generation_preview;
+    generation_preview_.reset();
+    generation_preview_checkpoints_ = nullptr;
+    last_generation_preview_step_ = -1;
     if (config_.generation_preview.enabled) {
         if (!config_.sequence_batch.create_causal_lm_targets || !model_->AsSequentialModel())
             throw std::invalid_argument("Generation previews require a causal SequentialModel");
-        generation_preview = std::make_unique<TrainingGenerationPreview>(
+        generation_preview_ = std::make_unique<TrainingGenerationPreview>(
             config_.generation_preview, config_.output_size);
+        generation_preview_dir_ = checkpoint_root / "generation_previews";
+        generation_preview_run_id_ = training_run_id;
+        generation_preview_checkpoints_ = checkpoint_manager.get();
     }
+    // The checkpoint manager is local to this call.
+    struct GenerationPreviewRelease {
+        TrainingExecutor& executor;
+        ~GenerationPreviewRelease() {
+            executor.generation_preview_.reset();
+            executor.generation_preview_checkpoints_ = nullptr;
+        }
+    } generation_preview_release{*this};
 
     // Resume (TOFIX118 P4e): restore the checkpoint into the model and
     // optimizer just built, and continue at the epoch after it.
@@ -1314,6 +1329,13 @@ void TrainingExecutor::Train(
                      restored.completed_epoch, exact ? "exact" : "not exact: unseeded run or unseeded data order");
         TrainingTraceCollector::Instance().RecordRuntimeEvent(
             "Resume", resume_from_.string() + "; completed_epoch=" + std::to_string(restored.completed_epoch));
+    }
+
+    if (generation_preview_ && config_.generation_preview.baseline && start_epoch == 1) {
+        GenerationPreviewPoint point;
+        point.kind = "baseline";
+        point.total_epochs = epochs;
+        RunGenerationPreview(point);
     }
 
     // Training loop
@@ -1590,23 +1612,16 @@ void TrainingExecutor::Train(
             }
         }
 
-        if (generation_preview && ShouldRunTrainingPreview(config_.generation_preview, epoch)) {
-            TrainingTraceCollector::Instance().RecordRuntimeEvent(
-                "GenerationPreview.Started", "Completed epoch " + std::to_string(epoch) + "; weights=current_epoch");
-            bool completed = false;
-            try {
-                completed = generation_preview->Run(*model_->AsSequentialModel(), epoch,
-                    training_run_id, (checkpoint_root / "generation_previews").string(),
-                    [this] { return ShouldStop(); });
-            } catch (const std::exception& error) {
-                TrainingTraceCollector::Instance().RecordRuntimeEvent(
-                    "GenerationPreview.Failed", "Completed epoch " + std::to_string(epoch) + "; " + error.what());
-                throw;
-            }
-            TrainingTraceCollector::Instance().RecordRuntimeEvent(
-                completed ? "GenerationPreview.Completed" : "GenerationPreview.Cancelled",
-                "Completed epoch " + std::to_string(epoch) + "; sample artifacts under " + checkpoint_root.string());
-            if (!completed) break;
+        // An early stop makes this the last epoch for "after the last epoch".
+        if (generation_preview_ &&
+            ShouldRunPreviewAfterEpoch(config_.generation_preview, epoch, stop_after_epoch ? epoch : epochs)) {
+            GenerationPreviewPoint point;
+            point.kind = "epoch";
+            point.epoch = epoch;
+            point.total_epochs = epochs;
+            point.step = GetMetrics().optimizer_step_count;
+            if (validation_ran_this_epoch) point.validation_loss = current.val_loss;
+            if (!RunGenerationPreview(point)) break;
         }
 
         // Notify plugin hooks: epoch end
@@ -2229,6 +2244,47 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     return true;
 }
 
+bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
+    const std::string where = point.kind == "baseline" ? std::string("before training")
+        : point.kind == "step" ? "step " + std::to_string(point.step)
+                               : "epoch " + std::to_string(point.epoch);
+    // Best weights: swap the best checkpoint in for this pass and put the
+    // current weights back afterwards; until a best exists, current is used.
+    std::optional<std::map<std::string, Tensor>> current_weights;
+    if (config_.generation_preview.weights == GenerationPreviewWeights::Best &&
+        generation_preview_checkpoints_ && !generation_preview_checkpoints_->GetBestCheckpoint().empty()) {
+        current_weights = model_->GetParameters();
+        if (generation_preview_checkpoints_->LoadCheckpoint(*model_, nullptr, "best")) {
+            point.weights = "best";
+        } else {
+            spdlog::warn("Generation preview at {}: the best checkpoint could not be loaded ({}); using the current "
+                         "weights", where, generation_preview_checkpoints_->GetLastError());
+            model_->SetParameters(*current_weights);
+            current_weights.reset();
+        }
+    }
+    struct RestoreWeights {
+        IExecutableModel& model;
+        std::optional<std::map<std::string, Tensor>>& weights;
+        ~RestoreWeights() { if (weights) model.SetParameters(*weights); }
+    } restore{*model_, current_weights};
+
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "GenerationPreview.Started", where + "; weights=" + point.weights);
+    bool completed = false;
+    try {
+        completed = generation_preview_->Run(*model_->AsSequentialModel(), point, generation_preview_run_id_,
+                                             generation_preview_dir_, [this] { return ShouldStop(); });
+    } catch (const std::exception& error) {
+        TrainingTraceCollector::Instance().RecordRuntimeEvent("GenerationPreview.Failed", where + "; " + error.what());
+        throw;
+    }
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        completed ? "GenerationPreview.Completed" : "GenerationPreview.Cancelled",
+        where + "; reports under " + generation_preview_dir_.string());
+    return completed;
+}
+
 void TrainingExecutor::ConfigureWeightDecayExclusions() {
     if (config_.weight_decay_exclude == "none") return;
     auto* adam = dynamic_cast<AdamOptimizer*>(optimizer_.get());
@@ -2700,6 +2756,23 @@ void TrainingExecutor::RunTrainingEpochSequence(
                 progress.sample_count = sample_count;
                 progress.metrics = aggregate_metrics;
                 SaveResumeCheckpoint(epoch - 1, progress);
+            }
+        }
+
+        // Generation previews every N optimizer steps (TOFIX159), on a
+        // completed step; the epoch's last batch is covered by the epoch end.
+        if (generation_preview_ && gradient_accumulated_batches_ == 0 &&
+            !batcher.IsEpochComplete() && !ShouldStop()) {
+            const long long steps = GetMetrics().optimizer_step_count;
+            if (steps != last_generation_preview_step_ &&
+                ShouldRunPreviewAfterStep(config_.generation_preview, steps)) {
+                last_generation_preview_step_ = steps;
+                GenerationPreviewPoint point;
+                point.kind = "step";
+                point.epoch = epoch - 1;
+                point.total_epochs = resume_total_epochs_;
+                point.step = steps;
+                RunGenerationPreview(point);
             }
         }
     }

@@ -1,4 +1,4 @@
-#include "plugin_context.h"
+#include "engine_plugin_context.h"
 #include "security/permission_store.h"
 #include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
@@ -8,6 +8,21 @@
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz::plugin {
+
+AssistantContextSnapshot EnginePluginContext::GetAssistantContextSnapshot() const {
+    std::lock_guard lock(assistant_context_mutex_);
+    return assistant_context_;
+}
+
+void EnginePluginContext::SetAssistantContextSnapshot(const AssistantContextSnapshot& snapshot) {
+    std::lock_guard lock(assistant_context_mutex_);
+    assistant_context_ = snapshot;
+}
+
+void EnginePluginContext::LogInfo(const std::string& message) { spdlog::info("[Plugin:{}] {}", plugin_id_, message); }
+void EnginePluginContext::LogWarn(const std::string& message) { spdlog::warn("[Plugin:{}] {}", plugin_id_, message); }
+void EnginePluginContext::LogError(const std::string& message) { spdlog::error("[Plugin:{}] {}", plugin_id_, message); }
+void EnginePluginContext::LogDebug(const std::string& message) { spdlog::debug("[Plugin:{}] {}", plugin_id_, message); }
 
 static const char* PermissionName(PluginPermission p) {
     switch (p) {
@@ -23,7 +38,7 @@ static const char* PermissionName(PluginPermission p) {
     }
 }
 
-bool PluginContext::CheckPermission(PluginPermission required, const char* action) const {
+bool EnginePluginContext::CheckPermission(PluginPermission required, const char* action) const {
     if (!plugin_) {
         spdlog::error("[Plugin:{}] No plugin instance for permission check", plugin_id_);
         return false;
@@ -39,9 +54,8 @@ bool PluginContext::CheckPermission(PluginPermission required, const char* actio
 
     // For dangerous permissions, also check PermissionStore approval
     if (security::PermissionStore::IsDangerousPermission(required)) {
-        auto& manifest = plugin_->GetManifest();
         auto granted = security::PermissionStore::Instance().GetGrantedPermissions(
-            plugin_id_, manifest.version.ToString(), requested);
+            plugin_id_, plugin_version_, requested);
         if (!HasPermission(granted, required)) {
             spdlog::warn("[Plugin:{}] Permission denied for {}: {} not approved by user",
                          plugin_id_, action, PermissionName(required));
@@ -52,7 +66,7 @@ bool PluginContext::CheckPermission(PluginPermission required, const char* actio
     return true;
 }
 
-bool PluginContext::RegisterNodeProvider(INodeProvider* provider) {
+bool EnginePluginContext::RegisterNodeProvider(INodeProvider* provider) {
     if (!CheckPermission(PluginPermission::UIModify, "RegisterNodeProvider")) return false;
     if (!provider) return false;
 
@@ -74,25 +88,25 @@ bool PluginContext::RegisterNodeProvider(INodeProvider* provider) {
     return all_registered;
 }
 
-bool PluginContext::RegisterPanelProvider(IPanelProvider* provider) {
+bool EnginePluginContext::RegisterPanelProvider(IPanelProvider* provider) {
     if (!CheckPermission(PluginPermission::UIModify, "RegisterPanelProvider")) return false;
     PluginPanelRegistry::Instance().Register(plugin_id_, provider);
     return true;
 }
 
-bool PluginContext::RegisterDataProvider(IDataProvider* provider) {
+bool EnginePluginContext::RegisterDataProvider(IDataProvider* provider) {
     if (!CheckPermission(PluginPermission::DataRegistry, "RegisterDataProvider")) return false;
     PluginDataLoaderRegistry::Instance().Register(plugin_id_, provider);
     return true;
 }
 
-bool PluginContext::RegisterTrainingHook(ITrainingHook* hook) {
+bool EnginePluginContext::RegisterTrainingHook(ITrainingHook* hook) {
     if (!CheckPermission(PluginPermission::Training, "RegisterTrainingHook")) return false;
     PluginTrainingHookManager::Instance().RegisterHook(plugin_id_, hook);
     return true;
 }
 
-bool PluginContext::RegisterAnalyticsProvider(IAnalyticsProvider* provider) {
+bool EnginePluginContext::RegisterAnalyticsProvider(IAnalyticsProvider* provider) {
     if (!CheckPermission(PluginPermission::DataRegistry, "RegisterAnalyticsProvider")) return false;
     PluginAnalyticsRegistry::Instance().Register(plugin_id_, provider);
     return true;

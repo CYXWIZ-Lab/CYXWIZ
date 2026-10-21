@@ -3,6 +3,7 @@
 #include "../icons.h"
 #include "../node_editor.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/node_metadata_registry.h"
 #include "../../core/extension_node_registry.h"
 #include "../../plugin/plugin_manager.h"
@@ -545,38 +546,8 @@ void NodeInfoPanel::RenderExamples() {
 }
 
 void NodeInfoPanel::RenderPlaceholder() {
-    ImVec2 window_size = ImGui::GetContentRegionAvail();
-
-    // Center the placeholder content
-    float icon_size = 48.0f;
-    ImGui::SetCursorPosY(window_size.y * 0.3f);
-
-    // Center icon
-    ImGui::SetCursorPosX((window_size.x - icon_size) * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_faint);
-    ImGui::SetWindowFontScale(2.0f);
-    ImGui::TextUnformatted(ICON_FA_CIRCLE_INFO);
-    ImGui::SetWindowFontScale(1.0f);
-    ImGui::PopStyleColor();
-
-    ImGui::Spacing();
-    ImGui::Spacing();
-
-    // Instruction text
-    const char* text = "Select a node to view details";
-    ImVec2 text_size = ImGui::CalcTextSize(text);
-    ImGui::SetCursorPosX((window_size.x - text_size.x) * 0.5f);
-    ImGui::TextDisabled("%s", text);
-
-    ImGui::Spacing();
-
-    const char* hint = "Click a node in the Nodes panel to keep\nits details here; hover to preview";
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_faint);
-    // Center multi-line hint
-    ImVec2 hint_size = ImGui::CalcTextSize(hint);
-    ImGui::SetCursorPosX((window_size.x - hint_size.x) * 0.5f);
-    ImGui::TextUnformatted(hint);
-    ImGui::PopStyleColor();
+    ui::EmptyState(ICON_FA_CIRCLE_INFO, "Select a node to view details",
+                   "Click a node in the Nodes panel to keep its details here; hover to preview");
 }
 
 ImU32 NodeInfoPanel::GetPinTypeColor(PinType type) const {

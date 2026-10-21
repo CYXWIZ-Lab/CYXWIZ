@@ -1,6 +1,6 @@
 # Troubleshooting extension nodes
 
-> Checked 2026-10-16 against plugin API 1.1.0.
+> Checked 2026-10-17 against plugin API 1.2.0.
 
 ## The plugin does not appear in the Plugin Manager
 
@@ -15,8 +15,20 @@
 - The library named in `platforms` must exist at that path (for example
   `bin/my_nodes.dll`).
 - `api_version` must have the Engine's major number and a minor number no
-  higher than the Engine's (1.1 today).
+  higher than the Engine's (1.2 today).
 - A plugin that could not be loaded is reported in the **Console** ("Failed to load plugin from ..." with the reason). One that loaded but failed to start shows its error on its card, with **Retry**.
+
+## "The plugin was built with ...; this Engine with ..."
+
+The plugin was built differently from this Engine (another build type,
+compiler, SDK or ArrayFire version). The message names each difference.
+Rebuild the plugin with the same settings, most often **Release** instead of
+Debug. See the developer guide, *Build fingerprint*.
+
+## "The plugin has no build fingerprint"
+
+The plugin was built with an SDK older than plugin API 1.2. Rebuild it
+against the current CyxWiz SDK; nothing in its code needs to change.
 
 ## A node shows "Not installed"
 
@@ -68,3 +80,37 @@ lists them.
 ## "Remote nodes do not run extension nodes yet"
 
 Graphs with extension nodes train on this computer only, for now.
+
+## "ONNX cannot describe its computation"
+
+ONNX export writes the built-in layers it knows. An extension node's
+computation is its own code, so a model with one would come out as a
+different model; the Engine refuses instead and names the node. The export
+dialog does not offer ONNX for such a model. Export a CyxWiz package
+(`.cyxmodel`), which keeps the graph and the extension node's weights, or
+Safetensors (weights only).
+
+## Generated code says "code export cannot include an extension node's own code yet"
+
+PyTorch, TensorFlow, Keras and pycyxwiz code export cannot contain an
+extension node's code yet, so the generated script stops with this message
+and the node's name instead of leaving the layer out. The same happens, with
+"is not installed", when the extension is not loaded (for example with
+`cyxwiz-engine --export-code`, which loads no extensions). Train the graph in
+CyxWiz, or export a CyxWiz package.
+
+## Importing a model says "Extension node '...' is not installed"
+
+A CyxWiz package keeps the graph and the extension node's weights, but not
+the extension itself. Install and approve the plugin or Python node bundle
+the model was trained with, then import again. If the extension is installed
+but cannot create its module (for example Python is not running yet), the
+import message ends with the extension's own reason.
+
+The package's `manifest.json` lists the extensions it needs under
+`extensions` (type id, version and code hash), and the export always includes
+the graph for such a model. When the installed extension is another version
+or other code than the model was trained with, the weights still load and the
+import adds a warning: "Extension node '...' is not the one this graph was
+saved with". Check the model's results, or install the version it was trained
+with.

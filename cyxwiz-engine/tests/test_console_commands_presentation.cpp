@@ -97,28 +97,26 @@ void TestMatching() {
 
 void TestOutput() {
     using namespace cyxwiz::commands;
-    const auto event = ParseEventLine(
-        "#167 2026-09-27T03:52:23.932Z level=error category=system source=cyxwiz "
-        "code=CW-S-0501 run=train-1 | Python execution error: ValueError: boom | x");
-    Check(event.has_value(), "event line parsed");
-    if (event) {
-        Check(event->sequence == 167, "sequence");
-        Check(event->time == "03:52:23.932", "time part");
-        Check(event->level == "error" && EventLevelIndex(event->level) == 4, "level");
-        Check(event->category == "system" && event->source == "cyxwiz", "fields");
-        Check(event->extra == "code=CW-S-0501 run=train-1", "extra fields");
-        Check(event->message == "Python execution error: ValueError: boom | x",
-              "message keeps later bars");
-    }
-    Check(!ParseEventLine("Logs: matched=1").has_value(), "not an event");
-    Check(!ParseEventLine("#12 not-a-time").has_value(), "bad timestamp");
-    const auto parsed_time = ParseUtcTimestamp("2026-09-25T21:13:48.487Z");
-    Check(parsed_time && std::chrono::duration_cast<std::chrono::milliseconds>(
-                             parsed_time->time_since_epoch())
-                                 .count() == 1790370828487LL,
-          "utc timestamp parsed");
-    Check(!ParseUtcTimestamp("not a time").has_value(), "bad utc timestamp");
-    Check(EventLevelIndex("warning") == 3 && EventLevelIndex("info") == 2, "level names");
+    cyxwiz::RuntimeLogEvent event;
+    event.source = "plugin.mujoco";
+    event.primary_error_code = "CW-S-0501";
+    event.run_id = "train-1";
+    event.backend = "arrayfire_oneapi";
+    event.device_id = 0;
+    event.details = {{"probe_stage", "metadata"}};
+    Check(EventFieldsLine(event) ==
+              "source plugin.mujoco \xC2\xB7 code CW-S-0501 \xC2\xB7 run train-1 \xC2\xB7 backend arrayfire_oneapi "
+              "\xC2\xB7 device 0 \xC2\xB7 probe_stage metadata",
+          "fields line");
+    Check(EventFieldsLine(cyxwiz::RuntimeLogEvent{}).empty(), "no fields");
+    const auto json = FindJsonPayload(
+        "Generation sample: point=epoch epoch=4 prompt=1 sample=1 "
+        "{\"prompt\":\"q {x}\",\"new_token_ids\":[4,5],\"stop_reason\":\"eos\"}");
+    Check(json && json->before == "Generation sample: point=epoch epoch=4 prompt=1 sample=1" &&
+              json->entries == 3 && json->pretty.find("\n  \"new_token_ids\": [4, 5],\n") != std::string::npos,
+          "json payload found after its text");
+    Check(!FindJsonPayload("Loaded {3} nodes").has_value(), "braces that are not JSON");
+    Check(!FindJsonPayload("plain message").has_value(), "no payload");
     const auto summary =
         PrettySummary("Logs: matched=167 showing=5 scanned=167 retained=167 evicted=0");
     Check(summary && *summary ==

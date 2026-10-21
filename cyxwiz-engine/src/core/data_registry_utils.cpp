@@ -429,7 +429,7 @@ std::string DataRegistry::TabularLoadKey(const std::string& path, const std::str
     const auto time = std::filesystem::last_write_time(path, ec);
     if (ec) return {};
     return NormalizeTabularSourcePath(path) + "|size=" + std::to_string(size) +
-           "|time=" + std::to_string(time.time_since_epoch().count()) + "|" + options;
+           "|time=" + std::to_string(static_cast<long long>(time.time_since_epoch().count())) + "|" + options;
 }
 
 std::shared_ptr<ArrowDataset> DataRegistry::ShareLoadedTableUnlocked(const std::string& key, const std::string& name,

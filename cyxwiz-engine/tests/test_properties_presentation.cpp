@@ -106,7 +106,7 @@ int main() {
         meta.parameters = {
             Param("epochs", "int", "10", "Epochs", "Training", false, false, "1-10000"),
             Param("batch_size", "int", "32", "Batch Size", "Training"),
-            Param("generation_preview_every_epochs", "int", "20", "Generation Preview Every Epochs",
+            Param("generation_preview_max_new_tokens", "int", "64", "Generation Preview Max New Tokens",
                   "Generation previews"),
             Param("model_seed", "int", "-1", "Model Seed", "Training", false, true),
             Param("balance_classes", "bool", "false", "Balance Classes", "Balancing", false, true),
@@ -150,8 +150,8 @@ int main() {
         Check(nodes[0].parameters.size() == 1, "displaying defaults wrote nothing into the node");
         const auto* batch = FindRow(v, "batch_size");
         Check(batch && batch->differs_from_default, "64 differs from the default 32");
-        const auto* every = FindRow(v, "generation_preview_every_epochs");
-        Check(every && every->label == "Every Epochs", "the group's words are dropped from the label: " + every->label);
+        const auto* every = FindRow(v, "generation_preview_max_new_tokens");
+        Check(every && every->label == "Max New Tokens", "the group's words are dropped from the label: " + every->label);
         const auto* model_seed = FindRow(v, "model_seed");
         Check(model_seed && model_seed->truth && model_seed->truth->chips.size() == 2 &&
                   model_seed->truth->chips[1].kind == ChipKind::Dialog && model_seed->truth->chips[1].text == "dialog",

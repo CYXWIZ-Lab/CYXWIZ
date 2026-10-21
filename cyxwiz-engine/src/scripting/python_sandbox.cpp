@@ -43,7 +43,7 @@ PythonSandbox::PythonSandbox()
     : initialized_(false)
     , monitoring_active_(false)
 {
-    spdlog::info("PythonSandbox created with default configuration");
+    spdlog::debug("PythonSandbox created with default configuration");
 }
 
 PythonSandbox::PythonSandbox(const Config& config)
@@ -51,7 +51,7 @@ PythonSandbox::PythonSandbox(const Config& config)
     , initialized_(false)
     , monitoring_active_(false)
 {
-    spdlog::info("PythonSandbox created with custom configuration");
+    spdlog::debug("PythonSandbox created with custom configuration");
     spdlog::info("  Timeout: {}s", config_.timeout.count());
     spdlog::info("  Max memory: {} MB", config_.max_memory_mb);
     spdlog::info("  Allowed modules: {}", config_.allowed_modules.size());

@@ -339,7 +339,7 @@ void NodeEditor::ShowNodeAddSearch() {
     ImGui::SetNextWindowSize(ImVec2(search_width, search_height));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, cyxwiz::ui::WithAlpha(t.bg_panel, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, t.bg_input);  // a search field: the input tone
 
     ImGuiWindowFlags search_window_flags =
         ImGuiWindowFlags_NoTitleBar |

@@ -38,15 +38,14 @@ void TableGrid::RenderColumnContextMenu(int column) {
     ImGui::Separator();
 
     // Sorting
+    // (the header's arrow follows on the next frame)
     if (ImGui::MenuItem(ICON_FA_SORT_UP " Sort Ascending")) {
-        sort_column = column;
-        sort_ascending = true;
-        SortByColumn(column);
+        SetOrder(column, true);
+        sync_sort_header_ = true;
     }
     if (ImGui::MenuItem(ICON_FA_SORT_DOWN " Sort Descending")) {
-        sort_column = column;
-        sort_ascending = false;
-        SortByColumn(column);
+        SetOrder(column, false);
+        sync_sort_header_ = true;
     }
 
     ImGui::Separator();

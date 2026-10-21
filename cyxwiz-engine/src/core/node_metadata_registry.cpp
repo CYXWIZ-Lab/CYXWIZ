@@ -326,7 +326,7 @@ void NodeMetadataRegistry::Initialize() {
     if (initialized_) return;
     std::lock_guard<std::mutex> lock(mutex_);
     if (initialized_) return;
-    spdlog::info("NodeMetadataRegistry: Initializing node metadata...");
+    spdlog::debug("NodeMetadataRegistry: Initializing node metadata...");
     InitializeBuiltinNodes();
 
     // Load template nodes from JSON files
@@ -342,7 +342,7 @@ void NodeMetadataRegistry::Initialize() {
 
     LoadUserPreferences();
     initialized_ = true;
-    spdlog::info("NodeMetadataRegistry: Registered {} nodes", metadata_.size());
+    spdlog::debug("NodeMetadataRegistry: Registered {} nodes", metadata_.size());
 }
 
 void NodeMetadataRegistry::InitializeBuiltinNodes() {
@@ -1108,7 +1108,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
             }
     }
 
-    spdlog::info("NodeMetadataRegistry: Loaded {} template nodes from {}", loaded_count, directory);
+    spdlog::debug("NodeMetadataRegistry: Loaded {} template nodes from {}", loaded_count, directory);
 }
 void NodeMetadataRegistry::SaveUserPreferences() {
     spdlog::debug("NodeMetadataRegistry: SaveUserPreferences not yet implemented");
@@ -1254,10 +1254,11 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
           "Training",
           false,
           true},
-         {"generation_preview_enabled", "bool", "false", "Generate samples between training epochs", {}, "", "", "Generation previews", false, false},
-         {"generation_preview_every_epochs", "int", "20", "Generate every N completed epochs", {}, "1-10000", "", "Generation previews", false, false},
-         {"generation_preview_max_new_tokens", "int", "32", "Maximum generated tokens per prompt", {}, "1-128", "", "Generation previews", false, false},
-         {"generation_preview_prompts", "string", "", "One prompt per line, or multi-line prompts separated by lines of ---; 1-8 prompts. Uses the training token-window vocabulary, greedy decoding, console and run artifacts.", {}, "", "", "Generation previews", false, false},
+         {"generation_preview_enabled", "bool", "false", "Generate samples while training. Prompts, chat template, stop texts and decoding are on the Data Loader's Generation tab.", {}, "", "", "Generation previews", false, false},
+         {"generation_preview_mode", "enum", "continuation", "continuation for a base model; chat for an instruction-tuned one (uses the chat template)", {"continuation", "chat"}, "", "", "Generation previews", false, false},
+         {"generation_preview_max_new_tokens", "int", "64", "Maximum generated tokens per prompt", {}, "1-1024", "", "Generation previews", false, false},
+         {"generation_preview_every", "int", "1", "Generate every N epochs or optimizer steps", {}, "1-1000000", "", "Generation previews", false, false},
+         {"generation_preview_every_unit", "enum", "epochs", "What Every counts", {"epochs", "steps"}, "", "", "Generation previews", false, false},
          {"balance_classes", "bool", "false", "Apply training-only class balancing", {}, "", "", "Balancing", false, true},
          {"balance_mode", "enum", "none", "Class balancing mode", {"none", "oversample", "undersample", "weighted_sampler"}, "", "", "Balancing", false, true},
          {"balance_target", "string", "max", "Class balancing target", {}, "", "", "Balancing", false, true},

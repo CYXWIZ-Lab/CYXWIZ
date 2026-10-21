@@ -15,7 +15,7 @@ UnitConverterPanel::UnitConverterPanel() {
     if (!categories_.empty()) {
         UpdateUnitsForCategory();
     }
-    spdlog::info("UnitConverterPanel initialized with {} categories", categories_.size());
+    spdlog::debug("UnitConverterPanel initialized with {} categories", categories_.size());
 }
 
 UnitConverterPanel::~UnitConverterPanel() {

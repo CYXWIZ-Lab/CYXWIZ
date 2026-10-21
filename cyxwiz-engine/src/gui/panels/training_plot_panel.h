@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../plot/plot_view.h"
+#include "../generation_preview_view.h"
 #include "../panel.h"
 #include "../../core/training_run_comparison_record.h"
 #include "../../core/training_progress_estimate.h"
@@ -202,6 +203,9 @@ public:
     // Samples per batch and batches per optimizer update, so the batch counter
     // can name its unit ("8 samples each") instead of reading as samples.
     void SetBatchComposition(int samples_per_batch, int batches_per_update);
+    // The run's generation_previews folder (TOFIX159 A4); "" for a run without
+    // previews. The Generations tab shows it while the run trains and after.
+    void SetGenerationPreviewFolder(const std::filesystem::path& folder);
     void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
     void ClearRunComparisonRecords();
 
@@ -386,6 +390,9 @@ private:
 
     // Thread safety
     mutable std::mutex data_mutex_;
+    std::filesystem::path generation_folder_;  // Under data_mutex_.
+    GenerationPreviewView generation_view_;
+    bool show_generations_ = false;
 
     // Drawn copies of the series (TOFIX134 P0 item 8): reduced to a few
     // thousand points with their smoothed curves, rebuilt only when the data

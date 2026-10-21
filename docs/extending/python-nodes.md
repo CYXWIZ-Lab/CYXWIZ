@@ -245,7 +245,39 @@ parallel with each other or with a script running in the Engine (one
 interpreter lock), and converting to NumPy inside a node copies to the CPU
 and back.
 
-## 8. Not yet
+## 8. Examples: ten built-in layers as Python nodes
+
+`examples/python_nodes/builtin_layers/` (in the SDK:
+`examples/python-nodes/builtin-layers/`) holds Dense, Layer Norm, ReLU, Leaky
+ReLU, ELU, Sigmoid, Tanh, Softplus, GELU and SiLU written as Python nodes,
+bundled as `builtin-layers.cyxnode`, with an example graph that feeds them
+from a Data Input (`blobs_python_layers.cyxgraph`, four classes from
+`blobs.csv`).
+
+| Shows | Where |
+|---|---|
+| A layer with learnable weights and a setting that changes the output shape | `Dense` (`units`, `build`, `output_shape`, a matrix product through `batch_matmul`) |
+| A normalisation with learnable gain and shift and a hand-written backward | `LayerNorm` |
+| Tier 1 activations from f and df | `ReLU`, `Sigmoid`, `Tanh`, `Softplus`, `GELU`, `SiLU` |
+| Activations with a setting | `LeakyReLU`, `ELU` |
+
+`test_builtin_layers.py` checks each against the Engine's built-in module
+(forward and gradients agree to 1e-5) and runs the gradient check; the
+Engine test `test_python_builtin_layers` trains the example graph and every
+activation from a Data Input. A comparison (`x > 0`) gives a uint8 mask:
+multiply it into a float tensor (`Tensor.ones(shape) * (x > 0)`) before
+using it in arithmetic, as `relu_mask` in the example does.
+
+## 9. Saving and exporting a model with Python nodes
+
+| Path | What happens |
+|---|---|
+| Export a CyxWiz package (`.cyxmodel`) | Works. The node's weights are saved, the graph is always included, and the manifest lists the bundle's node types with version and code hash |
+| Import the package | The node is rebuilt from the installed, approved bundle and its weights loaded. Missing bundle: refused, "is not installed". Other code than at training: loads, with the warning "is not the one this graph was saved with" |
+| ONNX export, generated code (PyTorch, TensorFlow, Keras, pycyxwiz) | Refused with the node's name: the bundle's `node.py` is not carried into them yet |
+| Server Node deployment | Refused: the Server Node does not run extension nodes yet |
+
+## 10. Not yet
 
 | Coming | Stage |
 |---|---|

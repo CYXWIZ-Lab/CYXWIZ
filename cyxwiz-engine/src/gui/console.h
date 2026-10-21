@@ -5,6 +5,7 @@
 #include "../plugin/interfaces/i_assistant_provider.h"
 #include "../scripting/script_output_sink.h"
 #include "../core/console_commands_presentation.h"
+#include "../core/runtime_console_commands.h"
 #include "console_workbench.h"
 
 #include <atomic>
@@ -16,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -62,6 +64,8 @@ public:
     // block id. Lines with block 0 come from elsewhere in the Engine.
     bool is_command = false;
     uint64_t block = 0;
+    // A "show logs ..." event row (TOFIX159 B1): drawn from the event, not the text.
+    std::shared_ptr<const cyxwiz::RuntimeLogEvent> event;
   };
 
   Console();
@@ -146,6 +150,21 @@ private:
   void StartInspectorWorker();
   void StopInspectorWorker();
   void RequestInspectorQuery(bool force = false);
+  // Commands output (TOFIX159 B2).
+  void AddCommandOutput(const cyxwiz::RuntimeConsoleOutputLine &line);
+  void RenderEventRow(const LogEntry &entry);
+  // Shows the Logs session with `filter` as its structured filter.
+  void OpenLogsWithFilter(const std::string &filter);
+  bool commands_wrap_ = true;  // Wrap long messages, or one line each.
+  // Logs tab (TOFIX159 B3): message line counts per row (width, lines), the
+  // columns left out as empty, and the details' Show raw.
+  std::unordered_map<uint64_t, std::pair<float, int>> inspector_row_lines_;
+  std::string inspector_hidden_columns_;
+  bool inspector_raw_json_ = false;
+  std::unordered_map<uint64_t, std::string> block_logs_filters_;  // block -> filter
+  std::unordered_map<uint64_t, std::string> open_event_text_;     // row -> its message
+  std::unordered_map<uint64_t, std::string> open_json_text_;      // row -> its JSON
+  std::unordered_map<uint64_t, std::optional<cyxwiz::commands::JsonPayload>> json_cache_;
   std::shared_ptr<const cyxwiz::RuntimeLogInspectorResult>
   SnapshotInspectorResult() const;
   void LoadSavedInspectorFilters();

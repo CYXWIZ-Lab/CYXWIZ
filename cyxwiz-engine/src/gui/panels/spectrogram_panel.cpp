@@ -11,9 +11,7 @@
 
 namespace cyxwiz {
 
-SpectrogramPanel::SpectrogramPanel() {
-    GenerateSignal();
-}
+SpectrogramPanel::SpectrogramPanel() = default;
 
 SpectrogramPanel::~SpectrogramPanel() {
     if (compute_thread_ && compute_thread_->joinable()) {
@@ -24,6 +22,8 @@ SpectrogramPanel::~SpectrogramPanel() {
 
 void SpectrogramPanel::Render() {
     if (!visible_) return;
+    // The demo signal is made when the panel is first shown, not at startup (TOFIX159 D5).
+    if (signal_.empty()) GenerateSignal();
 
     ImGui::SetNextWindowSize(ImVec2(950, 700), ImGuiCond_FirstUseEver);
 
@@ -413,7 +413,7 @@ void SpectrogramPanel::GenerateSignal() {
         signal_.push_back(value);
     }
 
-    spdlog::info("Generated {} samples at {} Hz", num_samples_, sample_rate_);
+    spdlog::debug("Generated {} samples at {} Hz", num_samples_, sample_rate_);
 }
 
 void SpectrogramPanel::ComputeAsync() {

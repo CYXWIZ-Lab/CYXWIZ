@@ -1054,16 +1054,7 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
                      ReadStringParamValue(node_->parameters, "initialize_from_checkpoint"));
     }
-    if (node_) {
-    generation_preview_enabled_ = false;
-    generation_preview_every_epochs_ = 20;
-    generation_preview_max_new_tokens_ = 32;
-    ReadBoolParam(node_->parameters, "generation_preview_enabled", generation_preview_enabled_);
-    ReadIntParam(node_->parameters, "generation_preview_every_epochs", generation_preview_every_epochs_);
-    ReadIntParam(node_->parameters, "generation_preview_max_new_tokens", generation_preview_max_new_tokens_);
-    CopyToBuffer(generation_preview_prompts_, sizeof(generation_preview_prompts_),
-                 ReadStringParamValue(node_->parameters, "generation_preview_prompts"));
-    }
+    if (node_) generation_tab_.Load(node_->parameters);
 }
 
 void DataLoaderDialog::Apply() {
@@ -1094,10 +1085,7 @@ void DataLoaderDialog::Apply() {
         node_->parameters["initialize_from_checkpoint"] = initialize_from_checkpoint_;
     else
         node_->parameters.erase("initialize_from_checkpoint");
-    node_->parameters["generation_preview_enabled"] = generation_preview_enabled_ ? "true" : "false";
-    node_->parameters["generation_preview_every_epochs"] = std::to_string(generation_preview_every_epochs_);
-    node_->parameters["generation_preview_max_new_tokens"] = std::to_string(generation_preview_max_new_tokens_);
-    node_->parameters["generation_preview_prompts"] = generation_preview_prompts_;
+    generation_tab_.Store(node_->parameters);
     node_->description = "epochs=" + std::to_string(epochs_) +
                           ", batch=" + std::to_string(batch_size_) +
                           (shuffle_ ? ", shuffled" : ", ordered") +
@@ -1173,15 +1161,7 @@ void DataLoaderDialog::Reset() {
     CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
                  ReadStringParamValue(original_params_, "initialize_from_checkpoint"));
     has_changes_ = false;
-    generation_preview_enabled_ = false;
-    generation_preview_every_epochs_ = 20;
-    generation_preview_max_new_tokens_ = 32;
-    ReadBoolParam(original_params_, "generation_preview_enabled", generation_preview_enabled_);
-    ReadIntParam(original_params_, "generation_preview_every_epochs", generation_preview_every_epochs_);
-    ReadIntParam(original_params_, "generation_preview_max_new_tokens", generation_preview_max_new_tokens_);
-    CopyToBuffer(generation_preview_prompts_, sizeof(generation_preview_prompts_),
-                 ReadStringParamValue(original_params_, "generation_preview_prompts"));
-
+    generation_tab_.Load(original_params_);
 }
 
 void DataLoaderDialog::RenderContent() {
@@ -1239,7 +1219,7 @@ void DataLoaderDialog::RenderContent() {
         if (ImGui::Checkbox("Shuffle every epoch", &shuffle_)) has_changes_ = true;
         if (ImGui::Checkbox("Drop the last short batch", &drop_last_)) has_changes_ = true;
         ImGui::Spacing();
-        ImGui::TextColored(t.text_faint, "Generation previews, logging, workers and pin memory are under Advanced.");
+        ImGui::TextColored(t.text_faint, "Generation previews have their own tab; logging, workers and pin memory are under Advanced.");
         ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Batches")) {
@@ -1343,6 +1323,16 @@ void DataLoaderDialog::RenderContent() {
         ImGui::PopTextWrapPos();
         ImGui::EndTabItem();
     }
+    if (ImGui::BeginTabItem("Generation")) {
+        ImGui::Spacing();
+        // The dataset is read once per dialog: Properties sets the editor after construction.
+        if (!generation_dataset_resolved_ && node_editor_ && node_) {
+            generation_dataset_ = ResolveGenerationTabDataset(node_editor_, node_->id);
+            generation_dataset_resolved_ = true;
+        }
+        if (generation_tab_.Render(generation_dataset_, node_editor_, node_)) has_changes_ = true;
+        ImGui::EndTabItem();
+    }
     if (ImGui::BeginTabItem("Advanced")) {
         ImGui::Spacing();
         Field("Worker threads");
@@ -1366,30 +1356,6 @@ void DataLoaderDialog::RenderContent() {
         }
         ImGui::SameLine();
         ImGui::TextDisabled("batches; 0 = only the first and the last");
-        ImGui::Spacing();
-        if (ImGui::Checkbox("Generate samples during training", &generation_preview_enabled_)) has_changes_ = true;
-        ImGui::BeginDisabled(!generation_preview_enabled_);
-        Field("Every");
-        ImGui::SetNextItemWidth(120);
-        if (ImGui::InputInt("##gen_every", &generation_preview_every_epochs_)) has_changes_ = true;
-        ImGui::SameLine();
-        ImGui::TextDisabled("completed epochs");
-        Field("New tokens");
-        ImGui::SetNextItemWidth(120);
-        if (ImGui::InputInt("##gen_tokens", &generation_preview_max_new_tokens_)) has_changes_ = true;
-        ImGui::SameLine();
-        ImGui::TextDisabled("1 to 128");
-        Field("Prompts");
-        if (ImGui::InputTextMultiline("##gen_prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_),
-                                      ImVec2(-1, 100)))
-            has_changes_ = true;
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("One prompt per line (1 to 8); for multi-line chat prompts put a line of --- between "
-                            "prompts (an empty line before --- keeps a trailing newline). Greedy previews use the "
-                            "causal token-window vocabulary; training pauses between epochs; results go to the "
-                            "Console and the run's artifacts.");
-        ImGui::PopTextWrapPos();
-        ImGui::EndDisabled();
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();

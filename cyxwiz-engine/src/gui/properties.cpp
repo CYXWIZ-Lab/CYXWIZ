@@ -439,10 +439,21 @@ void Properties::RenderHeader(MLNode& node) {
         }
     }
 
+    // Beside the item before it when there is room, else on the next line
+    // (a narrow panel cut the status and the Actions button off).
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    auto beside = [&](float width, float gap) {
+        if (ImGui::GetItemRectMax().x + gap + width <= right) ImGui::SameLine(0.0f, gap);
+    };
+
     // type · category · #id · status · badge
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s \xC2\xB7 %s \xC2\xB7 #%d", h.type_name.c_str(), h.category.c_str(), h.id);
+    ImGui::PopTextWrapPos();
     if (!h.implementation.empty()) {
-        ImGui::SameLine(0.0f, t.space_sm);
+        beside(h.implementation_kind == ChipKind::Ok ? ImGui::CalcTextSize(h.implementation.c_str()).x
+                                                     : cyxwiz::ui::ChipWidth(h.implementation.c_str()),
+               t.space_sm);
         if (h.implementation_kind == ChipKind::Ok) {
             ImGui::TextColored(t.text_faint, "%s", h.implementation.c_str());
         } else {
@@ -451,7 +462,7 @@ void Properties::RenderHeader(MLNode& node) {
         cyxwiz::ui::Tooltip("Implementation status of this node type");
     }
     if (!h.badge.empty()) {
-        ImGui::SameLine(0.0f, t.space_sm);
+        beside(cyxwiz::ui::ChipWidth(h.badge.c_str()), t.space_sm);
         cyxwiz::ui::Chip(h.badge.c_str(), t.text_dim);
     }
 
@@ -466,7 +477,7 @@ void Properties::RenderHeader(MLNode& node) {
             ImGui::TextColored(t.text_dim, "%s", h.primary_tip_detail.c_str());
             ImGui::EndTooltip();
         }
-        ImGui::SameLine(0.0f, t.space_md);
+        beside(cyxwiz::ui::ButtonWidth("Actions " ICON_FA_CARET_DOWN, cyxwiz::ui::ButtonSize::Small), t.space_md);
     }
     if (cyxwiz::ui::SecondaryButton("Actions " ICON_FA_CARET_DOWN)) ImGui::OpenPopup("##actions");
     RenderActionsMenu(node);
@@ -808,9 +819,7 @@ void Properties::RenderLooseTruths(MLNode& node) {
         const auto& d = *view_.data;
         properties_rows::Label("Data", false, d.loaded ? d.store.c_str() : nullptr);
         ImGui::AlignTextToFramePadding();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_bright, "%s", d.label.c_str());
-        ImGui::PopTextWrapPos();
+        properties_rows::Value(d.label, t.text_bright);
         ImGui::TableSetColumnIndex(2);
         if (d.loaded) {
             ImGui::AlignTextToFramePadding();

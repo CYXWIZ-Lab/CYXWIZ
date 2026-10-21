@@ -583,6 +583,33 @@ if(CYXWIZ_BUILD_TESTS)
         )
     endif()
 
+    # CyxWizLoader refuses models with extension nodes (TOFIX125 P6)
+    add_executable(test_cyxwiz_loader_extension
+        tests/test_cyxwiz_loader_extension.cpp
+        src/model_loader.cpp
+    )
+    target_include_directories(test_cyxwiz_loader_extension PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+    target_link_libraries(test_cyxwiz_loader_extension PRIVATE
+        Catch2::Catch2
+        Catch2::Catch2WithMain
+        fmt::fmt
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        cyxwiz-backend
+        Threads::Threads
+    )
+    if(CYXWIZ_HAS_ONNX)
+        target_link_libraries(test_cyxwiz_loader_extension PRIVATE onnxruntime::onnxruntime)
+        target_compile_definitions(test_cyxwiz_loader_extension PRIVATE CYXWIZ_HAS_ONNX)
+    endif()
+    # model_loader.cpp defines NOMINMAX and WIN32_LEAN_AND_MEAN itself.
+    if(WIN32)
+        target_compile_definitions(test_cyxwiz_loader_extension PRIVATE NOGDI)
+    endif()
+
     # ONNX Loader Tests (conditional on ONNX support)
     if(CYXWIZ_HAS_ONNX)
         add_executable(test_onnx_loader

@@ -3,6 +3,7 @@
 // compiler, launcher preparation, MainWindow's dispatch, TrainingManager) and
 // through the node's RunGraphTrainingJob give the same per-epoch losses.
 #include "../src/core/async_task_manager.h"
+#include "../src/core/checkpoint_tokenizer.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
@@ -207,6 +208,32 @@ int main() {
     Check(engine_val_loss.size() == static_cast<size_t>(kEpochs) && engine_val_loss.front() > 0.0f,
           "validation ran on a real partition");
     Check(Same(engine_val_loss, node_val_loss, 1e-5f), "same validation loss per epoch");
+
+    std::cout << "the checkpoint keeps its tokenizer (TOFIX159)\n";
+    {
+        fs::path best;
+        for (const auto& entry : fs::recursive_directory_iterator(work / "engine_checkpoints", ec))
+            if (entry.path().filename() == "best" && fs::exists(entry.path() / "metadata.json")) best = entry.path();
+        Check(!best.empty(), "the Engine run saved a best checkpoint");
+        std::string error;
+        const auto stored = cyxwiz::ReadCheckpointTokenizer(best, error);
+        Check(stored.has_value() && error.empty(), "best/tokenizer is there and reads " + error);
+        Check(stored && !stored->labels.empty() && stored->sequence_length > 0 && stored->token_vocabulary_size > 0,
+              "with the vocabulary, the context and the output size");
+
+        // Built from the checkpoint with no training data passed: the
+        // vocabulary comes from the checkpoint, not the dataset.
+        cyxwiz::GraphDocument document;
+        Check(cyxwiz::ParseGraphDocument(graph_json, document, error), "graph loaded " + error);
+        cyxwiz::GraphCompiler compiler;
+        const auto config = compiler.Compile(document.nodes, document.links);
+        const auto built = cyxwiz::BuildModelFromCheckpoint(config, nullptr, best.string(), {});
+        Check(built.model != nullptr, "the model builds from the checkpoint alone " + built.error_message);
+        Check(built.tokenizer_from_checkpoint, "its tokenizer came from the checkpoint");
+        Check(stored && built.prepared.sequence_batch.expected_token_vocabulary == stored->labels,
+              "the vocabulary is the stored one");
+        Check(stored && built.metadata.tokenizer_sha256 == stored->Sha256(), "metadata names the stored tokenizer");
+    }
 
     fs::remove_all(work, ec);
     if (g_failures > 0) {

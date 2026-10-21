@@ -4,6 +4,7 @@
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
 #include "training_executor.h"
+#include "checkpoint_tokenizer.h"
 #include <string>
 #include <map>
 #include <optional>
@@ -200,6 +201,10 @@ public:
      */
     void SetAutoSaveBest(bool enable) { auto_save_best_ = enable; }
 
+    /** The run's tokenizer, kept in every checkpoint saved after this call
+     *  (<checkpoint>/tokenizer/, TOFIX159); none when it is empty. */
+    void SetTokenizer(CheckpointTokenizer tokenizer) { tokenizer_ = std::move(tokenizer); }
+
     /** Provenance written into every checkpoint saved after this call. */
     void SetProvenance(std::string tokenizer_sha256, int context, std::string initialized_from) {
         provenance_.tokenizer_sha256 = std::move(tokenizer_sha256);
@@ -214,6 +219,7 @@ private:
     bool auto_save_best_ = true;
     std::string last_error_;
     CheckpointMetadata provenance_;  // only the provenance fields are used
+    CheckpointTokenizer tokenizer_;
 
     // Internal helpers
 

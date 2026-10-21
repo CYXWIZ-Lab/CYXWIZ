@@ -155,14 +155,16 @@ Boundary v1 shows a caution and **Migrate graph to Dataset v2**.
 
 ## Data Loader
 
-Five tabs: **Training** (epochs, validate every, batch size with about how
+Six tabs: **Training** (epochs, validate every, batch size with about how
 many batches an epoch has, seed, model seed, shuffle, drop the last short
 batch), **Batches** (gradient accumulation, prefetch), **Balance** (class
 balancing for training batches: mode, target per class, seed),
 **Checkpoints** (best validation checkpoint, early stop patience, checkpoint
-folder, start from an earlier checkpoint) and **Advanced** (worker threads,
-pin memory, report interval, generation previews). The Data Loader is the one
-place batching is set.
+folder, start from an earlier checkpoint), **Generation** (samples the model
+writes during training: prompts, chat template, stop texts, decoding, when;
+see [Generation previews](generation_previews.md)) and **Advanced** (worker
+threads, pin memory, report interval). The Data Loader is the one place
+batching is set.
 
 ## Row Filter
 

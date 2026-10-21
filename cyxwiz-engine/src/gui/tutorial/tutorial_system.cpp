@@ -801,7 +801,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
         RegisterTutorial(std::move(tutorial));
     }
 
-    spdlog::info("Registered {} built-in tutorials", tutorials_.size());
+    spdlog::debug("Registered {} built-in tutorials", tutorials_.size());
 }
 
 } // namespace cyxwiz

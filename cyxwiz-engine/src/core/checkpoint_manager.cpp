@@ -142,6 +142,15 @@ std::string CheckpointManager::SaveCheckpoint(
         return "";
     }
 
+    // The run's tokenizer goes with the weights.
+    if (!tokenizer_.empty()) {
+        std::string tokenizer_error;
+        if (!WriteCheckpointTokenizer(checkpoint_path, tokenizer_, tokenizer_error)) {
+            spdlog::error("CheckpointManager: Failed to save the tokenizer: {}", tokenizer_error);
+            return "";
+        }
+    }
+
     spdlog::info("CheckpointManager: Checkpoint saved successfully to {}", checkpoint_path.string());
 
     // Clean up old checkpoints
@@ -568,18 +577,20 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
 
         // Load parameters
         std::map<std::string, Tensor> params;
-        for (auto& [filename, param_name] : manifest.items()) {
-            fs::path tensor_path = model_dir / filename;
+        // Key and value through the iterator: a structured binding over
+        // items() made get<std::string>() a dependent call that GCC rejects.
+        for (auto item = manifest.begin(); item != manifest.end(); ++item) {
+            const std::string param_name = item.value().get<std::string>();
+            fs::path tensor_path = model_dir / item.key();
             auto tensor = LoadTensor(tensor_path);
             if (!tensor) {
                 if (last_error_.empty()) {
-                    last_error_ = "Could not load checkpoint parameter '" +
-                                  param_name.get<std::string>() + "'.";
+                    last_error_ = "Could not load checkpoint parameter '" + param_name + "'.";
                 }
-                spdlog::error("CheckpointManager: Failed to load parameter: {}", param_name.get<std::string>());
+                spdlog::error("CheckpointManager: Failed to load parameter: {}", param_name);
                 return false;
             }
-            params[param_name.get<std::string>()] = std::move(*tensor);
+            params[param_name] = std::move(*tensor);
         }
 
         // Validate the complete checkpoint before mutating the destination

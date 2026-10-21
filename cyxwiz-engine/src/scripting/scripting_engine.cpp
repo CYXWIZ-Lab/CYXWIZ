@@ -27,7 +27,7 @@ ScriptingEngine::ScriptingEngine()
 {
     python_engine_ = std::make_unique<PythonEngine>();
     sandbox_ = std::make_unique<PythonSandbox>();
-    spdlog::info("ScriptingEngine initialized (sandbox disabled by default)");
+    spdlog::debug("ScriptingEngine initialized (sandbox disabled by default)");
 }
 
 ScriptingEngine::~ScriptingEngine() {
@@ -1566,7 +1566,7 @@ std::string ScriptingEngine::CallLanguageTool(const std::string& function, const
             const py::dict status = intel.attr("status")();
             std::lock_guard<std::mutex> lock(language_mutex_);
             language_error_ = status["ok"].cast<bool>() ? std::string() : status["error"].cast<std::string>();
-            spdlog::info("Script Editor language tools: {}", language_error_.empty()
+            spdlog::debug("Script Editor language tools: {}", language_error_.empty()
                                                                  ? "jedi " + status["jedi"].cast<std::string>()
                                                                  : language_error_);
         }

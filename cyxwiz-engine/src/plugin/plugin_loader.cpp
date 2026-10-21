@@ -1,5 +1,6 @@
 #include "plugin_loader.h"
 #include "security/plugin_signature.h"
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <fstream>
 
@@ -11,6 +12,80 @@
 #endif
 
 namespace cyxwiz::plugin {
+
+namespace {
+
+// plugin.json -> manifest. In the Engine, not in plugin_types.h, so the
+// SDK headers need no JSON library (TOFIX125 P5 step 5.3).
+PluginManifest ManifestFromJson(const nlohmann::json& j) {
+    PluginManifest m;
+    m.id = j.value("id", "");
+    m.name = j.value("name", m.id);
+    m.description = j.value("description", "");
+    m.version = PluginVersion::Parse(j.value("version", "0.0.0"));
+    m.api_version = PluginVersion::Parse(j.value("api_version", "1.0.0"));
+    m.author = j.value("author", "");
+    m.license = j.value("license", "");
+    m.homepage = j.value("homepage", "");
+    m.repository = j.value("repository", "");
+
+    // Permissions
+    if (j.contains("permissions") && j["permissions"].is_array()) {
+        m.permissions = ParsePermissions(j["permissions"].get<std::vector<std::string>>());
+    }
+
+    // Capabilities
+    if (j.contains("capabilities") && j["capabilities"].is_array()) {
+        for (const auto& cap : j["capabilities"]) {
+            std::string s = cap.get<std::string>();
+            if (s == "ProvidesNodes")       m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesNodes);
+            else if (s == "ProvidesPanels")  m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesPanels);
+            else if (s == "ProvidesData")    m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesData);
+            else if (s == "ProvidesTraining") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesTraining);
+            else if (s == "ProvidesAnalytics") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesAnalytics);
+            else if (s == "RequiresPython")  m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresPython);
+            else if (s == "RequiresGPU")     m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresGPU);
+            else if (s == "RequiresNetwork") m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresNetwork);
+            else if (s == "ProvidesTensorNodes") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesTensorNodes);
+        }
+    }
+
+    // Dependencies
+    if (j.contains("dependencies") && j["dependencies"].is_array()) {
+        for (const auto& dep : j["dependencies"]) {
+            m.dependencies.push_back({
+                dep.value("id", ""),
+                dep.value("version", ">=0.0.0")
+            });
+        }
+    }
+
+    // Platform library
+#ifdef _WIN32
+    if (j.contains("platforms") && j["platforms"].contains("windows")) {
+        m.library = j["platforms"]["windows"].value("library", "");
+    }
+#elif defined(__APPLE__)
+    if (j.contains("platforms") && j["platforms"].contains("macos")) {
+        m.library = j["platforms"]["macos"].value("library", "");
+    }
+#else
+    if (j.contains("platforms") && j["platforms"].contains("linux")) {
+        m.library = j["platforms"]["linux"].value("library", "");
+    }
+#endif
+    // Fallback: top-level library field
+    if (m.library.empty()) {
+        m.library = j.value("library", "");
+    }
+
+    // Signature
+    m.signature = j.value("signature", "");
+
+    return m;
+}
+
+}  // namespace
 
 // ============================================================================
 // LoadedPlugin destructor
@@ -87,6 +162,22 @@ void* PluginLoader::GetSymbol(void* handle, const char* name) {
 #endif
 }
 
+bool PluginLoader::CheckBuildFingerprint(void* handle, std::string& error_out) {
+    const std::string engine = CurrentBuildFingerprint();
+    const auto fingerprint = reinterpret_cast<BuildFingerprintFunc>(GetSymbol(handle, "CyxwizPluginBuildFingerprint"));
+    if (!fingerprint) {
+        error_out = MissingFingerprintMessage(engine);
+        return false;
+    }
+    const char* text = fingerprint();
+    const auto differences = CompareBuildFingerprints(engine, text ? text : "");
+    if (!differences.empty()) {
+        error_out = DescribeFingerprintMismatch(differences);
+        return false;
+    }
+    return true;
+}
+
 std::string PluginLoader::GetLastDLLError() {
 #ifdef _WIN32
     DWORD err = ::GetLastError();
@@ -133,7 +224,7 @@ bool PluginLoader::ParseManifest(
         }
 
         nlohmann::json j = nlohmann::json::parse(f);
-        manifest_out = PluginManifest::FromJson(j);
+        manifest_out = ManifestFromJson(j);
         manifest_out.plugin_dir = plugin_dir;
 
         if (manifest_out.id.empty()) {
@@ -181,7 +272,7 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
         return nullptr;
     }
 
-    spdlog::info("Loading plugin: {} v{} from {}",
+    spdlog::debug("Loading plugin: {} v{} from {}",
                  loaded->manifest.name, loaded->manifest.version.ToString(), plugin_dir.string());
 
     // 2. Validate API version
@@ -269,6 +360,17 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
         return nullptr;
     }
 
+    // 4b. The plugin must be built the way this Engine was (TOFIX125 P5,
+    // decision D4): checked before any other plugin code runs.
+    if (!CheckBuildFingerprint(loaded->dll_handle, error_out)) {
+        spdlog::error("Plugin {} refused: {}", loaded->manifest.id, error_out);
+        UnloadDLL(loaded->dll_handle);
+        loaded->dll_handle = nullptr;
+        loaded->state = PluginState::Failed;
+        loaded->error_message = error_out;
+        return nullptr;
+    }
+
     // 5. Resolve entry points
     loaded->create_func = reinterpret_cast<CreatePluginFunc>(
         GetSymbol(loaded->dll_handle, "CreatePlugin"));
@@ -313,7 +415,7 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     }
 
     loaded->state = PluginState::Loaded;
-    spdlog::info("Plugin loaded: {} v{}", loaded->manifest.id, loaded->manifest.version.ToString());
+    spdlog::debug("Plugin loaded: {} v{}", loaded->manifest.id, loaded->manifest.version.ToString());
     return loaded;
 }
 
@@ -338,6 +440,15 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDLL(
     // Load DLL
     loaded->dll_handle = LoadDLL(dll_path, error_out);
     if (!loaded->dll_handle) {
+        loaded->state = PluginState::Failed;
+        loaded->error_message = error_out;
+        return nullptr;
+    }
+
+    if (!CheckBuildFingerprint(loaded->dll_handle, error_out)) {
+        spdlog::error("Plugin {} refused: {}", dll_path.string(), error_out);
+        UnloadDLL(loaded->dll_handle);
+        loaded->dll_handle = nullptr;
         loaded->state = PluginState::Failed;
         loaded->error_message = error_out;
         return nullptr;
