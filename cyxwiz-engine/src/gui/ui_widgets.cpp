@@ -157,17 +157,29 @@ void StatusText(Status status, const char* text) {
 
 void Chip(const char* text, const ImVec4& colour) {
     const Tokens& t = CurrentTokens();
-    const float height = ImGui::GetFrameHeight() - 4.0f;
+    const float line_height = ImGui::GetFrameHeight() - 4.0f;
     const float dot = 6.0f;
-    const ImVec2 text_size = ImGui::CalcTextSize(text);
-    const ImVec2 size(t.space_md * 2.0f + dot + t.space_sm + text_size.x, height);
+    const float inset = t.space_md * 2.0f + dot + t.space_sm;
+    ImVec2 text_size = ImGui::CalcTextSize(text);
+    // Wider than the room left: the text wraps inside a taller pill (a narrow
+    // panel cut the chip off at its edge).
+    float wrap = 0.0f;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (inset + text_size.x > avail && avail > inset + ImGui::GetFontSize() * 2.0f) {
+        wrap = avail - inset;
+        text_size = ImGui::CalcTextSize(text, nullptr, false, wrap);
+    }
+    const float height = std::max(line_height, text_size.y + (line_height - ImGui::GetTextLineHeight()));
+    const ImVec2 size(inset + text_size.x, height);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(size);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ToU32(WithAlpha(colour, 0.16f)), height * 0.5f);
-    const float cy = pos.y + height * 0.5f;
-    dl->AddCircleFilled(ImVec2(pos.x + t.space_md + dot * 0.5f, cy), dot * 0.5f, ToU32(colour));
-    dl->AddText(ImVec2(pos.x + t.space_md + dot + t.space_sm, cy - text_size.y * 0.5f), ToU32(colour), text);
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ToU32(WithAlpha(colour, 0.16f)), line_height * 0.5f);
+    const float top = pos.y + (height - text_size.y) * 0.5f;
+    dl->AddCircleFilled(ImVec2(pos.x + t.space_md + dot * 0.5f, top + ImGui::GetTextLineHeight() * 0.5f), dot * 0.5f,
+                        ToU32(colour));
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(pos.x + t.space_md + dot + t.space_sm, top),
+                ToU32(colour), text, nullptr, wrap);
 }
 
 float ChipWidth(const char* text) {
@@ -366,34 +378,36 @@ void EmptyState(const char* icon, const char* title, const char* hint) {
         ImGui::TextColored(colour, "%s", text);
         ImGui::SetWindowFontScale(1.0f);
     };
-    if (icon && icon[0]) centred(icon, t.text_faint, 2.0f);
-    centred(title, t.text_dim, 1.0f);
-    if (!hint || !hint[0]) return;
-    // The hint wraps into centred lines that fit the area (a single line ran
-    // past the edge of a narrow results area).
+    // The title and the hint wrap into centred lines that fit the area (a
+    // single line ran past both edges of a narrow panel).
     const float max_width = std::min(std::max(avail.x - ImGui::GetStyle().ItemSpacing.x * 2.0f, 80.0f), 420.0f);
-    std::string line;
-    std::string word;
-    const auto flush = [&]() {
-        if (!line.empty()) centred(line.c_str(), t.text_faint, 1.0f);
-        line.clear();
-    };
-    for (const char* c = hint;; ++c) {
-        if (*c == ' ' || *c == '\0') {
-            const std::string candidate = line.empty() ? word : line + " " + word;
-            if (!line.empty() && ImGui::CalcTextSize(candidate.c_str()).x > max_width) {
-                flush();
-                line = word;
+    auto wrapped = [&](const char* text, const ImVec4& colour) {
+        std::string line;
+        std::string word;
+        const auto flush = [&]() {
+            if (!line.empty()) centred(line.c_str(), colour, 1.0f);
+            line.clear();
+        };
+        for (const char* c = text;; ++c) {
+            if (*c == ' ' || *c == '\0') {
+                const std::string candidate = line.empty() ? word : line + " " + word;
+                if (!line.empty() && ImGui::CalcTextSize(candidate.c_str()).x > max_width) {
+                    flush();
+                    line = word;
+                } else {
+                    line = candidate;
+                }
+                word.clear();
+                if (*c == '\0') break;
             } else {
-                line = candidate;
+                word += *c;
             }
-            word.clear();
-            if (*c == '\0') break;
-        } else {
-            word += *c;
         }
-    }
-    flush();
+        flush();
+    };
+    if (icon && icon[0]) centred(icon, t.text_faint, 2.0f);
+    wrapped(title, t.text_dim);
+    if (hint && hint[0]) wrapped(hint, t.text_faint);
 }
 
 // ---------------------------------------------------------------------------
