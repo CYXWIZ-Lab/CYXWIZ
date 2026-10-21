@@ -126,8 +126,16 @@ void CorrelationView::RenderControls(const ExploreContext& context, const Datase
     row.Next(ui::ButtonWidth("Display", ui::ButtonSize::Small));
     if (ui::SecondaryButton("Display")) ImGui::OpenPopup("##corr_display");
     if (ImGui::BeginPopup("##corr_display")) {
-        ImGui::SetNextItemWidth(160.0f);
-        ImGui::SliderFloat("Cell size", &cell_, 28.0f, 90.0f, "%.0f px");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Cell size (px)");
+        ImGui::SameLine();
+        ui::NumberFieldOptions size;
+        size.min = 28.0;
+        size.max = 90.0;
+        size.step = 4.0;
+        size.format = "%.0f";
+        size.width = 50.0f;
+        ui::NumberField("##corr_cell", &cell_, size);
         ImGui::Checkbox("Show values", &show_values_);
         ImGui::Checkbox("Show legend", &show_legend_);
         ImGui::EndPopup();

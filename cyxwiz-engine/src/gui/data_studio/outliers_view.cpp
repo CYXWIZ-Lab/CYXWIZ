@@ -207,7 +207,7 @@ bool OutliersView::RenderControls(const DatasetProfile& p) {
     int rule = static_cast<int>(rule_);
     if (ui::SegmentedControl("##outlier_rule", kRules, 3, &rule)) {
         rule_ = static_cast<OutlierRule>(rule);
-        factor_ = factor_edit_ = explore::DefaultOutlierFactor(rule_);
+        factor_ = explore::DefaultOutlierFactor(rule_);
         changed = true;
     }
     const float step_w = ui::ButtonWidth("+", ui::ButtonSize::Small);
@@ -215,30 +215,16 @@ bool OutliersView::RenderControls(const DatasetProfile& p) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Factor");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(70.0f);
-    // Typing changes the field; the count follows when the field is left
-    // (or a step button is pressed), not on every key.
-    if (ImGui::InputDouble("##outlier_factor", &factor_edit_, 0.0, 0.0, "%.2f")) {
-        factor_edit_ = std::clamp(factor_edit_, 0.1, 20.0);
-        if (!ImGui::IsItemActive()) {
-            factor_ = factor_edit_;
-            changed = true;
-        }
-    }
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        factor_ = std::clamp(factor_edit_, 0.1, 20.0);
-        changed = true;
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-        ImGui::SetTooltip("k in the bounds: smaller finds more outliers. Default %s for %s.", ev::Figure(explore::DefaultOutlierFactor(rule_)).c_str(),
-                          explore::OutlierRuleName(rule_));
-    for (const auto& [label, delta] : {std::pair<const char*, double>{"-##factor", -0.1}, {"+##factor", 0.1}}) {
-        ImGui::SameLine(0.0f, 4.0f);
-        if (ui::SecondaryButton(label)) {
-            factor_ = factor_edit_ = std::clamp(std::round((factor_ + delta) * 10.0) / 10.0, 0.1, 20.0);
-            changed = true;
-        }
-    }
+    // Typed; the count follows when the field is left or - / + is pressed.
+    const std::string hint = "k in the bounds: smaller finds more outliers; default " + ev::Figure(explore::DefaultOutlierFactor(rule_)) +
+                             " for " + explore::OutlierRuleName(rule_);
+    ui::NumberFieldOptions factor;
+    factor.min = 0.1;
+    factor.max = 20.0;
+    factor.step = 0.1;
+    factor.width = 70.0f;
+    factor.hint = hint.c_str();
+    if (ui::NumberField("##outlier_factor", &factor_, factor)) changed = true;
     return changed;
 }
 

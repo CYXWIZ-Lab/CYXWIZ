@@ -9,7 +9,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace cyxwiz::ui {
 
@@ -351,6 +354,80 @@ void EndInsetList() {
 
 // ---------------------------------------------------------------------------
 // Empty state
+
+bool NumberField(const char* id, double* value, const NumberFieldOptions& o) {
+    // Drafts by widget id while a field is being typed in.
+    static std::unordered_map<ImGuiID, double> drafts;
+    const ImGuiID key = ImGui::GetID(id);
+    const auto clamp = [&](double v) { return std::isfinite(v) ? std::clamp(v, o.min, o.max) : *value; };
+    bool changed = false;
+    ImGui::PushID(id);
+    auto it = drafts.find(key);
+    double shown = it != drafts.end() ? it->second : *value;
+    ImGui::SetNextItemWidth(o.width);
+    if (ImGui::InputDouble("##number", &shown, 0.0, 0.0, o.format)) drafts[key] = shown;
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (auto d = drafts.find(key); d != drafts.end()) {
+            const double v = clamp(d->second);
+            drafts.erase(d);
+            if (v != *value) {
+                *value = v;
+                changed = true;
+            }
+        }
+    } else if (!ImGui::IsItemActive()) {
+        drafts.erase(key);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        char range[96] = "";
+        const bool low = o.min > -1e299, high = o.max < 1e299;
+        char lo[32], hi[32];
+        std::snprintf(lo, sizeof(lo), o.format, o.min);
+        std::snprintf(hi, sizeof(hi), o.format, o.max);
+        if (low && high) std::snprintf(range, sizeof(range), "%s to %s", lo, hi);
+        else if (low) std::snprintf(range, sizeof(range), "at least %s", lo);
+        else if (high) std::snprintf(range, sizeof(range), "at most %s", hi);
+        if (o.hint && *range) ImGui::SetTooltip("%s (%s)", o.hint, range);
+        else if (o.hint) ImGui::SetTooltip("%s", o.hint);
+        else if (*range) ImGui::SetTooltip("%s", range);
+    }
+    if (o.step > 0.0) {
+        for (const auto& [label, sign] : {std::pair<const char*, double>{"-", -1.0}, {"+", 1.0}}) {
+            ImGui::SameLine(0.0f, 4.0f);
+            if (SecondaryButton(label)) {
+                // Whole steps from the value, so 1.5 + 0.1 is 1.6, not 1.6000000000000001.
+                const double v = clamp(std::round((*value + sign * o.step) / o.step) * o.step);
+                if (v != *value) {
+                    *value = v;
+                    changed = true;
+                }
+            }
+        }
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+bool NumberField(const char* id, float* value, const NumberFieldOptions& options) {
+    double v = *value;
+    if (!NumberField(id, &v, options)) return false;
+    *value = static_cast<float>(v);
+    return true;
+}
+
+bool NumberField(const char* id, int* value, int min, int max, int step, float width, const char* hint) {
+    NumberFieldOptions o;
+    o.min = min;
+    o.max = max;
+    o.step = step;
+    o.format = "%.0f";
+    o.width = width;
+    o.hint = hint;
+    double v = *value;
+    if (!NumberField(id, &v, o)) return false;
+    *value = static_cast<int>(std::lround(v));
+    return true;
+}
 
 void EmptyState(const char* icon, const char* title, const char* hint) {
     const Tokens& t = CurrentTokens();
