@@ -6025,6 +6025,40 @@ set_target_properties(test_computation_truth_data_transform PROPERTIES
 )
 add_test(NAME data_transform_pytorch_parity COMMAND test_computation_truth_data_transform)
 
+# cyxwiz::StatisticalTests against scipy / statsmodels (TOFIX129 D3).
+set(CYXWIZ_STATISTICAL_TESTS_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/statistical_tests_scipy.json")
+add_executable(test_computation_truth_statistical_tests
+    tests/computation_truth/test_computation_truth_statistical_tests.cpp
+)
+target_include_directories(test_computation_truth_statistical_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_statistical_tests PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_statistical_tests PRIVATE
+    CYXWIZ_STATISTICAL_TESTS_FIXTURE="${CYXWIZ_STATISTICAL_TESTS_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_statistical_tests_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_statistical_tests>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_STATISTICAL_TESTS_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_statistical_tests>/computation_truth_fixtures/statistical_tests_scipy.json"
+    SOURCES "${CYXWIZ_STATISTICAL_TESTS_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_statistical_tests copy_test_computation_truth_statistical_tests_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_statistical_tests PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_statistical_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME statistical_tests_scipy_parity COMMAND test_computation_truth_statistical_tests)
+
 # ===== Test: ROC / precision-recall curves against scikit-learn (TOFIX140 ROC / PR on the device) =====
 set(CYXWIZ_ROC_PR_SKLEARN_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/roc_pr_sklearn.json"
