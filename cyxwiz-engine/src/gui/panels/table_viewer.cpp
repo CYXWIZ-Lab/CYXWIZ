@@ -603,8 +603,15 @@ void TableViewerPanel::RenderOpenDatasetPopup() {
         for (const auto& entry : tables) {
             const std::string detail = std::to_string(entry.rows) + " rows \xC2\xB7 " + std::to_string(entry.columns) +
                                        " columns \xC2\xB7 " + StorageText(entry.storage);
-            if (ImGui::Selectable((entry.Shown() + "##" + entry.name).c_str(), open_dataset_pick_ == entry.name))
+            // A click picks it (the popup stays for the row count); a double-click opens it.
+            if (ImGui::Selectable((entry.Shown() + "##" + entry.name).c_str(), open_dataset_pick_ == entry.name,
+                                  ImGuiSelectableFlags_NoAutoClosePopups | ImGuiSelectableFlags_AllowDoubleClick)) {
                 open_dataset_pick_ = entry.name;
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    OpenDataset(open_dataset_pick_, open_dataset_rows_);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
             ImGui::SameLine();
             ImGui::TextColored(t.text_dim, "%s", detail.c_str());
         }
