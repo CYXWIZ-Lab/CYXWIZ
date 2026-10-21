@@ -121,6 +121,18 @@ public:
      */
     bool IsExecuting() const { return executing_.load(); }
 
+    // What this executor's runs registered for these nodes - their results,
+    // extra outputs, and the in-memory copies of inputs they read - is
+    // unregistered when the nodes leave the graph (TOFIX160 P2). A name a
+    // kept node still uses stays, and so does a Save / Deploy / Data Output
+    // result (the user named it). Not while executing (the caller waits).
+    void ReleaseNodes(const std::set<int>& node_ids);
+    // Everything its runs registered (the graph was cleared or replaced).
+    void ReleaseAll();
+    // Only the in-memory copies of disk inputs (a one-shot run whose result
+    // has been read).
+    void ReleaseAdmittedInputs();
+
     /**
      * Get execution progress (0.0 to 1.0)
      */
@@ -225,6 +237,13 @@ private:
     // its output still exists), so MarkDirtyNodes can skip it.
     void RestoreRunCache(std::vector<Node>& nodes);
 
+    // The names each node's completed runs registered (results and extra
+    // outputs), for ReleaseNodes; kept_nodes_ are Save / Deploy / Data Output
+    // nodes, whose results stay. Under owned_mutex_ (nodes complete on worker
+    // threads).
+    std::mutex owned_mutex_;
+    std::map<int, std::set<std::string>> owned_names_;
+    std::set<int> kept_nodes_;
     std::map<int, std::string> last_node_results_;
     std::map<std::pair<int, int>, std::string> last_node_pin_results_;
     std::map<int, std::string> last_model_artifacts_;

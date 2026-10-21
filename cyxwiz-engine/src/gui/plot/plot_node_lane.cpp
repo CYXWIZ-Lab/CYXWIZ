@@ -331,6 +331,9 @@ void PlotNodeLane::Finish(Entry& e) {
         s.state = s.table ? Status::State::OutOfDate : Status::State::Idle;
     }
     e.task_id = 0;
+    // Its in-memory copies of disk inputs go now (the plot holds the rows it
+    // read); its other names are the graph's, released by the editor.
+    if (e.executor) e.executor->ReleaseAdmittedInputs();
     e.executor.reset();
     e.sparse_result.reset();
 }

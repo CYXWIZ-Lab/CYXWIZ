@@ -5,6 +5,7 @@
 #include "../core/node_metadata_registry.h"
 #include "../core/extension_node_registry.h"
 #include "../core/data_registry.h"
+#include "../core/pipeline_executor.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -77,6 +78,30 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     reg.UnregisterTextDataset(it->second);
 }
 
+void NodeEditor::ReleaseRunData(const std::set<int>& node_ids) {
+    pending_run_release_.insert(node_ids.begin(), node_ids.end());
+    ApplyPendingRunRelease();
+}
+
+void NodeEditor::ReleaseAllRunData() {
+    pending_run_release_all_ = true;
+    ApplyPendingRunRelease();
+}
+
+void NodeEditor::ApplyPendingRunRelease() {
+    if (pending_run_release_.empty() && !pending_run_release_all_) return;
+    if (!pipeline_executor_) {
+        pending_run_release_.clear();
+        pending_run_release_all_ = false;
+        return;
+    }
+    if (pipeline_executor_->IsExecuting()) return;  // when the run ends
+    if (pending_run_release_all_) pipeline_executor_->ReleaseAll();
+    else pipeline_executor_->ReleaseNodes(pending_run_release_);
+    pending_run_release_.clear();
+    pending_run_release_all_ = false;
+}
+
 void NodeEditor::DeleteNode(int node_id) {
     if (IsSubgraphMember(node_id)) {
         spdlog::warn("Cannot delete a subgraph member individually yet; delete its Subgraph container instead.");
@@ -86,10 +111,16 @@ void NodeEditor::DeleteNode(int node_id) {
         const auto members = data->internal_nodes;
         const bool expanded = data->expanded;
         std::erase_if(subgraphs_, [node_id](const SubgraphData& entry) { return entry.subgraph_node_id == node_id; });
+        std::set<int> collapsed;
         for (const auto& member : members) {
-            if (expanded) DeleteNode(member.id);
-            else UnregisterNodeDatasetIfOwned(member);
+            if (expanded) {
+                DeleteNode(member.id);
+            } else {
+                UnregisterNodeDatasetIfOwned(member);
+                collapsed.insert(member.id);
+            }
         }
+        ReleaseRunData(collapsed);
     }
     ClearValidationState();  // Graph changed — stale compile results
 
@@ -124,6 +155,9 @@ void NodeEditor::DeleteNode(int node_id) {
 
         nodes_.erase(node_it);
         RebuildPinLookup();  // Rebuild pin lookup after deleting node
+        // What the runs registered for it goes too (its copy of the data, its
+        // results), not only the dataset its dialog loaded.
+        ReleaseRunData({node_id});
     }
 }
 
@@ -148,6 +182,9 @@ void NodeEditor::ClearGraph() {
     for (const auto& data : subgraphs_) {
         if (!data.expanded) for (const auto& node : data.internal_nodes) UnregisterNodeDatasetIfOwned(node);
     }
+    // And everything the runs registered: the next graph's node ids start at
+    // 1 again, so an old run's copy would read as the new node's.
+    ReleaseAllRunData();
     subgraphs_.clear();
     nodes_.clear();
     links_.clear();

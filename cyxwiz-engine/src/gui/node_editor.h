@@ -1277,6 +1277,13 @@ private:
     // The executor of the run in flight or last run; its facts are copied
     // into node_run_facts_ while it runs and once when it ends.
     std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    // What the runs registered for nodes that left the graph (TOFIX160 P2):
+    // released now, or when the run in flight ends.
+    void ReleaseRunData(const std::set<int>& node_ids);
+    void ReleaseAllRunData();
+    void ApplyPendingRunRelease();
+    std::set<int> pending_run_release_;
+    bool pending_run_release_all_ = false;
     bool pipeline_facts_final_ = true;
     // The run's step figures read so far, and the step that sent them.
     WordVectorFeed word_vector_feed_;

@@ -4745,6 +4745,7 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // executor is kept between runs (lazy evaluation, TOFIX154): it reuses an
     // unchanged node's result, and drops the earlier result of each node it
     // runs again, so a node the run fails at leaves nothing stale.
+    ApplyPendingRunRelease();
     for (const auto& node : pipeline_json.at("nodes")) node_run_facts_.erase(node.at("id").get<int>());
     std::string pipeline_str = pipeline_json.dump(2);
     // One line: Debug is recorded in every build, and the indented form was
@@ -4795,6 +4796,7 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
 // ===== Unified Canvas Phase 6: Execution Visualization =====
 
 void NodeEditor::SyncPipelineExecutionVisualization() {
+    ApplyPendingRunRelease();  // releases asked for during a run
     if (pipeline_task_id_ == 0 || !pipeline_execution_tracker_) {
         pipeline_execution_active_ = false;
         return;
