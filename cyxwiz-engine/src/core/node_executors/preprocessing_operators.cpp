@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <memory>
@@ -355,253 +356,193 @@ arrow::Result<MaterializationMemoryEstimate> EmitPreprocessingMemoryPreflight(
 } // namespace
 
 // ============================================================================
-// StandardScalerOperator
+// ColumnTransformOperator: what the fitted column transforms share
 // ============================================================================
 
-bool StandardScalerOperator::Configure(
-    const std::map<std::string, std::string>& params,
-    std::string& error) {
-    ParseColumnsAndLabel(params, columns_, label_col_);
-    const auto excluded = params.find("exclude_columns");
-    ParseCommaList(
-        excluded == params.end() ? "" : excluded->second,
-        exclude_columns_);
-    if (!ReadBoolParam(params, "with_mean", true, GetName(),
-                       with_mean_, error)) return false;
-    if (!ReadBoolParam(params, "with_std", true, GetName(),
-                       with_std_, error)) return false;
-    const auto mode = params.find("operation_mode");
-    operation_mode_ =
-        mode == params.end() || mode->second.empty()
-            ? "fit_transform"
-            : ToLowerAscii(TrimString(mode->second));
-    if (operation_mode_ != "fit_transform" &&
-        operation_mode_ != "transform_only") {
-        error = GetName() +
-                ": 'operation_mode' must be 'fit_transform' or "
-                "'transform_only' (got '" + operation_mode_ + "')";
-        return false;
+namespace {
+
+// The present (finite) values of a column and where they sit.
+void SplitPresent(const std::vector<double>& all, std::vector<double>& present, std::vector<size_t>& rows) {
+    present.clear();
+    rows.clear();
+    for (size_t i = 0; i < all.size(); ++i) {
+        if (!std::isfinite(all[i])) continue;
+        present.push_back(all[i]);
+        rows.push_back(i);
     }
-    const auto state_path = params.find("state_path");
-    state_path_ =
-        state_path == params.end() ? "" : TrimString(state_path->second);
-    if (!ReadBoolParam(params, "save_state", false, GetName(),
-                       save_state_, error)) return false;
-    if (!ReadBoolParam(params, "state_overwrite", false, GetName(),
-                       state_overwrite_, error)) return false;
-    if (operation_mode_ == "transform_only" && state_path_.empty()) {
-        error = GetName() +
-                ": Transform Only requires 'state_path'. Fit this node on "
-                "training data with 'Save fitted state' enabled, then select "
-                "that artifact.";
-        return false;
-    }
-    if (operation_mode_ == "fit_transform" && save_state_ &&
-        state_path_.empty()) {
-        error = GetName() +
-                ": 'Save fitted state' is enabled but 'state_path' is empty. "
-                "Choose a .cyxstate.json path or disable saving.";
-        return false;
-    }
-    return true;
 }
 
-arrow::Status StandardScalerOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
+// A column of transformed values, missing (null) where the input was.
+arrow::Result<std::shared_ptr<arrow::Table>> ReplaceKeepingMissing(
+    const std::shared_ptr<arrow::Table>& table, int col_idx, size_t rows,
+    const std::vector<size_t>& present_rows, const std::vector<double>& values) {
+    arrow::FloatBuilder builder(arrow::default_memory_pool());
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(rows)));
+    size_t next = 0;
+    for (size_t row = 0; row < rows; ++row) {
+        if (next < present_rows.size() && present_rows[next] == row) {
+            ARROW_RETURN_NOT_OK(builder.Append(static_cast<float>(values[next++])));
+        } else {
+            ARROW_RETURN_NOT_OK(builder.AppendNull());
+        }
+    }
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    const std::string name = table->schema()->field(col_idx)->name();
+    return table->SetColumn(col_idx, arrow::field(name, arrow::float32()), std::make_shared<arrow::ChunkedArray>(array));
+}
+
+bool ReadDoubleParam(const std::map<std::string, std::string>& params, const std::string& key, double& out,
+                     const std::string& op_name, std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || TrimString(it->second).empty()) return true;
+    try {
+        size_t used = 0;
+        out = std::stod(it->second, &used);
+        if (used != TrimString(it->second).size() || !std::isfinite(out)) throw std::invalid_argument(key);
+        return true;
+    } catch (...) {
+        error = op_name + ": '" + key + "' is not a number: " + it->second;
+        return false;
+    }
+}
+
+double Saved(const PreprocessingFeatureState& feature, const char* key) {
+    auto it = feature.numeric_values.find(key);
+    return it == feature.numeric_values.end() ? NAN : it->second;
+}
+
+}  // namespace
+
+bool ColumnTransformOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    ParseColumnsAndLabel(params, columns_, label_col_);
+    const auto excluded = params.find("exclude_columns");
+    ParseCommaList(excluded == params.end() ? "" : excluded->second, exclude_columns_);
+    if (!ParseFittedPreprocessingOptions(params, GetName(), options_, error)) return false;
+    return ConfigureOwn(params, error);
+}
+
+arrow::Status ColumnTransformOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
     if (!schema) return arrow::Status::Invalid(GetName() + ": input is null");
     schema_ = schema;
     resolved_.clear();
-    centers_.clear();
-    scales_.clear();
     state_ = FittedPreprocessingState{};
     fit_rows_ = 0;
-    if (operation_mode_ == "transform_only") {
+    if (options_.IsTransformOnly()) {
         std::string state_error;
-        if (!LoadFittedPreprocessingState(state_path_, GetName(), state_, state_error)) {
+        if (!LoadFittedPreprocessingState(options_.state_path, GetName(), state_, state_error)) {
             return arrow::Status::Invalid(GetName() + ": " + state_error);
         }
         if (!ValidateFittedPreprocessingStateSchema(state_, schema, state_error)) {
             return arrow::Status::Invalid(state_error);
         }
-        const auto mean_config = state_.configuration.find("with_mean");
-        const auto std_config = state_.configuration.find("with_std");
-        if ((mean_config != state_.configuration.end() &&
-             mean_config->second != (with_mean_ ? "true" : "false")) ||
-            (std_config != state_.configuration.end() &&
-             std_config->second != (with_std_ ? "true" : "false"))) {
-            return arrow::Status::Invalid(
-                GetName() +
-                ": node options do not match the fitted artifact. Set "
-                "'Center data' and 'Scale to unit variance' to the values "
-                "used during fitting, or choose the correct artifact.");
+        if (!ValidateFittedPreprocessingConfiguration(state_, Settings(), state_error)) {
+            return arrow::Status::Invalid(GetName() + ": " + state_error);
         }
-        for (const auto& feature : state_.features) {
-            resolved_.push_back(feature.name);
-            const auto mean_it = feature.numeric_values.find("mean");
-            const auto scale_it = feature.numeric_values.find("scale");
-            if (mean_it == feature.numeric_values.end() ||
-                scale_it == feature.numeric_values.end()) {
-                return arrow::Status::Invalid(
-                    GetName() + ": state for column '" + feature.name +
-                    "' is missing mean/scale values. Refit the artifact.");
-            }
-            if (!std::isfinite(mean_it->second) || !std::isfinite(scale_it->second) ||
-                scale_it->second <= 0.0) {
-                return arrow::Status::Invalid(
-                    GetName() + ": state for column '" + feature.name +
-                    "' contains invalid mean/scale values. Refit the "
-                    "artifact.");
-            }
-            centers_.push_back(mean_it->second);
-            scales_.push_back(scale_it->second);
-        }
+        for (const auto& feature : state_.features) resolved_.push_back(feature.name);
         if (!columns_.empty() && columns_ != resolved_) {
             return arrow::Status::Invalid(
-                GetName() +
-                ": configured columns do not match the fitted artifact. "
-                "Keep the training column order or leave Columns empty.");
+                GetName() + ": the columns differ from the saved values' columns. Keep the columns used when "
+                "fitting, or leave Columns empty.");
         }
-        spdlog::info(
-            "[Preprocessing] StandardScaler Transform Only loaded '{}' "
-            "(fit_rows={}, features={}, schema={})",
-            state_path_, state_.fit_rows, state_.features.size(),
-            state_.input_schema_fingerprint);
+        BeginFit(resolved_.size());
+        for (size_t i = 0; i < state_.features.size(); ++i) {
+            ARROW_RETURN_NOT_OK(LoadColumn(i, state_.features[i]));
+        }
+        spdlog::info("[Preprocessing] {} uses saved values '{}' (fit_rows={}, columns={})", GetName(),
+                     options_.state_path, state_.fit_rows, resolved_.size());
         return arrow::Status::OK();
     }
-    for (const auto& excluded_name : exclude_columns_) {
-        if (schema->GetFieldIndex(excluded_name) < 0) {
-            return arrow::Status::KeyError(
-                GetName() + ": excluded column '" + excluded_name +
-                "' not found");
+    for (const auto& name : exclude_columns_) {
+        if (schema->GetFieldIndex(name) < 0) {
+            return arrow::Status::KeyError(GetName() + ": excluded column '" + name + "' not found");
         }
     }
     ARROW_ASSIGN_OR_RAISE(auto empty, arrow::Table::MakeEmpty(schema));
-    ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
-        empty, columns_, label_col_, exclude_columns_, GetName(), resolved_));
-    moments_.assign(resolved_.size(), {});
+    ARROW_RETURN_NOT_OK(ResolveNumericColumnList(empty, columns_, label_col_, exclude_columns_, GetName(), resolved_));
+    BeginFit(resolved_.size());
     state_.operator_name = GetName();
     state_.input_schema_fingerprint = FingerprintPreprocessingSchema(schema);
-    state_.configuration["with_mean"] = with_mean_ ? "true" : "false";
-    state_.configuration["with_std"] = with_std_ ? "true" : "false";
+    state_.configuration = Settings();
     state_.configuration["label_col"] = label_col_;
-    std::ostringstream excluded_columns;
-    for (size_t i = 0; i < exclude_columns_.size(); ++i) {
-        if (i > 0) excluded_columns << ',';
-        excluded_columns << exclude_columns_[i];
-    }
-    state_.configuration["exclude_columns"] = excluded_columns.str();
+    std::string excluded;
+    for (const auto& name : exclude_columns_) excluded += (excluded.empty() ? "" : ",") + name;
+    state_.configuration["exclude_columns"] = excluded;
     return arrow::Status::OK();
 }
 
-arrow::Status StandardScalerOperator::FitBatch(const std::shared_ptr<arrow::Table>& batch) {
-    // Fit on the device, as the Standardization tool: each batch's moments,
-    // merged exactly (population std, scikit-learn).
+arrow::Status ColumnTransformOperator::FitBatch(const std::shared_ptr<arrow::Table>& batch) {
+    std::vector<double> all, present;
+    std::vector<size_t> rows;
     for (size_t i = 0; i < resolved_.size(); ++i) {
-        std::vector<double> data;
         int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(batch, resolved_[i], GetName(), data, idx));
-        std::vector<DataTransform::ColumnMoments> moments;
-        std::string error;
-        if (!DataTransform::Moments({data}, moments, error)) {
-            return arrow::Status::Invalid(GetName() + ": column '" + resolved_[i] + "': " + error);
-        }
-        DataTransform::CombineMoments(moments_[i], moments[0]);
+        ARROW_RETURN_NOT_OK(ReadNumericDouble(batch, resolved_[i], GetName(), all, idx));
+        SplitPresent(all, present, rows);
+        if (!present.empty()) ARROW_RETURN_NOT_OK(FitValues(i, present));
     }
     fit_rows_ += batch->num_rows();
     return arrow::Status::OK();
 }
 
-arrow::Status StandardScalerOperator::EndFit() {
-    StandardizeOptions options;
-    options.with_mean = with_mean_;
-    options.with_std = with_std_;
+arrow::Status ColumnTransformOperator::EndFit() {
     state_.fit_rows = fit_rows_;
+    state_.features.clear();
     for (size_t i = 0; i < resolved_.size(); ++i) {
-        double mean = 0.0, denom = 1.0;
-        if (!DataTransform::StandardizeParameters(moments_[i], options, mean, denom)) {
-            return arrow::Status::Invalid(
-                GetName() + ": fitted non-finite statistics for column '" +
-                resolved_[i] + "'. Fill missing/non-finite values before "
-                "scaling.");
-        }
-        centers_.push_back(mean);
-        scales_.push_back(denom);
         PreprocessingFeatureState feature;
         feature.name = resolved_[i];
         feature.data_type = schema_->field(schema_->GetFieldIndex(resolved_[i]))->type()->ToString();
-        feature.numeric_values["mean"] = mean;
-        feature.numeric_values["scale"] = denom;
+        ARROW_RETURN_NOT_OK(EndColumnFit(i, feature));
         state_.features.push_back(std::move(feature));
     }
     return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>>
-StandardScalerOperator::ApplyBatch(const std::shared_ptr<arrow::Table>& batch) {
+arrow::Result<std::shared_ptr<arrow::Table>> ColumnTransformOperator::ApplyBatch(const std::shared_ptr<arrow::Table>& batch) {
     auto out = batch;
+    std::vector<double> all, present;
+    std::vector<size_t> rows;
     for (size_t i = 0; i < resolved_.size(); ++i) {
-        std::vector<double> data;
         int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, resolved_[i], GetName(), data, idx));
-        TransformResult scaled = DataTransform::ScaleColumns({std::move(data)}, {centers_[i]}, {scales_[i]});
-        if (!scaled.success) {
-            return arrow::Status::Invalid(GetName() + ": column '" + resolved_[i] + "': " + scaled.error_message);
+        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, resolved_[i], GetName(), all, idx));
+        SplitPresent(all, present, rows);
+        std::vector<double> transformed;
+        if (!present.empty()) {
+            ARROW_ASSIGN_OR_RAISE(transformed, TransformValues(i, std::move(present)));
+            if (transformed.size() != rows.size()) {
+                return arrow::Status::Invalid(GetName() + ": column '" + resolved_[i] + "' changed length");
+            }
         }
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
+        ARROW_ASSIGN_OR_RAISE(out, ReplaceKeepingMissing(out, idx, all.size(), rows, transformed));
     }
     return out;
 }
 
-arrow::Status StandardScalerOperator::EndStream() {
-    if (operation_mode_ == "fit_transform" && save_state_) {
+arrow::Status ColumnTransformOperator::EndStream() {
+    if (!options_.IsTransformOnly() && options_.save_state) {
         std::string state_error;
-        if (!SaveFittedPreprocessingState(
-                state_path_, state_, state_overwrite_, state_error)) {
-            return arrow::Status::IOError(
-                GetName() + ": failed to save fitted state: " + state_error);
+        if (!SaveFittedPreprocessingState(options_.state_path, state_, options_.state_overwrite, state_error)) {
+            return arrow::Status::IOError(GetName() + ": failed to save the fitted values: " + state_error);
         }
-        spdlog::info(
-            "[Preprocessing] StandardScaler saved fitted state '{}' "
-            "(fit_rows={}, features={}, schema={})",
-            state_path_, state_.fit_rows, state_.features.size(),
-            state_.input_schema_fingerprint);
+        spdlog::info("[Preprocessing] {} saved its fitted values '{}' (fit_rows={}, columns={})", GetName(),
+                     options_.state_path, state_.fit_rows, state_.features.size());
     }
-    spdlog::info(
-        "[Preprocessing] StandardScaler completed mode={} columns={} "
-        "(with_mean={}, with_std={})",
-        operation_mode_, resolved_.size(), with_mean_, with_std_);
+    spdlog::info("[Preprocessing] {} done: {} columns ({})", GetName(), resolved_.size(),
+                 options_.IsTransformOnly() ? "saved values" : "fitted here");
     return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>>
-StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
-    CYXWIZ_PROFILE_ZONE("CyxWiz StandardScaler Materializer");
-
+arrow::Result<std::shared_ptr<arrow::Table>> ColumnTransformOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz ColumnTransform Materializer");
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
-
-    ReportProgress(
-        progress_callback_, "Resolving columns",
-        "Resolving numeric columns for StandardScaler (" +
-            operation_mode_ + ")",
-        0.05);
+    ReportProgress(progress_callback_, "Resolving columns", "Resolving the columns for " + Describe(), 0.05);
     ARROW_RETURN_NOT_OK(BeginStream(input->schema()));
-    if (operation_mode_ != "transform_only") {
-        spdlog::info(
-            "[Preprocessing] StandardScaler Fit + Transform starting "
-            "(rows={}, features={}, save_state={}, state_path='{}')",
-            input->num_rows(), resolved_.size(), save_state_, state_path_);
-    }
-    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
-        EmitPreprocessingMemoryPreflight(
-            input, GetName(), static_cast<uint64_t>(resolved_.size()),
-            static_cast<uint64_t>(sizeof(double)),
-            "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
-            GetMaterializationMemoryContext(),
-            progress_callback_));
-    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
-    ReportProgress(progress_callback_, "Scaling columns",
-                   "Standard scaling " + std::to_string(resolved_.size()) + " columns",
+    ARROW_ASSIGN_OR_RAISE(auto preflight, EmitPreprocessingMemoryPreflight(
+        input, GetName(), static_cast<uint64_t>(resolved_.size()), static_cast<uint64_t>(sizeof(double)),
+        "reduce the selected rows or columns, or transform a sample first.", GetMaterializationMemoryContext(),
+        progress_callback_));
+    const uint64_t estimated_bytes = preflight.estimated_peak_bytes;
+    ReportProgress(progress_callback_, Describe(), Describe() + " of " + std::to_string(resolved_.size()) + " columns",
                    0.20, 0, static_cast<uint64_t>(resolved_.size()), estimated_bytes);
-
     // The whole table is one batch of the stream.
     if (NeedsFitPass()) {
         ARROW_RETURN_NOT_OK(FitBatch(input));
@@ -609,227 +550,421 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
     ARROW_ASSIGN_OR_RAISE(auto out, ApplyBatch(input));
     ARROW_RETURN_NOT_OK(EndStream());
-    ReportProgress(progress_callback_, "Complete",
-                   "StandardScaler materialization complete", 1.0,
-                   static_cast<uint64_t>(resolved_.size()),
+    ReportProgress(progress_callback_, "Complete", GetName() + " complete", 1.0, static_cast<uint64_t>(resolved_.size()),
                    static_cast<uint64_t>(resolved_.size()), estimated_bytes);
     return out;
+}
+
+// ============================================================================
+// StandardScalerOperator
+// ============================================================================
+
+bool StandardScalerOperator::ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) {
+    return ReadBoolParam(params, "with_mean", true, GetName(), with_mean_, error) &&
+           ReadBoolParam(params, "with_std", true, GetName(), with_std_, error);
+}
+
+std::map<std::string, std::string> StandardScalerOperator::Settings() const {
+    return {{"with_mean", with_mean_ ? "true" : "false"}, {"with_std", with_std_ ? "true" : "false"}};
+}
+
+void StandardScalerOperator::BeginFit(size_t columns) {
+    moments_.assign(columns, {});
+    centers_.assign(columns, 0.0);
+    scales_.assign(columns, 1.0);
+}
+
+arrow::Status StandardScalerOperator::FitValues(size_t column, const std::vector<double>& present) {
+    // Each batch's moments on the device, merged exactly (population std, scikit-learn).
+    std::vector<DataTransform::ColumnMoments> moments;
+    std::string error;
+    if (!DataTransform::Moments({present}, moments, error)) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + error);
+    }
+    DataTransform::CombineMoments(moments_[column], moments[0]);
+    return arrow::Status::OK();
+}
+
+arrow::Status StandardScalerOperator::EndColumnFit(size_t column, PreprocessingFeatureState& feature) {
+    StandardizeOptions options;
+    options.with_mean = with_mean_;
+    options.with_std = with_std_;
+    if (moments_[column].count < 1 ||
+        !DataTransform::StandardizeParameters(moments_[column], options, centers_[column], scales_[column])) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "' has no values to fit on");
+    }
+    feature.numeric_values["mean"] = centers_[column];
+    feature.numeric_values["scale"] = scales_[column];
+    return arrow::Status::OK();
+}
+
+arrow::Status StandardScalerOperator::LoadColumn(size_t column, const PreprocessingFeatureState& feature) {
+    const double mean = Saved(feature, "mean"), scale = Saved(feature, "scale");
+    if (!std::isfinite(mean) || !std::isfinite(scale) || scale <= 0.0) {
+        return arrow::Status::Invalid(GetName() + ": the saved values of column '" + feature.name +
+                                      "' are missing or invalid. Fit again.");
+    }
+    centers_[column] = mean;
+    scales_[column] = scale;
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::vector<double>> StandardScalerOperator::TransformValues(size_t column, std::vector<double> present) {
+    TransformResult scaled = DataTransform::ScaleColumns({std::move(present)}, {centers_[column]}, {scales_[column]});
+    if (!scaled.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + scaled.error_message);
+    return std::move(scaled.transformed_data[0]);
 }
 
 // ============================================================================
 // MinMaxScalerOperator
 // ============================================================================
 
-bool MinMaxScalerOperator::Configure(
-    const std::map<std::string, std::string>& params,
-    std::string& error) {
+bool MinMaxScalerOperator::ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) {
     range_min_ = 0.0;
     range_max_ = 1.0;
-
-    ParseColumnsAndLabel(params, columns_, label_col_);
-
-    auto mn = params.find("min");
-    if (mn != params.end() && !mn->second.empty()) {
-        try { range_min_ = std::stod(mn->second); }
-        catch (...) {
-            error = GetName() + ": 'min' is not a valid float: " + mn->second;
-            return false;
-        }
-    }
-    auto mx = params.find("max");
-    if (mx != params.end() && !mx->second.empty()) {
-        try { range_max_ = std::stod(mx->second); }
-        catch (...) {
-            error = GetName() + ": 'max' is not a valid float: " + mx->second;
-            return false;
-        }
-    }
+    if (!ReadDoubleParam(params, "min", range_min_, GetName(), error)) return false;
+    if (!ReadDoubleParam(params, "max", range_max_, GetName(), error)) return false;
     if (range_max_ <= range_min_) {
-        error = GetName() + ": max (" + std::to_string(range_max_) +
-                ") must be > min (" + std::to_string(range_min_) + ")";
+        error = GetName() + ": max (" + std::to_string(range_max_) + ") must be greater than min (" +
+                std::to_string(range_min_) + ")";
         return false;
     }
     return true;
 }
 
-arrow::Status MinMaxScalerOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
-    if (!schema) return arrow::Status::Invalid(GetName() + ": input is null");
-    ARROW_ASSIGN_OR_RAISE(auto empty, arrow::Table::MakeEmpty(schema));
-    resolved_.clear();
-    ARROW_RETURN_NOT_OK(ResolveNumericColumnList(empty, columns_, label_col_, GetName(), resolved_));
-    moments_.assign(resolved_.size(), {});
+std::map<std::string, std::string> MinMaxScalerOperator::Settings() const {
+    char lo[40], hi[40];
+    std::snprintf(lo, sizeof(lo), "%.17g", range_min_);
+    std::snprintf(hi, sizeof(hi), "%.17g", range_max_);
+    return {{"min", lo}, {"max", hi}};
+}
+
+void MinMaxScalerOperator::BeginFit(size_t columns) {
+    moments_.assign(columns, {});
+    lows_.assign(columns, 0.0);
+    highs_.assign(columns, 0.0);
+}
+
+arrow::Status MinMaxScalerOperator::FitValues(size_t column, const std::vector<double>& present) {
+    std::vector<DataTransform::ColumnMoments> moments;
+    std::string error;
+    if (!DataTransform::Moments({present}, moments, error)) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + error);
+    }
+    DataTransform::CombineMoments(moments_[column], moments[0]);
     return arrow::Status::OK();
 }
 
-arrow::Status MinMaxScalerOperator::FitBatch(const std::shared_ptr<arrow::Table>& batch) {
-    for (size_t i = 0; i < resolved_.size(); ++i) {
-        std::vector<double> data;
-        int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(batch, resolved_[i], GetName(), data, idx));
-        std::vector<DataTransform::ColumnMoments> moments;
-        std::string error;
-        if (!DataTransform::Moments({data}, moments, error)) {
-            return arrow::Status::Invalid(GetName() + ": column '" + resolved_[i] + "': " + error);
-        }
-        DataTransform::CombineMoments(moments_[i], moments[0]);
+arrow::Status MinMaxScalerOperator::EndColumnFit(size_t column, PreprocessingFeatureState& feature) {
+    if (moments_[column].count < 1) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "' has no values to fit on");
     }
+    lows_[column] = moments_[column].min;
+    highs_[column] = moments_[column].max;
+    feature.numeric_values["data_min"] = lows_[column];
+    feature.numeric_values["data_max"] = highs_[column];
     return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>>
-MinMaxScalerOperator::ApplyBatch(const std::shared_ptr<arrow::Table>& batch) {
-    auto out = batch;
-    for (size_t i = 0; i < resolved_.size(); ++i) {
-        std::vector<double> data;
-        int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, resolved_[i], GetName(), data, idx));
-        if (data.empty()) continue;
-        // One implementation with the Normalization tool, on the selected device.
-        TransformResult scaled = DataTransform::NormalizeColumns({std::move(data)}, {moments_[i].min},
-                                                                 {moments_[i].max}, range_min_, range_max_);
-        if (!scaled.success) {
-            return arrow::Status::Invalid(GetName() + ": column '" + resolved_[i] + "': " + scaled.error_message);
-        }
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
+arrow::Status MinMaxScalerOperator::LoadColumn(size_t column, const PreprocessingFeatureState& feature) {
+    const double lo = Saved(feature, "data_min"), hi = Saved(feature, "data_max");
+    if (!std::isfinite(lo) || !std::isfinite(hi) || hi < lo) {
+        return arrow::Status::Invalid(GetName() + ": the saved values of column '" + feature.name +
+                                      "' are missing or invalid. Fit again.");
     }
-    return out;
+    lows_[column] = lo;
+    highs_[column] = hi;
+    return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>>
-MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
-    CYXWIZ_PROFILE_ZONE("CyxWiz MinMaxScaler Materializer");
-    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
-    ReportProgress(progress_callback_, "Resolving columns",
-                   "Resolving numeric columns for MinMaxScaler", 0.05);
-    ARROW_RETURN_NOT_OK(BeginStream(input->schema()));
-    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
-        EmitPreprocessingMemoryPreflight(
-            input, GetName(), static_cast<uint64_t>(resolved_.size()),
-            static_cast<uint64_t>(sizeof(double)),
-            "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
-            GetMaterializationMemoryContext(),
-            progress_callback_));
-    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
-    ReportProgress(progress_callback_, "Scaling columns",
-                   "Min-max scaling " + std::to_string(resolved_.size()) + " columns",
-                   0.20, 0, static_cast<uint64_t>(resolved_.size()), estimated_bytes);
-    // The whole table is one batch of the stream.
-    ARROW_RETURN_NOT_OK(FitBatch(input));
-    ARROW_ASSIGN_OR_RAISE(auto out, ApplyBatch(input));
-    spdlog::info("MinMaxScaler: transformed {} columns to [{}, {}]",
-                 resolved_.size(), range_min_, range_max_);
-    ReportProgress(progress_callback_, "Complete",
-                   "MinMaxScaler materialization complete", 1.0,
-                   static_cast<uint64_t>(resolved_.size()),
-                   static_cast<uint64_t>(resolved_.size()), estimated_bytes);
-    return out;
+arrow::Result<std::vector<double>> MinMaxScalerOperator::TransformValues(size_t column, std::vector<double> present) {
+    // One implementation with the scaling tools, on the selected device.
+    TransformResult scaled = DataTransform::NormalizeColumns({std::move(present)}, {lows_[column]}, {highs_[column]},
+                                                             range_min_, range_max_);
+    if (!scaled.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + scaled.error_message);
+    return std::move(scaled.transformed_data[0]);
 }
 
 // ============================================================================
 // RobustScalerOperator
 // ============================================================================
 
-bool RobustScalerOperator::Configure(
-    const std::map<std::string, std::string>& params,
-    std::string& error) {
+bool RobustScalerOperator::ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) {
     quantile_min_ = 25.0;
     quantile_max_ = 75.0;
-
-    ParseColumnsAndLabel(params, columns_, label_col_);
-
-    if (!ReadBoolParam(params, "with_centering", true, GetName(),
-                       with_centering_, error)) return false;
-    if (!ReadBoolParam(params, "with_scaling", true, GetName(),
-                       with_scaling_, error)) return false;
-
-    auto qmin = params.find("quantile_min");
-    if (qmin != params.end() && !qmin->second.empty()) {
-        try { quantile_min_ = std::stod(qmin->second); }
-        catch (...) {
-            error = GetName() + ": 'quantile_min' is not a valid float: " + qmin->second;
-            return false;
-        }
-    }
-    auto qmax = params.find("quantile_max");
-    if (qmax != params.end() && !qmax->second.empty()) {
-        try { quantile_max_ = std::stod(qmax->second); }
-        catch (...) {
-            error = GetName() + ": 'quantile_max' is not a valid float: " + qmax->second;
-            return false;
-        }
-    }
-    if (quantile_min_ < 0.0 || quantile_min_ > 100.0 ||
-        quantile_max_ < 0.0 || quantile_max_ > 100.0 ||
-        quantile_max_ <= quantile_min_) {
-        error = GetName() + ": quantiles must satisfy 0 <= qmin < qmax <= 100 "
-                "(got qmin=" + std::to_string(quantile_min_) +
+    if (!ReadBoolParam(params, "with_centering", true, GetName(), with_centering_, error)) return false;
+    if (!ReadBoolParam(params, "with_scaling", true, GetName(), with_scaling_, error)) return false;
+    if (!ReadDoubleParam(params, "quantile_min", quantile_min_, GetName(), error)) return false;
+    if (!ReadDoubleParam(params, "quantile_max", quantile_max_, GetName(), error)) return false;
+    if (quantile_min_ < 0.0 || quantile_max_ > 100.0 || quantile_max_ <= quantile_min_) {
+        error = GetName() + ": quantiles must satisfy 0 <= qmin < qmax <= 100 (got qmin=" + std::to_string(quantile_min_) +
                 ", qmax=" + std::to_string(quantile_max_) + ")";
         return false;
     }
     return true;
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>>
-RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
-    CYXWIZ_PROFILE_ZONE("CyxWiz RobustScaler Materializer");
+std::map<std::string, std::string> RobustScalerOperator::Settings() const {
+    char lo[40], hi[40];
+    std::snprintf(lo, sizeof(lo), "%.17g", quantile_min_);
+    std::snprintf(hi, sizeof(hi), "%.17g", quantile_max_);
+    return {{"with_centering", with_centering_ ? "true" : "false"}, {"with_scaling", with_scaling_ ? "true" : "false"},
+            {"quantile_min", lo}, {"quantile_max", hi}};
+}
 
-    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
+void RobustScalerOperator::BeginFit(size_t columns) {
+    values_.assign(columns, {});
+    centers_.assign(columns, 0.0);
+    scales_.assign(columns, 1.0);
+}
 
-    ReportProgress(progress_callback_, "Resolving columns",
-                   "Resolving numeric columns for RobustScaler", 0.05);
-    std::vector<std::string> resolved;
-    ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
-        input, columns_, label_col_, GetName(), resolved));
-    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
-        EmitPreprocessingMemoryPreflight(
-            input, GetName(), static_cast<uint64_t>(resolved.size()),
-            static_cast<uint64_t>(sizeof(double)),
-            "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
-            GetMaterializationMemoryContext(),
-            progress_callback_));
-    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
-    ReportProgress(progress_callback_, "Columns resolved",
-                   "Resolved " + std::to_string(resolved.size()) +
-                   " columns for RobustScaler",
-                   0.15, 0, static_cast<uint64_t>(resolved.size()),
-                   estimated_bytes);
+arrow::Status RobustScalerOperator::FitValues(size_t column, const std::vector<double>& present) {
+    values_[column].insert(values_[column].end(), present.begin(), present.end());
+    return arrow::Status::OK();
+}
 
-    // One implementation with the scaling tools, on the selected device.
+arrow::Status RobustScalerOperator::EndColumnFit(size_t column, PreprocessingFeatureState& feature) {
+    if (values_[column].empty()) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "' has no values to fit on");
+    }
     RobustScaleOptions options;
     options.quantile_min = quantile_min_;
     options.quantile_max = quantile_max_;
     options.with_centering = with_centering_;
     options.with_scaling = with_scaling_;
-    auto out = input;
-    int transformed = 0;
-    for (const auto& name : resolved) {
-        ReportProgress(progress_callback_, "Scaling columns",
-                       "Robust scaling column '" + name + "'",
-                       0.20 + (0.70 * static_cast<double>(transformed) /
-                               static_cast<double>(resolved.size())),
-                       static_cast<uint64_t>(transformed),
-                       static_cast<uint64_t>(resolved.size()),
-                       estimated_bytes);
-        std::vector<double> data;
-        int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
-        TransformResult scaled = DataTransform::RobustScale({std::move(data)}, options);
-        if (!scaled.success) {
-            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + scaled.error_message);
-        }
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
-        transformed++;
-    }
+    // The fit on the device: the centre and scale RobustScale uses.
+    const TransformResult fitted = DataTransform::RobustScale({values_[column]}, options);
+    if (!fitted.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + fitted.error_message);
+    centers_[column] = fitted.params.at("col0_median");
+    scales_[column] = fitted.params.at("col0_iqr");
+    values_[column].clear();
+    values_[column].shrink_to_fit();
+    feature.numeric_values["center"] = centers_[column];
+    feature.numeric_values["scale"] = scales_[column];
+    return arrow::Status::OK();
+}
 
-    spdlog::info("RobustScaler: transformed {} columns (center={}, scale={}, "
-                 "q={}/{})",
-                 transformed, with_centering_, with_scaling_,
-                 quantile_min_, quantile_max_);
-    ReportProgress(progress_callback_, "Complete",
-                   "RobustScaler materialization complete", 1.0,
-                   static_cast<uint64_t>(transformed),
-                   static_cast<uint64_t>(resolved.size()), estimated_bytes);
-    return out;
+arrow::Status RobustScalerOperator::LoadColumn(size_t column, const PreprocessingFeatureState& feature) {
+    const double center = Saved(feature, "center"), scale = Saved(feature, "scale");
+    if (!std::isfinite(center) || !std::isfinite(scale) || scale <= 0.0) {
+        return arrow::Status::Invalid(GetName() + ": the saved values of column '" + feature.name +
+                                      "' are missing or invalid. Fit again.");
+    }
+    centers_[column] = center;
+    scales_[column] = scale;
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::vector<double>> RobustScalerOperator::TransformValues(size_t column, std::vector<double> present) {
+    TransformResult scaled = DataTransform::ScaleColumns({std::move(present)}, {centers_[column]}, {scales_[column]});
+    if (!scaled.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + scaled.error_message);
+    return std::move(scaled.transformed_data[0]);
+}
+
+// ============================================================================
+// MaxAbsScalerOperator
+// ============================================================================
+
+void MaxAbsScalerOperator::BeginFit(size_t columns) {
+    moments_.assign(columns, {});
+    scales_.assign(columns, 1.0);
+}
+
+arrow::Status MaxAbsScalerOperator::FitValues(size_t column, const std::vector<double>& present) {
+    std::vector<DataTransform::ColumnMoments> moments;
+    std::string error;
+    if (!DataTransform::Moments({present}, moments, error)) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + error);
+    }
+    DataTransform::CombineMoments(moments_[column], moments[0]);
+    return arrow::Status::OK();
+}
+
+arrow::Status MaxAbsScalerOperator::EndColumnFit(size_t column, PreprocessingFeatureState& feature) {
+    if (moments_[column].count < 1) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "' has no values to fit on");
+    }
+    const double max_abs = std::max(std::fabs(moments_[column].min), std::fabs(moments_[column].max));
+    scales_[column] = max_abs > 0.0 ? max_abs : 1.0;  // a column of zeros stays as it is (scikit-learn)
+    feature.numeric_values["max_abs"] = scales_[column];
+    return arrow::Status::OK();
+}
+
+arrow::Status MaxAbsScalerOperator::LoadColumn(size_t column, const PreprocessingFeatureState& feature) {
+    const double scale = Saved(feature, "max_abs");
+    if (!std::isfinite(scale) || scale <= 0.0) {
+        return arrow::Status::Invalid(GetName() + ": the saved values of column '" + feature.name +
+                                      "' are missing or invalid. Fit again.");
+    }
+    scales_[column] = scale;
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::vector<double>> MaxAbsScalerOperator::TransformValues(size_t column, std::vector<double> present) {
+    TransformResult scaled = DataTransform::ScaleColumns({std::move(present)}, {0.0}, {scales_[column]});
+    if (!scaled.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + scaled.error_message);
+    return std::move(scaled.transformed_data[0]);
+}
+
+// ============================================================================
+// QuantileTransformOperator
+// ============================================================================
+
+bool QuantileTransformOperator::ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) {
+    distribution_ = "uniform";
+    n_quantiles_ = 1000;
+    if (auto it = params.find("output_distribution"); it != params.end() && !TrimString(it->second).empty()) {
+        distribution_ = ToLowerAscii(TrimString(it->second));
+    }
+    if (distribution_ != "uniform" && distribution_ != "normal") {
+        error = GetName() + ": 'output_distribution' must be 'uniform' or 'normal' (got '" + distribution_ + "')";
+        return false;
+    }
+    double n = n_quantiles_;
+    if (!ReadDoubleParam(params, "n_quantiles", n, GetName(), error)) return false;
+    if (n < 2 || n > 100000 || n != std::floor(n)) {
+        error = GetName() + ": 'n_quantiles' must be a whole number from 2 to 100000";
+        return false;
+    }
+    n_quantiles_ = static_cast<int>(n);
+    return true;
+}
+
+std::map<std::string, std::string> QuantileTransformOperator::Settings() const {
+    return {{"output_distribution", distribution_}, {"n_quantiles", std::to_string(n_quantiles_)}};
+}
+
+void QuantileTransformOperator::BeginFit(size_t columns) {
+    values_.assign(columns, {});
+    quantiles_.assign(columns, {});
+}
+
+arrow::Status QuantileTransformOperator::FitValues(size_t column, const std::vector<double>& present) {
+    values_[column].insert(values_[column].end(), present.begin(), present.end());
+    return arrow::Status::OK();
+}
+
+arrow::Status QuantileTransformOperator::EndColumnFit(size_t column, PreprocessingFeatureState& feature) {
+    std::string error;
+    if (!DataTransform::QuantileFit(values_[column], n_quantiles_, quantiles_[column], error)) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + error);
+    }
+    values_[column].clear();
+    values_[column].shrink_to_fit();
+    feature.numeric_values["count"] = static_cast<double>(quantiles_[column].size());
+    for (size_t q = 0; q < quantiles_[column].size(); ++q) {
+        char key[16];
+        std::snprintf(key, sizeof(key), "q%05zu", q);
+        feature.numeric_values[key] = quantiles_[column][q];
+    }
+    return arrow::Status::OK();
+}
+
+arrow::Status QuantileTransformOperator::LoadColumn(size_t column, const PreprocessingFeatureState& feature) {
+    const double count = Saved(feature, "count");
+    std::vector<double> quantiles;
+    for (size_t q = 0; std::isfinite(count) && q < static_cast<size_t>(count); ++q) {
+        char key[16];
+        std::snprintf(key, sizeof(key), "q%05zu", q);
+        const double value = Saved(feature, key);
+        if (!std::isfinite(value) || (!quantiles.empty() && value < quantiles.back())) {
+            return arrow::Status::Invalid(GetName() + ": the saved quantiles of column '" + feature.name +
+                                          "' are missing or out of order. Fit again.");
+        }
+        quantiles.push_back(value);
+    }
+    if (quantiles.size() < 2) {
+        return arrow::Status::Invalid(GetName() + ": the saved values of column '" + feature.name + "' are missing. Fit again.");
+    }
+    quantiles_[column] = std::move(quantiles);
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::vector<double>> QuantileTransformOperator::TransformValues(size_t column, std::vector<double> present) {
+    TransformResult mapped = DataTransform::QuantileApply({std::move(present)}, {quantiles_[column]}, distribution_);
+    if (!mapped.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + mapped.error_message);
+    return std::move(mapped.transformed_data[0]);
+}
+
+// ============================================================================
+// PowerTransformOperator
+// ============================================================================
+
+bool PowerTransformOperator::ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) {
+    std::string family = "yeo-johnson", mode = "auto";
+    if (auto it = params.find("family"); it != params.end() && !TrimString(it->second).empty()) family = ToLowerAscii(TrimString(it->second));
+    if (auto it = params.find("lambda_mode"); it != params.end() && !TrimString(it->second).empty()) mode = ToLowerAscii(TrimString(it->second));
+    if (family != "box-cox" && family != "yeo-johnson") {
+        error = GetName() + ": 'family' must be 'box-cox' or 'yeo-johnson' (got '" + family + "')";
+        return false;
+    }
+    if (mode != "auto" && mode != "fixed") {
+        error = GetName() + ": 'lambda_mode' must be 'auto' or 'fixed' (got '" + mode + "')";
+        return false;
+    }
+    box_cox_ = family == "box-cox";
+    auto_lambda_ = mode == "auto";
+    lambda_ = 0.0;
+    if (!ReadDoubleParam(params, "lambda", lambda_, GetName(), error)) return false;
+    if (std::fabs(lambda_) > 10.0) {
+        error = GetName() + ": 'lambda' must be between -10 and 10";
+        return false;
+    }
+    return true;
+}
+
+std::map<std::string, std::string> PowerTransformOperator::Settings() const {
+    char lam[40];
+    std::snprintf(lam, sizeof(lam), "%.17g", lambda_);
+    return {{"family", box_cox_ ? "box-cox" : "yeo-johnson"}, {"lambda_mode", auto_lambda_ ? "auto" : "fixed"},
+            {"lambda", auto_lambda_ ? "" : lam}};
+}
+
+void PowerTransformOperator::BeginFit(size_t columns) {
+    values_.assign(columns, {});
+    lambdas_.assign(columns, lambda_);
+}
+
+arrow::Status PowerTransformOperator::FitValues(size_t column, const std::vector<double>& present) {
+    values_[column].insert(values_[column].end(), present.begin(), present.end());
+    return arrow::Status::OK();
+}
+
+arrow::Status PowerTransformOperator::EndColumnFit(size_t column, PreprocessingFeatureState& feature) {
+    const auto& x = values_[column];
+    if (x.empty()) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "' has no values to fit on");
+    if (box_cox_ && !DataTransform::CanApplyBoxCox(x)) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) +
+                                      "' has values of 0 or less; Box-Cox needs values above 0. Use Yeo-Johnson.");
+    }
+    if (auto_lambda_) {
+        const BoxCoxLambdaResult search = box_cox_ ? DataTransform::FindOptimalLambda(x) : DataTransform::FindOptimalYeoJohnsonLambda(x);
+        if (!search.success) return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + search.error_message);
+        lambdas_[column] = search.optimal_lambda;
+    }
+    values_[column].clear();
+    values_[column].shrink_to_fit();
+    feature.numeric_values["lambda"] = lambdas_[column];
+    return arrow::Status::OK();
+}
+
+arrow::Status PowerTransformOperator::LoadColumn(size_t column, const PreprocessingFeatureState& feature) {
+    const double lambda = Saved(feature, "lambda");
+    if (!std::isfinite(lambda)) {
+        return arrow::Status::Invalid(GetName() + ": the saved lambda of column '" + feature.name + "' is missing. Fit again.");
+    }
+    lambdas_[column] = lambda;
+    return arrow::Status::OK();
+}
+
+arrow::Result<std::vector<double>> PowerTransformOperator::TransformValues(size_t column, std::vector<double> present) {
+    TransformResult y = box_cox_ ? DataTransform::BoxCoxColumn(present, lambdas_[column], false)
+                                 : DataTransform::YeoJohnsonColumn(present, lambdas_[column], false);
+    if (!y.success) {
+        return arrow::Status::Invalid(GetName() + ": column '" + ColumnName(column) + "': " + y.error_message +
+                                      (box_cox_ ? " (Box-Cox needs values above 0; use Yeo-Johnson)" : ""));
+    }
+    return std::move(y.transformed_data[0]);
 }
 
 // ============================================================================

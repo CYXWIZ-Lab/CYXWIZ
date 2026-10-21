@@ -330,6 +330,10 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "RenameColumns",
         "RandomForestClassifier",
         "RobustScaler",
+        "MaxAbsScaler",
+        "MinMaxScaler",
+        "QuantileTransform",
+        "PowerTransform",
         "ROCCurveNode",
         "RowToColumnNames",
         "RuleEngine",
@@ -4909,6 +4913,25 @@ int main(int argc, char** argv) {
               std::string::npos,
           "MinMaxScaler columns validation should be specific: " +
               bad_minmax_scaler_column_type_executor.GetLastError());
+
+    // The fitted transforms of TOFIX129 D2 refuse a text column, as Min-Max does.
+    {
+        int id = 9301;
+        for (const std::string node : {"MaxAbsScaler", "QuantileTransform", "PowerTransform"}) {
+            const std::string json =
+                R"({"nodes":[)"
+                R"({"id":)" + std::to_string(id) + R"(,"type":"DataInput","name":"Input","parameters":{)"
+                R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+                R"(","type":"csv","has_header":"true"}},)"
+                R"({"id":)" + std::to_string(id + 1) + R"(,"type":")" + node + R"(","name":"Bad","parameters":{"columns":"phrase"}})"
+                R"(],"links":[{"start_node":)" + std::to_string(id) + R"(,"end_node":)" + std::to_string(id + 1) + "}]}";
+            cyxwiz::PipelineExecutor transform_executor;
+            Check(!transform_executor.ExecutePipeline(json), node + " string columns should fail schema validation");
+            Check(transform_executor.GetLastError().find(node + ": column 'phrase' must be numeric") != std::string::npos,
+                  node + " columns validation should be specific: " + transform_executor.GetLastError());
+            id += 2;
+        }
+    }
 
     const std::string bad_robust_scaler_centering_json =
         R"({"nodes":[)"

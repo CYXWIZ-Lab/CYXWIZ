@@ -2828,6 +2828,9 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::StandardScaler,
         NodeType::MinMaxScaler,
         NodeType::RobustScaler,
+        NodeType::MaxAbsScaler,
+        NodeType::QuantileTransform,
+        NodeType::PowerTransform,
         NodeType::LabelEncoder,
         NodeType::OrdinalEncoder,
         NodeType::TargetEncoder,
@@ -3019,7 +3022,10 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
 
     if (node.type == NodeType::StandardScaler ||
         node.type == NodeType::MinMaxScaler ||
-        node.type == NodeType::RobustScaler) {
+        node.type == NodeType::RobustScaler ||
+        node.type == NodeType::MaxAbsScaler ||
+        node.type == NodeType::QuantileTransform ||
+        node.type == NodeType::PowerTransform) {
         AddPreprocessingScalerTruth(report, node);
     }
 

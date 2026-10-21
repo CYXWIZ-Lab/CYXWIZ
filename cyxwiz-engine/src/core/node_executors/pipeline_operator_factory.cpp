@@ -170,6 +170,15 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::RobustScaler, []() {
         return std::make_unique<RobustScalerOperator>();
     });
+    RegisterCreator(gui::NodeType::MaxAbsScaler, []() {
+        return std::make_unique<MaxAbsScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::QuantileTransform, []() {
+        return std::make_unique<QuantileTransformOperator>();
+    });
+    RegisterCreator(gui::NodeType::PowerTransform, []() {
+        return std::make_unique<PowerTransformOperator>();
+    });
     RegisterCreator(gui::NodeType::LabelEncoder, []() {
         return std::make_unique<LabelEncoderOperator>();
     });

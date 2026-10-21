@@ -419,6 +419,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
                 return ICON_TI_RULER;
             case NodeType::LabelEncoder:
             case NodeType::OrdinalEncoder:
@@ -627,6 +630,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
                 return ICON_RI_SETTINGS;
 
@@ -989,6 +995,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
             case NodeType::Parameter:
                 return ICON_LU_SETTINGS;
@@ -1308,6 +1317,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
             case NodeType::Parameter:
                 return ICON_IO_SETTINGS;
@@ -1627,6 +1639,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
             case NodeType::Parameter:
                 return ICON_PH_GEAR;
@@ -2170,6 +2185,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::StandardScaler:
         case NodeType::MinMaxScaler:
         case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler:
+        case NodeType::QuantileTransform:
+        case NodeType::PowerTransform:
             return ICON_FA_SLIDERS;
         case NodeType::LabelEncoder:
         case NodeType::OrdinalEncoder:

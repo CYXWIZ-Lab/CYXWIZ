@@ -1625,6 +1625,9 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::MinMaxScaler:
         case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler:
+        case NodeType::QuantileTransform:
+        case NodeType::PowerTransform:
         case NodeType::LabelEncoder:
         case NodeType::OrdinalEncoder:
         case NodeType::TargetEncoder: {

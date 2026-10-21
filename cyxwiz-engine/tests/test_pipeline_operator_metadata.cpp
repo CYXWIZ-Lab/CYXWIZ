@@ -3056,7 +3056,9 @@ void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
 void CheckPreprocessingScalerEncoderFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const auto* minmax = metadata.GetMetadata(gui::NodeType::MinMaxScaler);
-    Check(minmax != nullptr && minmax->parameters.size() == 4,
+    // columns, label_col, exclude_columns, min, max + the four fitted-state
+    // parameters (TOFIX129 D2).
+    Check(minmax != nullptr && minmax->parameters.size() == 9,
           "MinMaxScaler should declare every operator parameter");
     Check(ParameterMatches(minmax, "columns", "string", "") &&
               ParameterMatches(minmax, "label_col", "string", "") &&
@@ -3065,7 +3067,7 @@ void CheckPreprocessingScalerEncoderFamilyContract(
           "MinMaxScaler metadata defaults should match its operator");
 
     const auto* robust = metadata.GetMetadata(gui::NodeType::RobustScaler);
-    Check(robust != nullptr && robust->parameters.size() == 6,
+    Check(robust != nullptr && robust->parameters.size() == 11,
           "RobustScaler should declare every operator parameter");
     Check(ParameterMatches(robust, "columns", "string", "") &&
               ParameterMatches(robust, "label_col", "string", "") &&
@@ -3074,6 +3076,26 @@ void CheckPreprocessingScalerEncoderFamilyContract(
               ParameterMatches(robust, "quantile_min", "float", "25") &&
               ParameterMatches(robust, "quantile_max", "float", "75"),
           "RobustScaler metadata defaults should match its operator");
+    for (const auto type : {gui::NodeType::MinMaxScaler, gui::NodeType::RobustScaler,
+                            gui::NodeType::MaxAbsScaler, gui::NodeType::QuantileTransform,
+                            gui::NodeType::PowerTransform}) {
+        const auto* fitted = metadata.GetMetadata(type);
+        Check(fitted != nullptr && ParameterMatches(fitted, "exclude_columns", "string", "") &&
+                  ParameterMatches(fitted, "operation_mode", "enum", "fit_transform") &&
+                  ParameterMatches(fitted, "save_state", "bool", "false") &&
+                  ParameterMatches(fitted, "state_path", "file", "") &&
+                  ParameterMatches(fitted, "state_overwrite", "bool", "false"),
+              "every fitted column transform should declare the fitted-state parameters");
+    }
+    const auto* quantile = metadata.GetMetadata(gui::NodeType::QuantileTransform);
+    Check(ParameterMatches(quantile, "output_distribution", "enum", "uniform") &&
+              ParameterMatches(quantile, "n_quantiles", "int", "1000"),
+          "QuantileTransform metadata defaults should match its operator");
+    const auto* power = metadata.GetMetadata(gui::NodeType::PowerTransform);
+    Check(ParameterMatches(power, "family", "enum", "yeo-johnson") &&
+              ParameterMatches(power, "lambda_mode", "enum", "auto") &&
+              ParameterMatches(power, "lambda", "float", "0"),
+          "PowerTransform metadata defaults should match its operator");
 
     const auto* label = metadata.GetMetadata(gui::NodeType::LabelEncoder);
     const auto* ordinal = metadata.GetMetadata(gui::NodeType::OrdinalEncoder);
