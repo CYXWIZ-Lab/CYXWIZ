@@ -133,6 +133,7 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/panels/analytics_panel.cpp
         src/gui/panels/fine_tuning_panel.cpp
         src/gui/panels/login_panel.cpp
+        src/core/sign_in_presentation.cpp
         src/gui/panels/account_settings_panel.cpp
         # Authentication
         src/auth/auth_manager.cpp
@@ -423,6 +424,16 @@ if(CYXWIZ_BUILD_TESTS)
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     endif()
+
+    # Sign-in screen words and states (TOFIX139): pure presentation model
+    add_executable(test_sign_in_presentation
+        tests/test_sign_in_presentation.cpp
+        src/core/sign_in_presentation.cpp
+    )
+    target_include_directories(test_sign_in_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_sign_in_presentation PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_sign_in_presentation PRIVATE cxx_std_17)
+    add_test(NAME test_sign_in_presentation COMMAND test_sign_in_presentation)
 
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
