@@ -130,6 +130,12 @@ void PrepareView::SetGraph(::gui::NodeEditor* editor, const std::vector<studio::
         // A run puts the inputs in memory: the operations see their columns.
         guided_.SetInputs(StepInputs(loaded_));
     }
+    // A step just added (Add a step, Data > Transform) is picked once it is on the canvas.
+    if (pick_after_ != -2 && editor_ && editor_->LastAddedStep() != pick_after_ && NodeById(editor_->LastAddedStep())) {
+        Select(editor_->LastAddedStep());
+        if (pick_compare_) transform_.CompareOn(selected_);
+        pick_after_ = -2;
+    }
     // A step replaced (a method switch) stays picked as its new node.
     if (selected_ >= 0 && !NodeById(selected_) && editor_ && editor_->ReplacedBy(selected_) >= 0) selected_ = editor_->ReplacedBy(selected_);
     const bool still_there = std::any_of(steps_.begin(), steps_.end(), [&](const studio::StepRow& r) { return r.id == selected_; });
@@ -277,8 +283,25 @@ void PrepareView::OpenInDialog(int step_id) {
     if (recipe >= 0) editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::OpenStep, step_id);
 }
 
+void PrepareView::PickWhenAdded(bool compare) {
+    pick_after_ = editor_ ? editor_->LastAddedStep() : -2;
+    pick_compare_ = compare;
+}
+
+void PrepareView::AddAfter(int after, ::gui::NodeType type, std::map<std::string, std::string> parameters, bool compare) {
+    if (!editor_) return;
+    PickWhenAdded(compare);
+    editor_->RequestStepAfter(after, type, {}, std::move(parameters));
+    const auto* meta = NodeMetadataRegistry::Instance().GetMetadata(type);
+    const auto* from = NodeById(after);
+    message_ = "Added a " + (meta ? meta->name : std::string("step")) + " step after " +
+               (from ? from->name : std::string("the data")) + " (Ctrl+Z on the canvas undoes it).";
+    message_error_ = false;
+}
+
 void PrepareView::AddStepAfter(int step_id, ::gui::NodeType type, bool guided) {
     if (!editor_) return;
+    PickWhenAdded(false);
     // A step is added on the canvas: a collapsed recipe opens first.
     if (!editor_->GetNodeForConfiguration(step_id)) {
         const int recipe = RecipeOf(step_id);
@@ -287,13 +310,13 @@ void PrepareView::AddStepAfter(int step_id, ::gui::NodeType type, bool guided) {
     if (type != ::gui::NodeType::SQLQuery) {
         editor_->RequestStepAfter(step_id, type);
         const auto* meta = NodeMetadataRegistry::Instance().GetMetadata(type);
-        message_ = "Added a " + (meta ? meta->name : std::string("step")) + " node after this one; pick it in the list, its settings are in its dialog.";
+        message_ = "Added a " + (meta ? meta->name : std::string("step")) + " node after this one (Ctrl+Z on the canvas undoes it).";
     } else if (guided) {
         editor_->RequestGuidedStepAfter(step_id);
-        message_ = "Added a guided step after this one; pick it in the list to add its operations.";
+        message_ = "Added a guided step after this one; add its operations.";
     } else {
         editor_->RequestSqlStepAfter(step_id, "SQL step", "SELECT *\nFROM input");
-        message_ = "Added an SQL step after this one; pick it in the list to write its query.";
+        message_ = "Added an SQL step after this one; write its query.";
     }
     // It joins the step list here; the canvas shows it when you go there.
     message_error_ = false;
@@ -313,12 +336,21 @@ void PrepareView::RenderAddStepMenu(int step_id) {
     static const NodeType kCommon[] = {NodeType::FilterRows, NodeType::JoinTables, NodeType::GroupByAggregate, NodeType::TextCleanNode};
     for (const NodeType type : kCommon)
         if (const auto* meta = registry.GetMetadata(type)) item(*meta);
+    // Scaling and shape (TOFIX129 D2): a Scale step's view switches between the scalers.
+    if (ImGui::BeginMenu("Scale and transform")) {
+        if (ImGui::MenuItem("Scale (Z-score, Min-Max, Robust, Max-Abs, Quantile)")) AddStepAfter(step_id, NodeType::StandardScaler);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds a Z-score step; its Method switch picks another scaler");
+        if (ImGui::MenuItem("Log transform")) AddStepAfter(step_id, NodeType::LogTransform);
+        if (ImGui::MenuItem("Power transform (Box-Cox, Yeo-Johnson)")) AddStepAfter(step_id, NodeType::PowerTransform);
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("More nodes")) {
         std::vector<const NodeMetadata*> more;
         for (const auto* meta : registry.GetAllMetadata()) {
             studio::Job job;
             if (!meta || meta->status != NodeImplementationStatus::Implemented || !studio::JobOf(meta->type, job) ||
                 job != studio::Job::Prepare || meta->type == NodeType::SQLQuery || meta->type == NodeType::Subgraph ||
+                transform_step::KindOf(meta->type) != transform_step::Kind::None ||
                 std::find(std::begin(kCommon), std::end(kCommon), meta->type) != std::end(kCommon))
                 continue;
             more.push_back(meta);
@@ -392,11 +424,7 @@ void PrepareView::Render() {
         return;
     }
     if (recipes_.empty() && loose_.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "This graph has no preparation steps yet.");
-        ImGui::TextColored(t.text_faint, "Explore > Query's \"Turn into SQL step\" adds one after a step of the graph; on the canvas, "
-                                         "an SQL Query node after a Data Input, grouped as a Preparation Recipe, is a recipe.");
-        ImGui::PopTextWrapPos();
+        RenderEmpty();
         return;
     }
     const float height = ImGui::GetContentRegionAvail().y;
@@ -413,6 +441,43 @@ void PrepareView::Render() {
         ImGui::PopID();
     }
     ImGui::EndChild();
+}
+
+// No steps yet: Add a step after a Data Input (found while drawing the D2
+// mockup: before, Prepare said so and offered nothing).
+void PrepareView::RenderEmpty() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::TextColored(t.text_dim, "This graph has no preparation steps yet.");
+    std::vector<const studio::GraphNode*> inputs;
+    for (const auto& n : nodes_)
+        if (n.type == ::gui::NodeType::DataInput) inputs.push_back(&n);
+    if (inputs.empty()) {
+        ImGui::TextColored(t.text_faint, "Bring in data first: a Data Input node (Bring in).");
+    } else {
+        const std::string label = inputs.size() == 1 ? "Add a step after " + inputs.front()->name + " " ICON_FA_CARET_DOWN
+                                                     : std::string("Add a step after " ICON_FA_CARET_DOWN);
+        if (ui::SecondaryButton(label.c_str())) ImGui::OpenPopup("##add_first_step");
+        if (ImGui::BeginPopup("##add_first_step")) {
+            if (inputs.size() == 1) {
+                RenderAddStepMenu(inputs.front()->id);
+            } else {
+                for (const auto* input : inputs) {
+                    ImGui::PushID(input->id);
+                    if (ImGui::BeginMenu(input->name.c_str())) {
+                        RenderAddStepMenu(input->id);
+                        ImGui::EndMenu();
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "or Explore > Query's \"Turn into SQL step\". On the canvas, an SQL Query node after a "
+                                     "Data Input, grouped as a Preparation Recipe, is a recipe.");
+    if (!message_.empty()) ImGui::TextColored(message_error_ ? t.error : t.text_dim, "%s", message_.c_str());
+    ImGui::PopTextWrapPos();
 }
 
 void PrepareView::RenderSteps(float height) {

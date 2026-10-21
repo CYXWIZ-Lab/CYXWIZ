@@ -197,6 +197,10 @@ void TransformStepView::Render(::gui::NodeEditor* editor, const studio::GraphNod
         figures_.Reset();
         compare_.Reset();
     }
+    if (compare_on_ == node.id) {
+        compare_on_ = -1;
+        comparing_ = true;
+    }
     const ::gui::MLNode* step = editor ? editor->FindStep(node.id) : nullptr;
     if (!step) return;
     const std::map<std::string, std::string> params = step->parameters;  // Set changes the node
@@ -615,11 +619,12 @@ void TransformStepView::RenderCompare(const studio::GraphNode& node, const studi
     ImGui::TextColored(t.text_bright, "Compare methods");
     ImGui::SameLine();
     if (compare_column_.empty() && !number_columns_.empty()) compare_column_ = number_columns_.front();
-    ImGui::TextColored(t.text_faint, "%s through every scaling method (preview; nothing is added)", compare_column_.c_str());
+    ImGui::TextColored(t.text_faint, "%s", compare_column_.empty() ? "every scaling method on one column (preview; nothing is added)"
+                                                               : (compare_column_ + " through every scaling method (preview; nothing is added)").c_str());
     ui::SameLineRight(ui::ButtonWidth(ICON_FA_ARROW_LEFT " Back to the step", ui::ButtonSize::Small));
     if (ui::LinkButton(ICON_FA_ARROW_LEFT " Back to the step")) comparing_ = false;
     if (ResultOf(input).empty()) {
-        Faint("Run the step's input first: Compare reads its values.");
+        Faint("Run step first: Compare reads the values of the step's input.");
         return;
     }
     Label("Column");

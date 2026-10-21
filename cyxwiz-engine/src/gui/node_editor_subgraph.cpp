@@ -686,6 +686,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         RebuildPinLookup();
         ClearValidationState();
         deferred_focus_ = {step_id, 2};
+        last_added_step_ = step_id;
         spdlog::info("Added {} node {} reading node {}", kind, step_id, after_id);
         return;
     }
@@ -773,6 +774,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     RebuildPinLookup();
     ClearValidationState();
     deferred_focus_ = {step_id, 2};
+    last_added_step_ = step_id;
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
     if (request.open_dialog) OpenNodeConfiguration(step_id);
 }

@@ -67,6 +67,12 @@ public:
     // Explore, Profile's missing counts).
     void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});
 
+    // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
+    // after the data in use (a Data Input or a node's result; the graph's
+    // only Data Input when none is picked), picked; `compare` opens Compare
+    // methods on it (Feature Scaling).
+    void AddTransformStep(::gui::NodeType type, std::map<std::string, std::string> parameters = {}, bool compare = false);
+
     // Opens Explore > Query on a dataset with this SQL in the editor (a
     // dashboard's "Open in Data Studio", the Asset Browser); it runs.
     void ShowQuery(const std::string& dataset_name, const std::string& sql);

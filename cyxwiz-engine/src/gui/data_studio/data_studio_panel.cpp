@@ -146,6 +146,30 @@ std::string DataStudioPanel::AddKeepRowsStep(const std::string& column, const st
     return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it).";
 }
 
+void DataStudioPanel::AddTransformStep(::gui::NodeType type, std::map<std::string, std::string> parameters, bool compare) {
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Prepare;
+    if (!prepare_ || !node_editor_) return;
+    const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+    if (!from) {
+        std::vector<const studio::GraphNode*> inputs;
+        for (const auto& n : graph_nodes_)
+            if (n.type == ::gui::NodeType::DataInput) inputs.push_back(&n);
+        if (inputs.empty()) {
+            prepare_->Notice("Nothing to transform yet: bring in data first (a Data Input node).");
+            return;
+        }
+        if (inputs.size() > 1) {
+            prepare_->Notice("Pick the data to transform in the rail (a Data Input or a node's result), then choose "
+                             "Data > Transform again, or use Add a step.");
+            return;
+        }
+        from = inputs.front();
+    }
+    prepare_->AddAfter(from->id, type, std::move(parameters), compare);
+}
+
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     if (query_editor_) query_editor_->SetActiveDataset(dataset_name);

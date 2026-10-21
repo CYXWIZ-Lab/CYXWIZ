@@ -1924,40 +1924,21 @@ MainWindow::MainWindow()
         }
     });
 
-    // Data Transformation callbacks (Phase 6C)
+    // Data > Transform: a step in Data Studio's Prepare (TOFIX129 D2; the old windows are gone).
     toolbar_->SetOpenNormalizationCallback([this]() {
-        if (normalization_panel_) {
-            normalization_panel_->Toggle();
-            spdlog::info("Toggled Normalization panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::MinMaxScaler);
     });
-
     toolbar_->SetOpenStandardizationCallback([this]() {
-        if (standardization_panel_) {
-            standardization_panel_->Toggle();
-            spdlog::info("Toggled Standardization panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::StandardScaler);
     });
-
     toolbar_->SetOpenLogTransformCallback([this]() {
-        if (log_transform_panel_) {
-            log_transform_panel_->Toggle();
-            spdlog::info("Toggled Log Transform panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::LogTransform);
     });
-
     toolbar_->SetOpenBoxCoxCallback([this]() {
-        if (boxcox_panel_) {
-            boxcox_panel_->Toggle();
-            spdlog::info("Toggled Box-Cox panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::PowerTransform, {{"family", "box-cox"}});
     });
-
     toolbar_->SetOpenFeatureScalingCallback([this]() {
-        if (feature_scaling_panel_) {
-            feature_scaling_panel_->Toggle();
-            spdlog::info("Toggled Feature Scaling panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::StandardScaler, {}, true);
     });
 
     // Linear Algebra callbacks (Phase 7)

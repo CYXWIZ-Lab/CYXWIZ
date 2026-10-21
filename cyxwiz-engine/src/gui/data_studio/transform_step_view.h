@@ -28,6 +28,8 @@ class TransformStepView {
 public:
     // `input`: the node feeding the step (null when none).
     void Render(::gui::NodeEditor* editor, const studio::GraphNode& node, const studio::GraphNode* input);
+    // Opens Compare methods when the step `step_id` shows (Data > Transform > Feature Scaling).
+    void CompareOn(int step_id) { compare_on_ = step_id; }
 
 private:
     void RenderHeader(const studio::GraphNode& node, const studio::GraphNode* input,
@@ -50,6 +52,7 @@ private:
     std::string figures_key_;
     ExploreJob<transform_step::CompareFigures> compare_;
     bool comparing_ = false;
+    int compare_on_ = -1;
     std::string compare_column_;
     std::string column_;  // the picked column (histograms, curve)
     // The input's number columns (Pick columns), by dataset.

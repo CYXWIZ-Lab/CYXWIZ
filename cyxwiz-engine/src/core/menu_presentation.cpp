@@ -577,12 +577,17 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Action(f, "data.missing_values", "Missing Value Analysis", "Opens Data Studio's Missing tab: incomplete rows and the columns that go missing together."),
                          Action(f, "data.outliers", "Outlier Detection", "Opens Data Studio's Outliers tab: values far from the rest, by IQR, Z-score or Modified Z."),
                          Action(f, "data.correlation", "Correlation Matrix", "Opens Data Studio's Correlation tab: how the number columns move together.")}));
-        i.push_back(Sub("data.transform", "Transform", "Rescale or reshape columns.",
-                        {Tool(f, "data.normalization", "Normalization (Min-Max)"),
-                         Tool(f, "data.standardization", "Standardization (Z-Score)"),
-                         Tool(f, "data.log_transform", "Log Transform"),
-                         Tool(f, "data.boxcox", "Box-Cox Transform"),
-                         Tool(f, "data.feature_scaling", "Feature Scaling (All Methods)")}));
+        i.push_back(Sub("data.transform", "Transform", "Rescale or reshape columns: each adds a step in Data Studio's Prepare.",
+                        {Action(f, "data.normalization", "Normalization (Min-Max)",
+                                "Adds a Min-Max Scaler step in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.standardization", "Standardization (Z-Score)",
+                                "Adds a Z-score (Standard Scaler) step in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.log_transform", "Log Transform",
+                                "Adds a Log Transform step in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.boxcox", "Box-Cox Transform",
+                                "Adds a Power Transform step (Box-Cox) in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.feature_scaling", "Feature Scaling (All Methods)",
+                                "Adds a scaling step in Data Studio's Prepare and compares every method on it.")}));
         i.push_back(Tool(f, "tools.tokenization", "Tokenization"));
         i.push_back(Planned(f, "data.augment", "Augment", "Data augmentation."));
         model.menus.push_back(std::move(m));

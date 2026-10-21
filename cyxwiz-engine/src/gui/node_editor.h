@@ -672,6 +672,9 @@ public:
     void RequestReplaceStep(int step_id, NodeType type, std::map<std::string, std::string> parameters = {}) {
         pending_replacements_.push_back({step_id, type, std::move(parameters)});
     }
+    // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
+    // yet); Data Studio's Prepare picks it once it is on the canvas.
+    int LastAddedStep() const { return last_added_step_; }
     int ReplacedBy(int old_id) const {
         const auto it = replaced_by_.find(old_id);
         return it == replaced_by_.end() ? -1 : it->second;
@@ -1067,6 +1070,7 @@ private:
     };
     std::vector<PendingReplacement> pending_replacements_;
     std::map<int, int> replaced_by_;  // old node -> the node that replaced it
+    int last_added_step_ = -1;
     void ReplaceStep(const PendingReplacement& request);
     void ApplyStepAfterInsert();
     int pending_open_node_id_ = -1;
