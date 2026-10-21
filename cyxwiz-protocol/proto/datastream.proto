@@ -1,19 +1,25 @@
 syntax = "proto3";
 
-package cyxwiz.protocol;
+// CyxCloud gateway's DataStreamService, as the gateway serves it (package
+// cyxcloud.datastream). This file is a copy of cyx_cloud/cyxcloud-protocol/
+// proto/datastream.proto (cyx_cloud branch distributed-training, 2026-10-22);
+// keep it identical to that file - gRPC routes by package and service name
+// (TOFIX164 slice 1c).
 
-// DataStream service for zero-copy ML training data streaming from CyxCloud
+package cyxcloud.datastream;
+
+// DataStream service for zero-copy ML training data streaming
 service DataStreamService {
     // Stream batches for training
-    rpc StreamBatches(StreamBatchesRequest) returns (stream StreamBatchResponse);
+    rpc StreamBatches(StreamBatchesRequest) returns (stream BatchResponse);
 
     // Get dataset metadata
-    rpc GetDatasetInfo(GetDatasetInfoRequest) returns (CloudDatasetInfoResponse);
+    rpc GetDatasetInfo(GetDatasetInfoRequest) returns (DatasetInfoResponse);
 
     // List user's datasets (owned + shared)
     rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
 
-    // Create a new dataset from uploaded files
+    // Create a new dataset from existing files
     rpc CreateDataset(CreateDatasetRequest) returns (CreateDatasetResponse);
 
     // Create access token for direct node access
@@ -31,10 +37,11 @@ service DataStreamService {
     // List public datasets (MNIST, CIFAR, ImageNet, etc.)
     rpc ListPublicDatasets(ListPublicDatasetsRequest) returns (ListPublicDatasetsResponse);
 
-    // Upload file to CyxCloud (for creating datasets)
+    // Upload a file (metadata first, then chunks) into the caller's own
+    // bucket; the file_id can then go into CreateDataset (TOFIX164).
     rpc UploadFile(stream UploadFileRequest) returns (UploadFileResponse);
 
-    // Delete a dataset
+    // Delete a dataset the caller owns (its files stay in the bucket)
     rpc DeleteDataset(DeleteDatasetRequest) returns (DeleteDatasetResponse);
 }
 
@@ -62,7 +69,7 @@ message StreamBatchesRequest {
     int64 seed = 8;                 // For reproducible shuffling
 }
 
-message StreamBatchResponse {
+message BatchResponse {
     uint64 batch_index = 1;
     repeated bytes items = 2;       // Raw data for each item in batch
     repeated bytes item_hashes = 3; // Blake3 hash of each item for verification
@@ -79,7 +86,7 @@ message GetDatasetInfoRequest {
     string dataset_id = 1;
 }
 
-message CloudDatasetInfoResponse {
+message DatasetInfoResponse {
     DatasetInfo dataset = 1;
     repeated DatasetFileInfo files = 2;
 }
@@ -131,7 +138,7 @@ message ListDatasetsResponse {
 message CreateDatasetRequest {
     string name = 1;
     string description = 2;
-    repeated string file_ids = 3;   // UUIDs of uploaded files to include
+    repeated string file_ids = 3;   // UUIDs of files to include
     string schema_json = 4;         // Optional schema definition
 }
 
@@ -259,7 +266,7 @@ message UploadFileMetadata {
     string filename = 1;
     int64 size_bytes = 2;
     string content_type = 3;          // MIME type
-    bytes content_hash = 4;           // Blake3 hash for verification
+    bytes content_hash = 4;           // Blake3 hash for verification (optional)
 }
 
 message UploadFileResponse {

@@ -81,7 +81,7 @@ bool DataStreamClient::Connect(const std::string& gateway_address) {
             return false;
         }
 
-        stub_ = cyxwiz::protocol::DataStreamService::NewStub(channel_);
+        stub_ = cyxcloud::datastream::DataStreamService::NewStub(channel_);
         if (!stub_) {
             last_error_ = "Failed to create stub";
             return false;
@@ -110,18 +110,18 @@ void DataStreamClient::AddAuthMetadata(grpc::ClientContext& context) {
     }
 }
 
-TrustLevel DataStreamClient::ConvertTrustLevel(cyxwiz::protocol::TrustLevel proto) {
+TrustLevel DataStreamClient::ConvertTrustLevel(cyxcloud::datastream::TrustLevel proto) {
     switch (proto) {
-        case cyxwiz::protocol::TRUST_SELF: return TrustLevel::Self;
-        case cyxwiz::protocol::TRUST_SIGNED: return TrustLevel::Signed;
-        case cyxwiz::protocol::TRUST_VERIFIED: return TrustLevel::Verified;
-        case cyxwiz::protocol::TRUST_ATTESTED: return TrustLevel::Attested;
-        case cyxwiz::protocol::TRUST_UNTRUSTED: return TrustLevel::Untrusted;
+        case cyxcloud::datastream::TRUST_SELF: return TrustLevel::Self;
+        case cyxcloud::datastream::TRUST_SIGNED: return TrustLevel::Signed;
+        case cyxcloud::datastream::TRUST_VERIFIED: return TrustLevel::Verified;
+        case cyxcloud::datastream::TRUST_ATTESTED: return TrustLevel::Attested;
+        case cyxcloud::datastream::TRUST_UNTRUSTED: return TrustLevel::Untrusted;
         default: return TrustLevel::Untrusted;
     }
 }
 
-CloudDatasetInfo DataStreamClient::ConvertDatasetInfo(const cyxwiz::protocol::DatasetInfo& proto) {
+CloudDatasetInfo DataStreamClient::ConvertDatasetInfo(const cyxcloud::datastream::DatasetInfo& proto) {
     CloudDatasetInfo info;
     info.id = proto.id();
     info.name = proto.name();
@@ -142,7 +142,7 @@ CloudDatasetInfo DataStreamClient::ConvertDatasetInfo(const cyxwiz::protocol::Da
     return info;
 }
 
-CloudFileInfo DataStreamClient::ConvertFileInfo(const cyxwiz::protocol::DatasetFileInfo& proto) {
+CloudFileInfo DataStreamClient::ConvertFileInfo(const cyxcloud::datastream::DatasetFileInfo& proto) {
     CloudFileInfo info;
     info.id = proto.id();
     info.path = proto.path_in_dataset();
@@ -156,7 +156,7 @@ CloudFileInfo DataStreamClient::ConvertFileInfo(const cyxwiz::protocol::DatasetF
     return info;
 }
 
-PublicDatasetInfo DataStreamClient::ConvertPublicDatasetInfo(const cyxwiz::protocol::PublicDatasetInfo& proto) {
+PublicDatasetInfo DataStreamClient::ConvertPublicDatasetInfo(const cyxcloud::datastream::PublicDatasetInfo& proto) {
     PublicDatasetInfo info;
     info.id = proto.id();
     info.name = proto.name();
@@ -191,13 +191,13 @@ bool DataStreamClient::ListDatasets(std::vector<CloudDatasetInfo>& out_datasets,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::ListDatasetsRequest request;
+    cyxcloud::datastream::ListDatasetsRequest request;
     request.set_limit(limit);
     request.set_offset(offset);
     request.set_include_shared(include_shared);
     request.set_max_trust_level(static_cast<int32_t>(max_trust_level));
 
-    cyxwiz::protocol::ListDatasetsResponse response;
+    cyxcloud::datastream::ListDatasetsResponse response;
     grpc::Status status = stub_->ListDatasets(&context, request, &response);
 
     if (!status.ok()) {
@@ -226,10 +226,10 @@ bool DataStreamClient::GetDatasetInfo(const std::string& dataset_id,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::GetDatasetInfoRequest request;
+    cyxcloud::datastream::GetDatasetInfoRequest request;
     request.set_dataset_id(dataset_id);
 
-    cyxwiz::protocol::CloudDatasetInfoResponse response;
+    cyxcloud::datastream::DatasetInfoResponse response;
     grpc::Status status = stub_->GetDatasetInfo(&context, request, &response);
 
     if (!status.ok()) {
@@ -258,10 +258,10 @@ bool DataStreamClient::ListPublicDatasets(std::vector<PublicDatasetInfo>& out_da
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::ListPublicDatasetsRequest request;
+    cyxcloud::datastream::ListPublicDatasetsRequest request;
     request.set_name_filter(name_filter);
 
-    cyxwiz::protocol::ListPublicDatasetsResponse response;
+    cyxcloud::datastream::ListPublicDatasetsResponse response;
     grpc::Status status = stub_->ListPublicDatasets(&context, request, &response);
 
     if (!status.ok()) {
@@ -296,7 +296,7 @@ bool DataStreamClient::CreateDataset(const std::string& name,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::CreateDatasetRequest request;
+    cyxcloud::datastream::CreateDatasetRequest request;
     request.set_name(name);
     request.set_description(description);
     for (const auto& id : file_ids) {
@@ -304,7 +304,7 @@ bool DataStreamClient::CreateDataset(const std::string& name,
     }
     request.set_schema_json(schema_json);
 
-    cyxwiz::protocol::CreateDatasetResponse response;
+    cyxcloud::datastream::CreateDatasetResponse response;
     grpc::Status status = stub_->CreateDataset(&context, request, &response);
 
     if (!status.ok()) {
@@ -325,10 +325,10 @@ bool DataStreamClient::DeleteDataset(const std::string& dataset_id) {
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::DeleteDatasetRequest request;
+    cyxcloud::datastream::DeleteDatasetRequest request;
     request.set_dataset_id(dataset_id);
 
-    cyxwiz::protocol::DeleteDatasetResponse response;
+    cyxcloud::datastream::DeleteDatasetResponse response;
     grpc::Status status = stub_->DeleteDataset(&context, request, &response);
 
     if (!status.ok()) {
@@ -356,7 +356,7 @@ bool DataStreamClient::ShareDataset(const std::string& dataset_id,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::ShareDatasetRequest request;
+    cyxcloud::datastream::ShareDatasetRequest request;
     request.set_dataset_id(dataset_id);
     request.set_share_with_user_id(share_with_user_id);
     for (const auto& p : permissions) {
@@ -364,7 +364,7 @@ bool DataStreamClient::ShareDataset(const std::string& dataset_id,
     }
     request.set_expires_at(expires_at);
 
-    cyxwiz::protocol::ShareDatasetResponse response;
+    cyxcloud::datastream::ShareDatasetResponse response;
     grpc::Status status = stub_->ShareDataset(&context, request, &response);
 
     if (!status.ok()) {
@@ -434,7 +434,7 @@ bool DataStreamClient::UploadFileData(const std::string& filename,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::UploadFileResponse response;
+    cyxcloud::datastream::UploadFileResponse response;
     auto writer = stub_->UploadFile(&context, &response);
     if (!writer) {
         last_error_ = "Failed to create upload stream";
@@ -442,7 +442,7 @@ bool DataStreamClient::UploadFileData(const std::string& filename,
     }
 
     // Send metadata first
-    cyxwiz::protocol::UploadFileRequest meta_request;
+    cyxcloud::datastream::UploadFileRequest meta_request;
     auto* metadata = meta_request.mutable_metadata();
     metadata->set_filename(filename);
     metadata->set_size_bytes(static_cast<int64_t>(data.size()));
@@ -462,7 +462,7 @@ bool DataStreamClient::UploadFileData(const std::string& filename,
         size_t remaining = data.size() - offset;
         size_t this_chunk = std::min(chunk_size, remaining);
 
-        cyxwiz::protocol::UploadFileRequest chunk_request;
+        cyxcloud::datastream::UploadFileRequest chunk_request;
         chunk_request.set_chunk(data.data() + offset, this_chunk);
 
         if (!writer->Write(chunk_request)) {
@@ -510,12 +510,12 @@ bool DataStreamClient::VerifyDataset(const std::string& dataset_id,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::VerifyDatasetRequest request;
+    cyxcloud::datastream::VerifyDatasetRequest request;
     request.set_dataset_id(dataset_id);
     request.set_check_public_registry(check_public_registry);
     request.set_full_verification(full_verification);
 
-    cyxwiz::protocol::VerificationResult response;
+    cyxcloud::datastream::VerificationResult response;
     grpc::Status status = stub_->VerifyDataset(&context, request, &response);
 
     if (!status.ok()) {
@@ -553,7 +553,7 @@ bool DataStreamClient::CreateAccessToken(const std::string& dataset_id,
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::CreateAccessTokenRequest request;
+    cyxcloud::datastream::CreateAccessTokenRequest request;
     request.set_dataset_id(dataset_id);
     if (!node_id.empty()) {
         request.set_node_id(node_id);
@@ -562,7 +562,7 @@ bool DataStreamClient::CreateAccessToken(const std::string& dataset_id,
     request.add_scopes("stream");
     request.set_ttl_seconds(ttl_seconds);
 
-    cyxwiz::protocol::AccessTokenResponse response;
+    cyxcloud::datastream::AccessTokenResponse response;
     grpc::Status status = stub_->CreateAccessToken(&context, request, &response);
 
     if (!status.ok()) {
@@ -590,10 +590,10 @@ bool DataStreamClient::RevokeAccessToken(const std::string& token_id) {
     grpc::ClientContext context;
     AddAuthMetadata(context);
 
-    cyxwiz::protocol::RevokeAccessTokenRequest request;
+    cyxcloud::datastream::RevokeAccessTokenRequest request;
     request.set_token_id(token_id);
 
-    cyxwiz::protocol::RevokeAccessTokenResponse response;
+    cyxcloud::datastream::RevokeAccessTokenResponse response;
     grpc::Status status = stub_->RevokeAccessToken(&context, request, &response);
 
     if (!status.ok()) {
@@ -679,7 +679,7 @@ void DataStreamClient::StreamingThread(const std::string& dataset_id,
     stream_context_ = std::make_unique<grpc::ClientContext>();
     AddAuthMetadata(*stream_context_);
 
-    cyxwiz::protocol::StreamBatchesRequest request;
+    cyxcloud::datastream::StreamBatchesRequest request;
     request.set_dataset_id(dataset_id);
     if (!access_token.empty()) {
         request.set_access_token(access_token);
@@ -700,7 +700,7 @@ void DataStreamClient::StreamingThread(const std::string& dataset_id,
         return;
     }
 
-    cyxwiz::protocol::StreamBatchResponse proto_batch;
+    cyxcloud::datastream::BatchResponse proto_batch;
     while (!should_stop_.load() && reader->Read(&proto_batch)) {
         // Update progress
         current_batch_.store(proto_batch.batch_index() + 1);
