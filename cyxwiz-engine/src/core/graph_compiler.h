@@ -521,6 +521,10 @@ struct TrainingConfiguration {
     int loss_node_id = -1;              // Selected loss node
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
     std::map<std::string, std::string> loss_params;
+    // loss_type PluginCustom: the extension loss node (TOFIX125 P7).
+    std::string loss_extension_type_id;
+    std::string loss_extension_version;
+    std::string loss_extension_name;    // its display name
 
     // Optimizer
     int optimizer_node_id = -1;         // Selected supported optimizer node
@@ -662,6 +666,7 @@ struct TrainingConfiguration {
             case gui::NodeType::TripletLoss: return "Triplet";
             case gui::NodeType::ContrastiveLoss: return "Contrastive";
             case gui::NodeType::CosineEmbeddingLoss: return "CosineEmbedding";
+            case gui::NodeType::PluginCustom: return loss_extension_name;
             default: return "CrossEntropy";
         }
     }

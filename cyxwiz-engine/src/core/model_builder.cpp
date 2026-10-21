@@ -2002,6 +2002,32 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
                 contrastive ? StackedPairLoss::Kind::Contrastive : StackedPairLoss::Kind::CosineEmbedding,
                 margin, config.metric_mining);
         }
+        case gui::NodeType::PluginCustom: {
+            // An extension loss (TOFIX125 P7): its factory builds the loss,
+            // guarded so its result is checked and errors name the node.
+            auto& registry = ExtensionNodeRegistry::Instance();
+            const auto factory = registry.LossFactory(config.loss_extension_type_id);
+            const std::string label = "extension loss '" + config.loss_extension_name + "' (" +
+                                      config.loss_extension_type_id + ")";
+            if (!factory) {
+                throw std::runtime_error(label + " is not installed");
+            }
+            std::string error;
+            std::unique_ptr<Loss> loss;
+            try {
+                loss = factory->CreateLoss(config.loss_params, error);
+            } catch (const std::exception& e) {
+                error = e.what();
+            }
+            if (!loss) {
+                throw std::runtime_error(label + " could not create its loss" +
+                                         (error.empty() ? std::string() : ": " + error));
+            }
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using extension loss {}", config.loss_extension_type_id);
+            return std::make_unique<GuardedExtensionLoss>(
+                std::move(loss), config.loss_node_id, config.loss_extension_name,
+                config.loss_extension_type_id, registry.ProviderLease(config.loss_extension_type_id));
+        }
         default:
             // Training another objective than the graph's would be silent
             // and wrong; the compiler should have refused this node.

@@ -55,7 +55,8 @@ std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node) {
         return name + ": the extension that provides it (" + node.extension_type_id +
                ") is not installed, so code export cannot include it";
     }
-    if (descriptor->kind == ExtensionNodeKind::TensorLayer) {
+    // A layer or a loss (P7): both run the extension's own code.
+    if (descriptor->kind != ExtensionNodeKind::Signal) {
         return name + ": code export cannot include an extension node's own code yet (" + node.extension_type_id +
                "); train it in Studio, or export a CyxWiz package";
     }

@@ -1,5 +1,6 @@
 #include "python_node_factory.h"
 
+#include <cyxwiz/losses/loss_base.h>
 #include <cyxwiz/sequential.h>
 
 #include <algorithm>
@@ -176,6 +177,34 @@ private:
     Module* target_;
 };
 
+// The same for a Python loss.
+class PythonNodeLoss final : public Loss {
+public:
+    PythonNodeLoss(py::object owner, Loss* target)
+        : Loss(target->GetReduction()), owner_(std::move(owner)), target_(target) {}
+
+    ~PythonNodeLoss() override {
+        if (Py_IsInitialized()) {
+            py::gil_scoped_acquire gil;
+            owner_ = py::object();
+        } else {
+            owner_.release();  // the interpreter is gone
+        }
+    }
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override {
+        return target_->Forward(predictions, targets);
+    }
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override {
+        return target_->Backward(predictions, targets);
+    }
+    std::string GetName() const override { return target_->GetName(); }
+
+private:
+    py::object owner_;
+    Loss* target_;
+};
+
 class PythonTensorNodeFactory final : public ITensorNodeFactory {
 public:
     PythonTensorNodeFactory(const PythonBundle& bundle, const PythonBundleNode& node)
@@ -242,11 +271,57 @@ private:
     ExtensionNodeDescriptor descriptor_;
 };
 
+class PythonLossFactory final : public ITensorLossFactory {
+public:
+    PythonLossFactory(const PythonBundle& bundle, const PythonBundleNode& node)
+        : folder_(bundle.folder.string()),
+          module_name_(PythonBundleModuleName(bundle.id, bundle.content_hash)),
+          entry_class_(node.entry_class),
+          descriptor_(node.descriptor) {}
+
+    std::unique_ptr<Loss> CreateLoss(const std::map<std::string, std::string>& parameters,
+                                     std::string& error) const override {
+        if (const std::string refused = CheckPythonNodeSettings(descriptor_, parameters); !refused.empty()) {
+            error = refused;
+            return nullptr;
+        }
+        if (!PythonNodeRuntime::Instance().Ready(error)) return nullptr;
+        py::gil_scoped_acquire gil;
+        try {
+            py::object nodes = py::module_::import("pycyxwiz.nodes");
+            py::tuple made = nodes.attr("_engine_create_loss")(folder_, module_name_, entry_class_, parameters);
+            auto* target = reinterpret_cast<Loss*>(made[1].cast<std::uintptr_t>());
+            if (!target) {
+                error = "pycyxwiz returned no loss";
+                return nullptr;
+            }
+            return std::make_unique<PythonNodeLoss>(py::reinterpret_borrow<py::object>(made[0]), target);
+        } catch (py::error_already_set& e) {
+            error = PythonError(e, true);
+            return nullptr;
+        } catch (const std::exception& e) {
+            error = e.what();
+            return nullptr;
+        }
+    }
+
+private:
+    std::string folder_;
+    std::string module_name_;
+    std::string entry_class_;
+    ExtensionNodeDescriptor descriptor_;
+};
+
 }  // namespace
 
 std::shared_ptr<ITensorNodeFactory> MakePythonTensorNodeFactory(const PythonBundle& bundle,
                                                                const PythonBundleNode& node) {
     return std::make_shared<PythonTensorNodeFactory>(bundle, node);
+}
+
+std::shared_ptr<ITensorLossFactory> MakePythonLossFactory(const PythonBundle& bundle,
+                                                         const PythonBundleNode& node) {
+    return std::make_shared<PythonLossFactory>(bundle, node);
 }
 
 #else  // !CYXWIZ_HAS_PYTHON
@@ -260,8 +335,12 @@ bool PythonNodeRuntime::Ready(std::string& error) {
 
 namespace {
 
-class UnavailablePythonFactory final : public ITensorNodeFactory {
+class UnavailablePythonFactory final : public ITensorNodeFactory, public ITensorLossFactory {
 public:
+    std::unique_ptr<Loss> CreateLoss(const std::map<std::string, std::string>&, std::string& error) const override {
+        error = "Python is not available in this build of CyxWiz";
+        return nullptr;
+    }
     ExtensionShapeResult InferOutputShape(const std::vector<size_t>&,
                                           const std::map<std::string, std::string>&) const override {
         return {false, {}, "Python is not available in this build of CyxWiz"};
@@ -276,6 +355,10 @@ public:
 }  // namespace
 
 std::shared_ptr<ITensorNodeFactory> MakePythonTensorNodeFactory(const PythonBundle&, const PythonBundleNode&) {
+    return std::make_shared<UnavailablePythonFactory>();
+}
+
+std::shared_ptr<ITensorLossFactory> MakePythonLossFactory(const PythonBundle&, const PythonBundleNode&) {
     return std::make_shared<UnavailablePythonFactory>();
 }
 

@@ -10,6 +10,8 @@
 //   that includes its hash, calls pycyxwiz.nodes.create, and wraps the
 //   Python module in a C++ Module that keeps the object alive and takes the
 //   interpreter lock to release it.
+// - A loss node (P7): CreateLoss calls pycyxwiz.nodes._engine_create_loss
+//   and wraps the Python loss the same way.
 //
 // The interpreter is started by the Engine's scripting engine on the UI
 // thread, never here: when it is not running, the call fails with a reason
@@ -54,5 +56,7 @@ std::string CheckPythonNodeSettings(const ExtensionNodeDescriptor& descriptor,
 
 std::shared_ptr<ITensorNodeFactory> MakePythonTensorNodeFactory(const PythonBundle& bundle,
                                                                const PythonBundleNode& node);
+std::shared_ptr<ITensorLossFactory> MakePythonLossFactory(const PythonBundle& bundle,
+                                                         const PythonBundleNode& node);
 
 }  // namespace cyxwiz

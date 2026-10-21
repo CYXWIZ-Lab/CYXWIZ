@@ -17,9 +17,9 @@ namespace cyxwiz {
 inline constexpr int kPythonBundleFormat = 1;
 
 struct PythonBundleNode {
-    ExtensionNodeDescriptor descriptor;  // source PythonBundle, kind TensorLayer
+    ExtensionNodeDescriptor descriptor;  // source PythonBundle, kind TensorLayer or Loss
     std::string entry_class;             // class in node.py ("Snake")
-    std::string tier;                    // "activation" (f, df) or "module"
+    std::string tier;                    // "activation" (f, df), "module" or "loss"
     bool same_shape = true;              // shape_rule same_as_input: no Python needed for shapes
 };
 

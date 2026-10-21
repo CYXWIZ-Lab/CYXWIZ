@@ -1,26 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # Part of the CyxWiz plugin SDK examples (see cmake/sdk/NOTICE).
-"""Ten CyxWiz layers written again as Python nodes.
+"""Ten CyxWiz layers and four losses written again as Python nodes.
 
 Each node does what the built-in node of the same name does, written only
-with pycyxwiz tensor operations, so you can read how a layer is made and copy
-it. Put them between a Data Input and a loss like the built-in ones; the
-example graph blobs_python_layers.cyxgraph does.
+with pycyxwiz tensor operations, so you can read how a layer or a loss is
+made and copy it. Put the layers between a Data Input and a loss like the
+built-in ones, and a loss after the last layer with the Data Input's labels
+on its Targets pin; the example graph blobs_python_layers.cyxgraph does both.
 
     Dense      y = x W + b, learnable W [in, units] and b [units]
     LayerNorm  normalise the last dimension, learnable gain and shift
     ReLU, LeakyReLU, ELU, Sigmoid, Tanh, Softplus, GELU (tanh form), SiLU
-
-Losses are not here: a Python node is one tensor in and one tensor out, so
-use the built-in loss nodes.
+    CrossEntropy  softmax cross entropy over one-hot targets (classification)
+    MSE, L1, Huber  mean squared, absolute and Huber error (regression)
 
 Bundle them (writes nodes/builtin-layers.cyxnode/):
 
     from pycyxwiz import nodes
     import builtin_layers as b
-    nodes.bundle(b.Dense, b.LayerNorm, b.ReLU, b.LeakyReLU, b.ELU, b.Sigmoid,
-                 b.Tanh, b.Softplus, b.GELU, b.SiLU, folder="nodes",
-                 name="builtin-layers")
+    nodes.bundle(*b.ALL, folder="nodes", name="builtin-layers")
 """
 import math
 
@@ -56,6 +54,17 @@ def tanh(x):
 def relu_mask(x):
     """1.0 where x > 0, else 0.0, as float32 (a comparison alone gives uint8)."""
     return cyx.Tensor.ones(x.shape()) * (x > 0.0)
+
+
+def softmax(x):
+    """Softmax over the last dimension, shifted by the row maximum (no overflow)."""
+    last = x.num_dimensions() - 1
+    e = (x - x.max(last, True)).exp()
+    return e / e.sum(last, True)
+
+
+def row_count(x):
+    return x.num_elements() // x.shape()[-1]
 
 
 # ----------------------------------------------------------------- layers
@@ -228,3 +237,65 @@ class ELU(cyx.Module):
 
     def backward(self, grad_output):
         return grad_output * (self.mask + self.e * (1.0 - self.mask) * self.alpha)
+
+
+# ----------------------------------------------------------------- losses
+# A loss takes the model's predictions and the Data Input's targets and gives
+# one value; backward gives dLoss/dpredictions with the mean scaling, as the
+# built-in losses do. target says what the labels are: "categorical" (one-hot
+# rows as wide as the model's output) or "continuous" (values).
+
+@nodes.loss(id=ID, name="CrossEntropy", version="1.0.0", target="categorical", category=CATEGORY,
+            display_name="Cross Entropy (Python)",
+            description="Softmax over the last layer's outputs, then the mean of -log p(class)")
+class CrossEntropy(cyx.Loss):
+    def forward(self, predictions, targets):
+        log_p = softmax(predictions).clip(1e-12, 1.0).log()
+        return (targets * log_p).sum() * (-1.0 / row_count(predictions))
+
+    def backward(self, predictions, targets):
+        return (softmax(predictions) - targets) * (1.0 / row_count(predictions))
+
+
+@nodes.loss(id=ID, name="MSE", version="1.0.0", target="continuous", category=CATEGORY,
+            display_name="MSE (Python)", description="mean((prediction - target)^2)")
+class MSE(cyx.Loss):
+    def forward(self, predictions, targets):
+        d = predictions - targets
+        return (d * d).mean()
+
+    def backward(self, predictions, targets):
+        return (predictions - targets) * (2.0 / predictions.num_elements())
+
+
+@nodes.loss(id=ID, name="L1", version="1.0.0", target="continuous", category=CATEGORY,
+            display_name="L1 (Python)", description="mean(|prediction - target|)")
+class L1(cyx.Loss):
+    def forward(self, predictions, targets):
+        return (predictions - targets).abs().mean()
+
+    def backward(self, predictions, targets):
+        return (predictions - targets).sign() * (1.0 / predictions.num_elements())
+
+
+@nodes.loss(id=ID, name="Huber", version="1.0.0", target="continuous", category=CATEGORY,
+            display_name="Huber (Python)",
+            description="Squared error below delta, linear above: less pull from outliers than MSE")
+class Huber(cyx.Loss):
+    delta = nodes.Param(float, default=1.0, min=1e-6, description="Where the loss turns from squared to linear")
+
+    def forward(self, predictions, targets):
+        d = predictions - targets
+        a = d.abs()
+        small = cyx.Tensor.ones(a.shape()) * (a < self.delta)
+        squared = d * d * 0.5
+        linear = (a - 0.5 * self.delta) * self.delta
+        return (squared * small + linear * (1.0 - small)).mean()
+
+    def backward(self, predictions, targets):
+        d = predictions - targets
+        return d.clip(-self.delta, self.delta) * (1.0 / predictions.num_elements())
+
+
+ALL = [Dense, LayerNorm, ReLU, LeakyReLU, ELU, Sigmoid, Tanh, Softplus, GELU, SiLU,
+       CrossEntropy, MSE, L1, Huber]
