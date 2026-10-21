@@ -7,6 +7,7 @@
 // compute, so each run must match the built-in run epoch by epoch.
 // No GUI, no Python: the provider is this file.
 #include "../src/core/execution_placement_plan.h"
+#include "../src/core/extension_node_metadata.h"
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
@@ -25,6 +26,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -363,6 +365,21 @@ int main() {
         Check(regression.target.value_kind == cyxwiz::TargetValueKind::Continuous &&
                   cyxwiz::UsesContinuousTargetMetrics(regression),
               "continuous targets: regression metrics");
+    }
+
+    std::cout << "code export refuses an extension loss, naming it\n";
+    {
+        cyxwiz::GraphDocument document;
+        std::string error;
+        cyxwiz::ParseGraphDocument(Graph(false, "CrossEntropy", gui::NodeType::CrossEntropyLoss).dump(), document,
+                                   error);
+        std::optional<std::string> refusal;
+        for (const auto& node : document.nodes) {
+            if (node.id == kLossNodeId) refusal = cyxwiz::ExtensionCodeExportRefusal(node);
+        }
+        Check(refusal && refusal->find("My CrossEntropy") != std::string::npos &&
+                  refusal->find("own code") != std::string::npos,
+              "refused: " + refusal.value_or("not refused"));
     }
 
     std::cout << "a missing extension loss is refused on the node\n";

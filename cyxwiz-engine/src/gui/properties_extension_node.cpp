@@ -52,28 +52,44 @@ std::string ShapeError(const std::string& type_id, const std::map<std::string, s
 cyxwiz::ExtensionGradientRecord RunGradientCheck(const cyxwiz::ExtensionNodeDescriptor& descriptor,
                                                  const std::map<std::string, std::string>& values) {
     cyxwiz::GradientCheckOptions options;
+    const bool loss = descriptor.kind == cyxwiz::ExtensionNodeKind::Loss;
+    // A loss is checked on predictions [rows, classes] (P7), as pycyxwiz.gradcheck_loss does.
+    if (loss) options.input_shapes = {{2, 3}, {4, 5}};
     cyxwiz::ExtensionGradientRecord record;
     record.parameters = values;
     record.input_shapes = options.input_shapes;
     record.absolute_floor = options.absolute_floor;
 
-    const auto factory = cyxwiz::ExtensionNodeRegistry::Instance().TensorFactory(descriptor.type_id);
-    if (!factory) {
+    auto& registry = cyxwiz::ExtensionNodeRegistry::Instance();
+    const auto factory = registry.TensorFactory(descriptor.type_id);
+    const auto loss_factory = registry.LossFactory(descriptor.type_id);
+    if (loss ? !loss_factory : !factory) {
         record.error = "the plugin no longer provides this node";
         record.summary = "Could not check: " + record.error;
         return record;
     }
-    const auto result = cyxwiz::CheckModuleGradients(
-        [&](const std::vector<size_t>& shape) {
-            // The checker's shapes include the batch; a factory is given the
-            // shape of one sample, as the model builder gives it.
-            const std::vector<size_t> sample(shape.begin() + (shape.empty() ? 0 : 1), shape.end());
-            std::string error;
-            auto module = factory->CreateModule(sample, values, error);
-            if (!module) throw std::runtime_error(error.empty() ? "the module could not be created" : error);
-            return module;
-        },
-        options);
+    const auto result = loss
+        ? cyxwiz::CheckLossGradients(
+              [&]() {
+                  std::string error;
+                  auto made = loss_factory->CreateLoss(values, error);
+                  if (!made) throw std::runtime_error(error.empty() ? "the loss could not be created" : error);
+                  return made;
+              },
+              descriptor.loss_target == cyxwiz::ExtensionLossTarget::Continuous ? cyxwiz::LossCheckTargets::Values
+                                                                                 : cyxwiz::LossCheckTargets::OneHot,
+              options)
+        : cyxwiz::CheckModuleGradients(
+              [&](const std::vector<size_t>& shape) {
+                  // The checker's shapes include the batch; a factory is given the
+                  // shape of one sample, as the model builder gives it.
+                  const std::vector<size_t> sample(shape.begin() + (shape.empty() ? 0 : 1), shape.end());
+                  std::string error;
+                  auto module = factory->CreateModule(sample, values, error);
+                  if (!module) throw std::runtime_error(error.empty() ? "the module could not be created" : error);
+                  return module;
+              },
+              options);
     record.passed = result.passed;
     record.summary = cyxwiz::DescribeGradientCheck(result);
     record.error = result.error;

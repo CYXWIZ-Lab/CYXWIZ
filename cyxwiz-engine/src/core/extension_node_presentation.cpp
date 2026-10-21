@@ -46,7 +46,12 @@ std::string PinsSummary(const ExtensionNodeDescriptor& descriptor) {
 }
 
 const char* KindChip(ExtensionNodeKind kind) {
-    return kind == ExtensionNodeKind::Signal ? "Simulation node" : "Trainable node";
+    switch (kind) {
+        case ExtensionNodeKind::Signal: return "Simulation node";
+        case ExtensionNodeKind::Loss: return "Loss node";
+        case ExtensionNodeKind::TensorLayer: break;
+    }
+    return "Trainable node";
 }
 
 std::string ProviderName(const std::string& provider_id,
