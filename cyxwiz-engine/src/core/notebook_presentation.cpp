@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 
 namespace cyxwiz::nbview {
 
@@ -158,7 +157,11 @@ FrameLink FrameLinkFor(const std::string& file, int line) {
         return link;
     }
     link.path = file;
-    link.label = std::filesystem::path(file).filename().string() + (line > 0 ? ":" + std::to_string(line) : "");
+    // The name after the last / or \ : a traceback can carry a Windows path
+    // on any system (std::filesystem splits on / only outside Windows).
+    const size_t slash = file.find_last_of("/\\");
+    const std::string name = slash == std::string::npos ? file : file.substr(slash + 1);
+    link.label = name + (line > 0 ? ":" + std::to_string(line) : "");
     return link;
 }
 
