@@ -163,6 +163,7 @@
 #include "../core/pipeline_execution_task.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
+#include "../core/cache_prune.h"
 #include "../core/data_budget.h"
 #include "../core/data_registry.h"
 #include "../core/arrow_dataset.h"
@@ -195,6 +196,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <set>
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/word_embeddings.h>
 #include <spdlog/spdlog.h>
@@ -5847,6 +5849,24 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     cyxwiz::SetImageQualityProjectRoot(project_root);
     // DuckDB spills sorts, joins and group-bys into the project (TOFIX154).
     cyxwiz::SetDataSpillDirectory((std::filesystem::path(project_root) / "cache" / "duckdb_tmp").string());
+    // The project's prepared-data caches: older than 30 days, then the oldest
+    // past 10 GB, go (TOFIX160 P7; the temp cache is pruned at startup). A
+    // file a loaded dataset reads stays.
+    cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Prune the project's prepared-data caches", [project_root](cyxwiz::LambdaTask& task) {
+            std::set<std::string> held;
+            for (const auto& e : cyxwiz::DataRegistry::Instance().LoadedData().entries)
+                if (!e.path.empty()) held.insert(std::filesystem::path(e.path).lexically_normal().string());
+            const auto in_use = [held](const std::filesystem::path& p) {
+                return held.count(p.lexically_normal().string()) > 0;
+            };
+            uint64_t freed = 0;
+            for (const auto& cache : cyxwiz::PreparedDataCacheFolders(project_root, in_use)) {
+                if (cache.label.find("this project") == std::string::npos) continue;
+                freed += cyxwiz::PruneCacheFolder(cache.folder).freed_bytes;
+            }
+            task.MarkCompleted(freed ? cyxwiz::FormatDataBytes(freed) + " freed" : "nothing to remove");
+        });
 
     // Load project settings and layout
     LoadProjectSettings();

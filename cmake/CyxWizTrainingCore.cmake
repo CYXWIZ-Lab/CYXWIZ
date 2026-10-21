@@ -41,6 +41,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/executable_model.cpp
     ${_cyxwiz_engine_src}/core/graph_executable_model.cpp
     ${_cyxwiz_engine_src}/core/parquet_backed_dataset.cpp
+    ${_cyxwiz_engine_src}/core/cache_prune.cpp
     ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/dataset_base.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp

@@ -4696,7 +4696,7 @@ foreach(hdf5_inspection_test IN ITEMS test_hdf5_inspection_task test_hdf5_inspec
         if(hdf5_inspection_test STREQUAL "test_hdf5_source_load_task")
             target_sources(${hdf5_inspection_test} PRIVATE
                 src/core/arrow_dataset.cpp src/core/dataset_audit.cpp
-                src/core/image_utils.cpp src/core/parquet_backed_dataset.cpp)
+                src/core/image_utils.cpp src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
             target_link_libraries(${hdf5_inspection_test} PRIVATE
                 Parquet::parquet_shared ${OpenCV_LIBS})
         endif()
@@ -4805,7 +4805,7 @@ add_executable(test_hdf5_prepared_source
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/arrow_dataset.cpp
-    src/core/parquet_backed_dataset.cpp)
+    src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
 target_include_directories(test_hdf5_prepared_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_prepared_source PRIVATE
     cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared ${OpenCV_LIBS}
@@ -4829,7 +4829,7 @@ add_executable(test_hdf5_loaded_source_verifier
     src/core/training_trace_collector.cpp
     src/core/crash_run_recorder.cpp
     src/core/arrow_dataset.cpp
-    src/core/parquet_backed_dataset.cpp)
+    src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
 target_include_directories(test_hdf5_loaded_source_verifier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_loaded_source_verifier PRIVATE
     cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
@@ -4852,7 +4852,7 @@ add_executable(test_tabular_publication
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/arrow_dataset.cpp
-    src/core/parquet_backed_dataset.cpp)
+    src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
 target_include_directories(test_tabular_publication PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_tabular_publication PRIVATE
     cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
@@ -6005,6 +6005,19 @@ set_target_properties(test_loaded_data_report PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME loaded_data_report COMMAND test_loaded_data_report)
+
+# ===== Test: the prepared-data caches' prune rule (TOFIX160 P7) =====
+add_executable(test_cache_prune tests/test_cache_prune.cpp)
+target_include_directories(test_cache_prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_cache_prune PRIVATE cyxwiz-training-core spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_cache_prune PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_cache_prune PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME cache_prune COMMAND test_cache_prune)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
