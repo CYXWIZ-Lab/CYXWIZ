@@ -96,6 +96,28 @@ resolved against the project, like Data Input paths.
 - New checkpoints record where the run started (`initialized_from`) and the
   context it trained at.
 
+### The tokenizer is kept in every checkpoint
+
+Every checkpoint of a run that trained with a tokenizer (any language model
+or other sequence model on token windows) keeps it next to its weights, in
+`<checkpoint>/tokenizer/`:
+
+| File | What it holds |
+|---|---|
+| `config.json` | The tokenizer's settings (type, lowercase, BPE details). |
+| `vocab.txt` | The vocabulary; its sha256 is the tokenizer's identity (`tokenizer_sha256` in `metadata.json`). |
+| `sequence.json` | What training read from the data: the context length, the vocabulary in id order, the output vocabulary size and the pad ids. |
+
+The layout of `config.json` and `vocab.txt` is the one a `.cyxmodel`
+package uses. Loading a checkpoint (the LM Generation panel, Load Checkpoint
+for Testing, the Generation tab's Try now) uses this tokenizer, so the
+weights always meet the tokenizer they were trained with, even if the
+training data changed since. A checkpoint saved before this has no
+`tokenizer/` folder; its tokenizer is rebuilt from the training data as
+before and checked against `tokenizer_sha256`. The LM Generation panel's
+Details says which (*Tokenizer from: the checkpoint*). A run without a
+tokenizer (tabular, images) keeps none.
+
 The log shows: `initialized model weights from <folder> (source epoch N,
 val_loss X); optimizer, schedule and epochs start fresh`.
 

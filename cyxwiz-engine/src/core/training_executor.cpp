@@ -9,6 +9,7 @@
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
+#include "sequence_arrow_batcher.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
 #include "algorithms/arrayfire_backend_utils.h"
@@ -1226,6 +1227,7 @@ void TrainingExecutor::Train(
     checkpoint_manager->SetProvenance(tokenizer_sha256,
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
                                       initialized_from);
+    checkpoint_manager->SetTokenizer(CheckpointTokenizerFromConfig(config_));
 
     generation_preview_.reset();
     generation_preview_checkpoints_ = nullptr;

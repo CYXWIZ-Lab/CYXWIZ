@@ -142,6 +142,15 @@ std::string CheckpointManager::SaveCheckpoint(
         return "";
     }
 
+    // The run's tokenizer goes with the weights.
+    if (!tokenizer_.empty()) {
+        std::string tokenizer_error;
+        if (!WriteCheckpointTokenizer(checkpoint_path, tokenizer_, tokenizer_error)) {
+            spdlog::error("CheckpointManager: Failed to save the tokenizer: {}", tokenizer_error);
+            return "";
+        }
+    }
+
     spdlog::info("CheckpointManager: Checkpoint saved successfully to {}", checkpoint_path.string());
 
     // Clean up old checkpoints

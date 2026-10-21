@@ -217,10 +217,12 @@ LoadedLanguageModel LoadFromCheckpoint(const LanguageModelLoadRequest& request, 
     std::optional<double> validation;
     if (meta.val_loss > 0.0f) validation = meta.val_loss;
     loaded.report.validation_loss = validation;
-    if (!meta.tokenizer_sha256.empty()) {
+    if (built.tokenizer_from_checkpoint) {
+        loaded.checks.push_back("Tokenizer stored in the checkpoint");
+    } else if (!meta.tokenizer_sha256.empty()) {
         if (meta.tokenizer_sha256 != loaded.tokenizer->Sha256())
             throw std::runtime_error("The training data's tokenizer is not the one this checkpoint was trained with");
-        loaded.checks.push_back("Tokenizer matches the one the checkpoint was trained with");
+        loaded.checks.push_back("Tokenizer rebuilt from the training data matches the one the checkpoint was trained with");
     }
     if (!settings_problem.empty())
         loaded.warnings.push_back("The graph's generation settings are not used (" + settings_problem +
@@ -234,6 +236,9 @@ LoadedLanguageModel LoadFromCheckpoint(const LanguageModelLoadRequest& request, 
     AddDetail(loaded, "Weights", resolved.filename().string() + " \xC2\xB7 epoch " + std::to_string(meta.epoch) +
                                      " \xC2\xB7 step " + std::to_string(meta.global_step));
     AddDetail(loaded, "Graph", fs::path(request.graph_path).filename().string());
+    AddDetail(loaded, "Tokenizer from", built.tokenizer_from_checkpoint
+                                            ? "the checkpoint"
+                                            : "the training data (this checkpoint stores none)");
     AddDetail(loaded, "Saved", CheckpointSavedLabel(meta.timestamp));
     if (validation)
         AddDetail(loaded, "Validation", "loss " + Fixed(*validation, 2) + " \xC2\xB7 accuracy " + Percent(meta.val_accuracy));

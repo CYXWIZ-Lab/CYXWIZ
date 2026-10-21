@@ -5020,6 +5020,13 @@ add_executable(test_warm_start_checkpoint
 configure_training_executor_harness(test_warm_start_checkpoint)
 add_test(NAME WarmStartCheckpoint COMMAND test_warm_start_checkpoint)
 
+# ===== Test: the tokenizer kept in every checkpoint (TOFIX159) =====
+add_executable(test_checkpoint_tokenizer
+    tests/test_checkpoint_tokenizer.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_checkpoint_tokenizer)
+add_test(NAME CheckpointTokenizer COMMAND test_checkpoint_tokenizer)
+
 add_executable(test_training_executor_arrow_parquet
     tests/test_training_executor_arrow_parquet.cpp
 )

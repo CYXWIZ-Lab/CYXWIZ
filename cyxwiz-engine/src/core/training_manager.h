@@ -59,6 +59,8 @@ struct CheckpointModel {
     std::string resolved_checkpoint_path;
     CheckpointMetadata metadata;
     std::string error_message;       // Empty when the model is ready.
+    // The tokenizer came from the checkpoint (TOFIX159), not the training data.
+    bool tokenizer_from_checkpoint = false;
 };
 CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
                                          std::shared_ptr<ArrowDataset> dataset,

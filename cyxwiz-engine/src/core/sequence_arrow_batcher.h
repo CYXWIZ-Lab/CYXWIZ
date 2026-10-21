@@ -1,5 +1,6 @@
 #pragma once
 
+#include "checkpoint_tokenizer.h"
 #include "graph_compiler.h"
 #include "dataset_batcher.h"
 #include "parquet_sequence_batcher.h"
@@ -62,5 +63,15 @@ bool PrepareSequenceEvaluationVocabulary(
     TrainingConfiguration& config,
     const std::shared_ptr<ArrowDataset>& dataset,
     std::string& error);
+
+// The run's tokenizer and what training read from the data, kept in each
+// checkpoint (TOFIX159); empty when the run has no tokenizer.
+CheckpointTokenizer CheckpointTokenizerFromConfig(const TrainingConfiguration& config);
+
+// A checkpoint's stored tokenizer into `config`: the sequence vocabulary,
+// length and pad ids, the layer sizes, and the generation previews'
+// tokenizer - what PrepareSequenceEvaluationVocabulary (and the compiler,
+// for previews) otherwise read from the training data.
+void ApplyCheckpointTokenizer(const CheckpointTokenizer& tokenizer, TrainingConfiguration& config);
 
 } // namespace cyxwiz

@@ -379,10 +379,22 @@ CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
     }
 
     // Generic for any causal-LM sequence graph: compiling a graph does not
-    // produce the frozen token vocabulary; training obtains it by building the
-    // sequence batcher from its prepared dataset (token-window metadata). Do the
-    // same here so Run Test can verify that test data uses the model's vocabulary.
+    // produce the frozen token vocabulary. A checkpoint keeps the tokenizer
+    // it was trained with (TOFIX159): use it. An older checkpoint rebuilds it
+    // as training did, from the sequence batcher of the prepared dataset
+    // (token-window metadata), so Run Test can verify that test data uses the
+    // model's vocabulary.
     result.prepared = config;
+    std::string tokenizer_error;
+    const auto stored = ReadCheckpointTokenizer(resolved, tokenizer_error);
+    if (!tokenizer_error.empty()) {
+        result.error_message = "The checkpoint's tokenizer cannot be read: " + tokenizer_error;
+        return result;
+    }
+    if (stored && config.sequence_batch.enabled) {
+        ApplyCheckpointTokenizer(*stored, result.prepared);
+        result.tokenizer_from_checkpoint = true;
+    }
     if (!PrepareSequenceEvaluationVocabulary(result.prepared, dataset, result.error_message)) {
         return result;
     }
@@ -409,6 +421,10 @@ CheckpointModel BuildModelFromCheckpoint(const TrainingConfiguration& config,
         result.error_message = manager.GetLastError().empty()
             ? "Checkpoint loading failed."
             : manager.GetLastError();
+        return result;
+    }
+    if (stored && !metadata->tokenizer_sha256.empty() && stored->Sha256() != metadata->tokenizer_sha256) {
+        result.error_message = "The checkpoint's stored tokenizer is not the one its metadata names.";
         return result;
     }
     result.model = std::move(built.model);

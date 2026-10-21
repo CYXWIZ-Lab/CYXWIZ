@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <array>
 #include <nlohmann/json.hpp>
+#include <cstdlib>
 
 namespace cyxwiz {
 namespace {
@@ -661,6 +662,56 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
         if (!head.output_shape.empty()) {
             head.output_shape.back() = output_vocabulary_size;
         }
+    }
+}
+
+CheckpointTokenizer CheckpointTokenizerFromConfig(const TrainingConfiguration& config) {
+    CheckpointTokenizer tokenizer;
+    const auto& sequence = config.sequence_batch;
+    if (!sequence.enabled || sequence.tokenizer_vocabulary_artifact.empty()) return tokenizer;
+    tokenizer.config_json = sequence.tokenizer_config_json;
+    tokenizer.vocabulary = sequence.tokenizer_vocabulary_artifact;
+    tokenizer.sequence_length = config.input_size;
+    tokenizer.labels = sequence.expected_token_vocabulary;
+    tokenizer.word_pad_id = sequence.word_pad_id;
+    tokenizer.pos_pad_id = sequence.pos_pad_id;
+    if (sequence.create_causal_lm_targets) {
+        tokenizer.token_vocabulary_size = config.output_size;
+    } else {
+        tokenizer.tag_vocabulary_size = config.output_size;
+        for (const auto& layer : config.layers) {
+            if (layer.type != gui::NodeType::Embedding) continue;
+            if (const auto it = layer.parameters.find("num_embeddings"); it != layer.parameters.end())
+                tokenizer.token_vocabulary_size = static_cast<size_t>(std::strtoull(it->second.c_str(), nullptr, 10));
+            break;
+        }
+    }
+    return tokenizer;
+}
+
+void ApplyCheckpointTokenizer(const CheckpointTokenizer& tokenizer, TrainingConfiguration& config) {
+    SequenceArrowBatcherBuildResult build;
+    build.tokenizer_config_json = tokenizer.config_json;
+    build.tokenizer_vocabulary_artifact = tokenizer.vocabulary;
+    build.sequence_length = tokenizer.sequence_length;
+    build.token_vocabulary_size = tokenizer.token_vocabulary_size;
+    build.tag_vocabulary_size = tokenizer.tag_vocabulary_size;
+    build.id_to_label = tokenizer.labels;
+    build.word_pad_id = tokenizer.word_pad_id;
+    build.pos_pad_id = tokenizer.pos_pad_id;
+    ApplySequenceBatcherBuildResultToTrainingConfig(build, config);
+
+    // Generation previews (Try now) decode with the same tokenizer.
+    auto& preview = config.generation_preview;
+    preview.vocabulary_artifact = tokenizer.vocabulary;
+    preview.context = static_cast<int>(tokenizer.sequence_length);
+    try {
+        const auto effective = nlohmann::json::parse(tokenizer.config_json).value("effective", nlohmann::json::object());
+        const std::string type = effective.value("tokenizer_type", std::string());
+        if (type.size() == 1 && type[0] >= '0' && type[0] <= '3') preview.tokenizer_type = type[0] - '0';
+        preview.lowercase = effective.value("lowercase", std::string()) == "true";
+    } catch (const std::exception&) {
+        // Settings that do not parse leave the preview's own (from the data).
     }
 }
 

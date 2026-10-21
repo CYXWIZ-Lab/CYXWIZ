@@ -44,6 +44,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/dataset_base.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_tokenizer.cpp
     ${_cyxwiz_engine_src}/core/crash_run_recorder.cpp
     ${_cyxwiz_engine_src}/core/training_trace_collector.cpp
     ${_cyxwiz_engine_src}/core/route_qualification_snapshot.cpp
