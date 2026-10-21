@@ -692,7 +692,12 @@ void DataRegistry::ClearAllTabularDatasets() {
     size_t image_count = image_dataset_entries_.size();
     size_t audio_count = audio_dataset_entries_.size();
     size_t text_count = text_dataset_entries_.size();
+    size_t other_count = datasets_.size();
 
+    // The legacy Dataset map too (image folders and CSVs loaded through
+    // LoadImageFolder / LoadImageCSV): a closed project kept them before.
+    datasets_.clear();
+    last_access_times_.clear();
     arrow_datasets_.clear();
     materialization_provenance_.clear();
     tabular_loads_.clear();
@@ -706,11 +711,11 @@ void DataRegistry::ClearAllTabularDatasets() {
 
     if (arrow_count > 0 || parquet_count > 0 || sparse_count > 0 ||
         image_count > 0 ||
-        audio_count > 0 || text_count > 0) {
+        audio_count > 0 || text_count > 0 || other_count > 0) {
         spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + "
-                     "{} Sparse + {} Image + {} Audio + {} Text entries",
+                     "{} Sparse + {} Image + {} Audio + {} Text + {} other entries",
                      arrow_count, parquet_count, sparse_count, image_count,
-                     audio_count, text_count);
+                     audio_count, text_count, other_count);
     }
 }
 

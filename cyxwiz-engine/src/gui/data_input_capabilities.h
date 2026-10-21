@@ -54,6 +54,10 @@ std::string CurrentSourceLabel(
     TextLayout text_layout);
 const char* BackendSummary(int loaded_backend);
 std::string GenerateDatasetName(const std::string& file_path, const std::string& folder_path);
+// `base`, or base_2, base_3, ... when another Data Input in the graph already
+// uses it (two files with the same name in different folders). Same-file
+// inputs still share one table in the registry (TOFIX160 P2).
+std::string UniqueDatasetName(const std::string& base, const std::vector<std::string>& taken);
 std::string FormatBytes(std::size_t bytes);
 
 } // namespace gui::data_input
