@@ -831,7 +831,11 @@ MLNode CreateGraphNode(NodeType type,
             out.name = "Transformed";
             out.is_input = false;
             node.outputs.push_back(out);
-            node.parameters["value_col"] = "";
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
+            node.parameters["exclude_columns"] = "";
+            node.parameters["base"] = "natural";
+            node.parameters["use_log1p"] = "true";
             break;
         }
 

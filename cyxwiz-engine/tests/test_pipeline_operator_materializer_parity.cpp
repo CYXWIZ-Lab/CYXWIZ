@@ -9,7 +9,6 @@
 #include "core/node_executors/regression_model_predictor_operator.h"
 #include "core/node_executors/regression_operators.h"
 #include "core/node_executors/differencing_operator.h"
-#include "core/node_executors/log_transform_operator.h"
 #include "core/node_executors/sentiment_analyzer_operator.h"
 #include "core/node_executors/time_series_split_operator.h"
 
@@ -676,7 +675,7 @@ void TestRemainingRowTransformMemoryPreflight() {
 
     std::string error;
     cyxwiz::LogTransformOperator log;
-    Check(log.Configure({{"value_col", "y"}}, error), error);
+    Check(log.Configure({{"columns", "y"}}, error), error);
     assert_safe_preflight(
         log,
         numeric_input,
@@ -743,7 +742,7 @@ void TestMaterializerStructuredFailures() {
             902,
             gui::NodeType::LogTransform,
             "Failure LogTransform",
-            {{"value_col", "y"}}),
+            {{"columns", "y"}}),
     };
     const std::vector<gui::NodeLink> links = {
         {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
@@ -963,7 +962,7 @@ void TestStreamedMaterializerMatchesMemory() {
                          {{"columns", "x"}, {"with_mean", "true"}, {"with_std", "true"}}),
         MakeOperatorNode(903, gui::NodeType::MinMaxScaler, "Range y",
                          {{"columns", "y"}, {"min", "0"}, {"max", "1"}}),
-        MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", {{"value_col", "y"}}),
+        MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", {{"columns", "y"}}),
     };
     std::vector<gui::NodeLink> links = {
         {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
@@ -1062,7 +1061,7 @@ int main() {
                    {"with_scaling", "true"}},
                   {"x"});
     RunParityCase(csv_path, "LogTransform", gui::NodeType::LogTransform,
-                  507, 508, {{"value_col", "y"}}, {"y"});
+                  507, 508, {{"columns", "y"}}, {"y"});
     RunParityCase(csv_path, "Differencing", gui::NodeType::Differencing,
                   509, 510,
                   {{"value_col", "y"}, {"lag", "1"}, {"order", "1"}},

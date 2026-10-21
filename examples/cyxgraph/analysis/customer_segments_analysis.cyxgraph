@@ -22,7 +22,7 @@
     },
     {
       "id": 2, "type": 145, "name": "Log spend", "pos_x": 260, "pos_y": 240,
-      "parameters": { "value_col": "spend" }
+      "parameters": { "columns": "spend", "base": "natural", "use_log1p": "true" }
     },
     {
       "id": 3, "type": 239, "name": "Robust Scaler", "pos_x": 520, "pos_y": 240,

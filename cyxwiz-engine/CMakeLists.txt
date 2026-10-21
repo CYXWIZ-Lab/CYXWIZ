@@ -246,7 +246,6 @@ set(ENGINE_SOURCES
     src/core/node_executors/time_series_segment_operator.cpp # Gap-safe segments
     src/core/node_executors/row_count_check_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp   # Phase 4 Band 2
-    src/core/node_executors/log_transform_operator.cpp       # Phase 4 Band 1
     src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
     src/core/node_executors/time_series_features_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -792,7 +791,6 @@ set(ENGINE_HEADERS
     src/core/node_executors/time_series_window_operator.h
     src/core/node_executors/time_series_segment_operator.h
     src/core/node_executors/time_series_split_operator.h
-    src/core/node_executors/log_transform_operator.h
     src/core/node_executors/differencing_operator.h
     src/core/node_executors/time_series_features_operator.h
     src/core/node_executors/text_tokenizer_operator.h
@@ -2694,7 +2692,6 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/tree_model_predictor_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
-    src/core/node_executors/log_transform_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
@@ -2986,7 +2983,6 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/tree_model_predictor_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
-    src/core/node_executors/log_transform_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
@@ -3698,7 +3694,6 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/tree_model_predictor_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
-    src/core/node_executors/log_transform_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
@@ -7186,7 +7181,6 @@ add_executable(test_engine_node_parity
     src/core/node_executors/tree_model_predictor_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
-    src/core/node_executors/log_transform_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp

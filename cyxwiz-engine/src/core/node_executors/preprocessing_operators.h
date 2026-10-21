@@ -251,6 +251,36 @@ private:
 };
 
 /**
+ * LogTransformOperator: log(x) or log(1 + x), in base e, 10 or 2 (TOFIX129 D2).
+ * Params: columns (csv; empty = every number column except label_col and
+ * exclude_columns), base (natural / log10 / log2, default natural),
+ * use_log1p (default true). Nothing is fitted; a missing value stays missing
+ * in its row. Streams (row by row).
+ */
+class LogTransformOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "LogTransform"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    bool SupportsStreaming() const override { return true; }
+    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
+
+private:
+    std::vector<std::string> columns_;
+    std::vector<std::string> exclude_columns_;
+    std::string label_col_;
+    std::string base_ = "natural";
+    bool log1p_ = true;
+    std::vector<std::string> resolved_;
+    PipelineOperatorProgressCallback progress_callback_;
+};
+
+/**
  * LabelEncoderOperator — string → int32, single column.
  *
  * Encodes a string column to stable integer codes using alphabetical

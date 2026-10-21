@@ -968,6 +968,82 @@ arrow::Result<std::vector<double>> PowerTransformOperator::TransformValues(size_
 }
 
 // ============================================================================
+// LogTransformOperator
+// ============================================================================
+
+bool LogTransformOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    ParseColumnsAndLabel(params, columns_, label_col_);
+    const auto excluded = params.find("exclude_columns");
+    ParseCommaList(excluded == params.end() ? "" : excluded->second, exclude_columns_);
+    const auto base = params.find("base");
+    base_ = base == params.end() || TrimString(base->second).empty() ? "natural" : ToLowerAscii(TrimString(base->second));
+    if (base_ != "natural" && base_ != "log10" && base_ != "log2") {
+        error = GetName() + ": 'base' must be natural, log10 or log2 (got '" + base->second + "')";
+        return false;
+    }
+    return ReadBoolParam(params, "use_log1p", true, GetName(), log1p_, error);
+}
+
+arrow::Status LogTransformOperator::BeginStream(const std::shared_ptr<arrow::Schema>& schema) {
+    if (!schema) return arrow::Status::Invalid(GetName() + ": input is null");
+    for (const auto& name : exclude_columns_) {
+        if (schema->GetFieldIndex(name) < 0) {
+            return arrow::Status::KeyError(GetName() + ": excluded column '" + name + "' not found");
+        }
+    }
+    ARROW_ASSIGN_OR_RAISE(auto empty, arrow::Table::MakeEmpty(schema));
+    resolved_.clear();
+    return ResolveNumericColumnList(empty, columns_, label_col_, exclude_columns_, GetName(), resolved_);
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> LogTransformOperator::ApplyBatch(const std::shared_ptr<arrow::Table>& batch) {
+    auto out = batch;
+    std::vector<double> all, present;
+    std::vector<size_t> rows;
+    for (const auto& name : resolved_) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        int idx = -1;
+        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), all, idx));
+        SplitPresent(all, present, rows);
+        std::vector<double> transformed;
+        if (!present.empty()) {
+            // One implementation with the backend's log transform, on the selected device.
+            const TransformResult result = DataTransform::LogTransform({present}, base_, log1p_);
+            if (!result.success) {
+                const std::string advice = log1p_
+                    ? " log(1 + x) needs values above -1; Power Transform (Yeo-Johnson) takes any value."
+                    : " Turn on log(1 + x) for zeros, or use Power Transform (Yeo-Johnson) for negative values.";
+                return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + result.error_message + "." +
+                                              advice);
+            }
+            transformed = result.transformed_data[0];
+        }
+        ARROW_ASSIGN_OR_RAISE(out, ReplaceKeepingMissing(out, idx, all.size(), rows, transformed));
+    }
+    return out;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> LogTransformOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz LogTransform Materializer");
+    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
+    ARROW_RETURN_NOT_OK(BeginStream(input->schema()));
+    ARROW_ASSIGN_OR_RAISE(auto preflight, EmitPreprocessingMemoryPreflight(
+        input, GetName(), static_cast<uint64_t>(resolved_.size()), static_cast<uint64_t>(sizeof(double)),
+        "reduce the selected rows or columns, or transform a sample first.", GetMaterializationMemoryContext(),
+        progress_callback_));
+    const uint64_t estimated_bytes = preflight.estimated_peak_bytes;
+    const uint64_t columns = static_cast<uint64_t>(resolved_.size());
+    ReportProgress(progress_callback_, "Log transform", "Log transform of " + std::to_string(columns) + " columns",
+                   0.20, 0, columns, estimated_bytes);
+    // The whole table is one batch of the stream.
+    ARROW_ASSIGN_OR_RAISE(auto out, ApplyBatch(input));
+    spdlog::info("[Preprocessing] LogTransform done: {} columns, base {}, {}", columns, base_,
+                 log1p_ ? "log(1 + x)" : "log(x)");
+    ReportProgress(progress_callback_, "Complete", "LogTransform complete", 1.0, columns, columns, estimated_bytes);
+    return out;
+}
+
+// ============================================================================
 // LabelEncoderOperator
 // ============================================================================
 

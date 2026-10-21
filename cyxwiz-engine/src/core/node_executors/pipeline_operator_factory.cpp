@@ -5,7 +5,6 @@
 #include "differencing_operator.h"
 #include "gradient_boosting_operator.h"
 #include "identity_operator.h"
-#include "log_transform_operator.h"
 #include "pca_operator.h"
 #include "preprocessing_operators.h"
 #include "random_forest_operator.h"

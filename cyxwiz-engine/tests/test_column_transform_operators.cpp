@@ -2,7 +2,8 @@
 // Max-Abs scalers, Quantile and Power transforms against scikit-learn / scipy
 // on a small table with missing values; missing stays missing in its row;
 // fitted values saved and reused; settings that differ from the saved ones,
-// and Box-Cox on values of 0 or less, are refused.
+// and Box-Cox on values of 0 or less, are refused. Log Transform (not fitted):
+// several columns, base e / 10 / 2, log(1 + x) or log(x), with its refusals.
 
 #include "../src/core/node_executors/preprocessing_operators.h"
 
@@ -154,6 +155,40 @@ int main() {
               "Box-Cox on 0 and below is refused and suggests Yeo-Johnson: " + why);
     }
 
+    {
+        LogTransformOperator op;  // default: natural log of 1 + x, every number column
+        auto out = Run(op, {{"columns", "a"}}, table);
+        Expect(Column(out, "a"), {std::log1p(1.0), std::log1p(2.0), M, std::log1p(4.0), std::log1p(10.0)}, "log(1 + a)");
+        LogTransformOperator ten;
+        out = Run(ten, {{"columns", "a"}, {"base", "log10"}, {"use_log1p", "false"}}, table);
+        Expect(Column(out, "a"), {0.0, std::log10(2.0), M, std::log10(4.0), 1.0}, "log10(a)");
+    }
+    {
+        std::string why;
+        LogTransformOperator zero;
+        Check(!Run(zero, {{"columns", "b"}, {"use_log1p", "false"}}, table, &why) &&
+                  why.find("log(1 + x)") != std::string::npos,
+              "plain log of 0 or less is refused and suggests log(1 + x): " + why);
+        LogTransformOperator below;
+        Check(!Run(below, {{"columns", "b"}}, table, &why) && why.find("Yeo-Johnson") != std::string::npos,
+              "log(1 + x) of -1 or less is refused and suggests Yeo-Johnson: " + why);
+        LogTransformOperator base;
+        Check(!Run(base, {{"base", "log3"}}, table, &why), "an unknown base is refused");
+    }
+    {
+        // Several columns at once: a and a shifted copy of b (b + 4 > 0).
+        arrow::DoubleBuilder c;
+        for (double v : {4.0, 1.0, 10.0, 0.0, 7.0}) (void)c.Append(v);
+        std::shared_ptr<arrow::Array> cc;
+        (void)c.Finish(&cc);
+        auto wider = *table->AddColumn(3, arrow::field("c", arrow::float64()), std::make_shared<arrow::ChunkedArray>(cc));
+        LogTransformOperator two;
+        auto out = Run(two, {{"columns", "a,c"}, {"base", "log2"}}, wider);
+        Expect(Column(out, "a"), {1.0, std::log2(3.0), M, std::log2(5.0), std::log2(11.0)}, "log2(1 + a)");
+        Expect(Column(out, "c"), {std::log2(5.0), 1.0, std::log2(11.0), 0.0, 3.0}, "log2(1 + c)");
+        Expect(Column(out, "b"), {0.0, -3.0, 6.0, M, 3.0}, "columns not chosen are left alone");
+    }
+
     // Fitted values saved, then reused on other rows (validation / test).
     const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_column_transforms";
     std::error_code ec;
@@ -190,6 +225,6 @@ int main() {
         Check(!Run(inverted, {{"min", "1"}, {"max", "0"}}, table, &why), "Min-Max range must rise");
     }
     fs::remove_all(dir, ec);
-    std::cout << "column transforms: six transforms match scikit-learn / scipy, missing values kept, saved values reused. OK\n";
+    std::cout << "column transforms: six transforms match scikit-learn / scipy, missing values kept, saved values reused; log transform bases and refusals. OK\n";
     return 0;
 }

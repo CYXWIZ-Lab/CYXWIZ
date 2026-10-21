@@ -48,6 +48,7 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::UnitConverter: case NodeType::JSONPathExtractor: case NodeType::RegexTester:
         case NodeType::StandardScaler: case NodeType::MinMaxScaler: case NodeType::RobustScaler:
         case NodeType::MaxAbsScaler: case NodeType::QuantileTransform: case NodeType::PowerTransform:
+        case NodeType::LogTransform:
         case NodeType::LabelEncoder: case NodeType::OrdinalEncoder: case NodeType::TargetEncoder:
         case NodeType::OutlierDetector:
             job = Job::Prepare; return true;

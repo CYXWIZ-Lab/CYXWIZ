@@ -2895,7 +2895,7 @@ bool ValidateNumericColumnsWithLabelInputSchema(
             table, node_type, parameters, "label_col", "label", error)) {
         return false;
     }
-    if (IsFittedColumnTransform(node_type)) {
+    if (IsFittedColumnTransform(node_type) || node_type == "LogTransform") {
         return ValidateOptionalRoleColumnListExists(
             table, node_type, parameters, "exclude_columns", "excluded",
             error);
@@ -3014,7 +3014,6 @@ bool ValidatePipelineOperatorInputSchema(
             return ValidateTimeSeriesWindowInputSchema(table, node_type,
                                                        parameters, error);
         case gui::NodeType::TimeSeriesFeatures:
-        case gui::NodeType::LogTransform:
         case gui::NodeType::Differencing:
             return ValidateValueColumnInputSchema(table, node_type,
                                                   parameters, error);
@@ -3024,6 +3023,7 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::MaxAbsScaler:
         case gui::NodeType::QuantileTransform:
         case gui::NodeType::PowerTransform:
+        case gui::NodeType::LogTransform:
             return ValidateNumericColumnsWithLabelInputSchema(
                 table, node_type, parameters, error);
         case gui::NodeType::OutlierDetector:

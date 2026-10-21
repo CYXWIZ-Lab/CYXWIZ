@@ -7140,6 +7140,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::Normalize,          PreprocessingDomain::General,     ExtractImageNormalize},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
     {gui::NodeType::StandardScaler,     PreprocessingDomain::General,     nullptr},
+    {gui::NodeType::LogTransform,       PreprocessingDomain::General,     nullptr},
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
@@ -7180,7 +7181,6 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesSplit,    PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::SeasonalNaive,      PreprocessingDomain::TimeSeries,  nullptr},
-    {gui::NodeType::LogTransform,       PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::Differencing,       PreprocessingDomain::TimeSeries,  nullptr},
 };
 

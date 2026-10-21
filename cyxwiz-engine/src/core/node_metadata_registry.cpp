@@ -4090,12 +4090,18 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
         {{"seasonal_period", "int", "1", "Observations in one seasonal cycle", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::LogTransform, NodeCategory::TimeSeries, "Log Transform", ICON_FA_CHART_LINE,
-        {"log", "log1p", "stabilize", "time", "series"}, 0, false,
-        "Apply log1p to a numeric time-series column", "", "",
+    RegisterNode({NodeType::LogTransform, NodeCategory::Preprocessing, "Log Transform", ICON_FA_CHART_LINE,
+        {"log", "log1p", "log10", "log2", "skew", "stabilize", "time", "series"}, 0, false,
+        "log(x) or log(1 + x) of number columns",
+        "Takes the log of each chosen column in base e, 10 or 2, to pull in a long right tail or steady exponential growth. "
+        "log(1 + x) keeps zeros; plain log needs values above 0.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Transformed", PinType::Dataset, true, "Input table with transformed column"}},
-        {{"value_col", "string", "", "Numeric column to transform", {}, ""}},
+        {{"Transformed", PinType::Dataset, true, "Input table with the columns transformed"}},
+        {{"columns", "string", "", "Columns to transform (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
+         {"base", "enum", "natural", "Log base: e (natural), 10 or 2", {"natural", "log10", "log2"}, ""},
+         {"use_log1p", "bool", "true", "log(1 + x): keeps zeros; values must be above -1. Off: log(x), values above 0", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Differencing, NodeCategory::TimeSeries, "Differencing", ICON_FA_MINUS,

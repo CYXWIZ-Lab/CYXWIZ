@@ -1769,7 +1769,7 @@ void CheckStreamingScaler() {
     auto log_graph = [&](bool disk, const std::string& expected) {
         return std::string(R"({"nodes":[{"id":95201,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
             (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
-            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"value_col":"id"}},)"
+            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"columns":"id"}},)"
             R"({"id":95203,"type":"RowCountCheck","name":"Count","parameters":{"check_name":"all rows","expected_rows":")" + expected +
             R"("}}],"links":[{"start_node":95201,"end_node":95202},{"start_node":95202,"end_node":95203}]})";
     };
@@ -5991,17 +5991,17 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":708,"type":"LogTransform","name":"BadLogValue","parameters":{)"
-        R"("value_col":"phrase"}})"
+        R"("columns":"phrase"}})"
         R"(],"links":[{"start_node":707,"end_node":708}]})";
 
     cyxwiz::PipelineExecutor bad_log_transform_value_type_executor;
     Check(!bad_log_transform_value_type_executor.ExecutePipeline(
               bad_log_transform_value_type_json),
-          "LogTransform string value_col should fail schema validation");
+          "LogTransform string columns should fail schema validation");
     Check(bad_log_transform_value_type_executor.GetLastError().find(
-              "LogTransform: value column 'phrase' must be numeric") !=
+              "LogTransform: column 'phrase' must be numeric") !=
               std::string::npos,
-          "LogTransform value_col validation should be specific: " +
+          "LogTransform columns validation should be specific: " +
               bad_log_transform_value_type_executor.GetLastError());
 
     const std::string bad_differencing_value_type_json =
