@@ -367,17 +367,28 @@ turns it into an ordinary SQL step when you save. An SQL step in Guided mode
 offers **Start a guided step instead**, which replaces the query when you save
 (Reset brings it back until then).
 
+**Scale, power and log steps** (Standard, Min-Max, Robust and Max-Abs
+Scaler, Quantile, Power and Log Transform) show their settings as typed fields
+and switches (a scaler's **Method** switch replaces the node with another
+scaler, keeping its links and columns), the last run's before / after per
+column with two histograms, a power step's λ, skewness, normality test and
+likelihood curve, and **Compare methods**; see
+[scaling and transforms](data_transforms.md#the-step-in-prepare).
+
 **Other steps** (a Check, a step node) show their last outcome,
 their settings as saved in the graph, **Run step**, **Open dialog** and
 **Show on canvas**; settings are changed in the node's dialog.
 
 **+ Add a step** under the step list (and **Add a step after** beside an SQL
 step) adds after the selected step: an **SQL step**, a **Guided step**, a
-**Row Filter**, **Joiner**, **GroupBy** or **Text Clean**, or any other
-preparation node from **More nodes**. The node goes on the canvas to the
+**Row Filter**, **Joiner**, **GroupBy** or **Text Clean**, a step from
+**Scale and transform** (Scale, Log transform, Power transform), or any other
+preparation node from **More nodes**. The new step is picked. The node goes on the canvas to the
 step's right, the nodes after it move right to make room (a collapsed recipe
 opens first), and it is selected there; Data Studio stays in front, and the
-step joins the list. Ctrl+Z on the canvas undoes it.
+step joins the list. Ctrl+Z on the canvas undoes it. A graph with no steps
+yet offers **Add a step after** its Data Input. **Data > Transform** adds a
+scaling, log or power step after the data in use and picks it.
 
 **Checks.** A Check node checks one of: a row count (exactly, at
 least, at most; all rows or the rows where a column is true or has a value),

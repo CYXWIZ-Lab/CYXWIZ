@@ -334,10 +334,6 @@ TransformResult TransformEachColumn(const Columns& data, const char* method, con
 // Input checks
 // ============================================================================
 
-bool DataTransform::CanApplyLogTransform(const std::vector<double>& data, bool use_log1p) {
-    return std::all_of(data.begin(), data.end(), [use_log1p](double x) { return use_log1p ? x > -1.0 : x > 0.0; });
-}
-
 bool DataTransform::CanApplyBoxCox(const std::vector<double>& data) {
     return std::all_of(data.begin(), data.end(), [](double x) { return x > 0.0; });
 }

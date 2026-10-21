@@ -203,8 +203,7 @@ void RunCase(const json& c, const std::string& name) {
     }
     if (op == "refuse_log" || op == "refuse_log1p") {
         const bool log1p = op == "refuse_log1p";
-        CheckRefused(DataTransform::LogTransform(inputs, "natural", log1p).error_message, c, name);
-        return Check(!DataTransform::CanApplyLogTransform(x, log1p), name + ": CanApplyLogTransform");
+        return CheckRefused(DataTransform::LogTransform(inputs, "natural", log1p).error_message, c, name);
     }
     if (op == "refuse_normaltest") {
         const auto test = DataTransform::DAgostinoPearsonTest(x);

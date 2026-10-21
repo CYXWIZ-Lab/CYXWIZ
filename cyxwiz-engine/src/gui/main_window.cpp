@@ -99,11 +99,6 @@
 #include "panels/pr_curve_panel.h"
 #include "panels/cross_validation_panel.h"
 #include "panels/learning_curves_panel.h"
-#include "panels/normalization_panel.h"
-#include "panels/standardization_panel.h"
-#include "panels/log_transform_panel.h"
-#include "panels/boxcox_panel.h"
-#include "panels/feature_scaling_panel.h"
 #include "panels/matrix_calculator_panel.h"
 #include "panels/eigen_decomp_panel.h"
 #include "panels/svd_panel.h"
@@ -697,13 +692,6 @@ MainWindow::MainWindow()
     cross_validation_panel_ = std::make_unique<cyxwiz::CrossValidationPanel>();
     learning_curves_panel_ = std::make_unique<cyxwiz::LearningCurvesPanel>();
 
-    // Data Transformation panels (Phase 6C)
-    normalization_panel_ = std::make_unique<cyxwiz::NormalizationPanel>();
-    standardization_panel_ = std::make_unique<cyxwiz::StandardizationPanel>();
-    log_transform_panel_ = std::make_unique<cyxwiz::LogTransformPanel>();
-    boxcox_panel_ = std::make_unique<cyxwiz::BoxCoxPanel>();
-    feature_scaling_panel_ = std::make_unique<cyxwiz::FeatureScalingPanel>();
-
     // Linear Algebra panels (Phase 7)
     matrix_calculator_panel_ = std::make_unique<cyxwiz::MatrixCalculatorPanel>();
     eigen_decomp_panel_ = std::make_unique<cyxwiz::EigenDecompPanel>();
@@ -1140,14 +1128,6 @@ MainWindow::MainWindow()
 
     toolbar_->SetCreateCustomDatasetCallback([this]() {
         if (node_editor_) node_editor_->AddDataInputAndConfigure();
-    });
-
-    // Preprocess - opens Feature Scaling panel
-    toolbar_->SetPreprocessDatasetCallback([this]() {
-        if (feature_scaling_panel_) {
-            feature_scaling_panel_->SetVisible(true);
-            spdlog::info("Opened Feature Scaling panel for preprocessing");
-        }
     });
 
     // Tokenize - opens existing TokenizationPanel
@@ -2694,16 +2674,6 @@ MainWindow::~MainWindow() {
     eigen_decomp_panel_.reset();
     spdlog::info("~MainWindow: matrix_calculator_panel_");
     matrix_calculator_panel_.reset();
-    spdlog::info("~MainWindow: feature_scaling_panel_");
-    feature_scaling_panel_.reset();
-    spdlog::info("~MainWindow: boxcox_panel_");
-    boxcox_panel_.reset();
-    spdlog::info("~MainWindow: log_transform_panel_");
-    log_transform_panel_.reset();
-    spdlog::info("~MainWindow: standardization_panel_");
-    standardization_panel_.reset();
-    spdlog::info("~MainWindow: normalization_panel_");
-    normalization_panel_.reset();
     spdlog::info("~MainWindow: learning_curves_panel_");
     learning_curves_panel_.reset();
     spdlog::info("~MainWindow: cross_validation_panel_");
@@ -3157,13 +3127,6 @@ void MainWindow::Render() {
     TimedRender("pr curve", pr_curve_panel_);
     TimedRender("cross validation", cross_validation_panel_);
     TimedRender("learning curves", learning_curves_panel_);
-
-    // Render Data Transformation panels (Phase 6C)
-    TimedRender("normalization", normalization_panel_);
-    TimedRender("standardization", standardization_panel_);
-    TimedRender("log transform", log_transform_panel_);
-    TimedRender("boxcox", boxcox_panel_);
-    TimedRender("feature scaling", feature_scaling_panel_);
 
     // Linear Algebra panels (Phase 7)
     TimedRender("matrix calculator", matrix_calculator_panel_);
@@ -3652,13 +3615,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (pr_curve_panel_) pr_curve_panel_->SetVisible(false);
     if (cross_validation_panel_) cross_validation_panel_->SetVisible(false);
     if (learning_curves_panel_) learning_curves_panel_->SetVisible(false);
-
-    // Data Transformation panels (Phase 6C)
-    if (normalization_panel_) normalization_panel_->SetVisible(false);
-    if (standardization_panel_) standardization_panel_->SetVisible(false);
-    if (log_transform_panel_) log_transform_panel_->SetVisible(false);
-    if (boxcox_panel_) boxcox_panel_->SetVisible(false);
-    if (feature_scaling_panel_) feature_scaling_panel_->SetVisible(false);
 
     // Linear Algebra panels (Phase 7)
     if (matrix_calculator_panel_) matrix_calculator_panel_->SetVisible(false);

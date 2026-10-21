@@ -203,7 +203,6 @@ public:
     static NormalityTestResult DAgostinoPearsonTest(const std::vector<double>& data);
 
     // ========== Input checks ==========
-    static bool CanApplyLogTransform(const std::vector<double>& data, bool use_log1p);
     static bool CanApplyBoxCox(const std::vector<double>& data);
 };
 

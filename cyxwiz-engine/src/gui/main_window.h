@@ -84,12 +84,6 @@ class ROCAUCPanel;
 class PRCurvePanel;
 class CrossValidationPanel;
 class LearningCurvesPanel;
-// Data Transformation panels (Phase 6C)
-class NormalizationPanel;
-class StandardizationPanel;
-class LogTransformPanel;
-class BoxCoxPanel;
-class FeatureScalingPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -412,13 +406,6 @@ private:
     std::unique_ptr<cyxwiz::PRCurvePanel> pr_curve_panel_;
     std::unique_ptr<cyxwiz::CrossValidationPanel> cross_validation_panel_;
     std::unique_ptr<cyxwiz::LearningCurvesPanel> learning_curves_panel_;
-
-    // Data Transformation panels (Phase 6C)
-    std::unique_ptr<cyxwiz::NormalizationPanel> normalization_panel_;
-    std::unique_ptr<cyxwiz::StandardizationPanel> standardization_panel_;
-    std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
-    std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
-    std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;

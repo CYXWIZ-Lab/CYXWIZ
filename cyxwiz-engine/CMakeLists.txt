@@ -607,11 +607,6 @@ set(ENGINE_SOURCES
     src/gui/panels/pr_curve_panel.cpp
     src/gui/panels/cross_validation_panel.cpp
     src/gui/panels/learning_curves_panel.cpp
-    src/gui/panels/normalization_panel.cpp
-    src/gui/panels/standardization_panel.cpp
-    src/gui/panels/log_transform_panel.cpp
-    src/gui/panels/boxcox_panel.cpp
-    src/gui/panels/feature_scaling_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
     src/gui/panels/eigen_decomp_panel.cpp
     src/gui/panels/svd_panel.cpp
@@ -911,11 +906,6 @@ set(ENGINE_HEADERS
     src/gui/panels/pr_curve_panel.h
     src/gui/panels/cross_validation_panel.h
     src/gui/panels/learning_curves_panel.h
-    src/gui/panels/normalization_panel.h
-    src/gui/panels/standardization_panel.h
-    src/gui/panels/log_transform_panel.h
-    src/gui/panels/boxcox_panel.h
-    src/gui/panels/feature_scaling_panel.h
     src/gui/panels/matrix_calculator_panel.h
     src/gui/panels/eigen_decomp_panel.h
     src/gui/panels/svd_panel.h
