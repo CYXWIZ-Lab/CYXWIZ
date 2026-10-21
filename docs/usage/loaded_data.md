@@ -66,3 +66,20 @@ MNIST test, `mnist_test.csv` (17.4 MB, 10,000 x 785):
   each.
 - The exit dialog's **Datasets in memory** shows the same total. Before
   TOFIX160 it said 0 B for every Arrow and Parquet dataset.
+
+## When data is released
+
+| What happens | What goes |
+|---|---|
+| Delete a Data Input | The dataset its dialog loaded, and everything a pipeline run made from it: its run copy (`ds_datainput_<id>`) and the in-memory copies of it |
+| Delete any step | The results a run registered for it, and its extra outputs. A table another node still passes through stays. |
+| Clear the graph, or open another graph | Everything the runs registered, except the outputs of Save, Deploy and Data Output nodes (you named them). Old copies can't be mistaken for the new graph's nodes, which start at id 1 again. |
+| Delete a Dataset Input | Nothing: it only names a dataset Data Studio loaded |
+| Close or switch the project | Every dataset |
+| A Plot or Dashboard refresh finishes | Its in-memory copies of disk inputs (the plot keeps the rows it read) |
+
+If a run is still going when you delete or clear, its data goes as soon as the run ends.
+
+Two Data Inputs reading files with the same name in different folders get
+different dataset names (`mnist`, `mnist_2`). Two Data Inputs reading the
+same file still share one table, so nothing is copied.
