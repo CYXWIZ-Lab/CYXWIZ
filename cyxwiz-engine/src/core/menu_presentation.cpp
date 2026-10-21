@@ -574,9 +574,9 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Action(f, "data.statistics", "Dataset Statistics", "Opens Data Studio's Profile: row counts, columns and value summaries."));
         i.push_back(Sep());
         i.push_back(Sub("data.explore", "Explore", "Look at a table before using it.",
-                        {Tool(f, "data.missing_values", "Missing Value Analysis"),
-                         Tool(f, "data.outliers", "Outlier Detection"),
-                         Tool(f, "data.correlation", "Correlation Matrix")}));
+                        {Action(f, "data.missing_values", "Missing Value Analysis", "Opens Data Studio's Missing tab: incomplete rows and the columns that go missing together."),
+                         Action(f, "data.outliers", "Outlier Detection", "Opens Data Studio's Outliers tab: values far from the rest, by IQR, Z-score or Modified Z."),
+                         Action(f, "data.correlation", "Correlation Matrix", "Opens Data Studio's Correlation tab: how the number columns move together.")}));
         i.push_back(Sub("data.transform", "Transform", "Rescale or reshape columns.",
                         {Tool(f, "data.normalization", "Normalization (Min-Max)"),
                          Tool(f, "data.standardization", "Standardization (Z-Score)"),
@@ -621,10 +621,10 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Sep(),
                          Tool(f, "tools.dim_reduction", "PCA / t-SNE / UMAP")}));
         i.push_back(Sub("tools.statistics", "Statistics", "Describe and test data.",
-                        {Tool(f, "tools.descriptive_stats", "Summary Statistics"),
+                        {Action(f, "tools.descriptive_stats", "Summary Statistics", "Opens Data Studio's Distribution tab: a column's figures, percentiles and box plot."),
                          Tool(f, "tools.hypothesis_test", "Hypothesis Testing"),
                          Tool(f, "tools.regression", "Linear / Polynomial Regression"),
-                         Tool(f, "tools.distribution_fitter", "Distribution Fitter")}));
+                         Action(f, "tools.distribution_fitter", "Distribution Fitter", "Opens Data Studio's Distribution tab: Normal, Uniform, Exponential and Log-Normal fits.")}));
         i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrix tools.",
                         {Tool(f, "tools.matrix_calculator", "Matrix Calculator"),
                          Tool(f, "tools.eigen", "Eigenvalue Decomposition"),

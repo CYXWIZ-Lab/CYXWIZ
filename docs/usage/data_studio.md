@@ -57,7 +57,12 @@ block with the same facts and links.
 Explore has seven views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
-right one. The views wrap to a second line in a narrow dock.
+right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
+Correlation Matrix) and Tools > Statistics > Summary Statistics and
+Distribution Fitter. In Profile, a column's missing or outlier count opens
+Missing or Outliers on it, "More about this column" opens Distribution, and
+"See the matrix" opens Correlation. The views wrap to a second line in a
+narrow dock.
 
 ## Query
 

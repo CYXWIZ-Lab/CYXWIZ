@@ -80,12 +80,7 @@
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/correlation_matrix_panel.h"
-#include "panels/missing_value_panel.h"
-#include "panels/outlier_detection_panel.h"
-#include "panels/descriptive_stats_panel.h"
 #include "panels/hypothesis_test_panel.h"
-#include "panels/distribution_fitter_panel.h"
 #include "panels/regression_panel.h"
 #include "panels/dim_reduction_panel.h"
 #include "panels/gradcam_panel.h"
@@ -674,15 +669,8 @@ MainWindow::MainWindow()
     lr_finder_panel_ = std::make_unique<cyxwiz::LRFinderPanel>();
     lr_finder_panel_->SetNodeEditor(node_editor_.get());
 
-    // Data Science panels (Phase 3)
-    correlation_matrix_panel_ = std::make_unique<cyxwiz::CorrelationMatrixPanel>();
-    missing_value_panel_ = std::make_unique<cyxwiz::MissingValuePanel>();
-    outlier_detection_panel_ = std::make_unique<cyxwiz::OutlierDetectionPanel>();
-
     // Statistics panels (Phase 4)
-    descriptive_stats_panel_ = std::make_unique<cyxwiz::DescriptiveStatsPanel>();
     hypothesis_test_panel_ = std::make_unique<cyxwiz::HypothesisTestPanel>();
-    distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
     regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
 
     // Advanced Tools panels (Phase 5)
@@ -1769,34 +1757,27 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Data Science callbacks (Tools menu - Phase 3)
+    // Data > Explore and Tools > Statistics > Summary Statistics / Distribution
+    // Fitter: Data Studio's Explore tabs (TOFIX129 D1; the old windows are gone).
     toolbar_->SetOpenCorrelationMatrixCallback([this]() {
-        if (correlation_matrix_panel_) {
-            correlation_matrix_panel_->Toggle();
-            spdlog::info("Toggled Correlation Matrix panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Correlation);
     });
 
     toolbar_->SetOpenMissingValuePanelCallback([this]() {
-        if (missing_value_panel_) {
-            missing_value_panel_->Toggle();
-            spdlog::info("Toggled Missing Value panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Missing);
     });
 
     toolbar_->SetOpenOutlierDetectionCallback([this]() {
-        if (outlier_detection_panel_) {
-            outlier_detection_panel_->Toggle();
-            spdlog::info("Toggled Outlier Detection panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Outliers);
     });
 
     // Set up Statistics callbacks (Tools menu - Phase 4)
     toolbar_->SetOpenDescriptiveStatsCallback([this]() {
-        if (descriptive_stats_panel_) {
-            descriptive_stats_panel_->Toggle();
-            spdlog::info("Toggled Descriptive Statistics panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Distribution);
     });
 
     toolbar_->SetOpenHypothesisTestCallback([this]() {
@@ -1807,10 +1788,8 @@ MainWindow::MainWindow()
     });
 
     toolbar_->SetOpenDistributionFitterCallback([this]() {
-        if (distribution_fitter_panel_) {
-            distribution_fitter_panel_->Toggle();
-            spdlog::info("Toggled Distribution Fitter panel");
-        }
+        if (data_studio_panel_)
+            data_studio_panel_->ShowExplore(data_studio_panel_->GetActiveDataset(), cyxwiz::DataStudioPanel::ExploreTab::Distribution);
     });
 
     toolbar_->SetOpenRegressionCallback([this]() {
@@ -2778,18 +2757,8 @@ MainWindow::~MainWindow() {
     dim_reduction_panel_.reset();
     spdlog::info("~MainWindow: regression_panel_");
     regression_panel_.reset();
-    spdlog::info("~MainWindow: distribution_fitter_panel_");
-    distribution_fitter_panel_.reset();
     spdlog::info("~MainWindow: hypothesis_test_panel_");
     hypothesis_test_panel_.reset();
-    spdlog::info("~MainWindow: descriptive_stats_panel_");
-    descriptive_stats_panel_.reset();
-    spdlog::info("~MainWindow: outlier_detection_panel_");
-    outlier_detection_panel_.reset();
-    spdlog::info("~MainWindow: missing_value_panel_");
-    missing_value_panel_.reset();
-    spdlog::info("~MainWindow: correlation_matrix_panel_");
-    correlation_matrix_panel_.reset();
     spdlog::info("~MainWindow: lr_finder_panel_");
     lr_finder_panel_.reset();
     spdlog::info("~MainWindow: architecture_diagram_");
@@ -3181,15 +3150,8 @@ void MainWindow::Render() {
     TimedRender("architecture diagram", architecture_diagram_);
     TimedRender("lr finder", lr_finder_panel_);
 
-    // Render Data Science panels (Phase 3)
-    TimedRender("correlation matrix", correlation_matrix_panel_);
-    TimedRender("missing value", missing_value_panel_);
-    TimedRender("outlier detection", outlier_detection_panel_);
-
     // Render Statistics panels (Phase 4)
-    TimedRender("descriptive stats", descriptive_stats_panel_);
     TimedRender("hypothesis test", hypothesis_test_panel_);
-    TimedRender("distribution fitter", distribution_fitter_panel_);
     TimedRender("regression", regression_panel_);
 
     // Render Advanced Tools panels (Phase 5)
@@ -3686,15 +3648,8 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (architecture_diagram_) architecture_diagram_->SetVisible(false);
     if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
 
-    // Data Science panels (Phase 3)
-    if (correlation_matrix_panel_) correlation_matrix_panel_->SetVisible(false);
-    if (missing_value_panel_) missing_value_panel_->SetVisible(false);
-    if (outlier_detection_panel_) outlier_detection_panel_->SetVisible(false);
-
     // Statistics panels (Phase 4)
-    if (descriptive_stats_panel_) descriptive_stats_panel_->SetVisible(false);
     if (hypothesis_test_panel_) hypothesis_test_panel_->SetVisible(false);
-    if (distribution_fitter_panel_) distribution_fitter_panel_->SetVisible(false);
     if (regression_panel_) regression_panel_->SetVisible(false);
 
     // Advanced Tools panels (Phase 5)

@@ -586,12 +586,7 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/correlation_matrix_panel.cpp
-    src/gui/panels/missing_value_panel.cpp
-    src/gui/panels/outlier_detection_panel.cpp
-    src/gui/panels/descriptive_stats_panel.cpp
     src/gui/panels/hypothesis_test_panel.cpp
-    src/gui/panels/distribution_fitter_panel.cpp
     src/gui/panels/regression_panel.cpp
     src/gui/panels/dim_reduction_panel.cpp
     src/gui/panels/gradcam_panel.cpp
@@ -896,12 +891,7 @@ set(ENGINE_HEADERS
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
-    src/gui/panels/correlation_matrix_panel.h
-    src/gui/panels/missing_value_panel.h
-    src/gui/panels/outlier_detection_panel.h
-    src/gui/panels/descriptive_stats_panel.h
     src/gui/panels/hypothesis_test_panel.h
-    src/gui/panels/distribution_fitter_panel.h
     src/gui/panels/regression_panel.h
     src/gui/panels/dim_reduction_panel.h
     src/gui/panels/gradcam_panel.h
