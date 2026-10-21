@@ -82,6 +82,7 @@ set(DAEMON_SOURCES
     src/node_server.cpp
     src/job_executor.cpp
     src/remote_dataset_fetcher.cpp
+    src/cloud_dataset_fetcher.cpp
     src/node_doctor.cpp
     # API layer
     src/api/api_key_manager.cpp
@@ -389,6 +390,7 @@ if(CYXWIZ_BUILD_TESTS)
         src/job_execution_service.cpp
         src/job_executor.cpp
         src/remote_dataset_fetcher.cpp
+    src/cloud_dataset_fetcher.cpp
         src/node_client.cpp
         src/node_doctor.cpp
         src/auth/p2p_jwt_validator.cpp
@@ -435,6 +437,34 @@ if(CYXWIZ_BUILD_TESTS)
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     endif()
+
+    # A node pulls a dataset file from CyxCloud (TOFIX164): fake gateway in-process
+    add_executable(test_cloud_dataset_fetcher
+        tests/test_cloud_dataset_fetcher.cpp
+        src/cloud_dataset_fetcher.cpp
+        ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src/core/sha256_digest.cpp
+    )
+    target_include_directories(test_cloud_dataset_fetcher PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-engine/src
+    )
+    target_link_libraries(test_cloud_dataset_fetcher PRIVATE
+        Catch2::Catch2
+        Catch2::Catch2WithMain
+        spdlog::spdlog
+        cyxwiz-protocol
+        gRPC::grpc++
+        protobuf::libprotobuf
+        OpenSSL::Crypto
+        Threads::Threads
+    )
+    target_compile_features(test_cloud_dataset_fetcher PRIVATE cxx_std_17)
+    if(WIN32)
+        target_compile_definitions(test_cloud_dataset_fetcher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN NOGDI
+            PROTOBUF_USE_DLLS GOOGLE_PROTOBUF_NO_THREADLOCAL)
+    endif()
+    add_test(NAME test_cloud_dataset_fetcher COMMAND test_cloud_dataset_fetcher)
 
     # Sign-in screen words and states (TOFIX139): pure presentation model
     add_executable(test_sign_in_presentation
@@ -510,6 +540,7 @@ if(CYXWIZ_BUILD_TESTS)
         src/job_execution_service.cpp
         src/job_executor.cpp
         src/remote_dataset_fetcher.cpp
+    src/cloud_dataset_fetcher.cpp
         src/node_client.cpp
         src/auth/p2p_jwt_validator.cpp
         ${SHARED_CORE_SOURCES}

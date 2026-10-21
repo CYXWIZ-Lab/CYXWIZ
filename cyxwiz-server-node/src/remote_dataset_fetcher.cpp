@@ -1,5 +1,7 @@
 #include "remote_dataset_fetcher.h"
 
+#include "cloud_dataset_fetcher.h"
+
 #include <spdlog/spdlog.h>
 
 #include <cctype>
@@ -177,14 +179,25 @@ bool RemoteDatasetFetcher::Fetch(const std::string& dataset_name, fs::path& file
     }
 }
 
-bool FetchRemoteJobDatasets(RemoteDatasetFetcher& fetcher, cyxwiz::protocol::JobConfig& config,
-                            std::string& error) {
+bool FetchRemoteJobDatasets(RemoteDatasetFetcher& engine, CloudDatasetFetcher* cloud,
+                            cyxwiz::protocol::JobConfig& config, std::string& error) {
     cyxwiz::GraphJobDatasetPlan plan;
     if (!cyxwiz::PlanGraphJobDatasets(config.model_definition(), plan, error)) return false;
+    std::map<std::string, const cyxwiz::protocol::CloudDatasetSource*> cloud_sources;
+    for (const auto& source : config.cloud_datasets()) cloud_sources[source.dataset_name()] = &source;
     std::map<std::string, std::string> files;
     for (const auto& name : plan.ship) {
         fs::path file;
-        if (!fetcher.Fetch(name, file, error)) return false;
+        const auto cloud_source = cloud_sources.find(name);
+        if (cloud_source != cloud_sources.end()) {
+            if (!cloud) {
+                error = "dataset '" + name + "' lives in CyxCloud but this node has no cloud fetcher";
+                return false;
+            }
+            if (!cloud->Fetch(*cloud_source->second, file, error)) return false;
+        } else if (!engine.Fetch(name, file, error)) {
+            return false;
+        }
         files[name] = file.string();
     }
     std::string bound;

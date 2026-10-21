@@ -687,7 +687,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
 
             if (chunk.is_last_chunk()) {
                 got_last_chunk = true;
-                REQUIRE(chunk.offset() + chunk.data().size() == chunk.total_size());
+                REQUIRE(chunk.offset() + static_cast<int64_t>(chunk.data().size()) == chunk.total_size());
             }
         }
 
@@ -731,7 +731,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
 
         WeightsChunk second_chunk;
         REQUIRE(reader2->Read(&second_chunk));
-        REQUIRE(second_chunk.offset() == first_chunk_size);
+        REQUIRE(second_chunk.offset() == static_cast<int64_t>(first_chunk_size));
 
         while (reader2->Read(&drain_chunk)) {
         }
@@ -1062,7 +1062,7 @@ TEST_CASE("Remote jobs fetch the Engine's dataset files, then train", "[remote_d
     config.set_model_definition(graph.dump());
     config.set_dataset_uri("remote://engine");
     config.set_epochs(1);
-    const bool fetched = FetchRemoteJobDatasets(*fetcher, config, error);
+    const bool fetched = FetchRemoteJobDatasets(*fetcher, nullptr, config, error);
     INFO(error);
     REQUIRE(fetched);
     CHECK(requests >= 2);

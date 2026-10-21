@@ -50,6 +50,21 @@ message JobConfig {
   // end from the Central Server's P2P token instead (TOFIX118 gap 2).
   reserved 15;
   reserved "reservation_duration_minutes";
+
+  // Datasets the node pulls from CyxCloud instead of the Engine (TOFIX164).
+  // Any training/validation input of the graph not listed here is shipped
+  // by the Engine over the training stream as before.
+  repeated CloudDatasetSource cloud_datasets = 16;
+}
+
+// One dataset of a job that lives in CyxCloud: the node streams the file
+// from the gateway with the access token the Engine obtained for it.
+message CloudDatasetSource {
+  string dataset_name = 1;      // the graph's Data Input dataset_name
+  string gateway_address = 2;   // host:port of the CyxCloud gateway gRPC
+  string file_id = 3;           // the file's UUID in CyxCloud
+  string access_token = 4;      // dataset access token (scope stream)
+  uint64 size_bytes = 5;        // expected size, 0 when unknown
 }
 
 // Job status
