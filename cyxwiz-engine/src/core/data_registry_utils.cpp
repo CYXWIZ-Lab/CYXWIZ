@@ -682,6 +682,30 @@ void DataRegistry::RestoreTabularDataset(
         name);
 }
 
+// Here, beside the per-map unregisters it calls (data_registry_core.cpp is
+// also built alone, without them).
+void DataRegistry::UnloadDataset(const std::string& name) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = datasets_.find(name);
+        if (it != datasets_.end()) {
+            InvalidateTabularPublicationUnlocked(name);
+            datasets_.erase(it);
+            spdlog::info("Unloaded dataset: {}", name);
+
+            if (on_unloaded_) {
+                on_unloaded_(name);
+            }
+        }
+    }
+    // Every other map too: "Unload from memory" on an Arrow, Parquet, image,
+    // audio or text dataset freed nothing (TOFIX160 P6). Each takes the lock.
+    UnregisterTabularDataset(name);
+    UnregisterImageDataset(name);
+    UnregisterAudioDataset(name);
+    UnregisterTextDataset(name);
+}
+
 void DataRegistry::ClearAllTabularDatasets() {
     std::lock_guard<std::mutex> lock(mutex_);
     tabular_publication_tokens_.clear();

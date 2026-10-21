@@ -32,6 +32,9 @@ class NodeEditor;
 // node, the graph, the compile result or an edit changes.
 class Properties {
 public:
+    // Its configuration dialog is loading (a Data Input's Apply): the graph
+    // must not be replaced under it (TOFIX160 P6).
+    bool IsDialogBusy() const { return active_dialog_ && active_dialog_->IsBusy(); }
     Properties();
     ~Properties();
 

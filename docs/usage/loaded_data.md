@@ -76,9 +76,13 @@ MNIST test, `mnist_test.csv` (17.4 MB, 10,000 x 785):
 | Clear the graph, or open another graph | Everything the runs registered, except the outputs of Save, Deploy and Data Output nodes (you named them). Old copies can't be mistaken for the new graph's nodes, which start at id 1 again. |
 | Delete a Dataset Input | Nothing: it only names a dataset Data Studio loaded |
 | Close or switch the project | Every dataset |
+| **Unload from memory** (the Data Input dialog's Memory tab) | The dataset from every place it is held, and the copies pipeline runs made of it; the node reads Not loaded until the next Apply or run |
 | A Plot or Dashboard refresh finishes | Its in-memory copies of disk inputs (the plot keeps the rows it read) |
 
 If a run is still going when you delete or clear, its data goes as soon as the run ends.
+While a Data Input's dialog is still loading, the graph can't be cleared or
+replaced ("a Data Input is loading its data"). Otherwise the dataset would
+arrive after its node was gone.
 
 **Undo and redo** follow the data:
 

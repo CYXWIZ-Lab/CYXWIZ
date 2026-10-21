@@ -714,6 +714,11 @@ public:
     bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
                            const std::vector<std::string>& erase = {}, const std::string& name = {});
 
+    // What pipeline runs registered for these nodes (their copies of the
+    // data, their results): released now, or when the run in flight ends
+    // (TOFIX160 P2; a Data Input's Unload uses it too).
+    void ReleaseRunData(const std::set<int>& node_ids);
+
 private:
     void ShowToolbar();
     // Studio nav (node_editor_toolbar.cpp, approved board 7): the graph menu,
@@ -1278,8 +1283,7 @@ private:
     // into node_run_facts_ while it runs and once when it ends.
     std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
     // What the runs registered for nodes that left the graph (TOFIX160 P2):
-    // released now, or when the run in flight ends.
-    void ReleaseRunData(const std::set<int>& node_ids);
+    // released now, or when the run in flight ends (ReleaseRunData, public).
     void ReleaseAllRunData();
     void ApplyPendingRunRelease();
     // After undo / redo swapped the graph (TOFIX160 P3): datasets no Data

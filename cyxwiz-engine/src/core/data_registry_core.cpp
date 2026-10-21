@@ -46,21 +46,6 @@ bool DataRegistry::IsSparseFeatureDataset(const std::string& name) const {
         sparse_feature_datasets_.end();
 }
 
-void DataRegistry::UnloadDataset(const std::string& name) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = datasets_.find(name);
-    if (it != datasets_.end()) {
-        InvalidateTabularPublicationUnlocked(name);
-        datasets_.erase(it);
-        spdlog::info("Unloaded dataset: {}", name);
-
-        if (on_unloaded_) {
-            on_unloaded_(name);
-        }
-    }
-}
-
 void DataRegistry::UnloadAll() {
     std::lock_guard<std::mutex> lock(mutex_);
 

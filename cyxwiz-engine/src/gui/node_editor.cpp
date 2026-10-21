@@ -234,6 +234,7 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         cyxwiz::TestManager::Instance().IsTestingActive(),
         graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
         training_data_loading_callback_ && training_data_loading_callback_(),
+        properties_panel_ && properties_panel_->IsDialogBusy(),
         is_simulating_.load(), pipeline_execution_active_,
         rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())}));
 }
