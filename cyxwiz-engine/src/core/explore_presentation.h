@@ -41,6 +41,15 @@ std::string Figure(double v);
 // SQL for the Query tab listing the rows of `column` outside lo .. hi.
 std::string OutlierRowsSql(const std::string& table, const std::string& column, double lo, double hi);
 
+// Words for |r|: "very strong" (>= .8), "strong" (.6), "moderate" (.4),
+// "weak" (.2), "none"; "unknown" for NaN.
+const char* CorrelationStrength(double r);
+// "very strong positive: when one is larger, so is the other".
+std::string CorrelationSentence(double r);
+// The matrix as CSV: a header of the columns, then one row per column
+// (row-major r, n x n; NaN as an empty cell).
+std::string CorrelationCsv(const std::vector<std::string>& columns, const std::vector<double>& r);
+
 // The Preparation Recipe step "Drop these rows": a guided Keep rows step
 // keeping the rows where the column is not empty and (with texts marked as
 // missing) is not one of them.

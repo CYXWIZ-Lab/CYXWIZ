@@ -98,8 +98,6 @@ constexpr size_t kCorrelationColumns = 30;
 // columns beyond the profile's first kCorrelationColumns).
 ColumnCorrelations Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run,
                             bool cache = true);
-// Words for |r|: "very strong" (>= .8), "strong" (.6), "moderate" (.4), "weak" (.2), "none".
-const char* CorrelationStrength(double r);
 
 // Its queries ask to be saved (QueryRequest::cache): through the session
 // query service, a table profiled before (by Data Studio or a dashboard, in

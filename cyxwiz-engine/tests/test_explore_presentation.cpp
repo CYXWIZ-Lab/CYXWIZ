@@ -49,6 +49,15 @@ int main() {
               "SELECT *\nFROM \"Penguins\"\nWHERE \"body_mass_g\" < 2597.5 OR \"body_mass_g\" > 5805.75",
           "outlier rows SQL: " + ev::OutlierRowsSql("Penguins", "body_mass_g", 2597.5, 5805.75));
 
+    Check(std::string(ev::CorrelationStrength(0.87)) == "very strong" && std::string(ev::CorrelationStrength(-0.47)) == "moderate" &&
+              std::string(ev::CorrelationStrength(0.1)) == "none" && std::string(ev::CorrelationStrength(NAN)) == "unknown",
+          "strength words");
+    Check(ev::CorrelationSentence(0.8712) == "very strong positive: when one is larger, so is the other.", "positive sentence");
+    Check(ev::CorrelationSentence(-0.5839).rfind("moderate negative", 0) == 0, "negative sentence");
+    Check(ev::CorrelationCsv({"a", "b,c"}, {1.0, -0.5, -0.5, 1.0}) == "column,a,\"b,c\"\na,1.000000,-0.500000\n\"b,c\",-0.500000,1.000000\n",
+          "CSV: " + ev::CorrelationCsv({"a", "b,c"}, {1.0, -0.5, -0.5, 1.0}));
+    Check(ev::CorrelationCsv({"a", "k"}, {1.0, NAN, NAN, 1.0}) == "column,a,k\na,1.000000,\nk,,1.000000\n", "NaN is an empty cell");
+
     // Drop these rows: a guided Keep rows step whose SQL keeps the rows with a value.
     guided::GuidedStep plain = ev::KeepRowsWithValue("sex", {});
     Check(plain.ops.size() == 1 && plain.ops[0].type == "keep_rows", "one Keep rows operation");

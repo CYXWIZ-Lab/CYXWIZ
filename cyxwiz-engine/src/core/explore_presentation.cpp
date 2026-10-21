@@ -100,6 +100,51 @@ std::string OutlierRowsSql(const std::string& table, const std::string& column, 
     return "SELECT *\nFROM " + Ident(table) + "\nWHERE " + Ident(column) + " < " + exact(lo) + " OR " + Ident(column) + " > " + exact(hi);
 }
 
+const char* CorrelationStrength(double r) {
+    const double a = std::fabs(r);
+    if (!std::isfinite(a)) return "unknown";
+    if (a >= 0.8) return "very strong";
+    if (a >= 0.6) return "strong";
+    if (a >= 0.4) return "moderate";
+    if (a >= 0.2) return "weak";
+    return "none";
+}
+
+std::string CorrelationSentence(double r) {
+    if (!std::isfinite(r)) return "No correlation can be measured: a column has no spread in the rows both have.";
+    const std::string strength = CorrelationStrength(r);
+    if (strength == "none") return "No linear relation: one tells little about the other.";
+    if (r > 0) return strength + " positive: when one is larger, so is the other.";
+    return strength + " negative: when one is larger, the other tends to be smaller.";
+}
+
+std::string CorrelationCsv(const std::vector<std::string>& columns, const std::vector<double>& r) {
+    const auto field = [](const std::string& text) {
+        if (text.find_first_of(",\"\n") == std::string::npos) return text;
+        std::string out = "\"";
+        for (char c : text) out += c == '"' ? std::string("\"\"") : std::string(1, c);
+        return out + "\"";
+    };
+    const size_t n = columns.size();
+    std::string csv = "column";
+    for (const auto& c : columns) csv += "," + field(c);
+    csv += "\n";
+    for (size_t i = 0; i < n; ++i) {
+        csv += field(columns[i]);
+        for (size_t j = 0; j < n; ++j) {
+            csv += ",";
+            const double v = i * n + j < r.size() ? r[i * n + j] : NAN;
+            if (std::isfinite(v)) {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.6f", v);
+                csv += buf;
+            }
+        }
+        csv += "\n";
+    }
+    return csv;
+}
+
 guided::GuidedStep KeepRowsWithValue(const std::string& column, const std::vector<std::string>& texts) {
     guided::GuidedStep step;
     nlohmann::json params = guided::DefaultParams("keep_rows", column);

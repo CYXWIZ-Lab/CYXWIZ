@@ -31,6 +31,7 @@ DataStudioPanel::DataStudioPanel() {
         return "";
     };
     outliers_ = std::make_unique<OutliersView>();
+    correlation_ = std::make_unique<CorrelationView>();
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);

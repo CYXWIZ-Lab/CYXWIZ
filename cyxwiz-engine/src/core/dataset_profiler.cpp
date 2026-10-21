@@ -392,16 +392,6 @@ ColumnCorrelations Correlate(const std::string& table, const std::vector<std::st
     return m;
 }
 
-const char* CorrelationStrength(double r) {
-    const double a = std::fabs(r);
-    if (!std::isfinite(a)) return "unknown";
-    if (a >= 0.8) return "very strong";
-    if (a >= 0.6) return "strong";
-    if (a >= 0.4) return "moderate";
-    if (a >= 0.2) return "weak";
-    return "none";
-}
-
 DatasetProfile ProfileArrow(const std::shared_ptr<arrow::Table>& table, const ProfileOptions& options) {
     namespace fs = std::filesystem;
     static std::atomic<uint64_t> next{0};

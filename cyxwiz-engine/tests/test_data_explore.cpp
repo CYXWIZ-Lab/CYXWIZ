@@ -171,8 +171,6 @@ int main() {
         Check(p.correlations.size() == 1 && Near(std::get<2>(p.correlations[0]), r, 1e-9), "strongest pairs from the matrix");
         const ColumnCorrelations chosen = Correlate("t", {"b", "a", "c"}, run, false);
         Check(chosen.ok() && Near(chosen.At(0, 1), r, 1e-9) && std::isnan(chosen.At(0, 2)), "chosen columns; no spread is NaN");
-        Check(std::string(CorrelationStrength(0.87)) == "very strong" && std::string(CorrelationStrength(-0.47)) == "moderate",
-              "strength words");
     }
     fs::remove_all(root, ec);
     std::cout << "data explore: all checks passed\n";

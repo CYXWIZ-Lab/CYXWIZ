@@ -54,8 +54,8 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has five views: **Query**, **Profile**, **Missing**, **Outliers**
-and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Explore has six views: **Query**, **Profile**, **Missing**, **Outliers**,
+**Correlation** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one. The views wrap to a second line in a narrow dock.
 
@@ -243,6 +243,25 @@ Penguins: no outliers at IQR 1.5 in any column. Z-score 2 finds 9 in
 body_mass_g (all male Gentoo from Biscoe, 5,850 to 6,300 g); Modified Z 2
 finds 8 in flipper_length_mm (MAD 11, above 229.6). Tables profiled
 approximately use estimated quartiles and say so.
+
+## Correlation
+
+How the number columns move together: Pearson r of every pair, over the rows
+where both values are present.
+
+- **The matrix**: the profile's first 30 number columns (more need picking in
+  **Columns**, a searchable list with chips). Each cell shows r; hover for
+  the pair, r, its strength in words and how many rows it used; click to
+  pick it.
+- **The picked pair** (right): r, a sentence ("very strong positive: when
+  one is larger, so is the other"), and the rows it used.
+- **Strongest pairs**: every pair by |r|, strongest first; click one to pick
+  it.
+- **Display**: cell size, values in the cells, the -1 .. +1 legend.
+- **Export CSV...** saves the matrix (a header of the columns, one row each).
+
+Penguins: flipper length and body mass +0.87; bill depth and flipper length
+-0.58; every pair uses 342 of 344 rows (2 rows have no measurements).
 
 ## Visualize
 
