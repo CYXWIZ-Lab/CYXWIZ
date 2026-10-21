@@ -135,7 +135,7 @@ SignInCard BuildSignInCard(const SignInInputs& in) {
     card.password_label = "Password";
     card.fields_enabled = !busy;
     card.button_busy = busy;
-    card.button_label = busy ? "Signing in\xE2\x80\xA6" : "Sign in";
+    card.button_label = busy ? "Signing in..." : "Sign in";  // "..." : the node font has no ellipsis glyph
     card.button_enabled = !busy && !Trim(in.email).empty() && in.password_filled;
     if (busy) card.busy_note = "Checking your password with the CyxWiz service. This takes a few seconds.";
     card.create_prefix = "New to CyxWiz?";
@@ -252,7 +252,7 @@ ServiceDialog BuildServiceDialog(const std::string& typed_address, ServiceReach 
         case ServiceReach::Unreachable:
             dialog.reach_line = "Not reachable \xC2\xB7 check the address and that the service is running";
             break;
-        case ServiceReach::Checking: dialog.reach_line = "Checking\xE2\x80\xA6"; break;
+        case ServiceReach::Checking: dialog.reach_line = "Checking..."; break;
         case ServiceReach::Unknown: break;
     }
     dialog.note =

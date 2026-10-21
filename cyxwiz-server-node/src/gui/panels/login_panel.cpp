@@ -7,6 +7,7 @@
 #include "gui/icons.h"
 #include "gui/theme.h"
 #include "gui/ui_widgets.h"
+#include "gui/window_frame.h"
 #include "ipc/daemon_client.h"
 
 #include <imgui.h>
@@ -28,7 +29,12 @@ namespace {
 constexpr float kCardWidth = 420.0f;
 constexpr float kDialogWidth = 440.0f;
 constexpr float kCardRounding = 10.0f;
+constexpr float kLogoAlpha = 0.28f;  // the logo stays a backdrop: the card and text keep their contrast
 const ImVec2 kCardPadding(24.0f, 24.0f);
+
+ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0f);
+}
 
 ImVec4 Surface() { return ImGui::GetStyle().Colors[ImGuiCol_WindowBg]; }
 // A darker shade of the theme's title-bar tone, so the card stands out.
@@ -356,22 +362,50 @@ void LoginPanel::OpenCreateAccount() {
 // Render
 
 void LoginPanel::Render() {
-    if (IsLoggedIn() && !progress_visible_) return;
+    if (IsLoggedIn() && !progress_visible_) {
+        // The dashboard: the frame follows the theme's title tone.
+        SetWindowFrameColor(ImGui::GetStyle().Colors[ImGuiCol_TitleBg]);
+        return;
+    }
+    if (!logo_tried_) {
+        logo_tried_ = true;
+        const std::string path = FindResourceFile("cyxwiz.png");
+        if (!path.empty()) LoadTexture(path, logo_);
+    }
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::SetNextWindowViewport(viewport->ID);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                   ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoScrollbar;
+                                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoDocking;
+    // The after-sign-in card shows over the dashboard: keep the overlay in front
+    // while it is visible (the dashboard windows appear once signed in).
+    if (progress_visible_) ImGui::SetNextWindowFocus();
     // Read the theme's surfaces before the backdrop replaces the window background.
     const ImVec4 surface = Surface();
-    const ImVec4 backdrop = Backdrop();
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, backdrop);
+    // With the logo drawn at kLogoAlpha over the backdrop, the visible tone is
+    // the mix; the OS frame takes the same tone (owner: "the window frame
+    // should match it").
+    const ImVec4 backdrop = logo_.Loaded() ? Mix(Backdrop(), logo_.edge_color, kLogoAlpha) : Backdrop();
+    SetWindowFrameColor(backdrop);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, Backdrop());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("##SignInOverlay", nullptr, flags);
+
+    // The CyxWiz logo, faint, covering the window (cover-fit, centred).
+    if (logo_.Loaded()) {
+        const ImVec2 min = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        const float scale = std::max(size.x / static_cast<float>(logo_.width), size.y / static_cast<float>(logo_.height));
+        const ImVec2 drawn(logo_.width * scale, logo_.height * scale);
+        const ImVec2 p0(min.x + (size.x - drawn.x) * 0.5f, min.y + (size.y - drawn.y) * 0.5f);
+        const ImVec2 p1(p0.x + drawn.x, p0.y + drawn.y);
+        ImGui::GetWindowDrawList()->AddImage(logo_.ImGuiId(), p0, p1, ImVec2(0, 0), ImVec2(1, 1),
+                                             ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, kLogoAlpha)));
+    }
 
     // Esc clears the message (when no dialog is open).
     if (!open_service_dialog_ && !open_offline_confirm_ && ImGui::IsKeyPressed(ImGuiKey_Escape)) ClearMessage();

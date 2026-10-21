@@ -22,6 +22,9 @@ local.
   not appear in the node list. Sign in later from Account to go online.
 - The line under the card names the daemon version and whether the daemon is
   connected.
+- The CyxWiz logo sits faintly behind the card and the window's title bar takes
+  the same tone (the logo file is `resources/cyxwiz.png`; without it the plain
+  theme backdrop shows).
 
 The cursor starts in the empty field: email on a first run, password when the
 email was remembered.

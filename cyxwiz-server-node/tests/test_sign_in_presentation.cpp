@@ -77,7 +77,7 @@ TEST_CASE("sign-in card: signing in locks everything but shows what is happening
     in.problem = SignInProblem::WrongPassword;  // a stale message never shows while busy
     const auto card = BuildSignInCard(in);
     CHECK(card.button_busy);
-    CHECK(card.button_label == "Signing in\xE2\x80\xA6");
+    CHECK(card.button_label == "Signing in...");
     CHECK_FALSE(card.button_enabled);
     CHECK_FALSE(card.fields_enabled);
     CHECK_FALSE(card.change_enabled);
@@ -229,7 +229,7 @@ TEST_CASE("change the sign-in service", "[sign-in]") {
 
         CHECK(BuildServiceDialog("http://x:1/api", ServiceReach::Unreachable).reach_line ==
               "Not reachable \xC2\xB7 check the address and that the service is running");
-        CHECK(BuildServiceDialog("http://x:1/api", ServiceReach::Checking).reach_line == "Checking\xE2\x80\xA6");
+        CHECK(BuildServiceDialog("http://x:1/api", ServiceReach::Checking).reach_line == "Checking...");
     }
 }
 

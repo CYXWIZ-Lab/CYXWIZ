@@ -6,6 +6,7 @@
 #include "auth/auth_manager.h"
 #include "core/sign_in_presentation.h"
 #include "gui/server_panel.h"
+#include "gui/texture.h"
 
 #include <chrono>
 #include <future>
@@ -64,6 +65,8 @@ private:
     bool focus_pending_ = true;       // put the cursor in the right field once
     bool email_prefilled_ = false;    // from the remembered email, once the restore finished
     float card_height_ = 460.0f;      // last measured, to centre the card
+    Texture logo_;                    // faint CyxWiz logo behind the card (P7)
+    bool logo_tried_ = false;
 
     // Sign-in state
     core::SignInPhase phase_ = core::SignInPhase::Form;
