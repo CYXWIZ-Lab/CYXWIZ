@@ -10,6 +10,7 @@
 #include "../../core/dataset_profiler.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <vector>
 #include <memory>
@@ -40,6 +41,14 @@ public:
     std::map<std::string, std::vector<std::string>> MissingTexts() const;
     // Shows this column's detail (Missing's "set them in Profile").
     void SelectColumn(const std::string& column);
+
+    // Links into the other Explore tabs (TOFIX129 D1): a column's missing
+    // and outlier counts, "More about this column", "See the matrix". Unset
+    // where the view is embedded (the Data Input dialog): plain figures.
+    std::function<void(const std::string& column)> on_missing;
+    std::function<void(const std::string& column)> on_outliers;
+    std::function<void(const std::string& column)> on_distribution;
+    std::function<void()> on_correlation;
 
 private:
     void RenderOverview();

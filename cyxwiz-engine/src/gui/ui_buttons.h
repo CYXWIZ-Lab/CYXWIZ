@@ -18,6 +18,9 @@ bool SecondaryButton(const char* label, bool enabled = true,
                      const char* disabled_reason = nullptr,
                      ButtonSize size = ButtonSize::Small, float width = 0.0f);
 bool LinkButton(const char* label, bool enabled = true);
+// A link at text height, for a figure inside a table row (LinkButton's
+// padding makes the row taller than its neighbours).
+bool InlineLink(const char* label);
 // Toolbar action: no fill until hovered; `on` gives it the secondary fill
 // (a panel that is shown, a toggle that is set). `text` (optional) colours
 // the label, e.g. a green run arrow.

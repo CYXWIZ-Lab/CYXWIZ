@@ -349,8 +349,17 @@ void ProfileView::RenderColumns(float /*width*/) {
                 ImGui::TextColored(t.text_dim, "%s to %s", c.min_text.c_str(), c.max_text.c_str());
             else ImGui::TextColored(t.text_dim, "%s distinct%s", Thousands(c.facts.distinct).c_str(), profile_->exact ? "" : " (about)");
             ImGui::TableSetColumnIndex(5);
-            if (c.missing) ImGui::TextColored(t.warning, "%s (%s)", Thousands(c.missing).c_str(), Percent(c.missing, profile_->rows).c_str());
-            else ImGui::TextColored(t.text_faint, "0");
+            if (c.missing) {
+                const std::string text = Thousands(c.missing) + " (" + Percent(c.missing, profile_->rows) + ")";
+                if (on_missing) {
+                    if (ui::InlineLink((text + "##missing").c_str())) on_missing(c.facts.name);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Open Missing on %s", c.facts.name.c_str());
+                } else {
+                    ImGui::TextColored(t.warning, "%s", text.c_str());
+                }
+            } else {
+                ImGui::TextColored(t.text_faint, "0");
+            }
             // Empty texts are not missing, but say so (362 empty statements
             // read as "0 missing", board 7).
             if (c.empty_text) {
@@ -364,7 +373,15 @@ void ProfileView::RenderColumns(float /*width*/) {
             ImGui::TableSetColumnIndex(8);
             if (c.numeric) ImGui::TextUnformatted(Short(c.median).c_str());
             ImGui::TableSetColumnIndex(9);
-            if (c.numeric && c.outliers) ImGui::TextColored(t.text_dim, "%s", Thousands(c.outliers).c_str());
+            if (c.numeric && c.outliers) {
+                if (on_outliers) {
+                    if (ui::InlineLink((Thousands(c.outliers) + "##outliers").c_str())) on_outliers(c.facts.name);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                        ImGui::SetTooltip("Open Outliers on %s (IQR 1.5, the rule counted here)", c.facts.name.c_str());
+                } else {
+                    ImGui::TextColored(t.text_dim, "%s", Thousands(c.outliers).c_str());
+                }
+            }
             ImGui::PopID();
         }
     ImGui::EndTable();
@@ -408,6 +425,7 @@ void ProfileView::RenderDetail() {
             const std::string hi = Short(c.max);
             dl->AddText(ImVec2(at.x + w - ImGui::CalcTextSize(hi.c_str()).x, at.y + h - 12), ui::ToU32(t.text_dim), hi.c_str());
             ImGui::Dummy(ImVec2(w, h));
+            if (on_distribution && c.numeric && ui::LinkButton("More about this column")) on_distribution(c.facts.name);
         } else if (!c.top.empty()) {
             size_t most = 1;
             for (const auto& [v, n] : c.top) most = std::max(most, n);
@@ -501,6 +519,7 @@ void ProfileView::RenderDetail() {
         ImGui::TextColored(t.text_dim, "STRONGEST CORRELATIONS (Pearson)");
         for (const auto& [a, b, r] : profile_->correlations)
             ImGui::TextColored(std::fabs(r) > 0.5 ? t.text : t.text_dim, "%+.2f  %s \xC2\xB7 %s", r, a.c_str(), b.c_str());
+        if (on_correlation && ui::LinkButton("See the matrix")) on_correlation();
     }
 }
 

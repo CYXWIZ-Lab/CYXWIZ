@@ -22,6 +22,10 @@ namespace cyxwiz {
 DataStudioPanel::DataStudioPanel() {
     query_editor_ = std::make_unique<QueryEditor>();
     profile_ = std::make_unique<ProfileView>();
+    profile_->on_missing = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Missing, column); };
+    profile_->on_outliers = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Outliers, column); };
+    profile_->on_distribution = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Distribution, column); };
+    profile_->on_correlation = [this] { ShowExplore(active_dataset_, ExploreTab::Correlation); };
     missing_ = std::make_unique<MissingView>();
     missing_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_open_profile = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Profile, column); };
