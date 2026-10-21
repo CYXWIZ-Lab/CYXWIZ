@@ -5,11 +5,11 @@ identity, a category, settings with types and limits, and the shape rule.
 Write the module as in [python-modules.md](python-modules.md), then
 decorate it.
 
-> Checked 2026-10-17 against pycyxwiz built from branch
+> Checked 2026-10-21 against pycyxwiz built from branch
 > `tofix125-extension-nodes`. The examples are
 > `cyxwiz-backend/python/tests/example_nodes.py`, which
-> `test_python_nodes.py` and `test_python_bundle.py` run. Using a bundle in
-> the Engine comes next (stage P4).
+> `test_python_nodes.py` and `test_python_bundle.py` run, and the losses in
+> `test_python_losses.py`.
 
 ```python
 import pycyxwiz as cyx
@@ -59,7 +59,46 @@ class Snake(cyx.Module):
 | `output_shape(self, input_shape)` | Optional. One sample's output shape. Without it the output shape equals the input shape |
 | `role` | `activation` or `layer` (default `layer`) |
 
-## 3. Identity rules
+## 3. A loss
+
+A loss takes the model's predictions and the targets and gives one value.
+Subclass `pycyxwiz.Loss` and decorate it with `@nodes.loss`:
+
+```python
+@nodes.loss(id="com.example.losses", name="Huber", version="1.0.0", target="continuous")
+class Huber(cyx.Loss):
+    """Squared error below delta, linear above"""
+    delta = nodes.Param(float, default=1.0, min=1e-6, description="Where it turns linear")
+
+    def forward(self, predictions, targets):
+        d = predictions - targets
+        a = d.abs()
+        small = cyx.Tensor.ones(a.shape()) * (a < self.delta)
+        return (d * d * 0.5 * small + (a - 0.5 * self.delta) * self.delta * (1.0 - small)).mean()
+
+    def backward(self, predictions, targets):
+        d = predictions - targets
+        return d.clip(-self.delta, self.delta) * (1.0 / predictions.num_elements())
+```
+
+| Part | Meaning |
+|---|---|
+| `forward(self, predictions, targets)` | One value: a Tensor of one element (`.mean()`, `.sum()` give one) |
+| `backward(self, predictions, targets)` | dLoss/dpredictions, with the predictions' shape. Include the mean scaling (divide by the element or row count) as the built-in losses do: the optimizer uses this gradient as it is |
+| `target` | `categorical` (default): the targets are one-hot rows as wide as the model's output, and training reports accuracy by argmax. `continuous`: the targets are the values to predict, and training reports regression metrics |
+| Settings | `nodes.Param`, as for any node |
+
+In the graph a loss node has the built-in losses' pins: **Predictions**
+(the last layer), **Targets** (the Data Input's labels, through the Loader)
+and **Loss** (to the optimizer). It is the graph's training objective, not
+a layer of the model.
+
+`pycyxwiz.gradcheck_loss(make, targets="one_hot" | "values")` checks a
+loss's backward against central differences of its forward;
+`nodes.gradcheck(Huber)` runs it with the node's target kind. A backward
+without the mean scaling fails it.
+
+## 4. Identity rules
 
 | Field | Rule | Example |
 |---|---|---|
@@ -72,7 +111,7 @@ class Snake(cyx.Module):
 A wrong value is refused when the class is decorated, with the rule in the
 message.
 
-## 4. Make and check a node the way the Engine will
+## 5. Make and check a node the way the Engine will
 
 ```python
 snake = nodes.create(Snake, {"initial_a": "2.5"}, [16])   # settings as a graph stores them
@@ -83,9 +122,9 @@ print(nodes.describe(Snake))                              # the manifest entry
 
 | Function | Does |
 |---|---|
-| `create(cls, settings, input_shape)` | Converts and checks the settings, makes the module, calls `build` |
-| `output_shape(cls, settings, input_shape)` | The output shape for one sample |
-| `gradcheck(cls, settings)` | `pycyxwiz.gradcheck` on fresh modules made with these settings |
+| `create(cls, settings, input_shape)` | Converts and checks the settings, makes the module, calls `build` (a loss: `create(cls, settings)`) |
+| `output_shape(cls, settings, input_shape)` | The output shape for one sample (not for a loss) |
+| `gradcheck(cls, settings)` | `pycyxwiz.gradcheck` on fresh modules made with these settings (`gradcheck_loss` for a loss) |
 | `describe(cls)` | Identity, tier, role, shape rule, pins and settings: the fields a bundle's `node.json` holds |
 
 A refused setting raises `ValueError` with the reason the Engine will show
@@ -97,7 +136,7 @@ under the field:
 | `{"initial_a": "abc"}` | `initial_a must be a number, not 'abc'` |
 | `{"speed": "1"}` | `Snake has no setting speed` |
 
-## 5. Bundle the nodes
+## 6. Bundle the nodes
 
 Put the decorated classes in one `.py` file, import it, and bundle:
 
@@ -168,7 +207,11 @@ The manifest of the example above (`node.json`, Snake's entry shortened):
 `verification.status` is `passed`, `failed` or `not_checked` (with `error`
 saying why, for example a default setting the node refuses).
 
-## 6. Use the bundle in the Engine
+A loss's entry has `"tier": "loss"`, `"role": "loss"`, its `"target"`, the
+pins Predictions (Tensor), Targets (Labels) -> Loss (Loss), and no
+`shape_rule`.
+
+## 7. Use the bundle in the Engine
 
 The Engine lists every bundle it finds in these folders, without starting
 Python:
@@ -215,7 +258,7 @@ its approval and code hash; the Node Browser counts *nodes from 2 plugins
 and 1 Python bundle*; **Apps > Python node bundles** opens a bundle's
 nodes.
 
-## 7. Create a node from a script in the Engine
+## 8. Create a node from a script in the Engine
 
 In the Script Editor, open (and save) a `.py` file of your project that
 defines nodes with `@nodes.activation` or `@nodes.node`, then **Run > Create
@@ -245,14 +288,15 @@ parallel with each other or with a script running in the Engine (one
 interpreter lock), and converting to NumPy inside a node copies to the CPU
 and back.
 
-## 8. Examples: ten built-in layers as Python nodes
+## 9. Examples: built-in layers and losses as Python nodes
 
 `examples/python_nodes/builtin_layers/` (in the SDK:
 `examples/python-nodes/builtin-layers/`) holds Dense, Layer Norm, ReLU, Leaky
-ReLU, ELU, Sigmoid, Tanh, Softplus, GELU and SiLU written as Python nodes,
-bundled as `builtin-layers.cyxnode`, with an example graph that feeds them
-from a Data Input (`blobs_python_layers.cyxgraph`, four classes from
-`blobs.csv`).
+ReLU, ELU, Sigmoid, Tanh, Softplus, GELU and SiLU, and the losses Cross
+Entropy, MSE, L1 and Huber, written as Python nodes, bundled as
+`builtin-layers.cyxnode`, with an example graph that feeds them from a Data
+Input (`blobs_python_layers.cyxgraph`, four classes from `blobs.csv`; every
+layer and the loss are Python).
 
 | Shows | Where |
 |---|---|
@@ -260,15 +304,18 @@ from a Data Input (`blobs_python_layers.cyxgraph`, four classes from
 | A normalisation with learnable gain and shift and a hand-written backward | `LayerNorm` |
 | Tier 1 activations from f and df | `ReLU`, `Sigmoid`, `Tanh`, `Softplus`, `GELU`, `SiLU` |
 | Activations with a setting | `LeakyReLU`, `ELU` |
+| A classification loss (softmax over one-hot targets) | `CrossEntropy` |
+| Regression losses, one with a setting | `MSE`, `L1`, `Huber` (`delta`) |
 
 `test_builtin_layers.py` checks each against the Engine's built-in module
-(forward and gradients agree to 1e-5) and runs the gradient check; the
-Engine test `test_python_builtin_layers` trains the example graph and every
-activation from a Data Input. A comparison (`x > 0`) gives a uint8 mask:
+or loss (forward and gradients agree to 1e-5) and runs the gradient check;
+the Engine test `test_python_builtin_layers` trains the example graph and
+every activation from a Data Input, and each Python loss gives the same
+epoch losses as the built-in loss of the same name. A comparison (`x > 0`) gives a uint8 mask:
 multiply it into a float tensor (`Tensor.ones(shape) * (x > 0)`) before
 using it in arithmetic, as `relu_mask` in the example does.
 
-## 9. Saving and exporting a model with Python nodes
+## 10. Saving and exporting a model with Python nodes
 
 | Path | What happens |
 |---|---|
@@ -277,8 +324,10 @@ using it in arithmetic, as `relu_mask` in the example does.
 | ONNX export, generated code (PyTorch, TensorFlow, Keras, pycyxwiz) | Refused with the node's name: the bundle's `node.py` is not carried into them yet |
 | Server Node deployment | Refused: the Server Node does not run extension nodes yet |
 
-## 10. Not yet
+## 11. Not yet
 
 | Coming | Stage |
 |---|---|
-| Nodes with several inputs or outputs | Later |
+| Nodes with several inputs or outputs (a loss has its fixed two) | Later |
+| Losses whose targets are class indices or 0/1 values, or that take weights | Later |
+| Losses from C++ plugins | Later |
