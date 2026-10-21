@@ -41,6 +41,22 @@ bool ValidateExtensionTypeId(const std::string& provider_id, const std::string& 
     return true;
 }
 
+void SetExtensionLossPorts(NodeMetadata& metadata) {
+    metadata.inputs = {PortDefinition("Predictions", PinType::Tensor),
+                       PortDefinition("Targets", PinType::Labels)};
+    metadata.outputs = {PortDefinition("Loss", PinType::Loss)};
+}
+
+namespace {
+
+bool HasLossPorts(const NodeMetadata& metadata) {
+    return metadata.inputs.size() == 2 && metadata.outputs.size() == 1 &&
+           metadata.inputs[0].type == PinType::Tensor && metadata.inputs[1].type == PinType::Labels &&
+           metadata.outputs[0].type == PinType::Loss;
+}
+
+}  // namespace
+
 bool SplitExtensionTypeId(const std::string& type_id, std::string& provider_id,
                           std::string& type_name) {
     const auto colon = type_id.find(':');
@@ -73,6 +89,17 @@ bool ExtensionNodeRegistry::Register(Registration registration, std::string& err
     if (descriptor.kind == ExtensionNodeKind::TensorLayer && !registration.tensor_factory) {
         error = "trainable node '" + descriptor.type_id + "' has no tensor factory";
         return false;
+    }
+    if (descriptor.kind == ExtensionNodeKind::Loss) {
+        if (!registration.loss_factory) {
+            error = "loss node '" + descriptor.type_id + "' has no loss factory";
+            return false;
+        }
+        if (!HasLossPorts(descriptor.metadata)) {
+            error = "loss node '" + descriptor.type_id +
+                    "' must have the pins Predictions (Tensor), Targets (Labels) -> Loss (Loss)";
+            return false;
+        }
     }
     if (descriptor.kind == ExtensionNodeKind::Signal && registration.signal_provider == nullptr) {
         error = "simulation node '" + descriptor.type_id + "' has no provider";
@@ -147,6 +174,12 @@ std::shared_ptr<ITensorNodeFactory> ExtensionNodeRegistry::TensorFactory(const s
     std::lock_guard lock(mutex_);
     const auto it = nodes_.find(type_id);
     return it == nodes_.end() ? nullptr : it->second.tensor_factory;
+}
+
+std::shared_ptr<ITensorLossFactory> ExtensionNodeRegistry::LossFactory(const std::string& type_id) const {
+    std::lock_guard lock(mutex_);
+    const auto it = nodes_.find(type_id);
+    return it == nodes_.end() ? nullptr : it->second.loss_factory;
 }
 
 plugin::INodeProvider* ExtensionNodeRegistry::SignalProvider(const std::string& type_id) const {
