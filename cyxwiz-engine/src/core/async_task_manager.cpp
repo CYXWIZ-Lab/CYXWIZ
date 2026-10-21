@@ -189,8 +189,12 @@ LambdaTask::LambdaTask(const std::string& name, TaskFunction func, bool cancella
 }
 
 void LambdaTask::Execute() {
-    if (func_) {
-        func_(*this);
+    // Run once, then drop the function: what it captured (a table, a loaded
+    // dataset) is not kept alive by the task history's last 100 tasks.
+    TaskFunction func = std::move(func_);
+    func_ = nullptr;
+    if (func) {
+        func(*this);
     }
 }
 

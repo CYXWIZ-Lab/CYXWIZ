@@ -6,8 +6,10 @@
 #include <chrono>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace cyxwiz;
 using namespace std::chrono_literals;
@@ -296,6 +298,24 @@ void SubmitAfterShutdownRestarts() {
     Check(manager.Shutdown(2s).drained, "restarted generation shuts down cleanly");
     Check(manager.Shutdown(2s).drained, "a second shutdown is a no-op");
 }
+
+// 8: a finished task in the history keeps nothing its function captured
+// (a table read in a task was pinned by the last 100 tasks, TOFIX160).
+void FinishedTaskReleasesItsCaptures() {
+    auto& manager = AsyncTaskManager::Instance();
+    manager.Initialize(1);
+    auto data = std::make_shared<std::vector<int>>(1000, 7);
+    std::weak_ptr<std::vector<int>> watch = data;
+    const auto id = manager.RunAsync("reads captured data", [data](auto&) { (void)data->size(); });
+    data.reset();
+    Check(WaitFor([&] {
+        auto task = manager.GetTask(id);
+        return task && task->GetState() == TaskState::Completed;
+    }), "task completed");
+    Check(WaitFor([&] { return manager.GetActiveTaskCount() == 0; }), "task retired");
+    Check(watch.expired(), "the finished task released what it captured");
+    Check(manager.Shutdown(2s).drained, "shutdown after the capture check");
+}
 }  // namespace
 
 int main() {
@@ -311,6 +331,7 @@ int main() {
         OwnerScopedLifetime();
         RunAsyncOwnerParameterScopesProjectSession();
         SubmitAfterShutdownRestarts();
+        FinishedTaskReleasesItsCaptures();
         std::cout << "PASS: " << checks << " task lifecycle checks\n";
         return 0;
     } catch (const std::exception& e) {
