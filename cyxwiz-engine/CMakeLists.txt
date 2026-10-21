@@ -610,6 +610,7 @@ set(ENGINE_SOURCES
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
     src/gui/panels/memory_panel.cpp
+    src/gui/panels/memory_panel_loaded_data.cpp
     src/gui/panels/memory_monitor.cpp
     src/gui/panels/pattern_browser.cpp
     src/gui/panels/variable_explorer.cpp

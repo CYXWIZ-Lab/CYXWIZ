@@ -1,0 +1,68 @@
+# Loaded data: what the Engine holds and when it lets go
+
+Loading a dataset (a Data Input's Apply, a pipeline run) keeps it in the Engine
+until something releases it. This page says how to see what is held. TOFIX160
+adds the release rules as they are built.
+
+## See what is held
+
+**Tools > Monitoring > Memory Visualization > Loaded data** lists every dataset
+the Engine holds:
+
+- **Summary:**
+  - how many datasets are held;
+  - their memory, with each byte counted once;
+  - their size on disk;
+  - what Arrow holds now, with its peak on the line under it. The peak includes
+    reading the file: a CSV load needs far more than the table it makes.
+- **Table:** one row per dataset, the largest first. Columns:
+  - **Name**;
+  - **Kind:** a table in memory, a table on disk (Parquet), sparse features,
+    images, audio, text or other;
+  - **Rows**;
+  - **In memory**;
+  - **Shared** (see below);
+  - **On disk**;
+  - **Reads:** the file or folder it reads.
+- **Details:** click a row to see that dataset's facts under the table.
+
+Some datasets hold no memory of their own:
+
+- **Tables on disk** are read a row group at a time.
+- **Image, audio and text datasets** read their files as training goes, so
+  they show 0 B in memory.
+
+The tab updates when a dataset is added, replaced or removed, the same moment
+the Console logs it.
+
+## Shared memory
+
+Several names can point at the same data, for example:
+
+- a pipeline run's copy of its input (`ds_datainput_<id>`);
+- a slice of a table;
+- the same table registered twice.
+
+That data is held once, so it is counted once in the total. Each of those rows
+gets a **shared** mark, and the **Shared** column says how much of its memory
+another row also holds. A row that should be a share but shows no shared part
+is a real copy, which is worth looking into.
+
+## Logs
+
+The Console (Debug) logs each change with the dataset's size, then one total
+for the batch:
+
+```
+Dataset catalog: added 'mnist_test' (in memory, 10000 rows, 7.49 MB in memory, generation 1)
+Loaded data: 1 dataset, 7.49 MB in memory, 0.00 B on disk; Arrow holds 7.52 MB (peak 88.30 MB)
+```
+
+## Example
+
+MNIST test, `mnist_test.csv` (17.4 MB, 10,000 x 785):
+
+- Loading it takes 7.49 MB, because the pixel columns are packed to one byte
+  each.
+- The exit dialog's **Datasets in memory** shows the same total. Before
+  TOFIX160 it said 0 B for every Arrow and Parquet dataset.
