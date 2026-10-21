@@ -175,6 +175,7 @@ set(ENGINE_SOURCES
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
     src/core/data_explore.cpp
+    src/core/explore_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -708,6 +709,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
+    src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/prepare_view.cpp
     src/gui/data_studio/validate_view.cpp
     src/gui/data_studio/publish_view.cpp
@@ -993,6 +995,8 @@ set(ENGINE_HEADERS
     # Data Studio (Phase 1 Week 1)
     src/gui/data_studio/query_editor.h
     src/gui/data_studio/profile_view.h
+    src/gui/data_studio/missing_view.h
+    src/gui/data_studio/explore_tab.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
@@ -6936,6 +6940,14 @@ target_include_directories(test_guided_sql PRIVATE src)
 target_link_libraries(test_guided_sql PRIVATE nlohmann_json::nlohmann_json)
 set_target_properties(test_guided_sql PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME GuidedSql COMMAND test_guided_sql)
+
+# Data Studio Explore tabs' words (TOFIX129 D1).
+add_executable(test_explore_presentation tests/test_explore_presentation.cpp src/core/explore_presentation.cpp
+    src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_explore_presentation PRIVATE src)
+target_link_libraries(test_explore_presentation PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(test_explore_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ExplorePresentation COMMAND test_explore_presentation)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp

@@ -54,9 +54,10 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has three views: **Query**, **Profile** and **Visualize**. A
-dashboard's "Open in Data Studio", "Edit roles", the Asset Browser's "Open
-in Data Studio" and Data > Dataset Statistics open the right one.
+Explore has four views: **Query**, **Profile**, **Missing** and
+**Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Browser's "Open in Data Studio" and Data > Dataset Statistics open the
+right one. The views wrap to a second line in a narrow dock.
 
 ## Query
 
@@ -184,6 +185,36 @@ looks like one, the panel suggests it. Spotify's artist_genres has `N/A` in
 
 The strongest correlations between number columns (Pearson) are listed
 under the details (Spotify: artist_popularity and artist_followers +0.64).
+
+## Missing
+
+Where the picked table has no value. It counts as Profile does: empty cells,
+plus the texts marked as missing for a column (**Treat as missing** in
+Profile; the link under the summary goes there).
+
+- **Summary**: missing cells and their share, complete rows and incomplete
+  rows. Penguins (344 rows, 7 columns): 19 of 2,408 cells missing (0.8%),
+  333 complete rows, 11 incomplete (3.2%).
+- **Columns**: every column with its missing count, share and a bar; sort by
+  name or count with the headers. Columns with none are listed faint.
+- **Missing together**: which columns are empty in the same rows, the most
+  common mixes first. Penguins: 9 rows lack only sex; 2 rows lack bill
+  length, bill depth, flipper length, body mass and sex together.
+- **The picked column** (click a row): its count, advice for how much is
+  missing, and its rows 50 at a time, numbered from 1 like the Table Viewer
+  (Previous / Next).
+  - **Drop these rows in Prepare** adds a guided step "Keep rows with
+    <column>" after the dataset's node (Keep rows where the column is not
+    empty and is not one of its missing texts). Prepare lists it; Ctrl+Z on
+    the canvas undoes it. It needs the table to be a Data Input or a node
+    result of the open graph.
+  - **Open in Query** puts the SQL for these rows in Query and runs it.
+  - **General recommendations** (folded) lists ways to fill values by kind
+    of data. Prepare has no "fill missing values" step yet.
+
+The counts come from Profile's profile, so switching tabs does not compute
+them again; complete rows, the mixes and the row pages are SQL on the
+dataset (tables kept on disk work the same way) and show in Task View.
 
 ## Visualize
 

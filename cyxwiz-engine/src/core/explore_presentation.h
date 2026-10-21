@@ -1,0 +1,42 @@
+#pragma once
+
+// Words and choices of Data Studio's Explore tabs Missing, Outliers,
+// Correlation and Distribution (TOFIX129 D1, approved mockup
+// d1_explore_tabs_mockup.html): pure data in, text out, so the tabs and their
+// tests agree. No ImGui, no queries.
+
+#include "guided_sql.h"
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+namespace cyxwiz::explore_view {
+
+// 2408 -> "2,408".
+std::string Number(size_t n);
+// "333 complete rows", "1 row", "2,408 cells".
+std::string Count(size_t n, const char* one, const char* many);
+// 3.2% (one decimal; "0%" for nothing of nothing).
+std::string Share(size_t part, size_t whole);
+
+// The advice for a column missing `share` percent of its values (the old
+// Missing Values window's tiers: below 5, 20, 50, and 50 or more).
+std::vector<std::string> MissingAdvice(double share);
+// Advice for any column, by kind of data.
+const std::vector<std::string>& GeneralMissingAdvice();
+
+// The line under the summary: what counts as missing here.
+// `texts_columns` = how many columns have texts marked as missing.
+std::string MissingRule(size_t texts_columns);
+
+// SQL for the Query tab listing the rows where `column` is missing in
+// `table` (texts as quoted literals; the Query tab takes no parameters).
+std::string MissingRowsSql(const std::string& table, const std::string& column, const std::vector<std::string>& texts);
+
+// The Preparation Recipe step "Drop these rows": a guided Keep rows step
+// keeping the rows where the column is not empty and (with texts marked as
+// missing) is not one of them.
+guided::GuidedStep KeepRowsWithValue(const std::string& column, const std::vector<std::string>& texts);
+
+}  // namespace cyxwiz::explore_view

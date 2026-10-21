@@ -404,15 +404,21 @@ void DataStudioPanel::RenderBringIn() {
 }
 
 void DataStudioPanel::RenderExplore() {
-    static const char* kTabs[] = {"Query", "Profile", "Visualize"};
-    for (int i = 0; i < 3; ++i) {
-        if (i) ImGui::SameLine(0.0f, 4.0f);
-        if (ui::FilterChip(kTabs[i], kTabs[i], "", static_cast<int>(explore_tab_) == i)) explore_tab_ = static_cast<ExploreTab>(i);
+    static const std::pair<const char*, ExploreTab> kTabs[] = {
+        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Missing", ExploreTab::Missing}, {"Visualize", ExploreTab::Visualize}};
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    bool first = true;
+    for (const auto& [label, tab] : kTabs) {
+        // Wraps in a narrow dock.
+        if (!first) SameLineOrWrap(ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 4.0f, right_edge);
+        first = false;
+        if (ui::FilterChip(label, label, "", explore_tab_ == tab)) explore_tab_ = tab;
     }
     ImGui::Spacing();
     switch (explore_tab_) {
         case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
         case ExploreTab::Profile: if (profile_) profile_->Render(); break;
+        case ExploreTab::Missing: if (missing_) missing_->Render(MakeExploreContext()); break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
     }
 }
@@ -422,6 +428,7 @@ void DataStudioPanel::RenderStatusBar() {
     ImGui::AlignTextToFramePadding();
     if (query_editor_ && query_editor_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Query running");
     else if (profile_ && profile_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Profiling");
+    else if (missing_ && missing_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Finding missing values");
     else if (readiness_ && readiness_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Comparing splits");
     else if (validate_ && validate_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Data Pipeline running");
     else ImGui::TextColored(t.success, ICON_FA_CIRCLE " Ready");

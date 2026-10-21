@@ -10,6 +10,8 @@
 #include "../../core/dataset_profiler.h"
 
 #include <cstdint>
+#include <map>
+#include <vector>
 #include <memory>
 #include <string>
 
@@ -28,6 +30,16 @@ public:
     void Reprofile();
     bool IsRunning() const { return task_id_ != 0; }
     float Progress() const { return progress_; }
+
+    // What the other Explore tabs read (TOFIX129 D1): the profile (null while
+    // profiling), the dataset as the graph calls it, the error, and the texts
+    // marked as missing per column (project settings).
+    std::shared_ptr<const DatasetProfile> Current() const { return profile_; }
+    const std::string& Shown() const { return shown_.empty() ? dataset_ : shown_; }
+    const std::string& Error() const { return error_; }
+    std::map<std::string, std::vector<std::string>> MissingTexts() const;
+    // Shows this column's detail (Missing's "set them in Profile").
+    void SelectColumn(const std::string& column);
 
 private:
     void RenderOverview();
@@ -49,6 +61,7 @@ private:
     std::string error_;
     std::string profiled_at_;
     int selected_ = -1;
+    std::string pending_select_;    // SelectColumn before the profile arrived
     bool roles_editable_ = true;
     char missing_buf_[256] = {};
     std::string missing_for_;

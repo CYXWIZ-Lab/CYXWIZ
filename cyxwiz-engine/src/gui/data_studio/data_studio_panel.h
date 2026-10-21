@@ -1,7 +1,7 @@
 #pragma once
 
 // Data Studio (TOFIX148, approved mockup v8): the open graph's data work in
-// one place, as seven jobs: Bring in, Explore (Query, Profile, Visualize),
+// one place, as seven jobs: Bring in, Explore (Query, Profile, Missing, Visualize),
 // Prepare, Validate, ML readiness, Publish, Results. A rail lists the data
 // (the graph's Data Inputs, node results, published files, other datasets),
 // each job shows the graph nodes that do it ("In the graph", Show on
@@ -12,6 +12,7 @@
 #include "../../core/data_studio_presentation.h"
 #include "query_editor.h"
 #include "profile_view.h"
+#include "missing_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -33,6 +34,9 @@ namespace cyxwiz {
 
 class DataStudioPanel {
 public:
+    // Explore's tabs, in the order they show.
+    enum class ExploreTab { Query, Profile, Missing, Visualize };
+
     DataStudioPanel();
     ~DataStudioPanel() = default;
 
@@ -55,6 +59,10 @@ public:
     // Opens Explore > Profile on a dataset (a dashboard's "Edit roles").
     void ShowProfile(const std::string& dataset_name);
 
+    // Opens an Explore tab on a dataset, at a column when given (Data >
+    // Explore, Profile's missing counts).
+    void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});
+
     // Opens Explore > Query on a dataset with this SQL in the editor (a
     // dashboard's "Open in Data Studio", the Asset Browser); it runs.
     void ShowQuery(const std::string& dataset_name, const std::string& sql);
@@ -74,10 +82,9 @@ public:
     }
 
 private:
-    enum class ExploreTab { Query = 0, Profile = 1, Visualize = 2 };
-
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
+    std::unique_ptr<MissingView> missing_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;
@@ -118,6 +125,9 @@ private:
     void RenderNodeStrip(const studio::JobView& job);
     void RenderJobBody();
     void RenderExplore();
+    ExploreContext MakeExploreContext() const;
+    // Missing's "Drop these rows in Prepare": a guided Keep rows step after the dataset's node.
+    std::string AddKeepRowsStep(const std::string& column, const std::vector<std::string>& texts);
     void RenderBringIn();
     void RenderStatusBar();
 };

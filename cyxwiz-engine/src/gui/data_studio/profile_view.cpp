@@ -144,10 +144,25 @@ void ProfileView::Reprofile() {
             std::strftime(buf, sizeof(buf), "%H:%M", std::localtime(&now));
             profiled_at_ = buf;
             RebuildContract();
+            if (!pending_select_.empty()) SelectColumn(pending_select_);
             spdlog::info("[Data Studio] Profiled '{}': {} rows, {} columns in {:.0f} ms{}", shown_, profile_->rows, profile_->columns.size(),
                          profile_->elapsed_ms, profile_->exact ? "" : " (approximate)");
         },
         alive_);
+}
+
+std::map<std::string, std::vector<std::string>> ProfileView::MissingTexts() const {
+    if (const auto* s = ProjectColumnRoles().Find(SourceKey())) return s->missing_text;
+    return {};
+}
+
+void ProfileView::SelectColumn(const std::string& column) {
+    selected_ = -1;
+    pending_select_ = column;
+    if (!profile_) return;  // picked when the profile arrives
+    pending_select_.clear();
+    for (size_t i = 0; i < profile_->columns.size(); ++i)
+        if (profile_->columns[i].facts.name == column) selected_ = static_cast<int>(i);
 }
 
 void ProfileView::RebuildContract() {
