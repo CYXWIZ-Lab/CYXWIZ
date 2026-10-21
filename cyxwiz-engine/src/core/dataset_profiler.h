@@ -51,7 +51,7 @@ struct ProfiledColumn {
 // Pearson r of every pair of `columns` (rows where both are present), and
 // how many rows each pair used. Row-major n x n; the diagonal is 1; NaN when
 // a pair has no spread.
-struct CorrelationMatrix {
+struct ColumnCorrelations {
     std::vector<std::string> columns;
     std::vector<double> r;
     std::vector<size_t> pairs;
@@ -69,7 +69,7 @@ struct DatasetProfile {
     bool duplicates_known = false;
     size_t duplicate_rows = 0;
     std::vector<std::tuple<std::string, std::string, double>> correlations;  // strongest |r| first (10)
-    CorrelationMatrix correlation;      // every pair of the first kCorrelationColumns numbers
+    ColumnCorrelations correlation;      // every pair of the first kCorrelationColumns numbers
     bool exact = true;
     double elapsed_ms = 0;
     std::string error;
@@ -96,7 +96,7 @@ constexpr size_t kCorrelationColumns = 30;
 
 // The correlation matrix of chosen columns (Explore > Correlation asks for
 // columns beyond the profile's first kCorrelationColumns).
-CorrelationMatrix Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run,
+ColumnCorrelations Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run,
                             bool cache = true);
 // Words for |r|: "very strong" (>= .8), "strong" (.6), "moderate" (.4), "weak" (.2), "none".
 const char* CorrelationStrength(double r);

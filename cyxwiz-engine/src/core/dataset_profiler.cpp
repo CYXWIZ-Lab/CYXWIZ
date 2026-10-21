@@ -354,8 +354,8 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
     return p;
 }
 
-CorrelationMatrix Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run, bool cache) {
-    CorrelationMatrix m;
+ColumnCorrelations Correlate(const std::string& table, const std::vector<std::string>& columns, const QueryRunner& run, bool cache) {
+    ColumnCorrelations m;
     m.columns = columns;
     const size_t n = columns.size();
     m.r.assign(n * n, NAN);
