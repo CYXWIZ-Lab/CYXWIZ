@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 // Word vectors (TOFIX152): pretrained files read as gensim reads them

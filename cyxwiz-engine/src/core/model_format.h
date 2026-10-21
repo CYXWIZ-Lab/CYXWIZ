@@ -307,6 +307,14 @@ struct TrainingHistory {
     int best_epoch = 0;
 };
 
+// An extension node type the model needs (TOFIX125 P6): from the graph's
+// extension blocks, so a reader knows what to install before importing.
+struct ModelExtensionRequirement {
+    std::string type_id;       // "<provider_id>:<TypeName>"
+    std::string version;       // node contract version it was trained with
+    std::string content_hash;  // code hash it was trained with ("" for a C++ plugin)
+};
+
 /**
  * Model manifest for .cyxmodel format
  */
@@ -365,6 +373,9 @@ struct ModelManifest {
     std::string sequence_token_vocabulary_path;
     std::string sequence_pos_vocabulary_path;
     std::string sequence_tag_vocabulary_path;
+
+    // Extension node types the graph uses, once per type.
+    std::vector<ModelExtensionRequirement> extensions;
 };
 
 // Utility functions

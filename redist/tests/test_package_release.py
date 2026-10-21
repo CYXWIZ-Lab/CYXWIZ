@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "package_release.py"
@@ -17,6 +18,8 @@ assert SPEC and SPEC.loader
 package_release = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = package_release
 SPEC.loader.exec_module(package_release)
+# setUp stands in a fake for it; the tests of the real one call this.
+REAL_INSTALL_PLUGIN_SDK = package_release.install_plugin_sdk
 
 SIGN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sign_pack_manifest.py"
 SIGN_SPEC = importlib.util.spec_from_file_location("sign_pack_manifest", SIGN_SCRIPT)
@@ -61,6 +64,7 @@ class PackageReleaseTests(unittest.TestCase):
             "cyxwiz-runtime-bootstrapper.exe",
             "cyxwiz-product-removal-finalizer.exe",
             "cyxwiz-backend-pack-installer.exe",
+            "cyxwiz-plugin-check.exe",
             "cyxwiz-backend.dll",
             "fmt.dll",
             "python312.dll",
@@ -89,6 +93,17 @@ class PackageReleaseTests(unittest.TestCase):
             "#define CYXWIZ_VERSION_PATCH 3\n",
             encoding="ascii",
         )
+
+        # The plugin SDK comes from `cmake --install --component plugin_sdk`
+        # of a real build; here a minimal SDK stands in for it.
+        def fake_sdk(_paths, destination: Path) -> None:
+            for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
+                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
+                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                (destination / relative).write_text(relative, encoding="ascii")
+        patcher = mock.patch.object(package_release, "install_plugin_sdk", fake_sdk)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -553,6 +568,48 @@ class PackageReleaseTests(unittest.TestCase):
         )
         self.assertEqual([], manifest["signatures"])
         self.assertTrue(archive.with_suffix(".zip.signed.json").is_file())
+        # The C++ plugin SDK and its check tool ship in the base (TOFIX125 P5).
+        components = {item["path"]: item for item in manifest["signed"]["components"]}
+        self.assertIn("cyxwiz-plugin-check.exe", components)
+        self.assertTrue(components["cyxwiz-plugin-check.exe"]["executable"])
+        self.assertEqual("cyxwiz-plugin-sdk", components["sdk/include/plugin/plugin_types.h"]["source"])
+        licence_paths = {item["path"] for item in manifest["signed"]["licenses"]}
+        self.assertTrue({"LICENSE", "sdk/LICENSE", "sdk/NOTICE"} <= licence_paths)
+
+    def test_plugin_sdk_installs_from_the_cmake_build_folder(self) -> None:
+        build_root = self.root / "build"
+        (build_root / "CMakeCache.txt").write_text("", encoding="ascii")
+        paths = package_release.default_paths(self.script, self.args("minimal"))
+        self.assertEqual(build_root.resolve(), package_release.cmake_build_root(paths.build))
+        destination = self.root / "sdk-stage" / "sdk"
+        calls = []
+
+        def fake_run(command, **_kwargs):
+            calls.append(command)
+            for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
+                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
+                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                (destination / relative).write_text(relative, encoding="ascii")
+            return subprocess.CompletedProcess(command, 0, "")
+
+        with mock.patch.object(package_release.subprocess, "run", fake_run):
+            REAL_INSTALL_PLUGIN_SDK(paths, destination)
+        self.assertEqual(
+            ["cmake", "--install", str(build_root.resolve()), "--config", "Release",
+             "--component", "plugin_sdk", "--prefix", str(destination)],
+            calls[0],
+        )
+
+        def failing_run(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 1, "no plugin_sdk component")
+
+        with mock.patch.object(package_release.subprocess, "run", failing_run):
+            with self.assertRaisesRegex(package_release.PackageError, "plugin SDK failed"):
+                REAL_INSTALL_PLUGIN_SDK(paths, destination)
+
+    def test_plugin_sdk_needs_a_cmake_build_folder(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "CMakeCache.txt"):
+            package_release.cmake_build_root(self.root / "nowhere" / "bin" / "Release")
 
     def test_opencl_pack_excludes_cpu_base_and_validates_signature(self) -> None:
         arrayfire = self.create_arrayfire(opencl=True)

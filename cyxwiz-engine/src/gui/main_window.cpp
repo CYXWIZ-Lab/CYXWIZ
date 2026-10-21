@@ -256,6 +256,13 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
             HashFnvMix(h, v);
             HashFnvMix(h, std::string(1, ';'));
         }
+        // Which extension, version and code: swapping one changes the model
+        // (TOFIX125 P6). Built-in nodes hash as before.
+        if (!np->extension_type_id.empty()) {
+            HashFnvMix(h, np->extension_type_id);
+            HashFnvMix(h, np->extension_version);
+            HashFnvMix(h, np->extension_content_hash);
+        }
         HashFnvMix(h, std::string(1, '#'));
     }
 

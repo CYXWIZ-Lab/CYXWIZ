@@ -1,0 +1,103 @@
+# Your own nodes: Python node bundles and C++ plugins
+
+An **extension node** is a node CyxWiz does not ship: written in Python with
+pycyxwiz (a *Python node bundle*) or in C++ (a *plugin*). It is added from the
+node editor, connected like a built-in layer, saved in `.cyxgraph` files and
+trained. This page is how to use them in the Engine; how to write one is in
+[docs/extending](../extending/README.md).
+
+## Try the examples first
+
+Every installation carries ten built-in layers rewritten as Python nodes:
+Dense, Layer Norm, ReLU, Leaky ReLU, ELU, Sigmoid, Tanh, Softplus, GELU and
+SiLU. They are in the plugin SDK of the CPU base,
+`sdk/examples/python-nodes/builtin-layers/` (in the sources
+`examples/python_nodes/builtin_layers/`).
+
+1. Copy `nodes/builtin-layers.cyxnode` from that folder into your project's
+   `nodes/` folder.
+2. **Apps > Plugin Manager**, section *Python node bundles*: on the
+   *builtin-layers* card press **Approve code...**, read what it adds (and
+   **View code** if you like), and approve.
+3. The ten nodes are in the Nodes panel and in search under *Python
+   examples*, as "Dense (Python)", "ReLU (Python)" and so on.
+4. Open `blobs_python_layers.cyxgraph` from the example folder (with
+   `blobs.csv` beside it), open the Data Input and apply the file, and press
+   **Train**. The graph is Data Input -> Split -> Loader -> Dense 16 -> ReLU
+   -> Layer Norm -> Dense 4 -> Cross entropy -> Adam -> Output, every layer in
+   Python; it reaches about 97% accuracy on the four classes in 10 epochs.
+
+Each example computes the same numbers as the built-in node of the same name,
+so you can swap one for the other in any graph. Losses stay built-in: a
+Python node takes one tensor and gives one tensor.
+
+## Python node bundles
+
+A bundle is a folder `<name>.cyxnode` holding `node.json` and `node.py`. The
+Engine finds bundles, without starting Python, in:
+
+| Folder | Scope |
+|---|---|
+| `<project>/nodes/` | This project; wins over a bundle with the same id elsewhere |
+| `%APPDATA%\cyxwiz\nodes\` (`~/.cyxwiz/nodes/` elsewhere) | Every project of this user |
+| `nodes/` inside a loaded plugin's folder | Delivered with that plugin |
+
+New, edited and removed bundles are noticed within two seconds.
+
+- **Approval.** A bundle's code runs only after you approve that exact code.
+  Until then its nodes can be placed and saved, and training says the code
+  is not approved yet. Approve from the Plugin Manager card or from the
+  node's Properties (Gradient check card). Editing `node.py` needs a new
+  approval; **Actions > Revoke approval** takes one back.
+- **Make one from a script.** In the Script Editor, open a project `.py`
+  file that defines nodes with `@nodes.activation` or `@nodes.node`, then
+  **Run > Create node from script...**: check gradients, name the bundle,
+  **Create nodes**. It is written to `<project>/nodes/` and approved for you.
+- **Python** starts by itself when the first approved Python node is built.
+  An error in a node's code stops training with the node's name and the
+  traceback.
+
+## C++ plugins
+
+1. **Apps > Plugin Manager > Install...**, choose the folder that holds the
+   plugin's `plugin.json`, and **Install**. Or copy the plugin folder into
+   `%APPDATA%\cyxwiz\plugins\` (`~/.cyxwiz/plugins/` elsewhere) and press
+   **Refresh**.
+2. The card lists what the plugin adds; **Load when the Engine starts** is
+   ticked. **Unload** removes it from the list.
+3. **Apps > Loaded plugins > <plugin>** opens the Node Browser on its nodes.
+
+To build your own plugin against the SDK in the CPU base (`sdk/`, Apache
+License 2.0), start with `sdk/template/README.md` and
+[plugin-quickstart.md](../extending/plugin-quickstart.md); check a built
+plugin with `cyxwiz-plugin-check`.
+
+## Using an extension node
+
+- Connect it between layers as you would ReLU or Dense.
+- **Properties** shows where it comes from (*Python node* or the plugin, with
+  id and version), its settings with their descriptions (a refused value is
+  explained under its field), and a **Gradient check** card: **Check
+  gradient** compares its backward step with a numerical gradient.
+- **Info** lists its bundle or plugin, approval and code hash.
+- A graph whose node is missing on this computer shows it as **Not
+  installed**, keeps its settings and pins, and does not train until the
+  bundle or plugin is installed.
+
+## Saving and exporting
+
+| Action | Result |
+|---|---|
+| Save the graph (`.cyxgraph`) | Works; nodes record their bundle or plugin and code hash |
+| Export a CyxWiz package (`.cyxmodel`) | Works; the node's weights are saved and the manifest lists the extension node types |
+| Import that package | The node is rebuilt from the installed bundle or plugin. Not installed: refused. Different code than at training: loads with a warning |
+| Export to ONNX or to code (PyTorch, TensorFlow, Keras, pycyxwiz) | Refused with the node's name |
+| Deploy on, or train on, a Server Node | Refused: the Server Node does not run extension nodes yet |
+
+## Not yet
+
+- Nodes with several inputs or outputs (so no Python loss nodes).
+- Autograd: a node's backward step is written by hand.
+
+Problems ("not installed", refused settings, failed gradient checks):
+[troubleshooting.md](../extending/troubleshooting.md).

@@ -9,10 +9,10 @@
 //   - Multiple interface implementation in one plugin
 
 #include <imgui.h>
-#include "../../cyxwiz-engine/src/plugin/plugin_types.h"
-#include "../../cyxwiz-engine/src/plugin/plugin_context.h"
-#include "../../cyxwiz-engine/src/plugin/interfaces/i_node_provider.h"
-#include "../../cyxwiz-engine/src/plugin/interfaces/i_panel_provider.h"
+#include "plugin/plugin_types.h"
+#include "plugin/plugin_context.h"
+#include "plugin/interfaces/i_node_provider.h"
+#include "plugin/interfaces/i_panel_provider.h"
 
 #include <string>
 #include <vector>

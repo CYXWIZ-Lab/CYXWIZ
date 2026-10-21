@@ -47,6 +47,15 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
     j["metadata"]["author"] = manifest.author;
     j["metadata"]["description"] = manifest.description;
     j["metadata"]["custom"] = manifest.custom_metadata;
+    if (!manifest.extensions.empty()) {
+        nlohmann::json extensions = nlohmann::json::array();
+        for (const auto& extension : manifest.extensions) {
+            extensions.push_back({{"type_id", extension.type_id},
+                                  {"version", extension.version},
+                                  {"content_hash", extension.content_hash}});
+        }
+        j["extensions"] = std::move(extensions);
+    }
 
     j["content"]["has_optimizer_state"] = manifest.has_optimizer_state;
     j["content"]["has_training_history"] = manifest.has_training_history;
@@ -131,6 +140,14 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
         manifest.description = j["metadata"].value("description", "");
         if (j["metadata"].contains("custom")) {
             manifest.custom_metadata = j["metadata"]["custom"].get<std::map<std::string, std::string>>();
+        }
+    }
+
+    if (j.contains("extensions") && j["extensions"].is_array()) {
+        for (const auto& extension : j["extensions"]) {
+            if (!extension.is_object()) continue;
+            manifest.extensions.push_back({extension.value("type_id", ""), extension.value("version", ""),
+                                           extension.value("content_hash", "")});
         }
     }
 

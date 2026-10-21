@@ -19,6 +19,9 @@ struct LayerAnalysis {
     int64_t non_trainable_params = 0; // BatchNorm running stats, etc.
     int64_t flops = 0;                // Multiply-add operations (MACs * 2)
     int64_t memory_bytes = 0;         // Activation memory in bytes
+    // What the layer is, when the node type alone does not say: an extension
+    // node's own name and type id ("Snake (com.example.acts:Snake)").
+    std::string type_label;
 };
 
 /**
@@ -172,5 +175,7 @@ std::string FormatShape(const std::vector<size_t>& shape);
  * @return Layer type name (e.g., "Dense", "Conv2D")
  */
 std::string GetNodeTypeName(gui::NodeType type);
+// type_label when set, else GetNodeTypeName(type).
+std::string GetLayerTypeName(const LayerAnalysis& layer);
 
 } // namespace cyxwiz

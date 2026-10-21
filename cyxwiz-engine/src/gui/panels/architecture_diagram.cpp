@@ -296,9 +296,9 @@ void ArchitectureDiagram::RenderDiagram() {
     if (hovered_layer_ >= 0 && hovered_layer_ < static_cast<int>(analysis_.layers.size())) {
         const auto& layer = analysis_.layers[hovered_layer_];
         ImGui::BeginTooltip();
-        ImGui::Text("%s", layer.name.empty() ? GetNodeTypeName(layer.type).c_str() : layer.name.c_str());
+        ImGui::Text("%s", layer.name.empty() ? GetLayerTypeName(layer).c_str() : layer.name.c_str());
         ImGui::Separator();
-        ImGui::Text("Type: %s", GetNodeTypeName(layer.type).c_str());
+        ImGui::Text("Type: %s", GetLayerTypeName(layer).c_str());
         ImGui::Text("Input: %s", FormatShape(layer.input_shape).c_str());
         ImGui::Text("Output: %s", FormatShape(layer.output_shape).c_str());
         if (layer.parameters > 0) {
@@ -343,7 +343,7 @@ void ArchitectureDiagram::DrawLayerBlock(ImDrawList* draw_list, const LayerAnaly
     }
 
     // Draw text
-    std::string type_name = GetNodeTypeName(layer.type);
+    std::string type_name = GetLayerTypeName(layer);
     std::string display_name = layer.name.empty() ? type_name : layer.name;
 
     // Truncate if necessary

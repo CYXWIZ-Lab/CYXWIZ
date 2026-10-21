@@ -1,0 +1,12 @@
+CyxWiz Plugin SDK
+Copyright (c) 2026 CYXWIZ COMPUTER SYSTEMS L.L.C - S.P.C.
+
+Every file in this SDK folder (include/, lib/, lib/cmake/CyxWizSDK/,
+template/) is licensed under the Apache License, Version 2.0 (LICENSE in
+this folder). You may build, distribute and sell plugins that include
+these headers, link this import library or start from the template, under
+any licence you choose for your own code.
+
+The CyxWiz Engine that loads your plugin, and the backend library behind
+the import library, are licensed separately (the LICENSE file of the
+CyxWiz installation).

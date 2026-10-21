@@ -13,6 +13,7 @@ find_package(httplib CONFIG REQUIRED)
 
 target_link_libraries(cyxwiz_assistant PRIVATE
     cyxwiz-plugin-sdk
+    nlohmann_json::nlohmann_json
     httplib::httplib
 )
 

@@ -103,7 +103,7 @@ std::string QueryResultCache::ContentIdentity(const arrow::Table& table) {
 std::string QueryResultCache::FileIdentity(const std::string& path) {
     std::error_code ec;
     const auto size = fs::file_size(path, ec);
-    const auto time = fs::last_write_time(path, ec).time_since_epoch().count();
+    const auto time = static_cast<long long>(fs::last_write_time(path, ec).time_since_epoch().count());
     return path + ":" + std::to_string(ec ? 0 : size) + ":" + std::to_string(ec ? 0 : time);
 }
 

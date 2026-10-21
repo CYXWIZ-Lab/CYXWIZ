@@ -1,0 +1,267 @@
+{
+  "version": "2.1",
+  "data_boundary_version": 2,
+  "framework": 0,
+  "execution_mode": 1,
+  "workflow_description": "Python example layers (the SDK's builtin-layers bundle) fed by a Data Input: Dense 16 -> ReLU -> Layer Norm -> Dense 4, trained with the built-in cross entropy and Adam on four blobs. Install and approve the bundle (Plugin Manager > Python node bundles) first.",
+  "annotations": [],
+  "groups": [],
+  "nodes": [
+    {
+      "id": 1,
+      "type": 157,
+      "name": "Blobs CSV",
+      "pos_x": 0,
+      "pos_y": 200,
+      "parameters": {
+        "source_type": "file",
+        "file_path": "blobs.csv",
+        "file_type": "csv",
+        "file_category": "tabular",
+        "has_header": "true",
+        "label_column": "class",
+        "dataset_name": "python_layers_blobs"
+      }
+    },
+    {
+      "id": 2,
+      "type": 106,
+      "name": "Split 80/10/10",
+      "pos_x": 220,
+      "pos_y": 200,
+      "parameters": {
+        "seed": "42",
+        "stratified": "true",
+        "train_ratio": "0.8",
+        "val_ratio": "0.1",
+        "test_ratio": "0.1"
+      }
+    },
+    {
+      "id": 3,
+      "type": 104,
+      "name": "Loader",
+      "pos_x": 440,
+      "pos_y": 200,
+      "parameters": {
+        "batch_size": "32",
+        "epochs": "20",
+        "shuffle": "true",
+        "seed": "11",
+        "model_seed": "7"
+      }
+    },
+    {
+      "id": 10,
+      "type": 321,
+      "name": "Dense (Python)",
+      "pos_x": 660,
+      "pos_y": 140,
+      "parameters": {
+        "units": "16",
+        "use_bias": "true"
+      },
+      "extension": {
+        "contract": 1,
+        "type_id": "com.cyxwiz.examples.layers:Dense",
+        "version": "1.0.0",
+        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "inputs": [
+          {
+            "name": "Input",
+            "type": "Tensor"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Output",
+            "type": "Tensor"
+          }
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": 321,
+      "name": "ReLU (Python)",
+      "pos_x": 880,
+      "pos_y": 140,
+      "parameters": {},
+      "extension": {
+        "contract": 1,
+        "type_id": "com.cyxwiz.examples.layers:ReLU",
+        "version": "1.0.0",
+        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "inputs": [
+          {
+            "name": "Input",
+            "type": "Tensor"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Output",
+            "type": "Tensor"
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": 321,
+      "name": "LayerNorm (Python)",
+      "pos_x": 1100,
+      "pos_y": 140,
+      "parameters": {
+        "eps": "1e-05"
+      },
+      "extension": {
+        "contract": 1,
+        "type_id": "com.cyxwiz.examples.layers:LayerNorm",
+        "version": "1.0.0",
+        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "inputs": [
+          {
+            "name": "Input",
+            "type": "Tensor"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Output",
+            "type": "Tensor"
+          }
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "type": 321,
+      "name": "Dense (Python)",
+      "pos_x": 1320,
+      "pos_y": 140,
+      "parameters": {
+        "units": "4",
+        "use_bias": "true"
+      },
+      "extension": {
+        "contract": 1,
+        "type_id": "com.cyxwiz.examples.layers:Dense",
+        "version": "1.0.0",
+        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "inputs": [
+          {
+            "name": "Input",
+            "type": "Tensor"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Output",
+            "type": "Tensor"
+          }
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "type": 73,
+      "name": "Cross entropy",
+      "pos_x": 1540,
+      "pos_y": 200,
+      "parameters": {}
+    },
+    {
+      "id": 21,
+      "type": 81,
+      "name": "Adam",
+      "pos_x": 1760,
+      "pos_y": 200,
+      "parameters": {
+        "learning_rate": "0.01"
+      }
+    },
+    {
+      "id": 22,
+      "type": 71,
+      "name": "Output",
+      "pos_x": 1980,
+      "pos_y": 200,
+      "parameters": {
+        "num_classes": "4"
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "from_node": 1,
+      "to_node": 2,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 2,
+      "from_node": 2,
+      "to_node": 3,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 3,
+      "from_node": 3,
+      "to_node": 10,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 4,
+      "from_node": 10,
+      "to_node": 11,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 5,
+      "from_node": 11,
+      "to_node": 12,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 6,
+      "from_node": 12,
+      "to_node": 13,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 7,
+      "from_node": 13,
+      "to_node": 20,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 8,
+      "from_node": 3,
+      "to_node": 20,
+      "from_pin_index": 1,
+      "to_pin_index": 1
+    },
+    {
+      "id": 9,
+      "from_node": 20,
+      "to_node": 21,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 10,
+      "from_node": 21,
+      "to_node": 22,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    }
+  ]
+}

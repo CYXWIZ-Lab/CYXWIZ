@@ -196,14 +196,28 @@ static bool HasBranches(const TrainingConfiguration& config) {
     return !config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty();
 }
 
+// The compile's warnings about extension nodes (TOFIX125 P6): an installed
+// extension that is not the one the model was trained with ("is not the one
+// this graph was saved with ..."). The weights still load; the user is told.
+static std::vector<std::string> ExtensionWarnings(const TrainingConfiguration& config) {
+    std::vector<std::string> out;
+    for (const auto& issue : config.issues) {
+        if (issue.level == IssueLevel::Warning && issue.message.rfind("Extension node '", 0) == 0)
+            out.push_back(issue.message);
+    }
+    return out;
+}
+
 // Helper: Build model architecture from graph JSON
 static bool BuildModelFromGraph(
     const std::string& graph_json,
     SequentialModel& model,
-    std::string& error_message
+    std::string& error_message,
+    std::vector<std::string>& warnings
 ) {
     TrainingConfiguration config;
     if (!CompileModelGraph(graph_json, config, error_message)) return false;
+    warnings = ExtensionWarnings(config);
     if (HasBranches(config)) {
         error_message = "the package holds a graph with branches; it loads as a graph model "
                         "(ModelImporter::ImportExecutableModel), not as a layer stack";
@@ -211,7 +225,10 @@ static bool BuildModelFromGraph(
     }
     auto built = BuildSequentialFromConfig(config);
     if (!built.ok() || !built.model) {
-        error_message = "ModelBuilder could not rebuild model from graph";
+        // The builder's reason names the node (an extension that cannot
+        // create its module, for example "Python is not running yet").
+        error_message = built.error_message.empty() ? "ModelBuilder could not rebuild model from graph"
+                                                    : built.error_message;
         return false;
     }
     model = std::move(*built.model);
@@ -679,7 +696,8 @@ ImportResult ModelImporter::ImportCyxModel(
         bool model_built = false;
         if (!graph_json.empty()) {
             std::string build_error;
-            if (!BuildModelFromGraph(graph_json, model, build_error)) {
+            std::vector<std::string> extension_warnings;
+            if (!BuildModelFromGraph(graph_json, model, build_error, extension_warnings)) {
                 // A saved architecture is authoritative. Shape guessing can replace
                 // a transformer with unrelated Dense layers and obscure the cause.
                 result.success = false;
@@ -689,6 +707,8 @@ ImportResult ModelImporter::ImportCyxModel(
                 return result;
             } else {
                 model_built = true;
+                result.warnings.insert(result.warnings.end(), extension_warnings.begin(),
+                                       extension_warnings.end());
             }
         } else {
             spdlog::warn("No graph.cyxgraph found - model architecture cannot be rebuilt");
@@ -894,6 +914,7 @@ ImportResult ModelImporter::ImportExecutableModel(
         std::string build_error;
         if (!CompileModelGraph(graph_json, config, build_error))
             return fail("Could not build model from graph: " + build_error);
+        for (auto& warning : ExtensionWarnings(config)) result.warnings.push_back(std::move(warning));
         auto built = BuildExecutableFromConfig(config);
         if (!built.ok() || !built.model)
             return fail("Could not build model from graph: " + built.error_message);

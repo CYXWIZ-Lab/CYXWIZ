@@ -4,6 +4,7 @@
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
 #include "../core/pipeline_runtime_capabilities.h"
+#include "../core/extension_node_metadata.h"
 #include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -734,6 +735,7 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             return EffectiveNodeName(*node) +
                    ": code export does not support Conv3D (volume rows) yet; train it in Studio";
         }
+        if (auto refusal = cyxwiz::ExtensionCodeExportRefusal(*node)) return refusal;
         switch (node->type) {
             case NodeType::CenterCrop:
             case NodeType::RandomCrop:
@@ -952,6 +954,10 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
             continue;
         }
 
+        if (node->type == NodeType::PluginCustom) {
+            code += cyxwiz::SimulationNodeCodeComment(*node, "pytorch", "        ");
+            continue;
+        }
         std::string layer_code = NodeTypeToPythonLayer(*node);
         if (!layer_code.empty()) {
             code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
@@ -1441,6 +1447,10 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
             continue;
         }
 
+        if (node->type == NodeType::PluginCustom) {
+            code += cyxwiz::SimulationNodeCodeComment(*node, "tensorflow", "        ");
+            continue;
+        }
         std::string layer_code = NodeTypeToTensorFlowLayer(*node, layer_idx);
         if (!layer_code.empty()) {
             code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
@@ -1577,12 +1587,17 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
     code += "model = keras.Sequential([\n";
 
     bool first_layer = true;
+    std::string simulation_comments;  // after the layer list, outside it
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
         // Skip DatasetInput node
         if (node->type == NodeType::DatasetInput) {
+            continue;
+        }
+        if (node->type == NodeType::PluginCustom) {
+            simulation_comments += cyxwiz::SimulationNodeCodeComment(*node, "keras", "");
             continue;
         }
 
@@ -1597,6 +1612,7 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
     }
 
     code += "\n])\n\n";
+    if (!simulation_comments.empty()) code += simulation_comments + "\n";
 
     // Model summary and compilation
     code += "# Model configuration\n";
@@ -1677,6 +1693,10 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             continue;
         }
 
+        if (node->type == NodeType::PluginCustom) {
+            code += cyxwiz::SimulationNodeCodeComment(*node, "pycyxwiz", "        ");
+            continue;
+        }
         std::string layer_code = NodeTypeToPyCyxWizLayer(*node);
         if (!layer_code.empty()) {
             code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
@@ -2412,13 +2432,6 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                    ", init=" + GetParamOrDefault(node, "init", "0.25") + ")";
             break;
 
-        case NodeType::PluginCustom: {
-            if (!node.extension_type_id.empty())
-                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(
-                    node.extension_type_id, node.parameters, "pytorch");
-            break;
-        }
-
         default:
             // Activation functions and others don't need layers in __init__
             code = "";
@@ -2511,13 +2524,6 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
             code = GetParamOrDefault(node, "num_parameters", "1") == "1"
                 ? "layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(" + init + "), shared_axes=[1])"
                 : "layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(" + init + "))";
-            break;
-        }
-
-        case NodeType::PluginCustom: {
-            if (!node.extension_type_id.empty())
-                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(
-                    node.extension_type_id, node.parameters, "tensorflow");
             break;
         }
 
@@ -2631,13 +2637,6 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             code = GetParamOrDefault(node, "num_parameters", "1") == "1"
                 ? "layers.PReLU(alpha_initializer=keras.initializers.Constant(" + init + "), shared_axes=[1])"
                 : "layers.PReLU(alpha_initializer=keras.initializers.Constant(" + init + "))";
-            break;
-        }
-
-        case NodeType::PluginCustom: {
-            if (!node.extension_type_id.empty())
-                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(
-                    node.extension_type_id, node.parameters, "keras");
             break;
         }
 
@@ -2963,13 +2962,6 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             code = "cx.PReLU(num_parameters=" + GetParamOrDefault(node, "num_parameters", "1") +
                    ", init=" + GetParamOrDefault(node, "init", "0.25") + ")";
             break;
-
-        case NodeType::PluginCustom: {
-            if (!node.extension_type_id.empty())
-                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(
-                    node.extension_type_id, node.parameters, "pycyxwiz");
-            break;
-        }
 
         default:
             // Other node types handled in forward pass or not yet implemented

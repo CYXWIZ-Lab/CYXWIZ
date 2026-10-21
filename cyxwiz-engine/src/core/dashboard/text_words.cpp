@@ -45,7 +45,7 @@ std::string WordsCacheKey(const std::string& source_path, const std::string& dat
     std::error_code ec;
     if (!source_path.empty() && fs::is_regular_file(source_path, ec)) {
         const auto size = fs::file_size(source_path, ec);
-        const auto time = fs::last_write_time(source_path, ec).time_since_epoch().count();
+        const auto time = static_cast<long long>(fs::last_write_time(source_path, ec).time_since_epoch().count());
         key += fs::absolute(source_path, ec).lexically_normal().string() + "|" + std::to_string(size) + "|" + std::to_string(time);
     } else {
         key += "session|" + dataset + "|" + std::to_string(generation);

@@ -47,11 +47,11 @@ std::string Hex(uint64_t value) {
 std::string DirectorySignature(const std::string& folder) {
     std::error_code ec;
     std::ostringstream out;
-    out << fs::last_write_time(folder, ec).time_since_epoch().count();
+    out << static_cast<long long>(fs::last_write_time(folder, ec).time_since_epoch().count());
     for (const auto& entry : fs::directory_iterator(folder, ec)) {
         if (entry.is_directory(ec)) {
             out << '|' << entry.path().filename().string() << ':'
-                << fs::last_write_time(entry.path(), ec).time_since_epoch().count();
+                << static_cast<long long>(fs::last_write_time(entry.path(), ec).time_since_epoch().count());
         }
     }
     return out.str();
@@ -65,7 +65,7 @@ std::string ComputeKey(const DataRegistry::ImageDatasetEntry& entry, int width, 
     for (size_t i = 0; i < dataset->Size(); ++i) {
         const std::string file = dataset->GetItemSource(i);
         const auto size = fs::file_size(file, ec);
-        const auto time = fs::last_write_time(file, ec).time_since_epoch().count();
+        const auto time = static_cast<long long>(fs::last_write_time(file, ec).time_since_epoch().count());
         rows.push_back(file + '|' + std::to_string(ec ? 0 : size) + '|' + std::to_string(time));
     }
     std::sort(rows.begin(), rows.end());
@@ -133,7 +133,7 @@ std::string ImageQualityKey(const DataRegistry::ImageDatasetEntry& entry, int wi
     std::string signature = DirectorySignature(entry.folder_path);
     if (!entry.labels_csv.empty()) {
         std::error_code ec;
-        signature += '|' + std::to_string(fs::last_write_time(entry.labels_csv, ec).time_since_epoch().count());
+        signature += '|' + std::to_string(static_cast<long long>(fs::last_write_time(entry.labels_csv, ec).time_since_epoch().count()));
     }
     {
         std::lock_guard<std::mutex> lock(mutex);

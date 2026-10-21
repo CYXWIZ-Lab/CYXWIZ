@@ -3,6 +3,7 @@
 #include "training_executor.h"
 #include "node_executors/tree_model_artifact.h"
 #include "graph_model.h"
+#include "guarded_extension_module.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
@@ -702,6 +703,29 @@ bool InferBertEncoderConfigFromGraph(
 }
 } // namespace
 
+namespace {
+// The extension node types a graph uses, once each, from its nodes'
+// extension blocks (TOFIX125 P6). Empty for a graph without any.
+std::vector<ModelExtensionRequirement> ExtensionRequirementsFromGraph(const std::string& graph_json) {
+    std::vector<ModelExtensionRequirement> out;
+    if (graph_json.empty()) return out;
+    const auto graph = nlohmann::json::parse(graph_json, nullptr, false);
+    if (graph.is_discarded() || !graph.contains("nodes") || !graph["nodes"].is_array()) return out;
+    for (const auto& node : graph["nodes"]) {
+        if (!node.is_object() || !node.contains("extension") || !node["extension"].is_object()) continue;
+        const auto& block = node["extension"];
+        ModelExtensionRequirement requirement{block.value("type_id", ""), block.value("version", ""),
+                                              block.value("content_hash", "")};
+        if (requirement.type_id.empty()) continue;
+        const bool known = std::any_of(out.begin(), out.end(), [&](const auto& item) {
+            return item.type_id == requirement.type_id;
+        });
+        if (!known) out.push_back(std::move(requirement));
+    }
+    return out;
+}
+}  // namespace
+
 ExportResult ModelExporter::Export(
     IExecutableModel& model,
     const Optimizer* optimizer,
@@ -1020,6 +1044,18 @@ ExportResult ModelExporter::WriteCyxModel(
 
         // Update manifest flags
         manifest.has_graph = options.include_graph && !graph_json.empty();
+        manifest.extensions = ExtensionRequirementsFromGraph(graph_json);
+        // An extension node is rebuilt through its extension from the
+        // graph's extension block: without the graph it cannot be placed
+        // (TOFIX125 P6).
+        if (!manifest.extensions.empty() && !manifest.has_graph) {
+            result.success = false;
+            result.error_message = errors::FormatError(
+                errors::Serialization::ModelSaveFailed,
+                "A model with extension nodes needs its graph in the package (Include: Graph)");
+            last_error_ = result.error_message;
+            return result;
+        }
         // A graph model is rebuilt from its graph: without it the weights
         // cannot be placed.
         if (!layer_stack && !manifest.has_graph) {
@@ -1100,6 +1136,21 @@ ExportResult ModelExporter::ExportONNX(
 ) {
     ExportResult result;
     result.output_path = output_path;
+
+    // ONNX is written from the built-in layers it recognises; an extension
+    // node's computation is the extension's own code, so it would be dropped
+    // and the file would describe another model (TOFIX125 P6).
+    for (size_t i = 0; i < model.Size(); ++i) {
+        const auto* extension = dynamic_cast<const GuardedExtensionModule*>(model.GetModule(i));
+        if (!extension) continue;
+        result.success = false;
+        result.error_message = errors::FormatError(
+            errors::Serialization::ExportFormatUnavailable,
+            "The model has the extension node " + extension->NodeName() + " (" + extension->TypeId() +
+                "); ONNX cannot describe its computation. Export a CyxWiz package (.cyxmodel) or Safetensors");
+        last_error_ = result.error_message;
+        return result;
+    }
 
 #ifndef CYXWIZ_HAS_ONNX_EXPORT
     result.num_layers = static_cast<int>(model.Size());

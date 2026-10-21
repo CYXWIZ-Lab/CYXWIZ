@@ -40,7 +40,8 @@ std::string ProjectRelative(const std::string& path) {
     if (root.empty() || path.empty()) return path;
     std::error_code ec;
     const fs::path rel = fs::relative(fs::path(path), fs::path(root), ec);
-    if (ec || rel.empty() || rel.native().rfind(L"..", 0) == 0) return path;
+    // generic_string(): native() is a wide string only on Windows.
+    if (ec || rel.empty() || rel.generic_string().rfind("..", 0) == 0) return path;
     return rel.generic_string();
 }
 

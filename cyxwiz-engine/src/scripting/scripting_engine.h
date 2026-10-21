@@ -146,7 +146,10 @@ public:
     // Starts the script in a background thread and returns at once. Returns
     // false when another script is still running (nothing is started and no
     // callback is called).
-    bool ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks = {});
+    bool ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks);
+    // (An overload, not "= {}": GCC rejects a default argument of a nested
+    // struct with member initialisers inside its own class.)
+    bool ExecuteScriptAsync(const std::string& script) { return ExecuteScriptAsync(script, RunCallbacks{}); }
 
     // Restart for a notebook: forgets the namespace its cells ran in.
     // Returns false (nothing done) while a script is running.
