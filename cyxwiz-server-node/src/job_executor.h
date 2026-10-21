@@ -19,6 +19,7 @@
 
 // Core includes
 #include "core/device_pool.h"
+#include "core/executable_model.h"
 #include "core/graph_training_job_timing.h"
 #include "core/training_failure.h"
 
@@ -143,7 +144,7 @@ private:
         int assigned_device_id = -1;  // Device from pool
 
         // Model storage for weights extraction
-        std::unique_ptr<cyxwiz::SequentialModel> model;
+        std::unique_ptr<cyxwiz::IExecutableModel> model;  // what RunGraphTrainingJob hands back
         std::mutex model_mutex;
         // The shared runner's time split and failure category (guarded by
         // model_mutex).
