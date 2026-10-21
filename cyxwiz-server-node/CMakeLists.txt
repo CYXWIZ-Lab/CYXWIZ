@@ -122,6 +122,7 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/ui_widgets.cpp
         src/gui/texture.cpp
         src/gui/window_frame.cpp
+        src/gui/ui_watchdog.cpp
         src/gui/panels/dashboard_panel.cpp
         src/gui/panels/hardware_panel.cpp
         src/gui/panels/allocation_panel.cpp
@@ -279,6 +280,12 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     # cpp-httplib is header-only: every file that includes it must agree on TLS
     # support, or the program holds two layouts of the same class (TOFIX136).
     target_compile_definitions(cyxwiz-server-gui PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    # Symbols beside the Release executable, so the UI watchdog names the
+    # function a hang sits in (TOFIX139); no effect on code generation.
+    if(MSVC)
+        target_compile_options(cyxwiz-server-gui PRIVATE /Zi)
+        target_link_options(cyxwiz-server-gui PRIVATE /DEBUG)
+    endif()
     target_link_libraries(cyxwiz-server-gui PRIVATE
         fmt::fmt
         spdlog::spdlog
