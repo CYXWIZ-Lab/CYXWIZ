@@ -1,6 +1,7 @@
 #include "theme.h"
 #include "dock_style.h"
 #include <imgui.h>
+#include <imnodes.h>
 
 namespace gui {
 
@@ -193,6 +194,29 @@ void Theme::HarmonizeSurfaces() {
     // Lines (window border, separators) in the surface tone.
     c[ImGuiCol_Border] = toward_text(0.10f);
     c[ImGuiCol_Separator] = toward_text(0.10f);
+
+    // Owner 2026-10-21 ("the whole engine" is the window tone; only inputs
+    // are darker - compare the Properties panel): menus, popups, tooltips
+    // and every area drawn in the panel token (Tokens::bg_panel: SQL
+    // Workbench panels, notebook toolbars, plot legends, completion lists)
+    // are a step lighter than the window, never the preset's near-black
+    // (Unreal Engine: 20 on a 41 window, darker than its inputs).
+    c[ImGuiCol_PopupBg] = toward_text(0.035f);
+
+    // The node canvas and its minimap: the window colour with grid lines a
+    // step toward the text (presets gave the canvas its own near-black).
+    // Nodes keep the preset's colours.
+    ImNodesStyle& nodes = ImNodes::GetStyle();
+    const auto u32 = [](const ImVec4& v, float alpha) { return ImGui::ColorConvertFloat4ToU32(ImVec4(v.x, v.y, v.z, alpha)); };
+    nodes.Colors[ImNodesCol_GridBackground] = u32(bg, 1.0f);
+    nodes.Colors[ImNodesCol_GridLine] = u32(toward_text(0.05f), 1.0f);
+    nodes.Colors[ImNodesCol_GridLinePrimary] = u32(toward_text(0.09f), 1.0f);
+    nodes.Colors[ImNodesCol_MiniMapBackground] = u32(toward_text(0.035f), 0.92f);
+    nodes.Colors[ImNodesCol_MiniMapBackgroundHovered] = u32(toward_text(0.06f), 0.95f);
+    nodes.Colors[ImNodesCol_MiniMapOutline] = u32(toward_text(0.10f), 1.0f);
+    nodes.Colors[ImNodesCol_MiniMapOutlineHovered] = u32(toward_text(0.16f), 1.0f);
+    nodes.Colors[ImNodesCol_MiniMapCanvas] = u32(toward_text(0.08f), 0.5f);
+    nodes.Colors[ImNodesCol_MiniMapCanvasOutline] = u32(toward_text(0.16f), 1.0f);
 
     // Window title bars, menu bars and the dock area: the window colour.
     const ImVec4 solid(bg.x, bg.y, bg.z, 1.0f);
