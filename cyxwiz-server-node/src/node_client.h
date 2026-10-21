@@ -20,7 +20,7 @@ namespace servernode {
 // Device allocation information from GUI
 // Used to specify which devices the user wants to share and their resource limits
 struct DeviceAllocation {
-    int device_type;           // 0=CPU, 1=CUDA, 2=OpenCL (matches protocol::DeviceType)
+    int device_type;           // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal (core/allocation_device_type.h)
     int device_id;             // Device index (0, 1, 2, etc.)
     std::string device_name;   // Human-readable name (e.g., "NVIDIA RTX 3080")
     bool is_enabled;           // Whether user enabled this device for sharing

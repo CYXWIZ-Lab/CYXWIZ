@@ -48,6 +48,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
 # ========== Shared Core Sources (Used by both daemon and client) ==========
 set(SHARED_CORE_SOURCES
     src/core/backend_manager.cpp
+    src/core/allocation_device_type.cpp
     src/core/state_manager.cpp
     src/core/config_manager.cpp
     src/core/metrics_collector.cpp
@@ -437,6 +438,19 @@ if(CYXWIZ_BUILD_TESTS)
     target_link_libraries(test_sign_in_presentation PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
     target_compile_features(test_sign_in_presentation PRIVATE cxx_std_17)
     add_test(NAME test_sign_in_presentation COMMAND test_sign_in_presentation)
+
+    # The runtime behind a lent GPU (TOFIX139 P8): pure mapping
+    add_executable(test_allocation_device_type
+        tests/test_allocation_device_type.cpp
+        src/core/allocation_device_type.cpp
+    )
+    target_include_directories(test_allocation_device_type PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    )
+    target_link_libraries(test_allocation_device_type PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_allocation_device_type PRIVATE cxx_std_17)
+    add_test(NAME test_allocation_device_type COMMAND test_allocation_device_type)
 
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
