@@ -65,6 +65,7 @@ message CloudDatasetSource {
   string file_id = 3;           // the file's UUID in CyxCloud
   string access_token = 4;      // dataset access token (scope stream)
   uint64 size_bytes = 5;        // expected size, 0 when unknown
+  string file_name = 6;         // the file's name in the dataset (its extension says the format)
 }
 
 // Job status

@@ -1,5 +1,6 @@
 // engine_config.cpp - Centralized configuration management implementation
 #include "core/engine_config.h"
+#include "core/cloud_gateway_address.h"
 
 #include <fstream>
 #include <algorithm>
@@ -133,6 +134,7 @@ EngineConfig::EngineConfig() {
 
 void EngineConfig::SetDefaults() {
     central_server_address_ = "localhost:50051";
+    cloud_gateway_address_.clear();  // derived from the central address
     auth_api_url_ = "http://127.0.0.1:3002/api";
     default_deployment_address_ = "localhost:50056";
     default_p2p_port_ = 50052;
@@ -220,6 +222,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             json defaults;
             defaults["servers"] = {
                 {"central", central_server_address_},
+                {"cloud_gateway", cloud_gateway_address_},
                 {"deployment", default_deployment_address_},
                 {"default_p2p_port", default_p2p_port_}
             };
@@ -283,6 +286,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 json template_config;
                 template_config["servers"] = {
                     {"central", central_server_address_},
+                    {"cloud_gateway", cloud_gateway_address_},
                     {"deployment", default_deployment_address_},
                     {"default_p2p_port", default_p2p_port_}
                 };
@@ -332,6 +336,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             const auto& servers = config["servers"];
             if (servers.contains("central")) {
                 central_server_address_ = servers["central"].get<std::string>();
+            }
+            if (servers.contains("cloud_gateway")) {
+                cloud_gateway_address_ = servers["cloud_gateway"].get<std::string>();
             }
             if (servers.contains("deployment")) {
                 default_deployment_address_ = servers["deployment"].get<std::string>();
@@ -442,6 +449,8 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
 
         spdlog::debug("Loaded config from: {}", config_path.string());
         spdlog::debug("  Central Server: {}", central_server_address_);
+        spdlog::debug("  CyxCloud gateway: {}",
+                      ResolveCloudGatewayAddress(cloud_gateway_address_, central_server_address_));
         spdlog::debug("  Auth API: {}", auth_api_url_);
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
         spdlog::debug("  Default P2P Port: {}", default_p2p_port_);
@@ -480,6 +489,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         // Server addresses
         config["servers"] = {
             {"central", central_server_address_},
+            {"cloud_gateway", cloud_gateway_address_},
             {"deployment", default_deployment_address_},
             {"default_p2p_port", default_p2p_port_}
         };
@@ -572,6 +582,19 @@ void EngineConfig::SetCentralServerAddress(const std::string& address) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (central_server_address_ != address) {
         central_server_address_ = address;
+        modified_ = true;
+    }
+}
+
+std::string EngineConfig::GetCloudGatewayAddress() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ResolveCloudGatewayAddress(cloud_gateway_address_, central_server_address_);
+}
+
+void EngineConfig::SetCloudGatewayAddress(const std::string& address) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (cloud_gateway_address_ != address) {
+        cloud_gateway_address_ = address;
         modified_ = true;
     }
 }

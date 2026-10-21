@@ -86,3 +86,20 @@ Common ones:
 | dataset '...' is empty (0 rows); apply its Data Input again | the last Apply read nothing (file moved or unreadable); nothing is sent to the node |
 | Data problem (job-fit card) | the Engine could not read the job's data while measuring it; Start training stays off until the Data Input loads |
 | Could not extend the reservation | the central server refused (ended, or not yours) |
+| dataset '...' lives in CyxCloud but the Engine has no CyxCloud connection | open the Cloud browser while signed in, so the Engine can mint the dataset's access token |
+| CyxCloud refused an access token for dataset '...' | the gateway's words follow (no access to the dataset, not signed in) |
+| Data Input '...': CyxCloud file '...' is not Arrow IPC or Parquet | remote nodes train from those two formats only; convert the file first |
+
+## Datasets that live in CyxCloud
+
+A Data Input whose dataset is stored in CyxCloud (its parameters carry
+`cloud_dataset_id`, `cloud_file_id` and `cloud_file_name`) is not shipped to
+the node. When the job is sent, the Engine asks the CyxCloud gateway for one
+access token per such dataset (scope `stream`, valid until the reservation ends
+plus a few minutes) and puts the gateway address, the file id and the token in
+the job; the node streams the file from the gateway itself and verifies it
+whole. The Engine needs its CyxCloud connection for this: the Cloud browser
+opens it when you are signed in. The gateway address comes from the config
+(`servers.cloud_gateway`; empty means the central server's host on port 50060).
+Only Arrow IPC and Parquet files can be trained from remotely. Test inputs
+(Data Split's third pin) never leave the Engine, cloud or not.

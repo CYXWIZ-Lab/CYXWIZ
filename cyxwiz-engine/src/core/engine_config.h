@@ -77,6 +77,11 @@ public:
     std::string GetCentralServerAddress() const;
     void SetCentralServerAddress(const std::string& address);
 
+    // CyxCloud gateway (gRPC: datasets, uploads, access tokens). Empty in the
+    // config means "the central server's host, port 50060" (TOFIX164).
+    std::string GetCloudGatewayAddress() const;
+    void SetCloudGatewayAddress(const std::string& address);
+
     // Auth API Server (JWT login)
     std::string GetAuthApiUrl() const;
     void SetAuthApiUrl(const std::string& url);
@@ -200,6 +205,7 @@ private:
 
     // Server addresses
     std::string central_server_address_;
+    std::string cloud_gateway_address_;  // as configured; empty = derived
     std::string auth_api_url_;
     std::string default_deployment_address_;
     int default_p2p_port_ = 50052;

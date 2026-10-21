@@ -41,6 +41,12 @@ std::string SafeCloudFileName(const std::string& dataset_name) {
     return safe.empty() ? std::string("dataset") : safe;
 }
 
+std::string CloudFileExtension(const std::string& file_name) {
+    std::string extension = fs::path(file_name).extension().string();
+    for (auto& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return extension == ".parquet" ? ".parquet" : ".arrow";
+}
+
 CloudDatasetFetcher::CloudDatasetFetcher(fs::path directory, int chunk_timeout_ms)
     : directory_(std::move(directory)), chunk_timeout_ms_(chunk_timeout_ms) {}
 
@@ -69,7 +75,8 @@ bool CloudDatasetFetcher::Fetch(const cyxwiz::protocol::CloudDatasetSource& sour
 
     std::error_code ec;
     fs::create_directories(directory_, ec);
-    const fs::path final_path = directory_ / (SafeCloudFileName(source.dataset_name()) + ".download");
+    const fs::path final_path =
+        directory_ / (SafeCloudFileName(source.dataset_name()) + CloudFileExtension(source.file_name()));
     const fs::path part_path = final_path.string() + ".part";
     std::ofstream out(part_path, std::ios::binary | std::ios::trunc);
     if (!out) {

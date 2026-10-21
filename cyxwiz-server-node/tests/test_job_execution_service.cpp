@@ -2,6 +2,7 @@
 #include <catch2/catch_session.hpp>
 #include <grpcpp/grpcpp.h>
 #include <thread>
+#include <fstream>
 #include <chrono>
 #include <jwt-cpp/jwt.h>
 #include <jwt-cpp/traits/nlohmann-json/traits.h>
@@ -9,6 +10,8 @@
 #include "../src/job_execution_service.h"
 #include "../src/job_executor.h"
 #include "../src/remote_dataset_fetcher.h"
+#include "../src/cloud_dataset_fetcher.h"
+#include "fake_cloud_gateway.h"
 #include "network/dataset_file_server.h"
 #include "core/arrow_dataset.h"
 #include "core/graph_compiler_dataset_hooks.h"
@@ -1087,6 +1090,94 @@ TEST_CASE("Remote jobs fetch the Engine's dataset files, then train", "[remote_d
     INFO(outcome.error);
     CHECK(outcome.success);
     CHECK(outcome.epochs_reported == 1);
+    fs::remove_all(work, ec);
+}
+
+TEST_CASE("Remote jobs fetch a CyxCloud dataset the Engine never ships", "[remote_dataset][cloud]") {
+    namespace fs = std::filesystem;
+    const fs::path root = CYXWIZ_SOURCE_ROOT;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_node_cloud_dataset_test";
+    std::error_code ec;
+    fs::remove_all(work, ec);
+    fs::create_directories(work);
+    const fs::path parquet = work / "tokens.parquet";
+    REQUIRE(cyxwiz::test::WriteTokenWindows(root, parquet, 0, 8));
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+    cyxwiz::SetGraphDatasetCatalog({});  // nothing is loaded on the node
+
+    // The graph's Data Input names a CyxCloud file (TOFIX164 slice 4a).
+    auto graph = cyxwiz::test::LoadTokenWindowGraph(root);
+    std::string dataset_name;
+    for (auto& node : graph["nodes"]) {
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataLoader)) {
+            node["parameters"]["checkpoint_dir"] = (work / "checkpoints").string();
+        }
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataInput)) {
+            dataset_name = node["parameters"].value("dataset_name", std::string());
+            node["parameters"]["cloud_dataset_id"] = "3b9d2c1e-5f60-4a71-8b92-c3d4e5f60718";
+            node["parameters"]["cloud_file_id"] = "2f1c7f8e-7d3a-4b4e-9c2d-1a2b3c4d5e6f";
+            node["parameters"]["cloud_file_name"] = "tokens.parquet";
+        }
+    }
+    REQUIRE_FALSE(dataset_name.empty());
+
+    // The gateway holds the Parquet file; the Engine is never asked.
+    cyxwiz::server_node::test::FakeGateway gateway;
+    {
+        std::ifstream in(parquet, std::ios::binary);
+        gateway.service.content.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    gateway.service.chunk_size = 4096;
+    std::atomic<bool> engine_asked{false};
+    RemoteDatasetFetcher engine_fetcher(
+        [&](const TrainingUpdate&) {
+            engine_asked = true;
+            return true;
+        },
+        "cloud_job", work / "node_cache", /*chunk_timeout_ms=*/300, /*max_resumes=*/1);
+    CloudDatasetFetcher cloud_fetcher(work / "node_cache");
+
+    JobConfig config;
+    config.set_job_id("cloud_job");
+    config.set_job_type(JOB_TYPE_TRAINING);
+    config.set_model_definition(graph.dump());
+    config.set_dataset_uri("remote://engine");
+    config.set_epochs(1);
+
+    SECTION("a job without the dataset's access is refused before any fetch") {
+        std::string error;
+        CHECK_FALSE(FetchRemoteJobDatasets(engine_fetcher, &cloud_fetcher, config, error));
+        CHECK(error.find("carries no access") != std::string::npos);
+        CHECK(error.find(dataset_name) != std::string::npos);
+        CHECK(gateway.service.requests == 0);
+        CHECK_FALSE(engine_asked);
+    }
+
+    SECTION("the file comes from the gateway, then the node trains") {
+        auto* source = config.add_cloud_datasets();
+        source->set_dataset_name(dataset_name);
+        source->set_gateway_address(gateway.address());
+        source->set_file_id("2f1c7f8e-7d3a-4b4e-9c2d-1a2b3c4d5e6f");
+        source->set_access_token("good-token");
+        source->set_file_name("tokens.parquet");
+        source->set_size_bytes(gateway.service.content.size());
+
+        std::string error;
+        const bool fetched = FetchRemoteJobDatasets(engine_fetcher, &cloud_fetcher, config, error);
+        INFO(error);
+        REQUIRE(fetched);
+        CHECK_FALSE(engine_asked);
+        CHECK(gateway.service.requests == 1);
+        CHECK(config.dataset_uri().empty());
+        CHECK(config.model_definition().find("node_cache") != std::string::npos);
+        CHECK(config.model_definition().find(".parquet") != std::string::npos);
+
+        JobOutcome outcome;
+        RunLocalJob(config, outcome);
+        INFO(outcome.error);
+        CHECK(outcome.success);
+        CHECK(outcome.epochs_reported == 1);
+    }
     fs::remove_all(work, ec);
 }
 

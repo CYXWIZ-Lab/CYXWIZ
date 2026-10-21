@@ -99,10 +99,27 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
 // Remote jobs ship whole dataset files to the node (owner decision
 // 2026-09-26): the Data Input datasets a graph trains from, and the supplied
 // Test inputs (Data Split's Test role) that never leave the host.
+// A Data Input whose file lives in CyxCloud (TOFIX164): the node streams it
+// from the gateway with a token the Engine obtains; the Engine ships nothing.
+// Read from the Data Input parameters cloud_dataset_id, cloud_file_id,
+// cloud_file_name and cloud_size_bytes.
+struct CloudJobDataset {
+    std::string dataset_name;  // the graph's Data Input dataset_name
+    std::string dataset_id;    // CyxCloud dataset UUID (what the access token covers)
+    std::string file_id;       // the file's UUID in that dataset
+    std::string file_name;     // its name in the dataset; the extension says the format
+    uint64_t size_bytes = 0;   // 0 when unknown
+};
+
 struct GraphJobDatasetPlan {
     std::vector<std::string> ship;          // dataset_name of each training/validation input
     std::vector<std::string> kept_private;  // dataset_name of each supplied Test input
+    std::vector<CloudJobDataset> cloud;     // training/validation inputs fetched from CyxCloud
 };
+
+// Whether a CyxCloud file name says a format a node trains from: Arrow IPC
+// (.arrow, .feather, .ipc) or Parquet (.parquet).
+bool CloudDatasetFileFormatKnown(const std::string& file_name);
 
 // False with a reason for a graph RunGraphTrainingJob would refuse
 // (preparation steps, subgraphs, unreadable) - checked before anything is sent.

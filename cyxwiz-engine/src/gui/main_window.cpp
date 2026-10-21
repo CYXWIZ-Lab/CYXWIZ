@@ -2924,6 +2924,8 @@ void MainWindow::SetDataStreamClient(network::DataStreamClient* client) {
         cloud_dataset_manager_panel_->SetDataStreamClient(client);
         spdlog::info("DataStreamClient set on CloudDatasetManagerPanel");
     }
+    // Remote jobs with CyxCloud datasets mint their access tokens through it.
+    if (connection_dialog_) connection_dialog_->SetDataStreamClient(client);
 
     spdlog::info("DataStreamClient set in MainWindow");
 }

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include "network/cloud_job_datasets.h"
 
 // Undefine Windows macros that conflict with protobuf STATUS_* enums
 #ifdef STATUS_PENDING
@@ -30,6 +31,14 @@
 #endif
 
 namespace cyxwiz {
+
+namespace {
+// The clock the reservation's end_time (unix seconds) is compared with.
+int64_t UnixNow() {
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
 
 ConnectionDialog::ConnectionDialog(network::GRPCClient* client, network::JobManager* job_manager)
     : client_(client), job_manager_(job_manager), show_(false), connecting_(false) {
@@ -733,7 +742,10 @@ void ConnectionDialog::StartP2PTraining() {
     // request is answered; refused graphs never reach the node.
     if (std::string(dataset_uri_).find("remote://") == 0) {
         std::string dataset_error;
-        if (!p2p_client_->RegisterJobDatasets(active_reservation_.job_id, graph_json, dataset_error)) {
+        if (!p2p_client_->RegisterJobDatasets(active_reservation_.job_id, graph_json, datastream_client_,
+                                              core::EngineConfig::Instance().GetCloudGatewayAddress(),
+                                              network::CloudAccessTtlSeconds(active_reservation_.end_time, UnixNow()),
+                                              config, dataset_error)) {
             reservation_error_ = "Cannot train this graph remotely: " + dataset_error;
             spdlog::error("{}", reservation_error_);
             return;
@@ -938,7 +950,10 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
     // request is answered; refused graphs never reach the node.
     if (std::string(dataset_uri_).find("remote://") == 0) {
         std::string dataset_error;
-        if (!p2p_client_->RegisterJobDatasets(new_job_id, graph_json, dataset_error)) {
+        if (!p2p_client_->RegisterJobDatasets(new_job_id, graph_json, datastream_client_,
+                                              core::EngineConfig::Instance().GetCloudGatewayAddress(),
+                                              network::CloudAccessTtlSeconds(active_reservation_.end_time, UnixNow()),
+                                              config, dataset_error)) {
             reservation_error_ = "Cannot train this graph remotely: " + dataset_error;
             spdlog::error("{}", reservation_error_);
             return;

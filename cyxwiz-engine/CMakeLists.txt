@@ -732,6 +732,7 @@ set(ENGINE_SOURCES
     src/network/job_manager.cpp
     src/network/p2p_client.cpp
     src/network/dataset_file_server.cpp
+    src/network/cloud_job_datasets.cpp
     src/network/reservation_client.cpp
     src/network/datastream_client.cpp
     src/core/cloud_data_registry.cpp
@@ -3359,6 +3360,18 @@ target_link_libraries(test_remote_job_presentation PRIVATE
 set_target_properties(test_remote_job_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# Where the Engine looks for the CyxCloud gateway (TOFIX164 slice 1d): header-only
+add_executable(test_cloud_gateway_address
+    tests/test_cloud_gateway_address.cpp
+)
+target_include_directories(test_cloud_gateway_address PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_cloud_gateway_address PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_cloud_gateway_address COMMAND test_cloud_gateway_address)
 
 # ===== Test: Reservation card presentation (TOFIX118 gaps 5-6) =====
 add_executable(test_reservation_presentation
@@ -7417,6 +7430,17 @@ add_executable(test_dataset_file_server
 target_link_libraries(test_dataset_file_server PRIVATE cyxwiz-training-core cyxwiz-protocol)
 target_compile_definitions(test_dataset_file_server PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
+# The Engine's side of a CyxCloud dataset in a remote job (TOFIX164 slice 4a):
+# one access token per dataset, into the job, with the gateway address; a
+# fake gateway DataStreamService answers in-process.
+add_executable(test_cloud_job_datasets
+    tests/test_cloud_job_datasets.cpp
+    src/network/cloud_job_datasets.cpp
+    src/network/datastream_client.cpp
+)
+target_link_libraries(test_cloud_job_datasets PRIVATE cyxwiz-training-core cyxwiz-protocol)
+add_test(NAME test_cloud_job_datasets COMMAND test_cloud_job_datasets)
 target_compile_definitions(test_graph_training_job PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 

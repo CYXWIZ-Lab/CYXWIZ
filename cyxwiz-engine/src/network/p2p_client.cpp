@@ -1,4 +1,6 @@
 #include "p2p_client.h"
+#include "cloud_job_datasets.h"
+#include "../core/graph_training_job.h"
 #include "../core/project_manager.h"
 #include "../core/training_failure.h"
 #include <spdlog/spdlog.h>
@@ -596,15 +598,28 @@ bool P2PClient::SendReservationExtension(const std::string& p2p_auth_token) {
     return success;
 }
 
-bool P2PClient::RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, std::string& error) {
+bool P2PClient::RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, DataStreamClient* cloud,
+                                    const std::string& cloud_gateway_address, int64_t cloud_token_ttl_seconds,
+                                    cyxwiz::protocol::JobConfig& config, std::string& error) {
     auto& projects = cyxwiz::ProjectManager::Instance();
     const std::filesystem::path root = projects.HasActiveProject()
         ? std::filesystem::path(projects.GetProjectRoot()) / ".cyxwiz" / "remote-datasets"
         : std::filesystem::temp_directory_path() / "cyxwiz-remote-datasets";
     std::string folder;
     for (const char c : job_id) folder.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-    return dataset_files_.RegisterJob(job_id, graph_json, root / (folder.empty() ? std::string("job") : folder),
-                                      error);
+    if (!dataset_files_.RegisterJob(job_id, graph_json, root / (folder.empty() ? std::string("job") : folder),
+                                    error)) {
+        return false;
+    }
+    // The plan RegisterJob accepted; its cloud inputs get their access now,
+    // so no token is minted for a job that will not be sent.
+    cyxwiz::GraphJobDatasetPlan plan;
+    if (!cyxwiz::PlanGraphJobDatasets(graph_json, plan, error) ||
+        !FillCloudJobDatasets(plan, cloud, cloud_gateway_address, cloud_token_ttl_seconds, config, error)) {
+        dataset_files_.UnregisterJob(job_id);
+        return false;
+    }
+    return true;
 }
 
 void P2PClient::UnregisterJobDatasets(const std::string& job_id) {

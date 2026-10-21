@@ -3,94 +3,23 @@
 // real one does after slice 2 (token required, DATA_LOSS instead of a skip,
 // SHA-256 trailer), and the fetcher must accept only what verifies.
 #include "cloud_dataset_fetcher.h"
-
-#include "../../cyxwiz-engine/src/core/sha256_digest.h"
+#include "fake_cloud_gateway.h"
 
 #include <catch2/catch_test_macros.hpp>
-#include <cyxcloud_data.grpc.pb.h>
-#include <grpcpp/grpcpp.h>
 
 #include <filesystem>
 #include <fstream>
-#include <memory>
 #include <string>
-#include <thread>
 
 namespace fs = std::filesystem;
 using cyxwiz::server_node::CloudDatasetFetcher;
+using cyxwiz::server_node::CloudFileExtension;
 using cyxwiz::server_node::SafeCloudFileName;
 
 namespace {
 
-enum class Mode { Ok, DataLossAtChunk, WrongHash, NoLastChunk, Slow };
-
-// Serves `content` in `chunk_size` pieces; `token` is the only accepted token.
-class FakeDataService final : public cyxcloud::data::DataService::Service {
-public:
-    std::string content;
-    std::string token = "good-token";
-    size_t chunk_size = 1000;
-    Mode mode = Mode::Ok;
-    int fail_at = 1;  // chunk index that fails in DataLossAtChunk
-    int requests = 0;
-
-    grpc::Status StreamData(grpc::ServerContext*, const cyxcloud::data::StreamDataRequest* request,
-                            grpc::ServerWriter<cyxcloud::data::DataChunk>* writer) override {
-        ++requests;
-        if (request->access_token().empty()) return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Dataset access token required");
-        if (request->access_token() != token) {
-            return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Dataset access token is invalid, expired or revoked");
-        }
-        if (request->shuffle()) return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "shuffle is not supported");
-
-        cyxwiz::Sha256Hasher hasher;
-        std::string error;
-        const size_t count = (content.size() + chunk_size - 1) / chunk_size;
-        for (size_t i = 0; i < count; ++i) {
-            if (mode == Mode::DataLossAtChunk && static_cast<int>(i) == fail_at) {
-                return grpc::Status(grpc::StatusCode::DATA_LOSS,
-                                    "chunk " + std::to_string(i + 1) + " of " + std::to_string(count) +
-                                        " could not be served: no storage node holds it");
-            }
-            if (mode == Mode::Slow) std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-            const std::string piece = content.substr(i * chunk_size, chunk_size);
-            hasher.Update(piece, error);
-            cyxcloud::data::DataChunk chunk;
-            chunk.set_batch_index(i);
-            chunk.set_data(piece);
-            const bool last = i + 1 == count;
-            if (last && mode != Mode::NoLastChunk) {
-                std::string digest;
-                hasher.Finish(digest, error);
-                if (mode == Mode::WrongHash) digest[0] = digest[0] == 'a' ? 'b' : 'a';
-                chunk.set_is_last(true);
-                chunk.set_stream_sha256(digest);
-                chunk.set_total_bytes(content.size());
-            }
-            if (!writer->Write(chunk)) break;
-        }
-        return grpc::Status::OK;
-    }
-};
-
-struct FakeGateway {
-    FakeDataService service;
-    std::unique_ptr<grpc::Server> server;
-    int port = 0;
-
-    FakeGateway() {
-        grpc::ServerBuilder builder;
-        builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
-        builder.RegisterService(&service);
-        server = builder.BuildAndStart();
-        REQUIRE(server);
-        REQUIRE(port > 0);
-    }
-    ~FakeGateway() {
-        if (server) server->Shutdown();
-    }
-    std::string address() const { return "127.0.0.1:" + std::to_string(port); }
-};
+using cyxwiz::server_node::test::FakeGateway;
+using Mode = cyxwiz::server_node::test::FakeGatewayMode;
 
 cyxwiz::protocol::CloudDatasetSource Source(const FakeGateway& gateway, const std::string& token = "good-token") {
     cyxwiz::protocol::CloudDatasetSource source;
@@ -98,6 +27,7 @@ cyxwiz::protocol::CloudDatasetSource Source(const FakeGateway& gateway, const st
     source.set_gateway_address(gateway.address());
     source.set_file_id("2f1c7f8e-7d3a-4b4e-9c2d-1a2b3c4d5e6f");
     source.set_access_token(token);
+    source.set_file_name("tokens.arrow");
     return source;
 }
 
@@ -129,7 +59,7 @@ TEST_CASE("cloud dataset fetch: the file arrives whole and verified", "[cloud]")
     REQUIRE(fetcher.Fetch(Source(gateway), file, error));
     CHECK(error.empty());
     CHECK(fs::exists(file));
-    CHECK(file.filename().string() == "tiny_causal_lm_tokens.download");
+    CHECK(file.filename().string() == "tiny_causal_lm_tokens.arrow");
     CHECK(ReadAll(file) == gateway.service.content);
     CHECK(fetcher.bytes_received() == 4321);
     CHECK(!fs::exists(fs::path(file.string() + ".part")));
@@ -181,13 +111,18 @@ TEST_CASE("cloud dataset fetch: what the gateway refuses or loses never binds", 
         CHECK(error.find("no data for") != std::string::npos);
     }
     // Nothing half-written stays behind.
-    CHECK(!fs::exists(work / "tiny_causal_lm_tokens.download"));
-    CHECK(!fs::exists(work / "tiny_causal_lm_tokens.download.part"));
+    CHECK(!fs::exists(work / "tiny_causal_lm_tokens.arrow"));
+    CHECK(!fs::exists(work / "tiny_causal_lm_tokens.arrow.part"));
     fs::remove_all(work, ec);
 }
 
-TEST_CASE("cloud dataset file names are safe", "[cloud]") {
+TEST_CASE("cloud dataset file names are safe and keep the format", "[cloud]") {
     CHECK(SafeCloudFileName("tiny causal lm tokens") == "tiny_causal_lm_tokens");
     CHECK(SafeCloudFileName("a/b\\c:d") == "a_b_c_d");
     CHECK(SafeCloudFileName("") == "dataset");
+    CHECK(CloudFileExtension("tokens.parquet") == ".parquet");
+    CHECK(CloudFileExtension("TOKENS.PARQUET") == ".parquet");
+    CHECK(CloudFileExtension("tokens.arrow") == ".arrow");
+    CHECK(CloudFileExtension("tokens.feather") == ".arrow");
+    CHECK(CloudFileExtension("") == ".arrow");
 }

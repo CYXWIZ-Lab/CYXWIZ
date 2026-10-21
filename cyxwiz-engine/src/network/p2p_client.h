@@ -13,6 +13,10 @@
 #include "dataset_file_server.h"
 
 namespace network {
+class DataStreamClient;
+}
+
+namespace network {
 
 // Forward declarations
 struct NodeCapabilities {
@@ -180,7 +184,12 @@ public:
     // graph datasets, served when the node asks; false with the reason when
     // the node could not train the graph or a dataset is not loaded. Exports
     // go inside the open project (the system drive may be full), else temp.
-    bool RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, std::string& error);
+    // Data Inputs that live in CyxCloud are not shipped: the job gets the
+    // gateway address and an access token per dataset instead (TOFIX164),
+    // minted through `cloud` (the Engine's DataStreamClient, may be null).
+    bool RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, DataStreamClient* cloud,
+                             const std::string& cloud_gateway_address, int64_t cloud_token_ttl_seconds,
+                             cyxwiz::protocol::JobConfig& config, std::string& error);
     void UnregisterJobDatasets(const std::string& job_id);
 
 private:

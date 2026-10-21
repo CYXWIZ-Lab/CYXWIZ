@@ -52,5 +52,10 @@ private:
 // A file name that is safe on every file system, from a dataset name.
 std::string SafeCloudFileName(const std::string& dataset_name);
 
+// The extension the fetched file gets, from the file's name in CyxCloud:
+// .parquet for Parquet, .arrow for Arrow IPC (.arrow, .feather, .ipc), and
+// .arrow for anything else (the Engine's plan admits only those formats).
+std::string CloudFileExtension(const std::string& file_name);
+
 }  // namespace server_node
 }  // namespace cyxwiz

@@ -884,15 +884,9 @@ void CloudBrowserPanel::TryAutoConnect() {
         owned_client_ = std::make_unique<network::DataStreamClient>();
     }
 
-    // Get gateway address - use central server address with gRPC port
-    std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress();
-    // CyxCloud gateway uses port 50052 for DataStream, override if needed
-    if (gateway_addr.find(":50051") != std::string::npos) {
-        gateway_addr.replace(gateway_addr.find(":50051"), 6, ":50052");
-    };
-    if (gateway_addr.empty()) {
-        gateway_addr = "localhost:50052";  // CyxCloud gateway gRPC port  // Default
-    }
+    // The gateway address from the config (servers.cloud_gateway), or the
+    // central server's host on the gateway's port (TOFIX164).
+    const std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCloudGatewayAddress();
 
     spdlog::info("CloudBrowser: Connecting to CyxCloud gateway at {}", gateway_addr);
 
