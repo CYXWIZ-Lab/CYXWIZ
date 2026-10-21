@@ -351,10 +351,8 @@ void TableViewerPanel::RenderToolbar() {
 
     // Filter mode toggle
     ImGui::SameLine();
-    if (ImGui::Checkbox("Hide", &active_tab->grid.filter_mode_hide)) {
-        if (active_tab->grid.Hiding()) active_tab->grid.ApplyFilter();
-        active_tab->grid.current_page = 0;
-    }
+    bool hide = active_tab->grid.filter_mode_hide;
+    if (ImGui::Checkbox("Hide", &hide)) active_tab->grid.SetHide(hide);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide non-matching rows instead of highlighting");
 
     // Clear filter button
@@ -518,7 +516,7 @@ void TableViewerPanel::StartOpen(const std::string& name, const std::string& dat
                 return;
             }
             task.ReportProgress(0.95f, "Column types");
-            result->kinds = TableGrid::ColumnKindsOf(*slice.table);
+            result->kinds = TableColumnKindsOf(*slice.table);
             task.MarkCompleted(std::to_string(slice.table->GetRowCount()) + " rows \xC2\xB7 " +
                                std::to_string(slice.table->GetColumnCount()) + " columns");
         },

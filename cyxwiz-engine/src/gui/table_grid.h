@@ -7,11 +7,14 @@
 // SQL Workbench and Data Studio embed the grid for their results.
 
 #include "../core/plot/plot_model.h"
+#include "../core/table_grid_rows.h"
 #include "../data/data_table.h"
 
 #include <imgui.h>
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -58,16 +61,6 @@ struct SelectionRange {
     }
 };
 
-/**
- * A column's kind and range, for drawing the grid: sorting, the header icon,
- * number formats, data bars and colour maps. Column statistics are the column
- * profile (core/dataset_profiler, TOFIX148).
- */
-struct TableColumnKind {
-    std::string type = "Unknown";  // "Numeric" (any number in it) or "Text"
-    double min_val = 0, max_val = 0;
-};
-
 class TableGrid {
 public:
     struct Options {
@@ -80,12 +73,13 @@ public:
     };
 
     TableGrid() = default;
+    ~TableGrid();
     TableGrid(const TableGrid&) = delete;
     TableGrid& operator=(const TableGrid&) = delete;
 
     // A fresh view of `t`: no sort, filter, selection, formats or edit.
-    // `kinds` (ColumnKindsOf, worked out off the UI thread) saves the grid
-    // working them out on its first frame.
+    // `kinds` (TableColumnKindsOf, worked out off the UI thread) saves the
+    // grid working them out on its first frame.
     void SetTable(std::shared_ptr<DataTable> t, std::vector<TableColumnKind> kinds = {});
     bool HasData() const { return table && table->GetRowCount() > 0; }
 
@@ -96,16 +90,31 @@ public:
     const std::vector<size_t>& DisplayIndices() const;
 
     void ComputeColumnKinds();
-    // Each column's kind and range: a scan of every cell.
-    static std::vector<TableColumnKind> ColumnKindsOf(const DataTable& table);
-    void SortByColumn(int column);
-    // The filter text: highlighted, or with filter_mode_hide the only rows shown.
+
+    // Sorting, filtering and the Find counts read every row: a small table in
+    // the frame, a large one in a task (the Task viewer lists it) while the
+    // grid keeps its current rows and shows the progress with Cancel.
+    // Sort by `column` (-1: the table's own order, reversed when descending).
+    void SetOrder(int column, bool ascending);
+    // The filter text: highlighted, or with Hide the only rows shown.
     void SetFilter(const std::string& text);
-    void ApplyFilter();
+    // The case and whole-cell options changed.
+    void RefreshFilter();
+    void SetHide(bool hide);
     void ClearFilter();
+    // Hide asked for (the rows shown follow when the work is done).
     bool Hiding() const { return filter_mode_hide && !filter_text.empty(); }
+    // The rows shown are the filtered ones.
+    bool ShowingFiltered() const { return showing_filtered_; }
     // Whether a cell's text matches the filter (its case and whole-cell options).
-    bool Matches(const std::string& text) const;
+    bool Matches(const std::string& text) const { return filter_.Matches(text); }
+    // Sorting or filtering is running; Cancel keeps the rows as they are.
+    bool Busy() const { return order_task_ != 0; }
+    void CancelWork();
+    // While the returned token lives (a task reading the table: an export),
+    // cells cannot be edited; an edit in progress is saved first.
+    std::shared_ptr<void> HoldTable();
+    bool TableHeld() const { return Busy() || holds_->load() > 0; }
     void ApplyColorMap(int column, ColorMapType type);
     void ClearColorMap(int column);
     static ImVec4 GetColorMapColor(double normalized, ColorMapType type);
@@ -149,8 +158,14 @@ public:
     bool filter_case_sensitive = false;
     bool filter_whole_cell = false;       // the whole cell, not a part of it
     std::vector<size_t> filtered_indices;  // Subset of sorted_indices
+    // Find: count the matching cells and rows (every cell read); the counts
+    // of the last filter, -1 while not counted.
+    bool count_matches = false;
+    int64_t match_cells = -1;
+    int64_t match_rows = 0;
 
     std::vector<TableColumnKind> column_kinds;
+    // The order asked for; sorted_indices follow when the work is done.
     int sort_column = -1;
     bool sort_ascending = true;
     std::vector<size_t> sorted_indices;    // For virtual sorting
@@ -176,6 +191,26 @@ private:
     static constexpr float kMaxInitialWidth = 420.0f;
     std::vector<float> initial_widths_;  // per column, 0 = fit the content
     void ComputeInitialWidths();
+
+    // The rows again: the order too when `reorder`, else only the filter
+    // work on the current order.
+    void Requery(bool reorder);
+    void ApplyRows(TableRowOrder rows, bool filter_rows, bool counted, int sort_column, bool ascending);
+    void RenderWorkLine();
+    TableFilter filter_;
+    bool showing_filtered_ = false;
+    // The order the rows are in (sort_column / sort_ascending are asked for).
+    int applied_sort_column_ = -1;
+    bool applied_sort_ascending_ = true;
+    // The header's sort arrow is set to sort_column on the next frame (a
+    // menu sort, a cancelled one).
+    bool sync_sort_header_ = false;
+    uint64_t order_task_ = 0;
+    bool order_task_reorders_ = false;
+    std::string order_task_label_;
+    uint64_t order_generation_ = 0;
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    std::shared_ptr<std::atomic<int>> holds_ = std::make_shared<std::atomic<int>>(0);
     void RenderColumnContextMenu(int column);
     void RenderCellContextMenu(int row, int col);
 };

@@ -199,7 +199,7 @@ private:
     int rows_per_page_ = 100;
 
     // Stats sidebar
-    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // scopes the profile tasks
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // scopes the open, profile and export tasks
     bool show_stats_sidebar_ = true;
     float stats_sidebar_width_ = 180.0f;
 
@@ -216,10 +216,7 @@ private:
     bool export_headers_ = true;           // CSV / TSV: the column names first
     std::string status_note_;              // what the last export did, in the status bar
     bool status_note_error_ = false;
-    bool show_find_dialog_ = false;
-    char find_buffer_[256] = {0};
-    int find_cells_ = -1;                  // cells matching (-1: nothing searched)
-    size_t find_rows_ = 0;
+    bool show_find_dialog_ = false;        // the grid counts the matches while it is open
 
     // Visualization integration
 

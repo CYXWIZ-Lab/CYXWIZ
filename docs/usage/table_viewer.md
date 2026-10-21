@@ -43,6 +43,17 @@ or is cancelled says so in the status bar. MNIST's test set (10,000 rows,
 - The header icon says the column's kind: `#` number, `A` text.
 - **Sort**: click a header (ascending, descending, then the table's own
   order). The row numbers stay frozen at the left while you scroll right.
+  Empty number cells sort last either way; equal values keep their order.
+- **Large tables work in the background.** Sorting, Hide and Find's count
+  read every row. Up to 200,000 cells this happens at once; past that it is
+  a task (in the Task viewer as *Sorting by <column> in <table>*,
+  *Filtering for "<text>" in <table>* or *Finding "<text>" in <table>*).
+  The grid keeps its rows while the task runs. A line over the grid shows
+  its progress, and **Cancel** keeps the rows and the header's arrow as they
+  were. A new sort or filter replaces a running one. Cells cannot be edited
+  while a task reads the table. MNIST (10,000 x 785): Hide on `255` takes
+  0.2 s, and Find's count (605,944 cells in 10,000 rows for `25`) about
+  0.5 s.
 - **Wide tables**: the grid shows up to 500 columns at a time. A table with
   more (MNIST has 785) shows the column pager under the grid, *Columns:
   1 - 500 of 785* with previous and next; the frozen columns (Lock) stay in
@@ -64,7 +75,7 @@ the query's rows (Query).
 
 | Control | What it does |
 |---|---|
-| Open dataset | Another loaded dataset, in a new tab. |
+| Open dataset | Another loaded dataset, in a new tab: click it, set the rows, **Open** (or double-click it). |
 | Stats | The Stats sidebar: the selected column's rows, missing, distinct, empty texts; numbers add min, max, mean, std, quartiles and a histogram (**Plot** opens it in the Plot window); text adds its most common values. Computed in the background (in the Task viewer as *Profile <name>*), again after an edit. It is the same profile as Data Studio's **Profile** tab: a tab showing a whole loaded dataset, unedited, is profiled exactly as Data Studio profiles it, and the answers either one saved serve the other (MNIST: 62 s the first time, 1.3 s for the other). A tab with part of a dataset, a result or an edited table is profiled on its own rows. |
 | Data Bars | A bar in each number cell, its length the value within the column's range. |
 | Line # | The row-number column. |
@@ -72,9 +83,9 @@ the query's rows (Query).
 | Filter (funnel) | Type and press Enter: matching cells are highlighted. Not case sensitive, any part of a cell (Find sets both). |
 | Hide | Only the rows with a matching cell; sorting keeps them. No match shows "No row contains ..." under the grid. |
 | Lock | How many data columns stay frozen at the left. |
-| Find | A window over the same filter: **Case sensitive**, **Whole cell**, how many cells in how many rows match, **Clear**. |
+| Find | A window over the same filter (its text is the toolbar's): **Case sensitive**, **Whole cell**, how many cells in how many rows match, **Clear**. The count is worked out only while Find is open. |
 | Save | Writes an edited table back to its file (CSV, TSV / TXT, HDF5); Ctrl+S. Not for a Python value: export it instead. |
-| Export | **CSV**, **TSV**, **JSON** or **Parquet** to a file you pick, or **Copy as CSV**. **Only the shown rows** writes the grid's rows in its order (sorted, filtered); **Column names first** applies to CSV and TSV. The status bar says what was written. |
+| Export | **CSV**, **TSV**, **JSON** or **Parquet** to a file you pick, or **Copy as CSV**. **Only the shown rows** writes the grid's rows in its order (sorted, filtered); **Column names first** applies to CSV and TSV. The writing is a task (*Export <table> to <file>*, *Copy <table> as CSV*); the status bar says when it is done and what was written. |
 | X | Closes the tab. |
 
 **Edit a cell**: double-click it, type, Enter (Escape cancels; a click

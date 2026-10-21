@@ -2,6 +2,7 @@
 // the clipboard) and Find (a window over the grid's filter and its options).
 
 #include "table_viewer.h"
+#include "../../core/async_task_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../../data/arrow_data_table.h"
 #include "../../data/table_text_export.h"
@@ -41,52 +42,98 @@ void TableViewerPanel::RenderExportMenu(TableTab* tab) {
 
 void TableViewerPanel::ExportTable(TableTab* tab, int format) {
     if (!tab || !tab->grid.table) return;
-    const DataTable& table = *tab->grid.table;
-    std::vector<size_t> rows;
+    // What the task reads and writes; released when it is done.
+    struct Job {
+        std::shared_ptr<DataTable> table;
+        std::vector<size_t> rows;
+        std::shared_ptr<void> hold;  // no cell edits while the table is read
+        std::string text;            // Copy as CSV: the text for the clipboard
+    };
+    auto job = std::make_shared<Job>();
+    job->table = tab->grid.table;
     if (export_shown_rows_only_) {
-        rows = tab->grid.DisplayIndices();
+        job->rows = tab->grid.DisplayIndices();
     } else {
-        rows.resize(table.GetRowCount());
-        std::iota(rows.begin(), rows.end(), size_t(0));
+        job->rows.resize(job->table->GetRowCount());
+        std::iota(job->rows.begin(), job->rows.end(), size_t(0));
     }
-    const std::string count = std::to_string(rows.size()) + " rows";
+    const std::string count = std::to_string(job->rows.size()) + " rows";
+    std::string path;
+    if (format != 4) {
+        static const char* kExt[] = {"csv", "tsv", "json", "parquet"};
+        static const char* kName[] = {"CSV", "TSV", "JSON", "Parquet"};
+        const FileDialogs::FilterList filters = {FileDialogs::Filter{kName[format], kExt[format]}};
+        const std::string suggested = (tab->filename.empty() ? std::string("table") : tab->filename) + "." + kExt[format];
+        const auto chosen = FileDialogs::SaveFile("Export table", filters, nullptr, suggested.c_str());
+        if (!chosen) return;
+        path = *chosen;
+    }
+    job->hold = tab->grid.HoldTable();
+    const bool headers = export_headers_;
+    const std::string name = tab->filename.empty() ? std::string("the table") : tab->filename;
     status_note_error_ = false;
-    if (format == 4) {
-        ImGui::SetClipboardText(TableText(table, rows, TableTextFormat::Csv, export_headers_).c_str());
-        status_note_ = "Copied " + count + " as CSV";
-        return;
-    }
-    static const char* kExt[] = {"csv", "tsv", "json", "parquet"};
-    static const char* kName[] = {"CSV", "TSV", "JSON", "Parquet"};
-    const FileDialogs::FilterList filters = {FileDialogs::Filter{kName[format], kExt[format]}};
-    const std::string suggested = (tab->filename.empty() ? std::string("table") : tab->filename) + "." + kExt[format];
-    const auto path = FileDialogs::SaveFile("Export table", filters, nullptr, suggested.c_str());
-    if (!path) return;
-    bool ok = false;
-    if (format == 3) {
-        const auto arrow_table = ArrowFromDataTable(*TableRows(table, rows));
-        auto out = arrow::io::FileOutputStream::Open(*path);
-        ok = arrow_table && out.ok() &&
-             parquet::arrow::WriteTable(*arrow_table, arrow::default_memory_pool(), *out, 64 * 1024).ok() &&
-             (*out)->Close().ok();
-    } else {
-        const auto kind = format == 0 ? TableTextFormat::Csv : format == 1 ? TableTextFormat::Tsv : TableTextFormat::Json;
-        std::ofstream file(*path, std::ios::binary);
-        file << TableText(table, rows, kind, export_headers_);
-        ok = static_cast<bool>(file);
-    }
-    status_note_error_ = !ok;
-    status_note_ = ok ? "Exported " + count + " to " + *path : "Could not write " + *path;
-    if (ok) spdlog::info("Table Viewer: exported {} to {}", count, *path);
-    else spdlog::error("Table Viewer: could not write {}", *path);
+    status_note_ = (format == 4 ? "Copying " : "Exporting ") + count + "...";
+    std::weak_ptr<int> alive = alive_;
+    AsyncTaskManager::Instance().RunAsync(
+        format == 4 ? "Copy " + name + " as CSV" : "Export " + name + " to " + path,
+        [job, format, path, headers](LambdaTask& task) {
+            task.ReportProgress(0.1f, "Writing " + std::to_string(job->rows.size()) + " rows");
+            const DataTable& table = *job->table;
+            bool ok = false;
+            if (format == 4) {
+                job->text = TableText(table, job->rows, TableTextFormat::Csv, headers);
+                ok = true;
+            } else if (format == 3) {
+                const auto arrow_table = ArrowFromDataTable(*TableRows(table, job->rows));
+                auto out = arrow::io::FileOutputStream::Open(path);
+                ok = arrow_table && out.ok() &&
+                     parquet::arrow::WriteTable(*arrow_table, arrow::default_memory_pool(), *out, 64 * 1024).ok() &&
+                     (*out)->Close().ok();
+            } else {
+                const auto kind =
+                    format == 0 ? TableTextFormat::Csv : format == 1 ? TableTextFormat::Tsv : TableTextFormat::Json;
+                std::ofstream file(path, std::ios::binary);
+                file << TableText(table, job->rows, kind, headers);
+                ok = static_cast<bool>(file);
+            }
+            job->table.reset();
+            job->hold.reset();
+            if (ok) task.MarkCompleted(std::to_string(job->rows.size()) + " rows");
+            else task.MarkFailed("Could not write " + path);
+        },
+        nullptr,
+        [this, alive, job, format, path, count](bool success, const std::string&) {
+            job->table.reset();  // a task stopped before it ran
+            job->hold.reset();
+            if (alive.expired()) return;
+            status_note_error_ = !success;
+            if (format == 4) {
+                if (success) ImGui::SetClipboardText(job->text.c_str());
+                status_note_ = success ? "Copied " + count + " as CSV" : "Could not copy the table";
+                job->text.clear();
+                return;
+            }
+            status_note_ = success ? "Exported " + count + " to " + path : "Could not write " + path;
+            if (success) spdlog::info("Table Viewer: exported {} to {}", count, path);
+            else spdlog::error("Table Viewer: could not write {}", path);
+        },
+        alive_);
 }
 
 void TableViewerPanel::RenderFindDialog() {
+    // Only the grid Find is open over counts its matches (every cell read).
+    TableTab* active = show_find_dialog_ ? GetActiveTab() : nullptr;
+    for (auto& tab : tabs_) {
+        const bool count = tab.get() == active;
+        if (tab->grid.count_matches == count) continue;
+        tab->grid.count_matches = count;
+        if (count && !tab->grid.filter_text.empty()) tab->grid.RefreshFilter();
+    }
     if (!show_find_dialog_) return;
 
     ImGui::SetNextWindowSize(ImVec2(420, 170), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(ICON_FA_MAGNIFYING_GLASS " Find in Table", &show_find_dialog_)) {
-        TableTab* tab = GetActiveTab();
+        TableTab* tab = active;
         if (!tab || !tab->grid.table) {
             ImGui::TextDisabled("No table loaded");
             ImGui::End();
@@ -96,43 +143,29 @@ void TableViewerPanel::RenderFindDialog() {
         const ui::Tokens& t = ui::CurrentTokens();
 
         ImGui::SetNextItemWidth(-1);
-        bool changed = ImGui::InputTextWithHint("##FindInput", "Text to find", find_buffer_, sizeof(find_buffer_));
-        changed |= ImGui::Checkbox("Case sensitive", &grid.filter_case_sensitive);
+        // The grid's filter, the same text as the toolbar's: matches are
+        // highlighted (Hide in the toolbar shows only their rows); the count
+        // is of every cell.
+        if (ImGui::InputTextWithHint("##FindInput", "Text to find", grid.filter_buffer, sizeof(grid.filter_buffer)))
+            grid.SetFilter(grid.filter_buffer);
+        bool options = ImGui::Checkbox("Case sensitive", &grid.filter_case_sensitive);
         ImGui::SameLine();
-        changed |= ImGui::Checkbox("Whole cell", &grid.filter_whole_cell);
-
-        // The grid's filter: matches are highlighted (Hide in the toolbar
-        // shows only their rows); the count is of every cell.
-        if (changed) {
-            grid.SetFilter(find_buffer_);
-            find_cells_ = -1;
-            find_rows_ = 0;
-            if (find_buffer_[0] != '\0') {
-                find_cells_ = 0;
-                for (size_t r = 0; r < grid.table->GetRowCount(); r++) {
-                    bool row_hit = false;
-                    for (size_t c = 0; c < grid.table->GetColumnCount(); c++) {
-                        if (grid.Matches(grid.CellText(r, c))) {
-                            ++find_cells_;
-                            row_hit = true;
-                        }
-                    }
-                    if (row_hit) ++find_rows_;
-                }
-            }
-        }
+        options |= ImGui::Checkbox("Whole cell", &grid.filter_whole_cell);
+        if (options) grid.RefreshFilter();
 
         ImGui::Spacing();
-        if (ui::SecondaryButton(ICON_FA_XMARK " Clear", find_buffer_[0] != '\0', "Nothing to clear")) {
-            std::memset(find_buffer_, 0, sizeof(find_buffer_));
+        if (ui::SecondaryButton(ICON_FA_XMARK " Clear", !grid.filter_text.empty(), "Nothing to clear"))
             grid.SetFilter("");
-            find_cells_ = -1;
-        }
-        if (find_cells_ >= 0) {
+        if (grid.Busy()) {
             ImGui::SameLine(0.0f, 14.0f);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(find_cells_ ? t.text : t.text_dim, "%d %s in %zu %s match", find_cells_,
-                               find_cells_ == 1 ? "cell" : "cells", find_rows_, find_rows_ == 1 ? "row" : "rows");
+            ImGui::TextColored(t.text_dim, "Counting... (the progress is over the grid)");
+        } else if (grid.match_cells >= 0) {
+            const int64_t cells = grid.match_cells, rows = grid.match_rows;
+            ImGui::SameLine(0.0f, 14.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(cells ? t.text : t.text_dim, "%lld %s in %lld %s match", static_cast<long long>(cells),
+                               cells == 1 ? "cell" : "cells", static_cast<long long>(rows), rows == 1 ? "row" : "rows");
         }
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_dim, "Matches are highlighted; tick Hide in the toolbar to show only their rows.");

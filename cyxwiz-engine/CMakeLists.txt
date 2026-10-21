@@ -171,6 +171,7 @@ set(ENGINE_SOURCES
     src/core/query_result_cache.cpp
     src/core/asset_preview.cpp
     src/core/dataset_table_slice.cpp
+    src/core/table_grid_rows.cpp
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
@@ -5811,6 +5812,24 @@ set_target_properties(test_dataset_table_slice PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME dataset_table_slice COMMAND test_dataset_table_slice)
+
+# ===== Test: the Table Viewer grid's sort, filter and Find counts off the UI thread (TOFIX159) =====
+add_executable(test_table_grid_rows
+    tests/test_table_grid_rows.cpp
+    src/core/table_grid_rows.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_table_grid_rows PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_table_grid_rows PRIVATE spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_table_grid_rows PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_table_grid_rows PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME table_grid_rows COMMAND test_table_grid_rows)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE

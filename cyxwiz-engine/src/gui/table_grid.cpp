@@ -4,6 +4,7 @@
 
 #include "table_grid.h"
 
+#include "../core/async_task_manager.h"
 #include "icons.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
@@ -12,10 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <charconv>
-#include <cctype>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -43,20 +41,17 @@ bool OneLine(std::string& text) {
     }
     return changed;
 }
+
+// Row work up to this many cells runs in the frame; more runs in a task.
+constexpr size_t kFrameCells = 200000;
 }  // namespace
 
+TableGrid::~TableGrid() {
+    if (order_task_) AsyncTaskManager::Instance().Cancel(order_task_);
+}
+
 std::string TableGrid::CellText(size_t row, size_t col) const {
-    const DataTable::CellValue v = table->GetCell(row, col);
-    if (const auto* s = std::get_if<std::string>(&v)) return *s;
-    if (const auto* n = std::get_if<int64_t>(&v)) return std::to_string(*n);
-    if (const auto* d = std::get_if<double>(&v)) {
-        char buf[32];
-        const auto r = std::to_chars(buf, buf + sizeof(buf), *d);
-        if (r.ptr - buf <= 12) return std::string(buf, r.ptr);
-        std::snprintf(buf, sizeof(buf), "%.10g", *d);
-        return buf;
-    }
-    return "";
+    return TableCellText(*table, row, col);
 }
 
 void TableGrid::ComputeInitialWidths() {
@@ -76,6 +71,9 @@ void TableGrid::ComputeInitialWidths() {
 }
 
 void TableGrid::SetTable(std::shared_ptr<DataTable> t, std::vector<TableColumnKind> kinds) {
+    CancelWork();
+    ++order_generation_;  // a result still on its way is for the old table
+    holds_ = std::make_shared<std::atomic<int>>(0);
     table = std::move(t);
     current_page = 0;
     column_page = 0;
@@ -85,11 +83,18 @@ void TableGrid::SetTable(std::shared_ptr<DataTable> t, std::vector<TableColumnKi
     filter_mode_hide = false;
     filter_case_sensitive = false;
     filter_whole_cell = false;
+    filter_ = {};
     filtered_indices.clear();
+    showing_filtered_ = false;
+    match_cells = -1;
+    match_rows = 0;
     column_kinds = table && kinds.size() == table->GetColumnCount() ? std::move(kinds) : std::vector<TableColumnKind>{};
     initial_widths_.clear();
     sort_column = -1;
     sort_ascending = true;
+    applied_sort_column_ = -1;
+    applied_sort_ascending_ = true;
+    sync_sort_header_ = false;
     sorted_indices.clear();
     if (table) {
         sorted_indices.resize(table->GetRowCount());
@@ -110,7 +115,7 @@ void TableGrid::SetTable(std::shared_ptr<DataTable> t, std::vector<TableColumnKi
 
 const std::vector<size_t>& TableGrid::DisplayIndices() const {
     // Hiding with no row matching shows no rows, not all of them.
-    return Hiding() ? filtered_indices : sorted_indices;
+    return showing_filtered_ ? filtered_indices : sorted_indices;
 }
 
 void TableGrid::Render(const char* id, const ImVec2& size) {
@@ -123,6 +128,8 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         ImGui::Text("Table is empty");
         return;
     }
+
+    RenderWorkLine();
 
     // Column kinds and opening widths, once per table
     if (column_kinds.empty()) {
@@ -181,7 +188,7 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
     // and past one block of columns the column pager: keep their lines free
     // when the grid fills the space left.
     ImVec2 outer = size;
-    const int note_lines = (total_pages > 1 || (Hiding() && display_count == 0) ? 1 : 0) + (column_pages > 1 ? 1 : 0);
+    const int note_lines = (total_pages > 1 || (showing_filtered_ && display_count == 0) ? 1 : 0) + (column_pages > 1 ? 1 : 0);
     if (note_lines > 0 && outer.y == 0.0f)
         outer.y = -(ImGui::GetFrameHeightWithSpacing() * static_cast<float>(note_lines) + 4.0f);
 
@@ -268,42 +275,39 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
             }
         }
 
+        // The header's arrow follows a sort from the column menu or a
+        // cancelled one (the rows keep their order).
+        if (sync_sort_header_) {
+            sync_sort_header_ = false;
+            int target = -1;
+            if (sort_column >= 0) {
+                const auto it = std::find(grid_columns.begin(), grid_columns.end(), static_cast<size_t>(sort_column));
+                if (it != grid_columns.end()) target = static_cast<int>(it - grid_columns.begin()) + line;
+            } else if (!sort_ascending && line) {
+                target = 0;
+            }
+            if (target >= 0)
+                ImGui::TableSetColumnSortDirection(
+                    target, sort_ascending ? ImGuiSortDirection_Ascending : ImGuiSortDirection_Descending, false);
+            else
+                ImGui::TableSetColumnSortDirection(0, ImGuiSortDirection_None, false);
+            if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs()) specs->SpecsDirty = false;
+        }
+
         // Handle ImGui's built-in sorting: a header click cycles ascending,
         // descending, unsorted (the table's own order; also how it opens).
+        // The line number column sorts by the table's order, either way.
         if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
             if (sort_specs->SpecsDirty && new_block) {
                 sort_specs->SpecsDirty = false;
             } else if (sort_specs->SpecsDirty && sort_specs->SpecsCount == 0) {
-                sort_column = -1;
-                sorted_indices.resize(row_count);
-                std::iota(sorted_indices.begin(), sorted_indices.end(), size_t(0));
-                if (Hiding()) ApplyFilter();
+                SetOrder(-1, true);
                 sort_specs->SpecsDirty = false;
             } else if (sort_specs->SpecsDirty) {
                 const ImGuiTableColumnSortSpecs& spec = sort_specs->Specs[0];
                 int sort_col = spec.ColumnIndex - line;  // the line number column is -1
                 if (sort_col >= 0) sort_col = static_cast<int>(grid_columns[static_cast<size_t>(sort_col)]);
-
-                if (sort_col < 0) {
-                    // Sorting by line number column - reset to original order
-                    sort_column = -1;
-                    sorted_indices.resize(row_count);
-                    if (spec.SortDirection == ImGuiSortDirection_Ascending) {
-                        std::iota(sorted_indices.begin(), sorted_indices.end(), size_t(0));
-                    } else {
-                        // Reverse order
-                        for (size_t i = 0; i < row_count; i++) {
-                            sorted_indices[i] = row_count - 1 - i;
-                        }
-                    }
-                    if (Hiding()) ApplyFilter();
-                    spdlog::info("Reset to original order ({})",
-                        spec.SortDirection == ImGuiSortDirection_Ascending ? "ascending" : "descending");
-                } else {
-                    sort_column = sort_col;
-                    sort_ascending = (spec.SortDirection == ImGuiSortDirection_Ascending);
-                    SortByColumn(sort_col);
-                }
+                SetOrder(sort_col, spec.SortDirection == ImGuiSortDirection_Ascending);
                 sort_specs->SpecsDirty = false;
             }
         }
@@ -540,7 +544,7 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         ImGui::EndTable();
     }
     ImGui::PopID();
-    if (Hiding() && display_count == 0)
+    if (showing_filtered_ && display_count == 0)
         ImGui::TextColored(ui::CurrentTokens().text_dim, "No row contains \"%s\".", filter_text.c_str());
 
     // The column pager: which block of a wide table is shown.
@@ -596,7 +600,7 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         }
 
         ImGui::SameLine();
-        if (Hiding()) {
+        if (showing_filtered_) {
             ImGui::Text("(rows %zu - %zu of %zu | %zu filtered)",
                 start_row + 1, end_row, display_count, row_count - display_count);
         } else {
@@ -606,73 +610,137 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
 }
 
 void TableGrid::ComputeColumnKinds() {
-    if (HasData()) column_kinds = ColumnKindsOf(*table);
+    if (HasData()) column_kinds = TableColumnKindsOf(*table);
 }
 
-std::vector<TableColumnKind> TableGrid::ColumnKindsOf(const DataTable& table) {
-    const size_t cols = table.GetColumnCount();
-    const size_t rows = table.GetRowCount();
-    std::vector<TableColumnKind> column_kinds(cols);
-    for (size_t c = 0; c < cols; c++) {
-        bool numeric = false;
-        double min_v = std::numeric_limits<double>::max();
-        double max_v = std::numeric_limits<double>::lowest();
-        for (size_t r = 0; r < rows; r++) {
-            const auto cell = table.GetCell(r, c);
-            double v = 0.0;
-            if (const auto* d = std::get_if<double>(&cell)) v = *d;
-            else if (const auto* n = std::get_if<int64_t>(&cell)) v = static_cast<double>(*n);
-            else continue;
-            if (std::isnan(v) || std::isinf(v)) continue;
-            min_v = std::min(min_v, v);
-            max_v = std::max(max_v, v);
-            numeric = true;
-        }
-        auto& kind = column_kinds[c];
-        kind.type = numeric ? "Numeric" : "Text";
-        if (numeric) {
-            kind.min_val = min_v;
-            kind.max_val = max_v;
-        }
+// ============================================================================
+// Sorting and filtering
+// ============================================================================
+
+void TableGrid::SetOrder(int column, bool ascending) {
+    if (!table) return;
+    sort_column = column;
+    sort_ascending = ascending;
+    Requery(true);
+}
+
+void TableGrid::Requery(bool reorder) {
+    if (!table) return;
+    // A sort still running is redone with the new request, not dropped.
+    reorder = reorder || (order_task_ && order_task_reorders_);
+    CancelWork();
+    const uint64_t generation = ++order_generation_;
+
+    TableRowRequest request;
+    request.sort_column = sort_column;
+    request.ascending = sort_ascending;
+    request.numeric = sort_column >= 0 && sort_column < static_cast<int>(column_kinds.size()) &&
+                      column_kinds[static_cast<size_t>(sort_column)].type == "Numeric";
+    if (!reorder) request.order = sorted_indices;
+    request.filter = filter_;
+    request.filter_rows = Hiding();
+    request.count_matches = count_matches && !filter_.empty();
+
+    const size_t rows = table->GetRowCount();
+    const bool filtering = !filter_.empty() && (request.filter_rows || request.count_matches);
+    const size_t cells = (reorder && sort_column >= 0 ? rows : 0) + (filtering ? rows * table->GetColumnCount() : 0);
+    const int column = sort_column;
+    const bool ascending = sort_ascending;
+    const bool filter_rows = request.filter_rows;
+    const bool counted = request.count_matches;
+    if (cells <= kFrameCells) {
+        ApplyRows(ComputeTableRowOrder(*table, request), filter_rows, counted, column, ascending);
+        return;
     }
-    return column_kinds;
+
+    // A large table: a task reads it while the grid keeps its rows.
+    const auto& headers = table->GetHeaders();
+    const std::string name = table->GetName().empty() ? "the table" : table->GetName();
+    if (reorder && column >= 0)
+        order_task_label_ = "Sorting by " + (static_cast<size_t>(column) < headers.size() ? headers[column] : "a column");
+    else if (reorder)
+        order_task_label_ = "Putting the rows in table order";
+    else if (counted)
+        order_task_label_ = "Finding \"" + filter_text + "\"";
+    else
+        order_task_label_ = "Filtering for \"" + filter_text + "\"";
+    order_task_reorders_ = reorder;
+    if (match_cells >= 0 && counted) match_cells = -1;  // counting again
+
+    auto result = std::make_shared<TableRowOrder>();
+    std::weak_ptr<int> alive = alive_;
+    order_task_ = AsyncTaskManager::Instance().RunAsync(
+        order_task_label_ + " in " + name,
+        [source = table, request = std::move(request), result](LambdaTask& task) {
+            *result = ComputeTableRowOrder(*source, request, [&task](float done) {
+                task.ReportProgress(done, "");
+                return !task.ShouldStop();
+            });
+            if (result->stopped || task.ShouldStop()) {
+                task.MarkCancelled();
+                return;
+            }
+            task.MarkCompleted(std::to_string((request.filter_rows ? result->filtered : result->sorted).size()) +
+                               " rows");
+        },
+        nullptr,
+        [this, alive, result, generation, filter_rows, counted, column, ascending](bool success, const std::string&) {
+            if (alive.expired() || generation != order_generation_) return;
+            order_task_ = 0;
+            if (!success) {
+                // Stopped: the rows stay as they are, and so does the header.
+                sort_column = applied_sort_column_;
+                sort_ascending = applied_sort_ascending_;
+                sync_sort_header_ = true;
+                return;
+            }
+            ApplyRows(std::move(*result), filter_rows, counted, column, ascending);
+        },
+        alive_);
 }
 
-void TableGrid::SortByColumn(int column) {
-    if (!HasData() || column < 0) return;
+void TableGrid::ApplyRows(TableRowOrder rows, bool filter_rows, bool counted, int column, bool ascending) {
+    sorted_indices = std::move(rows.sorted);
+    filtered_indices = std::move(rows.filtered);
+    showing_filtered_ = filter_rows;
+    match_cells = counted ? rows.match_cells : -1;
+    match_rows = counted ? rows.match_rows : 0;
+    applied_sort_column_ = column;
+    applied_sort_ascending_ = ascending;
+}
 
-    size_t rows = table->GetRowCount();
+void TableGrid::CancelWork() {
+    if (!order_task_) return;
+    AsyncTaskManager::Instance().Cancel(order_task_);
+    order_task_ = 0;
+    ++order_generation_;  // its result is not applied
+    if (sort_column != applied_sort_column_ || sort_ascending != applied_sort_ascending_) {
+        sort_column = applied_sort_column_;
+        sort_ascending = applied_sort_ascending_;
+        sync_sort_header_ = true;
+    }
+}
 
-    sorted_indices.resize(rows);
-    std::iota(sorted_indices.begin(), sorted_indices.end(), size_t(0));
+std::shared_ptr<void> TableGrid::HoldTable() {
+    if (IsEditing()) EndCellEdit(true);
+    holds_->fetch_add(1);
+    auto holds = holds_;
+    return std::shared_ptr<void>(nullptr, [holds](void*) { holds->fetch_sub(1); });
+}
 
-    bool is_numeric = (column < static_cast<int>(column_kinds.size()) &&
-                       column_kinds[column].type == "Numeric");
-    bool ascending = sort_ascending;
-
-    std::sort(sorted_indices.begin(), sorted_indices.end(),
-        [&](size_t a, size_t b) {
-            if (is_numeric) {
-                auto get_val = [&](size_t r) -> double {
-                    auto cell = table->GetCell(r, column);
-                    if (std::holds_alternative<double>(cell))
-                        return std::get<double>(cell);
-                    if (std::holds_alternative<int64_t>(cell))
-                        return static_cast<double>(std::get<int64_t>(cell));
-                    return ascending ? std::numeric_limits<double>::max()
-                                    : std::numeric_limits<double>::lowest();
-                };
-                double va = get_val(a), vb = get_val(b);
-                return ascending ? va < vb : va > vb;
-            } else {
-                std::string sa = CellText(a, column);
-                std::string sb = CellText(b, column);
-                return ascending ? sa < sb : sa > sb;
-            }
-        });
-
-    if (Hiding()) ApplyFilter();  // the shown rows follow the new order
-    spdlog::info("Sorted by column {} ({})", column, ascending ? "ascending" : "descending");
+void TableGrid::RenderWorkLine() {
+    if (!order_task_) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto task = AsyncTaskManager::Instance().GetTask(order_task_);
+    const float done = task ? task->GetInfo().progress : 0.0f;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.accent, ICON_FA_SPINNER);
+    ImGui::SameLine();
+    ImGui::TextColored(t.text, "%s", order_task_label_.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "%d%%", static_cast<int>(done * 100.0f + 0.5f));
+    ImGui::SameLine();
+    if (ui::LinkButton("Cancel##order")) CancelWork();
 }
 
 void TableGrid::ApplyColorMap(int column, ColorMapType type) {
@@ -827,59 +895,30 @@ ImVec4 TableGrid::GetColorMapColor(double normalized, ColorMapType type) {
 // Filtering
 // ============================================================================
 
-bool TableGrid::Matches(const std::string& text) const {
-    if (filter_text.empty()) return false;
-    if (filter_case_sensitive)
-        return filter_whole_cell ? text == filter_text : text.find(filter_text) != std::string::npos;
-    const auto lower = [](std::string s) {
-        for (char& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        return s;
-    };
-    const std::string t = lower(text), f = lower(filter_text);
-    return filter_whole_cell ? t == f : t.find(f) != std::string::npos;
-}
-
 void TableGrid::SetFilter(const std::string& text) {
     filter_text = text;
     std::memset(filter_buffer, 0, sizeof(filter_buffer));
     std::strncpy(filter_buffer, text.c_str(), sizeof(filter_buffer) - 1);
     current_page = 0;
-    if (filter_mode_hide) ApplyFilter();
+    RefreshFilter();
 }
 
-void TableGrid::ApplyFilter() {
-    if (!table) return;
+void TableGrid::RefreshFilter() {
+    filter_ = TableFilter(filter_text, filter_case_sensitive, filter_whole_cell);
+    Requery(false);
+}
 
-    filtered_indices.clear();
-
-    if (filter_text.empty()) {
-        // No filter - show all
-        filtered_indices = sorted_indices;
-        return;
-    }
-
-    // Filter matching rows
-    for (size_t idx : sorted_indices) {
-        bool match = false;
-        for (size_t c = 0; c < table->GetColumnCount(); c++) {
-            if (Matches(CellText(idx, c))) {
-                match = true;
-                break;
-            }
-        }
-        if (match) {
-            filtered_indices.push_back(idx);
-        }
-    }
-
-    spdlog::info("Filter applied: {} of {} rows match", filtered_indices.size(), sorted_indices.size());
+void TableGrid::SetHide(bool hide) {
+    filter_mode_hide = hide;
+    current_page = 0;
+    Requery(false);
 }
 
 void TableGrid::ClearFilter() {
     filter_text.clear();
     std::memset(filter_buffer, 0, sizeof(filter_buffer));
-    filtered_indices.clear();
     filter_mode_hide = false;
+    RefreshFilter();
 }
 
 // ============================================================================
@@ -887,7 +926,7 @@ void TableGrid::ClearFilter() {
 // ============================================================================
 
 void TableGrid::BeginCellEdit(int row, int col) {
-    if (!table) return;
+    if (!table || TableHeld()) return;
 
     // End any current editing
     if (editing_row >= 0 && editing_col >= 0) {
@@ -922,9 +961,10 @@ void TableGrid::EndCellEdit(bool save) {
                 spdlog::info("Cell [{}, {}] changed: '{}' -> '{}'",
                     editing_row + 1, editing_col + 1, old_value, new_value);
 
-                // The column kinds follow the edit; the owner marks itself dirty.
-                ComputeColumnKinds();
-                if (Hiding()) ApplyFilter();  // the edited row may match now, or no longer
+                // The column's kind follows the edit; the owner marks itself dirty.
+                if (static_cast<size_t>(editing_col) < column_kinds.size())
+                    column_kinds[static_cast<size_t>(editing_col)] = TableColumnKindOf(*table, static_cast<size_t>(editing_col));
+                if (Hiding() || count_matches) Requery(false);  // the edited row may match now, or no longer
                 if (on_edited) on_edited();
             } else {
                 spdlog::warn("Failed to update cell [{}, {}]", editing_row + 1, editing_col + 1);
