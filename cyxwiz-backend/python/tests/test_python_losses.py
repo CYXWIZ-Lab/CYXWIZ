@@ -1,21 +1,27 @@
-"""Python subclasses of pycyxwiz.Loss (TOFIX125 P7 step 7.4).
+"""Python subclasses of pycyxwiz.Loss (TOFIX125 P7 steps 7.4 and 7.5).
 
 Mean squared error and softmax cross entropy written only in Python give the
 built-in losses' values and gradients; gradcheck_loss passes them and fails a
-loss whose backward forgets the mean scaling. Run with the Python that
+loss whose backward forgets the mean scaling. @nodes.loss describes a loss as a
+node: its pins, its target kind, settings, the check and the bundle entry.
+Run with the Python that
 pycyxwiz was built for:
 
     python test_python_losses.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
 Exit code 0 when every check passes.
 """
+import json
 import os
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pycyxwiz_test_env import Checks, import_pycyxwiz  # noqa: E402
 
 cyx = import_pycyxwiz()
+from pycyxwiz import nodes  # noqa: E402
 check = Checks()
 
 
@@ -57,6 +63,27 @@ class SoftmaxCrossEntropy(cyx.Loss):
     def backward(self, predictions, targets):
         rows = predictions.num_elements() // predictions.shape()[-1]
         return (self.softmax(predictions) - targets) * (1.0 / rows)
+
+
+@nodes.loss("com.example.losses", "Huber", "1.0.0", target="continuous")
+class Huber(cyx.Loss):
+    """Squared below delta, linear above"""
+    delta = nodes.Param(float, default=1.0, min=0.01, description="Where the loss turns linear")
+
+    def forward(self, predictions, targets):
+        d = (predictions - targets).abs()
+        small = cyx.Tensor.ones(d.shape()) * (d <= self.delta)
+        values = small * (d * d * 0.5) + (1.0 - small) * (d * self.delta - 0.5 * self.delta * self.delta)
+        return values.mean()
+
+    def backward(self, predictions, targets):
+        d = predictions - targets
+        return d.clip(-self.delta, self.delta) * (1.0 / predictions.num_elements())
+
+
+@nodes.loss("com.example.losses", "SoftmaxCE", "1.0.0")
+class SoftmaxCE(SoftmaxCrossEntropy):
+    """Softmax cross entropy over one-hot targets"""
 
 
 class ForgetsTheMean(MeanSquaredError):
@@ -111,5 +138,61 @@ try:
     check(False, "unknown target kinds are refused")
 except ValueError as e:
     check("one_hot" in str(e), "unknown target kinds are refused: %s" % e)
+
+print("4. @nodes.loss")
+check(nodes.is_loss(Huber) and nodes.is_node(Huber) and not nodes.is_loss(MeanSquaredError), "is_loss")
+info = nodes.describe(Huber)
+check(info["role"] == "loss" and info["tier"] == "loss" and info["target"] == "continuous"
+      and info["category"] == "Loss", "describe: role, tier, target, category")
+check(info["inputs"] == [{"name": "Predictions", "type": "Tensor"}, {"name": "Targets", "type": "Labels"}]
+      and info["outputs"] == [{"name": "Loss", "type": "Loss"}] and "shape_rule" not in info,
+      "describe: the built-in losses' pins and no shape rule")
+check([q["name"] for q in info["parameters"]] == ["delta"], "describe: its setting")
+check(nodes.describe(SoftmaxCE)["target"] == "categorical", "the default target is categorical")
+
+huber = nodes.create(Huber, {"delta": "0.5"})
+check(isinstance(huber, cyx.Loss) and abs(huber.delta - 0.5) < 1e-9, "create converts the setting")
+try:
+    nodes.create(Huber, {"delta": "0"})
+    check(False, "a setting below its minimum is refused")
+except ValueError as e:
+    check("at least" in str(e), "a setting below its minimum is refused: %s" % e)
+for cls, kind in ((Huber, "values"), (SoftmaxCE, "one-hot")):
+    result = nodes.gradcheck(cls)
+    check(result.passed, "%s passes the check with %s targets: %s" % (cls.__name__, kind, result))
+try:
+    nodes.output_shape(Huber, {}, [3])
+    check(False, "a loss has no output shape")
+except TypeError as e:
+    check("is a loss" in str(e), "a loss has no output shape: %s" % e)
+
+for bad, expected in (
+        (lambda: nodes.loss("com.example.losses", "X", "1.0.0")(type("OnlyForward", (cyx.Loss,), {
+            "forward": lambda s, p, t: p})), "needs backward"),
+        (lambda: nodes.loss("com.example.losses", "X", "1.0.0")(type("NotALoss", (cyx.Module,), {})),
+         "subclass of pycyxwiz.Loss"),
+        (lambda: nodes.loss("com.example.losses", "X", "1.0.0", target="ranked")(MeanSquaredError), "target"),
+        (lambda: nodes.node("com.example.losses", "X", "1.0.0", role="loss")(type("M", (cyx.Module,), {
+            "forward": lambda s, x: x, "backward": lambda s, g: g})), "role")):
+    try:
+        bad()
+        check(False, "refused: " + expected)
+    except (TypeError, ValueError) as e:
+        check(expected in str(e), "refused (%s): %s" % (expected, e))
+
+folder = tempfile.mkdtemp(prefix="cyxwiz_losses_")
+try:
+    path = nodes.bundle(Huber, SoftmaxCE, folder=folder, name="my-losses")
+    with open(os.path.join(path, "node.json"), encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    entries = {n["name"]: n for n in manifest["nodes"]}
+    check(set(entries) == {"Huber", "SoftmaxCE"}, "the bundle lists both losses")
+    check(entries["Huber"]["role"] == "loss" and entries["Huber"]["target"] == "continuous"
+          and "shape_rule" not in entries["Huber"] and len(entries["Huber"]["inputs"]) == 2,
+          "a loss entry: role, target, two inputs, no shape rule")
+    check(all(n["verification"]["status"] == "passed" for n in manifest["nodes"]),
+          "both are recorded as passing the check")
+finally:
+    shutil.rmtree(folder, ignore_errors=True)
 
 check.finish("test_python_losses")
