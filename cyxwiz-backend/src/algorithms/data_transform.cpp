@@ -372,7 +372,8 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
     return stats;
 }
 
-std::vector<int64_t> DataTransform::Histogram(const std::vector<double>& data, int bins, double low, double high) {
+std::vector<int64_t> DataTransform::Histogram(const std::vector<double>& data, int bins, double low, double high,
+                                              std::string* error) {
     if (bins < 1 || !(high >= low) || !std::isfinite(low) || !std::isfinite(high)) return {};
     std::vector<int64_t> counts(static_cast<size_t>(bins), 0);
     if (data.empty()) return counts;
@@ -388,8 +389,9 @@ std::vector<int64_t> DataTransform::Histogram(const std::vector<double>& data, i
         const af::array h = af::histogram(x(inside), static_cast<unsigned>(bins), low, high).as(f64);
         const std::vector<double> host = DeviceToHostValues(h, "DataTransform::Histogram");
         for (size_t i = 0; i < counts.size() && i < host.size(); ++i) counts[i] = static_cast<int64_t>(host[i]);
-    } catch (const af::exception&) {
-        return {};  // the caller shows no histogram
+    } catch (const af::exception& e) {
+        if (error) *error = DeviceError("DataTransform::Histogram", e);
+        return {};
     }
     return counts;
 }
@@ -759,8 +761,7 @@ bool DataTransform::QuantileFit(const std::vector<double>& data, int n_quantiles
     }
     try {
         const af::array refs = QuantileReferences(HostValuesToDevice(data), n_quantiles).as(f64);
-        quantiles.resize(static_cast<size_t>(refs.elements()));
-        refs.host(quantiles.data());
+        quantiles = DeviceToHostValues(refs, "DataTransform::QuantileFit");
         return true;
     } catch (const af::exception& e) {
         error = DeviceError("DataTransform::QuantileFit", e);
