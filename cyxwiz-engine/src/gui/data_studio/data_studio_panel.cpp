@@ -3,6 +3,8 @@
 // data_studio_panel_render.cpp.
 
 #include "data_studio_panel.h"
+#include "../../core/node_executors/hypothesis_test_operator.h"
+#include "../../core/stats_presentation.h"
 #include "../separate_windows.h"
 
 #include "../../core/data_studio_publish.h"
@@ -39,6 +41,31 @@ DataStudioPanel::DataStudioPanel() {
     distribution_ = std::make_unique<DistributionView>();
     tests_ = std::make_unique<TestsView>();
     regression_ = std::make_unique<RegressionView>();
+    // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
+    tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        const std::string name = stats_view::TestName(r) + " (" + (r.values.empty() ? r.groups : r.values) + ")";
+        node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::HypothesisTest, HypothesisTestOperator::ParametersFromRequest(r), name);
+        return "Added the Hypothesis Test node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+    };
+    regression_->add_to_graph = [this](const stats::RegressionRequest& r) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        const std::string name = "Predict " + r.response;
+        if (r.polynomial) {
+            node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::PolynomialRegressionNode,
+                                             {{"feature_col", r.predictors.front()}, {"target_col", r.response}, {"degree", std::to_string(r.degree)}},
+                                             name);
+        } else {
+            std::string features;
+            for (const auto& p : r.predictors) features += (features.empty() ? "" : ",") + p;
+            node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::LinearRegressionNode,
+                                             {{"feature_cols", features}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
+        }
+        return std::string("Added the ") + (r.polynomial ? "Polynomial" : "Linear") + " Regression node \"" + name + "\" reading \"" +
+               from->name + "\" (Ctrl+Z on the canvas undoes it).";
+    };
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);

@@ -327,6 +327,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/tree_model_predictor_operator.cpp # Tool-to-Node Band 1
     src/core/node_executors/signal_processing_operators.cpp  # Tool-to-Node Band 1
     src/core/node_executors/regression_operators.cpp         # Tool-to-Node Band 1
+    src/core/node_executors/hypothesis_test_operator.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
@@ -866,6 +867,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/tree_model_predictor_operator.h
     src/core/node_executors/signal_processing_operators.h
     src/core/node_executors/regression_operators.h
+    src/core/node_executors/hypothesis_test_operator.h
     src/core/node_executors/model_artifact_json_io.h
     src/core/node_executors/regression_model_artifact.h
     src/core/node_executors/classic_model_common.h
@@ -2760,6 +2762,17 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/stats_explore.cpp
+    src/core/stats_presentation.cpp
+    src/core/explore_presentation.cpp
+    src/core/data_explore.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+    src/core/guided_sql.cpp
+    src/core/sql_step_presentation.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
@@ -2779,6 +2792,8 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/time_series_segment_operator.cpp
     src/core/node_executors/row_count_check_operator.cpp
 )
+target_link_libraries(test_pipeline_operator_metadata PRIVATE duckdb Parquet::parquet_shared)
+
 target_link_libraries(test_pipeline_operator_metadata PRIVATE cyxwiz-training-core)
 # The library lists the data-convert formats with the Engine's HDF5 / XLSX
 # flags; this test's own sources must see the same list.
@@ -3070,6 +3085,10 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/dataset_profiler.cpp
     src/core/dataset_contract.cpp
     src/core/session_query_engine.cpp
+    src/core/data_explore.cpp
+    src/core/explore_presentation.cpp
+    src/core/stats_explore.cpp
+    src/core/stats_presentation.cpp
     src/core/sql_plan.cpp
     src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp
@@ -3107,6 +3126,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/hypothesis_test_operator.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
@@ -3820,6 +3840,17 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/stats_explore.cpp
+    src/core/stats_presentation.cpp
+    src/core/explore_presentation.cpp
+    src/core/data_explore.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+    src/core/guided_sql.cpp
+    src/core/sql_step_presentation.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
@@ -3843,6 +3874,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
+target_link_libraries(test_graph_training_sequence_preflight PRIVATE duckdb Parquet::parquet_shared)
+
 target_link_libraries(test_graph_training_sequence_preflight PRIVATE cyxwiz-training-core)
 
 target_include_directories(test_graph_training_sequence_preflight PRIVATE
@@ -7160,6 +7193,7 @@ add_test(NAME TransformStepPresentation COMMAND test_transform_step_presentation
 
 # Data Studio > Explore Tests and Regression (TOFIX129 D3).
 add_executable(test_stats_explore tests/test_stats_explore.cpp
+    src/core/node_executors/hypothesis_test_operator.cpp
     src/core/stats_explore.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
@@ -7430,6 +7464,17 @@ add_executable(test_engine_node_parity
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/stats_explore.cpp
+    src/core/stats_presentation.cpp
+    src/core/explore_presentation.cpp
+    src/core/data_explore.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+    src/core/guided_sql.cpp
+    src/core/sql_step_presentation.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
@@ -7453,6 +7498,8 @@ add_executable(test_engine_node_parity
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
+target_link_libraries(test_engine_node_parity PRIVATE duckdb Parquet::parquet_shared)
+
 target_include_directories(test_engine_node_parity PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${Stb_INCLUDE_DIR}

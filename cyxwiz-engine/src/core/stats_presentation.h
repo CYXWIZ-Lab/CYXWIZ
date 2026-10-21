@@ -26,6 +26,10 @@ std::string Aic(double v);
 std::string Level(double confidence);
 
 const char* QuestionLabel(stats::Question q);
+// The test run for a request: "Welch two-sample t", "classic one-way ANOVA", "chi-square of independence".
+std::string TestName(const stats::TestRequest& r);
+// What `TestResult::effect` measures for it: "Cohen's d", "d (paired)", "eta squared", "Cramer's V".
+const char* EffectName(stats::Question q);
 
 // "large", "medium", "small", "negligible" (Cohen's cut-offs).
 const char* DWords(double d);         // Cohen's d: 0.2 / 0.5 / 0.8

@@ -4,6 +4,7 @@
 // cyxwiz::StatisticalTests on the same values (itself checked against scipy),
 // and the words.
 
+#include "../src/core/node_executors/hypothesis_test_operator.h"
 #include "../src/core/session_query_engine.h"
 #include "../src/core/stats_explore.h"
 #include "../src/core/stats_presentation.h"
@@ -72,6 +73,33 @@ int main() {
     const fs::path root = fs::temp_directory_path() / "cyxwiz_test_stats_explore";
     std::error_code ec;
     fs::remove_all(root, ec);
+    {
+        // The Hypothesis Test node: its one row equals the tab's answer; its parameters round-trip.
+        std::vector<double> v0, w0;
+        const auto input = Table(v0, w0);
+        stats::TestRequest node_request;
+        node_request.values = "v";
+        node_request.groups = "k";
+        node_request.question = stats::Question::SeveralGroups;
+        const auto params = HypothesisTestOperator::ParametersFromRequest(node_request);
+        HypothesisTestOperator op;
+        std::string configure_error;
+        Check(op.Configure(params, configure_error), "node configures: " + configure_error);
+        const auto out = op.Apply(input);
+        Check(out.ok() && (*out)->num_rows() == 1, "node gives one row: " + (out.ok() ? std::string() : out.status().ToString()));
+        const auto p = std::static_pointer_cast<arrow::DoubleArray>((*out)->GetColumnByName("p")->chunk(0))->Value(0);
+        SessionQueryEngine engine((root / "node").string());
+        std::string attach_error;
+        Check(engine.AttachArrow("t", 1, input, &attach_error), "attach: " + attach_error);
+        const QueryRunner run = [&](const QueryRequest& r) { return engine.Run(r); };
+        Same(p, stats::RunTest("t", node_request, run, {}).main.p, "node p equals the tab's p");
+        stats::TestRequest back;
+        Check(HypothesisTestOperator::RequestFromParameters(params, back, configure_error) && back.question == node_request.question &&
+                  back.values == "v" && back.groups == "k" && back.welch && std::fabs(back.confidence - 0.95) < 1e-12,
+              "parameters round-trip");
+        Check(!op.Configure({{"question", "maybe"}}, configure_error) && configure_error.find("question") != std::string::npos,
+              "an unknown question is refused");
+    }
     {
         std::vector<double> v, w;
         SessionQueryEngine engine((root / "attach").string());
@@ -245,6 +273,9 @@ int main() {
           stats_view::Answer(cat).text);
     Check(stats_view::Checks(cat).front().find("5 or more (smallest 10.28)") != std::string::npos, stats_view::Checks(cat).front());
 
+    stats::TestRequest names;
+    Check(stats_view::TestName(names) == "Welch two-sample t" && std::string(stats_view::EffectName(stats::Question::SeveralGroups)) == "eta squared",
+          "test and effect names");
     Check(stats_view::P(2.9e-82) == "2.9e-82" && stats_view::P(0.0064) == "0.0064" && stats_view::P(0.0) == "< 1e-300" &&
               stats_view::PairP(0.0) == "< 1e-15" && stats_view::PairP(0.0089) == "0.0089",
           "p words");

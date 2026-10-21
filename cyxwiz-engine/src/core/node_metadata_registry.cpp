@@ -4718,11 +4718,21 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
 void NodeMetadataRegistry::InitializeStatisticsNodes() {
     RegisterNode({NodeType::HypothesisTest, NodeCategory::Analytics, "Hypothesis Test", ICON_FA_FLASK,
         {"hypothesis", "test", "ttest", "anova", "chi", "square", "statistics"}, 0, false,
-        "Statistical Hypothesis Testing", "", "",
+        "Statistical hypothesis test",
+        "Answers one question about the data on the device (as Data Studio > Explore > Tests): two groups, paired columns, "
+        "several groups, one column vs a value, or two categories. Its output is one row: the test, statistic, df, p, "
+        "the estimate and its CI, the effect size, the rows used and whether it is significant, with the answer in words.", "",
         {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Results", PinType::Dataset, false, "Results"}},
-        {{"test", "dropdown", "ttest_1samp", "Test Type", {"ttest_1samp", "ttest_ind", "ttest_paired", "anova", "chi_square", "mann_whitney"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {{"Results", PinType::Dataset, false, "One row: the test's figures and its answer"}},
+        {{"question", "enum", "two_groups", "What to test", {"two_groups", "paired", "several_groups", "one_value", "two_categories"}, "", "Question", "Test"},
+         {"values", "string", "", "The number column (paired: the first one)", {}, "", "Values", "Columns"},
+         {"groups", "string", "", "The column that splits the rows into groups (two categories: the rows)", {}, "", "Split by", "Columns"},
+         {"second", "string", "", "Paired or two columns: the second number column; two categories: the columns", {}, "", "Second column", "Columns"},
+         {"two_columns", "bool", "false", "Two groups given as two number columns instead of a group column", {}, "", "Two columns", "Columns"},
+         {"variances", "enum", "unequal", "Welch (unequal) or Student / classic (equal)", {"unequal", "equal"}, "", "Variances", "Test"},
+         {"alpha", "float", "0.05", "Significance level; the CI is at 1 - alpha", {}, "0.001-0.5", "Alpha", "Test"},
+         {"value", "float", "0", "One column vs a value: the value the mean is compared with", {}, "", "Compared with", "Test"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DistributionFitter, NodeCategory::Analytics, "Distribution Fitter", ICON_FA_CHART_AREA,
         {"distribution", "fit", "normal", "exponential", "probability"}, 0, false,

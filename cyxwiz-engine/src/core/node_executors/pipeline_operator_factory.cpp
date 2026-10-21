@@ -15,6 +15,7 @@
 #include "classic_model_predictor_operator.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
+#include "hypothesis_test_operator.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
@@ -168,6 +169,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::RobustScaler, []() {
         return std::make_unique<RobustScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::HypothesisTest, []() {
+        return std::make_unique<HypothesisTestOperator>();
     });
     RegisterCreator(gui::NodeType::MaxAbsScaler, []() {
         return std::make_unique<MaxAbsScalerOperator>();

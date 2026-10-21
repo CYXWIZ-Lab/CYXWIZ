@@ -475,7 +475,10 @@ void TestsView::RenderAnswer(const stats::TestAnswer& a) {
     if (ui::SecondaryButton("Export CSV...")) Export(a);
     if (keep_as_node) {
         ImGui::SameLine();
-        if (ui::LinkButton("Keep as a node")) keep_as_node(a.request);
+        if (ui::LinkButton("Keep as a node")) {
+            message_ = keep_as_node(a.request);
+            message_error_ = false;
+        }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Adds a Hypothesis Test node with these settings after the data in use: the test runs with the graph");
     }

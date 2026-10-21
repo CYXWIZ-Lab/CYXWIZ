@@ -75,6 +75,26 @@ const char* QuestionLabel(Question q) {
     return "";
 }
 
+std::string TestName(const stats::TestRequest& r) {
+    switch (r.question) {
+        case Question::TwoGroups: return r.welch ? "Welch two-sample t" : "Student two-sample t";
+        case Question::Paired: return "paired t";
+        case Question::SeveralGroups: return r.welch ? "Welch one-way ANOVA" : "classic one-way ANOVA";
+        case Question::OneValue: return "one-sample t";
+        case Question::TwoCategories: return "chi-square of independence";
+    }
+    return {};
+}
+
+const char* EffectName(Question q) {
+    switch (q) {
+        case Question::Paired: return "d (paired)";
+        case Question::SeveralGroups: return "eta squared";
+        case Question::TwoCategories: return "Cramer's V";
+        default: return "Cohen's d";
+    }
+}
+
 const char* DWords(double d) {
     const double x = std::fabs(d);
     return x >= 0.8 ? "large" : x >= 0.5 ? "medium" : x >= 0.2 ? "small" : "negligible";

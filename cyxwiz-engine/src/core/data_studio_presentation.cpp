@@ -60,7 +60,8 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::ExportExcel: case NodeType::ExportSQL:
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
-        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode: case NodeType::TestEvaluationNode:
+        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
         default:

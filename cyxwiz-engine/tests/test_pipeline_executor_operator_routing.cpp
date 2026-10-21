@@ -330,6 +330,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "RenameColumns",
         "RandomForestClassifier",
         "RobustScaler",
+        "HypothesisTest",
         "MaxAbsScaler",
         "MinMaxScaler",
         "QuantileTransform",
@@ -4913,6 +4914,22 @@ int main(int argc, char** argv) {
               std::string::npos,
           "MinMaxScaler columns validation should be specific: " +
               bad_minmax_scaler_column_type_executor.GetLastError());
+
+    // The Hypothesis Test node (TOFIX129 D3) names a column its input lacks.
+    {
+        const std::string json =
+            R"({"nodes":[)"
+            R"({"id":9401,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":9402,"type":"HypothesisTest","name":"Bad","parameters":{"question":"one_value","values":"no_such_column"}})"
+            R"(],"links":[{"start_node":9401,"end_node":9402}]})";
+        cyxwiz::PipelineExecutor test_executor;
+        Check(!test_executor.ExecutePipeline(json), "HypothesisTest on a missing column should fail");
+        Check(test_executor.GetLastError().find("HypothesisTest") != std::string::npos &&
+                  test_executor.GetLastError().find("no_such_column") != std::string::npos,
+              "HypothesisTest missing-column error should name it: " + test_executor.GetLastError());
+    }
 
     // The fitted transforms of TOFIX129 D2 refuse a text column, as Min-Max does.
     {

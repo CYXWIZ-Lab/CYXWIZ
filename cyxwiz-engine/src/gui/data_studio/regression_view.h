@@ -24,8 +24,9 @@ public:
     void Select(const std::string& column) { request_.response = column; }
     bool IsRunning() const { return job_.Running(); }
 
-    // Add to the graph: a Linear or Polynomial Regression node with these columns.
-    std::function<void(const stats::RegressionRequest&)> add_to_graph;
+    // Add to the graph: a Linear or Polynomial Regression node with these columns reading the data in use;
+    // returns what happened.
+    std::function<std::string(const stats::RegressionRequest&)> add_to_graph;
 
 private:
     void RenderControls(const DatasetProfile& profile);

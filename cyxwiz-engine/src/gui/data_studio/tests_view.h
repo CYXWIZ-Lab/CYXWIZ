@@ -24,8 +24,8 @@ public:
     void Select(const std::string& column) { request_.values = column; }
     bool IsRunning() const { return job_.Running(); }
 
-    // Keep as a node: the Hypothesis Test node with these settings, after the data in use.
-    std::function<void(const stats::TestRequest&)> keep_as_node;
+    // Keep as a node: a Hypothesis Test node with these settings reading the data in use; returns what happened.
+    std::function<std::string(const stats::TestRequest&)> keep_as_node;
 
 private:
     void RenderControls(const DatasetProfile& profile);

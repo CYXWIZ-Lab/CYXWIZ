@@ -411,6 +411,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::CrossValidationNode:
                 return ICON_TI_COPY;
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_TI_LIST_NUMBERS;
@@ -608,6 +609,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_RI_CALCULATOR;
@@ -973,6 +975,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_LU_CALCULATOR;
@@ -1295,6 +1298,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_IO_CALCULATOR;
@@ -1617,6 +1621,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_PH_CALCULATOR;
@@ -2177,6 +2182,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::CrossValidationNode:
             return ICON_FA_COPY;
         case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode:
             return ICON_FA_CALCULATOR;

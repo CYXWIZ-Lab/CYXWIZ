@@ -344,7 +344,10 @@ void RegressionView::RenderFit(const stats::RegressionAnswer& a) {
     Faint(sv::ResidualSentence(a));
     ImGui::Spacing();
     if (add_to_graph) {
-        if (ui::PrimaryButton("Add to the graph", true, nullptr, ui::ButtonSize::Small)) add_to_graph(a.request);
+        if (ui::PrimaryButton("Add to the graph", true, nullptr, ui::ButtonSize::Small)) {
+            message_ = add_to_graph(a.request);
+            message_error_ = false;
+        }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Adds a %s Regression node with these columns after the data in use: its fitted values and model stay in the graph",
                               a.request.polynomial ? "Polynomial" : "Linear");
