@@ -193,6 +193,12 @@ public:
     // ========== Statistics ==========
     static ColumnStats ComputeColumnStats(const std::vector<double>& data);
 
+    // Counts in `bins` equal-width bins over [low, high], the last bin holding
+    // `high` (numpy.histogram); values outside are not counted. low == high:
+    // every value equal to it in the middle bin. Empty when bins < 1, high <
+    // low or the device fails.
+    static std::vector<int64_t> Histogram(const std::vector<double>& data, int bins, double low, double high);
+
     // D'Agostino-Pearson K^2 test (scipy.stats.normaltest), at least 20 values.
     static NormalityTestResult DAgostinoPearsonTest(const std::vector<double>& data);
 

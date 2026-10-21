@@ -91,6 +91,16 @@ void RunCase(const json& c, const std::string& name) {
         }
         return;
     }
+    if (op == "histogram") {
+        const auto counts = DataTransform::Histogram(x, c.at("bins").get<int>(), c.at("low").get<double>(),
+                                                     c.at("high").get<double>());
+        const json& e = c.at("counts");
+        Check(counts.size() == e.size(), name + ": bin count");
+        for (size_t i = 0; i < counts.size(); ++i)
+            Check(counts[i] == e[i].get<int64_t>(), name + ": bin " + std::to_string(i) + " has " +
+                                                        std::to_string(counts[i]) + ", want " + e[i].dump());
+        return;
+    }
     if (op == "normalize") {
         const double low = c.value("range_min", 0.0), high = c.value("range_max", 1.0);
         return CheckColumns(DataTransform::Normalize(inputs, low, high), c.at("outputs"), name);

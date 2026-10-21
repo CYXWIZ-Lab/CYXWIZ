@@ -376,6 +376,28 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
     return stats;
 }
 
+std::vector<int64_t> DataTransform::Histogram(const std::vector<double>& data, int bins, double low, double high) {
+    if (bins < 1 || !(high >= low) || !std::isfinite(low) || !std::isfinite(high)) return {};
+    std::vector<int64_t> counts(static_cast<size_t>(bins), 0);
+    if (data.empty()) return counts;
+    try {
+        const af::array x = HostValuesToDevice(data);
+        if (high == low) {
+            counts[static_cast<size_t>(bins / 2)] = static_cast<int64_t>(af::count<double>(x == low));
+            return counts;
+        }
+        const af::array inside = af::where(x >= low && x <= high);
+        if (inside.elements() == 0) return counts;
+        // ArrayFire puts a value in bin floor((v - low) / width), clamped to the last.
+        const af::array h = af::histogram(x(inside), static_cast<unsigned>(bins), low, high).as(f64);
+        const std::vector<double> host = DeviceToHostValues(h, "DataTransform::Histogram");
+        for (size_t i = 0; i < counts.size() && i < host.size(); ++i) counts[i] = static_cast<int64_t>(host[i]);
+    } catch (const af::exception&) {
+        return {};  // the caller shows no histogram
+    }
+    return counts;
+}
+
 NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double>& data) {
     NormalityTestResult result;
     result.test_name = "D'Agostino-Pearson";
