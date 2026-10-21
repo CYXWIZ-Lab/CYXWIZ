@@ -2099,7 +2099,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"Model", PinType::Parameters, false, "Reusable fitted polynomial-regression artifact"}},
         {{"feature_col", "string", "", "Single numeric predictor column", {}, "", "Predictor column", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
-         {"degree", "int", "2", "Highest polynomial power; requires at least degree plus two rows", {}, "1-2147483647", "Degree", "Fit Options", false, false}},
+         {"degree", "int", "2", "Highest polynomial power, 1 to 6; requires at least degree plus two rows", {}, "1-6", "Degree", "Fit Options", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", ICON_FA_BORDER_ALL,

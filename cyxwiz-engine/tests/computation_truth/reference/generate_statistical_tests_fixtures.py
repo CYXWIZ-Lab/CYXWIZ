@@ -118,11 +118,12 @@ def main():
             expected=[vec(r) for r in c.expected_freq], min_expected=float(c.expected_freq.min()))
 
     # ---------------------------------------------------------------- linear models (statsmodels OLS)
-    def ols_case(label, columns, y, names):
-        x = sm.add_constant(np.column_stack(columns))
+    def ols_case(label, columns, y, names, intercept=True):
+        x = sm.add_constant(np.column_stack(columns)) if intercept else np.column_stack(columns)
         m = sm.OLS(y, x).fit()
         ci = m.conf_int(0.05)
-        add("ols", label, columns=[vec(c) for c in columns], y=y, names=names, coef=vec(m.params), se=vec(m.bse),
+        add("ols", label, columns=[vec(c) for c in columns], y=y, names=names, intercept=intercept,
+            coef=vec(m.params), se=vec(m.bse),
             t=vec(m.tvalues), p=vec(m.pvalues), ci_low=vec(ci[:, 0]), ci_high=vec(ci[:, 1]), r2=float(m.rsquared),
             adj_r2=float(m.rsquared_adj), f=float(m.fvalue), f_p=float(m.f_pvalue), aic=float(m.aic),
             rse=float(np.sqrt(m.scale)), rmse=float(np.sqrt(m.ssr / m.nobs)), mae=float(np.abs(m.resid).mean()),
@@ -135,6 +136,7 @@ def main():
     y = -6000 + 50 * x1 + 4 * x2 + 20 * x3 + g.normal(0, 390, 80)
     ols_case("one_predictor", [x1], y, ["x1"])
     ols_case("three_predictors", [x1, x2, x3], y, ["x1", "x2", "x3"])
+    ols_case("no_intercept", [x1, x2], y, ["x1", "x2"], intercept=False)
     # Polynomials in raw powers (statsmodels on the raw basis), x centred near 0 so statsmodels itself stays exact.
     xp = g.uniform(-2, 3, 60)
     yp = 1.5 - 0.7 * xp + 0.4 * xp ** 2 + 0.05 * xp ** 3 + g.normal(0, 0.3, 60)

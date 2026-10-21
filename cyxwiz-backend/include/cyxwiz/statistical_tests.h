@@ -96,9 +96,11 @@ public:
     static ChiSquareResult ChiSquareIndependence(const std::vector<std::vector<double>>& counts);
 
     // ========== Linear models (device QR) ==========
-    // y on the given columns (+ an intercept); names label the columns.
+    // y on the given columns, with an intercept unless `intercept` is false
+    // (then R2 is uncentred and F has as many model degrees of freedom as
+    // columns, as statsmodels does); names label the columns.
     static LinearFit FitLinear(const std::vector<std::vector<double>>& columns, const std::vector<double>& y,
-                               const std::vector<std::string>& names, double confidence = 0.95);
+                               const std::vector<std::string>& names, bool intercept = true, double confidence = 0.95);
     // y on x, x^2 .. x^degree (degree 1 .. 6), fitted on centred, scaled x and
     // reported in the original units.
     static LinearFit FitPolynomial(const std::vector<double>& x, const std::vector<double>& y, int degree,

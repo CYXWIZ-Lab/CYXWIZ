@@ -138,7 +138,8 @@ void RunCase(const json& c, const std::string& name) {
     }
     if (op == "ols" || op == "poly") {
         const auto fit = op == "ols"
-            ? StatisticalTests::FitLinear(c.at("columns").get<Groups>(), c.at("y").get<Vec>(), c.at("names").get<std::vector<std::string>>())
+            ? StatisticalTests::FitLinear(c.at("columns").get<Groups>(), c.at("y").get<Vec>(), c.at("names").get<std::vector<std::string>>(),
+                                          c.value("intercept", true))
             : StatisticalTests::FitPolynomial(c.at("x").get<Vec>(), c.at("y").get<Vec>(), c.at("degree").get<int>(), "x");
         Check(fit.ok, name + ": " + fit.error);
         CheckVec(fit.coef, c.at("coef"), name + " coef");

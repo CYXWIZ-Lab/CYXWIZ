@@ -638,17 +638,18 @@ bool SolveOls(const af::array& x, const af::array& y, af::array& beta, af::array
 }
 
 LinearFit Summarise(const af::array& x, const af::array& y, const af::array& beta, const af::array& r_factor,
-                    std::vector<std::string> names, double confidence) {
+                    std::vector<std::string> names, double confidence, bool intercept = true) {
     LinearFit f;
     const double n = static_cast<double>(x.dims(0)), p = static_cast<double>(x.dims(1));
+    const double k = intercept ? p - 1.0 : p;  // model degrees of freedom
     const af::array fitted = af::matmul(x, beta);
     const af::array residual = y - fitted;
     const double sse = af::sum<double>(residual * residual);
-    const double ymean = af::mean<double>(y);
+    const double ymean = intercept ? af::mean<double>(y) : 0.0;  // uncentred without an intercept
     const af::array dy = y - ymean;
     const double sst = af::sum<double>(dy * dy);
     f.n = static_cast<int64_t>(n);
-    f.df_model = static_cast<int>(p) - 1;
+    f.df_model = static_cast<int>(k);
     f.df_resid = static_cast<int>(n - p);
     const double s2 = sse / (n - p);
     // (X'X)^-1 = R^-1 R^-T
@@ -668,10 +669,10 @@ LinearFit Summarise(const af::array& x, const af::array& y, const af::array& bet
         f.ci_high.push_back(f.coef[j] + tc * se);
     }
     f.r2 = sst > 0.0 ? 1.0 - sse / sst : NAN;
-    f.adj_r2 = 1.0 - (1.0 - f.r2) * (n - 1.0) / (n - p);
-    if (p > 1.0 && sse > 0.0) {
-        f.f = (f.r2 / (p - 1.0)) / ((1.0 - f.r2) / (n - p));
-        f.f_p = StatisticalTests::FSf(f.f, p - 1.0, n - p);
+    f.adj_r2 = 1.0 - (1.0 - f.r2) * (n - (intercept ? 1.0 : 0.0)) / (n - p);
+    if (k > 0.0 && sse > 0.0) {
+        f.f = (f.r2 / k) / ((1.0 - f.r2) / (n - p));
+        f.f_p = StatisticalTests::FSf(f.f, k, n - p);
     }
     f.rse = std::sqrt(s2);
     f.rmse = std::sqrt(sse / n);
@@ -688,14 +689,15 @@ LinearFit Summarise(const af::array& x, const af::array& y, const af::array& bet
 }  // namespace
 
 LinearFit StatisticalTests::FitLinear(const std::vector<std::vector<double>>& columns, const std::vector<double>& y,
-                                      const std::vector<std::string>& names, double confidence) {
+                                      const std::vector<std::string>& names, bool intercept, double confidence) {
     if (columns.empty()) return FitFail("needs at least one column to predict from");
-    const size_t n = y.size(), p = columns.size() + 1;
+    const size_t first = intercept ? 1 : 0;  // the design column of columns[0]
+    const size_t n = y.size(), p = columns.size() + first;
     for (const auto& c : columns)
         if (c.size() != n) return FitFail("every column needs the same rows");
     if (n < p + 1) return FitFail("needs at least " + std::to_string(p + 1) + " rows with every value; " + std::to_string(n) + " have them");
     try {
-        std::vector<double> flat(n, 1.0);  // column-major, intercept first
+        std::vector<double> flat(first * n, 1.0);  // column-major, the intercept first when there is one
         for (const auto& c : columns) flat.insert(flat.end(), c.begin(), c.end());
         const af::dtype type = ComputeType();
         const af::array x = af::moddims(Device(flat), static_cast<dim_t>(n), static_cast<dim_t>(p)).as(type);
@@ -703,15 +705,17 @@ LinearFit StatisticalTests::FitLinear(const std::vector<std::vector<double>>& co
         af::array beta, r_factor;
         size_t bad = 0;
         if (!SolveOls(x, yy, beta, r_factor, bad)) {
-            const std::string name = bad >= 1 && bad - 1 < names.size() ? names[bad - 1] : "a column";
-            const af::array column = bad >= 1 ? Device(columns[bad - 1]) : Device(y);
+            const bool is_column = bad >= first && bad - first < columns.size();
+            const std::string name = is_column && bad - first < names.size() ? names[bad - first] : "a column";
+            const af::array column = is_column ? Device(columns[bad - first]) : Device(y);
             const bool constant = af::min<double>(column) == af::max<double>(column);
             return FitFail(!constant ? name + " is a combination of the other columns, so its effect cannot be told apart"
                                        : name + " has the same value in every row used, so a line through it cannot be fitted");
         }
-        std::vector<std::string> all{"intercept"};
+        std::vector<std::string> all;
+        if (intercept) all.push_back("intercept");
         all.insert(all.end(), names.begin(), names.end());
-        return Summarise(x, yy, beta, r_factor, std::move(all), confidence);
+        return Summarise(x, yy, beta, r_factor, std::move(all), confidence, intercept);
     } catch (const af::exception& e) {
         return FitFail(DeviceError("StatisticalTests::FitLinear", e));
     }

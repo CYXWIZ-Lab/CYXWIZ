@@ -2603,10 +2603,9 @@ void CheckClassicalRegressionFamilyContract(
               FindParameter(polynomial, "feature_col") != nullptr &&
               FindParameter(polynomial, "feature_col")->required &&
               ParameterMatches(polynomial, "degree", "int", "2") &&
-              FindParameter(polynomial, "degree")->validation ==
-                  "1-2147483647" &&
+              FindParameter(polynomial, "degree")->validation == "1-6" &&
               FindParameter(polynomial, "degree")->group == "Fit Options",
-          "PolynomialRegression metadata should match its unbounded positive degree contract");
+          "PolynomialRegression metadata should match its 1-6 degree contract (TOFIX129 D3)");
 
     const auto* predictor =
         metadata.GetMetadata(gui::NodeType::RegressionModelPredictor);
