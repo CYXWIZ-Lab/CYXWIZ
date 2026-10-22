@@ -281,6 +281,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/studio_debugger_presentation.cpp
     src/core/training_manager.cpp
+    src/core/cross_validation_runner.cpp
     src/core/test_executor.cpp
     src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
@@ -5160,6 +5161,20 @@ add_executable(test_testing_device_handoff
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
 configure_training_executor_harness(test_testing_device_handoff)
 target_sources(test_testing_device_handoff PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
+# Cross-validation and learning curves that train the graph, against PyTorch (TOFIX129 D4)
+add_executable(test_computation_truth_cross_validation
+    tests/computation_truth/test_computation_truth_cross_validation.cpp
+    src/core/cross_validation_runner.cpp
+    src/core/test_executor.cpp
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp)
+configure_training_executor_harness(test_computation_truth_cross_validation)
+target_sources(test_computation_truth_cross_validation PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
+target_compile_definitions(test_computation_truth_cross_validation PRIVATE
+    CYXWIZ_CROSS_VALIDATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/cross_validation_pytorch.json")
+
 # ===== Test: TrainingExecutor Arrow/Parquet Parity =====
 add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp

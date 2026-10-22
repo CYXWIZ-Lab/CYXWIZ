@@ -101,9 +101,4 @@ ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negativ
 // point.
 double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives);
 
-// A regression test's R-squared: 1 - SSE / SST per target, averaged over the
-// targets (scikit-learn's r2_score); NaN when no rows were kept or a target
-// is constant.
-double RSquared(const TestingMetrics& m);
-
 }  // namespace cyxwiz::test_report

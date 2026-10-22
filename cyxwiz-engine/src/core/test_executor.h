@@ -155,6 +155,11 @@ struct ClassCurves {
 };
 bool CurvesForClass(const TestingMetrics& m, int positive, ClassCurves& out, std::string& error);
 
+// A regression test's R-squared: 1 - SSE / SST per target over the kept rows,
+// averaged over the targets (scikit-learn's r2_score); NaN when no rows were
+// kept or a target is constant.
+double RegressionRSquared(const TestingMetrics& m);
+
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 

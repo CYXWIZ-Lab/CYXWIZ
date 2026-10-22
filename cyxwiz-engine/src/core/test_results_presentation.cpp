@@ -115,7 +115,7 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
         v.headline = "MAE " + Fixed(m.test_mae, 4);
         v.headline_tone = Tone::Neutral;
         v.chips = {{"RMSE " + Fixed(m.test_rmse, 4), Tone::Neutral}};
-        if (const double r2 = RSquared(m); std::isfinite(r2)) v.chips.push_back({"R\xC2\xB2 " + Fixed(r2, 4), Tone::Neutral});
+        if (const double r2 = RegressionRSquared(m); std::isfinite(r2)) v.chips.push_back({"R\xC2\xB2 " + Fixed(r2, 4), Tone::Neutral});
         // A table read as a test has no loss (NaN).
         if (std::isfinite(m.test_loss)) v.chips.push_back({"loss " + Fixed(m.test_loss, 4), Tone::Neutral});
         v.chips.push_back({Count(static_cast<long long>(m.total_target_values)) + " target values", Tone::Neutral});
@@ -291,30 +291,6 @@ double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives) {
         }
     }
     return best;
-}
-
-double RSquared(const TestingMetrics& m) {
-    const size_t width = static_cast<size_t>(std::max(m.regression_width, 0));
-    if (!m.regression_mode || width == 0 || m.regression_truth.empty() ||
-        m.regression_truth.size() != m.regression_predictions.size())
-        return NAN;
-    const size_t rows = m.regression_truth.size() / width;
-    double total = 0.0;
-    for (size_t t = 0; t < width; ++t) {
-        double mean = 0.0;
-        for (size_t i = 0; i < rows; ++i) mean += m.regression_truth[i * width + t];
-        mean /= static_cast<double>(rows);
-        double sse = 0.0, sst = 0.0;
-        for (size_t i = 0; i < rows; ++i) {
-            const double y = m.regression_truth[i * width + t];
-            const double e = y - m.regression_predictions[i * width + t];
-            sse += e * e;
-            sst += (y - mean) * (y - mean);
-        }
-        if (!(sst > 0.0)) return NAN;
-        total += 1.0 - sse / sst;
-    }
-    return total / static_cast<double>(width);
 }
 
 std::vector<ClassRow> SortClasses(std::vector<ClassRow> rows, ClassSort by, bool ascending, const std::string& filter) {

@@ -5,6 +5,7 @@
 #include "one_vs_rest_curves.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace cyxwiz {
 
@@ -181,6 +182,30 @@ bool CurvesForClass(const TestingMetrics& m, int positive, ClassCurves& out, std
         return false;
     }
     return true;
+}
+
+double RegressionRSquared(const TestingMetrics& m) {
+    const size_t width = static_cast<size_t>(std::max(m.regression_width, 0));
+    if (!m.regression_mode || width == 0 || m.regression_truth.empty() ||
+        m.regression_truth.size() != m.regression_predictions.size())
+        return NAN;
+    const size_t rows = m.regression_truth.size() / width;
+    double total = 0.0;
+    for (size_t t = 0; t < width; ++t) {
+        double mean = 0.0;
+        for (size_t i = 0; i < rows; ++i) mean += m.regression_truth[i * width + t];
+        mean /= static_cast<double>(rows);
+        double sse = 0.0, sst = 0.0;
+        for (size_t i = 0; i < rows; ++i) {
+            const double y = m.regression_truth[i * width + t];
+            const double e = y - m.regression_predictions[i * width + t];
+            sse += e * e;
+            sst += (y - mean) * (y - mean);
+        }
+        if (!(sst > 0.0)) return NAN;
+        total += 1.0 - sse / sst;
+    }
+    return total / static_cast<double>(width);
 }
 
 }  // namespace cyxwiz

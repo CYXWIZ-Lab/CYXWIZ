@@ -351,7 +351,7 @@ void CheckTableAsTest() {
     Check(MetricsFromColumns(*numbers, regression, m, left_out, error), "regression read as a test: " + error);
     Check(m.regression_mode && Near(m.test_mae, r["mae"].get<double>(), 1e-3) && Near(m.test_rmse, r["rmse"].get<double>(), 1e-3),
           "MAE / RMSE " + Num(m.test_mae) + " " + Num(m.test_rmse));
-    Check(Near(RSquared(m), r["r2"].get<double>(), 1e-6), "R-squared " + Num(RSquared(m)));
+    Check(Near(RegressionRSquared(m), r["r2"].get<double>(), 1e-6), "R-squared " + Num(RegressionRSquared(m)));
     const View v = BuildView(m, nullptr);
     Check(v.chips.size() > 1 && v.chips[1].text.rfind("R\xC2\xB2 0.70", 0) == 0, "R-squared chip: " + v.chips[1].text);
     for (const auto& chip : v.chips) Check(chip.text.rfind("loss", 0) != 0, "a table has no loss to show: " + chip.text);
