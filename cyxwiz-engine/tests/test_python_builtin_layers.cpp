@@ -389,6 +389,9 @@ int main() {
                 current = current && node["extension"].value("content_hash", "") == bundle.content_hash;
         }
         Check(current, "its nodes name the bundle's current content hash");
+        // The Studio opens it ready to train (2 = LocalTraining); in the data
+        // pipeline mode (1) Train is off, which the headless job below ignores.
+        Check(graph.value("execution_mode", -1) == 2, "it opens in the training mode (execution_mode 2)");
         const fs::path blobs = work / "blobs4.parquet";
         Check(CsvToParquet(example / "blobs.csv", blobs), "blobs.csv converts to Parquet");
         cyxwiz::GraphTrainingJobRequest request;
