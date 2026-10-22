@@ -70,6 +70,9 @@ public:
     // Opens an Explore tab on a dataset, at a column when given (Data >
     // Explore, Profile's missing counts).
     void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});
+    // Explore > Groups / Projection on a method, for the data in use (Tools > Clustering and Projection).
+    void ShowGroups(groups::Method method);
+    void ShowProjection(groups::ProjectionMethod method);
 
     // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
     // after the data in use (a Data Input or a node's result; the graph's

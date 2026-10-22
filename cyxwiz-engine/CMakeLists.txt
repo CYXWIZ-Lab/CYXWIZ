@@ -642,7 +642,6 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/dim_reduction_panel.cpp
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/nas_panel.cpp
@@ -651,11 +650,6 @@ set(ENGINE_SOURCES
     src/gui/panels/serving_panel.cpp
     src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
-    src/gui/panels/kmeans_panel.cpp
-    src/gui/panels/dbscan_panel.cpp
-    src/gui/panels/hierarchical_panel.cpp
-    src/gui/panels/gmm_panel.cpp
-    src/gui/panels/cluster_eval_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
     src/gui/panels/eigen_decomp_panel.cpp
     src/gui/panels/svd_panel.cpp
@@ -941,7 +935,6 @@ set(ENGINE_HEADERS
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
-    src/gui/panels/dim_reduction_panel.h
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/nas_panel.h
@@ -949,11 +942,6 @@ set(ENGINE_HEADERS
     src/core/hyperparam_search.h
     src/gui/panels/serving_panel.h
     src/serving/inference_server.h
-    src/gui/panels/kmeans_panel.h
-    src/gui/panels/dbscan_panel.h
-    src/gui/panels/hierarchical_panel.h
-    src/gui/panels/gmm_panel.h
-    src/gui/panels/cluster_eval_panel.h
     src/gui/panels/matrix_calculator_panel.h
     src/gui/panels/eigen_decomp_panel.h
     src/gui/panels/svd_panel.h

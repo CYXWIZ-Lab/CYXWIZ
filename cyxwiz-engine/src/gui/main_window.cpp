@@ -79,18 +79,12 @@
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/dim_reduction_panel.h"
 #include "panels/gradcam_panel.h"
 #include "panels/feature_importance_panel.h"
 #include "panels/nas_panel.h"
 #include "panels/hyperparam_search_panel.h"
 #include "panels/serving_panel.h"
 #include "panels/dnn_inference_panel.h"
-#include "panels/kmeans_panel.h"
-#include "panels/dbscan_panel.h"
-#include "panels/hierarchical_panel.h"
-#include "panels/gmm_panel.h"
-#include "panels/cluster_eval_panel.h"
 #include "panels/matrix_calculator_panel.h"
 #include "panels/eigen_decomp_panel.h"
 #include "panels/svd_panel.h"
@@ -666,7 +660,6 @@ MainWindow::MainWindow()
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
     feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
@@ -676,11 +669,6 @@ MainWindow::MainWindow()
     dnn_inference_panel_ = std::make_unique<cyxwiz::DNNInferencePanel>();
 
     // Clustering panels (Phase 6A)
-    kmeans_panel_ = std::make_unique<cyxwiz::KMeansPanel>();
-    dbscan_panel_ = std::make_unique<cyxwiz::DBSCANPanel>();
-    hierarchical_panel_ = std::make_unique<cyxwiz::HierarchicalPanel>();
-    gmm_panel_ = std::make_unique<cyxwiz::GMMPanel>();
-    cluster_eval_panel_ = std::make_unique<cyxwiz::ClusterEvalPanel>();
 
     // Model Evaluation panels (Phase 6B)
 
@@ -1786,12 +1774,6 @@ MainWindow::MainWindow()
     });
 
     // Advanced Tools callbacks (Phase 5)
-    toolbar_->SetOpenDimReductionCallback([this]() {
-        if (dim_reduction_panel_) {
-            dim_reduction_panel_->Toggle();
-            spdlog::info("Toggled Dimensionality Reduction panel");
-        }
-    });
 
     toolbar_->SetOpenGradCAMCallback([this]() {
         if (gradcam_panel_) {
@@ -1839,39 +1821,23 @@ MainWindow::MainWindow()
     });
 
     // Clustering callbacks (Phase 6A)
-    toolbar_->SetOpenKMeansCallback([this]() {
-        if (kmeans_panel_) {
-            kmeans_panel_->Toggle();
-            spdlog::info("Toggled K-Means Clustering panel");
-        }
-    });
+    // Tools > Clustering and Projection open Data Studio's Explore tabs Groups
+    // and Projection on that method (TOFIX129 D5).
+    const auto open_groups = [this](cyxwiz::groups::Method method) {
+        if (data_studio_panel_) data_studio_panel_->ShowGroups(method);
+    };
+    toolbar_->SetOpenKMeansCallback([open_groups]() { open_groups(cyxwiz::groups::Method::KMeans); });
 
-    toolbar_->SetOpenDBSCANCallback([this]() {
-        if (dbscan_panel_) {
-            dbscan_panel_->Toggle();
-            spdlog::info("Toggled DBSCAN panel");
-        }
-    });
+    toolbar_->SetOpenDBSCANCallback([open_groups]() { open_groups(cyxwiz::groups::Method::DBSCAN); });
 
-    toolbar_->SetOpenHierarchicalCallback([this]() {
-        if (hierarchical_panel_) {
-            hierarchical_panel_->Toggle();
-            spdlog::info("Toggled Hierarchical Clustering panel");
-        }
-    });
+    toolbar_->SetOpenHierarchicalCallback([open_groups]() { open_groups(cyxwiz::groups::Method::Hierarchical); });
 
-    toolbar_->SetOpenGMMCallback([this]() {
-        if (gmm_panel_) {
-            gmm_panel_->Toggle();
-            spdlog::info("Toggled GMM panel");
-        }
-    });
+    toolbar_->SetOpenGMMCallback([open_groups]() { open_groups(cyxwiz::groups::Method::Mixture); });
 
-    toolbar_->SetOpenClusterEvalCallback([this]() {
-        if (cluster_eval_panel_) {
-            cluster_eval_panel_->Toggle();
-            spdlog::info("Toggled Cluster Evaluation panel");
-        }
+    // Cluster Evaluation: the scores are on every Groups answer.
+    toolbar_->SetOpenClusterEvalCallback([open_groups]() { open_groups(cyxwiz::groups::Method::KMeans); });
+    toolbar_->SetOpenDimReductionCallback([this]() {
+        if (data_studio_panel_) data_studio_panel_->ShowProjection(cyxwiz::groups::ProjectionMethod::PCA);
     });
 
     // Tools > Evaluation: Confusion Matrix, ROC / AUC and PR Curve are Data
@@ -2664,16 +2630,6 @@ MainWindow::~MainWindow() {
     eigen_decomp_panel_.reset();
     spdlog::info("~MainWindow: matrix_calculator_panel_");
     matrix_calculator_panel_.reset();
-    spdlog::info("~MainWindow: cluster_eval_panel_");
-    cluster_eval_panel_.reset();
-    spdlog::info("~MainWindow: gmm_panel_");
-    gmm_panel_.reset();
-    spdlog::info("~MainWindow: hierarchical_panel_");
-    hierarchical_panel_.reset();
-    spdlog::info("~MainWindow: dbscan_panel_");
-    dbscan_panel_.reset();
-    spdlog::info("~MainWindow: kmeans_panel_");
-    kmeans_panel_.reset();
     spdlog::info("~MainWindow: serving_panel_");
     serving_panel_.reset();
     spdlog::info("~MainWindow: hyperparam_search_panel_");
@@ -2684,8 +2640,6 @@ MainWindow::~MainWindow() {
     feature_importance_panel_.reset();
     spdlog::info("~MainWindow: gradcam_panel_");
     gradcam_panel_.reset();
-    spdlog::info("~MainWindow: dim_reduction_panel_");
-    dim_reduction_panel_.reset();
     spdlog::info("~MainWindow: lr_finder_panel_");
     lr_finder_panel_.reset();
     spdlog::info("~MainWindow: architecture_diagram_");
@@ -3077,7 +3031,6 @@ void MainWindow::Render() {
     // Render Statistics panels (Phase 4)
 
     // Render Advanced Tools panels (Phase 5)
-    TimedRender("dim reduction", dim_reduction_panel_);
     TimedRender("gradcam", gradcam_panel_);
     TimedRender("feature importance", feature_importance_panel_);
     TimedRender("nas", nas_panel_);
@@ -3086,11 +3039,6 @@ void MainWindow::Render() {
     TimedRender("dnn inference", dnn_inference_panel_);
 
     // Render Clustering panels (Phase 6A)
-    TimedRender("kmeans", kmeans_panel_);
-    TimedRender("dbscan", dbscan_panel_);
-    TimedRender("hierarchical", hierarchical_panel_);
-    TimedRender("gmm", gmm_panel_);
-    TimedRender("cluster eval", cluster_eval_panel_);
 
     // Render Model Evaluation panels (Phase 6B)
 
@@ -3560,17 +3508,11 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    if (dim_reduction_panel_) dim_reduction_panel_->SetVisible(false);
     if (gradcam_panel_) gradcam_panel_->SetVisible(false);
     if (feature_importance_panel_) feature_importance_panel_->SetVisible(false);
     if (nas_panel_) nas_panel_->SetVisible(false);
 
     // Clustering panels (Phase 6A)
-    if (kmeans_panel_) kmeans_panel_->SetVisible(false);
-    if (dbscan_panel_) dbscan_panel_->SetVisible(false);
-    if (hierarchical_panel_) hierarchical_panel_->SetVisible(false);
-    if (gmm_panel_) gmm_panel_->SetVisible(false);
-    if (cluster_eval_panel_) cluster_eval_panel_->SetVisible(false);
 
     // Model Evaluation panels (Phase 6B)
 

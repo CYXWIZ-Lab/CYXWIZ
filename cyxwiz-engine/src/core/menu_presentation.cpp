@@ -628,13 +628,13 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Opens Results > Learning curve: the graph trained on shares of its rows, training against validation."),
                          Tool(f, "tools.feature_importance", "Feature Importance")}));
         i.push_back(Sub("tools.clustering", "Clustering and Projection", "Group rows and reduce dimensions.",
-                        {Tool(f, "tools.kmeans", "K-Means Clustering"),
-                         Tool(f, "tools.dbscan", "DBSCAN"),
-                         Tool(f, "tools.hierarchical", "Hierarchical Clustering"),
-                         Tool(f, "tools.gmm", "Gaussian Mixture Models"),
-                         Tool(f, "tools.cluster_eval", "Cluster Evaluation"),
+                        {Action(f, "tools.kmeans", "K-Means Clustering", "Opens Data Studio's Groups tab on K-Means: groups, scores, what each group is, how many groups."),
+                         Action(f, "tools.dbscan", "DBSCAN", "Opens the Groups tab on DBSCAN: dense groups and noise; the k-distance knee suggests eps."),
+                         Action(f, "tools.hierarchical", "Hierarchical Clustering", "Opens the Groups tab on Hierarchical: the dendrogram and its cut."),
+                         Action(f, "tools.gmm", "Gaussian Mixture Models", "Opens the Groups tab on Gaussian mixture: soft groups, BIC and AIC."),
+                         Action(f, "tools.cluster_eval", "Cluster Evaluation", "Opens the Groups tab: silhouette, Davies-Bouldin and Calinski-Harabasz are on every answer."),
                          Sep(),
-                         Tool(f, "tools.dim_reduction", "PCA / t-SNE / UMAP")}));
+                         Action(f, "tools.dim_reduction", "PCA / t-SNE / UMAP", "Opens Data Studio's Projection tab: the rows in two dimensions, coloured by a column or the groups.")}));
         i.push_back(Sub("tools.statistics", "Statistics", "Describe and test data.",
                         {Action(f, "tools.descriptive_stats", "Summary Statistics", "Opens Data Studio's Distribution tab: a column's figures, percentiles and box plot."),
                          Action(f, "tools.hypothesis_test", "Hypothesis Testing", "Opens Data Studio's Tests tab: two groups, paired columns, several groups, one value, two categories."),

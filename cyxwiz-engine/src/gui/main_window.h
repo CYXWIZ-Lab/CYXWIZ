@@ -66,18 +66,12 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
 class NASPanel;
 class HyperparamSearchPanel;
 class ServingPanel;
 class DNNInferencePanel;
-class KMeansPanel;
-class DBSCANPanel;
-class HierarchicalPanel;
-class GMMPanel;
-class ClusterEvalPanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
@@ -405,7 +399,6 @@ private:
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    std::unique_ptr<cyxwiz::DimReductionPanel> dim_reduction_panel_;
     std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
@@ -414,11 +407,6 @@ private:
     std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
-    std::unique_ptr<cyxwiz::KMeansPanel> kmeans_panel_;
-    std::unique_ptr<cyxwiz::DBSCANPanel> dbscan_panel_;
-    std::unique_ptr<cyxwiz::HierarchicalPanel> hierarchical_panel_;
-    std::unique_ptr<cyxwiz::GMMPanel> gmm_panel_;
-    std::unique_ptr<cyxwiz::ClusterEvalPanel> cluster_eval_panel_;
 
     // Model Evaluation panels (Phase 6B)
 

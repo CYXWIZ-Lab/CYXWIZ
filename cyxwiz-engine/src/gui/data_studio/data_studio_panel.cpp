@@ -188,6 +188,16 @@ void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab ta
     if (tab == ExploreTab::Regression && regression_) regression_->Select(column);
 }
 
+void DataStudioPanel::ShowGroups(groups::Method method) {
+    if (groups_) groups_->SelectMethod(method);
+    ShowExplore(active_dataset_, ExploreTab::Groups);
+}
+
+void DataStudioPanel::ShowProjection(groups::ProjectionMethod method) {
+    if (projection_) projection_->SelectMethod(method);
+    ShowExplore(active_dataset_, ExploreTab::Projection);
+}
+
 ExploreContext DataStudioPanel::MakeExploreContext() const {
     ExploreContext c;
     c.dataset = active_dataset_;
