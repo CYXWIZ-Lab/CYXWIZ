@@ -35,3 +35,12 @@ marked *Advanced operation - Rows* and so on.
 The Nodes panel's filter (**All**, **Pipeline**, **Training**, **UI-only**,
 **Blocked**) narrows the cards; with a filter other than *All*, each group
 lists every node that passes it, in its own group.
+
+## Learning what a node does
+
+- **The Info panel** shows a node's description, support and ports. Hover a
+  card in the Nodes panel to preview it; click a card, or click a node on the
+  canvas, to keep it there.
+- **Pins**: hover the small circle just outside a node's box (inputs on the
+  left, outputs on the right) for the pin's name, what it carries, how many
+  links it has and what it is for.
