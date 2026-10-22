@@ -4019,6 +4019,26 @@ void NodeEditor::AddDataInputFromAsset(const std::string& path) {
     pending_nodes_.push_back(std::move(pending));
     spdlog::info("Asset Browser queued Data Input source {}", path);
 }
+void NodeEditor::AddDataInputFromCloud(const std::string& dataset_id, const std::string& dataset_name,
+                                       const std::string& file_id, const std::string& file_name,
+                                       uint64_t size_bytes) {
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    PendingNode pending{NodeType::DataInput, file_name, ImVec2(-panning.x + 400, -panning.y + 300)};
+    pending.initial_parameters["source_type"] = "cloud";
+    pending.initial_parameters["cloud_dataset_id"] = dataset_id;
+    pending.initial_parameters["cloud_dataset_name"] = dataset_name;
+    pending.initial_parameters["cloud_file_id"] = file_id;
+    pending.initial_parameters["cloud_file_name"] = file_name;
+    pending.initial_parameters["cloud_size_bytes"] = std::to_string(size_bytes);
+    pending.initial_parameters["configured"] = "false";
+    pending.initial_parameters["data_loaded"] = "false";
+    pending.open_configuration = true;
+    pending_nodes_.push_back(std::move(pending));
+    Show();
+    spdlog::info("Cloud browser queued Data Input on CyxCloud file {} ({}) of dataset {}", file_name, file_id,
+                 dataset_name);
+}
+
 void NodeEditor::AddKeptTest(const std::string& path, const std::string& name) {
     // Below the graph, at its left edge, clear of its nodes and links (an
     // empty graph: where FindEmptyPosition puts a node).

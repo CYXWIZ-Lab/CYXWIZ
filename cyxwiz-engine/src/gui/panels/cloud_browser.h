@@ -31,6 +31,11 @@ public:
 
     // Set DataStream client (must be connected)
     void SetDataStreamClient(network::DataStreamClient* client) { datastream_client_ = client; }
+    // A message on the panel's error line (shown for a few seconds).
+    void ShowError(const std::string& text) {
+        last_error_ = text;
+        error_time_ = 5.0f;
+    }
 
     // Callback when user selects a dataset for training
     using DatasetSelectedCallback = std::function<void(const network::CloudDatasetInfo& dataset)>;

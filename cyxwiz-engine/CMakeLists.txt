@@ -429,6 +429,7 @@ set(ENGINE_SOURCES
     src/core/compile_report_presentation.cpp
     src/core/data_input_presentation.cpp
     src/core/cloud_source_presentation.cpp
+    src/core/cloud_connection.cpp
     src/core/test_results_presentation.cpp
     src/core/test_evaluation_tables.cpp
     src/core/kept_tests.cpp
@@ -486,6 +487,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_summary.cpp
     src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
+    src/gui/data_input_dialog_cloud_source.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp

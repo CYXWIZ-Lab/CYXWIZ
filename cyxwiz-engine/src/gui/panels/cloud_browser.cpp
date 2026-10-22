@@ -1,3 +1,4 @@
+#include "../../core/cloud_connection.h"
 #include "cloud_browser.h"
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
@@ -901,7 +902,8 @@ void CloudBrowserPanel::TryAutoConnect() {
         RefreshDatasets();
         RefreshPublicDatasets();
     } else {
-        spdlog::warn("CloudBrowser: Failed to connect to CyxCloud gateway");
+        spdlog::warn("CloudBrowser: Failed to connect to CyxCloud gateway: {}", owned_client_->GetLastError());
+        cyxwiz::cloud::SetLastConnectError(owned_client_->GetLastError());
     }
 }
 } // namespace gui
