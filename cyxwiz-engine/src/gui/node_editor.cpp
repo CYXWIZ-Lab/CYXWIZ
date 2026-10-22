@@ -1677,8 +1677,10 @@ void NodeEditor::RenderNodes() {
         if (is_knime_style) {
             // Make ImNodes node completely invisible - we draw our own icon box
             ImU32 transparent = IM_COL32(0, 0, 0, 0);
-            // Push pin closer to node content (negative offset pulls it inward)
-            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 0.0f);
+            // Pins sit just outside the icon box: centred on its edge, the box
+            // covered half of each and the rest was too small to hover (its
+            // tooltip seemed missing). Radius as pushed above, plus a gap.
+            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 4.0f * zoom_ + 1.0f);
             // Remove node padding so pins sit flush with the icon box
             ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(0.0f, 0.0f));
             ImNodes::PushColorStyle(ImNodesCol_TitleBar, transparent);
