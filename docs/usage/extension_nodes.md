@@ -59,6 +59,14 @@ New, edited and removed bundles are noticed within two seconds.
   `@nodes.loss`, then
   **Run > Create node from script...**: check gradients, name the bundle,
   **Create nodes**. It is written to `<project>/nodes/` and approved for you.
+- **Change a node.** A node is ordinary Python: open its code with **View
+  code** (Plugin Manager card). To change it, edit the `.py` file you wrote
+  it in (for the examples, `builtin_layers.py`) and make the bundle again
+  (**Create node from script**, or `nodes.bundle(...)`): `node.json` and
+  `node.py` are written together and the new code needs approval once.
+  Editing `node.py` inside the bundle by hand is refused with "node.py
+  changed since the bundle was written": the bundle's record no longer
+  matches its code.
 - **Python** starts by itself when the first approved Python node is built.
   An error in a node's code stops training with the node's name and the
   traceback.
