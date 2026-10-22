@@ -651,9 +651,6 @@ set(ENGINE_SOURCES
     src/gui/panels/hierarchical_panel.cpp
     src/gui/panels/gmm_panel.cpp
     src/gui/panels/cluster_eval_panel.cpp
-    src/gui/panels/confusion_matrix_panel.cpp
-    src/gui/panels/roc_auc_panel.cpp
-    src/gui/panels/pr_curve_panel.cpp
     src/gui/panels/cross_validation_panel.cpp
     src/gui/panels/learning_curves_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
@@ -954,9 +951,6 @@ set(ENGINE_HEADERS
     src/gui/panels/hierarchical_panel.h
     src/gui/panels/gmm_panel.h
     src/gui/panels/cluster_eval_panel.h
-    src/gui/panels/confusion_matrix_panel.h
-    src/gui/panels/roc_auc_panel.h
-    src/gui/panels/pr_curve_panel.h
     src/gui/panels/cross_validation_panel.h
     src/gui/panels/learning_curves_panel.h
     src/gui/panels/matrix_calculator_panel.h
@@ -4535,7 +4529,8 @@ if(WIN32)
     target_compile_definitions(test_test_results_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 target_compile_definitions(test_test_results_presentation PRIVATE
-    CYXWIZ_EVALUATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/evaluation_sklearn.json")
+    CYXWIZ_EVALUATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/evaluation_sklearn.json"
+    CYXWIZ_CLASSIFICATION_METRICS_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/classification_metrics_sklearn_pytorch.json")
 set_target_properties(test_test_results_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_results_presentation COMMAND test_test_results_presentation)
 

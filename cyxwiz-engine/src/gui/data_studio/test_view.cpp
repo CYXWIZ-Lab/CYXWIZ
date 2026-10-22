@@ -135,12 +135,6 @@ bool TestView::HasResults() const {
     return has_results_;
 }
 
-void TestView::ShowLatest() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    source_ = Source::Latest;
-    dirty_ = true;
-}
-
 void TestView::ShowKept(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex_);
     LoadKept(path);
@@ -174,6 +168,12 @@ void TestView::ShowComparison() {
     std::lock_guard<std::mutex> lock(mutex_);
     source_ = Source::Latest;  // Comparison is the latest run and the one before
     select_comparison_ = true;
+    dirty_ = true;
+}
+
+void TestView::ShowTable() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    source_ = Source::Table;
     dirty_ = true;
 }
 

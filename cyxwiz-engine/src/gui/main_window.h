@@ -76,9 +76,6 @@ class HierarchicalPanel;
 class GMMPanel;
 class ClusterEvalPanel;
 // Model Evaluation panels (Phase 6B)
-class ConfusionMatrixPanel;
-class ROCAUCPanel;
-class PRCurvePanel;
 class CrossValidationPanel;
 class LearningCurvesPanel;
 // Linear Algebra panels (Phase 7)
@@ -395,9 +392,6 @@ private:
     std::unique_ptr<cyxwiz::ClusterEvalPanel> cluster_eval_panel_;
 
     // Model Evaluation panels (Phase 6B)
-    std::unique_ptr<cyxwiz::ConfusionMatrixPanel> confusion_matrix_panel_;
-    std::unique_ptr<cyxwiz::ROCAUCPanel> roc_auc_panel_;
-    std::unique_ptr<cyxwiz::PRCurvePanel> pr_curve_panel_;
     std::unique_ptr<cyxwiz::CrossValidationPanel> cross_validation_panel_;
     std::unique_ptr<cyxwiz::LearningCurvesPanel> learning_curves_panel_;
 

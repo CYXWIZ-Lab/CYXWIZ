@@ -91,9 +91,6 @@
 #include "panels/hierarchical_panel.h"
 #include "panels/gmm_panel.h"
 #include "panels/cluster_eval_panel.h"
-#include "panels/confusion_matrix_panel.h"
-#include "panels/roc_auc_panel.h"
-#include "panels/pr_curve_panel.h"
 #include "panels/cross_validation_panel.h"
 #include "panels/learning_curves_panel.h"
 #include "panels/matrix_calculator_panel.h"
@@ -686,9 +683,6 @@ MainWindow::MainWindow()
     cluster_eval_panel_ = std::make_unique<cyxwiz::ClusterEvalPanel>();
 
     // Model Evaluation panels (Phase 6B)
-    confusion_matrix_panel_ = std::make_unique<cyxwiz::ConfusionMatrixPanel>();
-    roc_auc_panel_ = std::make_unique<cyxwiz::ROCAUCPanel>();
-    pr_curve_panel_ = std::make_unique<cyxwiz::PRCurvePanel>();
     cross_validation_panel_ = std::make_unique<cyxwiz::CrossValidationPanel>();
     learning_curves_panel_ = std::make_unique<cyxwiz::LearningCurvesPanel>();
 
@@ -1846,27 +1840,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Model Evaluation callbacks (Phase 6B)
-    toolbar_->SetOpenConfusionMatrixCallback([this]() {
-        if (confusion_matrix_panel_) {
-            confusion_matrix_panel_->Toggle();
-            spdlog::info("Toggled Confusion Matrix panel");
-        }
-    });
-
-    toolbar_->SetOpenROCAUCCallback([this]() {
-        if (roc_auc_panel_) {
-            roc_auc_panel_->Toggle();
-            spdlog::info("Toggled ROC/AUC panel");
-        }
-    });
-
-    toolbar_->SetOpenPRCurveCallback([this]() {
-        if (pr_curve_panel_) {
-            pr_curve_panel_->Toggle();
-            spdlog::info("Toggled PR Curve panel");
-        }
-    });
+    // Tools > Evaluation: Confusion Matrix, ROC / AUC and PR Curve are Data
+    // Studio > Results > Test (TOFIX129 D4); with no test yet it opens on
+    // A table..., which reads any table of predictions.
+    const auto open_test_view = [this]() {
+        if (!data_studio_panel_) return;
+        if (!data_studio_panel_->GetTestView()->HasResults()) data_studio_panel_->GetTestView()->ShowTable();
+        data_studio_panel_->ShowResults(cyxwiz::ResultsView::View::Test);
+    };
+    toolbar_->SetOpenConfusionMatrixCallback(open_test_view);
+    toolbar_->SetOpenROCAUCCallback(open_test_view);
+    toolbar_->SetOpenPRCurveCallback(open_test_view);
 
     toolbar_->SetOpenCrossValidationCallback([this]() {
         if (cross_validation_panel_) {
@@ -2656,12 +2640,6 @@ MainWindow::~MainWindow() {
     learning_curves_panel_.reset();
     spdlog::info("~MainWindow: cross_validation_panel_");
     cross_validation_panel_.reset();
-    spdlog::info("~MainWindow: pr_curve_panel_");
-    pr_curve_panel_.reset();
-    spdlog::info("~MainWindow: roc_auc_panel_");
-    roc_auc_panel_.reset();
-    spdlog::info("~MainWindow: confusion_matrix_panel_");
-    confusion_matrix_panel_.reset();
     spdlog::info("~MainWindow: cluster_eval_panel_");
     cluster_eval_panel_.reset();
     spdlog::info("~MainWindow: gmm_panel_");
@@ -3091,9 +3069,6 @@ void MainWindow::Render() {
     TimedRender("cluster eval", cluster_eval_panel_);
 
     // Render Model Evaluation panels (Phase 6B)
-    TimedRender("confusion matrix", confusion_matrix_panel_);
-    TimedRender("roc auc", roc_auc_panel_);
-    TimedRender("pr curve", pr_curve_panel_);
     TimedRender("cross validation", cross_validation_panel_);
     TimedRender("learning curves", learning_curves_panel_);
 
@@ -3576,9 +3551,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (cluster_eval_panel_) cluster_eval_panel_->SetVisible(false);
 
     // Model Evaluation panels (Phase 6B)
-    if (confusion_matrix_panel_) confusion_matrix_panel_->SetVisible(false);
-    if (roc_auc_panel_) roc_auc_panel_->SetVisible(false);
-    if (pr_curve_panel_) pr_curve_panel_->SetVisible(false);
     if (cross_validation_panel_) cross_validation_panel_->SetVisible(false);
     if (learning_curves_panel_) learning_curves_panel_->SetVisible(false);
 

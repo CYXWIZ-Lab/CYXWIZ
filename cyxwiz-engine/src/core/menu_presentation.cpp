@@ -612,9 +612,12 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Tool(f, "tools.dnn_inference", "DNN Inference")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
                         {Tool(f, "tools.cross_validation", "Cross-Validation"),
-                         Tool(f, "tools.confusion_matrix", "Confusion Matrix"),
-                         Tool(f, "tools.roc_auc", "ROC Curve / AUC"),
-                         Tool(f, "tools.pr_curve", "Precision-Recall Curve"),
+                         Action(f, "tools.confusion_matrix", "Confusion Matrix",
+                                "Opens Data Studio > Results > Test: the latest test, a kept test or any table of predictions."),
+                         Action(f, "tools.roc_auc", "ROC Curve / AUC",
+                                "Opens Results > Test: Curves and Threshold, the positive class picked by name."),
+                         Action(f, "tools.pr_curve", "Precision-Recall Curve",
+                                "Opens Results > Test: Curves and Threshold, the positive class picked by name."),
                          Tool(f, "tools.learning_curves", "Learning Curves"),
                          Tool(f, "tools.feature_importance", "Feature Importance")}));
         i.push_back(Sub("tools.clustering", "Clustering and Projection", "Group rows and reduce dimensions.",

@@ -44,11 +44,12 @@ public:
     // the last successful results; it never becomes the run compared against.
     void SetResults(const TestingMetrics& results);
     bool HasResults() const;
-    // What to show: the latest test, a kept test (path), or the latest test on
-    // its Comparison section (Train > Test > Compare test results).
-    void ShowLatest();
+    // What to show: a kept test (path), the latest test on its Comparison
+    // section (Train > Test > Compare test results), or A table... (Tools >
+    // Evaluation with no test yet).
     void ShowKept(const std::string& path);
     void ShowComparison();
+    void ShowTable();
     // Train > Test > Export test report: the shown run as JSON (a Save dialog).
     // False when nothing is shown.
     bool ExportReport();
