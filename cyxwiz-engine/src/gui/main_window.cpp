@@ -753,6 +753,15 @@ MainWindow::MainWindow()
             node_info_panel_->SetSelectedExtension(type_id);
         });
     }
+    // A node clicked on the canvas is kept in the Info panel too.
+    if (node_editor_ && node_info_panel_) {
+        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode& node) {
+            if (node.type == gui::NodeType::PluginCustom && !node.extension_type_id.empty())
+                node_info_panel_->SetSelectedExtension(node.extension_type_id);
+            else
+                node_info_panel_->SetSelectedNode(node.type);
+        });
+    }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
 
     // Plugin Manager panel

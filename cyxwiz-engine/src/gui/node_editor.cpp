@@ -836,6 +836,14 @@ void NodeEditor::Render() {
                 }
             }
         }
+        // The Info panel follows the canvas selection, as it follows a click
+        // in the Nodes panel: once per newly selected node, any node type.
+        const int info_id = frame_selected_subgraph_id_ >= 0 ? frame_selected_subgraph_id_ : selected_node_id_;
+        if (info_id != info_node_id_) {
+            info_node_id_ = info_id;
+            if (const MLNode* node = info_id > 0 ? FindNodeById(info_id) : nullptr; node && node_selected_callback_)
+                node_selected_callback_(*node);
+        }
     }
     ImGui::End();
 

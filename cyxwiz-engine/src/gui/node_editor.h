@@ -372,6 +372,10 @@ public:
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
 
+    // A node newly selected on the canvas (the Info panel shows it).
+    using NodeSelectedCallback = std::function<void(const MLNode&)>;
+    void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
     // Graph replacement admission is checked by all load/clear entry points.
@@ -1029,6 +1033,8 @@ private:
 
     // Explain selected node in Studio Debugger.
     ExplainNodeCallback explain_node_callback_;
+    NodeSelectedCallback node_selected_callback_;
+    int info_node_id_ = -1;  // the node last sent to node_selected_callback_
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
