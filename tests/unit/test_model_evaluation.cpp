@@ -109,6 +109,24 @@ void CheckConfusionMatrix(const cyxwiz::ConfusionMatrixData& actual,
     CHECK(actual.support == expected.at("support").get<std::vector<int>>());
 }
 
+void CheckBinaryMetrics(const cyxwiz::BinaryMetrics& actual,
+                        const json& expected,
+                        double tolerance) {
+    REQUIRE(actual.success);
+    REQUIRE(actual.error_message.empty());
+    CHECK(actual.tp == expected.at("tp").get<int>());
+    CHECK(actual.fp == expected.at("fp").get<int>());
+    CHECK(actual.tn == expected.at("tn").get<int>());
+    CHECK(actual.fn == expected.at("fn").get<int>());
+    CheckMetric(actual.precision, expected.at("precision"), tolerance);
+    CheckMetric(actual.recall, expected.at("recall"), tolerance);
+    CheckMetric(actual.specificity, expected.at("specificity"), tolerance);
+    CheckMetric(actual.f1, expected.at("f1"), tolerance);
+    CheckMetric(actual.balanced_accuracy,
+                expected.at("balanced_accuracy"), tolerance);
+    CheckMetric(actual.mcc, expected.at("mcc"), tolerance);
+}
+
 } // namespace
 
 TEST_CASE("Regression evaluation metrics match scikit-learn fixtures",
@@ -200,6 +218,26 @@ TEST_CASE("Classification reports match sklearn fixtures",
     }
 }
 
+TEST_CASE("Binary classification metrics match sklearn and PyTorch decisions",
+          "[model_evaluation][classification_metrics][sklearn][pytorch]") {
+    const auto fixture = LoadClassificationMetricsFixture();
+    const double tolerance = fixture.at("tolerance").get<double>();
+
+    for (const auto& test_case : fixture.at("binary_cases")) {
+        INFO("case=" << test_case.at("name").get<std::string>());
+        if (test_case.contains("pytorch_y_pred")) {
+            CHECK(test_case.at("pytorch_y_pred") ==
+                  test_case.at("expected").at("y_pred"));
+        }
+        const auto result = cyxwiz::ModelEvaluation::ComputeBinaryMetrics(
+            test_case.at("y_true").get<std::vector<int>>(),
+            test_case.at("y_scores").get<std::vector<double>>(),
+            test_case.at("threshold").get<double>());
+        CHECK(result.threshold == test_case.at("threshold").get<double>());
+        CheckBinaryMetrics(result, test_case.at("expected"), tolerance);
+    }
+}
+
 TEST_CASE("ROC and precision-recall curves match sklearn fixtures",
           "[model_evaluation][classification_metrics][curves][sklearn]") {
     const auto fixture = LoadClassificationMetricsFixture();
@@ -284,10 +322,23 @@ TEST_CASE("Multiclass curves match sklearn after PyTorch score adaptation",
     }
 }
 
-TEST_CASE("AUC matches declared sklearn contracts",
-          "[model_evaluation][classification_metrics][auc][sklearn]") {
+TEST_CASE("Threshold selection and AUC match declared sklearn contracts",
+          "[model_evaluation][classification_metrics][threshold][sklearn]") {
     const auto fixture = LoadClassificationMetricsFixture();
     const double tolerance = fixture.at("tolerance").get<double>();
+
+    for (const auto& test_case : fixture.at("threshold_cases")) {
+        const auto y_true = test_case.at("y_true").get<std::vector<int>>();
+        const auto y_scores =
+            test_case.at("y_scores").get<std::vector<double>>();
+        for (const auto& item : test_case.at("expected").items()) {
+            INFO("case=" << test_case.at("name").get<std::string>()
+                          << ", criterion=" << item.key());
+            CHECK(cyxwiz::ModelEvaluation::FindOptimalThreshold(
+                      y_true, y_scores, item.key()) ==
+                  Catch::Approx(item.value().get<double>()).margin(tolerance));
+        }
+    }
 
     for (const auto& test_case : fixture.at("auc_cases")) {
         INFO("case=" << test_case.at("name").get<std::string>());
@@ -317,6 +368,16 @@ TEST_CASE("Classification evaluation rejects invalid public inputs",
     CHECK_FALSE(mismatched_names.success);
     CHECK_FALSE(mismatched_names.error_message.empty());
 
+    for (const auto& result : {
+             cyxwiz::ModelEvaluation::ComputeBinaryMetrics({}, {}),
+             cyxwiz::ModelEvaluation::ComputeBinaryMetrics({0}, {0.1, 0.2}),
+             cyxwiz::ModelEvaluation::ComputeBinaryMetrics({2}, {0.1}),
+             cyxwiz::ModelEvaluation::ComputeBinaryMetrics({0}, {nan}),
+             cyxwiz::ModelEvaluation::ComputeBinaryMetrics({0}, {0.1}, inf),
+         }) {
+        CHECK_FALSE(result.success);
+        CHECK_FALSE(result.error_message.empty());
+    }
 
     for (const auto& result : {
              cyxwiz::ModelEvaluation::ComputeROC({}, {}),
@@ -372,4 +433,10 @@ TEST_CASE("Classification evaluation rejects invalid public inputs",
         {0.0, 1.0, 0.5}, {0.0, 1.0, 0.5})));
     CHECK(std::isnan(cyxwiz::ModelEvaluation::ComputeAUC(
         {0.0, inf}, {0.0, 1.0})));
+    CHECK(std::isnan(cyxwiz::ModelEvaluation::FindOptimalThreshold(
+        {0}, {0.1, 0.2}, "f1")));
+    CHECK(std::isnan(cyxwiz::ModelEvaluation::FindOptimalThreshold(
+        {0}, {nan}, "f1")));
+    CHECK(std::isnan(cyxwiz::ModelEvaluation::FindOptimalThreshold(
+        {0}, {0.1}, "unknown")));
 }

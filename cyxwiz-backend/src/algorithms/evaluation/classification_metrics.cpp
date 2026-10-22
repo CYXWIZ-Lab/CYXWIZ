@@ -145,6 +145,74 @@ ConfusionMatrixData ModelEvaluation::ComputeConfusionMatrix(
     return result;
 }
 
+BinaryMetrics ModelEvaluation::ComputeBinaryMetrics(
+    const std::vector<int>& y_true,
+    const std::vector<double>& y_scores,
+    double threshold) {
+    BinaryMetrics result;
+    result.threshold = threshold;
+    if (!classification_metric_detail::ValidateBinaryScores(
+            y_true, y_scores, result.error_message, threshold)) {
+        return result;
+    }
+
+    for (size_t index = 0; index < y_true.size(); ++index) {
+        const int prediction = y_scores[index] >= threshold ? 1 : 0;
+        if (prediction == 1 && y_true[index] == 1) {
+            ++result.tp;
+        } else if (prediction == 1) {
+            ++result.fp;
+        } else if (y_true[index] == 0) {
+            ++result.tn;
+        } else {
+            ++result.fn;
+        }
+    }
+
+    const double true_positive = static_cast<double>(result.tp);
+    const double false_positive = static_cast<double>(result.fp);
+    const double true_negative = static_cast<double>(result.tn);
+    const double false_negative = static_cast<double>(result.fn);
+    const double precision_denominator = true_positive + false_positive;
+    const double recall_denominator = true_positive + false_negative;
+    const double specificity_denominator = true_negative + false_positive;
+    result.precision = precision_denominator > 0.0
+        ? true_positive / precision_denominator
+        : 0.0;
+    result.recall = recall_denominator > 0.0
+        ? true_positive / recall_denominator
+        : 0.0;
+    result.specificity = specificity_denominator > 0.0
+        ? true_negative / specificity_denominator
+        : 0.0;
+    const double f1_denominator = result.precision + result.recall;
+    result.f1 = f1_denominator > 0.0
+        ? 2.0 * result.precision * result.recall / f1_denominator
+        : 0.0;
+
+    if (recall_denominator > 0.0 && specificity_denominator > 0.0) {
+        result.balanced_accuracy =
+            (result.recall + result.specificity) / 2.0;
+    } else if (recall_denominator > 0.0) {
+        result.balanced_accuracy = result.recall;
+    } else {
+        result.balanced_accuracy = result.specificity;
+    }
+
+    const double mcc_numerator =
+        true_positive * true_negative - false_positive * false_negative;
+    const double mcc_denominator = std::sqrt(
+        (true_positive + false_positive) *
+        (true_positive + false_negative) *
+        (true_negative + false_positive) *
+        (true_negative + false_negative));
+    result.mcc = mcc_denominator > 0.0
+        ? mcc_numerator / mcc_denominator
+        : 0.0;
+    result.success = true;
+    return result;
+}
+
 ClassificationReport ModelEvaluation::GenerateClassificationReport(
     const std::vector<int>& y_true,
     const std::vector<int>& y_pred,
@@ -178,6 +246,43 @@ ClassificationReport ModelEvaluation::GenerateClassificationReport(
     }
     report.success = true;
     return report;
+}
+
+double ModelEvaluation::FindOptimalThreshold(
+    const std::vector<int>& y_true,
+    const std::vector<double>& y_scores,
+    const std::string& criterion) {
+    if (criterion != "f1" && criterion != "youden" &&
+        criterion != "balanced") {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    std::string error_message;
+    if (!classification_metric_detail::ValidateBinaryScores(
+            y_true, y_scores, error_message)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    const std::set<double> thresholds(y_scores.begin(), y_scores.end());
+    double best_threshold = std::numeric_limits<double>::quiet_NaN();
+    double best_score = -std::numeric_limits<double>::infinity();
+    for (double threshold : thresholds) {
+        const BinaryMetrics metrics =
+            ComputeBinaryMetrics(y_true, y_scores, threshold);
+        if (!metrics.success) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        double score = metrics.f1;
+        if (criterion == "youden") {
+            score = metrics.recall + metrics.specificity - 1.0;
+        } else if (criterion == "balanced") {
+            score = metrics.balanced_accuracy;
+        }
+        if (score > best_score) {
+            best_score = score;
+            best_threshold = threshold;
+        }
+    }
+    return best_threshold;
 }
 
 } // namespace cyxwiz

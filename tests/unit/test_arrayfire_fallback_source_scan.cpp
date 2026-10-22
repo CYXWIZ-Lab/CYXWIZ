@@ -611,7 +611,7 @@ TEST_CASE("Host-vector model evaluation has one native execution owner",
                    std::string::npos;
         }));
     for (const auto& line : forwarding_header) {
-        CHECK(line.find("struct ROCCurveData") == std::string::npos);
+        CHECK(line.find("struct BinaryMetrics") == std::string::npos);
         CHECK(line.find("class ModelEvaluation") == std::string::npos);
     }
 }
