@@ -94,6 +94,10 @@ rows it shows. A line over the tab says so: "'mnist_test' was removed (its
 Data Input or graph is gone). This tab is a frozen copy of the 10000 rows it
 shows." The tab lets go of the dataset's own memory and keeps only its rows.
 
+**A dashboard on a removed dataset** keeps its plots as they were last read,
+with a line saying so: "'<name>' is not loaded now (its Data Input or graph is
+gone)." The plots update when the dataset is loaded again.
+
 Two Data Inputs reading files with the same name in different folders get
 different dataset names (`mnist`, `mnist_2`). Two Data Inputs reading the
 same file still share one table, so nothing is copied.

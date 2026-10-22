@@ -146,20 +146,7 @@ void TableViewerPanel::RenderRemovedHeader(TableTab* tab) {
     const ui::Tokens& t = ui::CurrentTokens();
     const std::string text = "'" + tab->origin + "' was removed (its Data Input or graph is gone). This tab is a frozen "
                              "copy of the " + std::to_string(tab->GetRowCount()) + " rows it shows.";
-    // A tinted line, like the live-value line; the text wraps.
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float w = ImGui::GetContentRegionAvail().x;
-    const float wrap = w - 36.0f;
-    const float h = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap).y + 10.0f;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ui::ToU32(ui::Mix(t.bg_window, t.warning, 0.10f)), 4.0f);
-    dl->AddCircleFilled(ImVec2(p.x + 14.0f, p.y + 5.0f + ImGui::GetTextLineHeight() * 0.5f), 3.5f, ui::ToU32(t.warning));
-    ImGui::SetCursorScreenPos(ImVec2(p.x + 26.0f, p.y + 5.0f));
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
-    ImGui::TextColored(t.text, "%s", text.c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 4.0f));
-    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    ui::NoticeLine(text, t.warning);
 }
 
 void TableViewerPanel::RenderLiveHeader(TableTab* tab) {

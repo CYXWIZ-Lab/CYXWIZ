@@ -17,6 +17,7 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../separate_windows.h"
 
 #include <imgui.h>
@@ -346,6 +347,12 @@ void DashboardWindow::Render() {
         return;
     }
     if (draw_header) draw_header();
+    // Its dataset was removed (its Data Input or graph is gone): the plots
+    // stay as they last read it, marked (TOFIX160 P5).
+    if (!dataset_.empty() && message_.empty() && !DatasetCatalog::Instance().Resolve(dataset_))
+        ui::NoticeLine("'" + dataset_ + "' is not loaded now (its Data Input or graph is gone). The plots show what "
+                       "they last read; they update when it is loaded again.",
+                       t.warning);
     if (dataset_.empty() || !message_.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(t.text_dim, "%s", message_.empty() ? "No data yet." : message_.c_str());
