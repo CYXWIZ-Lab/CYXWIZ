@@ -226,7 +226,7 @@ static bool BuildModelFromGraph(
     auto built = BuildSequentialFromConfig(config);
     if (!built.ok() || !built.model) {
         // The builder's reason names the node (an extension that cannot
-        // create its module, for example "Python is not running yet").
+        // create its module, for example "Python is starting for the Python nodes").
         error_message = built.error_message.empty() ? "ModelBuilder could not rebuild model from graph"
                                                     : built.error_message;
         return false;

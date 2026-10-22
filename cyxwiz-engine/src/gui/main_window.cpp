@@ -3373,13 +3373,19 @@ void MainWindow::UpdatePythonNodes() {
             if (plugin) roots.push_back(plugin->plugin_dir / "nodes");
         }
         python_node_provider_->Refresh(roots);
+        // Start Python before a compile needs it: the open graph uses a node
+        // whose code is approved (TOFIX125). Otherwise the first compile
+        // would fail and only start Python for the next one.
+        graph_needs_python_ = node_editor_ && scripting_engine_ && !scripting_engine_->IsInitialized() &&
+                              python_node_provider_->UsesApprovedNode(node_editor_->GetNodes());
     }
 
     // Python itself: started here, on the UI thread, when a Python node
-    // needed it (the factories never start it).
+    // needed it or the graph will (the factories never start it).
     auto& runtime = cyxwiz::PythonNodeRuntime::Instance();
-    if (!runtime.Wanted() || !scripting_engine_) return;
+    if ((!runtime.Wanted() && !graph_needs_python_) || !scripting_engine_) return;
     runtime.ClearWanted();
+    graph_needs_python_ = false;  // one attempt per check; the next check (2 s) may try again
     if (scripting_engine_->IsInitialized()) return;
     std::string error;
     if (scripting_engine_->StartPython(&error)) {
