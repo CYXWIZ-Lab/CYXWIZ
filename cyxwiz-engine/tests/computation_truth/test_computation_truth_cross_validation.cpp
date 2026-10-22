@@ -6,11 +6,13 @@
 // share likewise, and the row counts are exact. Then the runner's own folds:
 // the graph's test rows are left out, every row used is validated once, class
 // shares stay, the same seed gives the same folds, and bad settings are
-// refused.
+// refused. Last, the nodes: their settings, data passing through, the run's
+// table on pin 1.
 #include "../../src/core/arrow_dataset.h"
 #include "../../src/core/cross_validation_runner.h"
 #include "../../src/core/graph_node_factory.h"
 #include "../../src/core/graph_training_job.h"
+#include "../../src/core/node_executors/training_evaluation_operator.h"
 #include "../route_qualification_test_fixture.h"
 
 #include <arrow/api.h>
@@ -265,6 +267,62 @@ int main() {
             const auto cancelled = cyxwiz::RunCrossValidation(p.job.config, p.table, "species", 2, batch, settings, stop);
             Check(!cancelled.ok && cancelled.cancelled, "Cancel stops it");
         }
+    }
+
+    std::cout << "the Cross-Validation and Learning Curves nodes\n";
+    {
+        using cyxwiz::TrainingEvaluationOperator;
+        cyxwiz::CrossValidationSettings s;
+        std::string table, error;
+        Check(TrainingEvaluationOperator::SettingsFromParameters(false, {{"folds", "7"}, {"stratified", "false"}, {"seed", "3"}}, s, table,
+                                                                 error) &&
+                  s.folds == 7 && !s.stratified && s.seed == 3 && table == "cross_validation_results",
+              "cross-validation settings read from the node");
+        cyxwiz::CrossValidationSettings curve;
+        curve.folds = 4;
+        curve.seed = 9;
+        curve.train_shares = {0.25, 0.5, 1.0};
+        const auto params = TrainingEvaluationOperator::ParametersFromSettings(true, curve, "curve_here");
+        Check(TrainingEvaluationOperator::SettingsFromParameters(true, params, s, table, error) && s.folds == 4 && s.seed == 9 &&
+                  s.train_shares.size() == 3 && s.train_shares[0] == 0.25 && table == "curve_here",
+              "learning-curve settings round trip: " + params.at("train_sizes"));
+        Check(!TrainingEvaluationOperator::SettingsFromParameters(false, {{"folds", "1"}}, s, table, error) &&
+                  error.find("'folds' must be a whole number from 2 to 20") != std::string::npos,
+              "one fold refused");
+        Check(!TrainingEvaluationOperator::SettingsFromParameters(true, {{"train_sizes", "50%"}}, s, table, error) &&
+                  error.find("two shares") != std::string::npos,
+              "one share refused");
+
+        // Data passes through; pin 1 is the published table (the Engine's lookup).
+        cyxwiz::CrossValidationOutcome outcome;
+        for (int k = 1; k <= 3; ++k) {
+            cyxwiz::CrossValidationRun run;
+            run.fold = k;
+            run.train_rows = 20;
+            run.val_rows = 10;
+            run.val.accuracy = 0.9;
+            outcome.runs.push_back(run);
+        }
+        const auto published = cyxwiz::CrossValidationTable(outcome);
+        Check(published && published->num_rows() == 3 && published->schema()->GetFieldIndex("val_accuracy") >= 0 &&
+                  published->schema()->GetFieldIndex("train_accuracy") < 0,
+              "the run's table: one row per fold, validation scores");
+        TrainingEvaluationOperator::SetResultsLookup([published](const std::string& name) {
+            return name == "cross_validation_results" ? published : nullptr;
+        });
+        TrainingEvaluationOperator op(false);
+        Check(op.Configure({}, error), "defaults configure");
+        arrow::Int64Builder xs;
+        std::shared_ptr<arrow::Array> column;
+        Check(xs.Append(1).ok() && xs.Finish(&column).ok(), "input column");
+        const auto input = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::int64())}), {column});
+        const auto out = op.Apply(input);
+        Check(out.ok() && *out == input, "the data passes through unchanged");
+        Check(op.ExtraOutputs().size() == 1 && op.ExtraOutputs()[0] == published, "pin 1 is the last run's table");
+        Check(op.OutcomeSummary().find("last run: 3 trainings") != std::string::npos, "summary: " + op.OutcomeSummary());
+        TrainingEvaluationOperator::SetResultsLookup(nullptr);
+        Check(op.Apply(input).ok() && op.ExtraOutputs()[0] == nullptr && op.OutcomeSummary().find("not run yet") != std::string::npos,
+              "before a run pin 1 has no result");
     }
 
     fs::remove_all(work, ec);

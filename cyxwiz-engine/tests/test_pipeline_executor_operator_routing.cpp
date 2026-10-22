@@ -41,6 +41,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <thread>
 
@@ -369,6 +370,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSFeatures",
         "TSLag",
         "TestEvaluationNode",
+        "CrossValidationNode",
+        "LearningCurvesNode",
         "TSWindow",
         "ValueCounts",
         "WordEmbeddings",
@@ -3993,9 +3996,7 @@ int main(int argc, char** argv) {
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
         {"TrainTestSplit", false},
-        {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
-        {"CrossValidationNode", false},
         {"Normalize", false},
         {"OneHotEncode", false},
         {"AudioInput", false},
@@ -4929,6 +4930,22 @@ int main(int argc, char** argv) {
         Check(test_executor.GetLastError().find("HypothesisTest") != std::string::npos &&
                   test_executor.GetLastError().find("no_such_column") != std::string::npos,
               "HypothesisTest missing-column error should name it: " + test_executor.GetLastError());
+    }
+
+    // The Cross-Validation / Learning Curves nodes (TOFIX129 D4) refuse settings Train could not use.
+    for (const auto& [type, params, word] : {std::tuple{"CrossValidationNode", R"({"folds":"1"})", "folds"},
+                                             std::tuple{"LearningCurvesNode", R"({"train_sizes":"50%"})", "train_sizes"}}) {
+        const std::string json =
+            R"({"nodes":[)"
+            R"({"id":9411,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":9412,"type":")" + std::string(type) + R"(","name":"Bad","parameters":)" + params + "}"
+            R"(],"links":[{"start_node":9411,"end_node":9412}]})";
+        cyxwiz::PipelineExecutor folds_executor;
+        Check(!folds_executor.ExecutePipeline(json), std::string(type) + " with bad settings should fail");
+        Check(folds_executor.GetLastError().find(word) != std::string::npos,
+              std::string(type) + " error should name the setting: " + folds_executor.GetLastError());
     }
 
     // The fitted transforms of TOFIX129 D2 refuse a text column, as Min-Max does.

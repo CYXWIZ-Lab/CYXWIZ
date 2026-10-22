@@ -126,6 +126,33 @@ void FoldsView::RenderLocked() {
 
 void FoldsView::RenderSettings(bool running) {
     const ui::Tokens& t = ui::CurrentTokens();
+    // The graph's node holds the settings when it has one.
+    const std::optional<GraphNode> node = graph_node ? graph_node() : std::nullopt;
+    if (node) {
+        const auto& s = node->settings;
+        std::string line = "From the graph's node \"" + node->name + "\": ";
+        line += std::to_string(s.folds) + " folds";
+        if (mode_ == Mode::LearningCurve) line += ", training rows " + folds_view::SharesText(s.train_shares);
+        else line += s.stratified ? ", class shares kept" : "";
+        line += ", seed " + std::to_string(s.seed) + ". Edit them in the node.";
+        Wrapped(node->error.empty() ? t.text : t.error, node->error.empty() ? line : "The graph's node \"" + node->name + "\": " + node->error);
+        ImGui::Spacing();
+        const std::string blocker = running ? std::string("It is running") : run_blocker ? run_blocker() : std::string();
+        const std::string why = !blocker.empty() ? blocker : node->error;
+        if (ui::PrimaryButton(outcome_ && !running ? "Run again" : "Run", why.empty() && run, why.c_str()) || (run_requested_ && why.empty()))
+            pending_run_ = node->settings;
+        run_requested_ = false;
+        if (running && cancel) {
+            ImGui::SameLine();
+            if (ui::SecondaryButton("Cancel")) pending_cancel_ = true;
+        }
+        if (outcome_ && outcome_->ok && !running) {
+            ImGui::SameLine();
+            if (ui::SecondaryButton("Export CSV...", true, nullptr, ui::ButtonSize::Small)) Export();
+        }
+        ImGui::Spacing();
+        return;
+    }
     ui::FlowRow row;
     const float field = ui::ButtonWidth("+", ui::ButtonSize::Small) * 2.0f + 60.0f;
     row.Next(ImGui::CalcTextSize("Folds").x + field);
@@ -155,9 +182,21 @@ void FoldsView::RenderSettings(bool running) {
     ImGui::Spacing();
     const std::string blocker = running ? std::string("It is running") : run_blocker ? run_blocker() : std::string();
     const std::string why = !blocker.empty() ? blocker : shares_error_;
-    if (ui::PrimaryButton(outcome_ && !running ? "Run again" : "Run", why.empty() && run, why.c_str())) {
+    if (ui::PrimaryButton(outcome_ && !running ? "Run again" : "Run", why.empty() && run, why.c_str()) || (run_requested_ && why.empty())) {
         CrossValidationSettings settings = Settings();
         if (shares_error_.empty() && run) pending_run_ = settings;
+    }
+    run_requested_ = false;
+    if (!running && add_to_graph) {
+        ImGui::SameLine();
+        if (ui::SecondaryButton("Add to the graph", shares_error_.empty(), shares_error_.c_str(), ui::ButtonSize::Small)) {
+            note_ = add_to_graph(Settings());
+            note_failed_ = note_.rfind("Added", 0) != 0;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("A %s node with these settings after the Data Input: the graph keeps them, and its second "
+                              "output is the last run's table",
+                              mode_ == Mode::CrossValidation ? "Cross-Validation" : "Learning Curves");
     }
     if (running && cancel) {
         ImGui::SameLine();

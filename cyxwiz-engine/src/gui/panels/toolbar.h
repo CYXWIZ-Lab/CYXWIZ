@@ -182,6 +182,8 @@ public:
     // Testing callbacks
     void SetRunTestCallback(std::function<void()> callback) { run_test_callback_ = callback; }
     void SetViewTestResultsCallback(std::function<void()> callback) { view_test_results_callback_ = callback; }
+    void SetCrossValidateCallback(std::function<void()> callback) { cross_validate_callback_ = std::move(callback); }
+    void SetLearningCurveCallback(std::function<void()> callback) { learning_curve_callback_ = std::move(callback); }
 
     // Tools menu callbacks
     void SetLoadCheckpointCallback(std::function<void()> cb) { load_checkpoint_callback_ = cb; }
@@ -639,6 +641,8 @@ private:
     // Testing callbacks
     std::function<void()> run_test_callback_;
     std::function<void()> view_test_results_callback_;
+    std::function<void()> cross_validate_callback_;
+    std::function<void()> learning_curve_callback_;
 
     // Tools menu callbacks
     std::function<void()> load_checkpoint_callback_;

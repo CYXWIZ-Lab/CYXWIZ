@@ -557,6 +557,11 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Sep(),
                          Action(f, "train.load_checkpoint", "Load Checkpoint for Testing...",
                                 "Loads saved weights to test them.")}));
+        i.push_back(Sub("train.evaluate", "Evaluate", "Train the graph again on folds of its data.",
+                        {Action(f, "train.cross_validate", "Cross-validate",
+                                "Trains the graph once per fold and scores each fold once (Data Studio > Results > Cross-validation)."),
+                         Action(f, "train.learning_curve", "Learning Curve",
+                                "Trains the graph on shares of its rows: does more data help? (Data Studio > Results > Learning curve).")}));
         i.push_back(Sep());
         i.push_back(Action(f, "train.dashboard", "Training Dashboard", "Opens the Training panel."));
         i.push_back(Action(f, "train.optimizer_settings", "Optimizer Settings...", "Shows the graph's optimizer node in Properties."));

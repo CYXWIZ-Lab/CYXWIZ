@@ -330,6 +330,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/signal_processing_operators.cpp  # Tool-to-Node Band 1
     src/core/node_executors/regression_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
@@ -2756,6 +2757,9 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
+    src/core/cross_validation_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/core/stats_explore.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
@@ -3120,6 +3124,8 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
+    src/core/cross_validation_presentation.cpp
     src/core/node_executors/regression_model_artifact.cpp
     src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
@@ -3834,6 +3840,9 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
+    src/core/cross_validation_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/core/stats_explore.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
@@ -5174,6 +5183,9 @@ add_test(NAME cross_validation_presentation COMMAND test_cross_validation_presen
 add_executable(test_computation_truth_cross_validation
     tests/computation_truth/test_computation_truth_cross_validation.cpp
     src/core/cross_validation_runner.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
+    src/core/cross_validation_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/core/test_executor.cpp
     src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
@@ -7218,6 +7230,9 @@ add_test(NAME TransformStepPresentation COMMAND test_transform_step_presentation
 # Data Studio > Explore Tests and Regression (TOFIX129 D3).
 add_executable(test_stats_explore tests/test_stats_explore.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
+    src/core/cross_validation_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/core/stats_explore.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
@@ -7489,6 +7504,9 @@ add_executable(test_engine_node_parity
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
+    src/core/node_executors/training_evaluation_operator.cpp
+    src/core/cross_validation_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/core/stats_explore.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp

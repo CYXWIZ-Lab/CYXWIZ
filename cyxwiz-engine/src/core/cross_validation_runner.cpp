@@ -15,6 +15,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -287,6 +288,40 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     result.ok = true;
     return result;
+}
+
+std::shared_ptr<arrow::Table> CrossValidationTable(const CrossValidationOutcome& o) {
+    const bool curve = std::any_of(o.runs.begin(), o.runs.end(), [](const CrossValidationRun& r) { return r.share < 1.0 - 1e-9; });
+    arrow::Int64Builder fold, train_rows, val_rows, epochs;
+    arrow::DoubleBuilder share, seconds;
+    arrow::DoubleBuilder val[3], train[3];
+    const auto three = [&o](const CrossValidationScores& s) {
+        return o.regression ? std::array<double, 3>{s.mae, s.rmse, s.r2} : std::array<double, 3>{s.accuracy, s.macro_f1, s.loss};
+    };
+    for (const auto& r : o.runs) {
+        if (!fold.Append(r.fold).ok() || !share.Append(r.share).ok() || !train_rows.Append(r.train_rows).ok() ||
+            !val_rows.Append(r.val_rows).ok() || !epochs.Append(r.epochs).ok() || !seconds.Append(r.seconds).ok())
+            return nullptr;
+        const auto v = three(r.val), t = three(r.train);
+        for (size_t i = 0; i < 3; ++i)
+            if (!val[i].Append(v[i]).ok() || (curve && !train[i].Append(t[i]).ok())) return nullptr;
+    }
+    const char* names[3] = {o.regression ? "mae" : "accuracy", o.regression ? "rmse" : "macro_f1", o.regression ? "r2" : "loss"};
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    const auto add = [&](const std::string& name, const std::shared_ptr<arrow::DataType>& type, arrow::ArrayBuilder& builder) {
+        std::shared_ptr<arrow::Array> array;
+        if (!builder.Finish(&array).ok()) return false;
+        fields.push_back(arrow::field(name, type));
+        arrays.push_back(array);
+        return true;
+    };
+    bool ok = add("fold", arrow::int64(), fold) && add("share", arrow::float64(), share) && add("train_rows", arrow::int64(), train_rows) &&
+              add("val_rows", arrow::int64(), val_rows);
+    for (size_t i = 0; i < 3 && ok; ++i) ok = add(std::string("val_") + names[i], arrow::float64(), val[i]);
+    for (size_t i = 0; i < 3 && ok && curve; ++i) ok = add(std::string("train_") + names[i], arrow::float64(), train[i]);
+    ok = ok && add("epochs", arrow::int64(), epochs) && add("seconds", arrow::float64(), seconds);
+    return ok ? arrow::Table::Make(arrow::schema(fields), arrays) : nullptr;
 }
 
 ScoreSummary SummariseRuns(const std::vector<CrossValidationRun>& runs, double share,

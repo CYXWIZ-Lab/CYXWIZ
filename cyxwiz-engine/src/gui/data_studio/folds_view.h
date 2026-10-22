@@ -43,6 +43,20 @@ public:
     std::function<std::string()> run_blocker;
     // The latest test's main score (accuracy, or MAE), for the sentence.
     std::function<std::optional<double>()> single_test;
+    // The graph's Cross-Validation / Learning Curves node, when it has one: its
+    // settings are what Run uses (edited in the node), or why they are wrong.
+    struct GraphNode {
+        std::string name;
+        CrossValidationSettings settings;
+        std::string error;
+    };
+    std::function<std::optional<GraphNode>()> graph_node;
+    // Add to the graph: the node with these settings after the Data Input; a
+    // word on what happened.
+    std::function<std::string(const CrossValidationSettings& settings)> add_to_graph;
+    // Train > Cross-validate / Learning curve: Run on the next frame.
+    void RequestRun() { run_requested_ = true; }
+    bool IsLearningCurve() const { return mode_ == Mode::LearningCurve; }
 
 private:
     CrossValidationSettings Settings();
@@ -79,6 +93,7 @@ private:
     std::string note_;
     bool note_failed_ = false;
     std::optional<CrossValidationSettings> pending_run_;  // pressed this frame (called after the lock)
+    bool run_requested_ = false;                          // Train menu
     bool pending_cancel_ = false;
 };
 

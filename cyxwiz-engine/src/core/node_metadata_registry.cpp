@@ -2177,23 +2177,36 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"positive_label", "string", "1", "Positive class label", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    // TOFIX129 D4: the settings of Results > Learning curve / Cross-validation on
+    // the data path (Train passes through them; Train > Learning curve /
+    // Cross-validate read them); the second pin is the last run's table.
     RegisterNode({NodeType::LearningCurvesNode, NodeCategory::Analytics, "Learning Curves", ICON_FA_CHART_LINE,
-        {"learning", "curves", "training"}, 0, false, "Training/validation learning curves",
-        "Plot train and validation scores vs training set size.", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"TrainScores", PinType::Dataset, true, "Train scores"}, {"ValScores", PinType::Dataset, true, "Validation scores"}},
-        {{"cv", "int", "5", "Cross-validation folds", {}, ""},
-         {"train_sizes", "string", "0.1,0.3,0.5,0.7,0.9,1.0", "Training sizes", {}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
+        {"learning", "curves", "training", "rows"}, 0, false, "Train on shares of the rows: does more data help?",
+        "Holds the settings of Train > Learning curve: the graph is trained on shares of each fold's training rows and "
+        "scored on those rows and on the fold. Data passes through unchanged, so Train trains as usual; Results' table is "
+        "the second output after a run.", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Data", PinType::Dataset, true, "The same data, for the rest of the graph"},
+         {"Results", PinType::Dataset, false, "The last run: one row per training (fold, share, rows, scores)"}},
+        {{"folds", "int", "5", "Folds, 2 to 20", {}, ""},
+         {"seed", "int", "42", "Seed for the folds and the subsets", {}, ""},
+         {"train_sizes", "string", "10%, 25%, 50%, 75%, 100%", "Shares of each fold's training rows", {}, ""},
+         {"results_table", "string", "learning_curve_results", "Name the last run's table is published under", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CrossValidationNode, NodeCategory::Analytics, "Cross-Validation", ICON_FA_ROTATE,
-        {"cross", "validation", "cv"}, 0, false, "K-Fold cross-validation",
-        "Evaluate model performance using k-fold cross-validation.", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Scores", PinType::Dataset, true, "CV scores"}, {"Mean", PinType::Dataset, true, "Mean score"}, {"Std", PinType::Dataset, true, "Std deviation"}},
-        {{"cv", "int", "5", "Number of folds", {}, "2-20"},
-         {"scoring", "enum", "accuracy", "Scoring metric", {"accuracy", "f1", "precision", "recall", "roc_auc"}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
+        {"cross", "validation", "cv", "folds"}, 0, false, "Train once per fold; score each fold once",
+        "Holds the settings of Train > Cross-validate: the graph is trained once per fold with fresh weights and scored "
+        "on the fold it did not see. Data passes through unchanged, so Train trains as usual; the fold table is the "
+        "second output after a run.", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Data", PinType::Dataset, true, "The same data, for the rest of the graph"},
+         {"Results", PinType::Dataset, false, "The last run: one row per fold (rows, scores)"}},
+        {{"folds", "int", "5", "Folds, 2 to 20", {}, ""},
+         {"stratified", "bool", "true", "Keep each fold's class shares", {}, ""},
+         {"seed", "int", "42", "Seed for the folds", {}, ""},
+         {"results_table", "string", "cross_validation_results", "Name the last run's table is published under", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::FeatureImportanceNode, NodeCategory::Analytics, "Feature Importance", ICON_FA_RANKING_STAR,
         {"feature", "importance", "selection"}, 0, false, "Feature importance analysis",

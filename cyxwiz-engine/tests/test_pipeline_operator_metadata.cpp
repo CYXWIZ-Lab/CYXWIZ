@@ -5197,9 +5197,7 @@ int main() {
           "SVMClassifier enum support should resolve to operator-backed");
     const gui::NodeType additional_fail_closed_enum_cases[] = {
         gui::NodeType::UMAPNode,
-        gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
-        gui::NodeType::CrossValidationNode,
         gui::NodeType::Normalize,
         gui::NodeType::OneHotEncode,
         gui::NodeType::AudioInput,
@@ -5298,9 +5296,7 @@ int main() {
     }
 
     const gui::NodeType blocked_metadata_cases[] = {
-        gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
-        gui::NodeType::CrossValidationNode,
         gui::NodeType::ExportExcel,
         gui::NodeType::TableSplitter,
         gui::NodeType::IFFTNode,

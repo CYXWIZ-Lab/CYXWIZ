@@ -26,6 +26,10 @@
 #include <string>
 #include <vector>
 
+namespace arrow {
+class Table;
+}
+
 namespace cyxwiz {
 
 class ArrowDataset;
@@ -91,6 +95,13 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
                                          const std::string& label_column, int epochs, int batch_size,
                                          const CrossValidationSettings& settings,
                                          const CrossValidationCallbacks& callbacks = {});
+
+// The outcome as a table, one row per training: fold, share, train_rows,
+// val_rows, the validation scores (classes: val_accuracy, val_macro_f1,
+// val_loss; numbers: val_mae, val_rmse, val_r2), for a learning curve the
+// training rows' scores (train_...), epochs, seconds. Published when a run
+// finishes; the Cross-Validation / Learning Curves node's second pin.
+std::shared_ptr<arrow::Table> CrossValidationTable(const CrossValidationOutcome& outcome);
 
 // Mean and (sample) standard deviation of one score over the runs at `share`.
 struct ScoreSummary {

@@ -111,6 +111,7 @@
 #include "panels/acf_pacf_panel.h"
 #include "panels/stationarity_panel.h"
 #include "data_studio/folds_view.h"
+#include "../core/node_executors/training_evaluation_operator.h"
 #include "panels/seasonality_panel.h"
 #include "panels/forecasting_panel.h"
 #include "panels/tokenization_panel.h"
@@ -1251,6 +1252,11 @@ MainWindow::MainWindow()
         };
     }
     // Results > Cross-validation / Learning curve train the open graph again (TOFIX129 D4).
+    // Their nodes' second pin reads the last run's table from the registry.
+    cyxwiz::TrainingEvaluationOperator::SetResultsLookup([](const std::string& name) -> std::shared_ptr<arrow::Table> {
+        const auto dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(name);
+        return dataset ? dataset->GetArrowTable() : nullptr;
+    });
     if (data_studio_panel_) {
         for (const auto view_kind : {cyxwiz::ResultsView::View::CrossValidation, cyxwiz::ResultsView::View::LearningCurve}) {
             const std::shared_ptr<cyxwiz::FoldsView> view = data_studio_panel_->GetFoldsView(view_kind);
@@ -1262,8 +1268,25 @@ MainWindow::MainWindow()
                 if (folds_task_) cyxwiz::AsyncTaskManager::Instance().Cancel(folds_task_);
             };
             view->run_blocker = [this]() { return FoldsBlocker(); };
+            const bool curve = view_kind == cyxwiz::ResultsView::View::LearningCurve;
+            view->graph_node = [this, curve]() -> std::optional<cyxwiz::FoldsView::GraphNode> {
+                const auto node = FindFoldsNode(curve);
+                if (!node) return std::nullopt;
+                return cyxwiz::FoldsView::GraphNode{node->name, node->settings, node->error};
+            };
+            view->add_to_graph = [this, curve](const cyxwiz::CrossValidationSettings& settings) {
+                return AddFoldsNode(curve, settings);
+            };
         }
     }
+    // Train > Evaluate: Results' views, running.
+    const auto run_folds = [this](cyxwiz::ResultsView::View kind) {
+        if (!data_studio_panel_) return;
+        data_studio_panel_->ShowResults(kind);
+        if (const auto view = data_studio_panel_->GetFoldsView(kind)) view->RequestRun();
+    };
+    toolbar_->SetCrossValidateCallback([run_folds]() { run_folds(cyxwiz::ResultsView::View::CrossValidation); });
+    toolbar_->SetLearningCurveCallback([run_folds]() { run_folds(cyxwiz::ResultsView::View::LearningCurve); });
     toolbar_->SetCompareTestResultsCallback([this]() {
         if (!data_studio_panel_) return;
         data_studio_panel_->GetTestView()->ShowComparison();
@@ -3693,9 +3716,44 @@ void MainWindow::StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, co
         view->Finished(std::move(refused));
         return;
     }
-    folds_launch_ = FoldsLaunch{view, settings};
+    const auto node = FindFoldsNode(view->IsLearningCurve());
+    const std::string results_table = node ? node->results_table
+                                           : cyxwiz::TrainingEvaluationOperator::DefaultResultsTable(view->IsLearningCurve());
+    folds_launch_ = FoldsLaunch{view, settings, results_table};
     view->Started();
     StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+}
+
+std::optional<MainWindow::FoldsNode> MainWindow::FindFoldsNode(bool learning_curve) const {
+    if (!node_editor_) return std::nullopt;
+    const NodeType type = learning_curve ? NodeType::LearningCurvesNode : NodeType::CrossValidationNode;
+    for (const auto& n : node_editor_->GetNodes()) {
+        if (n.type != type) continue;
+        FoldsNode found;
+        found.id = n.id;
+        found.name = n.name;
+        cyxwiz::TrainingEvaluationOperator::SettingsFromParameters(learning_curve, n.parameters, found.settings, found.results_table,
+                                                                  found.error);
+        return found;
+    }
+    return std::nullopt;
+}
+
+std::string MainWindow::AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings) {
+    if (!node_editor_) return "No graph is open.";
+    std::vector<const MLNode*> inputs;
+    for (const auto& n : node_editor_->GetNodes())
+        if (n.type == NodeType::DataInput) inputs.push_back(&n);
+    if (inputs.size() != 1)
+        return inputs.empty() ? "The graph has no Data Input to put it after."
+                              : "The graph has several Data Inputs: add the node from the palette after the one it trains from.";
+    const char* name = learning_curve ? "Learning Curves" : "Cross-Validation";
+    node_editor_->RequestStepAfter(inputs.front()->id, learning_curve ? NodeType::LearningCurvesNode : NodeType::CrossValidationNode,
+                                   name,
+                                   cyxwiz::TrainingEvaluationOperator::ParametersFromSettings(
+                                       learning_curve, settings, cyxwiz::TrainingEvaluationOperator::DefaultResultsTable(learning_curve)));
+    return std::string("Added a ") + name + " node after \"" + inputs.front()->name +
+           "\": the graph keeps these settings, and Run uses them from now on.";
 }
 
 void MainWindow::EndFoldsLaunch(const std::string& why) {
@@ -3731,10 +3789,11 @@ std::string MainWindow::FoldsBlocker() const {
                                      "' is kept on disk. Raise the data budget (Preferences) or use fewer rows.");
         const std::shared_ptr<cyxwiz::FoldsView> view = launch.view;
         const cyxwiz::CrossValidationSettings settings = launch.settings;
+        const std::string results_table = launch.results_table;
         const std::string name = settings.train_shares.empty() ? "Cross-validation" : "Learning curve";
         folds_task_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
             name,
-            [view, settings, config, dataset, label_column, epochs, batch_size, name](cyxwiz::LambdaTask& task) {
+            [view, settings, config, dataset, label_column, epochs, batch_size, name, results_table](cyxwiz::LambdaTask& task) {
                 cyxwiz::CrossValidationCallbacks callbacks;
                 callbacks.should_cancel = [&task] { return task.ShouldStop(); };
                 callbacks.on_progress = [&task, view, name](const cyxwiz::CrossValidationProgress& p) {
@@ -3748,6 +3807,14 @@ std::string MainWindow::FoldsBlocker() const {
                 cyxwiz::CrossValidationOutcome outcome =
                     cyxwiz::RunCrossValidation(config, dataset, label_column, epochs, batch_size, settings, callbacks);
                 if (!outcome.ok && !outcome.cancelled) task.MarkFailed(outcome.error);
+                // The run's table, for the node's second pin and any reader (as test_predictions is).
+                if (outcome.ok) {
+                    if (auto table = cyxwiz::CrossValidationTable(outcome)) {
+                        cyxwiz::AsyncTaskManager::Instance().PostToMainThread([table, results_table]() {
+                            cyxwiz::DataRegistry::Instance().RegisterArrowTable(table, results_table);
+                        });
+                    }
+                }
                 view->Finished(std::move(outcome));
             },
             nullptr,

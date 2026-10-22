@@ -241,7 +241,19 @@ private:
     struct FoldsLaunch {
         std::shared_ptr<cyxwiz::FoldsView> view;
         cyxwiz::CrossValidationSettings settings;
+        std::string results_table;  // where the finished run's table is published
     };
+    // The graph's Cross-Validation / Learning Curves node (the first one), read.
+    struct FoldsNode {
+        int id = -1;
+        std::string name;
+        cyxwiz::CrossValidationSettings settings;
+        std::string results_table;
+        std::string error;
+    };
+    std::optional<FoldsNode> FindFoldsNode(bool learning_curve) const;
+    // Results' Add to the graph: the node after the graph's Data Input.
+    std::string AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings);
     std::optional<FoldsLaunch> folds_launch_;
     uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
     void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);

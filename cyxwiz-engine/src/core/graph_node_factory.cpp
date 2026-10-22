@@ -1527,40 +1527,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::LearningCurvesNode: {
-            NodePin model_in;
-            model_in.id = next_pin_id_++;
-            model_in.type = PinType::Parameters;
-            model_in.name = "Model";
-            model_in.is_input = true;
-            node.inputs.push_back(model_in);
-
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin curves_out;
-            curves_out.id = next_pin_id_++;
-            curves_out.type = PinType::Dataset;
-            curves_out.name = "Curves";
-            curves_out.is_input = false;
-            node.outputs.push_back(curves_out);
-
-            node.parameters["cv"] = "5";
-            node.parameters["train_sizes"] = "0.1,0.3,0.5,0.7,0.9";
-            break;
-        }
-
         case NodeType::FeatureImportanceNode: {
             NodePin model_in;
             model_in.id = next_pin_id_++;
@@ -1580,42 +1546,10 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::CrossValidationNode: {
-            NodePin model_in;
-            model_in.id = next_pin_id_++;
-            model_in.type = PinType::Parameters;
-            model_in.name = "Model";
-            model_in.is_input = true;
-            node.inputs.push_back(model_in);
-
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin scores_out;
-            scores_out.id = next_pin_id_++;
-            scores_out.type = PinType::Dataset;
-            scores_out.name = "Scores";
-            scores_out.is_input = false;
-            node.outputs.push_back(scores_out);
-
-            node.parameters["cv"] = "5";
-            node.parameters["scoring"] = "accuracy";
-            break;
-        }
-
         case NodeType::RegressionMetricsNode:
         case NodeType::HypothesisTest:
+        case NodeType::CrossValidationNode:
+        case NodeType::LearningCurvesNode:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
