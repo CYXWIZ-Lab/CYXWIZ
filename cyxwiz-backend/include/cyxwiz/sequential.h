@@ -1497,6 +1497,30 @@ private:
 };
 
 /**
+ * @brief BatchNorm2D (torch.nn.BatchNorm2d) on `[H,W,C,N]`: per-channel batch
+ * statistics while training, running statistics in eval. Wraps
+ * BatchNorm2DLayer; parameters and gradients use BatchNormModule's keys.
+ */
+class CYXWIZ_API BatchNorm2DModule : public Module {
+public:
+    BatchNorm2DModule(int num_features, float eps = 1e-5f, float momentum = 0.1f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<BatchNorm2DLayer> layer_;
+    int num_features_;
+    float eps_;
+    float momentum_;
+};
+
+/**
  * @brief Canonical ordered model container for backend training/inference.
  *
  * SequentialModel owns Module instances, not raw Layer instances. Use it for

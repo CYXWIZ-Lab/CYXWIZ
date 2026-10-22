@@ -105,6 +105,7 @@ Tensor BatchNorm2DLayer::Forward(const Tensor& input) {
         }
         std_inv_ = Tensor::FromSemanticArray(af::flat(inverse), channel_shape);
         normalized_ = Tensor::FromSemanticArray(normalized4, input.Shape());
+        forward_training_ = training_;
         return Tensor::FromSemanticArray(y4, input.Shape());
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("BatchNorm2DLayer::Forward", e));
@@ -138,9 +139,12 @@ Tensor BatchNorm2DLayer::Backward(const Tensor& grad_output) {
         const float count = static_cast<float>(dy.dims(0));
         const af::array sum_dy = af::sum(dy, 0);
         const af::array sum_dy_norm = af::sum(dy * normalized, 0);
-        const af::array scale = ChannelRow(gamma_) * ChannelRow(std_inv_) / count;
-        const af::array dx = af::tile(scale, down) *
-                             (count * dy - af::tile(sum_dy, down) - normalized * af::tile(sum_dy_norm, down));
+        // Batch statistics depend on every element, running ones are constants:
+        // in eval the input gradient is only the per-channel scale.
+        const af::array dx = forward_training_
+            ? af::tile(ChannelRow(gamma_) * ChannelRow(std_inv_) / count, down) *
+                  (count * dy - af::tile(sum_dy, down) - normalized * af::tile(sum_dy_norm, down))
+            : dy * af::tile(ChannelRow(gamma_) * ChannelRow(std_inv_), down);
         const af::array dx4 = FromChannelColumns(dx, dy4.dims());
         dx4.eval();
         Tensor grad_input = Tensor::FromSemanticArray(dx4, grad_output.Shape());

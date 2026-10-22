@@ -81,8 +81,9 @@ ResolveSpatialSequentialHead(const TrainingConfiguration &config) {
       throw std::invalid_argument(
           "PReLU before Flatten needs one shared slope (num_parameters = 1); per-channel "
           "slopes are not supported on [H,W,C] samples (index " + std::to_string(i) + ")");
+    // BatchNorm before Flatten is BatchNorm2D (per channel); after it, 1-D.
     if (!spatial_layer && !spatial::IsShapePreservingLayer(layer.type) && !shared_prelu &&
-        layer.type != gui::NodeType::Output)
+        layer.type != gui::NodeType::BatchNorm && layer.type != gui::NodeType::Output)
       throw std::invalid_argument(
           "Spatial head requires Flatten or a global pool before layer index " + std::to_string(i) +
           "; only convolution, pooling, normalisation, upsampling and "

@@ -232,6 +232,53 @@ int main() {
               "per-channel PReLU before Flatten is refused with the reason: " + bad_built.error_message);
     }
 
+    // ---- Conv -> BatchNorm -> ReLU (TOFIX178 1.1): BatchNorm before Flatten is
+    // BatchNorm2D, per channel (it used to stop the compile: "Spatial head requires
+    // Flatten or a global pool before ...") ----
+    {
+        auto variant = nodes;
+        variant.push_back(Layer(30, gui::NodeType::BatchNorm, "BN 16", {{"eps", "1e-5"}, {"momentum", "0.1"}}));
+        variant.push_back(Layer(31, gui::NodeType::BatchNorm, "BN 32", {{"eps", "1e-5"}, {"momentum", "0.1"}}));
+        auto blinks = links;
+        int next_link = 900;
+        for (auto& l : blinks) {
+            if (l.from_node == 3 && l.to_node == 4) l = Link(l.id, 3, 30);
+            if (l.from_node == 6 && l.to_node == 7) l = Link(l.id, 6, 31);
+        }
+        blinks.push_back(Link(next_link++, 30, 4));
+        blinks.push_back(Link(next_link++, 31, 7));
+        const auto bconfig = compiler.Compile(variant, blinks, true);
+        for (const auto& issue : bconfig.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.message << "\n";
+        }
+        Check(bconfig.is_valid, "a CNN with Conv -> BatchNorm -> ReLU compiles");
+        Check(LayerNamed(bconfig, "BN 16").output_shape == std::vector<size_t>{64, 64, 16},
+              "BatchNorm keeps [64, 64, 16]");
+        auto bbuilt = cyxwiz::BuildExecutableFromConfig(bconfig);
+        Check(bbuilt.ok(), "ModelBuilder builds BatchNorm2D: " + bbuilt.error_message);
+        long long bparams = 0;
+        for (const auto& [name, tensor] : bbuilt.model->GetParameters()) bparams += static_cast<long long>(tensor.NumElements());
+        // Per channel: gamma, beta, running mean, running var = 4 x 16 and 4 x 32 (torch BatchNorm2d state).
+        Check(bparams == parameters + 4 * 16 + 4 * 32,
+              "BatchNorm2D holds 4 values per channel, got " + std::to_string(bparams - parameters));
+        const cyxwiz::Tensor blogits = bbuilt.model->Forward(spatial);
+        Check(blogits.Shape() == std::vector<size_t>{batch, 2}, "Conv-BN CNN forward gives [N, 2]");
+        std::vector<float> ones(batch * 2, 1.0f);
+        const cyxwiz::Tensor bgrad = bbuilt.model->Backward(cyxwiz::Tensor({batch, 2}, ones.data(), cyxwiz::DataType::Float32));
+        Check(bgrad.Shape() == std::vector<size_t>{64, 64, 3, batch}, "backward through BatchNorm2D reaches the input");
+        // Eval uses the running statistics: the same batch gives different logits than in training.
+        bbuilt.model->SetTraining(false);
+        const cyxwiz::Tensor eval_logits = bbuilt.model->Forward(spatial);
+        const float* train_values = blogits.ReadData<float>();
+        const float* eval_values = eval_logits.ReadData<float>();
+        bool differs = false;
+        for (size_t i = 0; i < batch * 2; ++i) {
+            Check(std::isfinite(eval_values[i]), "eval logits are finite");
+            differs = differs || std::fabs(train_values[i] - eval_values[i]) > 1e-6f;
+        }
+        Check(differs, "eval mode uses the running statistics, not the batch's");
+    }
+
     // ---- Global Avg Pool ends the conv section instead of Flatten (TOFIX140 A4b) ----
     {
         auto variant = nodes;
