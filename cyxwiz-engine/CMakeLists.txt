@@ -222,6 +222,8 @@ set(ENGINE_SOURCES
     src/core/transform_step_presentation.cpp
     src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
+    src/core/groups_explore.cpp
+    src/core/groups_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -752,6 +754,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/transform_step_view.cpp
     src/gui/data_studio/tests_view.cpp
     src/gui/data_studio/regression_view.cpp
+    src/gui/data_studio/groups_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp

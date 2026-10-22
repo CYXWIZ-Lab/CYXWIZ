@@ -29,6 +29,14 @@ std::string Percent(double share) {
     return buf;
 }
 
+// An information criterion with one decimal (two models' often differ in the first): "2553.6".
+std::string Criterion(double v) {
+    if (!std::isfinite(v)) return "";
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.1f", v);
+    return buf;
+}
+
 // A value in full for the CSV ("" for NaN).
 std::string Full(double v) {
     if (!std::isfinite(v)) return "";
@@ -118,7 +126,7 @@ std::string MethodLine(const groups::GroupsAnswer& a) {
             return "cophenetic correlation " + Score(a.cophenetic) + ": the tree keeps the rows' distances " + how;
         }
         case groups::Method::Mixture:
-            return "BIC " + Figure(a.bic) + ", AIC " + Figure(a.aic) + (a.converged ? "" : " (stopped at the limit)");
+            return "BIC " + Criterion(a.bic) + ", AIC " + Criterion(a.aic) + (a.converged ? "" : " (stopped at the limit)");
     }
     return "";
 }
@@ -201,9 +209,9 @@ std::string HowManySentence(const groups::HowManyAnswer& a) {
         case groups::Method::Mixture: {
             if (a.suggested == 0) return "";
             const auto at = static_cast<size_t>(std::find(a.ks.begin(), a.ks.end(), a.suggested) - a.ks.begin());
-            std::string out = "BIC is lowest at " + std::to_string(a.suggested) + " components (" + Figure(a.bic[at]);
-            if (at > 0) out += "; " + std::to_string(a.ks[at - 1]) + ": " + Figure(a.bic[at - 1]);
-            if (at + 1 < a.bic.size()) out += "; " + std::to_string(a.ks[at + 1]) + ": " + Figure(a.bic[at + 1]);
+            std::string out = "BIC is lowest at " + std::to_string(a.suggested) + " components (" + Criterion(a.bic[at]);
+            if (at > 0) out += "; " + std::to_string(a.ks[at - 1]) + ": " + Criterion(a.bic[at - 1]);
+            if (at + 1 < a.bic.size()) out += "; " + std::to_string(a.ks[at + 1]) + ": " + Criterion(a.bic[at + 1]);
             return out + ").";
         }
         case groups::Method::Hierarchical: {
