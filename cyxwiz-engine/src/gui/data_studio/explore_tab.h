@@ -35,6 +35,10 @@ bool ExploreProfileReady(const ExploreContext& context, const char* empty_hint);
 // around them (the old KeyValueTable draws an outline and cut the labels).
 void ExploreFigures(const char* id, const std::vector<std::pair<std::string, std::string>>& rows);
 
+// Choices side by side (a segmented control) when they fit on the line, else
+// a list; true when the choice changed.
+bool ExploreChoices(const char* id, const char* const* labels, int count, int* selected);
+
 // One background answer of type T for a key (dataset + choices).
 template <typename T>
 class ExploreJob {
@@ -56,7 +60,9 @@ public:
             label,
             [work = std::move(work), result](LambdaTask& task) {
                 *result = work(task);
-                if (!result->ok()) task.MarkFailed(result->error);
+                if (result->ok()) return;
+                if (result->error == "Cancelled.") task.MarkCancelled();  // asked to stop: not a failure
+                else task.MarkFailed(result->error);
             },
             nullptr,
             [this, alive, result, ticket](bool, const std::string&) {
