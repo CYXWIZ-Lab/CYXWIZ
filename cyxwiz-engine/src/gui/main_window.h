@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <functional>
@@ -9,6 +10,8 @@
 #include <utility>
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 #include "../core/compile_report_presentation.h"
+#include "../core/cross_validation_runner.h"
+#include "graph_training_launcher.h"
 
 namespace cyxwiz {
 class ProjectManager;
@@ -76,8 +79,6 @@ class HierarchicalPanel;
 class GMMPanel;
 class ClusterEvalPanel;
 // Model Evaluation panels (Phase 6B)
-class CrossValidationPanel;
-class LearningCurvesPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -121,6 +122,7 @@ class RegexTesterPanel;
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
 class DataStudioPanel;
+class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
@@ -232,6 +234,21 @@ private:
         const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
+    // Results > Cross-validation / Learning curve (TOFIX129 D4): Run marks the
+    // next Train launch as theirs; it goes through Train's checks, data loads,
+    // memory question and preparation, and only the dispatch differs: the
+    // prepared table goes to core/cross_validation_runner on a task.
+    struct FoldsLaunch {
+        std::shared_ptr<cyxwiz::FoldsView> view;
+        cyxwiz::CrossValidationSettings settings;
+    };
+    std::optional<FoldsLaunch> folds_launch_;
+    uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
+    void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
+    // A marked launch that stopped before its task: the view says why.
+    void EndFoldsLaunch(const std::string& why);
+    std::string FoldsBlocker() const;
+    ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -392,8 +409,6 @@ private:
     std::unique_ptr<cyxwiz::ClusterEvalPanel> cluster_eval_panel_;
 
     // Model Evaluation panels (Phase 6B)
-    std::unique_ptr<cyxwiz::CrossValidationPanel> cross_validation_panel_;
-    std::unique_ptr<cyxwiz::LearningCurvesPanel> learning_curves_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;

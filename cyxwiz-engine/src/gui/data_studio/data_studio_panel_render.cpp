@@ -430,6 +430,8 @@ void DataStudioPanel::RenderStatusBar() {
     else if (distribution_ && distribution_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting distributions");
     else if (tests_ && tests_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Testing");
     else if (regression_ && regression_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting");
+    else if (results_ && results_->CrossValidation()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Cross-validating");
+    else if (results_ && results_->LearningCurve()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Learning curve");
     else if (results_ && results_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the test");
     else if (readiness_ && readiness_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Comparing splits");
     else if (validate_ && validate_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Data Pipeline running");

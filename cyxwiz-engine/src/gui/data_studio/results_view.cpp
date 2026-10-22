@@ -22,6 +22,9 @@ namespace cyxwiz {
 ResultsView::ResultsView() {
     test_.keep = [this] { RequestKeep(); };
     test_.keep_blocker = [this] { return KeepBlocker(graph_open); };
+    // The folds' sentence sets the latest test beside them.
+    for (const auto& view : {cross_validation_, learning_curve_})
+        view->single_test = [this] { return test_.LatestScore(); };
 }
 
 void ResultsView::RefreshRuns() {
@@ -43,15 +46,22 @@ void ResultsView::Render() {
     static const struct {
         const char* label;
         View view;
-    } kViews[] = {{"Test", View::Test}, {"Generations", View::Generations}};
+    } kViews[] = {{"Test", View::Test},
+                  {"Cross-validation", View::CrossValidation},
+                  {"Learning curve", View::LearningCurve},
+                  {"Generations", View::Generations}};
     for (size_t i = 0; i < std::size(kViews); ++i) {
         if (i > 0) ImGui::SameLine();
         if (ui::FilterChip(kViews[i].label, kViews[i].label, "", view_ == kViews[i].view)) Show(kViews[i].view);
     }
     ImGui::Spacing();
     RenderKeepDialog();
-    if (view_ == View::Generations) RenderPreviews();
-    else test_.Render();
+    switch (view_) {
+        case View::Test: test_.Render(); break;
+        case View::CrossValidation: cross_validation_->Render(); break;
+        case View::LearningCurve: learning_curve_->Render(); break;
+        case View::Generations: RenderPreviews(); break;
+    }
 }
 
 void ResultsView::RenderPreviews() {

@@ -61,11 +61,13 @@ struct CrossValidationProgress {
     int fold = 0, folds = 0;
     double share = 1.0;
     int epoch = 0, epochs = 0;
+    bool regression = false;
 };
 
 struct CrossValidationCallbacks {
     std::function<bool()> should_cancel;
     std::function<void(const CrossValidationProgress&)> on_progress;
+    std::function<void(const CrossValidationRun&)> on_run;  // each training as it finishes
 };
 
 struct CrossValidationOutcome {

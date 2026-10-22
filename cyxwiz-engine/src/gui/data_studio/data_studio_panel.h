@@ -85,6 +85,12 @@ public:
     // Results > Test: MainWindow hands it each finished test and its "Run
     // test again".
     TestView* GetTestView() { return results_ ? &results_->Test() : nullptr; }
+    // Results > Cross-validation / Learning curve: MainWindow runs them and
+    // reports into them.
+    std::shared_ptr<FoldsView> GetFoldsView(ResultsView::View view) const {
+        if (!results_) return nullptr;
+        return view == ResultsView::View::LearningCurve ? results_->LearningCurve() : results_->CrossValidation();
+    }
 
     // Query results open in the Table Viewer through this (MainWindow): the
     // result and its tab's name.

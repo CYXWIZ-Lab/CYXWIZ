@@ -26,6 +26,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,8 @@ public:
     // the last successful results; it never becomes the run compared against.
     void SetResults(const TestingMetrics& results);
     bool HasResults() const;
+    // The latest successful test's main score: accuracy, or MAE (regression).
+    std::optional<double> LatestScore() const;
     // What to show: a kept test (path), the latest test on its Comparison
     // section (Train > Test > Compare test results), or A table... (Tools >
     // Evaluation with no test yet).

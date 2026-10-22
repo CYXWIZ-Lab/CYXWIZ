@@ -135,6 +135,12 @@ bool TestView::HasResults() const {
     return has_results_;
 }
 
+std::optional<double> TestView::LatestScore() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!has_results_ || results_.causal_lm_mode) return std::nullopt;
+    return results_.regression_mode ? static_cast<double>(results_.test_mae) : static_cast<double>(results_.test_accuracy);
+}
+
 void TestView::ShowKept(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex_);
     LoadKept(path);

@@ -442,6 +442,7 @@ void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
         if (training_plot_panel_)
             training_plot_panel_->SetPreparationFailed("Training not started: cancelled at the memory-risk question.");
         spdlog::info("StartTrainingFromGraph: materialization memory confirmation cancelled by user");
+        EndFoldsLaunch("Not started: cancelled at the memory question.");
     } else if (continue_training) {
         auto nodes = std::move(pending_memory_confirmation_nodes_);
         auto links = std::move(pending_memory_confirmation_links_);

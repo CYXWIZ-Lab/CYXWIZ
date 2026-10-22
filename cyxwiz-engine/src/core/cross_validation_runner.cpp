@@ -229,7 +229,7 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
 
             TrainingExecutor executor(fold, TakeResolvedExternalBatchers(std::move(built.batchers)));
             bool cancelled = false;
-            CrossValidationProgress progress{run_number, runs, k + 1, settings.folds, share, 0, epochs};
+            CrossValidationProgress progress{run_number, runs, k + 1, settings.folds, share, 0, epochs, result.regression};
             if (callbacks.on_progress) callbacks.on_progress(progress);
             const BatchCallback on_batch = [&](int, int, int, float, float) {
                 if (!cancelled && callbacks.should_cancel && callbacks.should_cancel()) {
@@ -280,6 +280,7 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
             spdlog::info("Cross-validation fold {} of {} (share {:.2f}): {} training rows, {} validation rows, {} {:.4f}",
                          run.fold, settings.folds, share, run.train_rows, run.val_rows, result.regression ? "MAE" : "accuracy",
                          result.regression ? run.val.mae : run.val.accuracy);
+            if (callbacks.on_run) callbacks.on_run(run);
             result.runs.push_back(run);
         }
     }

@@ -5,6 +5,8 @@
 //  - Test: one view of a test (test_view.h): the latest test, a kept test or
 //    any table read as a test. It replaced the Test Results window and the
 //    Tools > Evaluation windows (TOFIX129 D4).
+//  - Cross-validation and Learning curve (folds_view.h): the graph trained
+//    again on folds of its data.
 //  - Generations: a language model's training-run generation previews, the
 //    ones the Training Dashboard also shows (gui/generation_preview_view,
 //    TOFIX159 A4).
@@ -12,6 +14,7 @@
 // (results/tests) and adds a Data Input reading them and a Test Evaluation
 // node; kept tests open from Test's Showing picker.
 
+#include "folds_view.h"
 #include "test_view.h"
 #include "../generation_preview_view.h"
 
@@ -25,7 +28,7 @@ namespace cyxwiz {
 
 class ResultsView {
 public:
-    enum class View { Test, Generations };
+    enum class View { Test, CrossValidation, LearningCurve, Generations };
 
     ResultsView();
     void Render();
@@ -36,7 +39,10 @@ public:
         view_chosen_ = true;
     }
     TestView& Test() { return test_; }
-    bool IsRunning() const { return test_.IsRunning(); }
+    // Shared with MainWindow's task, which reports into them.
+    std::shared_ptr<FoldsView> CrossValidation() const { return cross_validation_; }
+    std::shared_ptr<FoldsView> LearningCurve() const { return learning_curve_; }
+    bool IsRunning() const { return test_.IsRunning() || cross_validation_->IsRunning() || learning_curve_->IsRunning(); }
     // For the job's caption: runs that wrote previews, and the latest test's rows.
     size_t PreviewRunCount();
     int64_t TestRowCount() const;
@@ -66,6 +72,8 @@ private:
     bool view_chosen_ = false;
 
     TestView test_;
+    std::shared_ptr<FoldsView> cross_validation_ = std::make_shared<FoldsView>(FoldsView::Mode::CrossValidation);
+    std::shared_ptr<FoldsView> learning_curve_ = std::make_shared<FoldsView>(FoldsView::Mode::LearningCurve);
 
     std::vector<GenerationPreviewRun> runs_;
     double runs_time_ = -1.0;

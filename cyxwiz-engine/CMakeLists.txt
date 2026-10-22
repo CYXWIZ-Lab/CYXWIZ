@@ -282,6 +282,7 @@ set(ENGINE_SOURCES
     src/core/studio_debugger_presentation.cpp
     src/core/training_manager.cpp
     src/core/cross_validation_runner.cpp
+    src/core/cross_validation_presentation.cpp
     src/core/test_executor.cpp
     src/core/test_metrics.cpp
     src/core/one_vs_rest_curves.cpp
@@ -652,8 +653,6 @@ set(ENGINE_SOURCES
     src/gui/panels/hierarchical_panel.cpp
     src/gui/panels/gmm_panel.cpp
     src/gui/panels/cluster_eval_panel.cpp
-    src/gui/panels/cross_validation_panel.cpp
-    src/gui/panels/learning_curves_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
     src/gui/panels/eigen_decomp_panel.cpp
     src/gui/panels/svd_panel.cpp
@@ -762,6 +761,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/test_view.cpp
     src/gui/data_studio/test_errors_by_value.cpp
     src/gui/data_studio/explore_plots.cpp
+    src/gui/data_studio/folds_view.cpp
     src/gui/data_studio/readiness_view.cpp
     src/gui/dashboard/dashboard_window.cpp
     src/gui/dashboard/dashboard_sparse.cpp
@@ -952,8 +952,6 @@ set(ENGINE_HEADERS
     src/gui/panels/hierarchical_panel.h
     src/gui/panels/gmm_panel.h
     src/gui/panels/cluster_eval_panel.h
-    src/gui/panels/cross_validation_panel.h
-    src/gui/panels/learning_curves_panel.h
     src/gui/panels/matrix_calculator_panel.h
     src/gui/panels/eigen_decomp_panel.h
     src/gui/panels/svd_panel.h
@@ -1030,6 +1028,7 @@ set(ENGINE_HEADERS
     src/gui/data_studio/test_view.h
     src/gui/data_studio/test_errors_by_value.h
     src/gui/data_studio/explore_plots.h
+    src/gui/data_studio/folds_view.h
     src/gui/data_studio/missing_view.h
     src/gui/data_studio/outliers_view.h
     src/gui/data_studio/correlation_view.h
@@ -5161,6 +5160,16 @@ add_executable(test_testing_device_handoff
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
 configure_training_executor_harness(test_testing_device_handoff)
 target_sources(test_testing_device_handoff PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
+# Results > Cross-validation / Learning curve wording (TOFIX129 D4)
+add_executable(test_cross_validation_presentation
+    tests/test_cross_validation_presentation.cpp
+    src/core/cross_validation_presentation.cpp
+    src/core/compiled_node_presentation.cpp)
+target_include_directories(test_cross_validation_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_cross_validation_presentation PRIVATE cyxwiz-training-core spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json cyxwiz-backend)
+set_target_properties(test_cross_validation_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME cross_validation_presentation COMMAND test_cross_validation_presentation)
+
 # Cross-validation and learning curves that train the graph, against PyTorch (TOFIX129 D4)
 add_executable(test_computation_truth_cross_validation
     tests/computation_truth/test_computation_truth_cross_validation.cpp
