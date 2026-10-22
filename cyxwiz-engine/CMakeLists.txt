@@ -220,7 +220,7 @@ set(ENGINE_SOURCES
     src/core/data_explore.cpp
     src/core/explore_presentation.cpp
     src/core/transform_step_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
@@ -2760,7 +2760,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/training_evaluation_operator.cpp
     src/core/cross_validation_presentation.cpp
     src/core/compiled_node_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
     src/core/data_explore.cpp
@@ -3084,7 +3084,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/session_query_engine.cpp
     src/core/data_explore.cpp
     src/core/explore_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/sql_plan.cpp
     src/core/guided_sql.cpp
@@ -3843,7 +3843,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/training_evaluation_operator.cpp
     src/core/cross_validation_presentation.cpp
     src/core/compiled_node_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
     src/core/data_explore.cpp
@@ -7230,7 +7230,7 @@ add_test(NAME TransformStepPresentation COMMAND test_transform_step_presentation
 # Data Studio > Explore Tests and Regression (TOFIX129 D3).
 add_executable(test_stats_explore tests/test_stats_explore.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
-    src/core/stats_explore.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
     src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
@@ -7242,6 +7242,23 @@ if(WIN32)
 endif()
 set_target_properties(test_stats_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME StatsExplore COMMAND test_stats_explore)
+
+# Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
+add_executable(test_groups_explore tests/test_groups_explore.cpp
+    src/core/groups_explore.cpp src/core/groups_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
+    src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_groups_explore PRIVATE src)
+target_link_libraries(test_groups_explore PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_groups_explore PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+target_compile_definitions(test_groups_explore PRIVATE
+    CYXWIZ_GROUPS_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/groups_sklearn.json")
+set_target_properties(test_groups_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME GroupsExplore COMMAND test_groups_explore)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp
@@ -7504,7 +7521,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/training_evaluation_operator.cpp
     src/core/cross_validation_presentation.cpp
     src/core/compiled_node_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
     src/core/data_explore.cpp

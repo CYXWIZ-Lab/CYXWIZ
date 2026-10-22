@@ -176,6 +176,13 @@ public:
         int k = 5
     );
 
+    /** As above, with the distance "euclidean", "manhattan" or "cosine" (DBSCAN's metrics). */
+    static std::vector<double> ComputeKDistances(
+        const std::vector<std::vector<double>>& data,
+        int k,
+        const std::string& metric
+    );
+
     // ==================== Hierarchical ====================
 
     /**
