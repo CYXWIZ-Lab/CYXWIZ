@@ -639,6 +639,43 @@ void TestInstallLocation() {
             all_users.requires_elevation && !relative.valid && !root.valid,
         "Installation locations must be absolute, normalized, non-root, and "
         "least-privilege by default");
+
+  // A pasted path with spaces or Explorer's quotes is the same folder.
+  const auto typed = absolute_root.u8string();
+  const std::string plain(typed.begin(), typed.end());
+  Check(cyxwiz::ParseInstallLocationText("  " + plain + " \t") == absolute_root &&
+            cyxwiz::ParseInstallLocationText("\"" + plain + "\"") == absolute_root &&
+            cyxwiz::ParseInstallLocationText(" '" + plain + "' ") == absolute_root &&
+            cyxwiz::ResolveCyxWizInstallLocation(
+                cyxwiz::ParseInstallLocationText(" \"" + plain + "\" ")).valid &&
+            cyxwiz::ParseInstallLocationText("   ").empty(),
+        "A typed or pasted location is trimmed of spaces and surrounding quotes");
+}
+
+// The Recommended profile installs the CPU base only; the summary names the
+// GPU packs that suit this computer so they are not missed.
+void TestOptionalPacksForThisComputer() {
+  using cyxwiz::BackendPackCatalogSupport;
+  auto cpu = Pack("base", BackendPackCatalogSupport::Supported);
+  cpu.backend = "cpu";
+  auto cuda = Pack("cuda-pack", BackendPackCatalogSupport::Supported);
+  cuda.backend = "cuda";
+  auto opencl = Pack("opencl-pack", BackendPackCatalogSupport::Supported);
+  auto oneapi = Pack("oneapi-pack", BackendPackCatalogSupport::Supported);
+  oneapi.backend = "oneapi";
+  oneapi.compatibility->recommendation_target_eligible = false;  // never recommended
+  auto blocked = Pack("blocked-pack", BackendPackCatalogSupport::Blocked);
+  auto installed = Pack("installed-pack", BackendPackCatalogSupport::Supported, true);
+  installed.backend = "vulkan";
+  const std::vector records{cpu, cuda, opencl, oneapi, blocked, installed};
+  Check(cyxwiz::OptionalPacksForThisComputer(records, {}) ==
+            std::vector<std::string>({"cuda", "opencl"}),
+        "With nothing chosen, the summary names CUDA and OpenCL");
+  Check(cyxwiz::OptionalPacksForThisComputer(records, {"cuda-pack"}) ==
+            std::vector<std::string>({"opencl"}),
+        "A chosen pack is not named again");
+  Check(cyxwiz::OptionalPacksForThisComputer(records, {"cuda-pack", "opencl-pack"}).empty(),
+        "Nothing is named when every suitable pack is chosen");
 }
 
 void TestMaintenanceBaseUpdatePlan() {
@@ -1056,6 +1093,7 @@ int main(int argc, char** argv) {
   TestMultiTargetCpuCatalogPlan();
   TestDisplayFormatting();
   TestInstallLocation();
+  TestOptionalPacksForThisComputer();
   TestInstallerProgressChannel();
   TestInstallerTransactionJournal();
   TestInstallerCudaPrerequisite();

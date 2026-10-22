@@ -8,6 +8,7 @@
 #include "installer/installer_theme.h"
 #include "installer/installer_transaction_journal.h"
 #include "installer/installer_view.h"
+#include "product_registration.h"
 
 // glad must own the OpenGL declarations before GLFW includes platform headers.
 // clang-format off
@@ -77,12 +78,17 @@ bool ParseArguments(const std::vector<std::string> &values,
                     Arguments &output, std::string &error) {
   const auto bundled_runtime = executable_directory / "runtime";
   std::error_code state_error;
+  // The installation this installer manages: the one it ships in, else the
+  // registered one (wherever the user put it), else the default location.
+  const auto registered = cyxwiz::runtime::RegisteredInstallRoot(
+      cyxwiz::runtime::ProductInstallScope::CurrentUser);
   output.runtime_root =
       std::filesystem::is_regular_file(bundled_runtime / "active-runtime.json",
                                        state_error)
           ? bundled_runtime
-          : cyxwiz::installer::DefaultCyxWizInstallRoot(output.scope) /
-                "runtime";
+          : registered ? *registered / "runtime"
+                       : cyxwiz::installer::DefaultCyxWizInstallRoot(output.scope) /
+                             "runtime";
   output.metadata_root = bundled_runtime;
   bool runtime_seen = false;
   bool metadata_seen = false;
@@ -149,8 +155,11 @@ bool ParseArguments(const std::vector<std::string> &values,
     return false;
   }
   if (!runtime_seen && output.scope == cyxwiz::CyxWizInstallScope::AllUsers) {
+    const auto all_users = cyxwiz::runtime::RegisteredInstallRoot(
+        cyxwiz::runtime::ProductInstallScope::AllUsers);
     output.runtime_root =
-        cyxwiz::installer::DefaultCyxWizInstallRoot(output.scope) / "runtime";
+        all_users ? *all_users / "runtime"
+                  : cyxwiz::installer::DefaultCyxWizInstallRoot(output.scope) / "runtime";
   }
   output.runtime_root = std::filesystem::absolute(output.runtime_root);
   if (runtime_seen && !metadata_seen) {
@@ -430,6 +439,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
       async_operation = AsyncOperation::None;
       operation_message = result.message;
       view_state.uninstall_completed = result.succeeded;
+      view_state.uninstall_refused = result.succeeded ? std::string() : result.message;
       std::cout << "CyxWiz uninstall: " << result.message << std::endl;
       view_state.install_completed = false;
       view_state.engine_launched = false;
@@ -580,6 +590,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
         break;
       }
       view_state.uninstall_completed = false;
+      view_state.uninstall_refused.clear();
       view_state.install_completed = false;
       view_state.engine_launched = false;
       view_state.cancellation_requested = false;

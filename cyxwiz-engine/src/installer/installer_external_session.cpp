@@ -2,6 +2,7 @@
 
 #include "backend_pack_path.h"
 #include "backend_pack_platform.h"
+#include "installer_transaction_journal.h"
 
 #include <archive.h>
 
@@ -103,7 +104,8 @@ bool StageExternalInstallerSession(
           runtime::CurrentProductRemovalFinalizerExecutableName()})
       copy(executable_directory / name, std::filesystem::path(name));
     for (const auto *relative :
-         {"resources/cyxwiz.png", "resources/fonts/Inter-Regular.ttf",
+         {"resources/cyxwiz.png", "resources/cyxwiz_icon.png",
+          "resources/fonts/Inter-Regular.ttf",
           "resources/fonts/Inter-Bold.ttf",
           "resources/fonts/fa-solid-900.ttf"}) {
       if (std::filesystem::is_regular_file(executable_directory / relative))
@@ -141,6 +143,32 @@ bool StageExternalInstallerSession(
   }
 }
 
+namespace {
+
+// Where the manager runs while it changes the installation it came from: a
+// CyxWiz folder beside the installer's transaction record, not the system
+// temporary folder (programs that copy themselves to %TEMP% and relaunch look
+// like malware droppers to security scanners). Earlier sessions are removed
+// first; one still running stays (its files are in use).
+std::filesystem::path ExternalSessionDirectory() {
+  const auto journal = DefaultInstallerTransactionJournalPath();
+  std::error_code error;
+  if (journal.empty()) return std::filesystem::temp_directory_path(error);
+  const auto sessions = journal.parent_path() / "sessions";
+  std::filesystem::create_directories(sessions, error);
+  if (error) return std::filesystem::temp_directory_path(error);
+  for (const auto &entry : std::filesystem::directory_iterator(sessions, error)) {
+    const auto name = entry.path().filename().string();
+    std::error_code ignored;
+    if (name.rfind("cyxwiz-manager-", 0) == 0 && entry.is_directory(ignored)) {
+      std::filesystem::remove_all(entry.path(), ignored);
+    }
+  }
+  return sessions;
+}
+
+} // namespace
+
 ExternalInstallerSession PrepareExternalInstallerSession(
     const std::filesystem::path &executable_directory,
     const std::filesystem::path &runtime_root,
@@ -160,7 +188,7 @@ ExternalInstallerSession PrepareExternalInstallerSession(
     if (!error.empty())
       return ExternalInstallerSession::Failed;
     const auto destination =
-        std::filesystem::temp_directory_path() /
+        ExternalSessionDirectory() /
         ("cyxwiz-manager-" +
          std::to_string(
              std::chrono::steady_clock::now().time_since_epoch().count()));
