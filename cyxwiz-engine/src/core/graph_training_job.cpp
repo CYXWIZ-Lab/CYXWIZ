@@ -8,6 +8,7 @@
 #include "graph_training_prep.h"
 #include "node_metadata_registry.h"
 #include "parquet_backed_dataset.h"
+#include "project_data_path.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_arrow_batcher.h"
 #include "sha256_digest.h"
@@ -454,6 +455,21 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     return result;
 }
 
+
+std::map<std::string, std::string> DataInputFiles(const std::string& graph_json, const std::string& project_root) {
+    std::map<std::string, std::string> files;
+    GraphDocument graph;
+    std::string error;
+    if (!ParseGraphDocument(graph_json, graph, error)) return files;
+    for (const auto& node : graph.nodes) {
+        if (node.type != gui::NodeType::DataInput) continue;
+        const std::string name = Parameter(node, "dataset_name");
+        const std::string path = Parameter(node, "file_path");
+        if (name.empty() || path.empty()) continue;
+        files[name] = ResolveProjectDataPath(path, project_root);
+    }
+    return files;
+}
 
 bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error) {
     plan = {};

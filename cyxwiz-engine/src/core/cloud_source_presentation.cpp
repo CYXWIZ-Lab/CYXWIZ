@@ -118,7 +118,8 @@ View Build(const Input& in) {
         detected_file_id = file->id;
         detected_dataset_id = dataset ? dataset->id : std::string();
         detected_size = static_cast<uint64_t>(file->size_bytes);
-    } else if (!in.connected && in.remembered.Any()) {
+    } else if (in.remembered.Any()) {
+        // No live pick yet (or the listing failed): the graph's own record.
         detected_name = in.remembered.file_name;
         detected_file_id = in.remembered.file_id;
         detected_dataset_id = in.remembered.dataset_id;
@@ -138,8 +139,8 @@ View Build(const Input& in) {
         }
     }
 
-    // --- without a connection, the graph's own record
-    if (!in.connected && in.remembered.Any()) {
+    // --- the graph's own record, until a live pick replaces it
+    if (!file && in.remembered.Any()) {
         v.remembered = {{"Dataset", in.remembered.dataset_name},
                         {"Dataset id", in.remembered.dataset_id},
                         {"File", in.remembered.file_name},
@@ -147,8 +148,10 @@ View Build(const Input& in) {
                         {"Size", FormatSize(in.remembered.size_bytes)},
                         {"Gateway", in.gateway + " (servers.cloud_gateway)"}};
         v.remembered_note =
-            "These are saved in the graph, so a node can still be sent the job once you are signed in. Without a "
-            "connection the Engine cannot list datasets, mint the node's access token, or read a sample.";
+            in.connected
+                ? "These are saved in the graph; pick a dataset and file above to change them."
+                : "These are saved in the graph, so a node can still be sent the job once you are signed in. Without "
+                  "a connection the Engine cannot list datasets, mint the node's access token, or read a sample.";
     }
 
     // --- Apply

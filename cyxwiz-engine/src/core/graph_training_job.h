@@ -125,6 +125,13 @@ struct GraphJobDatasetPlan {
 // (preparation steps, subgraphs, unreadable) - checked before anything is sent.
 bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error);
 
+// dataset_name -> the file each Data Input reads on this machine: its
+// file_path resolved against the project root (graphs save project-relative
+// paths). For GraphTrainingJobRequest::dataset_files when the Engine runs a
+// job itself (the job-fit probe). Inputs without a file_path (cloud sources)
+// are left out.
+std::map<std::string, std::string> DataInputFiles(const std::string& graph_json, const std::string& project_root);
+
 // The job's graph with each shipped Data Input reading its local file and the
 // `drop` inputs (with their links) removed. Every remaining Data Input needs
 // a file. The rest of the document is unchanged.

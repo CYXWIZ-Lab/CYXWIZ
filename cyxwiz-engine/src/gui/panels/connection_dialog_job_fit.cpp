@@ -6,6 +6,7 @@
 
 #include "../icons.h"
 #include "../node_editor.h"
+#include "../../core/project_manager.h"
 #include "../ui_buttons.h"
 
 #include <cyxwiz/device.h>
@@ -63,6 +64,10 @@ void ConnectionDialog::UpdateJobEstimate() {
     GraphTrainingJobRequest request;
     request.graph_json = std::move(graph_json);
     request.batch_size_override = reservation_batch_size_;
+    // Graphs save Data Input paths project-relative; the probe reads them
+    // resolved, as the node reads its own copies.
+    request.dataset_files =
+        cyxwiz::DataInputFiles(request.graph_json, cyxwiz::ProjectManager::Instance().GetProjectRoot());
     estimate_future_ = std::async(std::launch::async, [request]() { return ProbeGraphJobMemory(request); });
 }
 

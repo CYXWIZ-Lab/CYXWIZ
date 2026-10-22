@@ -54,7 +54,19 @@ void CheckConnectedAndPicked() {
     Check(v.detected == "Parquet table, 149.6 MB, file 2f1c7f8e in dataset 3b9d2c1e", "detected: " + v.detected);
     Check(Contains(v.detected_note, "nothing is sent from this computer"), "detected note");
     Check(v.can_apply && v.apply_blocked_reason.empty(), "Apply allowed");
-    Check(v.remembered.empty(), "nothing to remember while connected");
+    Check(v.remembered.empty(), "a live pick replaces the graph's record");
+
+    // Connected, listing failed, nothing picked: the record still shows.
+    Input failed = Connected();
+    failed.datasets.clear();
+    failed.selected_dataset_id.clear();
+    failed.files.clear();
+    failed.datasets_error = "pool timed out";
+    failed.remembered = {"tiny-causal-lm", "f8ccb4ed", "tokens.parquet", "fa02b46b", 3117};
+    const View f = Build(failed);
+    Check(f.detected == "Parquet table, 3.0 KB, file fa02b46b in dataset f8ccb4ed", "detected from the record: " + f.detected);
+    Check(f.remembered.size() == 6 && Contains(f.remembered_note, "pick a dataset and file above"), "record shown while connected");
+    Check(!f.can_apply && f.apply_blocked_reason == "Pick a dataset and a file", "Apply off until a live pick");
 }
 
 void CheckPickingRules() {

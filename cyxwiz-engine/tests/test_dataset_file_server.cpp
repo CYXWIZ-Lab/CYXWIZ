@@ -136,6 +136,24 @@ int main() {
               "graph with a preparation step refused: " + error);
     }
 
+    std::cout << "resolves each Data Input's file against the project root\n";
+    {
+        nlohmann::json g = GraphWithTestInput(root);
+        for (auto& node : g["nodes"]) {
+            if (node.value("id", 0) == 1) node["parameters"]["file_path"] = "datasets/tokens.parquet";
+            if (node.value("id", 0) == 21) {
+                node["parameters"].erase("file_path");
+                node["parameters"]["cloud_file_id"] = "2f1c7f8e";
+            }
+        }
+        const auto files = cyxwiz::DataInputFiles(g.dump(), "D:/projects/demo");
+        Check(files.size() == 1 && files.count(kTrain) == 1, "one file for the one input with a path");
+        const std::string resolved = files.count(kTrain) ? files.at(kTrain) : std::string();
+        Check(Contains(resolved, "projects") && Contains(resolved, "demo") && Contains(resolved, "tokens.parquet") &&
+                  std::filesystem::path(resolved).is_absolute(),
+              "relative path resolved against the root: " + resolved);
+    }
+
     std::cout << "plans CyxCloud inputs apart from shipped ones (TOFIX164)\n";
     {
         auto cloud_graph = [&](const std::string& file_name, const std::string& dataset_id) {
