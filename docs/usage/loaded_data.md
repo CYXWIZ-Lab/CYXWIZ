@@ -71,13 +71,14 @@ MNIST test, `mnist_test.csv` (17.4 MB, 10,000 x 785):
 
 | What happens | What goes |
 |---|---|
-| Delete a Data Input | The dataset its dialog loaded, and everything a pipeline run made from it: its run copy (`ds_datainput_<id>`) and the in-memory copies of it |
+| Delete a Data Input | The dataset its dialog loaded, and everything a pipeline run made from it: its run copy (`ds_datainput_<id>`) and the in-memory copies of it, including the copies a Plot or Dashboard read |
 | Delete any step | The results a run registered for it, and its extra outputs. A table another node still passes through stays. |
 | Clear the graph, or open another graph | Everything the runs registered, except the outputs of Save, Deploy and Data Output nodes (you named them). Old copies can't be mistaken for the new graph's nodes, which start at id 1 again. |
 | Delete a Dataset Input | Nothing: it only names a dataset Data Studio loaded |
 | Close or switch the project | Every dataset |
 | **Unload from memory** (the Data Input dialog's Memory tab) | The dataset from every place it is held, and the copies pipeline runs made of it; the node reads Not loaded until the next Apply or run |
 | A Plot or Dashboard refresh finishes | Its in-memory copies of disk inputs (the plot keeps the rows it read) |
+| A Plot or Dashboard is no longer connected (its input was deleted or unwired) | The rows it read; it reads "Not connected" |
 | Delete a Plot of a trainer's model | The model's table (`ds_plot_model_<id>`), unless another plot shows it |
 | A run that was replaced by a newer run finishes | What the older run registered, except what the newer run uses (it releases once the newer run has ended) |
 
