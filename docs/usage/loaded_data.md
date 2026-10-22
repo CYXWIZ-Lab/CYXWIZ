@@ -109,6 +109,11 @@ gone)." The plots update when the dataset is loaded again. A plot open in the
 dashboard's plot editor lets go of its table and says where the plot was:
 "Open the plot again from the dashboard when it is loaded."
 
+**A dashboard on a sparse vectorizer** keeps its feature matrix in memory
+until the project closes: closing the dashboard, deleting or unloading its
+Data Input, or opening another graph does not free it. Hover the dashboard's
+"Sparse features" line or its Memory tile for the same note.
+
 Two Data Inputs reading files with the same name in different folders get
 different dataset names (`mnist`, `mnist_2`). Two Data Inputs reading the
 same file still share one table, so nothing is copied.
