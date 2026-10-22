@@ -3158,6 +3158,31 @@ void PipelineExecutor::ReleaseAdmittedInputs() {
     if (!admitted.empty()) RemoveUnusedStepFiles();
 }
 
+void PipelineExecutor::AdoptOwnership(PipelineExecutor& from) {
+    if (&from == this) return;
+    std::map<int, std::set<std::string>> owned;
+    std::set<int> kept;
+    {
+        std::lock_guard<std::mutex> lock(from.owned_mutex_);
+        owned.swap(from.owned_names_);
+        kept.swap(from.kept_nodes_);
+    }
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(from.step_files_mutex_);
+        admitted.swap(from.admitted_inputs_);
+    }
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (auto& [id, names] : owned) owned_names_[id].insert(names.begin(), names.end());
+        kept_nodes_.insert(kept.begin(), kept.end());
+    }
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    for (auto& name : admitted)
+        if (std::find(admitted_inputs_.begin(), admitted_inputs_.end(), name) == admitted_inputs_.end())
+            admitted_inputs_.push_back(std::move(name));
+}
+
 PipelineExecutor::~PipelineExecutor() {
     // Its copies of memory tables go with it; result files a dataset still
     // uses stay until the next prune.

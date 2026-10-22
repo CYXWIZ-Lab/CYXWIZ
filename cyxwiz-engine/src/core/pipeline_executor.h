@@ -136,6 +136,10 @@ public:
     // Only the in-memory copies of disk inputs (a one-shot run whose result
     // has been read).
     void ReleaseAdmittedInputs();
+    // Takes over what `from`'s runs registered (its owned names, kept nodes
+    // and in-memory input copies), so this executor releases them later.
+    // A one-shot run (a plot's data) hands its names to one that outlives it.
+    void AdoptOwnership(PipelineExecutor& from);
 
     /**
      * Get execution progress (0.0 to 1.0)

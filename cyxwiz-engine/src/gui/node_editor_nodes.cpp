@@ -6,6 +6,7 @@
 #include "../core/extension_node_registry.h"
 #include "../core/data_registry.h"
 #include "../core/pipeline_executor.h"
+#include "plot/plot_node_lane.h"
 #include "loaders/data_loader.h"
 #include <imgui.h>
 #include <imnodes.h>
@@ -119,11 +120,13 @@ void NodeEditor::SyncDataAfterSwap(const std::vector<MLNode>& before) {
 }
 
 void NodeEditor::ReleaseRunData(const std::set<int>& node_ids) {
+    if (plot_lane_) plot_lane_->ReleaseNodes(node_ids);  // what plots' runs read for them
     pending_run_release_.insert(node_ids.begin(), node_ids.end());
     ApplyPendingRunRelease();
 }
 
 void NodeEditor::ReleaseAllRunData() {
+    if (plot_lane_) plot_lane_->ReleaseAll();
     pending_run_release_all_ = true;
     ApplyPendingRunRelease();
 }
@@ -138,7 +141,10 @@ void NodeEditor::ApplyPendingRunRelease() {
             ++it;
             continue;
         }
-        (*it)->ReleaseAll(pipeline_executor_ ? pipeline_executor_->OwnedNames() : std::set<std::string>{});
+        // Names a plot's run registered too stay with it.
+        std::set<std::string> keep = pipeline_executor_ ? pipeline_executor_->OwnedNames() : std::set<std::string>{};
+        if (plot_lane_) keep.merge(plot_lane_->OwnedNames());
+        (*it)->ReleaseAll(keep);
         it = retired_executors_.erase(it);
     }
     if (pending_run_release_.empty() && !pending_run_release_all_) return;

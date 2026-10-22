@@ -149,6 +149,29 @@ int main() try {
         registry.ClearAllTabularDatasets();
     }
 
+    // A one-shot run (a plot's data) hands its names to an executor that
+    // outlives it; deleting the node then frees them (its run copy stayed).
+    {
+        cyxwiz::PipelineExecutor owner;
+        {
+            cyxwiz::PipelineExecutor one_shot;
+            one_shot.SetIngestionCacheRoot((work_dir / "ingestion").string());
+            Check(one_shot.ExecutePipeline(graph_json), "one-shot run: " + one_shot.GetLastError());
+            owner.AdoptOwnership(one_shot);
+            Check(one_shot.OwnedNames().empty(), "the one-shot run owns nothing after handing over");
+        }
+        Check(Held("ds_datainput_1") && Held("ds_dataconvert_2"), "its names outlive the one-shot executor");
+        const auto adopted = owner.OwnedNames();
+        Check(adopted.count("ds_datainput_1") && adopted.count("ds_dataconvert_2") && !adopted.count("kept_output"),
+              "the owner holds the run's names, not the Save output");
+        owner.ReleaseNodes({1});
+        Check(!Held("ds_datainput_1"), "releasing the deleted input frees its run copy");
+        Check(Held("ds_dataconvert_2"), "another node's result stays");
+        owner.ReleaseAll();
+        Check(!Held("ds_dataconvert_2") && Held("kept_output"), "ReleaseAll frees the rest, the Save output stays");
+        registry.ClearAllTabularDatasets();
+    }
+
     // Unload from memory frees a dataset from every map (TOFIX160 P6).
     const auto table = cyxwiz::DataRegistry::Instance().LoadCSVToArrow(big_csv.string(), "unload_me");
     Check(table != nullptr && Held("unload_me"), "a dataset is loaded to unload");
