@@ -60,6 +60,11 @@ ResolveSpatialSequentialHead(const TrainingConfiguration &config) {
             std::to_string(i) + ")");
       continue;
     }
+    // The compiler's sample entering this layer, from the graph: in a branched
+    // graph (a residual block's shortcut) the previous layer in this list is
+    // not this layer's input. The walk below is the fallback when it is absent.
+    if (layer.input_shape.size() == 3)
+      shape = layer.input_shape;
     if (layer.type == gui::NodeType::Flatten || spatial::IsGlobalPoolLayer(layer.type)) {
       const bool global_pool = spatial::IsGlobalPoolLayer(layer.type);
       if (shape.empty())

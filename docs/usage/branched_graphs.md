@@ -50,8 +50,9 @@ Input 2 before Input 1 changes nothing.
   to B's rows.
 - An output you leave unconnected is fine: its branch passes a zero gradient
   back.
-- In a CNN, split after Flatten. Before Flatten the tensors are images
-  `[H, W, C]`, and Split runs on rows.
+- In a CNN, Split runs after Flatten: before it the tensors are images
+  `[H, W, C]` and Split cuts rows. Fan-out and Add do work on images: that
+  is a residual block (see [cnn_layers.md](cnn_layers.md#residual-blocks)).
 
 Each problem is reported on the node, with the shapes involved.
 

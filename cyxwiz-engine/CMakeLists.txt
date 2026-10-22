@@ -6440,6 +6440,10 @@ endif()
 set_target_properties(test_cnn_graph_training PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+# The residual CNN graph checked against PyTorch (TOFIX178 1.2).
+target_compile_definitions(test_cnn_graph_training PRIVATE
+    CYXWIZ_CNN_GRAPH_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/cnn_graph_pytorch.json"
+)
 add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
 
 set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
