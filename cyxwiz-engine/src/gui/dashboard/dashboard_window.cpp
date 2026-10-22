@@ -331,7 +331,18 @@ void DashboardWindow::AddWidget(const std::string& kind_id) {
     SaveIfChanged();
 }
 
+void DashboardWindow::ReleaseEditorIfGone() {
+    // The plot editor holds the whole dataset's table: when the dataset is
+    // gone it lets go and says so where the plot was (TOFIX160 P5).
+    if (!editor_ || editor_released_ || dataset_.empty() || DatasetCatalog::Instance().Resolve(dataset_)) return;
+    editor_->ClearData(title_.empty() ? dataset_ : title_,
+                       "'" + dataset_ + "' is not loaded now (its Data Input or graph is gone). Open the plot again "
+                       "from the dashboard when it is loaded.");
+    editor_released_ = true;
+}
+
 void DashboardWindow::Render() {
+    ReleaseEditorIfGone();
     if (editor_) editor_->Render();
     FinishExport();
     if (!visible) return;
@@ -1066,6 +1077,7 @@ void DashboardWindow::DrawSettings(float width) {
 }
 
 void DashboardWindow::RenderEmbedded() {
+    ReleaseEditorIfGone();
     if (editor_) editor_->Render();
     const ui::Tokens& t = ui::CurrentTokens();
     if (dataset_.empty() || !message_.empty()) {
@@ -1229,6 +1241,7 @@ void DashboardWindow::OpenInPlotWindow(WidgetSpec& w) {
         }
     };
     editor_->SetArrowTable(title_.empty() ? dataset_ : title_, table);
+    editor_released_ = false;
     editor_->visible = true;
 }
 

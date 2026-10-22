@@ -90,10 +90,12 @@ private:
         std::string dataset;
         // The loaded dataset the rows came from (OpenDataset, any row count).
         // When it is removed (its node deleted, the graph or project closed)
-        // the tab stays as a frozen copy of the rows it shows, marked so, and
-        // lets go of the dataset's Arrow buffers (TOFIX160 P5).
+        // or replaced (loaded again with new data), the tab stays as a frozen
+        // copy of the rows it shows, marked so, and lets go of the dataset's
+        // Arrow buffers (TOFIX160 P5).
         std::string origin;
-        bool removed = false;
+        enum class Frozen { No, Removed, Replaced };
+        Frozen frozen = Frozen::No;
         // The column profile for the Stats sidebar, computed in the
         // background; stale after an edit.
         std::shared_ptr<DatasetProfile> profile;
@@ -157,7 +159,7 @@ private:
 
     void RenderTabBar();
     void RenderLiveHeader(TableTab* tab);
-    // The frozen-copy line of a tab whose dataset was removed.
+    // The frozen-copy line of a tab whose dataset was removed or replaced.
     void RenderRemovedHeader(TableTab* tab);
     int catalog_subscription_ = 0;
     void ReadLive(TableTab* tab, std::vector<int> index, long long max_rows);

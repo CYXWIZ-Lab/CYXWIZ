@@ -94,9 +94,17 @@ rows it shows. A line over the tab says so: "'mnist_test' was removed (its
 Data Input or graph is gone). This tab is a frozen copy of the 10000 rows it
 shows." The tab lets go of the dataset's own memory and keeps only its rows.
 
+**A Table Viewer tab of a dataset that is loaded again** with new data (an
+Apply with other options, for example) also stays as a frozen copy: "'mnist_test'
+was loaded again with new data. This tab is a frozen copy of the 10000 rows it
+showed before; open the dataset again for the new rows." If the dataset is
+then removed, the line changes to the "was removed" notice.
+
 **A dashboard on a removed dataset** keeps its plots as they were last read,
 with a line saying so: "'<name>' is not loaded now (its Data Input or graph is
-gone)." The plots update when the dataset is loaded again.
+gone)." The plots update when the dataset is loaded again. A plot open in the
+dashboard's plot editor lets go of its table and says where the plot was:
+"Open the plot again from the dashboard when it is loaded."
 
 Two Data Inputs reading files with the same name in different folders get
 different dataset names (`mnist`, `mnist_2`). Two Data Inputs reading the

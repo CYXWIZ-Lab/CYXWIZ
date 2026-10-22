@@ -35,14 +35,18 @@ TableViewerPanel::TableViewerPanel()
     // A removed dataset leaves its tabs as frozen copies of the rows they
     // show; they let go of its Arrow buffers so its memory is freed.
     catalog_subscription_ = DatasetCatalog::Instance().Subscribe(alive_, [this](const DatasetChange& change) {
-        if (change.kind != DatasetChange::Kind::Removed) return;
+        if (change.kind == DatasetChange::Kind::Added) return;
+        const bool removed = change.kind == DatasetChange::Kind::Removed;
         for (auto& tab : tabs_) {
-            if (tab->removed || tab->origin != change.name) continue;
-            tab->removed = true;
+            if (tab->origin != change.name) continue;
+            // Removed after a replace says removed; a second replace changes nothing.
+            if (tab->frozen == TableTab::Frozen::Removed || (!removed && tab->frozen == TableTab::Frozen::Replaced))
+                continue;
+            tab->frozen = removed ? TableTab::Frozen::Removed : TableTab::Frozen::Replaced;
             tab->source.reset();
             tab->dataset.clear();
-            spdlog::info("Table Viewer: '{}' was removed; tab '{}' keeps a frozen copy of its {} rows", change.name,
-                         tab->filename, tab->GetRowCount());
+            spdlog::info("Table Viewer: '{}' was {}; tab '{}' keeps a frozen copy of its {} rows", change.name,
+                         removed ? "removed" : "loaded again", tab->filename, tab->GetRowCount());
         }
     });
 }
@@ -142,10 +146,14 @@ void TableViewerPanel::Render() {
 }
 
 void TableViewerPanel::RenderRemovedHeader(TableTab* tab) {
-    if (!tab || !tab->removed) return;
+    if (!tab || tab->frozen == TableTab::Frozen::No) return;
     const ui::Tokens& t = ui::CurrentTokens();
-    const std::string text = "'" + tab->origin + "' was removed (its Data Input or graph is gone). This tab is a frozen "
-                             "copy of the " + std::to_string(tab->GetRowCount()) + " rows it shows.";
+    const std::string rows = std::to_string(tab->GetRowCount());
+    const std::string text = tab->frozen == TableTab::Frozen::Removed
+        ? "'" + tab->origin + "' was removed (its Data Input or graph is gone). This tab is a frozen copy of the " +
+              rows + " rows it shows."
+        : "'" + tab->origin + "' was loaded again with new data. This tab is a frozen copy of the " + rows +
+              " rows it showed before; open the dataset again for the new rows.";
     ui::NoticeLine(text, t.warning);
 }
 
