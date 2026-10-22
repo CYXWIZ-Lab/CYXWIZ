@@ -157,6 +157,7 @@ view::Input DataInputDialog::CloudInput() const {
     in.signed_in = auth.IsAuthenticated();
     if (in.signed_in) in.account = auth.GetUserInfo().email;
     auto* client = cyxwiz::cloud::Client();
+    in.browser_opened = client != nullptr;
     in.connected = client != nullptr && client->IsConnected();
     in.gateway = cyxwiz::core::EngineConfig::Instance().GetCloudGatewayAddress();
     in.connect_error = cyxwiz::cloud::LastConnectError();

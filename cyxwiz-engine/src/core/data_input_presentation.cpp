@@ -95,7 +95,9 @@ Strip BuildStrip(const StripInput& in) {
     if (!in.loaded && in.cloud) {
         s.tone = LoadTone::NotLoaded;
         s.state = "Not loaded";
-        s.detail = "CyxCloud \xC2\xB7 " + in.cloud_dataset + (in.kind.empty() ? "" : " \xC2\xB7 " + in.kind);
+        s.detail = "CyxCloud";
+        if (!in.cloud_dataset.empty()) s.detail += " \xC2\xB7 " + in.cloud_dataset;
+        if (!in.kind.empty()) s.detail += " \xC2\xB7 " + in.kind;
         if (in.file_size > 0) s.facts.push_back({FormatSize(in.file_size), "in CyxCloud"});
         s.facts.push_back({"no", "local copy"});
         s.note = "A node trains from CyxCloud without a copy here. Preview on this computer reads a sample "

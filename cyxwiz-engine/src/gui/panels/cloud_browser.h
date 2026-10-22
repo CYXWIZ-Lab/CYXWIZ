@@ -81,6 +81,7 @@ private:
 
     // Filtering and sorting
     void ApplyFilter();
+    void ApplyFilterLocked();  // with datasets_mutex_ held
     void SortDatasets(int column, bool ascending);
 
     network::DataStreamClient* datastream_client_ = nullptr;

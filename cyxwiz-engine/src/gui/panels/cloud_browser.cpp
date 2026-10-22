@@ -175,6 +175,9 @@ void CloudBrowserPanel::RenderTabs() {
 
 void CloudBrowserPanel::RenderMyDatasetsTab() {
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    // The fetch thread rebuilds these lists under datasets_mutex_; drawing
+    // them without it raced that rebuild.
+    std::lock_guard<std::mutex> lock(datasets_mutex_);
     if (filtered_datasets_.empty() && !is_loading_.load()) {
         if (my_datasets_.empty()) {
             ImGui::TextColored(t.text_dim,
@@ -198,6 +201,7 @@ void CloudBrowserPanel::RenderPublicDatasetsTab() {
         RefreshPublicDatasets();
     }
 
+    std::lock_guard<std::mutex> lock(datasets_mutex_);
     if (filtered_public_datasets_.empty() && !is_loading_.load()) {
         if (public_datasets_.empty()) {
             ImGui::TextColored(t.text_dim,
@@ -699,7 +703,7 @@ void CloudBrowserPanel::FetchDatasets() {
         std::lock_guard<std::mutex> lock(datasets_mutex_);
         if (success) {
             my_datasets_ = std::move(datasets);
-            ApplyFilter();
+            ApplyFilterLocked();
         } else {
             last_error_ = datastream_client_->GetLastError();
             error_time_ = 5.0f;
@@ -745,6 +749,16 @@ void CloudBrowserPanel::FetchPublicDatasets() {
 
 void CloudBrowserPanel::ApplyFilter() {
     std::lock_guard<std::mutex> lock(datasets_mutex_);
+    ApplyFilterLocked();
+}
+
+// Caller holds datasets_mutex_ (the fetch thread already does; a second lock
+// of a std::mutex on the same thread throws, and threw on the first live
+// listing).
+void CloudBrowserPanel::ApplyFilterLocked() {
+    // The selection survives a refresh by id; its pointer is into the
+    // vector rebuilt below, so it is re-pointed afterwards.
+    const std::string selected_id = selected_dataset_ ? selected_dataset_->id : std::string();
     filtered_datasets_.clear();
 
     std::string filter = search_buffer_;
@@ -773,10 +787,13 @@ void CloudBrowserPanel::ApplyFilter() {
         filtered_datasets_.push_back(ds);
     }
 
-    // Reset selection if it's now invalid
-    if (selected_index_ >= static_cast<int>(filtered_datasets_.size())) {
-        selected_index_ = -1;
-        selected_dataset_ = nullptr;
+    selected_index_ = -1;
+    selected_dataset_ = nullptr;
+    for (int i = 0; i < static_cast<int>(filtered_datasets_.size()); ++i) {
+        if (filtered_datasets_[static_cast<size_t>(i)].id == selected_id) {
+            selected_index_ = i;
+            selected_dataset_ = &filtered_datasets_[static_cast<size_t>(i)];
+        }
     }
 }
 

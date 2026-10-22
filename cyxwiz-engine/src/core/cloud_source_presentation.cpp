@@ -47,7 +47,11 @@ View Build(const Input& in) {
         v.connection_tone = Tone::Warning;
         v.offer_sign_in = true;
     } else if (!in.connected) {
-        if (in.connect_error.empty()) {
+        if (!in.browser_opened) {
+            v.connection = "Not connected yet: open the Cloud Browser once (sidebar, Network); it connects to " +
+                           in.gateway;
+            v.connection_tone = Tone::Warning;
+        } else if (in.connect_error.empty()) {
             v.connection = "Connecting to " + in.gateway + "...";
             v.connection_tone = Tone::Accent;
         } else {

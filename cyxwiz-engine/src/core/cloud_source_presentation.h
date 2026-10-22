@@ -40,6 +40,7 @@ struct Remembered {
 
 struct Input {
     bool signed_in = false;
+    bool browser_opened = false;  // the Cloud Browser created the Engine's gateway client
     bool connected = false;
     std::string gateway;        // host:port the Engine uses (servers.cloud_gateway or derived)
     std::string account;        // the signed-in e-mail

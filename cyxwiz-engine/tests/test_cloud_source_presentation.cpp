@@ -102,6 +102,10 @@ void CheckNotConnected() {
 
     in.signed_in = true;
     v = Build(in);
+    Check(Contains(v.connection, "open the Cloud Browser once") && v.connection_tone == Tone::Warning,
+          "browser never opened: " + v.connection);
+    in.browser_opened = true;
+    v = Build(in);
     Check(v.connection == "Connecting to 192.168.1.116:50060..." && v.connection_tone == Tone::Accent, "connecting: " + v.connection);
     Check(v.apply_blocked_reason == "Connect to CyxCloud first", "Apply off while connecting");
 
