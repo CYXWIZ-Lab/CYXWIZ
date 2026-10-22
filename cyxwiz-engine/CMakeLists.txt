@@ -7230,9 +7230,6 @@ add_test(NAME TransformStepPresentation COMMAND test_transform_step_presentation
 # Data Studio > Explore Tests and Regression (TOFIX129 D3).
 add_executable(test_stats_explore tests/test_stats_explore.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
-    src/core/node_executors/training_evaluation_operator.cpp
-    src/core/cross_validation_presentation.cpp
-    src/core/compiled_node_presentation.cpp
     src/core/stats_explore.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
