@@ -1979,7 +1979,9 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
     return {};
 }
 
-bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
+bool HasTrainingGraphStructure(
+    const std::vector<gui::MLNode>& nodes,
+    const std::function<std::optional<PipelineTrainingSupportRole>(const gui::MLNode&)>& extension_role) {
     bool has_source = false;
     bool has_model = false;
     bool has_loss = false;
@@ -1987,6 +1989,12 @@ bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
     for (const auto& node : nodes) {
         has_source |= node.type == gui::NodeType::DataInput ||
                       node.type == gui::NodeType::DatasetInput;
+        if (node.type == gui::NodeType::PluginCustom && extension_role) {
+            if (const auto role = extension_role(node)) {
+                has_model |= *role == PipelineTrainingSupportRole::ModelLayer;
+                has_loss |= *role == PipelineTrainingSupportRole::Loss;
+            }
+        }
         for (const auto& capability : roles) {
             if (capability.node_type != node.type) continue;
             has_model |= capability.role == PipelineTrainingSupportRole::ModelLayer;

@@ -7,6 +7,7 @@
 #include "transformer_configuration_policy.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -368,6 +369,11 @@ PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);
 
 // Cheap toolbar eligibility only; compilation and runtime preflight remain required.
-bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes);
+// extension_role: the training role of an extension node (PluginCustom), a
+// trainable layer -> ModelLayer, a loss node -> Loss; nothing for others.
+// Without it extension nodes count for nothing.
+bool HasTrainingGraphStructure(
+    const std::vector<gui::MLNode>& nodes,
+    const std::function<std::optional<PipelineTrainingSupportRole>(const gui::MLNode&)>& extension_role = {});
 
 } // namespace cyxwiz
