@@ -56,7 +56,6 @@ class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
 class PlotOutputPanel;
-class TestResultsPanel;
 class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
@@ -367,7 +366,6 @@ private:
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
     std::unique_ptr<cyxwiz::PlotOutputPanel> plot_output_panel_;
-    std::unique_ptr<cyxwiz::TestResultsPanel> test_results_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
     std::unique_ptr<cyxwiz::DeploymentDialog> deployment_dialog_;

@@ -1,6 +1,6 @@
 #pragma once
 
-// Test Results (TOFIX129 B5): the headline, figures, classes, confusion
+// Results > Test (TOFIX129 B5, D4): the headline, figures, classes, confusion
 // matrix, mistakes and the comparison with the run before, from a test's
 // TestingMetrics. Pure data in and out (no ImGui), so the panel and its tests
 // say the same words.

@@ -4,9 +4,7 @@
 #include "../../core/data_registry.h"
 #include "../../core/project_manager.h"
 #include "../../core/kept_tests.h"
-#include "../../core/test_predictions_metrics.h"
 #include "../../core/test_predictions_table.h"
-#include "../panels/test_results_panel.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
@@ -20,6 +18,11 @@
 #include <filesystem>
 
 namespace cyxwiz {
+
+ResultsView::ResultsView() {
+    test_.keep = [this] { RequestKeep(); };
+    test_.keep_blocker = [this] { return KeepBlocker(graph_open); };
+}
 
 void ResultsView::RefreshRuns() {
     const double now = ImGui::GetTime();
@@ -35,13 +38,20 @@ void ResultsView::RefreshRuns() {
 
 void ResultsView::Render() {
     RefreshRuns();
-    const bool have_predictions = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset) != nullptr;
-    if (!source_chosen_) source_ = runs_.empty() && have_predictions ? 1 : 0;
-    static const char* kSources[] = {"Generations", "Test run"};
-    if (ui::SegmentedControl("##results_source", kSources, 2, &source_)) source_chosen_ = true;
+    // A language model's project opens on its previews, any other on Test.
+    if (!view_chosen_) view_ = !runs_.empty() && !test_.HasResults() ? View::Generations : View::Test;
+    static const struct {
+        const char* label;
+        View view;
+    } kViews[] = {{"Test", View::Test}, {"Generations", View::Generations}};
+    for (size_t i = 0; i < std::size(kViews); ++i) {
+        if (i > 0) ImGui::SameLine();
+        if (ui::FilterChip(kViews[i].label, kViews[i].label, "", view_ == kViews[i].view)) Show(kViews[i].view);
+    }
     ImGui::Spacing();
-    if (source_ == 0) RenderPreviews();
-    else RenderTest();
+    RenderKeepDialog();
+    if (view_ == View::Generations) RenderPreviews();
+    else test_.Render();
 }
 
 void ResultsView::RenderPreviews() {
@@ -84,54 +94,10 @@ int64_t ResultsView::TestRowCount() const {
     return table ? table->num_rows() : 0;
 }
 
-void ResultsView::RenderTest() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    RenderKeepDialog();
-    const auto dataset = DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset);
-    const auto table = dataset ? dataset->GetArrowTable() : nullptr;
-    ImGui::PushTextWrapPos(0.0f);
-    if (!table) {
-        ImGui::TextColored(t.text_dim, "No test run in this session. Test a model (Train > Test > Run Test): its results open in "
-                                       "the Test Results panel, and its per-row predictions are published as "
-                                       "\"test_predictions\".");
-        ImGui::PopTextWrapPos();
-        return;
-    }
-    // The run read back from its table: the same calculation and words as
-    // the Test Results panel.
-    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(table.get())) + "#" + std::to_string(table->num_rows());
-    if (key != predictions_key_) {
-        predictions_key_ = key;
-        TestingMetrics run;
-        test_error_.clear();
-        if (MetricsFromPredictionsTable(*table, run, test_error_)) test_view_ = test_report::BuildView(run, nullptr);
-    }
-    if (!test_error_.empty()) {
-        ImGui::TextColored(t.error, "The test predictions cannot be read: %s", test_error_.c_str());
-        ImGui::PopTextWrapPos();
-        return;
-    }
-    ImGui::TextColored(t.text_dim, "LATEST TEST");
-    ImGui::TextColored(TestToneColour(test_view_.headline_tone), "%s", test_view_.headline.c_str());
-    ImGui::TextColored(t.text_dim, "%s", test_view_.subtitle.c_str());
-    std::string chips;
-    for (const auto& chip : test_view_.chips) chips += (chips.empty() ? "" : " \xC2\xB7 ") + chip.text;
-    if (!chips.empty()) ImGui::TextColored(t.text_faint, "%s", chips.c_str());
-    ImGui::Spacing();
-    ImGui::TextColored(t.text_dim, "The Test Results panel shows the rest: %s", test_view_.classification
-        ? "the confusion matrix, the classes, the curves, every row by its dataset row, and the error by the values of a column."
-        : "every row by its dataset row, the largest errors first, and the error by the values of a column.");
-    ImGui::PopTextWrapPos();
-    if (ui::SecondaryButton("Open Test Results", static_cast<bool>(on_open_test_results), "Not available here") &&
-        on_open_test_results)
-        on_open_test_results();
-    RenderKeptTests();
-}
-
-std::string ResultsView::KeepBlocker(bool graph_open) const {
+std::string ResultsView::KeepBlocker(bool open) const {
     if (!DataRegistry::Instance().GetArrowDataset(kTestPredictionsDataset)) return "Test a model first (Train > Test > Run Test)";
     if (ProjectManager::Instance().GetProjectRoot().empty()) return "Open or create a project: the test is kept in its results folder";
-    if (!graph_open) return "No graph is open";
+    if (!open) return "No graph is open";
     return "";
 }
 
@@ -164,49 +130,20 @@ void ResultsView::RenderKeepDialog() {
     if (ui::PrimaryButton("Keep", named && rows && !root.empty(), "Give it a name")) {
         const std::filesystem::path relative = std::filesystem::path("results") / "tests" / file;
         std::string error;
-        keep_failed_ = !WriteKeptTest(*rows, keep_name_, KeptTestsFolder(root) / file, error);
-        if (keep_failed_) {
-            keep_note_ = "Could not keep the test: " + error;
+        if (!WriteKeptTest(*rows, keep_name_, KeptTestsFolder(root) / file, error)) {
+            test_.SetNote("Could not keep the test: " + error, true);
         } else {
             if (on_keep) on_keep(relative.generic_string(), keep_name_);
-            keep_note_ = "Kept as " + relative.generic_string() + ": added the Data Input \"" + std::string(keep_name_) +
-                         "\" and a Test Evaluation node (Ctrl+Z on the canvas removes them; the file stays).";
-            kept_time_ = -1.0;  // list it now
+            test_.SetNote("Kept as " + relative.generic_string() + ": added the Data Input \"" + std::string(keep_name_) +
+                              "\" and a Test Evaluation node (Ctrl+Z on the canvas removes them; the file stays). Showing "
+                              "lists it under Kept.",
+                          false);
         }
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ui::SecondaryButton("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
-}
-
-void ResultsView::RenderKeptTests() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    const std::string root = ProjectManager::Instance().GetProjectRoot();
-    const double now = ImGui::GetTime();
-    if (kept_time_ < 0.0 || now - kept_time_ > 2.0) {
-        kept_time_ = now;
-        kept_ = root.empty() ? std::vector<KeptTest>{} : ListKeptTests(KeptTestsFolder(root));
-    }
-    if (!keep_note_.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(keep_failed_ ? t.error : t.success, "%s", keep_note_.c_str());
-        ImGui::PopTextWrapPos();
-    }
-    if (kept_.empty()) return;
-    ImGui::Spacing();
-    ImGui::TextColored(t.text_dim, "KEPT TESTS");
-    for (const auto& k : kept_) {
-        ImGui::PushID(k.path.string().c_str());
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(k.name.c_str());
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.text_faint, "%s", ("results/tests/" + k.path.filename().string()).c_str());
-        ImGui::SameLine();
-        if (ui::LinkButton("Open") && on_open_kept) on_open_kept(k.path.string());
-        ImGui::PopID();
-    }
 }
 
 }  // namespace cyxwiz

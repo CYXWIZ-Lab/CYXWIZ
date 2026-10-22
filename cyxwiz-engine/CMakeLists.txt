@@ -616,8 +616,6 @@ set(ENGINE_SOURCES
     src/gui/panels/pattern_browser.cpp
     src/gui/panels/variable_explorer.cpp
     src/gui/variables_view.cpp
-    src/gui/panels/test_results_panel.cpp
-    src/gui/panels/test_errors_by_value.cpp
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp
     src/gui/panels/deployment_dialog.cpp
@@ -763,6 +761,9 @@ set(ENGINE_SOURCES
     src/gui/data_studio/validate_view.cpp
     src/gui/data_studio/publish_view.cpp
     src/gui/data_studio/results_view.cpp
+    src/gui/data_studio/test_view.cpp
+    src/gui/data_studio/test_errors_by_value.cpp
+    src/gui/data_studio/explore_plots.cpp
     src/gui/data_studio/readiness_view.cpp
     src/gui/dashboard/dashboard_window.cpp
     src/gui/dashboard/dashboard_sparse.cpp
@@ -924,7 +925,6 @@ set(ENGINE_HEADERS
     src/gui/panels/memory_panel.h
     src/gui/panels/memory_monitor.h
     src/gui/panels/pattern_browser.h
-    src/gui/panels/test_results_panel.h
     src/gui/panels/export_dialog.h
     src/gui/panels/import_dialog.h
     src/gui/panels/deployment_dialog.h
@@ -1032,6 +1032,9 @@ set(ENGINE_HEADERS
     # Data Studio (Phase 1 Week 1)
     src/gui/data_studio/query_editor.h
     src/gui/data_studio/profile_view.h
+    src/gui/data_studio/test_view.h
+    src/gui/data_studio/test_errors_by_value.h
+    src/gui/data_studio/explore_plots.h
     src/gui/data_studio/missing_view.h
     src/gui/data_studio/outliers_view.h
     src/gui/data_studio/correlation_view.h

@@ -129,6 +129,16 @@ void DataStudioPanel::ShowProfile(const std::string& dataset_name) {
     explore_tab_ = ExploreTab::Profile;
 }
 
+void DataStudioPanel::ShowResults(ResultsView::View view) {
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Results;
+    if (results_) {
+        results_->Activate();
+        results_->Show(view);
+    }
+}
+
 void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column) {
     SetActiveDataset(dataset_name);
     visible_ = true;
@@ -307,6 +317,7 @@ void DataStudioPanel::RefreshView() {
         in.preview_runs = results_->PreviewRunCount();
         in.test_rows = results_->TestRowCount();
         results_->graph_name = in.graph_name;
+        results_->graph_open = node_editor_ != nullptr;
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);

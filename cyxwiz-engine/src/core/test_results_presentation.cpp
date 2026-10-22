@@ -100,8 +100,8 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
     v.kind = m.causal_lm_mode ? "causal_lm" : m.regression_mode ? "regression" : m.metric_learning_mode ? "metric_learning"
                                                                                                       : "classification";
     v.classification = !m.causal_lm_mode && !m.regression_mode;
-    v.subtitle = Count(m.total_samples) + (m.causal_lm_mode ? " windows" : m.regression_mode ? " forecast windows" : " test samples") +
-                 ", " + Fixed(m.total_time_seconds, 2) + " s";
+    v.subtitle = Count(m.total_samples) + (m.causal_lm_mode ? " windows" : " test samples") +
+                 (m.total_time_seconds > 0.0f ? ", " + Fixed(m.total_time_seconds, 2) + " s" : std::string());
     if (m.partial)
         v.note = "Quick test: the first " + std::to_string(m.batch_limit) + " of " + std::to_string(m.total_batches) +
                  " batches. Train > Test > Run Test covers the whole test split.";
@@ -116,8 +116,9 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
         v.headline_tone = Tone::Neutral;
         v.chips = {{"RMSE " + Fixed(m.test_rmse, 4), Tone::Neutral}};
         if (const double r2 = RSquared(m); std::isfinite(r2)) v.chips.push_back({"R\xC2\xB2 " + Fixed(r2, 4), Tone::Neutral});
-        v.chips.insert(v.chips.end(), {{"loss " + Fixed(m.test_loss, 4), Tone::Neutral},
-                   {Count(static_cast<long long>(m.total_target_values)) + " target values", Tone::Neutral}});
+        // A table read as a test has no loss (NaN).
+        if (std::isfinite(m.test_loss)) v.chips.push_back({"loss " + Fixed(m.test_loss, 4), Tone::Neutral});
+        v.chips.push_back({Count(static_cast<long long>(m.total_target_values)) + " target values", Tone::Neutral});
     } else {
         v.headline = std::string(m.metric_learning_mode ? "1-NN accuracy " : "Accuracy ") + Percent(m.test_accuracy);
         v.headline_tone = AccuracyTone(m.test_accuracy);
@@ -125,9 +126,9 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
             const std::string nn = "Each test row takes the class of its nearest other test row in the embedding space.";
             v.note = v.note.empty() ? nn : nn + " " + v.note;
         }
-        v.chips = {{"loss " + Fixed(m.test_loss, 4), Tone::Neutral},
-                   {"macro F1 " + Fixed(m.macro_f1, 4), Tone::Neutral},
-                   {"weighted F1 " + Fixed(m.weighted_f1, 4), Tone::Neutral}};
+        if (std::isfinite(m.test_loss)) v.chips.push_back({"loss " + Fixed(m.test_loss, 4), Tone::Neutral});
+        v.chips.push_back({"macro F1 " + Fixed(m.macro_f1, 4), Tone::Neutral});
+        v.chips.push_back({"weighted F1 " + Fixed(m.weighted_f1, 4), Tone::Neutral});
         if (m.roc && m.roc->success) v.chips.push_back({"AUC " + Fixed(m.roc->auc, 4), Tone::Neutral});
         v.tiles = {{Fixed(m.macro_precision, 4), "macro precision"},
                    {Fixed(m.macro_recall, 4), "macro recall"},

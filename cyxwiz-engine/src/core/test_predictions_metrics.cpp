@@ -390,6 +390,7 @@ bool MetricsFromColumns(const arrow::Table& table, const PredictionColumns& c, T
         if (error.empty()) error = "the columns cannot be read as a test";
         return false;
     }
+    out.test_loss = NAN;  // a table of predictions carries no loss
     return true;
 }
 

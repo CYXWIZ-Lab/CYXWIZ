@@ -1,6 +1,6 @@
 #pragma once
 
-// Test Results > By column value (TOFIX157, moved from Data Studio > Results):
+// Results > Test > By column value (TOFIX157; in the Test Results window until TOFIX129 D4):
 // a test's error sliced by the values of one column of the tested table. The
 // test's rows (its per-row table) are joined back to that table by row_id; the
 // chosen column is read by a task (a table on disk a row group at a time). The
@@ -26,6 +26,7 @@ public:
     // The test's per-row table (nullptr: none). A different table starts over.
     void SetRows(const std::shared_ptr<arrow::Table>& rows);
     void Render();
+    bool IsRunning() const { return task_ != 0; }
 
 private:
     void SliceBy(const std::string& column);

@@ -2,7 +2,7 @@
 
 // A test run as its per-row table and back (TOFIX157). A finished test
 // publishes the table as "test_predictions"; Keep as node saves a copy to a
-// file. The Test Results panel, Data Studio > Results and the Test Evaluation
+// file. Data Studio > Results > Test and the Test Evaluation
 // node read a table back into the TestingMetrics a run produces, so one
 // calculation (FinishClassifierMetrics; MAE / RMSE here) gives every view its
 // numbers.

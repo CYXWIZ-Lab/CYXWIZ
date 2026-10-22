@@ -309,6 +309,8 @@ void CheckTableAsTest() {
     Check(Near(RSquared(m), r["r2"].get<double>(), 1e-6), "R-squared " + Num(RSquared(m)));
     const View v = BuildView(m, nullptr);
     Check(v.chips.size() > 1 && v.chips[1].text.rfind("R\xC2\xB2 0.70", 0) == 0, "R-squared chip: " + v.chips[1].text);
+    for (const auto& chip : v.chips) Check(chip.text.rfind("loss", 0) != 0, "a table has no loss to show: " + chip.text);
+    Check(v.subtitle == "67 test samples", "nor a duration: " + v.subtitle);
 }
 
 void CheckSorting() {

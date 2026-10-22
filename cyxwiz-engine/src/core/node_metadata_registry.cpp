@@ -2226,12 +2226,12 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
 
     // A kept test (TOFIX157): reads a test's per-row table (test_predictions,
     // or a copy kept with Data Studio > Results > Keep as node) and gives the
-    // Test Results panel's figures as tables.
+    // Results > Test's figures as tables.
     RegisterNode({NodeType::TestEvaluationNode, NodeCategory::Analytics, "Test Evaluation", ICON_FA_TABLE_CELLS,
         {"test", "evaluation", "kept", "confusion", "metrics", "accuracy", "mae", "worst rows"}, 0, false,
         "A test's results as tables",
         "Reads a test's per-row predictions (the test_predictions table, or a test kept as a file) and gives its "
-        "metrics, confusion counts, per-class precision / recall / F1 and worst rows, the same figures as Test Results.", "",
+        "metrics, confusion counts, per-class precision / recall / F1 and worst rows, the same figures as Data Studio > Results > Test.", "",
         {{"Data", PinType::Dataset, true, "A test's per-row predictions (true_class / predicted_class, or true_value / predicted_value)"}},
         // Results to look at: none must be read further (an unread required
         // output fails Compile and so blocks Train).

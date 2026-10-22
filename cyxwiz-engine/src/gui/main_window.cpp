@@ -71,7 +71,6 @@
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
-#include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
 #include "panels/deployment_dialog.h"
@@ -650,7 +649,6 @@ MainWindow::MainWindow()
     plot_output_panel_->SetScriptingEngine(scripting_engine_);
 
     // Test results panel
-    test_results_panel_ = std::make_unique<cyxwiz::TestResultsPanel>();
 
     // Export/Import dialogs
     export_dialog_ = std::make_unique<cyxwiz::ExportDialog>();
@@ -801,18 +799,6 @@ MainWindow::MainWindow()
             node_editor_->QueueDashboardWidget(node_id, dataset, widget);
         };
     }
-    // Results > Test run opens the whole run in Test Results (TOFIX157).
-    data_studio_panel_->SetOpenTestResultsCallback([this]() {
-        if (!test_results_panel_) return;
-        test_results_panel_->Show();
-        ::gui::BringToFront(test_results_panel_->GetName());
-    });
-    // ... and a kept test (Keep as node).
-    data_studio_panel_->SetOpenKeptTestCallback([this](const std::string& path) {
-        if (!test_results_panel_) return;
-        test_results_panel_->ShowKeptTest(path);
-        ::gui::BringToFront(test_results_panel_->GetName());
-    });
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<arrow::Table> table, const std::string& name) {
         if (table_viewer_ && table) {
@@ -1267,28 +1253,23 @@ MainWindow::MainWindow()
             StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
         }
     });
-    if (test_results_panel_) {
-        test_results_panel_->SetRunTestCallback([this]() {
+    // A test's results are Data Studio > Results > Test (TOFIX129 D4).
+    if (cyxwiz::TestView* test = data_studio_panel_ ? data_studio_panel_->GetTestView() : nullptr) {
+        test->run_test = [this]() {
             if (node_editor_) StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
-        });
+        };
     }
     toolbar_->SetCompareTestResultsCallback([this]() {
-        if (test_results_panel_) test_results_panel_->ShowComparison();
+        if (!data_studio_panel_) return;
+        data_studio_panel_->GetTestView()->ShowComparison();
+        data_studio_panel_->ShowResults(cyxwiz::ResultsView::View::Test);
     });
     toolbar_->SetExportTestReportCallback([this]() {
-        if (!test_results_panel_ || !test_results_panel_->HasResults()) {
+        if (!data_studio_panel_ || !data_studio_panel_->GetTestView()->ExportReport())
             ShowOperationError("No test results", "Run a test first, then export its report.");
-            return;
-        }
-        test_results_panel_->ExportReport();
     });
-
-    // Set up View Test Results callback
     toolbar_->SetViewTestResultsCallback([this]() {
-        if (test_results_panel_) {
-            test_results_panel_->Show();
-            spdlog::info("Opened Test Results panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->ShowResults(cyxwiz::ResultsView::View::Test);
     });
 
     const std::weak_ptr<int> test_window_lifetime = test_callback_lifetime_;
@@ -1309,13 +1290,13 @@ MainWindow::MainWindow()
                 cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(cyxwiz::kTestPredictionsDataset);
             }
         }
-        if (test_results_panel_) {
-            test_results_panel_->SetResults(metrics);
-            test_results_panel_->Show();
+        if (data_studio_panel_) {
+            data_studio_panel_->GetTestView()->SetResults(metrics);
+            data_studio_panel_->ShowResults(cyxwiz::ResultsView::View::Test);
         }
         if (!success) {
             spdlog::error(
-                "Testing failed and was surfaced in Test Results: {}",
+                "Testing failed and was surfaced in Data Studio > Results > Test: {}",
                 metrics.status_message.empty()
                     ? "unknown testing failure"
                     : metrics.status_message);
@@ -2715,8 +2696,6 @@ MainWindow::~MainWindow() {
     import_dialog_.reset();
     spdlog::info("~MainWindow: export_dialog_");
     export_dialog_.reset();
-    spdlog::info("~MainWindow: test_results_panel_");
-    test_results_panel_.reset();
     // variable_explorer_ already reset at the beginning
     spdlog::info("~MainWindow: memory_monitor_");
     memory_monitor_.reset();
@@ -3083,7 +3062,6 @@ void MainWindow::Render() {
     cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
     TimedRender("variable explorer", variable_explorer_);
     TimedRender("plot output", plot_output_panel_);
-    TimedRender("test results", test_results_panel_);
     TimedRender("export dialog", export_dialog_);
     TimedRender("import dialog", import_dialog_);
     TimedRender("deployment dialog", deployment_dialog_);
@@ -3576,7 +3554,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (memory_monitor_) memory_monitor_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
     if (plot_output_panel_) plot_output_panel_->SetVisible(false);
-    if (test_results_panel_) test_results_panel_->SetVisible(false);
 
     // Model Analysis panels (Phase 2)
     if (model_summary_panel_) model_summary_panel_->SetVisible(false);
