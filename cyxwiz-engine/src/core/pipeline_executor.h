@@ -126,9 +126,13 @@ public:
     // unregistered when the nodes leave the graph (TOFIX160 P2). A name a
     // kept node still uses stays, and so does a Save / Deploy / Data Output
     // result (the user named it). Not while executing (the caller waits).
-    void ReleaseNodes(const std::set<int>& node_ids);
+    // `keep`: names another executor now owns too (the same node ids).
+    void ReleaseNodes(const std::set<int>& node_ids, const std::set<std::string>& keep = {});
     // Everything its runs registered (the graph was cleared or replaced).
-    void ReleaseAll();
+    void ReleaseAll(const std::set<std::string>& keep = {});
+    // The names its runs registered and would release (results of nodes that
+    // are not Save / Deploy / Data Output, and in-memory input copies).
+    std::set<std::string> OwnedNames();
     // Only the in-memory copies of disk inputs (a one-shot run whose result
     // has been read).
     void ReleaseAdmittedInputs();

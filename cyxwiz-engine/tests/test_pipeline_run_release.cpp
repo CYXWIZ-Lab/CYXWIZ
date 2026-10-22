@@ -131,6 +131,24 @@ int main() try {
           "Arrow's pool is back near its baseline (" + std::to_string(pool->bytes_allocated() - baseline) +
               " bytes over)");
 
+    // Two executors ran the same graph (a run started while one ran): the
+    // older one's release keeps the names the current one owns.
+    {
+        cyxwiz::PipelineExecutor older, current;
+        older.SetIngestionCacheRoot((work_dir / "ingestion").string());
+        current.SetIngestionCacheRoot((work_dir / "ingestion").string());
+        Check(older.ExecutePipeline(graph_json), "older run: " + older.GetLastError());
+        Check(current.ExecutePipeline(graph_json), "current run: " + current.GetLastError());
+        const auto owned = current.OwnedNames();
+        Check(owned.count("ds_datainput_1") && owned.count("ds_dataconvert_2"), "the current executor owns its names");
+        Check(!owned.count("kept_output"), "a Save output is not owned for release");
+        older.ReleaseAll(owned);
+        Check(Held("ds_datainput_1") && Held("ds_dataconvert_2"), "the older release keeps the current run's names");
+        current.ReleaseAll();
+        Check(!Held("ds_datainput_1") && !Held("ds_dataconvert_2"), "the current release then frees them");
+        registry.ClearAllTabularDatasets();
+    }
+
     // Unload from memory frees a dataset from every map (TOFIX160 P6).
     const auto table = cyxwiz::DataRegistry::Instance().LoadCSVToArrow(big_csv.string(), "unload_me");
     Check(table != nullptr && Held("unload_me"), "a dataset is loaded to unload");

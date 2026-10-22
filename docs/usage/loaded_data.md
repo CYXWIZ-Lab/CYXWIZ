@@ -78,6 +78,8 @@ MNIST test, `mnist_test.csv` (17.4 MB, 10,000 x 785):
 | Close or switch the project | Every dataset |
 | **Unload from memory** (the Data Input dialog's Memory tab) | The dataset from every place it is held, and the copies pipeline runs made of it; the node reads Not loaded until the next Apply or run |
 | A Plot or Dashboard refresh finishes | Its in-memory copies of disk inputs (the plot keeps the rows it read) |
+| Delete a Plot of a trainer's model | The model's table (`ds_plot_model_<id>`), unless another plot shows it |
+| A run that was replaced by a newer run finishes | What the older run registered, except what the newer run uses (it releases once the newer run has ended) |
 
 If a run is still going when you delete or clear, its data goes as soon as the run ends.
 While a Data Input's dialog is still loading, the graph can't be cleared or

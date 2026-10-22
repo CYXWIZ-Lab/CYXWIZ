@@ -1292,6 +1292,10 @@ private:
     void SyncDataAfterSwap(const std::vector<MLNode>& before);
     std::set<int> pending_run_release_;
     bool pending_run_release_all_ = false;
+    // Executors replaced while their run was in flight (a new run started):
+    // when each ends, what it registered goes, except the names the current
+    // executor also owns (the same node ids).
+    std::vector<std::shared_ptr<cyxwiz::PipelineExecutor>> retired_executors_;
     bool pipeline_facts_final_ = true;
     // The run's step figures read so far, and the step that sent them.
     WordVectorFeed word_vector_feed_;

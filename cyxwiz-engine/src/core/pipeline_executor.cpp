@@ -3062,7 +3062,7 @@ PipelineExecutor::PipelineExecutor()
     // like the SQL step: RunStepSql, one restricted DuckDB per step.
 }
 
-void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids) {
+void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids, const std::set<std::string>& keep) {
     if (node_ids.empty()) return;
     std::set<std::string> release;
     {
@@ -3077,7 +3077,7 @@ void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids) {
             if (it == owned_names_.end()) continue;
             if (!kept_nodes_.count(id))
                 for (const auto& name : it->second)
-                    if (!kept.count(name)) release.insert(name);
+                    if (!kept.count(name) && !keep.count(name)) release.insert(name);
             owned_names_.erase(it);
             kept_nodes_.erase(id);
         }
@@ -3095,7 +3095,7 @@ void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids) {
         std::lock_guard<std::mutex> lock(step_files_mutex_);
         for (auto it = admitted_inputs_.begin(); it != admitted_inputs_.end();) {
             const std::string source = it->size() > kAdmitted.size() ? it->substr(0, it->size() - kAdmitted.size()) : "";
-            if (release.count(source)) {
+            if (release.count(source) && !keep.count(*it)) {
                 release.insert(*it);
                 it = admitted_inputs_.erase(it);
             } else {
@@ -3112,15 +3112,40 @@ void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids) {
     }
 }
 
-void PipelineExecutor::ReleaseAll() {
+void PipelineExecutor::ReleaseAll(const std::set<std::string>& keep) {
     std::set<int> ids;
     {
         std::lock_guard<std::mutex> lock(owned_mutex_);
         for (const auto& [id, names] : owned_names_) ids.insert(id);
     }
     for (const auto& [id, cache] : run_cache_) ids.insert(id);
-    ReleaseNodes(ids);
-    ReleaseAdmittedInputs();
+    ReleaseNodes(ids, keep);
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        for (auto it = admitted_inputs_.begin(); it != admitted_inputs_.end();) {
+            if (keep.count(*it)) {
+                ++it;
+            } else {
+                admitted.push_back(*it);
+                it = admitted_inputs_.erase(it);
+            }
+        }
+    }
+    for (const auto& name : admitted) DataRegistry::Instance().UnregisterTabularDataset(name);
+    if (!admitted.empty()) RemoveUnusedStepFiles();
+}
+
+std::set<std::string> PipelineExecutor::OwnedNames() {
+    std::set<std::string> names;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (const auto& [id, owned] : owned_names_)
+            if (!kept_nodes_.count(id)) names.insert(owned.begin(), owned.end());
+    }
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    names.insert(admitted_inputs_.begin(), admitted_inputs_.end());
+    return names;
 }
 
 void PipelineExecutor::ReleaseAdmittedInputs() {

@@ -105,7 +105,15 @@ const PlotNodeLane::Status& PlotNodeLane::StatusOf(int plot_id) { return entries
 
 void PlotNodeLane::Forget(int plot_id) {
     Cancel(plot_id);
+    if (const auto it = entries_.find(plot_id); it != entries_.end()) ReleaseModelTable(it->second.model_table, plot_id);
     entries_.erase(plot_id);
+}
+
+void PlotNodeLane::ReleaseModelTable(const std::string& name, int plot_id) {
+    if (name.empty()) return;
+    for (const auto& [id, entry] : entries_)
+        if (id != plot_id && entry.model_table == name) return;
+    DataRegistry::Instance().UnregisterTabularDataset(name);
 }
 
 void PlotNodeLane::Cancel(int plot_id) {
@@ -288,6 +296,11 @@ void PlotNodeLane::Finish(Entry& e) {
             auto table = it != models.end() ? TreeModelTable(it->second, &error) : nullptr;
             const std::string name = "ds_plot_model_" + std::to_string(e.plan.feeder_id);
             if (table && DataRegistry::Instance().RegisterArrowTable(table, name)) {
+                if (e.model_table != name) {
+                    const std::string previous = e.model_table;
+                    e.model_table = name;
+                    ReleaseModelTable(previous, -1);  // another feeder's model, no longer shown here
+                }
                 s.table = table;
                 s.source_rows = table->num_rows();
                 s.dataset_name = name;
@@ -353,8 +366,10 @@ void PlotNodeLane::Poll(const std::vector<gui::MLNode>& nodes, const std::vector
         Plan(n.id, entries_[n.id], nodes, links);
     }
     for (auto it = entries_.begin(); it != entries_.end();) {
-        if (std::find(alive.begin(), alive.end(), it->first) == alive.end() && it->second.task_id == 0)
+        if (std::find(alive.begin(), alive.end(), it->first) == alive.end() && it->second.task_id == 0) {
+            ReleaseModelTable(it->second.model_table, it->first);
             it = entries_.erase(it);
+        }
         else
             ++it;
     }

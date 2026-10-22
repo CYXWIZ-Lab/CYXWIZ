@@ -76,7 +76,11 @@ private:
         uint64_t task_id = 0;
         std::shared_ptr<PipelineExecutor> executor;
         std::shared_ptr<std::string> sparse_result;  // the sparse dataset's name, when its task finishes
+        std::string model_table;  // the ds_plot_model_<feeder> it registered (a trainer's model as a table)
     };
+    // Unregisters `name` unless another entry than `plot_id` still shows it
+    // (TOFIX160: the model table outlived its plot until project close).
+    void ReleaseModelTable(const std::string& name, int plot_id);
     void Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links);
     void ReadLoaded(Entry& e);
     void Finish(Entry& e);

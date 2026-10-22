@@ -4752,6 +4752,7 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // One line: Debug is recorded in every build, and the indented form was
     // about 140 lines per run.
     spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
+    if (pipeline_executor_ && pipeline_executor_->IsExecuting()) retired_executors_.push_back(pipeline_executor_);
     auto executor = pipeline_executor_ && !pipeline_executor_->IsExecuting()
         ? pipeline_executor_
         : std::make_shared<cyxwiz::PipelineExecutor>();

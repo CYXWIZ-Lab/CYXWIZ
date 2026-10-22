@@ -129,6 +129,18 @@ void NodeEditor::ReleaseAllRunData() {
 }
 
 void NodeEditor::ApplyPendingRunRelease() {
+    // A replaced executor whose run has ended: its names go, not the ones
+    // the current executor registered too. Not while the current run goes:
+    // a node registers its output before it completes (and is owned).
+    const bool current_running = pipeline_executor_ && pipeline_executor_->IsExecuting();
+    for (auto it = retired_executors_.begin(); !current_running && it != retired_executors_.end();) {
+        if ((*it)->IsExecuting()) {
+            ++it;
+            continue;
+        }
+        (*it)->ReleaseAll(pipeline_executor_ ? pipeline_executor_->OwnedNames() : std::set<std::string>{});
+        it = retired_executors_.erase(it);
+    }
     if (pending_run_release_.empty() && !pending_run_release_all_) return;
     if (!pipeline_executor_) {
         pending_run_release_.clear();
