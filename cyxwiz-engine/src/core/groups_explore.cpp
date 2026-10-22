@@ -387,6 +387,72 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
     return a;
 }
 
+namespace {
+
+std::string Joined(const std::vector<std::string>& columns) {
+    std::string out;
+    for (const auto& c : columns) out += (out.empty() ? "" : ",") + c;
+    return out;
+}
+
+std::string Number(double v) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.10g", v);
+    return buf;
+}
+
+}  // namespace
+
+std::map<std::string, std::string> NodeParameters(const GroupsRequest& r) {
+    std::map<std::string, std::string> p = {{"feature_cols", Joined(r.columns)}, {"standardise", r.standardise ? "true" : "false"}};
+    switch (r.method) {
+        case Method::KMeans:
+            p["n_clusters"] = std::to_string(r.k);
+            p["seed"] = std::to_string(Seed(r.seed));
+            break;
+        case Method::DBSCAN:
+            p["eps"] = Number(r.eps);
+            p["min_samples"] = std::to_string(r.min_samples);
+            p["metric"] = r.metric;
+            break;
+        case Method::Hierarchical:
+            p["n_clusters"] = std::to_string(r.k);
+            p["linkage"] = r.linkage;
+            p["metric"] = r.metric;
+            break;
+        case Method::Mixture:
+            p["n_components"] = std::to_string(r.k);
+            p["covariance_type"] = r.covariance;
+            p["seed"] = std::to_string(Seed(r.seed));
+            p["probabilities"] = "true";
+            break;
+    }
+    return p;
+}
+
+std::map<std::string, std::string> NodeParameters(const ProjectionRequest& r) {
+    std::map<std::string, std::string> p = {{"feature_cols", Joined(r.columns)}, {"keep_columns", "true"}};
+    switch (r.method) {
+        case ProjectionMethod::PCA:
+            p["n_components"] = "2";
+            p["center"] = "true";
+            p["scale"] = r.standardise ? "true" : "false";
+            break;
+        case ProjectionMethod::TSNE:
+            p["standardise"] = r.standardise ? "true" : "false";
+            p["perplexity"] = std::to_string(r.perplexity);
+            p["learning_rate"] = Number(r.learning_rate);
+            p["iterations"] = std::to_string(r.iterations);
+            break;
+        case ProjectionMethod::UMAP:
+            p["standardise"] = r.standardise ? "true" : "false";
+            p["n_neighbors"] = std::to_string(r.neighbors);
+            p["min_dist"] = Number(r.min_dist);
+            break;
+    }
+    return p;
+}
+
 double AdjustedRand(const std::vector<int>& a, const std::vector<int>& b) {
     if (a.empty() || a.size() != b.size()) return NAN;
     std::map<std::pair<int, int>, int64_t> cells;

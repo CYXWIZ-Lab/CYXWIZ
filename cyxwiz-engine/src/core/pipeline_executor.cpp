@@ -3036,6 +3036,8 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::DBSCANCluster:
         case gui::NodeType::HierarchicalCluster:
         case gui::NodeType::GMMCluster:
+        case gui::NodeType::TSNENode:
+        case gui::NodeType::UMAPNode:
             return ValidateFeatureColumnsWithLabelInputSchema(
                 table, node_type, parameters, error);
         case gui::NodeType::LinearRegressionNode:

@@ -39,6 +39,9 @@ void ExploreFigures(const char* id, const std::vector<std::pair<std::string, std
 // a list; true when the choice changed.
 bool ExploreChoices(const char* id, const char* const* labels, int count, int* selected);
 
+// SameLine before a button of `label`, or a new line when it would not fit.
+void ExploreNextButton(const char* label);
+
 // One background answer of type T for a key (dataset + choices).
 template <typename T>
 class ExploreJob {

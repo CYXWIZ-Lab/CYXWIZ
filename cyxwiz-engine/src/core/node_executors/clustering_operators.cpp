@@ -2,6 +2,7 @@
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
+#include "feature_rows.h"
 
 #include <cyxwiz/clustering.h>
 
@@ -208,7 +209,15 @@ bool ClusteringOperatorBase::ConfigureBase(
     auto lc = params.find("label_col");
     if (lc != params.end()) label_col_ = lc->second;
 
-    (void)error;
+    standardise_ = false;
+    auto st = params.find("standardise");
+    if (st != params.end() && !st->second.empty()) {
+        if (st->second != "true" && st->second != "false") {
+            error = GetName() + ": 'standardise' must be 'true' or 'false' (got '" + st->second + "')";
+            return false;
+        }
+        standardise_ = st->second == "true";
+    }
     return true;
 }
 
@@ -267,11 +276,11 @@ KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, resolved, GetName(), GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
-    std::vector<std::vector<double>> matrix;
-    int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
-        input, resolved, GetName(), matrix, n_samples,
-        GetCancellationQuery()));
+    FeatureRows fit;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, resolved, GetName(), standardise_, fit, GetCancellationQuery()));
+    const auto& matrix = fit.data;
+    const int64_t n_samples = static_cast<int64_t>(fit.rows.size());
+    if (n_samples == 0) return arrow::Status::Invalid(GetName() + ": no row has every feature");
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     if (n_samples < n_clusters_) {
@@ -293,7 +302,7 @@ KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n_samples, resolved.size(), result.n_clusters,
                  result.inertia, result.n_iterations, result.converged);
 
-    return AppendClusterIdColumn(input, result.labels);
+    return AppendFittedInt32(input, "cluster_id", fit.rows, result.labels);
 }
 
 // ============================================================================
@@ -347,11 +356,11 @@ DBSCANOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, resolved, GetName(), GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
-    std::vector<std::vector<double>> matrix;
-    int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
-        input, resolved, GetName(), matrix, n_samples,
-        GetCancellationQuery()));
+    FeatureRows fit;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, resolved, GetName(), standardise_, fit, GetCancellationQuery()));
+    const auto& matrix = fit.data;
+    const int64_t n_samples = static_cast<int64_t>(fit.rows.size());
+    if (n_samples == 0) return arrow::Status::Invalid(GetName() + ": no row has every feature");
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     ReportProgress(progress_callback_, "fit", "Fitting DBSCAN clusters", 0.55, 0, static_cast<uint64_t>(n_samples), matrix_bytes);
@@ -366,7 +375,7 @@ DBSCANOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n_samples, resolved.size(), result.n_clusters,
                  result.n_noise_points, eps_, min_samples_, metric_);
 
-    return AppendClusterIdColumn(input, result.labels);
+    return AppendFittedInt32(input, "cluster_id", fit.rows, result.labels);
 }
 
 // ============================================================================
@@ -429,11 +438,11 @@ HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, resolved, GetName(), GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
-    std::vector<std::vector<double>> matrix;
-    int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
-        input, resolved, GetName(), matrix, n_samples,
-        GetCancellationQuery()));
+    FeatureRows fit;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, resolved, GetName(), standardise_, fit, GetCancellationQuery()));
+    const auto& matrix = fit.data;
+    const int64_t n_samples = static_cast<int64_t>(fit.rows.size());
+    if (n_samples == 0) return arrow::Status::Invalid(GetName() + ": no row has every feature");
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     if (n_samples < n_clusters_) {
@@ -454,7 +463,7 @@ HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n_samples, resolved.size(), result.n_clusters,
                  linkage_, metric_, result.cophenetic_correlation);
 
-    return AppendClusterIdColumn(input, result.labels);
+    return AppendFittedInt32(input, "cluster_id", fit.rows, result.labels);
 }
 
 // ============================================================================
@@ -470,10 +479,18 @@ bool GMMOperator::Configure(
     tol_ = 1e-3;
     n_init_ = 1;
     seed_ = 0;
+    probabilities_ = false;
 
     if (!ConfigureBase(params, error)) return false;
 
     if (!ParseIntParam(params, "n_components", n_components_, GetName(), error)) return false;
+    if (auto pr = params.find("probabilities"); pr != params.end() && !pr->second.empty()) {
+        if (pr->second != "true" && pr->second != "false") {
+            error = GetName() + ": 'probabilities' must be 'true' or 'false' (got '" + pr->second + "')";
+            return false;
+        }
+        probabilities_ = pr->second == "true";
+    }
     if (!ParseIntParam(params, "max_iter", max_iter_, GetName(), error)) return false;
     if (!ParseDoubleParam(params, "tol", tol_, GetName(), error)) return false;
     if (!ParseIntParam(params, "n_init", n_init_, GetName(), error)) return false;
@@ -514,11 +531,11 @@ GMMOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, resolved, GetName(), GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
-    std::vector<std::vector<double>> matrix;
-    int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
-        input, resolved, GetName(), matrix, n_samples,
-        GetCancellationQuery()));
+    FeatureRows fit;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, resolved, GetName(), standardise_, fit, GetCancellationQuery()));
+    const auto& matrix = fit.data;
+    const int64_t n_samples = static_cast<int64_t>(fit.rows.size());
+    if (n_samples == 0) return arrow::Status::Invalid(GetName() + ": no row has every feature");
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     if (n_samples < n_components_) {
@@ -543,7 +560,11 @@ GMMOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  covariance_type_, result.log_likelihood, result.bic, result.aic,
                  result.n_iterations, result.converged);
 
-    return AppendClusterIdColumn(input, result.labels);
+    ARROW_ASSIGN_OR_RAISE(auto clustered, AppendFittedInt32(input, "cluster_id", fit.rows, result.labels));
+    if (!probabilities_) return clustered;
+    std::vector<std::string> names;
+    for (int k = 0; k < n_components_; ++k) names.push_back("probability_" + std::to_string(k));
+    return AppendFittedColumns(clustered, names, fit.rows, result.responsibilities);
 }
 
 } // namespace cyxwiz

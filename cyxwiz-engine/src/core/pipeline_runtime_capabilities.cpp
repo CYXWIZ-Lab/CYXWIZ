@@ -327,6 +327,8 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"WordEmbeddings", gui::NodeType::WordEmbeddings},
         {"PCANode", gui::NodeType::PCANode},
         {"PCA", gui::NodeType::PCANode},
+        {"TSNENode", gui::NodeType::TSNENode},
+        {"UMAPNode", gui::NodeType::UMAPNode},
         {"KMeansCluster", gui::NodeType::KMeansCluster},
         {"DBSCANCluster", gui::NodeType::DBSCANCluster},
         {"HierarchicalCluster", gui::NodeType::HierarchicalCluster},
@@ -375,12 +377,6 @@ GetPipelineOperatorRuntimeCapabilities() {
 const std::vector<PipelineFailClosedRuntimeCapability>&
 GetPipelineFailClosedRuntimeCapabilities() {
     static const std::vector<PipelineFailClosedRuntimeCapability> capabilities = {
-        {"TSNENode", "legacy t-SNE graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::TSNENode, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"UMAPNode", "legacy UMAP graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::UMAPNode, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"FeatureImportanceNode", "feature-importance graph execution is not implemented in PipelineExecutor",
          gui::NodeType::FeatureImportanceNode, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
@@ -1074,6 +1070,9 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"NERSequenceBuilder", "max_vocab_size", 0, false},
         {"NERSequenceBuilder", "max_sequence_length", 0, false},
         {"PCANode", "n_components", 1, false},
+        {"TSNENode", "perplexity", 1, false},
+        {"TSNENode", "iterations", 250, false},
+        {"UMAPNode", "n_neighbors", 2, false},
         {"KMeansCluster", "n_clusters", 1, false},
         {"KMeansCluster", "max_iter", 1, false},
         {"KMeansCluster", "n_init", 1, false},

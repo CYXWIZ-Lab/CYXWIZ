@@ -308,6 +308,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "JSONPathExtractor",
         "KMeansCluster",
         "KNNClassifier",
+        "TSNENode",
+        "UMAPNode",
         "LabelEncoder",
         "LinearRegressionNode",
         "LogisticRegressionNode",
@@ -3965,16 +3967,16 @@ int main(int argc, char** argv) {
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":4,"type":"TSNENode","name":"TSNE","parameters":{}})"
+        R"({"id":4,"type":"FeatureImportanceNode","name":"Importance","parameters":{}})"
         R"(],"links":[{"start_node":3,"end_node":4}]})";
 
     cyxwiz::PipelineExecutor unsupported_executor;
     Check(!unsupported_executor.ExecutePipeline(unsupported_json),
-          "TSNENode should fail closed in PipelineExecutor");
+          "FeatureImportanceNode should fail closed in PipelineExecutor");
     Check(unsupported_executor.GetLastError().find(
-              "legacy t-SNE graph execution is not implemented") !=
+              "feature-importance graph execution is not implemented") !=
               std::string::npos,
-          "TSNENode fail-closed error should come from runtime capabilities: " +
+          "FeatureImportanceNode fail-closed error should come from runtime capabilities: " +
               unsupported_executor.GetLastError());
 
     struct RepresentativeFailClosedCase {
@@ -3994,7 +3996,6 @@ int main(int argc, char** argv) {
           "Retired visualizer rejection should identify its type");
 
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
-        {"UMAPNode", false},
         {"TrainTestSplit", false},
         {"FeatureImportanceNode", false},
         {"Normalize", false},
@@ -5778,6 +5779,40 @@ int main(int argc, char** argv) {
               std::string::npos,
           "GMMCluster feature_cols validation should be specific: " +
               bad_gmm_feature_type_executor.GetLastError());
+
+    // t-SNE and UMAP (TOFIX129 D5): numeric features only; a run adds the embedding beside the input.
+    for (const char* type : {"TSNENode", "UMAPNode"}) {
+        const std::string bad_embedding_json =
+            R"({"nodes":[)"
+            R"({"id":707,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":708,"type":")" + std::string(type) + R"(","name":"BadEmbedding","parameters":{)"
+            R"("feature_cols":"phrase"}})"
+            R"(],"links":[{"start_node":707,"end_node":708}]})";
+        cyxwiz::PipelineExecutor bad_embedding_executor;
+        Check(!bad_embedding_executor.ExecutePipeline(bad_embedding_json),
+              std::string(type) + " string feature_cols should fail schema validation");
+        Check(bad_embedding_executor.GetLastError().find("feature column 'phrase' must be numeric") != std::string::npos,
+              std::string(type) + " feature_cols validation should be specific: " + bad_embedding_executor.GetLastError());
+
+        const std::string embedding_json =
+            R"({"nodes":[)"
+            R"({"id":709,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":710,"type":")" + std::string(type) + R"(","name":"Embedding","parameters":{)"
+            R"("feature_cols":"x,y","perplexity":"2","iterations":"250","n_neighbors":"3"}})"
+            R"(],"links":[{"start_node":709,"end_node":710}]})";
+        cyxwiz::PipelineExecutor embedding_executor;
+        Check(embedding_executor.ExecutePipeline(embedding_json),
+              std::string(type) + " should run as an operator: " + embedding_executor.GetLastError());
+        const auto embedded_dataset = registry.GetArrowDataset("ds_operator_" + std::string(type) + "_710");
+        const auto embedded = embedded_dataset ? embedded_dataset->GetArrowTable() : nullptr;
+        const std::string prefix = std::string(type) == "TSNENode" ? "tsne_" : "umap_";
+        Check(embedded && embedded->GetColumnByName(prefix + "0") && embedded->GetColumnByName(prefix + "1") && embedded->GetColumnByName("x"),
+              std::string(type) + " should add its embedding beside the input columns");
+    }
 
     const std::string bad_exp_smoothing_method_json =
         R"({"nodes":[)"

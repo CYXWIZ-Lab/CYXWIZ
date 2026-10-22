@@ -4,6 +4,7 @@
 
 #include "data_studio_panel.h"
 #include "../../core/node_executors/hypothesis_test_operator.h"
+#include "../../core/groups_presentation.h"
 #include "../../core/stats_presentation.h"
 #include "../separate_windows.h"
 
@@ -44,6 +45,36 @@ DataStudioPanel::DataStudioPanel() {
     groups_ = std::make_unique<GroupsView>();
     projection_ = std::make_unique<ProjectionView>();
     projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
+    // Groups and projections go into the graph as their nodes (TOFIX129 D5): in the
+    // data path (a step: the rest of the graph gets the new columns) or as a branch.
+    const auto add_node = [this](::gui::NodeType type, const std::string& name, std::map<std::string, std::string> params,
+                                 bool step) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        if (step) node_editor_->RequestStepAfter(from->id, type, name, std::move(params));
+        else node_editor_->RequestBranchAfter(from->id, type, std::move(params), name);
+        return std::string("Added the node \"") + name + "\" " + (step ? "after" : "reading") + " \"" + from->name +
+               "\" (Ctrl+Z on the canvas undoes it).";
+    };
+    groups_->add_to_graph = [add_node](const groups::GroupsRequest& r, bool step) {
+        ::gui::NodeType type = ::gui::NodeType::KMeansCluster;
+        switch (r.method) {
+            case groups::Method::KMeans: type = ::gui::NodeType::KMeansCluster; break;
+            case groups::Method::DBSCAN: type = ::gui::NodeType::DBSCANCluster; break;
+            case groups::Method::Hierarchical: type = ::gui::NodeType::HierarchicalCluster; break;
+            case groups::Method::Mixture: type = ::gui::NodeType::GMMCluster; break;
+        }
+        return add_node(type, std::string("Groups (") + groups_view::MethodLabel(r.method) + ")", groups::NodeParameters(r), step);
+    };
+    projection_->add_to_graph = [add_node](const groups::ProjectionRequest& r, bool step) {
+        ::gui::NodeType type = ::gui::NodeType::PCANode;
+        switch (r.method) {
+            case groups::ProjectionMethod::PCA: type = ::gui::NodeType::PCANode; break;
+            case groups::ProjectionMethod::TSNE: type = ::gui::NodeType::TSNENode; break;
+            case groups::ProjectionMethod::UMAP: type = ::gui::NodeType::UMAPNode; break;
+        }
+        return add_node(type, groups_view::ProjectionLabel(r.method), groups::NodeParameters(r), step);
+    };
     // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
     tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
         const studio::GraphNode* from = NodeOfDataset(active_dataset_);

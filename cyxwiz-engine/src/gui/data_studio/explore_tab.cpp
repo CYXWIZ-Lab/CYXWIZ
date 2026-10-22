@@ -74,4 +74,9 @@ bool ExploreChoices(const char* id, const char* const* labels, int count, int* s
     return changed;
 }
 
+void ExploreNextButton(const char* label) {
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < ui::ButtonWidth(label, ui::ButtonSize::Small)) ImGui::NewLine();
+}
+
 }  // namespace cyxwiz

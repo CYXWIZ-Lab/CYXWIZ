@@ -141,9 +141,9 @@ gui::MLNode MakeCustomPaddingNode() {
 gui::MLNode MakeFactoryOnlyUnsupportedNode() {
     gui::MLNode node;
     node.id = 6;
-    node.type = gui::NodeType::UMAPNode;
+    node.type = gui::NodeType::FeatureImportanceNode;
     node.category = gui::NodeCategory::Analytics;
-    node.name = "Factory-only UMAP";
+    node.name = "Factory-only feature importance";
     return node;
 }
 

@@ -393,16 +393,16 @@ void GroupsView::RenderActions(const groups::GroupsAnswer& a) {
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Puts the %s node after the data in use: the rest of the graph gets a cluster_id column", gv::MethodLabel(a.request.method));
-        ImGui::SameLine();
+        ExploreNextButton("Keep as a node");
         if (ui::SecondaryButton("Keep as a node")) {
             message_ = add_to_graph(a.request, false);
             message_error_ = false;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the %s node as a branch reading the data in use", gv::MethodLabel(a.request.method));
-        ImGui::SameLine();
+        ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export(a);
-    ImGui::SameLine();
+    ExploreNextButton("Copy");
     if (ui::SecondaryButton("Copy")) {
         std::string text = std::string(gv::MethodLabel(a.request.method)) + ": " + gv::Summary(a) + "\n";
         for (size_t g = 0; g < a.groups.size(); ++g) text += gv::GroupName(a.groups[g].label) + ": " + gv::Profile(a, g) + "\n";

@@ -51,6 +51,9 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::LogTransform:
         case NodeType::LabelEncoder: case NodeType::OrdinalEncoder: case NodeType::TargetEncoder:
         case NodeType::OutlierDetector:
+        // Groups and projections added as steps (Explore > Groups / Projection, TOFIX129 D5).
+        case NodeType::KMeansCluster: case NodeType::DBSCANCluster: case NodeType::HierarchicalCluster:
+        case NodeType::GMMCluster: case NodeType::PCANode: case NodeType::TSNENode: case NodeType::UMAPNode:
             job = Job::Prepare; return true;
         case NodeType::RowCountCheck: case NodeType::DataValidator:
             job = Job::Validate; return true;

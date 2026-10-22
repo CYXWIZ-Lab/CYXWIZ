@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -150,6 +151,13 @@ struct ProjectionHooks {
 
 ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest& request, const QueryRunner& run,
                                const explore::MissingTexts& texts, const ProjectionHooks& hooks = {});
+
+// The parameters of the node that gives the same answer in the graph (Add as
+// a step / Keep as a node): K-Means, DBSCAN, Hierarchical Clustering or GMM
+// Clustering (with its probabilities); PCA (keep_columns), t-SNE or UMAP (all
+// rows: the node does not sample).
+std::map<std::string, std::string> NodeParameters(const GroupsRequest& request);
+std::map<std::string, std::string> NodeParameters(const ProjectionRequest& request);
 
 // ---- Pure helpers (checked against scikit-learn / scipy) ----
 

@@ -8,6 +8,9 @@
 
 #include "../src/core/groups_explore.h"
 #include "../src/core/groups_presentation.h"
+#include "../src/core/node_executors/clustering_operators.h"
+#include "../src/core/node_executors/pca_operator.h"
+#include "../src/core/node_executors/projection_operators.h"
 #include "../src/core/session_query_engine.h"
 
 #include <arrow/api.h>
@@ -321,6 +324,101 @@ int main() {
         Check(n.legend.size() == 4 && n.index.front() == 0 && n.index.back() == 3, "numbers: four quartile bins");
         const auto gc = groups_view::ColourGroups({1, 0, -1, 1});
         Check(gc.legend.size() == 3 && gc.legend[0].first == "Group 1" && gc.legend[2].first == "noise", "group colours");
+    }
+
+    // ---- the nodes Add as a step puts in the graph: the tab's groups and projection
+    {
+        const auto table = Penguins(f);
+        const std::string features = "bill_length_mm,bill_depth_mm,flipper_length_mm,body_mass_g";
+        const auto int_column = [](const std::shared_ptr<arrow::Table>& t, const std::string& name) {
+            auto joined = arrow::Concatenate(t->GetColumnByName(name)->chunks()).ValueOrDie();
+            return std::static_pointer_cast<arrow::Int32Array>(joined);
+        };
+        const auto double_column = [](const std::shared_ptr<arrow::Table>& t, const std::string& name) {
+            auto joined = arrow::Concatenate(t->GetColumnByName(name)->chunks()).ValueOrDie();
+            return std::static_pointer_cast<arrow::DoubleArray>(joined);
+        };
+        std::string configure_error;
+
+        KMeansOperator kmeans;
+        Check(kmeans.Configure(groups::NodeParameters(km), configure_error),
+              "K-Means node configures: " + configure_error);
+        const auto clustered = kmeans.Apply(table);
+        Check(clustered.ok(), "K-Means node runs: " + clustered.status().ToString());
+        Check((*clustered)->num_rows() == 344 && (*clustered)->num_columns() == table->num_columns() + 1, "K-Means node keeps every row and column");
+        const auto ids = int_column(*clustered, "cluster_id");
+        std::vector<int> node_labels;
+        for (int64_t row = 0; row < ids->length(); ++row)
+            if (ids->IsValid(row)) node_labels.push_back(ids->Value(row));
+        Check(ids->null_count() == 2 && node_labels == a.labels, "K-Means node: the tab's groups, null where a feature is missing");
+
+        DBSCANOperator dbscan_node;
+        Check(dbscan_node.Configure(groups::NodeParameters(dbs), configure_error),
+              "DBSCAN node configures: " + configure_error);
+        const auto dense = dbscan_node.Apply(table);
+        Check(dense.ok(), "DBSCAN node runs: " + dense.status().ToString());
+        const auto dense_ids = int_column(*dense, "cluster_id");
+        std::vector<int> dense_labels;
+        for (int64_t row = 0; row < dense_ids->length(); ++row)
+            if (dense_ids->IsValid(row)) dense_labels.push_back(dense_ids->Value(row));
+        Check(dense_labels == Ints(f["dbscan"]["labels"]), "DBSCAN node: scikit-learn's labels");
+
+        GMMOperator mixture;
+        Check(mixture.Configure(groups::NodeParameters(mix), configure_error),
+              "mixture node configures: " + configure_error);
+        const auto mixed = mixture.Apply(table);
+        Check(mixed.ok(), "mixture node runs: " + mixed.status().ToString());
+        const auto p0 = double_column(*mixed, "probability_0"), p1 = double_column(*mixed, "probability_1"),
+                   p2 = double_column(*mixed, "probability_2");
+        Check(p0->null_count() == 2, "probabilities null where a feature is missing");
+        for (int64_t row = 0; row < p0->length(); ++row)
+            if (p0->IsValid(row)) Near(p0->Value(row) + p1->Value(row) + p2->Value(row), 1.0, 1e-9, "node probabilities sum to 1");
+        Check(!mixture.Configure({{"probabilities", "maybe"}}, configure_error) && configure_error.find("probabilities") != std::string::npos,
+              "probabilities must be true or false");
+
+        PCAOperator pca_node;
+        groups::ProjectionRequest pca_request;
+        pca_request.columns = columns;
+        Check(pca_node.Configure(groups::NodeParameters(pca_request), configure_error),
+              "PCA node configures: " + configure_error);
+        const auto projected = pca_node.Apply(table);
+        Check(projected.ok(), "PCA node runs: " + projected.status().ToString());
+        Check((*projected)->num_columns() == table->num_columns() + 2 && (*projected)->GetColumnByName("species"), "PCA node keeps the input columns");
+        const auto pc0 = double_column(*projected, "pc_0"), pc1 = double_column(*projected, "pc_1");
+        Check(pc0->null_count() == 2, "pc_0 null where a feature is missing");
+        size_t at = 0;
+        for (int64_t row = 0; row < pc0->length(); ++row) {
+            if (!pc0->IsValid(row)) continue;
+            Near(pc0->Value(row), f["pca"]["x"][at].get<double>(), 1e-6, "PCA node pc_0 is scikit-learn's");
+            Near(pc1->Value(row), f["pca"]["y"][at].get<double>(), 1e-6, "PCA node pc_1 is scikit-learn's");
+            ++at;
+        }
+
+        TSNEOperator tsne_node;
+        Check(tsne_node.Configure({{"feature_cols", features}, {"iterations", "250"}}, configure_error), "t-SNE node configures: " + configure_error);
+        const auto embedded = tsne_node.Apply(table);
+        Check(embedded.ok(), "t-SNE node runs: " + embedded.status().ToString());
+        Check((*embedded)->num_columns() == table->num_columns() + 2 && double_column(*embedded, "tsne_1")->null_count() == 2,
+              "t-SNE node adds tsne_0, tsne_1 beside the input");
+        Check(!tsne_node.Configure({{"iterations", "100"}}, configure_error) && configure_error.find("250") != std::string::npos,
+              "t-SNE refuses fewer than 250 iterations");
+        TSNEOperator stopped_node;
+        Check(stopped_node.Configure({{"feature_cols", features}, {"iterations", "5000"}}, configure_error), "t-SNE node configures");
+        // The first ask is while reading the rows; the next is t-SNE's first report.
+        auto asked = std::make_shared<int>(0);
+        PipelineOperatorExecutionContext context;
+        context.cancellation_requested = [asked] { return ++*asked > 1; };
+        stopped_node.SetExecutionContext(context);
+        const auto stopped_run = stopped_node.Apply(table);
+        Check(!stopped_run.ok() && stopped_run.status().IsCancelled(), "a cancelled run stops t-SNE: " + stopped_run.status().ToString());
+        Check(*asked == 2, "t-SNE stopped at its first report");
+
+        UMAPOperator umap_node;
+        Check(umap_node.Configure({{"feature_cols", features}, {"keep_columns", "false"}}, configure_error), "UMAP node configures: " + configure_error);
+        const auto umapped = umap_node.Apply(table);
+        Check(umapped.ok(), "UMAP node runs: " + umapped.status().ToString());
+        Check((*umapped)->num_columns() == 2 && (*umapped)->num_rows() == used, "UMAP node alone: umap_0, umap_1 for the rows used");
+        Check(!umap_node.Configure({{"n_components", "4"}}, configure_error), "n_components must be 2 or 3");
     }
 
     // ---- refusals

@@ -367,16 +367,16 @@ void ProjectionView::RenderActions(const groups::ProjectionAnswer& a) {
             message_error_ = false;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puts the %s node after the data in use: the rest of the graph gets its columns beside the others", node);
-        ImGui::SameLine();
+        ExploreNextButton("Keep as a node");
         if (ui::SecondaryButton("Keep as a node")) {
             message_ = add_to_graph(a.request, false);
             message_error_ = false;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the %s node as a branch reading the data in use", node);
-        ImGui::SameLine();
+        ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export(a);
-    ImGui::SameLine();
+    ExploreNextButton("Copy");
     if (ui::SecondaryButton("Copy")) {
         const std::string text = gv::ProjectionSentence(a) + "\n";
         ImGui::SetClipboardText(text.c_str());

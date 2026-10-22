@@ -310,6 +310,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/pca_operator.cpp                 # Tool-to-Node Band 1
     src/core/node_executors/sentiment_analyzer_operator.cpp  # Tool-to-Node Band 1
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp    # Tool-to-Node Band 1
     src/core/node_executors/tree_model_artifact.cpp          # Tool-to-Node Band 1
     src/core/node_executors/decision_tree_model.cpp          # Tool-to-Node Band 1
@@ -2415,6 +2417,8 @@ set_target_properties(test_language_model_inference_contract PROPERTIES
 add_executable(test_operator_configure_resets
     tests/test_operator_configure_resets.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/pca_operator.cpp
@@ -2736,6 +2740,8 @@ add_executable(test_pipeline_operator_metadata
     src/gui/properties_contract.cpp
     src/gui/properties_truth.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -3103,6 +3109,8 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/datasets/streaming_dataset.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -3819,6 +3827,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/csv_records.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -7250,10 +7260,13 @@ add_test(NAME StatsExplore COMMAND test_stats_explore)
 # Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
 add_executable(test_groups_explore tests/test_groups_explore.cpp
     src/core/groups_explore.cpp src/core/groups_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/node_executors/clustering_operators.cpp src/core/node_executors/pca_operator.cpp
+    src/core/node_executors/projection_operators.cpp src/core/node_executors/feature_rows.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
     src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
 target_include_directories(test_groups_explore PRIVATE src)
+target_link_libraries(test_groups_explore PRIVATE cyxwiz-training-core)
 target_link_libraries(test_groups_explore PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
     spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
 if(WIN32)
@@ -7497,6 +7510,8 @@ add_executable(test_engine_node_parity
     src/core/csv_records.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
