@@ -33,14 +33,17 @@ public:
         ExtensionNodeDescriptor descriptor;
         // TensorLayer nodes: required.
         std::shared_ptr<ITensorNodeFactory> tensor_factory;
+        // Loss nodes: required.
+        std::shared_ptr<ITensorLossFactory> loss_factory;
         // Signal nodes: required, non-owning (the plugin manager owns the plugin).
         plugin::INodeProvider* signal_provider = nullptr;
         // Keeps the provider's code loaded while anything holds a copy.
         std::shared_ptr<void> provider_lease;
     };
 
-    // False with a reason: invalid id, id already registered, or the kind's
-    // factory/provider is missing. descriptor.type_id is filled from
+    // False with a reason: invalid id, id already registered, the kind's
+    // factory/provider is missing, or a Loss node's pins are not
+    // Predictions/Targets -> Loss. descriptor.type_id is filled from
     // provider_id and type_name.
     bool Register(Registration registration, std::string& error);
 
@@ -54,6 +57,7 @@ public:
     size_t Count() const;
 
     std::shared_ptr<ITensorNodeFactory> TensorFactory(const std::string& type_id) const;
+    std::shared_ptr<ITensorLossFactory> LossFactory(const std::string& type_id) const;
     plugin::INodeProvider* SignalProvider(const std::string& type_id) const;
     std::shared_ptr<void> ProviderLease(const std::string& type_id) const;
 

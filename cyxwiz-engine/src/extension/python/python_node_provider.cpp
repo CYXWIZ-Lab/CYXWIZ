@@ -3,6 +3,7 @@
 #include "python_node_factory.h"
 #include "../../core/extension_node_registry.h"
 
+#include <cyxwiz/losses/loss_base.h>
 #include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
 
@@ -18,9 +19,14 @@ namespace {
 
 // The factory of a bundle whose code is not approved: the node is listed and
 // saved, compiling it reports why it does not run.
-class NotApprovedFactory final : public ITensorNodeFactory {
+class NotApprovedFactory final : public ITensorNodeFactory, public ITensorLossFactory {
 public:
     explicit NotApprovedFactory(std::string message) : message_(std::move(message)) {}
+
+    std::unique_ptr<Loss> CreateLoss(const std::map<std::string, std::string>&, std::string& error) const override {
+        error = message_;
+        return nullptr;
+    }
 
     ExtensionShapeResult InferOutputShape(const std::vector<size_t>&,
                                           const std::map<std::string, std::string>&) const override {
@@ -123,11 +129,18 @@ void PythonNodeProvider::Register() {
         for (const auto& node : state.bundle.nodes) {
             ExtensionNodeRegistry::Registration registration;
             registration.descriptor = node.descriptor;
-            if (state.approved) {
-                registration.tensor_factory = MakePythonTensorNodeFactory(state.bundle, node);
+            const bool loss = node.descriptor.kind == ExtensionNodeKind::Loss;
+            if (!state.approved) {
+                auto refusal = std::make_shared<NotApprovedFactory>(PythonBundleNotApprovedMessage(state.bundle.id));
+                if (loss) {
+                    registration.loss_factory = refusal;
+                } else {
+                    registration.tensor_factory = refusal;
+                }
+            } else if (loss) {
+                registration.loss_factory = MakePythonLossFactory(state.bundle, node);
             } else {
-                registration.tensor_factory =
-                    std::make_shared<NotApprovedFactory>(PythonBundleNotApprovedMessage(state.bundle.id));
+                registration.tensor_factory = MakePythonTensorNodeFactory(state.bundle, node);
             }
             if (registry.Register(std::move(registration), error)) {
                 ++registered;

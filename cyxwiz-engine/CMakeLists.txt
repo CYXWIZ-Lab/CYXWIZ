@@ -7269,6 +7269,11 @@ add_executable(test_extension_training tests/test_extension_training.cpp)
 target_link_libraries(test_extension_training PRIVATE cyxwiz-training-core)
 target_compile_definitions(test_extension_training PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
+# Loss nodes from extensions: compile, build, train (TOFIX125 P7 steps 7.2-7.3)
+add_executable(test_extension_loss tests/test_extension_loss.cpp)
+target_link_libraries(test_extension_loss PRIVATE cyxwiz-training-core)
+add_test(NAME extension_loss COMMAND test_extension_loss)
+
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
 

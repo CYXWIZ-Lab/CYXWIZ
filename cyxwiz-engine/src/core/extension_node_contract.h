@@ -19,6 +19,7 @@
 
 namespace cyxwiz {
 
+class Loss;
 class Module;
 
 namespace plugin {
@@ -28,11 +29,20 @@ class INodeProvider;
 enum class ExtensionNodeKind {
     Signal,       // evaluated per tick by GraphExecutor (simulation); cannot train
     TensorLayer,  // one tensor in, one tensor out; becomes a Module in the model
+    Loss,         // predictions + targets in, a scalar loss out; the graph's training objective
 };
 
 enum class ExtensionLayerRole {
     Layer,
     Activation,
+};
+
+// What a Loss node's targets are, which decides the label format and the
+// metrics. Categorical: one-hot rows as wide as the model's output, accuracy
+// by argmax. Continuous: target values, regression metrics.
+enum class ExtensionLossTarget {
+    Categorical,
+    Continuous,
 };
 
 enum class ExtensionSource {
@@ -60,6 +70,7 @@ struct ExtensionNodeDescriptor {
     std::string source_path;
     ExtensionNodeKind kind = ExtensionNodeKind::Signal;
     ExtensionLayerRole role = ExtensionLayerRole::Layer;
+    ExtensionLossTarget loss_target = ExtensionLossTarget::Categorical;  // Loss nodes
 
     // name, category, ports, typed parameters, help. type is PluginCustom.
     NodeMetadata metadata;
@@ -97,6 +108,24 @@ public:
         const std::map<std::string, std::string>& parameters,
         std::string& error) const = 0;
 };
+
+// What a Loss node supplies. Called when training (and Test, Debug) builds
+// the model, from any thread. The loss follows the built-in losses'
+// contract: Forward(predictions, targets) gives a scalar; Backward gives
+// dLoss/dpredictions with the predictions' shape, mean scaling included.
+class ITensorLossFactory {
+public:
+    virtual ~ITensorLossFactory() = default;
+
+    // nullptr with `error` set when the loss cannot be created.
+    virtual std::unique_ptr<Loss> CreateLoss(
+        const std::map<std::string, std::string>& parameters,
+        std::string& error) const = 0;
+};
+
+// A Loss node's pins, the same as a built-in loss's: Predictions (Tensor)
+// and Targets (Labels) in, Loss (Loss) out.
+void SetExtensionLossPorts(NodeMetadata& metadata);
 
 // "<provider_id>:<type_name>".
 std::string MakeExtensionTypeId(const std::string& provider_id, const std::string& type_name);

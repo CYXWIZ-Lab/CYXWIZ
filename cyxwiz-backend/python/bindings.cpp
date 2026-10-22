@@ -1125,14 +1125,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Sum", cyxwiz::Reduction::Sum)
         .export_values();
 
-    // Base Loss class (abstract - for type hierarchy)
-    py::class_<cyxwiz::Loss>(m, "Loss")
-        .def("forward", &cyxwiz::Loss::Forward,
-             py::arg("predictions"), py::arg("targets"),
-             "Compute loss value")
-        .def("backward", &cyxwiz::Loss::Backward,
-             py::arg("predictions"), py::arg("targets"),
-             "Compute loss gradients");
+    // Base Loss class, subclassable in Python (TOFIX125 P7).
+    pycyxwiz_bindings::BindLossBase(m);
 
     // MSE Loss (concrete implementation)
     py::class_<cyxwiz::MSELoss, cyxwiz::Loss>(m, "MSELoss")
@@ -2228,6 +2222,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // Module base class; Python subclasses become real modules (TOFIX125 P3).
     pycyxwiz_bindings::BindModuleBase(m);
     pycyxwiz_bindings::BindGradientCheck(m);
+    pycyxwiz_bindings::BindLossGradientCheck(m);
 
     // LinearModule
     py::class_<cyxwiz::LinearModule, cyxwiz::Module>(m, "LinearModule")

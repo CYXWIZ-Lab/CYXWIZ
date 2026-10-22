@@ -227,6 +227,13 @@ inline bool IsSupportedTrainingLoss(gui::NodeType type) {
     return IsArrayFireTrainingLoss(type);
 }
 
+// A loss node from a plugin or a Python bundle (TOFIX125 P7): its own code,
+// placed like an extension layer.
+inline bool IsExtensionTrainingLoss(const TrainingConfiguration& config) {
+    return config.loss_type == gui::NodeType::PluginCustom &&
+           !config.loss_extension_type_id.empty();
+}
+
 inline bool IsSupportedTrainingOptimizer(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::SGD:
@@ -243,6 +250,10 @@ inline bool IsSupportedTrainingOptimizer(gui::NodeType type) {
 
 inline bool IsSupportedTrainingMetricContract(
     const TrainingConfiguration& config) {
+    // The compiler set the value kind from the extension's target kind.
+    if (IsExtensionTrainingLoss(config)) {
+        return true;
+    }
     if (!IsSupportedTrainingLoss(config.loss_type)) {
         return false;
     }
@@ -261,7 +272,7 @@ inline bool IsSupportedTrainingMetricContract(
 
 inline std::string TrainingLossPlacementName(
     const TrainingConfiguration& config) {
-    return IsSupportedTrainingLoss(config.loss_type)
+    return IsSupportedTrainingLoss(config.loss_type) || IsExtensionTrainingLoss(config)
         ? config.GetLossName()
         : "Unsupported(" +
               std::to_string(static_cast<int>(config.loss_type)) + ")";
@@ -349,19 +360,34 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
             "Model forward is assigned to the selected ArrayFire backend."));
     }
 
-    const bool supported_loss = IsSupportedTrainingLoss(config.loss_type);
-    AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
-        config.loss_node_id >= 0 ? config.loss_node_id : -3001,
-        "loss",
-        "Loss." + TrainingLossPlacementName(config),
-        context,
-        supported_loss ? ExecutionPlacementStatus::ArrayFire : BackendPlacementStatus::Unsupported,
-        supported_loss ? "loss_arrayfire" : "loss_unsupported",
-        supported_loss ? backend : "unavailable",
-        supported_loss
-            ? "Loss computation is assigned to the selected ArrayFire backend."
-            : "TrainingExecutor has no configured loss implementation for "
-              "this node type."));
+    const int loss_node_id = config.loss_node_id >= 0 ? config.loss_node_id : -3001;
+    if (IsExtensionTrainingLoss(config)) {
+        AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
+            loss_node_id,
+            "loss",
+            "Loss." + config.loss_extension_type_id,
+            context,
+            BackendPlacementStatus::Unknown,
+            BackendPlacementReason::ExtensionModuleCode,
+            BackendPlacementStatus::Unknown,
+            "Extension loss " + config.loss_extension_type_id +
+                " runs its extension's own code. Where it computes depends "
+                "on the tensor operations that code uses."));
+    } else {
+        const bool supported_loss = IsSupportedTrainingLoss(config.loss_type);
+        AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
+            loss_node_id,
+            "loss",
+            "Loss." + TrainingLossPlacementName(config),
+            context,
+            supported_loss ? ExecutionPlacementStatus::ArrayFire : BackendPlacementStatus::Unsupported,
+            supported_loss ? "loss_arrayfire" : "loss_unsupported",
+            supported_loss ? backend : "unavailable",
+            supported_loss
+                ? "Loss computation is assigned to the selected ArrayFire backend."
+                : "TrainingExecutor has no configured loss implementation for "
+                  "this node type."));
+    }
 
     const bool supported_metrics =
         IsSupportedTrainingMetricContract(config);

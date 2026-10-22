@@ -1,9 +1,11 @@
 // The extension node registry (TOFIX125 P1 step 1.1): identity rules,
-// registration, removal, the generation counter and change notification.
+// registration, removal, the generation counter and change notification;
+// loss nodes (P7 step 7.1).
 // No GUI, no plugin library, no Python: providers are stand-ins in this file.
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/interfaces/i_node_provider.h"
 
+#include <cyxwiz/losses/loss_base.h>
 #include <cyxwiz/sequential.h>
 
 #include <cstdlib>
@@ -64,6 +66,30 @@ public:
         return nullptr;
     }
 };
+
+class StubLossFactory : public cyxwiz::ITensorLossFactory {
+public:
+    std::unique_ptr<cyxwiz::Loss> CreateLoss(const std::map<std::string, std::string>&,
+                                             std::string& error) const override {
+        error = "not used in this test";
+        return nullptr;
+    }
+};
+
+cyxwiz::ExtensionNodeRegistry::Registration LossNode(const std::string& provider_id,
+                                                     const std::string& type_name,
+                                                     std::shared_ptr<cyxwiz::ITensorLossFactory> factory) {
+    cyxwiz::ExtensionNodeRegistry::Registration registration;
+    registration.descriptor.provider_id = provider_id;
+    registration.descriptor.type_name = type_name;
+    registration.descriptor.kind = cyxwiz::ExtensionNodeKind::Loss;
+    registration.descriptor.loss_target = cyxwiz::ExtensionLossTarget::Continuous;
+    registration.descriptor.metadata.name = type_name;
+    cyxwiz::SetExtensionLossPorts(registration.descriptor.metadata);
+    registration.descriptor.source_path = "test://" + provider_id;
+    registration.loss_factory = std::move(factory);
+    return registration;
+}
 
 cyxwiz::ExtensionNodeRegistry::Registration SignalNode(const std::string& provider_id,
                                                        const std::string& type_name,
@@ -223,6 +249,43 @@ void TestRefusals() {
     Check(registry.Count() == 0, "cleanup");
 }
 
+void TestLossNodes() {
+    auto& registry = cyxwiz::ExtensionNodeRegistry::Instance();
+    auto factory = std::make_shared<StubLossFactory>();
+    std::string error;
+
+    Check(!registry.Register(LossNode("test.losses", "MyMSE", nullptr), error),
+          "a loss node without a loss factory is refused");
+    Check(error.find("test.losses:MyMSE") != std::string::npos && error.find("loss factory") != std::string::npos,
+          "the refusal names the node and the missing factory: " + error);
+
+    auto one_input = LossNode("test.losses", "MyMSE", factory);
+    one_input.descriptor.metadata.inputs.pop_back();
+    Check(!registry.Register(std::move(one_input), error), "a loss node without a Targets pin is refused");
+    Check(error.find("Predictions (Tensor), Targets (Labels) -> Loss (Loss)") != std::string::npos,
+          "the refusal says which pins a loss has: " + error);
+    auto tensor_out = LossNode("test.losses", "MyMSE", factory);
+    tensor_out.descriptor.metadata.outputs = {{"Output", cyxwiz::PinType::Tensor}};
+    Check(!registry.Register(std::move(tensor_out), error), "a loss node whose output is not a Loss pin is refused");
+    Check(registry.Count() == 0, "nothing was registered by the refusals");
+
+    Check(registry.Register(LossNode("test.losses", "MyMSE", factory), error), "a loss node registers: " + error);
+    const auto found = registry.Find("test.losses:MyMSE");
+    Check(found && found->kind == cyxwiz::ExtensionNodeKind::Loss &&
+              found->loss_target == cyxwiz::ExtensionLossTarget::Continuous,
+          "the loss node is found with its kind and target");
+    Check(found->metadata.inputs.size() == 2 && found->metadata.inputs[0].name == "Predictions" &&
+              found->metadata.inputs[1].name == "Targets" &&
+              found->metadata.inputs[1].type == cyxwiz::PinType::Labels &&
+              found->metadata.outputs.size() == 1 && found->metadata.outputs[0].type == cyxwiz::PinType::Loss,
+          "a loss node has the built-in losses' pins");
+    Check(registry.LossFactory("test.losses:MyMSE") == factory, "the loss factory is returned");
+    Check(registry.TensorFactory("test.losses:MyMSE") == nullptr, "a loss node has no tensor factory");
+    Check(registry.LossFactory("test.losses:Missing") == nullptr, "an unknown node has no loss factory");
+    registry.RemoveByProvider("test.losses");
+    Check(registry.Count() == 0, "cleanup");
+}
+
 void TestGenerationAndNotification() {
     auto& registry = cyxwiz::ExtensionNodeRegistry::Instance();
     auto factory = std::make_shared<StubTensorFactory>();
@@ -361,6 +424,7 @@ int main() {
     TestIdentityRules();
     TestRegisterFindRemove();
     TestRefusals();
+    TestLossNodes();
     TestGenerationAndNotification();
     TestLeaseIsKept();
     TestSignalNodeDescriptor();
