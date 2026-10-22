@@ -109,8 +109,8 @@ struct PipelineOperatorExecutionContext {
  * IPipelineOperator — Category 1 base interface (pipeline operations).
  *
  * Real operations that transform Arrow table data flowing through a graph,
- * executed automatically during training. The opposite of Category 2
- * introspection executors (INodeExecutor) which are manual click-Run UI tools.
+ * executed automatically during training. Inspection (Category 2) lives in
+ * panels and Data Studio's Explore tabs, not in operators.
  *
  * Contract:
  *   - Input  → arrow::Table from upstream node
@@ -122,9 +122,6 @@ struct PipelineOperatorExecutionContext {
  * Subclasses implement a single operation per CLAUDE.md's
  * single-responsibility node rule. Multi-step transforms compose at the
  * graph level, not inside a single operator.
- *
- * NOT for Category 2 (introspection / KMeans-style click-Run tools) — use
- * INodeExecutor for those.
  */
 class IPipelineOperator {
 public:

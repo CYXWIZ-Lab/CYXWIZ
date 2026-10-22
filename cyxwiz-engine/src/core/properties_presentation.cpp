@@ -362,7 +362,6 @@ View Build(const Inputs& in) {
         const bool listed = std::any_of(v.raw.begin(), v.raw.end(), [&key](const RawRow& r) { return r.key == key; });
         if (!listed) v.raw.push_back(MakeRawRow(key, value));
     }
-    v.has_executor = in.has_executor;
     return v;
 }
 

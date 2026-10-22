@@ -141,8 +141,6 @@ struct View {
     float position_x = 0.0f, position_y = 0.0f;
     int links_in = 0, links_out = 0;
     std::vector<RawRow> raw;
-
-    bool has_executor = false;               // K-Means: the executor section follows
 };
 
 struct Inputs {
@@ -153,7 +151,6 @@ struct Inputs {
     gui::properties_truth::NodeTruthReport truth;
     const gui::properties_truth::DatasetTruthFact* dataset = nullptr;  // this node's, Data Input only
     bool has_dialog = false;        // NodeConfigDialogFactory has one for the type
-    bool has_executor = false;
     bool custom_editor = false;     // metadata says Custom
     bool dialog_only = false;       // metadata says Dialog
     const CompiledNodeInputs* compiled = nullptr;  // nullptr: no compile facts

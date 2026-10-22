@@ -6,7 +6,6 @@
 #include "properties.h"
 #include "../core/label_vocabulary.h"
 #include "properties_contract.h"
-#include "properties_executor.h"
 #include "properties_node_editors.h"
 #include "properties_parameter_rules.h"
 #include "properties_rows.h"
@@ -18,7 +17,6 @@
 #include "../core/extension_node_metadata.h"
 #include "../core/file_dialogs.h"
 #include "../core/live_graph_compile.h"
-#include "../core/node_executors/node_executor_factory.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/dashboard/dashboard_model.h"
 #include "../core/plot/plot_model.h"
@@ -290,7 +288,6 @@ void Properties::RefreshView(MLNode& node) {
         if (fact.dataset_name == dataset_name) in.dataset = &fact;
     }
     in.has_dialog = ShouldShowOpenDialogButton(node.type);
-    in.has_executor = cyxwiz::NodeExecutorFactory::Instance().HasExecutor(node.type);
     in.custom_editor = properties_contract::IsCustomPropertiesNode(metadata);
     in.dialog_only = properties_contract::IsDialogOnlyPropertiesNode(metadata);
 
@@ -366,10 +363,6 @@ void Properties::RenderGenericSections(MLNode& node) {
     RenderCompiledCard(node);
     RenderFusionCard(node);
     RenderAdvanced(node);
-    if (view_.has_executor) {
-        ImGui::Spacing();
-        RenderExecutorSection(node);
-    }
 }
 
 void Properties::RenderEmpty() {
@@ -993,12 +986,6 @@ void Properties::RenderAdvanced(MLNode& node) {
             NotifyEdited();
         }
     }
-}
-
-// ==================== Node Executor Integration ====================
-
-void Properties::RenderExecutorSection(MLNode& node) {
-    properties_executor::RenderExecutorSection(node_editor_, node);
 }
 
 } // namespace gui

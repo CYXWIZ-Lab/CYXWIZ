@@ -290,7 +290,6 @@ set(ENGINE_SOURCES
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
-    src/core/node_executors/kmeans_executor.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/time_series_window_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/time_series_segment_operator.cpp # Gap-safe segments
@@ -427,7 +426,6 @@ set(ENGINE_SOURCES
     src/gui/guided_editor.cpp
     src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
-    src/gui/properties_executor.cpp
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_extension_node.cpp
@@ -839,9 +837,6 @@ set(ENGINE_HEADERS
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
-    src/core/node_executors/node_executor.h
-    src/core/node_executors/kmeans_executor.h
-    src/core/node_executors/node_executor_factory.h
     src/core/node_executors/pipeline_operator.h
     src/core/node_executors/pipeline_operator_factory.h
     src/core/node_executors/identity_operator.h
