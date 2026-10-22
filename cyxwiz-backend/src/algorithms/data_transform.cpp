@@ -334,10 +334,6 @@ TransformResult TransformEachColumn(const Columns& data, const char* method, con
 // Input checks
 // ============================================================================
 
-bool DataTransform::CanApplyLogTransform(const std::vector<double>& data, bool use_log1p) {
-    return std::all_of(data.begin(), data.end(), [use_log1p](double x) { return use_log1p ? x > -1.0 : x > 0.0; });
-}
-
 bool DataTransform::CanApplyBoxCox(const std::vector<double>& data) {
     return std::all_of(data.begin(), data.end(), [](double x) { return x > 0.0; });
 }
@@ -374,6 +370,30 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
         stats.error_message = DeviceError("DataTransform::ComputeColumnStats", e);
     }
     return stats;
+}
+
+std::vector<int64_t> DataTransform::Histogram(const std::vector<double>& data, int bins, double low, double high,
+                                              std::string* error) {
+    if (bins < 1 || !(high >= low) || !std::isfinite(low) || !std::isfinite(high)) return {};
+    std::vector<int64_t> counts(static_cast<size_t>(bins), 0);
+    if (data.empty()) return counts;
+    try {
+        const af::array x = HostValuesToDevice(data);
+        if (high == low) {
+            counts[static_cast<size_t>(bins / 2)] = static_cast<int64_t>(af::count<double>(x == low));
+            return counts;
+        }
+        const af::array inside = af::where(x >= low && x <= high);
+        if (inside.elements() == 0) return counts;
+        // ArrayFire puts a value in bin floor((v - low) / width), clamped to the last.
+        const af::array h = af::histogram(x(inside), static_cast<unsigned>(bins), low, high).as(f64);
+        const std::vector<double> host = DeviceToHostValues(h, "DataTransform::Histogram");
+        for (size_t i = 0; i < counts.size() && i < host.size(); ++i) counts[i] = static_cast<int64_t>(host[i]);
+    } catch (const af::exception& e) {
+        if (error) *error = DeviceError("DataTransform::Histogram", e);
+        return {};
+    }
+    return counts;
 }
 
 NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double>& data) {
@@ -659,13 +679,56 @@ TransformResult DataTransform::MaxAbsScale(const Columns& data) {
         });
 }
 
+namespace {
+
+// x through fitted quantile references onto [0, 1] (uniform) or the standard
+// normal (QuantileTransformer's transform).
+af::array QuantileMap(const af::array& x, const af::array& quantiles, bool normal) {
+    const dim_t size = quantiles.elements();
+    const af::array refs = af::range(af::dim4(size), 0, x.type()) / static_cast<double>(size - 1);
+    const double lower_x = af::min<double>(quantiles), upper_x = af::max<double>(quantiles);
+    af::array y = QuantileInterpolate(quantiles.as(x.type()), refs, x);
+    // x + 1e-7 > upper_x as QuantileTransformer writes it; the == keeps the
+    // bound values themselves on a float32 device, where x + 1e-7 rounds to x.
+    constexpr double kBoundsThreshold = 1e-7;
+    const af::array upper = normal ? (x > upper_x - kBoundsThreshold) || (x == upper_x) : x == upper_x;
+    const af::array lower = normal ? (x < lower_x + kBoundsThreshold) || (x == lower_x) : x == lower_x;
+    y = af::select(upper, 1.0, y);
+    y = af::select(lower, 0.0, y);
+    if (!normal) return y;
+    const double clip = kBoundsThreshold - std::numeric_limits<double>::epsilon();
+    af::array z = NormalQuantile(af::max(af::min(y, af::constant(1.0 - clip, y.dims(), y.type())),
+                                         af::constant(clip, y.dims(), y.type())));
+    // The bounds are scipy's norm.ppf(1 - clip) and norm.ppf(clip): float32
+    // cannot hold 1 - clip (it rounds to 1 - 1.19e-7, ppf 5.1666).
+    constexpr double kUpperZ = 5.19933758270342, kLowerZ = -5.199337582605575;
+    z = af::select(upper, kUpperZ, z);
+    return af::select(lower, kLowerZ, z);
+}
+
+// The column's min(n_quantiles, n) quantile references, made non-decreasing.
+af::array QuantileReferences(const af::array& x, int n_quantiles) {
+    const int size = static_cast<int>(std::min<dim_t>(n_quantiles, x.elements()));
+    return af::scan(ExactQuantiles(af::sort(x), size), 0, AF_BINARY_MAX);
+}
+
+bool OutputDistribution(const std::string& name, bool& normal, std::string& error) {
+    normal = name == "normal";
+    if (normal || name == "uniform") return true;
+    error = "Unknown output distribution '" + name + "' (uniform or normal)";
+    return false;
+}
+
+}  // namespace
+
 TransformResult DataTransform::QuantileTransform(const Columns& data, const std::string& output_distribution,
                                                  int n_quantiles) {
-    const bool normal = output_distribution == "normal";
-    if (!normal && output_distribution != "uniform") {
+    bool normal = false;
+    std::string error;
+    if (!OutputDistribution(output_distribution, normal, error)) {
         TransformResult result;
         result.method = "quantile_transform";
-        return Fail(result, "Unknown output distribution '" + output_distribution + "' (uniform or normal)");
+        return Fail(result, error);
     }
     if (n_quantiles < 2) {
         TransformResult result;
@@ -674,36 +737,55 @@ TransformResult DataTransform::QuantileTransform(const Columns& data, const std:
     }
     TransformResult result = TransformEachColumn(data, "quantile_transform", "DataTransform::QuantileTransform",
         [&](const af::array& x, const std::string&, auto&, std::string& refusal) -> af::array {
-            const dim_t n = x.elements();
-            if (n < 2) {
+            if (x.elements() < 2) {
                 refusal = "Needs at least 2 values";
                 return {};
             }
-            const int size = static_cast<int>(std::min<dim_t>(n_quantiles, n));
-            const af::array refs = af::range(af::dim4(size), 0, x.type()) / static_cast<double>(size - 1);
-            const af::array quantiles = af::scan(ExactQuantiles(af::sort(x), size), 0, AF_BINARY_MAX);
-            const double lower_x = af::min<double>(quantiles), upper_x = af::max<double>(quantiles);
-
-            af::array y = QuantileInterpolate(quantiles, refs, x);
-            // x + 1e-7 > upper_x as QuantileTransformer writes it; the == keeps the
-            // bound values themselves on a float32 device, where x + 1e-7 rounds to x.
-            constexpr double kBoundsThreshold = 1e-7;
-            const af::array upper = normal ? (x > upper_x - kBoundsThreshold) || (x == upper_x) : x == upper_x;
-            const af::array lower = normal ? (x < lower_x + kBoundsThreshold) || (x == lower_x) : x == lower_x;
-            y = af::select(upper, 1.0, y);
-            y = af::select(lower, 0.0, y);
-            if (!normal) return y;
-            const double clip = kBoundsThreshold - std::numeric_limits<double>::epsilon();
-            af::array z = NormalQuantile(af::max(af::min(y, af::constant(1.0 - clip, y.dims(), y.type())),
-                                                 af::constant(clip, y.dims(), y.type())));
-            // The bounds are scipy's norm.ppf(1 - clip) and norm.ppf(clip): float32
-            // cannot hold 1 - clip (it rounds to 1 - 1.19e-7, ppf 5.1666).
-            constexpr double kUpperZ = 5.19933758270342, kLowerZ = -5.199337582605575;
-            z = af::select(upper, kUpperZ, z);
-            return af::select(lower, kLowerZ, z);
+            return QuantileMap(x, QuantileReferences(x, n_quantiles), normal);
         });
     result.params["output_distribution"] = normal ? 1.0 : 0.0;
     result.params["n_quantiles"] = static_cast<double>(n_quantiles);
+    return result;
+}
+
+bool DataTransform::QuantileFit(const std::vector<double>& data, int n_quantiles, std::vector<double>& quantiles,
+                                std::string& error) {
+    quantiles.clear();
+    if (n_quantiles < 2) {
+        error = "Needs at least 2 quantiles";
+        return false;
+    }
+    if (data.size() < 2) {
+        error = "Needs at least 2 values";
+        return false;
+    }
+    try {
+        const af::array refs = QuantileReferences(HostValuesToDevice(data), n_quantiles).as(f64);
+        quantiles = DeviceToHostValues(refs, "DataTransform::QuantileFit");
+        return true;
+    } catch (const af::exception& e) {
+        error = DeviceError("DataTransform::QuantileFit", e);
+        return false;
+    }
+}
+
+TransformResult DataTransform::QuantileApply(const Columns& data, const Columns& quantiles,
+                                             const std::string& output_distribution) {
+    TransformResult result;
+    result.method = "quantile_transform";
+    bool normal = false;
+    std::string error;
+    if (!OutputDistribution(output_distribution, normal, error)) return Fail(result, error);
+    if (quantiles.size() != data.size()) return Fail(result, "One set of fitted quantiles per column is needed");
+    for (const auto& q : quantiles)
+        if (q.size() < 2) return Fail(result, "Fitted quantiles need at least 2 values");
+    size_t column = 0;
+    result = TransformEachColumn(data, "quantile_transform", "DataTransform::QuantileApply",
+        [&](const af::array& x, const std::string&, auto&, std::string&) -> af::array {
+            const af::array refs = HostValuesToDevice(quantiles[column++]).as(x.type());
+            return QuantileMap(x, refs, normal);
+        });
+    result.params["output_distribution"] = normal ? 1.0 : 0.0;
     return result;
 }
 

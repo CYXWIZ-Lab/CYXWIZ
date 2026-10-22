@@ -41,6 +41,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <thread>
 
@@ -330,6 +331,11 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "RenameColumns",
         "RandomForestClassifier",
         "RobustScaler",
+        "HypothesisTest",
+        "MaxAbsScaler",
+        "MinMaxScaler",
+        "QuantileTransform",
+        "PowerTransform",
         "ROCCurveNode",
         "RowToColumnNames",
         "RuleEngine",
@@ -364,6 +370,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSFeatures",
         "TSLag",
         "TestEvaluationNode",
+        "CrossValidationNode",
+        "LearningCurvesNode",
         "TSWindow",
         "ValueCounts",
         "WordEmbeddings",
@@ -1765,7 +1773,7 @@ void CheckStreamingScaler() {
     auto log_graph = [&](bool disk, const std::string& expected) {
         return std::string(R"({"nodes":[{"id":95201,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
             (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
-            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"value_col":"id"}},)"
+            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"columns":"id"}},)"
             R"({"id":95203,"type":"RowCountCheck","name":"Count","parameters":{"check_name":"all rows","expected_rows":")" + expected +
             R"("}}],"links":[{"start_node":95201,"end_node":95202},{"start_node":95202,"end_node":95203}]})";
     };
@@ -3988,9 +3996,7 @@ int main(int argc, char** argv) {
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
         {"TrainTestSplit", false},
-        {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
-        {"CrossValidationNode", false},
         {"Normalize", false},
         {"OneHotEncode", false},
         {"AudioInput", false},
@@ -4909,6 +4915,57 @@ int main(int argc, char** argv) {
               std::string::npos,
           "MinMaxScaler columns validation should be specific: " +
               bad_minmax_scaler_column_type_executor.GetLastError());
+
+    // The Hypothesis Test node (TOFIX129 D3) names a column its input lacks.
+    {
+        const std::string json =
+            R"({"nodes":[)"
+            R"({"id":9401,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":9402,"type":"HypothesisTest","name":"Bad","parameters":{"question":"one_value","values":"no_such_column"}})"
+            R"(],"links":[{"start_node":9401,"end_node":9402}]})";
+        cyxwiz::PipelineExecutor test_executor;
+        Check(!test_executor.ExecutePipeline(json), "HypothesisTest on a missing column should fail");
+        Check(test_executor.GetLastError().find("HypothesisTest") != std::string::npos &&
+                  test_executor.GetLastError().find("no_such_column") != std::string::npos,
+              "HypothesisTest missing-column error should name it: " + test_executor.GetLastError());
+    }
+
+    // The Cross-Validation / Learning Curves nodes (TOFIX129 D4) refuse settings Train could not use.
+    for (const auto& [type, params, word] : {std::tuple{"CrossValidationNode", R"({"folds":"1"})", "folds"},
+                                             std::tuple{"LearningCurvesNode", R"({"train_sizes":"50%"})", "train_sizes"}}) {
+        const std::string json =
+            R"({"nodes":[)"
+            R"({"id":9411,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":9412,"type":")" + std::string(type) + R"(","name":"Bad","parameters":)" + params + "}"
+            R"(],"links":[{"start_node":9411,"end_node":9412}]})";
+        cyxwiz::PipelineExecutor folds_executor;
+        Check(!folds_executor.ExecutePipeline(json), std::string(type) + " with bad settings should fail");
+        Check(folds_executor.GetLastError().find(word) != std::string::npos,
+              std::string(type) + " error should name the setting: " + folds_executor.GetLastError());
+    }
+
+    // The fitted transforms of TOFIX129 D2 refuse a text column, as Min-Max does.
+    {
+        int id = 9301;
+        for (const std::string node : {"MaxAbsScaler", "QuantileTransform", "PowerTransform"}) {
+            const std::string json =
+                R"({"nodes":[)"
+                R"({"id":)" + std::to_string(id) + R"(,"type":"DataInput","name":"Input","parameters":{)"
+                R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+                R"(","type":"csv","has_header":"true"}},)"
+                R"({"id":)" + std::to_string(id + 1) + R"(,"type":")" + node + R"(","name":"Bad","parameters":{"columns":"phrase"}})"
+                R"(],"links":[{"start_node":)" + std::to_string(id) + R"(,"end_node":)" + std::to_string(id + 1) + "}]}";
+            cyxwiz::PipelineExecutor transform_executor;
+            Check(!transform_executor.ExecutePipeline(json), node + " string columns should fail schema validation");
+            Check(transform_executor.GetLastError().find(node + ": column 'phrase' must be numeric") != std::string::npos,
+                  node + " columns validation should be specific: " + transform_executor.GetLastError());
+            id += 2;
+        }
+    }
 
     const std::string bad_robust_scaler_centering_json =
         R"({"nodes":[)"
@@ -5968,17 +6025,17 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":708,"type":"LogTransform","name":"BadLogValue","parameters":{)"
-        R"("value_col":"phrase"}})"
+        R"("columns":"phrase"}})"
         R"(],"links":[{"start_node":707,"end_node":708}]})";
 
     cyxwiz::PipelineExecutor bad_log_transform_value_type_executor;
     Check(!bad_log_transform_value_type_executor.ExecutePipeline(
               bad_log_transform_value_type_json),
-          "LogTransform string value_col should fail schema validation");
+          "LogTransform string columns should fail schema validation");
     Check(bad_log_transform_value_type_executor.GetLastError().find(
-              "LogTransform: value column 'phrase' must be numeric") !=
+              "LogTransform: column 'phrase' must be numeric") !=
               std::string::npos,
-          "LogTransform value_col validation should be specific: " +
+          "LogTransform columns validation should be specific: " +
               bad_log_transform_value_type_executor.GetLastError());
 
     const std::string bad_differencing_value_type_json =

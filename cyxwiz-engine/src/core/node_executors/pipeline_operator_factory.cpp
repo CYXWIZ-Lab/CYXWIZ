@@ -5,7 +5,6 @@
 #include "differencing_operator.h"
 #include "gradient_boosting_operator.h"
 #include "identity_operator.h"
-#include "log_transform_operator.h"
 #include "pca_operator.h"
 #include "preprocessing_operators.h"
 #include "random_forest_operator.h"
@@ -16,6 +15,8 @@
 #include "classic_model_predictor_operator.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
+#include "hypothesis_test_operator.h"
+#include "training_evaluation_operator.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
@@ -169,6 +170,24 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::RobustScaler, []() {
         return std::make_unique<RobustScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::HypothesisTest, []() {
+        return std::make_unique<HypothesisTestOperator>();
+    });
+    RegisterCreator(gui::NodeType::CrossValidationNode, []() {
+        return std::make_unique<TrainingEvaluationOperator>(false);
+    });
+    RegisterCreator(gui::NodeType::LearningCurvesNode, []() {
+        return std::make_unique<TrainingEvaluationOperator>(true);
+    });
+    RegisterCreator(gui::NodeType::MaxAbsScaler, []() {
+        return std::make_unique<MaxAbsScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::QuantileTransform, []() {
+        return std::make_unique<QuantileTransformOperator>();
+    });
+    RegisterCreator(gui::NodeType::PowerTransform, []() {
+        return std::make_unique<PowerTransformOperator>();
     });
     RegisterCreator(gui::NodeType::LabelEncoder, []() {
         return std::make_unique<LabelEncoderOperator>();

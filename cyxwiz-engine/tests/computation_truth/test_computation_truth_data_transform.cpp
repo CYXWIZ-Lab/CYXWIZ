@@ -91,6 +91,16 @@ void RunCase(const json& c, const std::string& name) {
         }
         return;
     }
+    if (op == "histogram") {
+        const auto counts = DataTransform::Histogram(x, c.at("bins").get<int>(), c.at("low").get<double>(),
+                                                     c.at("high").get<double>());
+        const json& e = c.at("counts");
+        Check(counts.size() == e.size(), name + ": bin count");
+        for (size_t i = 0; i < counts.size(); ++i)
+            Check(counts[i] == e[i].get<int64_t>(), name + ": bin " + std::to_string(i) + " has " +
+                                                        std::to_string(counts[i]) + ", want " + e[i].dump());
+        return;
+    }
     if (op == "normalize") {
         const double low = c.value("range_min", 0.0), high = c.value("range_max", 1.0);
         return CheckColumns(DataTransform::Normalize(inputs, low, high), c.at("outputs"), name);
@@ -165,9 +175,19 @@ void RunCase(const json& c, const std::string& name) {
         return;
     }
     if (op == "quantile") {
-        return CheckColumns(DataTransform::QuantileTransform(inputs, c.at("distribution").get<std::string>(),
-                                                             c.at("n_quantiles").get<int>()),
-                            c.at("outputs"), name);
+        const std::string distribution = c.at("distribution").get<std::string>();
+        const int n_quantiles = c.at("n_quantiles").get<int>();
+        CheckColumns(DataTransform::QuantileTransform(inputs, distribution, n_quantiles), c.at("outputs"), name);
+        // Fitted and re-applied (the Quantile Transform node's saved state) gives the same answer.
+        std::vector<std::vector<double>> fitted;
+        for (const auto& column : inputs) {
+            std::vector<double> quantiles;
+            std::string error;
+            Check(DataTransform::QuantileFit(column, n_quantiles, quantiles, error), name + " fit: " + error);
+            fitted.push_back(std::move(quantiles));
+        }
+        return CheckColumns(DataTransform::QuantileApply(inputs, fitted, distribution), c.at("outputs"),
+                            name + " (fit, then apply)");
     }
     if (op == "normaltest") {
         const auto test = DataTransform::DAgostinoPearsonTest(x);
@@ -183,8 +203,7 @@ void RunCase(const json& c, const std::string& name) {
     }
     if (op == "refuse_log" || op == "refuse_log1p") {
         const bool log1p = op == "refuse_log1p";
-        CheckRefused(DataTransform::LogTransform(inputs, "natural", log1p).error_message, c, name);
-        return Check(!DataTransform::CanApplyLogTransform(x, log1p), name + ": CanApplyLogTransform");
+        return CheckRefused(DataTransform::LogTransform(inputs, "natural", log1p).error_message, c, name);
     }
     if (op == "refuse_normaltest") {
         const auto test = DataTransform::DAgostinoPearsonTest(x);

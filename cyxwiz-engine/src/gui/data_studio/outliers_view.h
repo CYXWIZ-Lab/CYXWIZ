@@ -35,8 +35,7 @@ private:
     std::shared_ptr<const DatasetProfile> seen_;
     std::string column_;
     explore::OutlierRule rule_ = explore::OutlierRule::Iqr;
-    double factor_ = 1.5;       // in use
-    double factor_edit_ = 1.5;  // in the field while it is being typed
+    double factor_ = 1.5;
     size_t offset_ = 0;
     plot::ColumnPicker picker_;
     ExploreJob<explore::Mad> mad_;

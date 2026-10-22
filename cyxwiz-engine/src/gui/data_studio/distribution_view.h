@@ -34,8 +34,7 @@ private:
 
     std::shared_ptr<const DatasetProfile> seen_;
     std::string column_;
-    int bins_wanted_ = 20;  // in use
-    int bins_edit_ = 20;    // in the field while it is being typed
+    int bins_wanted_ = 20;
     size_t fit_index_ = 0;  // the fit drawn (best AIC first)
     std::string message_;
     bool message_error_ = false;

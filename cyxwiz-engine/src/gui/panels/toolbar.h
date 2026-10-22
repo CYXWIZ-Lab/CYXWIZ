@@ -60,7 +60,6 @@ public:
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
     void SetCreateCustomDatasetCallback(std::function<void()> callback) { create_custom_dataset_callback_ = callback; }
-    void SetPreprocessDatasetCallback(std::function<void()> callback) { preprocess_dataset_callback_ = callback; }
     void SetTokenizeDatasetCallback(std::function<void()> callback) { tokenize_dataset_callback_ = callback; }
     void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
     void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
@@ -184,6 +183,8 @@ public:
     // Testing callbacks
     void SetRunTestCallback(std::function<void()> callback) { run_test_callback_ = callback; }
     void SetViewTestResultsCallback(std::function<void()> callback) { view_test_results_callback_ = callback; }
+    void SetCrossValidateCallback(std::function<void()> callback) { cross_validate_callback_ = std::move(callback); }
+    void SetLearningCurveCallback(std::function<void()> callback) { learning_curve_callback_ = std::move(callback); }
 
     // Tools menu callbacks
     void SetLoadCheckpointCallback(std::function<void()> cb) { load_checkpoint_callback_ = cb; }
@@ -238,7 +239,7 @@ public:
     void SetOpenCrossValidationCallback(std::function<void()> cb) { open_cross_validation_callback_ = cb; }
     void SetOpenLearningCurvesCallback(std::function<void()> cb) { open_learning_curves_callback_ = cb; }
 
-    // Data Transformation callbacks (Phase 6C)
+    // Data > Transform: each adds a step in Data Studio's Prepare (TOFIX129 D2)
     void SetOpenNormalizationCallback(std::function<void()> cb) { open_normalization_callback_ = cb; }
     void SetOpenStandardizationCallback(std::function<void()> cb) { open_standardization_callback_ = cb; }
     void SetOpenLogTransformCallback(std::function<void()> cb) { open_log_transform_callback_ = cb; }
@@ -399,7 +400,6 @@ private:
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
     std::function<void()> create_custom_dataset_callback_;
-    std::function<void()> preprocess_dataset_callback_;
     std::function<void()> tokenize_dataset_callback_;
     std::function<void()> augment_dataset_callback_;
     std::function<void()> dataset_statistics_callback_;
@@ -653,6 +653,8 @@ private:
     // Testing callbacks
     std::function<void()> run_test_callback_;
     std::function<void()> view_test_results_callback_;
+    std::function<void()> cross_validate_callback_;
+    std::function<void()> learning_curve_callback_;
 
     // Tools menu callbacks
     std::function<void()> load_checkpoint_callback_;
@@ -706,7 +708,7 @@ private:
     std::function<void()> open_cross_validation_callback_;
     std::function<void()> open_learning_curves_callback_;
 
-    // Data Transformation callbacks (Phase 6C)
+    // Data > Transform (Prepare steps)
     std::function<void()> open_normalization_callback_;
     std::function<void()> open_standardization_callback_;
     std::function<void()> open_log_transform_callback_;

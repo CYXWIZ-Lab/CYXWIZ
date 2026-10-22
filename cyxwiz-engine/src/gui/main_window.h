@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <functional>
@@ -9,6 +10,8 @@
 #include <utility>
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 #include "../core/compile_report_presentation.h"
+#include "../core/cross_validation_runner.h"
+#include "graph_training_launcher.h"
 
 namespace cyxwiz {
 class ProjectManager;
@@ -56,7 +59,6 @@ class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
 class PlotOutputPanel;
-class TestResultsPanel;
 class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
@@ -64,8 +66,6 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class HypothesisTestPanel;
-class RegressionPanel;
 class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
@@ -79,17 +79,6 @@ class HierarchicalPanel;
 class GMMPanel;
 class ClusterEvalPanel;
 // Model Evaluation panels (Phase 6B)
-class ConfusionMatrixPanel;
-class ROCAUCPanel;
-class PRCurvePanel;
-class CrossValidationPanel;
-class LearningCurvesPanel;
-// Data Transformation panels (Phase 6C)
-class NormalizationPanel;
-class StandardizationPanel;
-class LogTransformPanel;
-class BoxCoxPanel;
-class FeatureScalingPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -133,6 +122,7 @@ class RegexTesterPanel;
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
 class DataStudioPanel;
+class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
@@ -244,6 +234,33 @@ private:
         const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
+    // Results > Cross-validation / Learning curve (TOFIX129 D4): Run marks the
+    // next Train launch as theirs; it goes through Train's checks, data loads,
+    // memory question and preparation, and only the dispatch differs: the
+    // prepared table goes to core/cross_validation_runner on a task.
+    struct FoldsLaunch {
+        std::shared_ptr<cyxwiz::FoldsView> view;
+        cyxwiz::CrossValidationSettings settings;
+        std::string results_table;  // where the finished run's table is published
+    };
+    // The graph's Cross-Validation / Learning Curves node (the first one), read.
+    struct FoldsNode {
+        int id = -1;
+        std::string name;
+        cyxwiz::CrossValidationSettings settings;
+        std::string results_table;
+        std::string error;
+    };
+    std::optional<FoldsNode> FindFoldsNode(bool learning_curve) const;
+    // Results' Add to the graph: the node after the graph's Data Input.
+    std::string AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings);
+    std::optional<FoldsLaunch> folds_launch_;
+    uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
+    void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
+    // A marked launch that stopped before its task: the view says why.
+    void EndFoldsLaunch(const std::string& why);
+    std::string FoldsBlocker() const;
+    ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -375,7 +392,6 @@ private:
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
     std::unique_ptr<cyxwiz::PlotOutputPanel> plot_output_panel_;
-    std::unique_ptr<cyxwiz::TestResultsPanel> test_results_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
     std::unique_ptr<cyxwiz::DeploymentDialog> deployment_dialog_;
@@ -387,8 +403,6 @@ private:
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Statistics panels (Phase 4)
-    std::unique_ptr<cyxwiz::HypothesisTestPanel> hypothesis_test_panel_;
-    std::unique_ptr<cyxwiz::RegressionPanel> regression_panel_;
 
     // Advanced Tools panels (Phase 5)
     std::unique_ptr<cyxwiz::DimReductionPanel> dim_reduction_panel_;
@@ -407,18 +421,6 @@ private:
     std::unique_ptr<cyxwiz::ClusterEvalPanel> cluster_eval_panel_;
 
     // Model Evaluation panels (Phase 6B)
-    std::unique_ptr<cyxwiz::ConfusionMatrixPanel> confusion_matrix_panel_;
-    std::unique_ptr<cyxwiz::ROCAUCPanel> roc_auc_panel_;
-    std::unique_ptr<cyxwiz::PRCurvePanel> pr_curve_panel_;
-    std::unique_ptr<cyxwiz::CrossValidationPanel> cross_validation_panel_;
-    std::unique_ptr<cyxwiz::LearningCurvesPanel> learning_curves_panel_;
-
-    // Data Transformation panels (Phase 6C)
-    std::unique_ptr<cyxwiz::NormalizationPanel> normalization_panel_;
-    std::unique_ptr<cyxwiz::StandardizationPanel> standardization_panel_;
-    std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
-    std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
-    std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;

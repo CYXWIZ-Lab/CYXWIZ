@@ -1,6 +1,6 @@
 #pragma once
 
-// Test Results (TOFIX129 B5): the headline, figures, classes, confusion
+// Results > Test (TOFIX129 B5, D4): the headline, figures, classes, confusion
 // matrix, mistakes and the comparison with the run before, from a test's
 // TestingMetrics. Pure data in and out (no ImGui), so the panel and its tests
 // say the same words.
@@ -82,5 +82,23 @@ std::vector<ClassRow> SortClasses(std::vector<ClassRow> rows, ClassSort by, bool
 // A failed test shows only its message; it never becomes the run Comparison
 // compares against.
 bool IsFailedRun(const TestingMetrics& m);
+
+// Two classes, or one class against the rest (TOFIX129 D4): the figures at a
+// threshold (the class is predicted when its score is at least the threshold),
+// read off that class's ROC curve, which holds the true and false positives at
+// every distinct score (TP = TPR x positives, FP = FPR x negatives). Moving the
+// threshold does no new pass over the rows.
+struct ThresholdFigures {
+    bool ok = false;
+    double threshold = 0.5;
+    int tp = 0, fp = 0, tn = 0, fn = 0;
+    double precision = 0.0, recall = 0.0, specificity = 0.0, f1 = 0.0, balanced_accuracy = 0.0, mcc = 0.0,
+           accuracy = 0.0;
+};
+ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negatives, double threshold);
+// The score with the highest F1 (the lowest such score on a tie, the
+// classification fixtures' threshold contract); NaN when the curve has no
+// point.
+double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives);
 
 }  // namespace cyxwiz::test_report

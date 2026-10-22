@@ -221,6 +221,7 @@ set(BACKEND_SOURCES
     src/algorithms/fasttext_bin.cpp
     src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
+    src/algorithms/statistical_tests.cpp
     src/algorithms/model_evaluation.cpp
     src/algorithms/evaluation/cross_validation.cpp
     src/algorithms/evaluation/classification_metrics.cpp
@@ -330,6 +331,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/scheduler.h
     include/cyxwiz/clustering.h
     include/cyxwiz/data_transform.h
+    include/cyxwiz/statistical_tests.h
     include/cyxwiz/model_evaluation.h
     include/cyxwiz/dimensionality_reduction.h
     include/cyxwiz/feature_importance.h

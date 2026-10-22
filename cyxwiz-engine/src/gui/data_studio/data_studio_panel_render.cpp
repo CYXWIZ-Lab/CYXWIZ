@@ -222,12 +222,7 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_faint, "In the graph:");
     const char* const empty_note = "no node does this yet";
-    // Results keeps the latest test as a node (TOFIX157, approved mockup).
-    const bool keep = job.job == studio::Job::Results && results_;
-    const char* const keep_label = "Keep as node";
-    const std::string keep_why = keep ? results_->KeepBlocker(node_editor_ != nullptr) : std::string();
-    const float keep_w = keep ? ui::ButtonWidth(keep_label, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x : 0.0f;
-    const float link_w = ImGui::CalcTextSize("Show on canvas").x + 12.0f + keep_w;
+    const float link_w = ImGui::CalcTextSize("Show on canvas").x + 12.0f;
     // The link sits at the top right while the first line still fits beside
     // it; in a narrow panel it goes under the chips instead of over them.
     float first_w = ImGui::CalcTextSize(empty_note).x;
@@ -270,12 +265,6 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
     float bottom = ImGui::GetItemRectMax().y;
     ImGui::SetCursorScreenPos(link_beside ? ImVec2(start.x + width - link_w - 6.0f, start.y + 6.0f)
                                           : ImVec2(start.x + 10.0f, bottom + 4.0f));
-    if (keep) {
-        if (ui::SecondaryButton(keep_label, keep_why.empty(), keep_why.c_str(), ui::ButtonSize::Small)) results_->RequestKeep();
-        if (keep_why.empty() && ImGui::IsItemHovered())
-            ImGui::SetTooltip("Saves the latest test's rows in the project and adds a Test Evaluation node reading them");
-        ImGui::SameLine();
-    }
     ImGui::AlignTextToFramePadding();
     if (ui::LinkButton("Show on canvas", !job.node_ids.empty())) ShowOnCanvas(job.node_ids);
     if (!link_beside) bottom = ImGui::GetItemRectMax().y;
@@ -407,7 +396,7 @@ void DataStudioPanel::RenderExplore() {
     static const std::pair<const char*, ExploreTab> kTabs[] = {
         {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
-        {"Visualize", ExploreTab::Visualize}};
+        {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression}, {"Visualize", ExploreTab::Visualize}};
     const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     bool first = true;
     for (const auto& [label, tab] : kTabs) {
@@ -424,6 +413,8 @@ void DataStudioPanel::RenderExplore() {
         case ExploreTab::Outliers: if (outliers_) outliers_->Render(MakeExploreContext()); break;
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;
         case ExploreTab::Distribution: if (distribution_) distribution_->Render(MakeExploreContext()); break;
+        case ExploreTab::Tests: if (tests_) tests_->Render(MakeExploreContext()); break;
+        case ExploreTab::Regression: if (regression_) regression_->Render(MakeExploreContext()); break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
     }
 }
@@ -437,6 +428,11 @@ void DataStudioPanel::RenderStatusBar() {
     else if (outliers_ && outliers_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Finding outliers");
     else if (correlation_ && correlation_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Computing correlations");
     else if (distribution_ && distribution_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting distributions");
+    else if (tests_ && tests_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Testing");
+    else if (regression_ && regression_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting");
+    else if (results_ && results_->CrossValidation()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Cross-validating");
+    else if (results_ && results_->LearningCurve()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Learning curve");
+    else if (results_ && results_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the test");
     else if (readiness_ && readiness_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Comparing splits");
     else if (validate_ && validate_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Data Pipeline running");
     else ImGui::TextColored(t.success, ICON_FA_CIRCLE " Ready");

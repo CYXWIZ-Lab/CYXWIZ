@@ -663,6 +663,22 @@ public:
     void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
         pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
     }
+    // Replaces a step with a node of `type` in its place, with its links and
+    // `parameters` over the new node's defaults; its name goes with it unless
+    // it was the old type's default; one undo point (Data Studio Prepare's
+    // method switch, TOFIX129 D2). A recipe's step is not replaced (fitted
+    // steps sit outside recipes). Applied, like RequestStepAfter, at the start
+    // of the next canvas frame; ReplacedBy then names the new node.
+    void RequestReplaceStep(int step_id, NodeType type, std::map<std::string, std::string> parameters = {}) {
+        pending_replacements_.push_back({step_id, type, std::move(parameters)});
+    }
+    // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
+    // yet); Data Studio's Prepare picks it once it is on the canvas.
+    int LastAddedStep() const { return last_added_step_; }
+    int ReplacedBy(int old_id) const {
+        const auto it = replaced_by_.find(old_id);
+        return it == replaced_by_.end() ? -1 : it->second;
+    }
     // A Text Tokenizer after the Data Input `input_id`, reading its text and
     // label columns (the node's, unless given), opened once it is on the
     // canvas (Compile's and Data Input's "Add a Text Tokenizer", TOFIX129 B-8).
@@ -1052,6 +1068,15 @@ private:
         bool open_dialog = false;  // open the new node's dialog once it is added
     };
     std::vector<PendingStepAfter> pending_steps_after_;
+    struct PendingReplacement {
+        int step = -1;
+        NodeType type = NodeType::SQLQuery;
+        std::map<std::string, std::string> parameters;
+    };
+    std::vector<PendingReplacement> pending_replacements_;
+    std::map<int, int> replaced_by_;  // old node -> the node that replaced it
+    int last_added_step_ = -1;
+    void ReplaceStep(const PendingReplacement& request);
     void ApplyStepAfterInsert();
     int pending_open_node_id_ = -1;
     void InsertStepAfter(const PendingStepAfter& request);

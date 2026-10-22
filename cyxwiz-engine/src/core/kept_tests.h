@@ -3,7 +3,7 @@
 // Kept tests (TOFIX157, "Keep as node"): a test run's per-row table
 // (test_predictions) saved once as a Parquet file in the project, so it stays
 // when the model is tested again. The graph reads it through a Data Input and
-// a Test Evaluation node; the Test Results panel opens it like a run. The file
+// a Test Evaluation node; Results > Test opens it like a run. The file
 // keeps the table's metadata (tested table, class names, loss, time) and the
 // name it was kept under.
 

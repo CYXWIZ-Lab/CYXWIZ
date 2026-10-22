@@ -47,6 +47,8 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::BinningNode: case NodeType::PolynomialFeaturesNode: case NodeType::CalculatorNode:
         case NodeType::UnitConverter: case NodeType::JSONPathExtractor: case NodeType::RegexTester:
         case NodeType::StandardScaler: case NodeType::MinMaxScaler: case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler: case NodeType::QuantileTransform: case NodeType::PowerTransform:
+        case NodeType::LogTransform:
         case NodeType::LabelEncoder: case NodeType::OrdinalEncoder: case NodeType::TargetEncoder:
         case NodeType::OutlierDetector:
             job = Job::Prepare; return true;
@@ -58,7 +60,8 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::ExportExcel: case NodeType::ExportSQL:
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
-        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode: case NodeType::TestEvaluationNode:
+        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
         default:

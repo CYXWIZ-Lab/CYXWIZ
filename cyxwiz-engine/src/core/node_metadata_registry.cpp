@@ -2099,7 +2099,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"Model", PinType::Parameters, false, "Reusable fitted polynomial-regression artifact"}},
         {{"feature_col", "string", "", "Single numeric predictor column", {}, "", "Predictor column", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
-         {"degree", "int", "2", "Highest polynomial power; requires at least degree plus two rows", {}, "1-2147483647", "Degree", "Fit Options", false, false}},
+         {"degree", "int", "2", "Highest polynomial power, 1 to 6; requires at least degree plus two rows", {}, "1-6", "Degree", "Fit Options", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", ICON_FA_BORDER_ALL,
@@ -2177,23 +2177,36 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"positive_label", "string", "1", "Positive class label", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    // TOFIX129 D4: the settings of Results > Learning curve / Cross-validation on
+    // the data path (Train passes through them; Train > Learning curve /
+    // Cross-validate read them); the second pin is the last run's table.
     RegisterNode({NodeType::LearningCurvesNode, NodeCategory::Analytics, "Learning Curves", ICON_FA_CHART_LINE,
-        {"learning", "curves", "training"}, 0, false, "Training/validation learning curves",
-        "Plot train and validation scores vs training set size.", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"TrainScores", PinType::Dataset, true, "Train scores"}, {"ValScores", PinType::Dataset, true, "Validation scores"}},
-        {{"cv", "int", "5", "Cross-validation folds", {}, ""},
-         {"train_sizes", "string", "0.1,0.3,0.5,0.7,0.9,1.0", "Training sizes", {}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
+        {"learning", "curves", "training", "rows"}, 0, false, "Train on shares of the rows: does more data help?",
+        "Holds the settings of Train > Learning curve: the graph is trained on shares of each fold's training rows and "
+        "scored on those rows and on the fold. Data passes through unchanged, so Train trains as usual; Results' table is "
+        "the second output after a run.", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Data", PinType::Dataset, true, "The same data, for the rest of the graph"},
+         {"Results", PinType::Dataset, false, "The last run: one row per training (fold, share, rows, scores)"}},
+        {{"folds", "int", "5", "Folds, 2 to 20", {}, ""},
+         {"seed", "int", "42", "Seed for the folds and the subsets", {}, ""},
+         {"train_sizes", "string", "10%, 25%, 50%, 75%, 100%", "Shares of each fold's training rows", {}, ""},
+         {"results_table", "string", "learning_curve_results", "Name the last run's table is published under", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CrossValidationNode, NodeCategory::Analytics, "Cross-Validation", ICON_FA_ROTATE,
-        {"cross", "validation", "cv"}, 0, false, "K-Fold cross-validation",
-        "Evaluate model performance using k-fold cross-validation.", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Scores", PinType::Dataset, true, "CV scores"}, {"Mean", PinType::Dataset, true, "Mean score"}, {"Std", PinType::Dataset, true, "Std deviation"}},
-        {{"cv", "int", "5", "Number of folds", {}, "2-20"},
-         {"scoring", "enum", "accuracy", "Scoring metric", {"accuracy", "f1", "precision", "recall", "roc_auc"}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
+        {"cross", "validation", "cv", "folds"}, 0, false, "Train once per fold; score each fold once",
+        "Holds the settings of Train > Cross-validate: the graph is trained once per fold with fresh weights and scored "
+        "on the fold it did not see. Data passes through unchanged, so Train trains as usual; the fold table is the "
+        "second output after a run.", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Data", PinType::Dataset, true, "The same data, for the rest of the graph"},
+         {"Results", PinType::Dataset, false, "The last run: one row per fold (rows, scores)"}},
+        {{"folds", "int", "5", "Folds, 2 to 20", {}, ""},
+         {"stratified", "bool", "true", "Keep each fold's class shares", {}, ""},
+         {"seed", "int", "42", "Seed for the folds", {}, ""},
+         {"results_table", "string", "cross_validation_results", "Name the last run's table is published under", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::FeatureImportanceNode, NodeCategory::Analytics, "Feature Importance", ICON_FA_RANKING_STAR,
         {"feature", "importance", "selection"}, 0, false, "Feature importance analysis",
@@ -2226,12 +2239,12 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
 
     // A kept test (TOFIX157): reads a test's per-row table (test_predictions,
     // or a copy kept with Data Studio > Results > Keep as node) and gives the
-    // Test Results panel's figures as tables.
+    // Results > Test's figures as tables.
     RegisterNode({NodeType::TestEvaluationNode, NodeCategory::Analytics, "Test Evaluation", ICON_FA_TABLE_CELLS,
         {"test", "evaluation", "kept", "confusion", "metrics", "accuracy", "mae", "worst rows"}, 0, false,
         "A test's results as tables",
         "Reads a test's per-row predictions (the test_predictions table, or a test kept as a file) and gives its "
-        "metrics, confusion counts, per-class precision / recall / F1 and worst rows, the same figures as Test Results.", "",
+        "metrics, confusion counts, per-class precision / recall / F1 and worst rows, the same figures as Data Studio > Results > Test.", "",
         {{"Data", PinType::Dataset, true, "A test's per-row predictions (true_class / predicted_class, or true_value / predicted_value)"}},
         // Results to look at: none must be read further (an unread required
         // output fails Compile and so blocks Train).
@@ -2267,8 +2280,13 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Scaled", PinType::Dataset, true, "Normalized data"}},
         {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
          {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
          {"min", "float", "0.0", "Target range minimum", {}, ""},
-         {"max", "float", "1.0", "Target range maximum", {}, ""}},
+         {"max", "float", "1.0", "Target range maximum", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Save the fitted values to a project artifact for validation, test and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     // (TrainTestSplit registration removed — use NodeType::DataSplit, which
@@ -2282,10 +2300,62 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Scaled", PinType::Dataset, true, "Scaled data"}},
         {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
          {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
          {"with_centering", "bool", "true", "Subtract median", {}, ""},
          {"with_scaling", "bool", "true", "Scale by IQR", {}, ""},
          {"quantile_min", "float", "25", "Lower quantile", {}, "0-100"},
-         {"quantile_max", "float", "75", "Upper quantile", {}, "0-100"}},
+         {"quantile_max", "float", "75", "Upper quantile", {}, "0-100"},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Save the fitted values to a project artifact for validation, test and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::MaxAbsScaler, NodeCategory::Preprocessing, "Max-Abs Scaler", ICON_FA_SCALE_BALANCED,
+        {"maxabs", "scaler", "sparse"}, 0, false, "Max-abs scaling",
+        "Divides each column by its largest absolute value, into -1 .. 1; zeros stay zero (sparse data).", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Scaled", PinType::Dataset, true, "Scaled data"}},
+        {{"columns", "string", "", "Columns to transform (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Save the fitted values to a project artifact for validation, test and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::QuantileTransform, NodeCategory::Preprocessing, "Quantile Transform", ICON_FA_CHART_AREA,
+        {"quantile", "rank", "uniform", "normal", "gaussian"}, 0, false, "Quantile transform",
+        "Maps each column through its quantiles onto a uniform 0 .. 1 or a normal shape (changes the shape; outliers are pulled in).", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Transformed", PinType::Dataset, true, "Transformed data"}},
+        {{"columns", "string", "", "Columns to transform (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
+         {"output_distribution", "enum", "uniform", "Shape of the output", {"uniform", "normal"}, ""},
+         {"n_quantiles", "int", "1000", "How many quantiles to fit (at most the number of values)", {}, "2-100000"},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Save the fitted values to a project artifact for validation, test and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::PowerTransform, NodeCategory::Preprocessing, "Power Transform", ICON_FA_SUPERSCRIPT,
+        {"power", "box-cox", "boxcox", "yeo-johnson", "skew", "normalize shape"}, 0, false, "Box-Cox / Yeo-Johnson",
+        "Reduces skew with a power transform per column: Box-Cox (values above 0) or Yeo-Johnson (any values), lambda found by maximum likelihood or typed.", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Transformed", PinType::Dataset, true, "Transformed data"}},
+        {{"columns", "string", "", "Columns to transform (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
+         {"family", "enum", "yeo-johnson", "Box-Cox needs values above 0; Yeo-Johnson takes any value", {"box-cox", "yeo-johnson"}, ""},
+         {"lambda_mode", "enum", "auto", "Find the best lambda per column, or use the one typed", {"auto", "fixed"}, ""},
+         {"lambda", "float", "0", "Lambda when typed (0 = log for Box-Cox)", {}, "-10-10"},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Save the fitted values to a project artifact for validation, test and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LabelEncoder, NodeCategory::Preprocessing, "Label Encoder", ICON_FA_TAG,
@@ -4034,12 +4104,18 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
         {{"seasonal_period", "int", "1", "Observations in one seasonal cycle", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::LogTransform, NodeCategory::TimeSeries, "Log Transform", ICON_FA_CHART_LINE,
-        {"log", "log1p", "stabilize", "time", "series"}, 0, false,
-        "Apply log1p to a numeric time-series column", "", "",
+    RegisterNode({NodeType::LogTransform, NodeCategory::Preprocessing, "Log Transform", ICON_FA_CHART_LINE,
+        {"log", "log1p", "log10", "log2", "skew", "stabilize", "time", "series"}, 0, false,
+        "log(x) or log(1 + x) of number columns",
+        "Takes the log of each chosen column in base e, 10 or 2, to pull in a long right tail or steady exponential growth. "
+        "log(1 + x) keeps zeros; plain log needs values above 0.", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Transformed", PinType::Dataset, true, "Input table with transformed column"}},
-        {{"value_col", "string", "", "Numeric column to transform", {}, ""}},
+        {{"Transformed", PinType::Dataset, true, "Input table with the columns transformed"}},
+        {{"columns", "string", "", "Columns to transform (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
+         {"base", "enum", "natural", "Log base: e (natural), 10 or 2", {"natural", "log10", "log2"}, ""},
+         {"use_log1p", "bool", "true", "log(1 + x): keeps zeros; values must be above -1. Off: log(x), values above 0", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Differencing, NodeCategory::TimeSeries, "Differencing", ICON_FA_MINUS,
@@ -4655,11 +4731,21 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
 void NodeMetadataRegistry::InitializeStatisticsNodes() {
     RegisterNode({NodeType::HypothesisTest, NodeCategory::Analytics, "Hypothesis Test", ICON_FA_FLASK,
         {"hypothesis", "test", "ttest", "anova", "chi", "square", "statistics"}, 0, false,
-        "Statistical Hypothesis Testing", "", "",
+        "Statistical hypothesis test",
+        "Answers one question about the data on the device (as Data Studio > Explore > Tests): two groups, paired columns, "
+        "several groups, one column vs a value, or two categories. Its output is one row: the test, statistic, df, p, "
+        "the estimate and its CI, the effect size, the rows used and whether it is significant, with the answer in words.", "",
         {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Results", PinType::Dataset, false, "Results"}},
-        {{"test", "dropdown", "ttest_1samp", "Test Type", {"ttest_1samp", "ttest_ind", "ttest_paired", "anova", "chi_square", "mann_whitney"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {{"Results", PinType::Dataset, false, "One row: the test's figures and its answer"}},
+        {{"question", "enum", "two_groups", "What to test", {"two_groups", "paired", "several_groups", "one_value", "two_categories"}, "", "Question", "Test"},
+         {"values", "string", "", "The number column (paired: the first one)", {}, "", "Values", "Columns"},
+         {"groups", "string", "", "The column that splits the rows into groups (two categories: the rows)", {}, "", "Split by", "Columns"},
+         {"second", "string", "", "Paired or two columns: the second number column; two categories: the columns", {}, "", "Second column", "Columns"},
+         {"two_columns", "bool", "false", "Two groups given as two number columns instead of a group column", {}, "", "Two columns", "Columns"},
+         {"variances", "enum", "unequal", "Welch (unequal) or Student / classic (equal)", {"unequal", "equal"}, "", "Variances", "Test"},
+         {"alpha", "float", "0.05", "Significance level; the CI is at 1 - alpha", {}, "0.001-0.5", "Alpha", "Test"},
+         {"value", "float", "0", "One column vs a value: the value the mean is compared with", {}, "", "Compared with", "Test"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DistributionFitter, NodeCategory::Analytics, "Distribution Fitter", ICON_FA_CHART_AREA,
         {"distribution", "fit", "normal", "exponential", "probability"}, 0, false,

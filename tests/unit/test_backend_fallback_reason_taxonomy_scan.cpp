@@ -170,7 +170,7 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
 
 TEST_CASE("Device-only ArrayFire exception handlers report the device error",
           "[arrayfire][fallback][taxonomy][source_scan]") {
-    // LSTM / GRU / RNN, the linear algebra API, the data transforms, clustering and dimensionality reduction run only on ArrayFire
+    // LSTM / GRU / RNN, the linear algebra API, the data transforms, the statistical tests (TOFIX129 D3), clustering and dimensionality reduction run only on ArrayFire
     // (TOFIX140): there is no native CPU path to fall back to, so every
     // ArrayFire handler in these sources reports the error instead.
     const fs::path repo_root = FindRepoRoot();
@@ -185,6 +185,7 @@ TEST_CASE("Device-only ArrayFire exception handlers report the device error",
           "cyxwiz-backend/src/algorithms/linear_algebra.cpp",
           "cyxwiz-backend/src/algorithms/linear_algebra_tensor.cpp",
           "cyxwiz-backend/src/algorithms/data_transform.cpp",
+          "cyxwiz-backend/src/algorithms/statistical_tests.cpp",
           "cyxwiz-backend/src/algorithms/clustering_kmeans.cpp",
           "cyxwiz-backend/src/algorithms/clustering_dbscan.cpp",
           "cyxwiz-backend/src/algorithms/clustering_hierarchical.cpp",

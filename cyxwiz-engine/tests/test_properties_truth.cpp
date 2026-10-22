@@ -161,8 +161,9 @@ int main() {
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
-        // WordEmbeddings (TOFIX152).
-        Check(covered.size() == 78,
+        // WordEmbeddings (TOFIX152) + Max-Abs Scaler, Quantile Transform and
+        // Power Transform (TOFIX129 D2).
+        Check(covered.size() == 81,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");

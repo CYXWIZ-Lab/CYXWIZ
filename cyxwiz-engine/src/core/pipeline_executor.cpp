@@ -62,6 +62,13 @@ namespace cyxwiz {
 
 namespace {
 
+// The column transforms that fit values on their input (TOFIX129 D2): they
+// share the fitted-state parameters, the saved-state path and the leakage guard.
+bool IsFittedColumnTransform(const std::string& type) {
+    return type == "StandardScaler" || type == "MinMaxScaler" || type == "RobustScaler" ||
+           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform";
+}
+
 // The registry name of an operator node's result.
 std::string OperatorOutputName(const std::string& type, int id) {
     return "ds_operator_" + type + "_" + std::to_string(id);
@@ -2888,7 +2895,7 @@ bool ValidateNumericColumnsWithLabelInputSchema(
             table, node_type, parameters, "label_col", "label", error)) {
         return false;
     }
-    if (node_type == "StandardScaler") {
+    if (IsFittedColumnTransform(node_type) || node_type == "LogTransform") {
         return ValidateOptionalRoleColumnListExists(
             table, node_type, parameters, "exclude_columns", "excluded",
             error);
@@ -3007,13 +3014,16 @@ bool ValidatePipelineOperatorInputSchema(
             return ValidateTimeSeriesWindowInputSchema(table, node_type,
                                                        parameters, error);
         case gui::NodeType::TimeSeriesFeatures:
-        case gui::NodeType::LogTransform:
         case gui::NodeType::Differencing:
             return ValidateValueColumnInputSchema(table, node_type,
                                                   parameters, error);
         case gui::NodeType::StandardScaler:
         case gui::NodeType::MinMaxScaler:
         case gui::NodeType::RobustScaler:
+        case gui::NodeType::MaxAbsScaler:
+        case gui::NodeType::QuantileTransform:
+        case gui::NodeType::PowerTransform:
+        case gui::NodeType::LogTransform:
             return ValidateNumericColumnsWithLabelInputSchema(
                 table, node_type, parameters, error);
         case gui::NodeType::OutlierDetector:
@@ -3640,8 +3650,7 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
             }
             continue;
         }
-        if (node.type != "FillMissing" &&
-            node.type != "StandardScaler") {
+        if (node.type != "FillMissing" && !IsFittedColumnTransform(node.type)) {
             continue;
         }
         const std::string operation_mode = ToLowerAscii(TrimString(
@@ -3852,8 +3861,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         nodes_by_id[node.id] = &node;
     }
     for (const auto& node : nodes) {
-        if (node.type != "FillMissing" &&
-            node.type != "StandardScaler") {
+        if (node.type != "FillMissing" && !IsFittedColumnTransform(node.type)) {
             continue;
         }
 

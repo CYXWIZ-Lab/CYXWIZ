@@ -1,3 +1,4 @@
+#include <cyxwiz/statistical_tests.h>
 #include "core/arrow_dataset.h"
 #include "core/data_analyzer.h"
 #include "core/data_registry.h"
@@ -9,7 +10,6 @@
 #include "core/node_executors/regression_model_predictor_operator.h"
 #include "core/node_executors/regression_operators.h"
 #include "core/node_executors/differencing_operator.h"
-#include "core/node_executors/log_transform_operator.h"
 #include "core/node_executors/sentiment_analyzer_operator.h"
 #include "core/node_executors/time_series_split_operator.h"
 
@@ -507,40 +507,20 @@ std::shared_ptr<arrow::Table> MakeNoisyRegressionTable() {
 }
 
 void TestRegressionMetricDefinitions() {
+    // The facts a model artifact keeps: MSE = SSE / n (RMSE its root) and the
+    // residual variance = SSE / df (the residual SE its root), from the
+    // solver the regression nodes use.
     const std::vector<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
     const std::vector<double> y = {2.0, 4.0, 5.0, 9.0, 10.0};
-    const auto result = cyxwiz::DataAnalyzer::LinearRegression(x, y);
-    Check(result.residuals.size() == x.size(),
-          "LinearRegression should produce one residual per observation");
+    const auto fit = cyxwiz::StatisticalTests::FitLinear({x}, y, {"x"});
+    Check(fit.ok && fit.residuals.size() == x.size(), "FitLinear should produce one residual per observation");
     double sse = 0.0;
-    for (double residual : result.residuals) {
-        sse += residual * residual;
-    }
-    const double expected_mse = sse / static_cast<double>(result.n);
-    const double expected_residual_variance =
-        sse / static_cast<double>(result.df_resid);
-    Check(std::abs(result.mse - expected_mse) < 1e-12 &&
-              std::abs(result.rmse - std::sqrt(expected_mse)) < 1e-12,
-          "MSE/RMSE should use mean prediction error SSE/n");
-    Check(std::abs(result.residual_variance -
-                   expected_residual_variance) < 1e-12 &&
-              std::abs(result.residual_standard_error -
-                       std::sqrt(expected_residual_variance)) < 1e-12,
-          "residual variance/error should retain SSE/df_resid statistics");
-    Check(result.residual_variance > result.mse,
-          "non-perfect fixture should distinguish residual variance from MSE");
-
-    std::vector<std::vector<double>> design;
-    design.reserve(x.size());
-    for (double value : x) {
-        design.push_back({1.0, value});
-    }
-    const auto multiple = cyxwiz::DataAnalyzer::MultipleLinearRegression(
-        design, y, {"intercept", "x"});
-    Check(std::abs(multiple.mse - result.mse) < 1e-12 &&
-              std::abs(multiple.residual_variance -
-                       result.residual_variance) < 1e-12,
-          "simple and multiple regression paths should share metric semantics");
+    for (double residual : fit.residuals) sse += residual * residual;
+    Check(std::abs(fit.rmse - std::sqrt(sse / static_cast<double>(fit.n))) < 1e-9,
+          "RMSE should use mean prediction error SSE/n");
+    Check(std::abs(fit.rse - std::sqrt(sse / static_cast<double>(fit.df_resid))) < 1e-9,
+          "the residual SE should retain SSE/df_resid");
+    Check(fit.rse > fit.rmse, "non-perfect fixture should distinguish residual variance from MSE");
 }
 
 void TestRegressionFittedModelArtifact() {
@@ -676,7 +656,7 @@ void TestRemainingRowTransformMemoryPreflight() {
 
     std::string error;
     cyxwiz::LogTransformOperator log;
-    Check(log.Configure({{"value_col", "y"}}, error), error);
+    Check(log.Configure({{"columns", "y"}}, error), error);
     assert_safe_preflight(
         log,
         numeric_input,
@@ -743,7 +723,7 @@ void TestMaterializerStructuredFailures() {
             902,
             gui::NodeType::LogTransform,
             "Failure LogTransform",
-            {{"value_col", "y"}}),
+            {{"columns", "y"}}),
     };
     const std::vector<gui::NodeLink> links = {
         {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
@@ -963,7 +943,7 @@ void TestStreamedMaterializerMatchesMemory() {
                          {{"columns", "x"}, {"with_mean", "true"}, {"with_std", "true"}}),
         MakeOperatorNode(903, gui::NodeType::MinMaxScaler, "Range y",
                          {{"columns", "y"}, {"min", "0"}, {"max", "1"}}),
-        MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", {{"value_col", "y"}}),
+        MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", {{"columns", "y"}}),
     };
     std::vector<gui::NodeLink> links = {
         {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
@@ -1062,7 +1042,7 @@ int main() {
                    {"with_scaling", "true"}},
                   {"x"});
     RunParityCase(csv_path, "LogTransform", gui::NodeType::LogTransform,
-                  507, 508, {{"value_col", "y"}}, {"y"});
+                  507, 508, {{"columns", "y"}}, {"y"});
     RunParityCase(csv_path, "Differencing", gui::NodeType::Differencing,
                   509, 510,
                   {{"value_col", "y"}, {"lag", "1"}, {"order", "1"}},

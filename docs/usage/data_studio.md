@@ -54,12 +54,13 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has seven views: **Query**, **Profile**, **Missing**, **Outliers**,
-**Correlation**, **Distribution** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Explore has nine views: **Query**, **Profile**, **Missing**, **Outliers**,
+**Correlation**, **Distribution**, **Tests**, **Regression** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
-Correlation Matrix) and Tools > Statistics > Summary Statistics and
-Distribution Fitter. In Profile, a column's missing or outlier count opens
+Correlation Matrix) and Tools > Statistics (Summary Statistics and
+Distribution Fitter open Distribution; Hypothesis Testing opens Tests; Linear /
+Polynomial Regression opens Regression). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -298,6 +299,21 @@ Penguins: bill_length_mm fits Normal (KS p 0.066); body_mass_g fits nothing
 (best Log-Normal, p 0.018): the three species mixed give it more than one
 hump. Its mode is 3,800 g (12 birds), skewness 0.47, excess kurtosis -0.72.
 
+## Tests
+
+A question about the data: two groups (Welch by default), paired columns,
+several groups (with Tukey HSD), one column vs a value, two categories
+(chi-square). The answer shows the groups and box plots, the figures with
+effect sizes in words, a sentence, and its checks; **Keep as a node** adds a
+Hypothesis Test node. See [statistics](statistics.md#tests).
+
+## Regression
+
+Predict a number column from others, or a curve (degree 1 to 6) in one:
+coefficients with CIs, the equation, R², AIC, what the fit says, and the
+residual plots; **Add to the graph** adds a Linear or Polynomial Regression
+node. See [statistics](statistics.md#regression).
+
 ## Visualize
 
 Quick plots of the picked dataset, with the same plot types, plot view and
@@ -369,17 +385,28 @@ turns it into an ordinary SQL step when you save. An SQL step in Guided mode
 offers **Start a guided step instead**, which replaces the query when you save
 (Reset brings it back until then).
 
+**Scale, power and log steps** (Standard, Min-Max, Robust and Max-Abs
+Scaler, Quantile, Power and Log Transform) show their settings as typed fields
+and switches (a scaler's **Method** switch replaces the node with another
+scaler, keeping its links and columns), the last run's before / after per
+column with two histograms, a power step's λ, skewness, normality test and
+likelihood curve, and **Compare methods**; see
+[scaling and transforms](data_transforms.md#the-step-in-prepare).
+
 **Other steps** (a Check, a step node) show their last outcome,
 their settings as saved in the graph, **Run step**, **Open dialog** and
 **Show on canvas**; settings are changed in the node's dialog.
 
 **+ Add a step** under the step list (and **Add a step after** beside an SQL
 step) adds after the selected step: an **SQL step**, a **Guided step**, a
-**Row Filter**, **Joiner**, **GroupBy** or **Text Clean**, or any other
-preparation node from **More nodes**. The node goes on the canvas to the
+**Row Filter**, **Joiner**, **GroupBy** or **Text Clean**, a step from
+**Scale and transform** (Scale, Log transform, Power transform), or any other
+preparation node from **More nodes**. The new step is picked. The node goes on the canvas to the
 step's right, the nodes after it move right to make room (a collapsed recipe
 opens first), and it is selected there; Data Studio stays in front, and the
-step joins the list. Ctrl+Z on the canvas undoes it.
+step joins the list. Ctrl+Z on the canvas undoes it. A graph with no steps
+yet offers **Add a step after** its Data Input. **Data > Transform** adds a
+scaling, log or power step after the data in use and picks it.
 
 **Checks.** A Check node checks one of: a row count (exactly, at
 least, at most; all rows or the rows where a column is true or has a value),
@@ -519,47 +546,74 @@ rail (or the last step); its format and file are set in its dialog.
 
 ## Results
 
-A model's results next to the data. Pick **Generations** or **Test run**.
-The job's line counts what there is to show (*test: 72 rows · 2 preview
-runs*, and any evaluation nodes in the graph).
+A model's results next to the data, in four views: **Test**,
+**Cross-validation**, **Learning curve** and **Generations**. The job's line
+counts what there is to show (*test: 72 rows · 2 preview runs*, and any
+evaluation nodes in the graph). After a test, Data Studio opens Results > Test
+by itself.
 
-**Generations** shows the generation previews a language model's training
-writes (set on the Data Loader's Generation tab). **Run** lists every run of
-the project that wrote previews, newest first; under it is the same
-Generations view as the Training Dashboard's: the latest pass with one card
-per prompt, two passes compared, or one prompt over time. See
-[Generation previews](generation_previews.md).
+### Test
 
-**Test run** shows the latest test in a few lines: its headline (*Accuracy
-94.44%*, *MAE 0.1234*), how many rows it tested and its other figures, read
-back from the run's per-row predictions (the `test_predictions` table,
-published when a model is tested with Train > Test) with the same calculation
-and words as the Test Results panel. **Open Test Results** opens that panel,
-the one full view of a test: the confusion matrix, the classes, the curves,
-each prediction with its dataset row, a regression's rows by error, and the
-error by the values of a column of the tested table (see
-[testing.md](testing.md)).
+One view of a test (it replaced the Test Results window and the Confusion
+Matrix, ROC / AUC and PR Curve windows). **Showing** picks what it shows:
+
+- **Latest test**: the last Train > Test run (its rows are the
+  `test_predictions` table);
+- **Kept: name**: a test kept with Keep as node (`results/tests` in the
+  project);
+- **A table...**: any table read as a test. Pick the table, **Classes** or
+  **Numbers**, the **True** and **Predicted** columns and, for the curves, the
+  **Scores**: one `score_<class>` column per class, or one column for two
+  classes (then say whose score it is). Columns named like `label` /
+  `prediction` / `score_<class>` are picked for you. Rows missing a value are
+  left out and counted. A model scored in a script or an imported CSV gets
+  every section this way.
+
+The headline (*Accuracy 94.12%*, *MAE 318.2*), the test's size and time, and
+its figures as chips (loss, macro and weighted F1, AUC; RMSE and R² for
+numbers). A table read as a test has no loss or time, so they are not shown.
+Sections:
+
+| Section | What it shows |
+| --- | --- |
+| Overview | macro precision / recall / F1, weighted F1; the best and worst class, classes never predicted; a regression's bias |
+| Confusion matrix | counts, or the share of each true class; the largest confusion; a cell's tooltip says *x of y (z%)* |
+| Classes | precision, recall, F1, found, false alarms, support per class; filter and sort |
+| Curves | ROC and precision-recall (one line per class against the rest for three or more), AUC and AP; the precision-recall curve is drawn as steps, so its area is AP; a ring marks the threshold |
+| Threshold | two classes, or one class against the rest: the **Positive class** by name, a typed **Threshold** (- / +) and **Best F1**; precision, recall, specificity, F1, balanced accuracy, MCC, accuracy and the 2 x 2 counts at that threshold |
+| Plots | regression: predicted vs actual, residuals vs predicted, residual histogram |
+| Predictions | every row with its dataset row, or the mistakes with the most confident first (regression: the largest errors first) |
+| By column value | the error by the values (or ranges) of a column of the tested table |
+| Comparison | the latest test beside the one before (Train > Test > Compare Test Results opens it) |
+
+The figures at a threshold are read off the class's ROC curve, which holds the
+true and false positives at every distinct score, so moving the threshold does
+no new pass over the rows. They match scikit-learn
+(`tests/fixtures/generate_evaluation_fixtures.py`).
+
+**Export CSV...** / **Export JSON...** save what is shown. **Keep as node...**
+keeps the latest test (below). **Clear** asks first, then forgets the latest
+test and the one before (kept tests stay). **Run test again** tests again.
 
 `test_predictions` has a `row_id` column (each test row's row in the tested
 table, counted from 0), and its metadata keeps the tested table's name, the
 class names, the loss and the time, so the results join back to the data and
 a copy read back later gives the whole run.
 
-**Keep as node** (on the *In the graph* line of Results) keeps the latest test
-for later: testing again replaces `test_predictions`, a kept test stays. Give
-it a name (the graph's name and *test* to start with); **Keep**:
+**Keep as node...** keeps the latest test for later: testing again replaces
+`test_predictions`, a kept test stays. Give it a name (the graph's name and
+*test* to start with); **Keep**:
 
 - saves the test's rows once as `results/tests/<name>_<date>_<time>.parquet`
   in the project (an existing file is never replaced), with its tested table,
   class names, loss and time and the name it was kept under;
 - adds a **Data Input** named after it reading that file and a **Test
   Evaluation** node after it, in free space on the canvas (Ctrl+Z removes
-  them; the file stays). The line under the jobs then counts *1 evaluation
-  node*.
+  them; the file stays). Showing then lists it under *Kept*.
 
 The **Test Evaluation** node (Analytics) reads any test's per-row table (a
-kept test, or `test_predictions` itself) and gives the Test Results panel's
-figures as four tables:
+kept test, or `test_predictions` itself) and gives Results > Test's figures as
+four tables:
 
 | Output | Columns |
 | --- | --- |
@@ -571,5 +625,76 @@ figures as four tables:
 *Worst rows* keeps 20 rows (Properties: **worst_rows**). A table that is not a
 test's is refused (*not a test's predictions*).
 
-**Kept tests** under the latest test lists the project's kept tests, newest
-first; **Open** shows one in Test Results.
+### Cross-validation
+
+Trains the open graph once per fold with fresh weights, each time on the
+other folds, and scores the fold it did not see. **Folds** (typed, 2 to 20),
+**Keep class shares** (stratified folds for classes) and **Seed**; **Run**
+(or Train > Evaluate > Cross-validate).
+
+Run goes through Train's own path: the graph is compiled and checked, data
+that is not loaded is loaded, the memory question is asked when it applies,
+and the graph's preparation steps run. Then, instead of one training, the
+prepared table is trained once per fold:
+
+- the rows are the table less the graph's own **test rows** (the ones Train >
+  Test tests on), so those stay unseen;
+- each fold trains for the graph's epochs with its batch size, optimiser and
+  device; early stopping and the best-epoch restore are off, since they would
+  pick the epoch by the fold being scored;
+- each fold is scored by the test code: accuracy, macro F1 and loss (numbers:
+  MAE, RMSE, R²).
+
+It runs in the background (Task View shows *Cross-validation: fold 3 of 5*)
+with the folds listed as they finish, and **Cancel** stops it. It does not
+touch the trained model in use, its checkpoints or the Training Dashboard;
+Train waits while it runs, and it waits while Train runs.
+
+The answer: the mean with its spread (*Accuracy 91.9% ± 3.7 over 5 folds*),
+the range, a sentence on what to expect on new rows (with the latest test
+beside it: inside the folds' range, or a lucky or unlucky split), the bars per
+fold with the mean, the fold table, and a fold that stands out (*Fold 5's loss
+is high (2.663) though its accuracy is not low: a few mistakes made with great
+confidence*). **Export CSV...** saves one row per fold.
+
+The runner matches PyTorch training the same graph on the same folds
+(`tests/computation_truth/reference/generate_cross_validation_fixtures.py`):
+every fold's accuracy and loss fall inside the spread of 8 seeds.
+
+### Learning curve
+
+Trains the open graph on shares of each fold's training rows (**Training
+rows**, typed: *10%, 25%, 50%, 75%, 100%*), with **Folds** and **Seed**, and
+scores both the rows it trained on and the fold. **Score**: accuracy, macro F1
+or loss (numbers: MAE, RMSE, R²). The plot shows training against validation
+with one-standard-deviation bands; the table has the gap at each size; the
+sentences say where validation levels off (or that it still improves, so more
+rows would help) and what the gap at full size means (memorising, or a model
+that needs more information rather than more rows). Loss and accuracy per
+epoch of a run stay in the Training Dashboard.
+
+### The Cross-Validation and Learning Curves nodes
+
+They keep the settings in the graph, on the data path the way Data Split is
+(**Add to the graph** in the view puts one after the Data Input). Data passes
+through them unchanged, so Train trains as usual. When the graph has one, Run
+(and Train > Evaluate) uses its settings, and the view says so.
+
+| Node | Parameters |
+| --- | --- |
+| Cross-Validation | `folds` (2 to 20), `stratified` (true / false), `seed`, `results_table` |
+| Learning Curves | `folds`, `seed`, `train_sizes` (*10%, 25%, 50%, 100%*), `results_table` |
+
+A finished run is published as a table named by `results_table`
+(`cross_validation_results`, `learning_curve_results`): one row per training
+(`fold`, `share`, `train_rows`, `val_rows`, the validation scores, a learning
+curve's training scores, `epochs`, `seconds`). It is the node's second output,
+so a Plot or Export node can use it, and Data Studio lists it like any table.
+
+### Generations
+
+The generation previews a language model's training writes (set on the Data
+Loader's Generation tab). **Run** lists every run of the project that wrote
+previews, newest first; under it is the same Generations view as the Training
+Dashboard's: the latest pass with one card per prompt, two passes compared, or
+one prompt over time. See [Generation previews](generation_previews.md).
