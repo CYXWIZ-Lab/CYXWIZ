@@ -114,9 +114,10 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
     } else if (m.regression_mode) {
         v.headline = "MAE " + Fixed(m.test_mae, 4);
         v.headline_tone = Tone::Neutral;
-        v.chips = {{"RMSE " + Fixed(m.test_rmse, 4), Tone::Neutral},
-                   {"loss " + Fixed(m.test_loss, 4), Tone::Neutral},
-                   {Count(static_cast<long long>(m.total_target_values)) + " target values", Tone::Neutral}};
+        v.chips = {{"RMSE " + Fixed(m.test_rmse, 4), Tone::Neutral}};
+        if (const double r2 = RSquared(m); std::isfinite(r2)) v.chips.push_back({"R\xC2\xB2 " + Fixed(r2, 4), Tone::Neutral});
+        v.chips.insert(v.chips.end(), {{"loss " + Fixed(m.test_loss, 4), Tone::Neutral},
+                   {Count(static_cast<long long>(m.total_target_values)) + " target values", Tone::Neutral}});
     } else {
         v.headline = std::string(m.metric_learning_mode ? "1-NN accuracy " : "Accuracy ") + Percent(m.test_accuracy);
         v.headline_tone = AccuracyTone(m.test_accuracy);
@@ -248,6 +249,70 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
 
     if (previous && !IsFailedRun(*previous)) AddComparison(v, *previous, m);
     return v;
+}
+
+ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negatives, double threshold) {
+    ThresholdFigures f;
+    f.threshold = threshold;
+    const size_t points = std::min({roc.fpr.size(), roc.tpr.size(), roc.thresholds.size()});
+    if (!roc.success || points == 0 || positives <= 0 || negatives <= 0) return f;
+    // Thresholds fall along the curve; the last point at or above `threshold`
+    // counts every score >= threshold as positive (point 0, +inf: none).
+    size_t at = 0;
+    for (size_t i = 1; i < points; ++i)
+        if (roc.thresholds[i] >= threshold) at = i;
+    f.tp = static_cast<int>(std::lround(roc.tpr[at] * positives));
+    f.fp = static_cast<int>(std::lround(roc.fpr[at] * negatives));
+    f.fn = positives - f.tp;
+    f.tn = negatives - f.fp;
+    const double tp = f.tp, fp = f.fp, tn = f.tn, fn = f.fn;
+    f.precision = tp + fp > 0 ? tp / (tp + fp) : 0.0;
+    f.recall = tp / positives;
+    f.specificity = tn / negatives;
+    f.f1 = f.precision + f.recall > 0.0 ? 2.0 * f.precision * f.recall / (f.precision + f.recall) : 0.0;
+    f.balanced_accuracy = (f.recall + f.specificity) / 2.0;
+    const double d = std::sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn));
+    f.mcc = d > 0.0 ? (tp * tn - fp * fn) / d : 0.0;
+    f.accuracy = (tp + tn) / static_cast<double>(positives + negatives);
+    f.ok = true;
+    return f;
+}
+
+double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives) {
+    const size_t points = std::min({roc.fpr.size(), roc.tpr.size(), roc.thresholds.size()});
+    double best = NAN, best_f1 = -1.0;
+    for (size_t i = 1; i < points; ++i) {
+        const ThresholdFigures f = AtThreshold(roc, positives, negatives, roc.thresholds[i]);
+        if (f.ok && f.f1 > best_f1) {
+            best_f1 = f.f1;
+            best = roc.thresholds[i];
+        }
+    }
+    return best;
+}
+
+double RSquared(const TestingMetrics& m) {
+    const size_t width = static_cast<size_t>(std::max(m.regression_width, 0));
+    if (!m.regression_mode || width == 0 || m.regression_truth.empty() ||
+        m.regression_truth.size() != m.regression_predictions.size())
+        return NAN;
+    const size_t rows = m.regression_truth.size() / width;
+    double total = 0.0;
+    for (size_t t = 0; t < width; ++t) {
+        double mean = 0.0;
+        for (size_t i = 0; i < rows; ++i) mean += m.regression_truth[i * width + t];
+        mean /= static_cast<double>(rows);
+        double sse = 0.0, sst = 0.0;
+        for (size_t i = 0; i < rows; ++i) {
+            const double y = m.regression_truth[i * width + t];
+            const double e = y - m.regression_predictions[i * width + t];
+            sse += e * e;
+            sst += (y - mean) * (y - mean);
+        }
+        if (!(sst > 0.0)) return NAN;
+        total += 1.0 - sse / sst;
+    }
+    return total / static_cast<double>(width);
 }
 
 std::vector<ClassRow> SortClasses(std::vector<ClassRow> rows, ClassSort by, bool ascending, const std::string& filter) {

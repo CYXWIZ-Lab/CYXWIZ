@@ -4500,6 +4500,10 @@ add_test(NAME compile_report_presentation COMMAND test_compile_report_presentati
 add_executable(test_test_results_presentation
     tests/test_test_results_presentation.cpp
     src/core/test_results_presentation.cpp
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_predictions_metrics.cpp
+    src/core/test_predictions_table.cpp
     src/core/test_evaluation_tables.cpp
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
@@ -4527,6 +4531,8 @@ target_link_libraries(test_test_results_presentation PRIVATE
 if(WIN32)
     target_compile_definitions(test_test_results_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
+target_compile_definitions(test_test_results_presentation PRIVATE
+    CYXWIZ_EVALUATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/evaluation_sklearn.json")
 set_target_properties(test_test_results_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_results_presentation COMMAND test_test_results_presentation)
 

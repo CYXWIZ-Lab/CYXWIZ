@@ -5,6 +5,7 @@
 // exports of the shown results.
 
 #include "../src/core/test_evaluation_tables.h"
+#include "../src/core/test_predictions_metrics.h"
 #include "../src/core/test_results_export.h"
 #include "../src/core/test_results_presentation.h"
 #include "../src/core/model_export_presentation.h"
@@ -13,6 +14,8 @@
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -170,6 +173,142 @@ void CheckRegressionRows() {
     m.regression_truth.clear();
     m.regression_predictions.clear();
     Check(BuildView(m, nullptr).largest_errors.empty(), "no kept rows: no largest errors");
+}
+
+// ---- Results > Test (TOFIX129 D4), against scikit-learn (generate_evaluation_fixtures.py) ----
+
+nlohmann::json EvaluationFixture() {
+    std::ifstream in(CYXWIZ_EVALUATION_FIXTURE);
+    Check(in.good(), std::string("cannot open ") + CYXWIZ_EVALUATION_FIXTURE);
+    return nlohmann::json::parse(in);
+}
+
+std::shared_ptr<arrow::Array> TextArray(const nlohmann::json& values) {
+    arrow::StringBuilder b;
+    for (const auto& v : values) Check(b.Append(v.get<std::string>()).ok(), "append text");
+    std::shared_ptr<arrow::Array> out;
+    Check(b.Finish(&out).ok(), "finish text");
+    return out;
+}
+
+std::shared_ptr<arrow::Array> NumberArray(const nlohmann::json& values) {
+    arrow::DoubleBuilder b;
+    for (const auto& v : values) Check(b.Append(v.get<double>()).ok(), "append number");
+    std::shared_ptr<arrow::Array> out;
+    Check(b.Finish(&out).ok(), "finish number");
+    return out;
+}
+
+bool Near(double a, double b, double tolerance) { return std::abs(a - b) <= tolerance; }
+
+std::string Num(double v) {
+    char text[40];
+    std::snprintf(text, sizeof(text), "%.9g", v);
+    return text;
+}
+
+// Two classes read from a table (text labels, one score): the curves for each
+// positive class, the figures at a threshold and the best-F1 threshold.
+void CheckThresholds() {
+    const auto j = EvaluationFixture()["binary"];
+    const auto table = arrow::Table::Make(
+        arrow::schema({arrow::field("actual", arrow::utf8()), arrow::field("predicted", arrow::utf8()),
+                       arrow::field("p_male", arrow::float64())}),
+        {TextArray(j["truth"]), TextArray(j["predicted"]), NumberArray(j["score_male"])});
+    PredictionColumns columns;
+    columns.truth = "actual";
+    columns.predicted = "predicted";
+    columns.scores = {"p_male"};
+    columns.positive = "MALE";
+    TestingMetrics m;
+    int64_t left_out = -1;
+    std::string error;
+    Check(MetricsFromColumns(*table, columns, m, left_out, error), "two classes read as a test: " + error);
+    Check(left_out == 0 && m.total_samples == static_cast<int>(j["truth"].size()), "every row read");
+    Check(Near(m.test_accuracy, j["accuracy"].get<double>(), 1e-6), "accuracy " + Num(m.test_accuracy));
+    Check(ClassName(m, 0) == "FEMALE" && ClassName(m, 1) == "MALE", "classes in the label encoder's order");
+
+    ClassCurves male;
+    Check(CurvesForClass(m, 1, male, error), "MALE curves: " + error);
+    Check(Near(male.roc.auc, j["auc_male"].get<double>(), 1e-9), "AUC (MALE) " + Num(male.roc.auc));
+    Check(Near(male.pr.average_precision, j["ap_male"].get<double>(), 1e-9), "AP (MALE) " + Num(male.pr.average_precision));
+    for (const auto& at : j["at"]) {
+        const double t = at["threshold"].get<double>();
+        const ThresholdFigures f = AtThreshold(male.roc, male.positives, male.negatives, t);
+        const std::string where = " at " + Num(t);
+        Check(f.ok && f.tp == at["tp"].get<int>() && f.fp == at["fp"].get<int>() && f.tn == at["tn"].get<int>() &&
+                  f.fn == at["fn"].get<int>(),
+              "counts" + where + ": " + std::to_string(f.tp) + " " + std::to_string(f.fp) + " " + std::to_string(f.tn) + " " +
+                  std::to_string(f.fn));
+        Check(Near(f.precision, at["precision"].get<double>(), 1e-9) && Near(f.recall, at["recall"].get<double>(), 1e-9) &&
+                  Near(f.specificity, at["specificity"].get<double>(), 1e-9) && Near(f.f1, at["f1"].get<double>(), 1e-9) &&
+                  Near(f.balanced_accuracy, at["balanced"].get<double>(), 1e-9) && Near(f.mcc, at["mcc"].get<double>(), 1e-9),
+              "figures" + where);
+    }
+    const double best = BestF1Threshold(male.roc, male.positives, male.negatives);
+    Check(Near(best, j["best_threshold"].get<double>(), 1e-6), "best-F1 threshold " + Num(best));
+    Check(Near(AtThreshold(male.roc, male.positives, male.negatives, best).f1, j["best_f1"].get<double>(), 1e-9), "best F1");
+
+    ClassCurves female;  // class 0 of two: worked out on the device
+    Check(CurvesForClass(m, 0, female, error), "FEMALE curves: " + error);
+    Check(Near(female.roc.auc, j["auc_female"].get<double>(), 1e-6), "AUC (FEMALE) " + Num(female.roc.auc));
+    Check(female.positives == male.negatives && female.negatives == male.positives, "FEMALE counts");
+    Check(!AtThreshold(male.roc, 0, 10, 0.5).ok, "no positives: no figures");
+}
+
+// Three classes and a regression read from tables: the same figures as
+// scikit-learn, score_<class> columns taken in class order whatever their
+// order in the table, and the first guess at the columns.
+void CheckTableAsTest() {
+    const auto fixture = EvaluationFixture();
+    const auto& j = fixture["multiclass"];
+    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("label", arrow::utf8()),
+                                                         arrow::field("prediction", arrow::utf8())};
+    std::vector<std::shared_ptr<arrow::Array>> arrays = {TextArray(j["truth"]), TextArray(j["predicted"])};
+    std::vector<std::string> classes = j["classes"].get<std::vector<std::string>>();
+    for (auto c = classes.rbegin(); c != classes.rend(); ++c) {  // reversed on purpose
+        fields.push_back(arrow::field("score_" + *c, arrow::float64()));
+        arrays.push_back(NumberArray(j["scores"][*c]));
+    }
+    const auto table = arrow::Table::Make(arrow::schema(fields), arrays);
+    const PredictionColumns guess = GuessPredictionColumns(*table);
+    Check(guess.truth == "label" && guess.predicted == "prediction" && guess.scores.size() == 3 && !guess.numbers,
+          "guess: " + guess.truth + " / " + guess.predicted);
+    TestingMetrics m;
+    int64_t left_out = 0;
+    std::string error;
+    Check(MetricsFromColumns(*table, guess, m, left_out, error), "three classes read as a test: " + error);
+    Check(Near(m.test_accuracy, j["accuracy"].get<double>(), 1e-6) && Near(m.macro_f1, j["macro_f1"].get<double>(), 1e-6) &&
+              Near(m.weighted_f1, j["weighted_f1"].get<double>(), 1e-6),
+          "accuracy / F1 " + Num(m.test_accuracy) + " " + Num(m.macro_f1));
+    for (int c = 0; c < 3; ++c) {
+        ClassCurves curves;
+        Check(CurvesForClass(m, c, curves, error), "curves " + classes[static_cast<size_t>(c)] + ": " + error);
+        Check(ClassName(m, c) == classes[static_cast<size_t>(c)] &&
+                  Near(curves.roc.auc, j["auc"][classes[static_cast<size_t>(c)]].get<double>(), 1e-6),
+              "AUC " + classes[static_cast<size_t>(c)] + " " + Num(curves.roc.auc));
+    }
+    PredictionColumns one = guess;
+    one.scores = {"score_Gentoo"};
+    Check(!MetricsFromColumns(*table, one, m, left_out, error) && error.find("one score column fits two classes") == 0,
+          "one score for three classes is refused: " + error);
+
+    const auto& r = fixture["regression"];
+    const auto numbers = arrow::Table::Make(
+        arrow::schema({arrow::field("body_mass_g", arrow::float64()), arrow::field("predicted_body_mass_g", arrow::float64())}),
+        {NumberArray(r["truth"]), NumberArray(r["predicted"])});
+    const PredictionColumns n = GuessPredictionColumns(*numbers);
+    Check(n.predicted == "predicted_body_mass_g" && n.truth.empty(), "no true-looking name: the user picks it");
+    PredictionColumns regression;
+    regression.truth = "body_mass_g";
+    regression.predicted = "predicted_body_mass_g";
+    regression.numbers = true;
+    Check(MetricsFromColumns(*numbers, regression, m, left_out, error), "regression read as a test: " + error);
+    Check(m.regression_mode && Near(m.test_mae, r["mae"].get<double>(), 1e-3) && Near(m.test_rmse, r["rmse"].get<double>(), 1e-3),
+          "MAE / RMSE " + Num(m.test_mae) + " " + Num(m.test_rmse));
+    Check(Near(RSquared(m), r["r2"].get<double>(), 1e-6), "R-squared " + Num(RSquared(m)));
+    const View v = BuildView(m, nullptr);
+    Check(v.chips.size() > 1 && v.chips[1].text.rfind("R\xC2\xB2 0.70", 0) == 0, "R-squared chip: " + v.chips[1].text);
 }
 
 void CheckSorting() {
@@ -347,10 +486,12 @@ int main() {
     CheckOverview();
     CheckSorting();
     CheckRegressionRows();
+    CheckThresholds();
+    CheckTableAsTest();
     CheckEvaluationTables();
     CheckComparison();
     CheckExports();
-    std::cout << "test results presentation: overview, classes, sorting, regression rows, evaluation tables, comparison, exports, export model, open "
+    std::cout << "test results presentation: overview, classes, sorting, regression rows, thresholds and tables against scikit-learn, evaluation tables, comparison, exports, export model, open "
                  "model. OK\n";
     return 0;
 }

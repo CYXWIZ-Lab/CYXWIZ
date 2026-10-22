@@ -83,4 +83,26 @@ std::vector<ClassRow> SortClasses(std::vector<ClassRow> rows, ClassSort by, bool
 // compares against.
 bool IsFailedRun(const TestingMetrics& m);
 
+// Two classes, or one class against the rest (TOFIX129 D4): the figures at a
+// threshold (the class is predicted when its score is at least the threshold),
+// read off that class's ROC curve, which holds the true and false positives at
+// every distinct score (TP = TPR x positives, FP = FPR x negatives). Moving the
+// threshold does no new pass over the rows.
+struct ThresholdFigures {
+    bool ok = false;
+    double threshold = 0.5;
+    int tp = 0, fp = 0, tn = 0, fn = 0;
+    double precision = 0.0, recall = 0.0, specificity = 0.0, f1 = 0.0, balanced_accuracy = 0.0, mcc = 0.0,
+           accuracy = 0.0;
+};
+ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negatives, double threshold);
+// The score with the highest F1 (the highest such score on a tie); NaN when
+// the curve has no point.
+double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives);
+
+// A regression test's R-squared: 1 - SSE / SST per target, averaged over the
+// targets (scikit-learn's r2_score); NaN when no rows were kept or a target
+// is constant.
+double RSquared(const TestingMetrics& m);
+
 }  // namespace cyxwiz::test_report
