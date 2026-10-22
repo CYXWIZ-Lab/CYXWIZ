@@ -97,3 +97,35 @@ shows." The tab lets go of the dataset's own memory and keeps only its rows.
 Two Data Inputs reading files with the same name in different folders get
 different dataset names (`mnist`, `mnist_2`). Two Data Inputs reading the
 same file still share one table, so nothing is copied.
+
+## Disk caches (Preferences > Storage)
+
+The Engine keeps prepared copies of data on disk, so loading and preparing
+are faster next time. **File > Preferences > Storage** (Ctrl+,) lists each
+cache:
+
+| Cache | What it holds | Limit |
+|---|---|---|
+| Temporary (this PC) | Parquet copies of files too large for memory | 30 days, 10 GB |
+| Prepared inputs (this project) | Data Input copies, reused the next time a file loads | 30 days, 10 GB |
+| Streamed preparations (this project) | The output of preparing data kept on disk, written again each run | 30 days, 10 GB |
+| Prepared datasets (this project) | Training data after its preparation steps | 32 entries, 10 GB |
+| Saved query answers (this project) | Data Studio and dashboard query results | 512 MB |
+
+Each cache in the list shows:
+
+- what it holds, its folder and **Show in Explorer**;
+- its size and number of files;
+- its limit;
+- **Clear...**, which asks first.
+
+Clearing never changes your files or graphs: what a cache held is made again
+when it is needed (slower once). A file a loaded dataset reads stays.
+
+When a project opens, the Engine applies the 30-day / 10 GB rule to that
+project's two folders. The temporary cache gets the same rule when the
+Engine starts.
+
+Example (MNIST project): Prepared inputs, 1 file, 3 MB, **Clear...** then
+**Clear** shows "Cleared 3 MB (1 file)." The next Apply of
+`mnist_test.csv` prepares the file again.

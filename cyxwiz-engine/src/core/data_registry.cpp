@@ -894,6 +894,15 @@ LoadedDataReport DataRegistry::LoadedDataUnlocked() const {
     return builder.Finish();
 }
 
+std::function<bool(const std::filesystem::path&)> DataRegistry::FileInUse() const {
+    std::set<std::string> held;
+    for (const auto& e : LoadedData().entries)
+        if (!e.path.empty()) held.insert(std::filesystem::path(e.path).lexically_normal().string());
+    return [held = std::move(held)](const std::filesystem::path& p) {
+        return held.count(p.lexically_normal().string()) > 0;
+    };
+}
+
 MemoryStats DataRegistry::GetMemoryStats() const {
     std::lock_guard<std::mutex> lock(mutex_);
 

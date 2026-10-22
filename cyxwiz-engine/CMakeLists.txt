@@ -237,6 +237,7 @@ set(ENGINE_SOURCES
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
+    src/core/storage_caches.cpp  # Preferences > Storage: measure and clear the prepared-data caches
     src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
@@ -518,6 +519,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_dialogs.cpp
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
+    src/gui/panels/toolbar_preferences_storage.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/dataset_picker.cpp
@@ -6018,6 +6020,20 @@ set_target_properties(test_cache_prune PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME cache_prune COMMAND test_cache_prune)
+
+# ===== Test: Preferences > Storage's caches (TOFIX160 P7) =====
+add_executable(test_storage_caches tests/test_storage_caches.cpp src/core/storage_caches.cpp
+    src/core/materialization_cache.cpp)
+target_include_directories(test_storage_caches PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_storage_caches PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_storage_caches PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_storage_caches PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME storage_caches COMMAND test_storage_caches)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE

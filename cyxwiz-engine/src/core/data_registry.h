@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <chrono>
@@ -669,6 +670,10 @@ public:
     // Every dataset held, its memory (shared buffers counted once) and disk,
     // and the Arrow pool (TOFIX160 P1).
     LoadedDataReport LoadedData() const;
+    // True for a file a loaded dataset reads (a Parquet table on disk, a
+    // source file): cache cleanup never removes those (TOFIX160 P7). The set
+    // is taken now; call again for a later state.
+    std::function<bool(const std::filesystem::path&)> FileInUse() const;
     void ResetCacheStats();
 
     // Memory optimization

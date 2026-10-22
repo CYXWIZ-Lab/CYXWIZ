@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../core/storage_caches.h"
 #include "../panel.h"
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
@@ -341,6 +342,10 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
+    // Preferences > Storage (TOFIX160 P7, toolbar_preferences_storage.cpp):
+    // the prepared-data caches, measured off the UI thread, with Clear.
+    void RenderStorageTab();
+    void MeasureStorage();
     void RenderAppearancePreferences();  // Preferences > Appearance
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
@@ -519,6 +524,13 @@ private:
 
     // Preferences dialog state
     bool show_preferences_dialog_ = false;
+    std::vector<cyxwiz::StorageCache> storage_caches_;
+    bool storage_stale_ = true;
+    bool storage_measuring_ = false;
+    std::string storage_confirm_;    // the cache whose Clear is being asked
+    std::string storage_done_id_;    // the cache last cleared, and what it freed
+    std::string storage_done_note_;
+    std::shared_ptr<int> storage_alive_ = std::make_shared<int>(0);
     bool preferences_open_appearance_ = false;
     std::string preferences_select_tab_;  // tab to select when the dialog opens
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts

@@ -196,7 +196,6 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <set>
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/word_embeddings.h>
 #include <spdlog/spdlog.h>
@@ -5854,12 +5853,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     // file a loaded dataset reads stays.
     cyxwiz::AsyncTaskManager::Instance().RunAsync(
         "Prune the project's prepared-data caches", [project_root](cyxwiz::LambdaTask& task) {
-            std::set<std::string> held;
-            for (const auto& e : cyxwiz::DataRegistry::Instance().LoadedData().entries)
-                if (!e.path.empty()) held.insert(std::filesystem::path(e.path).lexically_normal().string());
-            const auto in_use = [held](const std::filesystem::path& p) {
-                return held.count(p.lexically_normal().string()) > 0;
-            };
+            const auto in_use = cyxwiz::DataRegistry::Instance().FileInUse();
             uint64_t freed = 0;
             for (const auto& cache : cyxwiz::PreparedDataCacheFolders(project_root, in_use)) {
                 if (cache.label.find("this project") == std::string::npos) continue;
