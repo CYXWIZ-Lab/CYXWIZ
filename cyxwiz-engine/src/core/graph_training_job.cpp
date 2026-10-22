@@ -455,11 +455,6 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
 }
 
 
-bool CloudDatasetFileFormatKnown(const std::string& file_name) {
-    const std::string extension = Lower(std::filesystem::path(file_name).extension().string());
-    return extension == ".arrow" || extension == ".feather" || extension == ".ipc" || extension == ".parquet";
-}
-
 bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error) {
     plan = {};
     GraphDocument graph;

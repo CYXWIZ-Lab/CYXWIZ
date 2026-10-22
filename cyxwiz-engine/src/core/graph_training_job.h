@@ -10,6 +10,7 @@
 // with preprocessing or data-transform nodes on the data path, other input
 // kinds (image/audio/text folders, CSV), or a graph that does not compile.
 
+#include "cloud_dataset_file_format.h"
 #include "graph_document.h"
 #include "graph_training_job_timing.h"
 #include "training_failure.h"
@@ -117,9 +118,8 @@ struct GraphJobDatasetPlan {
     std::vector<CloudJobDataset> cloud;     // training/validation inputs fetched from CyxCloud
 };
 
-// Whether a CyxCloud file name says a format a node trains from: Arrow IPC
-// (.arrow, .feather, .ipc) or Parquet (.parquet).
-bool CloudDatasetFileFormatKnown(const std::string& file_name);
+// CloudDatasetFileFormatKnown (Arrow IPC or Parquet) comes from
+// cloud_dataset_file_format.h, shared with the dialog and the browser.
 
 // False with a reason for a graph RunGraphTrainingJob would refuse
 // (preparation steps, subgraphs, unreadable) - checked before anything is sent.
