@@ -31,6 +31,7 @@ if(TARGET cyxwiz-backend)
         "${CMAKE_SOURCE_DIR}/tests/smoke/route_probe_flatten_contract.cpp"
         "${CMAKE_SOURCE_DIR}/tests/smoke/route_probe_dropout_contract.cpp"
     )
+    cyxwiz_windows_resources(cyxwiz-route-probe DESCRIPTION "CyxWiz compute route probe")
     target_link_libraries(cyxwiz-route-probe PRIVATE cyxwiz-backend)
     target_include_directories(cyxwiz-route-probe PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
@@ -58,6 +59,7 @@ add_executable(cyxwiz-backend-pack-installer
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_service.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
 )
+cyxwiz_windows_resources(cyxwiz-backend-pack-installer DESCRIPTION "CyxWiz backend pack installer")
 target_include_directories(cyxwiz-backend-pack-installer PRIVATE
     "${_cyxwiz_installer_engine_dir}/src"
     "${_cyxwiz_installer_backend_dir}/include"
@@ -613,6 +615,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session_platform.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_transaction_journal.cpp"
     )
     target_include_directories(test_installer_product_removal PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
@@ -621,6 +624,7 @@ if(CYXWIZ_BUILD_TESTS)
     target_link_libraries(test_installer_product_removal PRIVATE
         cyxwiz-runtime-bootstrap
         LibArchive::LibArchive
+        nlohmann_json::nlohmann_json
         ${CMAKE_DL_LIBS}
     )
     set_target_properties(test_installer_product_removal PROPERTIES
@@ -827,12 +831,11 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
 )
 if(WIN32)
-    list(APPEND _cyxwiz_installer_sources
-        "${_cyxwiz_installer_engine_dir}/resources/installer_icon.rc")
     add_executable(cyxwiz-installer WIN32 ${_cyxwiz_installer_sources})
 else()
     add_executable(cyxwiz-installer ${_cyxwiz_installer_sources})
 endif()
+cyxwiz_windows_resources(cyxwiz-installer DESCRIPTION "CyxWiz Installer" ICON)
 target_include_directories(cyxwiz-installer PRIVATE
     "${_cyxwiz_installer_engine_dir}/src"
     "${_cyxwiz_installer_backend_dir}/include"
@@ -867,7 +870,8 @@ add_custom_command(TARGET cyxwiz-installer POST_BUILD
         "$<TARGET_FILE_DIR:cyxwiz-installer>/resources/fonts"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${_cyxwiz_installer_engine_dir}/resources/cyxwiz.png"
-        "$<TARGET_FILE_DIR:cyxwiz-installer>/resources/cyxwiz.png"
+        "${_cyxwiz_installer_engine_dir}/resources/cyxwiz_icon.png"
+        "$<TARGET_FILE_DIR:cyxwiz-installer>/resources"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${_cyxwiz_installer_engine_dir}/resources/fonts/Inter-Regular.ttf"
         "${_cyxwiz_installer_engine_dir}/resources/fonts/Inter-Bold.ttf"
@@ -881,6 +885,7 @@ install(TARGETS cyxwiz-installer
 )
 install(FILES
     "${_cyxwiz_installer_engine_dir}/resources/cyxwiz.png"
+    "${_cyxwiz_installer_engine_dir}/resources/cyxwiz_icon.png"
     DESTINATION resources
 )
 install(FILES

@@ -15,6 +15,13 @@
 #include <sstream>
 #include <string>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #ifndef CYXWIZ_SETUP_VERSION
 #define CYXWIZ_SETUP_VERSION "0.1.0"
 #endif
@@ -159,7 +166,7 @@ std::optional<cyxwiz::runtime::BackendPackTrustStore> LoadSetupTrust(
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int RunSetup(int argc, char** argv) {
     Options options;
     std::string error;
     if (!ParseArguments(argc, argv, options, error)) {
@@ -263,4 +270,29 @@ int main(int argc, char** argv) {
         return 6;
     }
     return child_exit;
+}
+
+// On Windows the setup is a windowed program (no console window for the
+// person who downloaded it); what went wrong is shown in a message box.
+// Output still reaches a caller that captures it (tests, CI).
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    std::ostringstream errors;
+    auto* const previous = std::cerr.rdbuf(errors.rdbuf());
+    const int code = RunSetup(argc, argv);
+    std::cerr.rdbuf(previous);
+    const std::string text = errors.str();
+    if (!text.empty()) {
+        std::cerr << text;
+        if (code != 0) {
+            const int length = ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+            std::wstring wide(length > 0 ? length : 1, L'\0');
+            ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), length);
+            ::MessageBoxW(nullptr, wide.c_str(), L"CyxWiz Setup", MB_OK | MB_ICONERROR);
+        }
+    }
+    return code;
+#else
+    return RunSetup(argc, argv);
+#endif
 }
