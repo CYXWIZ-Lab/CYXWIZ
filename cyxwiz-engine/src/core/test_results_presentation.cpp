@@ -282,7 +282,8 @@ ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negativ
 double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives) {
     const size_t points = std::min({roc.fpr.size(), roc.tpr.size(), roc.thresholds.size()});
     double best = NAN, best_f1 = -1.0;
-    for (size_t i = 1; i < points; ++i) {
+    // From the lowest score up, so a tie keeps the lowest.
+    for (size_t i = points; i-- > 1;) {
         const ThresholdFigures f = AtThreshold(roc, positives, negatives, roc.thresholds[i]);
         if (f.ok && f.f1 > best_f1) {
             best_f1 = f.f1;

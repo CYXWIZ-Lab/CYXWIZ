@@ -96,8 +96,9 @@ struct ThresholdFigures {
            accuracy = 0.0;
 };
 ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negatives, double threshold);
-// The score with the highest F1 (the highest such score on a tie); NaN when
-// the curve has no point.
+// The score with the highest F1 (the lowest such score on a tie, the
+// classification fixtures' threshold contract); NaN when the curve has no
+// point.
 double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives);
 
 // A regression test's R-squared: 1 - SSE / SST per target, averaged over the

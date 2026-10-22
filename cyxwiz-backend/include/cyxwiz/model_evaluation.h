@@ -123,21 +123,6 @@ struct CYXWIZ_API RegressionMetrics {
     std::string error_message;
 };
 
-// Binary classification metrics at a specific threshold
-struct CYXWIZ_API BinaryMetrics {
-    double threshold = 0.5;
-    int tp = 0, fp = 0, tn = 0, fn = 0;
-    double precision = 0.0;
-    double recall = 0.0;
-    double f1 = 0.0;
-    double specificity = 0.0;
-    double balanced_accuracy = 0.0;
-    double mcc = 0.0;  // Matthews correlation coefficient
-
-    bool success = false;
-    std::string error_message;
-};
-
 class CYXWIZ_API ModelEvaluation {
 public:
     // These vector APIs own bounded native host evaluation/reporting. Training
@@ -167,12 +152,6 @@ public:
     static PRCurveData ComputeMulticlassPRCurve(
         const std::vector<int>& y_true,
         const std::vector<std::vector<double>>& y_scores);
-
-    // Binary metrics at threshold
-    static BinaryMetrics ComputeBinaryMetrics(
-        const std::vector<int>& y_true,
-        const std::vector<double>& y_scores,
-        double threshold = 0.5);
 
     // sklearn-compatible AUC for monotonic finite x. Invalid input returns NaN.
     static double ComputeAUC(
@@ -210,13 +189,6 @@ public:
     static RegressionMetrics ComputeRegressionMetrics(
         const std::vector<double>& y_true,
         const std::vector<double>& y_pred);
-
-    // Optimal threshold finder. Invalid input/criterion returns NaN. Candidate
-    // thresholds are unique scores in ascending order; the first maximum wins.
-    static double FindOptimalThreshold(
-        const std::vector<int>& y_true,
-        const std::vector<double>& y_scores,
-        const std::string& criterion = "f1");  // "f1", "youden", "balanced"
 };
 
 } // namespace cyxwiz

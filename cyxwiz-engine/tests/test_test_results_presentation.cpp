@@ -5,6 +5,7 @@
 // exports of the shown results.
 
 #include "../src/core/test_evaluation_tables.h"
+#include <cyxwiz/model_evaluation.h>
 #include "../src/core/test_predictions_metrics.h"
 #include "../src/core/test_results_export.h"
 #include "../src/core/test_results_presentation.h"
@@ -14,6 +15,7 @@
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -256,6 +258,49 @@ void CheckThresholds() {
     Check(!AtThreshold(male.roc, 0, 10, 0.5).ok, "no positives: no figures");
 }
 
+// The classification fixtures' binary and threshold cases (scikit-learn,
+// PyTorch's logit >= 0 decision), which ModelEvaluation's threshold functions
+// answered before Results > Test read the figures off the ROC: tied scores,
+// a score of exactly the threshold (0.0 and -0.0 against 0), and the best-F1
+// threshold's lowest-score tie. One-class cases have no ROC and are skipped.
+void CheckEstablishedThresholdCases() {
+    std::ifstream in(CYXWIZ_CLASSIFICATION_METRICS_FIXTURE);
+    Check(in.good(), std::string("cannot open ") + CYXWIZ_CLASSIFICATION_METRICS_FIXTURE);
+    const auto fixture = nlohmann::json::parse(in);
+    const double tolerance = fixture.at("tolerance").get<double>();
+    int checked = 0;
+    for (const auto& c : fixture.at("binary_cases")) {
+        const auto truth = c.at("y_true").get<std::vector<int>>();
+        const auto positives = static_cast<int>(std::count(truth.begin(), truth.end(), 1));
+        const auto negatives = static_cast<int>(truth.size()) - positives;
+        if (positives == 0 || negatives == 0) continue;
+        const auto roc = ModelEvaluation::ComputeROC(truth, c.at("y_scores").get<std::vector<double>>());
+        const auto& want = c.at("expected");
+        const ThresholdFigures f = AtThreshold(roc, positives, negatives, c.at("threshold").get<double>());
+        const std::string name = c.at("name").get<std::string>();
+        Check(f.ok && f.tp == want.at("tp").get<int>() && f.fp == want.at("fp").get<int>() && f.tn == want.at("tn").get<int>() &&
+                  f.fn == want.at("fn").get<int>(),
+              name + ": counts");
+        Check(Near(f.precision, want.at("precision").get<double>(), tolerance) &&
+                  Near(f.recall, want.at("recall").get<double>(), tolerance) &&
+                  Near(f.specificity, want.at("specificity").get<double>(), tolerance) &&
+                  Near(f.f1, want.at("f1").get<double>(), tolerance) &&
+                  Near(f.balanced_accuracy, want.at("balanced_accuracy").get<double>(), tolerance) &&
+                  Near(f.mcc, want.at("mcc").get<double>(), tolerance),
+              name + ": figures");
+        ++checked;
+    }
+    for (const auto& c : fixture.at("threshold_cases")) {
+        const auto truth = c.at("y_true").get<std::vector<int>>();
+        const auto positives = static_cast<int>(std::count(truth.begin(), truth.end(), 1));
+        const auto roc = ModelEvaluation::ComputeROC(truth, c.at("y_scores").get<std::vector<double>>());
+        const double best = BestF1Threshold(roc, positives, static_cast<int>(truth.size()) - positives);
+        Check(Near(best, c.at("expected").at("f1").get<double>(), tolerance), c.at("name").get<std::string>() + ": best F1 " + Num(best));
+        ++checked;
+    }
+    Check(checked == 3, "two two-class binary cases and one threshold case: " + std::to_string(checked));
+}
+
 // Three classes and a regression read from tables: the same figures as
 // scikit-learn, score_<class> columns taken in class order whatever their
 // order in the table, and the first guess at the columns.
@@ -489,6 +534,7 @@ int main() {
     CheckSorting();
     CheckRegressionRows();
     CheckThresholds();
+    CheckEstablishedThresholdCases();
     CheckTableAsTest();
     CheckEvaluationTables();
     CheckComparison();

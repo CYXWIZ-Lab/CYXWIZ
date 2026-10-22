@@ -5,7 +5,7 @@ A small MLP is trained on the Palmer penguins table so the rows look like a
 real model's output. Writes evaluation_sklearn.json beside this file:
   binary     - sex (labels FEMALE / MALE, one score = P(MALE)): AUC for each
                positive class, the 2 x 2 counts and figures at 0.3 / 0.5 / 0.7,
-               and the best-F1 threshold (the highest score on a tie);
+               and the best-F1 threshold (the lowest score on a tie);
   multiclass - species (text labels, a score column per class): accuracy,
                macro / weighted F1, per-class AUC;
   regression - body mass from the other measurements: MAE, RMSE, R-squared.
@@ -47,7 +47,7 @@ for t in [0.3, 0.5, 0.7]:
                    specificity=tn / (tn + fp), f1=M.f1_score(male, p), balanced=M.balanced_accuracy_score(male, p),
                    mcc=M.matthews_corrcoef(male, p)))
 best_t, best_f1 = None, -1.0
-for t in sorted(np.unique(p_male), reverse=True):
+for t in sorted(np.unique(p_male)):
     f = M.f1_score(male, (p_male >= t).astype(int))
     if f > best_f1:
         best_t, best_f1 = float(t), f
