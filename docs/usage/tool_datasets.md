@@ -13,6 +13,10 @@ Everything else reads what Data Input nodes loaded.
   Distribution tabs on that dataset, and **Tools > Statistics > Hypothesis
   Testing / Linear / Polynomial Regression** its Tests and Regression tabs
   (see [statistics](statistics.md)); they are no longer separate windows.
+- **Tools > Evaluation** (Cross-Validation, Confusion Matrix, ROC Curve / AUC,
+  Precision-Recall Curve, Learning Curves) opens Data Studio's Results views
+  (see [Data Studio > Results](data_studio.md#results)); they are no longer
+  separate windows.
 - **Data > Transform** adds a scaling, log or power step after that dataset
   in Data Studio's Prepare (see [scaling and transforms](data_transforms.md));
   the Transform windows are gone.
@@ -21,7 +25,7 @@ Everything else reads what Data Input nodes loaded.
 
 Every analysis tool has the same Dataset dropdown as Data Studio:
 - Tools > Clustering and Projection
-- Tools > Evaluation
+- Tools > Evaluation > Feature Importance
 
 It lists:
 - datasets loaded by Data Input nodes, shown with the node's name
