@@ -273,8 +273,8 @@ int RunSetup(int argc, char** argv) {
 }
 
 // On Windows the setup is a windowed program (no console window for the
-// person who downloaded it); what went wrong is shown in a message box.
-// Output still reaches a caller that captures it (tests, CI).
+// person who downloaded it); what went wrong is shown in a message box when
+// a person started it. Output still reaches a caller that captures it.
 int main(int argc, char** argv) {
 #ifdef _WIN32
     std::ostringstream errors;
@@ -284,7 +284,12 @@ int main(int argc, char** argv) {
     const std::string text = errors.str();
     if (!text.empty()) {
         std::cerr << text;
-        if (code != 0) {
+        // A message box only for a person: when output is captured (tests,
+        // CI, a script) there is a stderr handle, and a modal box would wait
+        // for a click that never comes.
+        const HANDLE stderr_handle = ::GetStdHandle(STD_ERROR_HANDLE);
+        const bool interactive = stderr_handle == nullptr || stderr_handle == INVALID_HANDLE_VALUE;
+        if (code != 0 && interactive) {
             const int length = ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
             std::wstring wide(length > 0 ? length : 1, L'\0');
             ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), length);

@@ -184,9 +184,13 @@ LoadInstallerVisualAssets(GLFWwindow *window,
     assets.logo_texture = static_cast<ImTextureID>(texture);
 
     stbi_image_free(pixels);
+  } else {
+    AppendWarning(
+        warning,
+        "The CyxWiz logo could not be loaded from the packaged resources.");
   }
   // The window and taskbar icon is the mark alone (the header shows the
-  // full logo with the name).
+  // full logo with the name). macOS takes the application bundle's icon.
 #ifndef __APPLE__
   const auto icon_path = ResourcePath(executable_directory, "cyxwiz_icon.png");
   int icon_width = 0;
@@ -199,15 +203,10 @@ LoadInstallerVisualAssets(GLFWwindow *window,
     GLFWimage icon{icon_width, icon_height, icon_pixels};
     glfwSetWindowIcon(window, 1, &icon);
     stbi_image_free(icon_pixels);
+  }
 #else
   (void)window;
-  {
 #endif
-  } else {
-    AppendWarning(
-        warning,
-        "The CyxWiz logo could not be loaded from the packaged resources.");
-  }
   return assets;
 }
 
