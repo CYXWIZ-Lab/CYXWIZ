@@ -2,6 +2,7 @@
 
 #include "../../core/explore_presentation.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 
@@ -52,6 +53,25 @@ void ExploreFigures(const char* id, const std::vector<std::pair<std::string, std
         ImGui::TextUnformatted(rows[i].second.c_str());
     }
     ImGui::EndTable();
+}
+
+bool ExploreChoices(const char* id, const char* const* labels, int count, int* selected) {
+    float needed = 0.0f;
+    for (int i = 0; i < count; ++i) needed += ImGui::CalcTextSize(labels[i]).x + 24.0f;
+    if (needed <= ImGui::GetContentRegionAvail().x) return ui::SegmentedControl(id, labels, count, selected);
+    bool changed = false;
+    float widest = 0.0f;
+    for (int i = 0; i < count; ++i) widest = std::max(widest, ImGui::CalcTextSize(labels[i]).x);
+    ImGui::SetNextItemWidth(widest + ImGui::GetFrameHeight() + 16.0f);
+    if (ImGui::BeginCombo(id, labels[*selected])) {
+        for (int i = 0; i < count; ++i)
+            if (ImGui::Selectable(labels[i], i == *selected) && i != *selected) {
+                *selected = i;
+                changed = true;
+            }
+        ImGui::EndCombo();
+    }
+    return changed;
 }
 
 }  // namespace cyxwiz

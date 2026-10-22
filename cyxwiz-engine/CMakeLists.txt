@@ -755,6 +755,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/tests_view.cpp
     src/gui/data_studio/regression_view.cpp
     src/gui/data_studio/groups_view.cpp
+    src/gui/data_studio/projection_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp

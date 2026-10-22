@@ -5,6 +5,7 @@
 #include <cyxwiz/dimensionality_reduction.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <map>
@@ -294,7 +295,7 @@ HowManyAnswer RunHowMany(const std::string& table, const HowManyRequest& req, co
 }
 
 ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest& req, const QueryRunner& run,
-                               const explore::MissingTexts& texts) {
+                               const explore::MissingTexts& texts, const ProjectionHooks& hooks) {
     ProjectionAnswer a;
     a.request = req;
     if (req.columns.size() < 2) return a.error = "Add two number columns or more to project.", a;
@@ -316,7 +317,11 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
     }
     std::vector<std::vector<double>> data;
     data.reserve(keep.size());
-    for (const size_t i : keep) data.push_back(m.data[i]);
+    for (const size_t i : keep) {
+        data.push_back(m.data[i]);
+        a.used_rows.push_back(static_cast<int64_t>(i));
+    }
+    if (hooks.should_stop && hooks.should_stop()) return a.error = "Cancelled.", a;
 
     std::vector<std::vector<double>> points;
     switch (req.method) {
@@ -331,7 +336,22 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
         case ProjectionMethod::TSNE: {
             if (req.perplexity < 1 || req.perplexity >= static_cast<int>(data.size()))
                 return a.error = "Perplexity must be at least 1 and below the number of rows (" + std::to_string(data.size()) + ").", a;
-            const auto r = DimensionalityReduction::ComputetSNE(data, 2, req.perplexity, req.learning_rate, req.iterations);
+            // The progress callback is the only way back into the loop: it throws to stop it.
+            struct Stopped {};
+            tSNEResult r;
+            try {
+                r = DimensionalityReduction::ComputetSNE(data, 2, req.perplexity, req.learning_rate, req.iterations,
+                                                         [&](int iteration, double kl) {
+                                                             if (hooks.progress) {
+                                                                 char text[64];
+                                                                 std::snprintf(text, sizeof(text), "t-SNE iteration %d, KL %.3f", iteration, kl);
+                                                                 hooks.progress(static_cast<float>(iteration) / static_cast<float>(std::max(1, req.iterations)), text);
+                                                             }
+                                                             if (hooks.should_stop && hooks.should_stop()) throw Stopped{};
+                                                         });
+            } catch (const Stopped&) {
+                return a.error = "Cancelled.", a;
+            }
             if (!r.success) return a.error = "t-SNE: " + r.error_message, a;
             points = r.embeddings;
             a.kl_divergence = r.final_kl_divergence;

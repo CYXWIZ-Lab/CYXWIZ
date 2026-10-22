@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <map>
 
 namespace cyxwiz::groups_view {
 
@@ -272,6 +274,71 @@ std::string AxisTitle(const groups::ProjectionAnswer& a, int axis) {
         return out;
     }
     return std::string(ProjectionLabel(a.request.method)) + " " + std::to_string(axis + 1);
+}
+
+Colouring ColourPoints(const std::vector<std::string>& values, bool numeric) {
+    Colouring c;
+    c.index.assign(values.size(), -1);
+    if (numeric) {
+        std::vector<double> v;
+        for (const auto& s : values)
+            if (!s.empty()) v.push_back(std::strtod(s.c_str(), nullptr));
+        if (v.empty()) return c;
+        std::vector<double> sorted = v;
+        std::sort(sorted.begin(), sorted.end());
+        const auto at = [&](double q) { return sorted[static_cast<size_t>(q * static_cast<double>(sorted.size() - 1))]; };
+        const double edges[5] = {sorted.front(), at(0.25), at(0.5), at(0.75), sorted.back()};
+        std::vector<int64_t> counts(4, 0);
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (values[i].empty()) continue;
+            const double x = std::strtod(values[i].c_str(), nullptr);
+            int bin = 0;
+            while (bin < 3 && x > edges[bin + 1]) ++bin;
+            c.index[i] = bin;
+            ++counts[static_cast<size_t>(bin)];
+        }
+        for (int b = 0; b < 4; ++b)
+            c.legend.emplace_back(Figure(edges[b]) + " .. " + Figure(edges[b + 1]), counts[static_cast<size_t>(b)]);
+        return c;
+    }
+    std::map<std::string, int64_t> counts;
+    for (const auto& s : values)
+        if (!s.empty()) ++counts[s];
+    std::vector<std::string> names;
+    for (const auto& [name, n] : counts) names.push_back(name);
+    if (names.size() > 18) {
+        std::stable_sort(names.begin(), names.end(), [&](const auto& l, const auto& r) { return counts[l] > counts[r]; });
+        names.resize(17);
+        std::sort(names.begin(), names.end());
+    }
+    std::map<std::string, int> index;
+    for (size_t i = 0; i < names.size(); ++i) {
+        index[names[i]] = static_cast<int>(i);
+        c.legend.emplace_back(names[i], counts[names[i]]);
+    }
+    int64_t other = 0;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (values[i].empty()) continue;
+        const auto it = index.find(values[i]);
+        if (it != index.end()) c.index[i] = it->second;
+        else {
+            c.index[i] = 17;
+            ++other;
+        }
+    }
+    if (other > 0) c.legend.emplace_back("other", other);
+    return c;
+}
+
+Colouring ColourGroups(const std::vector<int>& labels) {
+    Colouring c;
+    c.index = labels;
+    std::map<int, int64_t> counts;
+    for (const int l : labels) ++counts[l];
+    for (const auto& [label, n] : counts)
+        if (label >= 0) c.legend.emplace_back(GroupName(label), n);
+    if (counts.count(-1)) c.legend.emplace_back("noise", counts[-1]);
+    return c;
 }
 
 std::string GroupsCsv(const groups::GroupsAnswer& a) {

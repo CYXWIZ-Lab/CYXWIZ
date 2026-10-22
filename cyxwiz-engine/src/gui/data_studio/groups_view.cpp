@@ -111,26 +111,6 @@ float InnerWidth(const std::vector<std::string>& headers, float first) {
     return std::max(w, ImGui::GetContentRegionAvail().x);
 }
 
-// Choices side by side when they fit on the line, else a list; true when it changed.
-bool Segments(const char* id, const char* const* labels, int count, int* selected) {
-    float needed = 0.0f;
-    for (int i = 0; i < count; ++i) needed += ImGui::CalcTextSize(labels[i]).x + 24.0f;
-    if (needed <= ImGui::GetContentRegionAvail().x) return ui::SegmentedControl(id, labels, count, selected);
-    bool changed = false;
-    float widest = 0.0f;
-    for (int i = 0; i < count; ++i) widest = std::max(widest, ImGui::CalcTextSize(labels[i]).x);
-    ImGui::SetNextItemWidth(widest + ImGui::GetFrameHeight() + 16.0f);
-    if (ImGui::BeginCombo(id, labels[*selected])) {
-        for (int i = 0; i < count; ++i)
-            if (ImGui::Selectable(labels[i], i == *selected) && i != *selected) {
-                *selected = i;
-                changed = true;
-            }
-        ImGui::EndCombo();
-    }
-    return changed;
-}
-
 // A coloured dot and its group's name and size, in a line that wraps.
 void Legend(const groups::GroupsAnswer& a) {
     const ui::Tokens& t = ui::CurrentTokens();
@@ -215,7 +195,7 @@ void GroupsView::RenderControls(const DatasetProfile& p) {
     int scale = request_.standardise ? 0 : 1;
     row.Next(ImGui::CalcTextSize("ScaleStandardiseAs they are").x + 50.0f);
     Label("Scale");
-    if (Segments("##groups_scale", kScale, 2, &scale)) request_.standardise = scale == 0;
+    if (ExploreChoices("##groups_scale", kScale, 2, &scale)) request_.standardise = scale == 0;
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Standardise: each column as z-scores, so a column in large units does not decide the groups alone");
 
@@ -224,7 +204,7 @@ void GroupsView::RenderControls(const DatasetProfile& p) {
     int m = static_cast<int>(request_.method);
     method.Next(ImGui::CalcTextSize("MethodK-MeansDBSCANHierarchicalGaussian mixture").x + 110.0f);
     Label("Method");
-    if (Segments("##groups_method", kMethods, 4, &m)) request_.method = static_cast<Method>(m);
+    if (ExploreChoices("##groups_method", kMethods, 4, &m)) request_.method = static_cast<Method>(m);
     RenderMethodSettings();
     const char* how = how_many_open_ ? "Hide how many" : "How many groups?";
     ImGui::SameLine(0.0f, 16.0f);

@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -130,6 +131,7 @@ struct ProjectionAnswer {
     int64_t rows = 0, used = 0;
     bool sampled = false;            // t-SNE / UMAP on a sample of the used rows
     std::vector<double> x, y;
+    std::vector<int64_t> used_rows;  // per point, its index among the used rows (GroupsAnswer::labels align)
     std::vector<std::string> colour; // per point ("" when missing)
     bool colour_numeric = false;     // the colour column is a number (a scale, not groups)
     // PCA: each component's share of the variance (all of them) and the
@@ -139,8 +141,15 @@ struct ProjectionAnswer {
     double kl_divergence = NAN;      // t-SNE
 };
 
+// Stop and progress while it runs: t-SNE reports every 50 iterations and
+// stops there when asked ("Cancelled."); PCA and UMAP check before they start.
+struct ProjectionHooks {
+    std::function<bool()> should_stop;
+    std::function<void(float, const std::string&)> progress;
+};
+
 ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest& request, const QueryRunner& run,
-                               const explore::MissingTexts& texts);
+                               const explore::MissingTexts& texts, const ProjectionHooks& hooks = {});
 
 // ---- Pure helpers (checked against scikit-learn / scipy) ----
 

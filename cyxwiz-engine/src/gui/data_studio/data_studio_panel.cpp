@@ -42,6 +42,8 @@ DataStudioPanel::DataStudioPanel() {
     tests_ = std::make_unique<TestsView>();
     regression_ = std::make_unique<RegressionView>();
     groups_ = std::make_unique<GroupsView>();
+    projection_ = std::make_unique<ProjectionView>();
+    projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
     // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
     tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
         const studio::GraphNode* from = NodeOfDataset(active_dataset_);

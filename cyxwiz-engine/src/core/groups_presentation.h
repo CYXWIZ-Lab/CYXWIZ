@@ -58,6 +58,18 @@ std::string ComponentWords(const std::vector<double>& loadings, const std::vecto
 // The axis titles: "component 1 (68.8%)", "t-SNE 1", "UMAP 2".
 std::string AxisTitle(const groups::ProjectionAnswer& a, int axis);
 
+// Colours for points from a column's values: a colour index per point (-1:
+// missing) and the legend (name, points). Text: a colour per value in sorted
+// order, the 17 most frequent beyond 18 values and "other" for the rest.
+// Numbers (`numeric`): four bins by quartile, named "lo .. hi".
+struct Colouring {
+    std::vector<int> index;
+    std::vector<std::pair<std::string, int64_t>> legend;
+};
+Colouring ColourPoints(const std::vector<std::string>& values, bool numeric);
+// The same from group labels (-1 noise): "Group 1" .., "noise".
+Colouring ColourGroups(const std::vector<int>& labels);
+
 // CSV: a row per group (rows, silhouette, the means), then a row per row used
 // (its group, the scatter's coordinates, Mixture's probabilities).
 std::string GroupsCsv(const groups::GroupsAnswer& a);

@@ -20,6 +20,7 @@
 #include "tests_view.h"
 #include "regression_view.h"
 #include "groups_view.h"
+#include "projection_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -42,7 +43,7 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Visualize };
+    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -109,6 +110,7 @@ private:
     std::unique_ptr<TestsView> tests_;
     std::unique_ptr<RegressionView> regression_;
     std::unique_ptr<GroupsView> groups_;
+    std::unique_ptr<ProjectionView> projection_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

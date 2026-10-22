@@ -288,6 +288,15 @@ int main() {
     const auto t2 = groups::RunProjection("penguins", pr, run, {});
     Check(t2.x == t.x && t2.colour == t.colour, "the sample and t-SNE repeat");
     Contains(groups_view::ProjectionSentence(t), "a seeded sample of 120 of 342 rows", "sample words");
+    Check(t.used_rows.size() == 120 && std::is_sorted(t.used_rows.begin(), t.used_rows.end()) && t.used_rows.back() < used,
+          "each point keeps its row, in table order");
+    // Cancel: t-SNE stops at its next report.
+    int reports = 0;
+    groups::ProjectionHooks hooks;
+    hooks.progress = [&](float, const std::string&) { ++reports; };
+    hooks.should_stop = [&] { return reports >= 1; };
+    const auto stopped = groups::RunProjection("penguins", pr, run, {}, hooks);
+    Check(stopped.error == "Cancelled." && reports == 1, "t-SNE stops when asked: " + stopped.error + " after " + std::to_string(reports));
     pr.perplexity = 500;
     Contains(groups::RunProjection("penguins", pr, run, {}).error, "Perplexity must be", "perplexity refused");
 
@@ -296,6 +305,23 @@ int main() {
     const auto u = groups::RunProjection("penguins", pr, run, {});
     Check(u.ok() && !u.sampled && u.x.size() == static_cast<size_t>(used), "UMAP on every row: " + u.error);
     for (size_t i = 0; i < u.x.size(); ++i) Check(std::isfinite(u.x[i]) && std::isfinite(u.y[i]), "UMAP finite");
+
+    // ---- point colours
+    {
+        const auto c = groups_view::ColourPoints({"b", "a", "", "b"}, false);
+        Check(c.index == std::vector<int>({1, 0, -1, 1}) && c.legend.size() == 2 && c.legend[1].first == "b" && c.legend[1].second == 2,
+              "text colours: sorted values, missing -1");
+        std::vector<std::string> many;
+        for (int i = 0; i < 20; ++i) many.push_back("v" + std::to_string(100 + i));
+        many.push_back("v100");
+        const auto o = groups_view::ColourPoints(many, false);
+        Check(o.legend.size() == 18 && o.legend.back().first == "other" && o.legend.back().second == 3 && o.index[0] == 0,
+              "beyond 18 values: 17 most frequent and other");
+        const auto n = groups_view::ColourPoints({"1", "2", "3", "4", "5", "6", "7", "8"}, true);
+        Check(n.legend.size() == 4 && n.index.front() == 0 && n.index.back() == 3, "numbers: four quartile bins");
+        const auto gc = groups_view::ColourGroups({1, 0, -1, 1});
+        Check(gc.legend.size() == 3 && gc.legend[0].first == "Group 1" && gc.legend[2].first == "noise", "group colours");
+    }
 
     // ---- refusals
     groups::GroupsRequest none;
