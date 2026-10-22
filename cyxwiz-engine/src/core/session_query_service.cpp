@@ -14,9 +14,18 @@
 #include <spdlog/spdlog.h>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <process.h>
 #define CYXWIZ_GETPID _getpid
 #else
+#include <cerrno>
+#include <signal.h>
 #include <unistd.h>
 #define CYXWIZ_GETPID getpid
 #endif
@@ -26,6 +35,28 @@ namespace cyxwiz {
 namespace fs = std::filesystem;
 
 namespace {
+
+// Whether the process that made a session folder still runs (another Engine).
+bool ProcessRunning(unsigned long pid) {
+#ifdef _WIN32
+    HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!process) return ::GetLastError() == ERROR_ACCESS_DENIED;
+    DWORD code = 0;
+    const bool running = ::GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+    ::CloseHandle(process);
+    return running;
+#else
+    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+#endif
+}
+
+// A folder named by the process id of an Engine that still runs.
+bool LiveSessionFolder(const fs::path& folder) {
+    const std::string name = folder.filename().string();
+    if (name.empty() || name.size() > 10 || !std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isdigit(c); }))
+        return false;
+    return ProcessRunning(std::stoul(name));
+}
 
 std::string Lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -57,10 +88,13 @@ SessionQueryService& SessionQueryService::Instance() {
 }
 
 SessionQueryService::SessionQueryService() {
-    // This session's own folder for table copies; old sessions' folders are removed.
+    // This session's own folder for table copies; the folders of sessions
+    // that ended are removed (another running Engine's folder stays: it was
+    // removed under it, and its queries could no longer copy their tables).
     const fs::path base = fs::temp_directory_path() / "cyxwiz" / "query_sessions";
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(base, ec)) fs::remove_all(entry.path(), ec);
+    for (const auto& entry : fs::directory_iterator(base, ec))
+        if (!LiveSessionFolder(entry.path())) fs::remove_all(entry.path(), ec);
     engine_ = std::make_unique<SessionQueryEngine>((base / std::to_string(CYXWIZ_GETPID())).string());
     if (!engine_->Ready()) spdlog::error("Session query service: the query engine did not start");
 }
