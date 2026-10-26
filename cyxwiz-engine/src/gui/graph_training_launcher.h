@@ -2,6 +2,7 @@
 
 #include "../core/graph_compiler.h"
 #include "../core/pipeline_materializer.h"
+#include "../core/prepared_data_cache.h"
 #include "../core/execution_device_preferences.h"
 
 #include <functional>
@@ -118,7 +119,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     std::filesystem::path project_root = {},
     // The table the canvas runs already prepared for training (TOFIX178 S0-d);
     // empty prepares the data from the Data Input.
-    std::string canvas_prepared_dataset = {});
+    std::string canvas_prepared_dataset = {},
+    // The disk key of that table (TOFIX178 S0-e2): training loads it from the
+    // prepared data cache when the canvas has none, and keeps a canvas table
+    // there for the next session.
+    cyxwiz::PreparedDataKey prepared_data_key = {});
 
 // True while a graph's training data is being prepared (before the run
 // starts).

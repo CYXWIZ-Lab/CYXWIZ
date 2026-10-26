@@ -5,6 +5,7 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/pipeline_materializer.h"
+#include "../src/core/prepared_data_cache.h"
 
 #include <arrow/api.h>
 
@@ -665,6 +666,87 @@ int main() {
     Check(lifetime_table.expired(),
           "provenance must not retain materialized memory after source unload");
     std::filesystem::remove_all(cache_root);
+
+    // The table training reads, kept on disk between sessions (TOFIX178
+    // S0-e2): Data Input (a file) -> Filter Rows -> Text Tokenizer -> Split.
+    {
+        const auto work = cache_root / "prepared";
+        std::filesystem::create_directories(work);
+        const auto csv = work / "text.csv";
+        {
+            std::ofstream out(csv, std::ios::binary);
+            out << "text,label\nSmall happy text,positive\nAnother happy one,positive\nSad text here,negative\n";
+        }
+        const std::string source = "prepared_cache_source";
+        registry.RegisterArrowTable(MakeTextTable(), source);
+        gui::MLNode filter;
+        filter.id = 7;
+        filter.type = gui::NodeType::FilterRows;
+        filter.name = "Keep rows";
+        filter.parameters = {{"condition", "label != ''"}};
+        gui::MLNode split;
+        split.id = 3;
+        split.type = gui::NodeType::DataSplit;
+        split.name = "Split";
+        gui::MLNode dense;
+        dense.id = 4;
+        dense.type = gui::NodeType::Dense;
+        dense.name = "Dense";
+        dense.parameters = {{"units", "16"}};
+        std::vector<gui::MLNode> graph = {MakeDataInputNode(source, csv.string()), filter, MakeTokenizerNode(),
+                                          split, dense};
+        std::vector<gui::NodeLink> graph_links = {
+            {1, 1, 0, 7, 0, gui::LinkType::TensorFlow},
+            {2, 7, 0, 2, 0, gui::LinkType::TensorFlow},
+            {3, 2, 0, 3, 0, gui::LinkType::TensorFlow},
+            {4, 3, 0, 4, 0, gui::LinkType::TensorFlow},
+        };
+        const auto key_of = [&](const std::vector<gui::MLNode>& g) {
+            return cyxwiz::ComputePreparedDataKey(g, graph_links, 2, registry, work.string());
+        };
+        const auto base = key_of(graph);
+        Check(base.cacheable && !base.key.empty(), "a Filter Rows + tokenizer path is cacheable: " + base.reason);
+        Check(base.steps == 2, "the key covers the two steps before the Split");
+        Check(key_of(graph).key == base.key, "the same graph gives the same key");
+        auto model_edit = graph;
+        model_edit[4].parameters["units"] = "64";
+        Check(key_of(model_edit).key == base.key, "a model edit keeps the key");
+        auto filter_edit = graph;
+        filter_edit[1].parameters["condition"] = "label == 'positive'";
+        Check(key_of(filter_edit).key != base.key, "a Filter Rows edit changes the key");
+        auto sql = graph;
+        sql[1].type = gui::NodeType::SQLQuery;
+        sql[1].parameters = {{"query", "SELECT * FROM input"}};
+        const auto sql_key = key_of(sql);
+        Check(!sql_key.cacheable && sql_key.reason.find("SQL") != std::string::npos,
+              "a SQL step is never cached: " + sql_key.reason);
+
+        cyxwiz::MaterializationCacheConfig config;
+        config.mode = cyxwiz::MaterializationCacheMode::Auto;
+        config.cache_root = work;
+        Check(!cyxwiz::ProbePreparedData(config, base), "nothing is on disk before a save");
+        const auto table = MakeTextTable();
+        std::string error;
+        Check(cyxwiz::SavePreparedData(config, base, table, "prepared_out", &error), "the save works: " + error);
+        Check(cyxwiz::ProbePreparedData(config, base), "the saved entry is found");
+        Check(!cyxwiz::ProbePreparedData(config, key_of(filter_edit)), "another key finds nothing");
+        Check(cyxwiz::LoadPreparedData(config, base, registry, "prepared_loaded", &error), "the load works: " + error);
+        const auto loaded = registry.GetArrowDataset("prepared_loaded");
+        Check(loaded && loaded->GetArrowTable()->Equals(*table), "the loaded table equals the saved one");
+        auto rebuild = config;
+        rebuild.mode = cyxwiz::MaterializationCacheMode::Rebuild;
+        Check(!cyxwiz::ProbePreparedData(rebuild, base), "a requested rebuild ignores the entry");
+
+        // The source file changes: its size and time change the key.
+        {
+            std::ofstream out(csv, std::ios::binary | std::ios::app);
+            out << "More text,negative\n";
+        }
+        Check(key_of(graph).key != base.key, "an edited source file changes the key");
+        registry.UnregisterTabularDataset(source);
+        registry.UnregisterTabularDataset("prepared_loaded");
+        std::filesystem::remove_all(cache_root);
+    }
 
     std::cout << "Pipeline materializer cache tests passed\n";
     return 0;

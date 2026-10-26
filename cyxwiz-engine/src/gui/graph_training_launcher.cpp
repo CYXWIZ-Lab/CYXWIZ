@@ -8,6 +8,7 @@
 #include "../core/label_column_resolver.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/pipeline_materializer.h"
+#include "../core/prepared_data_cache.h"
 #include "../core/profiler_trace.h"
 #include "../core/sparse_feature_dataset.h"
 #include "../core/process_memory_snapshot.h"
@@ -648,7 +649,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     std::optional<cyxwiz::PipelineOperatorProgress>
         materialization_preflight_evidence,
     std::filesystem::path project_root,
-    std::string canvas_prepared_dataset) {
+    std::string canvas_prepared_dataset,
+    cyxwiz::PreparedDataKey prepared_data_key) {
 
     GraphTrainingLaunchResult result;
 
@@ -812,7 +814,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
          plot_panel,
          callback = std::move(node_editor_callback),
          dispatch = std::move(dispatch),
-         canvas_dataset = std::move(canvas_prepared_dataset)](cyxwiz::LambdaTask& task) mutable {
+         canvas_dataset = std::move(canvas_prepared_dataset),
+         prepared_key = std::move(prepared_data_key)](cyxwiz::LambdaTask& task) mutable {
             CYXWIZ_PROFILE_ZONE("CyxWiz Prepare Graph Training");
             const auto now = std::chrono::system_clock::now().time_since_epoch();
             const auto run_ms =
@@ -848,20 +851,58 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             std::string effective_label_column = label_column;
 
             // The canvas run's table (TOFIX178 S0-d), while it is loaded: the
-            // data steps already ran on it, nothing is prepared again.
-            const bool use_canvas =
-                !canvas_dataset.empty() &&
-                (registry.GetArrowDataset(canvas_dataset) || registry.GetParquetBackedDataset(canvas_dataset));
+            // data steps already ran on it, nothing is prepared again. Without
+            // one, the same table kept on disk by an earlier session (S0-e2).
+            const auto loaded = [&registry](const std::string& name) {
+                return !name.empty() &&
+                       (registry.GetArrowDataset(name) || registry.GetParquetBackedDataset(name));
+            };
+            std::string prepared_dataset = canvas_dataset;
+            std::string prepared_origin = "Prepared by the canvas run";
+            if (!loaded(prepared_dataset) && cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
+                const std::string name = "prepared_" + prepared_key.key.substr(0, 16);
+                task.ReportProgress(0.3f, "Loading the prepared data from disk...");
+                std::string error;
+                if (cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
+                    prepared_dataset = name;
+                    prepared_origin = "Loaded from the prepared data cache";
+                    spdlog::info("StartTrainingFromGraph: training reads '{}', prepared in an earlier session; "
+                                 "the data steps do not run", name);
+                } else {
+                    spdlog::warn("StartTrainingFromGraph: the prepared data on disk could not be used ({}); "
+                                 "preparing it again", error);
+                }
+            }
+            const bool use_canvas = loaded(prepared_dataset);
             if (use_canvas) {
-                spdlog::info("StartTrainingFromGraph: training reads '{}', prepared by the canvas run; "
-                             "the data steps do not run again", canvas_dataset);
-                task.ReportProgress(0.65f, "Using the data the canvas run prepared...");
+                if (prepared_dataset == canvas_dataset) {
+                    spdlog::info("StartTrainingFromGraph: training reads '{}', prepared by the canvas run; "
+                                 "the data steps do not run again", canvas_dataset);
+                    // Kept for the next session, once per prepared table.
+                    const auto dataset = registry.GetArrowDataset(canvas_dataset);
+                    if (prepared_key.cacheable && dataset &&
+                        !cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
+                        task.ReportProgress(0.5f, "Keeping the prepared data for the next session...");
+                        std::string error;
+                        if (cyxwiz::SavePreparedData(cache_config, prepared_key, dataset->GetArrowTable(),
+                                                     canvas_dataset, &error)) {
+                            spdlog::info("StartTrainingFromGraph: '{}' is kept on disk for the next session",
+                                         canvas_dataset);
+                        } else {
+                            spdlog::debug("StartTrainingFromGraph: '{}' not kept on disk: {}", canvas_dataset, error);
+                        }
+                    } else if (!prepared_key.cacheable && !prepared_key.reason.empty()) {
+                        spdlog::debug("StartTrainingFromGraph: '{}' not kept on disk: {}", canvas_dataset,
+                                      prepared_key.reason);
+                    }
+                }
+                task.ReportProgress(0.65f, "Using the prepared data...");
                 PostPlotPanelUpdate(
                     plot_panel,
-                    [canvas_dataset](cyxwiz::TrainingPlotPanel& panel) {
-                        panel.SetMaterializationComplete(canvas_dataset, 0, "Prepared by the canvas run");
+                    [prepared_dataset, prepared_origin](cyxwiz::TrainingPlotPanel& panel) {
+                        panel.SetMaterializationComplete(prepared_dataset, 0, prepared_origin);
                     });
-                effective_dataset_name = canvas_dataset;
+                effective_dataset_name = prepared_dataset;
                 effective_label_column = ResolveRuntimeArrowLabelColumn(
                     registry, effective_dataset_name, effective_label_column);
                 cyxwiz::ReconcileRuntimeDatasetTarget(

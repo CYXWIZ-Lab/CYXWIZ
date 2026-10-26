@@ -239,6 +239,7 @@ set(ENGINE_SOURCES
     src/core/node_palette.cpp  # TOFIX157 palette curation
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
+    src/core/prepared_data_cache.cpp
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
     src/core/storage_caches.cpp  # Preferences > Storage: measure and clear the prepared-data caches
     src/core/annotation_manager.cpp
@@ -3096,6 +3097,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
     src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
@@ -3845,6 +3847,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
     src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
@@ -3983,6 +3986,7 @@ add_executable(test_text_gui_training_launch
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
     src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
@@ -7088,6 +7092,7 @@ set_target_properties(test_device_runtime_truth PROPERTIES
 add_executable(test_pipeline_materializer_cache
     tests/test_pipeline_materializer_cache.cpp
     src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
@@ -7581,6 +7586,7 @@ add_executable(test_engine_node_parity
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
     src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp

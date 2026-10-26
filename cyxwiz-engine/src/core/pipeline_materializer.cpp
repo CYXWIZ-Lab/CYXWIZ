@@ -1,4 +1,5 @@
 #include "pipeline_materializer.h"
+#include "prepared_data_cache.h"
 
 #include "arrow_dataset.h"
 #include "data_registry.h"
@@ -173,44 +174,6 @@ std::string FindSourceFilePath(const std::vector<gui::MLNode>& nodes,
     return {};
 }
 
-uint64_t FileTimeStampSeconds(const std::filesystem::file_time_type& time) {
-    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
-        time.time_since_epoch()).count();
-    return seconds > 0 ? static_cast<uint64_t>(seconds) : 0;
-}
-
-void PopulateSourceFileIdentity(MaterializationCacheKeyInput& input,
-                                const std::string& source_path) {
-    if (source_path.empty()) {
-        return;
-    }
-
-    std::error_code ec;
-    std::filesystem::path path(source_path);
-    auto absolute = std::filesystem::weakly_canonical(path, ec);
-    if (ec) {
-        ec.clear();
-        absolute = std::filesystem::absolute(path, ec);
-    }
-    input.source_file_path = ec ? source_path : absolute.string();
-
-    ec.clear();
-    if (std::filesystem::is_regular_file(path, ec)) {
-        ec.clear();
-        input.source_file_size =
-            static_cast<uint64_t>(std::filesystem::file_size(path, ec));
-        if (ec) {
-            input.source_file_size = 0;
-        }
-        ec.clear();
-        input.source_file_mtime = FileTimeStampSeconds(
-            std::filesystem::last_write_time(path, ec));
-        if (ec) {
-            input.source_file_mtime = 0;
-        }
-    }
-}
-
 MaterializationCacheKeyInput BuildCacheKeyInput(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -256,66 +219,6 @@ std::string CacheRebuildReason(MaterializationCacheStatus status,
         return {};
     }
     return message.empty() ? MaterializationCacheStatusName(status) : message;
-}
-
-std::shared_ptr<ArrowDataset> LoadCachedArrowDataset(
-    const MaterializationCacheManifest& manifest,
-    const std::string& materialized_name) {
-    if (manifest.artifact_format == "feather") {
-        return ArrowDataset::FromFeather(manifest.artifact_path, materialized_name);
-    }
-    return ArrowDataset::FromParquet(manifest.artifact_path, materialized_name);
-}
-
-bool ReplacePath(const std::filesystem::path& source,
-                 const std::filesystem::path& target,
-                 std::string* error) {
-    std::error_code ec;
-    std::filesystem::rename(source, target, ec);
-    if (!ec) {
-        return true;
-    }
-
-    std::filesystem::remove(target, ec);
-    ec.clear();
-    std::filesystem::rename(source, target, ec);
-    if (ec) {
-        if (error) {
-            *error = ec.message();
-        }
-        return false;
-    }
-    return true;
-}
-
-bool ExportCachedArtifact(const std::shared_ptr<arrow::Table>& table,
-                          const std::string& materialized_name,
-                          const MaterializationCacheConfig& config,
-                          const std::string& cache_key,
-                          std::filesystem::path& artifact_path,
-                          std::string* error) {
-    artifact_path = MaterializationCacheArtifactPath(config, cache_key);
-    std::error_code ec;
-    std::filesystem::create_directories(artifact_path.parent_path(), ec);
-    if (ec) {
-        if (error) *error = ec.message();
-        return false;
-    }
-
-    const auto temp_path = artifact_path.string() + ".tmp";
-    std::filesystem::remove(temp_path, ec);
-
-    ArrowDataset dataset(table, materialized_name);
-    const bool exported = config.artifact_format == "feather"
-        ? dataset.ExportFeather(temp_path)
-        : dataset.ExportParquet(temp_path);
-    if (!exported) {
-        if (error) *error = "failed to export cached materialization artifact";
-        std::filesystem::remove(temp_path, ec);
-        return false;
-    }
-
-    return ReplacePath(temp_path, artifact_path, error);
 }
 
 void SaveCacheManifestLastUsed(const MaterializationCacheManifest& manifest,
@@ -757,7 +660,7 @@ MaterializeResult PipelineMaterializer::Materialize(
                                          "Loading prepared data from cache",
                                          "Loading prepared data from cache...",
                                          0.5f);
-                        auto cached = LoadCachedArrowDataset(
+                        auto cached = LoadPreparedArtifact(
                             validation.manifest, materialized_name);
                         if (cached && cached->GetArrowTable()) {
                             if (StopIfMaterializationCancelled(
@@ -931,7 +834,7 @@ MaterializeResult PipelineMaterializer::Materialize(
             artifact_saved = status.ok();
             if (!artifact_saved) cache_error = status.ToString();
         } else {
-            artifact_saved = ExportCachedArtifact(
+            artifact_saved = ExportPreparedArtifact(
                 table_result.table, materialized_name, cache_config,
                 result.cache_key, artifact_path, &cache_error);
         }

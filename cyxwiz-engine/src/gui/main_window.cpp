@@ -3935,17 +3935,23 @@ int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<Node
     return feeder >= 0 ? feeder : entry_of(NodeType::DataLoader);
 }
 
+// A Count / TF-IDF vectorizer set to sparse output: training prepares that
+// graph itself (the canvas run keeps tables only).
+bool GraphHasSparseOutput(const std::vector<MLNode>& nodes) {
+    for (const auto& node : nodes) {
+        const auto format = node.parameters.find("output_format");
+        if (format != node.parameters.end() && format->second == "sparse") return true;
+    }
+    return false;
+}
+
 // The table the canvas runs already prepared for training (TOFIX178 S0-d): the
 // feeder's result when it and every step before it are unchanged since. Empty
 // when the data must be prepared: no such result, a sparse feature output (the
 // canvas run keeps tables only) or a requested rebuild.
 std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
                                         const std::vector<NodeLink>& links) {
-    if (!editor || IsGraphMaterializationRebuildRequested()) return {};
-    for (const auto& node : nodes) {
-        const auto format = node.parameters.find("output_format");
-        if (format != node.parameters.end() && format->second == "sparse") return {};
-    }
+    if (!editor || IsGraphMaterializationRebuildRequested() || GraphHasSparseOutput(nodes)) return {};
     const int feeder = TrainingInputFeeder(nodes, links);
     if (feeder < 0) {
         spdlog::debug("StartTrainingFromGraph: no step feeds the Training Dataset input from its main output");
@@ -4088,10 +4094,23 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // A Train that just ran the steps itself reads that run's result.
         std::string canvas_dataset = std::exchange(training_pipeline_result_, std::string());
         if (canvas_dataset.empty()) canvas_dataset = CanvasPreparedTrainingInput(node_editor_.get(), nodes, links);
+        // The same table kept on disk by an earlier session (TOFIX178 S0-e2):
+        // training loads it and nothing runs.
+        const std::string project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+        cyxwiz::PreparedDataKey prepared_key;
+        if (const int feeder = TrainingInputFeeder(nodes, links); feeder >= 0 && !GraphHasSparseOutput(nodes)) {
+            prepared_key = cyxwiz::ComputePreparedDataKey(nodes, links, feeder, registry, project_root);
+            spdlog::debug("StartTrainingFromGraph: prepared data key {}", prepared_key.cacheable
+                              ? prepared_key.key.substr(0, 16)
+                              : "none (" + prepared_key.reason + ")");
+        }
+        const bool prepared_on_disk = canvas_dataset.empty() && !IsGraphMaterializationRebuildRequested() &&
+            cyxwiz::ProbePreparedData(GraphMaterializationCacheConfig(project_root), prepared_key);
+        if (prepared_on_disk) spdlog::info("StartTrainingFromGraph: the prepared data is on disk from an earlier session");
         // SQL, Text Clean ... on the Training Dataset path run only in the
         // pipeline run (TOFIX178 S0-e): run it through the Split's input, then
         // train on its result.
-        if (canvas_dataset.empty() && config.training_data_needs_pipeline_run) {
+        if (canvas_dataset.empty() && !prepared_on_disk && config.training_data_needs_pipeline_run) {
             if (StartTrainingPipelineRun(nodes, links)) {
                 folds_waiting = true;
                 return;
@@ -4108,13 +4127,13 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         cyxwiz::MaterializationMemoryContext preflight_memory_context;
         preflight_memory_context.policy = materialization_memory_policy;
         GraphMaterializationPreflightResult memory_preflight;
-        if (canvas_dataset.empty()) {
+        if (canvas_dataset.empty() && !prepared_on_disk) {
             spdlog::info("StartTrainingFromGraph: preparing materialization memory plan");
             memory_preflight = PreflightGraphMaterialization(
                 nodes, links, config, registry,
                 std::move(preflight_memory_context),
                 cyxwiz::ProjectManager::Instance().GetProjectRoot());
-        } else {
+        } else if (!canvas_dataset.empty()) {
             spdlog::info("StartTrainingFromGraph: the canvas run already prepared '{}'", canvas_dataset);
         }
         if (memory_preflight.cache_hit) {
@@ -4212,7 +4231,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 ? std::make_optional(memory_preflight.evidence)
                 : std::nullopt,
             cyxwiz::ProjectManager::Instance().GetProjectRoot(),
-            canvas_dataset);
+            canvas_dataset,
+            prepared_key);
 
         if (launch_result.started && folds) {
             folds_launch_.reset();  // the preparation runs; its task reports into the view
