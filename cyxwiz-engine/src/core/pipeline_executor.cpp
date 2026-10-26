@@ -6015,7 +6015,12 @@ bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator&
             if (!opened.ok()) return abandon(opened.status().ToString());
             out = *opened;
             auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
-            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props);
+            // The Arrow schema is stored so field metadata (a label's class
+            // names) survives the round trip; the fit pass already saw every
+            // row, so the first batch's metadata is the whole table's.
+            auto arrow_props = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props,
+                                                         arrow_props);
             if (!made.ok()) return abandon(made.status().ToString());
             writer = std::move(*made);
         }

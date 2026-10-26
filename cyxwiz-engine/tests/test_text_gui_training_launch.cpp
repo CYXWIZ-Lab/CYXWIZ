@@ -1116,11 +1116,8 @@ void CheckTokenizerStreamsOnDisk(const std::filesystem::path& work_dir) {
         Check(memory_y && disk_y &&
                   cyxwiz::ClassNamesOfField(*memory_y) == std::vector<std::string>({"negative", "positive", "neutral"}),
               "the classes are numbered in file order");
-        // Known gap: the pipeline run's streamed result file does not keep the
-        // y field's class names (PipelineExecutor::RunStreamingOperator opens
-        // its Parquet writer with the first batch's schema and no stored Arrow
-        // schema). The class ids above still match; restore this check when fixed:
-        // ClassNamesOfField(*disk_y) == ClassNamesOfField(*memory_y).
+        Check(cyxwiz::ClassNamesOfField(*disk_y) == cyxwiz::ClassNamesOfField(*memory_y),
+              "the streamed y keeps its class names (for Run Test)");
         cyxwiz::ParquetArrowBatcher batcher(result, "y", 8, false, 1.0f, true);
         auto batch = batcher.GetNextBatch();
         Check(batch.IsValid() && batch.data.Shape().size() == 2 && batch.data.Shape()[1] == 5,
