@@ -136,7 +136,8 @@ void CollectDatasetSourceOrigins(
     int output_pin_id,
     std::unordered_set<int>& active_path,
     std::unordered_set<int>& origins,
-    bool& invalid_path) {
+    bool& invalid_path,
+    bool& needs_pipeline_run) {
     const auto* node = FindNodeById(nodes, node_id);
     const auto* output_pin = node
         ? FindPinById(node->outputs, output_pin_id)
@@ -160,10 +161,14 @@ void CollectDatasetSourceOrigins(
         runtime_support.implementation_owner ==
             PipelineRuntimeImplementationOwner::PipelineOperatorFactory &&
         runtime_support.materializer_arrow_table_supported;
-    if (!training_filter && !table_operator) {
+    // SQL, Text Clean, Filter Rows ... run in the pipeline run only: training
+    // trains on that run's result (TOFIX178 S0-e).
+    const bool run_step = IsPipelineRunTrainingStep(node->type);
+    if (!training_filter && !table_operator && !run_step) {
         invalid_path = true;
         return;
     }
+    if (run_step) needs_pipeline_run = true;
 
     if (!active_path.insert(node->id).second) {
         invalid_path = true;
@@ -177,7 +182,7 @@ void CollectDatasetSourceOrigins(
         if (!input_pin || input_pin->type != gui::PinType::Dataset) continue;
         found_dataset_input = true;
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, needs_pipeline_run);
     }
     if (!found_dataset_input) invalid_path = true;
     active_path.erase(node->id);
@@ -189,9 +194,11 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     const gui::MLNode& split_node,
     const std::string& pin_name,
     bool* has_connection = nullptr,
-    bool* has_multiple_sources = nullptr) {
+    bool* has_multiple_sources = nullptr,
+    bool* needs_pipeline_run = nullptr) {
     if (has_connection) *has_connection = false;
     if (has_multiple_sources) *has_multiple_sources = false;
+    if (needs_pipeline_run) *needs_pipeline_run = false;
 
     const auto* input_pin = FindInputPinByName(split_node, pin_name);
     if (!input_pin) return nullptr;
@@ -199,6 +206,7 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     std::unordered_set<int> origins;
     std::unordered_set<int> active_path;
     bool invalid_path = false;
+    bool run_steps = false;
     for (const auto& link : links) {
         if (link.to_node != split_node.id || link.to_pin != input_pin->id) {
             continue;
@@ -206,8 +214,9 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
         if (has_connection) *has_connection = true;
 
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, run_steps);
     }
+    if (needs_pipeline_run) *needs_pipeline_run = run_steps;
     if (origins.size() > 1) {
         if (has_multiple_sources) *has_multiple_sources = true;
         return nullptr;
@@ -652,6 +661,15 @@ void ValidateSparseFeatureTrainingContract(
     if (sparse_vectorizers.empty()) return;
 
     const auto* vectorizer = sparse_vectorizers.front();
+    if (config.training_data_needs_pipeline_run) {
+        // The pipeline run keeps tables only (sparse output there: TOFIX178 S0-f).
+        AddIssue(config, IssueLevel::Error,
+                 "Sparse output from node '" + vectorizer->name +
+                     "' cannot follow SQL, Text Clean or another pipeline-run step yet; "
+                     "set its Output format to Dense",
+                 vectorizer->id, vectorizer->name,
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
     const size_t sparse_width = ParsePositiveSizeParam(
         *vectorizer, "max_features", 2000);
     config.text_preprocessing.max_length = static_cast<int>(sparse_width);
@@ -745,7 +763,8 @@ void SuggestSparseFeatureOutput(
     const std::unordered_set<int>& training_path_ids,
     const std::vector<int>& sorted_ids) {
     constexpr size_t kSuggestSparseFromWidth = 1000;
-    if (config.sequence_batch.enabled || config.is_time_series ||
+    if (config.training_data_needs_pipeline_run ||
+        config.sequence_batch.enabled || config.is_time_series ||
         config.dataset_roles.dev.IsSupplied() ||
         config.dataset_roles.test.IsSupplied()) {
         return;
@@ -4540,7 +4559,8 @@ TrainingConfiguration GraphCompiler::Compile(
             bool train_has_multiple_sources = false;
             const auto* topology_train = FindDatasetSourceConnectedToSplitInput(
                 nodes, links, *role_split, "Training Dataset",
-                &train_has_connection, &train_has_multiple_sources);
+                &train_has_connection, &train_has_multiple_sources,
+                &config.training_data_needs_pipeline_run);
             if (train_has_multiple_sources) {
                 AddIssue(config, IssueLevel::Error,
                          "Data Split 'Training Dataset' accepts exactly one "
@@ -4567,9 +4587,21 @@ TrainingConfiguration GraphCompiler::Compile(
                 DatasetSourceRef& output) {
                 bool has_connection = false;
                 bool has_multiple_sources = false;
+                bool needs_run = false;
                 const auto* source = FindDatasetSourceConnectedToSplitInput(
                     nodes, links, *role_split, pin_name,
-                    &has_connection, &has_multiple_sources);
+                    &has_connection, &has_multiple_sources, &needs_run);
+                if (needs_run) {
+                    // Training prepares only the Training Dataset input
+                    // (supplied Validation / Test steps: TOFIX178 S0-g).
+                    AddIssue(config, IssueLevel::Error,
+                             std::string(role_name) +
+                                 " dataset steps such as SQL or Text Clean are not applied "
+                                 "by training yet; connect its Data Input directly",
+                             role_split->id, role_split->name,
+                             errors::Compiler::InvalidConnectivity);
+                    return;
+                }
                 if (has_multiple_sources) {
                     AddIssue(config, IssueLevel::Error,
                              std::string("Data Split '") + pin_name +

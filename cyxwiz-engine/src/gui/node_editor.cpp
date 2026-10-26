@@ -4518,6 +4518,16 @@ std::optional<std::string> NodeEditor::CurrentRunResult(int node_id) {
     return pipeline_executor_->CurrentNodeResult(pipeline_json.dump(), node_id);
 }
 
+std::optional<std::string> NodeEditor::LastRunResult(int node_id) const {
+    if (!pipeline_executor_ || pipeline_executor_->IsExecuting()) return std::nullopt;
+    const auto& results = pipeline_executor_->NodeResults();
+    const auto it = results.find(node_id);
+    if (it == results.end() || it->second.empty()) return std::nullopt;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    if (!registry.GetArrowDataset(it->second) && !registry.GetParquetBackedDataset(it->second)) return std::nullopt;
+    return it->second;
+}
+
 bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step) {
     if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
         spdlog::warn("Data transformation pipeline is already running (task ID: {})",

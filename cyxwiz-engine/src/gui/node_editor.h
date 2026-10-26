@@ -380,6 +380,10 @@ public:
     // before it are unchanged since (TOFIX178 S0-d: training uses it instead of
     // preparing the data again); nothing while a run executes.
     std::optional<std::string> CurrentRunResult(int node_id);
+    // The table node `node_id` got in the last finished run, while it is
+    // loaded: Train reads it after running the steps itself (TOFIX178 S0-e;
+    // a step that writes a file always runs, so its result is never current).
+    std::optional<std::string> LastRunResult(int node_id) const;
 
     // Check if graph is ready for training
     bool IsGraphValid() const;

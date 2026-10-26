@@ -435,6 +435,9 @@ struct TrainingConfiguration {
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    // A step only the pipeline run applies (SQL, Text Clean ...) is on the
+    // Training Dataset path: training trains on that run's result.
+    bool training_data_needs_pipeline_run = false;
     TargetContract target;              // Objective target provenance
     RegressionTargetTransform regression_target_transform;
 

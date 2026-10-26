@@ -368,6 +368,11 @@ bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type);
 // optimizers, Output): a data pipeline run leaves it out.
 bool IsTrainingOnlyNode(gui::NodeType node_type);
 
+// A table step only the pipeline run applies (SQL, Text Clean, Fill Missing,
+// Filter / Select / Sort / Join ...): on the path into a Data Split, training
+// trains on the run's result (TOFIX178 S0-e).
+bool IsPipelineRunTrainingStep(gui::NodeType node_type);
+
 PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);
 

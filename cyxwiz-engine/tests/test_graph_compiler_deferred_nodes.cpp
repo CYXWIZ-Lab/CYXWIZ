@@ -2552,6 +2552,28 @@ int main() {
           "Data Split should resolve Data Input through a Dataset transform");
     Check(!HasIssueText(config, "Training role must originate"),
           "valid Dataset preprocessing must not obscure the Training source");
+    Check(!config.training_data_needs_pipeline_run,
+          "an operator-only Training path is prepared without a pipeline run");
+
+    // SQL / Text Clean / Filter Rows run only in the pipeline run: training
+    // trains on that run's result (TOFIX178 S0-e).
+    auto run_step = Node(
+        66,
+        gui::NodeType::FilterRows,
+        "Keep Rows",
+        {Pin(6601, gui::PinType::Dataset, "Data", true)},
+        {Pin(6602, gui::PinType::Dataset, "Filtered", false)});
+    nodes = {role_train, run_step, role_transform, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    auto run_links = links;
+    run_links[0] = Link(1, 60, 6001, 66, 6601);
+    run_links.push_back(Link(8, 66, 6602, 65, 6501));
+    config = compiler.Compile(nodes, run_links, true);
+    Check(config.is_valid, "a Filter Rows step before the Data Split compiles: " + config.error_message);
+    Check(config.training_data_needs_pipeline_run,
+          "a pipeline-run step on the Training path asks for the pipeline run");
+    Check(config.dataset_roles.train.source_node_id == role_train.id,
+          "the Training source is still the Data Input behind the run step");
 
     auto false_dataset_transform = Node(
         67,
@@ -2568,6 +2590,21 @@ int main() {
               HasIssueText(config, "Training role must originate"),
           "Dataset-shaped nodes without a materializer owner must not hide "
           "the Data Split source contract");
+
+    // A supplied Test dataset gets no pipeline-run steps from training yet.
+    nodes = {role_train, role_test, run_step, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    config = compiler.Compile(nodes, {
+        Link(1, 60, 6001, 62, 6201),
+        Link(2, 61, 6101, 66, 6601),
+        Link(3, 66, 6602, 62, 6203),
+        Link(4, 62, 6204, 63, 6301),
+        Link(5, 63, 6302, 2, 201),
+        Link(6, 2, 202, 14, 1401),
+        Link(7, 63, 6303, 14, 1402),
+        Link(8, 14, 1403, 5, 501)}, true);
+    Check(!config.is_valid && HasIssueText(config, "Test dataset steps such as SQL or Text Clean"),
+          "a pipeline-run step on the Test input is refused with its reason");
 
     auto role_dev = Node(
         64,

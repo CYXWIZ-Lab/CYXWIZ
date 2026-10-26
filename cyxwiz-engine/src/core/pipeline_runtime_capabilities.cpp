@@ -1971,6 +1971,29 @@ bool IsTrainingOnlyNode(gui::NodeType node_type) {
     return false;
 }
 
+bool IsPipelineRunTrainingStep(gui::NodeType node_type) {
+    switch (node_type) {
+        case gui::NodeType::SQLQuery:
+        case gui::NodeType::TextCleanNode:
+        case gui::NodeType::FillMissingValues:
+        case gui::NodeType::SelectColumns:
+        case gui::NodeType::FilterRows:
+        case gui::NodeType::DataConvert:
+        case gui::NodeType::RemoveDuplicateRows:
+        case gui::NodeType::SortRows:
+        case gui::NodeType::RenameColumns:
+        case gui::NodeType::JoinTables:
+        case gui::NodeType::MathFormula:
+        case gui::NodeType::StringManipulation:
+        case gui::NodeType::SampleRows:
+        case gui::NodeType::BinningNode:
+        case gui::NodeType::PolynomialFeaturesNode:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type) {
     const auto& capabilities = GetPipelineSupportedTrainingRoleCapabilities();
     auto it = std::find_if(

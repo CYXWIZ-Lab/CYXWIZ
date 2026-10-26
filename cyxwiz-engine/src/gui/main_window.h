@@ -342,6 +342,17 @@ private:
     std::vector<DataInputLoad> data_input_loads_;
     std::string data_input_loads_project_;
     bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // Train on a graph whose Training Dataset path has pipeline-run steps
+    // (SQL, Text Clean ...): run them first, then train on the result.
+    bool StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void PollTrainingPipelineRun();
+    struct TrainingPipelineRun {
+        uint64_t task_id = 0;
+        int feeder = -1;
+        std::string project;
+    };
+    std::optional<TrainingPipelineRun> training_pipeline_run_;
+    std::string training_pipeline_result_;  // read by the next StartTrainingFromGraph
     void PollDataInputLoads();
 
     // Local Debug staleness cache. `last_debug_graph_hash_` is a stable

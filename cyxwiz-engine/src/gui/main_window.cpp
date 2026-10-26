@@ -2972,6 +2972,7 @@ void MainWindow::Render() {
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
     PollDataInputLoads();
+    PollTrainingPipelineRun();
     // Dataset labels for the catalog: each Data Input node's name for its
     // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1,
     // and each node's name for the table a pipeline run made from it.
@@ -3668,6 +3669,71 @@ bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std
     return true;
 }
 
+namespace {
+int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+}  // namespace
+
+// Runs the graph's data steps through the Training Dataset input's feeder on
+// the canvas executor (one run, one cache, the canvas shows it); training
+// starts when it ends (PollTrainingPipelineRun).
+bool MainWindow::StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (!node_editor_) return false;
+    if (node_editor_->IsDataPipelineRunning()) {
+        spdlog::warn("Train: the data pipeline is running; train when it ends");
+        return false;
+    }
+    const int feeder = TrainingInputFeeder(nodes, links);
+    if (feeder < 0 || !node_editor_->ExecuteDataPipelineThrough(feeder, /*with_checks=*/false)) return false;
+    training_pipeline_run_ = TrainingPipelineRun{node_editor_->GetDataPipelineTaskId(), feeder,
+                                                 cyxwiz::ProjectManager::Instance().GetProjectRoot()};
+    spdlog::info("Train: running the data steps before the Data Split first; training starts when they end");
+    if (training_plot_panel_) {
+        training_plot_panel_->SetPreparationState(true, "Running the data steps before training...", 0.01f);
+        training_plot_panel_->SetVisible(true);
+    }
+    return true;
+}
+
+// The run Train started: when it ends, train on its result, or say why not.
+void MainWindow::PollTrainingPipelineRun() {
+    if (!training_pipeline_run_) return;
+    if (!node_editor_) {
+        training_pipeline_run_.reset();
+        return;
+    }
+    const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(training_pipeline_run_->task_id);
+    std::optional<cyxwiz::TaskInfo> info;
+    if (task) info = task->GetInfo();
+    if (info && (info->state == cyxwiz::TaskState::Pending || info->state == cyxwiz::TaskState::Running)) return;
+    const TrainingPipelineRun run = *training_pipeline_run_;
+    training_pipeline_run_.reset();
+    if (cyxwiz::ProjectManager::Instance().GetProjectRoot() != run.project) {
+        spdlog::info("Train: the project changed while the data steps ran; not training");
+        EndFoldsLaunch("Not started: the project changed while the data steps ran.");
+        return;
+    }
+    std::optional<std::string> result;
+    if (info && info->state == cyxwiz::TaskState::Completed) result = node_editor_->LastRunResult(run.feeder);
+    if (!result) {
+        std::string why = "the run left no table";
+        if (info && !info->error_message.empty()) why = info->error_message;
+        else if (info && info->state == cyxwiz::TaskState::Cancelled) why = "the run was cancelled";
+        spdlog::error("Train: the data steps before the Data Split failed: {}", why);
+        compile_result_success_ = false;
+        compile_result_issues_.clear();
+        compile_result_issues_.push_back({cyxwiz::IssueLevel::Error, run.feeder, "",
+                                          "The data steps before the Data Split failed: " + why,
+                                          cyxwiz::errors::Training::InvalidTrainingSetup});
+        ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps failed");
+        if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("The data steps failed: " + why);
+        EndFoldsLaunch("Not started: the data steps before the Data Split failed.");
+        return;
+    }
+    spdlog::info("Train: the data steps ended; training reads '{}'", *result);
+    training_pipeline_result_ = *result;
+    StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+}
+
 // The loads Train started: when all have ended, train, or say which data
 // could not be loaded and why.
 void MainWindow::PollDataInputLoads() {
@@ -3838,18 +3904,9 @@ std::string MainWindow::FoldsBlocker() const {
 
 namespace {
 
-// The table the canvas runs already prepared for training (TOFIX178 S0-d): the
-// result of the node wired into the Data Split (the Data Loader without one),
-// when it and every step before it are unchanged since. Empty when the data
-// must be prepared: no such result, a sparse feature output (the canvas run
-// keeps tables only) or a requested rebuild.
-std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
-                                        const std::vector<NodeLink>& links) {
-    if (!editor || IsGraphMaterializationRebuildRequested()) return {};
-    for (const auto& node : nodes) {
-        const auto format = node.parameters.find("output_format");
-        if (format != node.parameters.end() && format->second == "sparse") return {};
-    }
+// The node wired into the Data Split's Training Dataset input (the Data
+// Loader's input without a Split) from its main result (output 0); -1 if none.
+int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
     const auto find = [&](int id) -> const MLNode* {
         for (const auto& node : nodes)
             if (node.id == id) return &node;
@@ -3874,8 +3931,22 @@ std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<ML
         }
         return -1;
     };
-    int feeder = entry_of(NodeType::DataSplit);
-    if (feeder < 0) feeder = entry_of(NodeType::DataLoader);
+    const int feeder = entry_of(NodeType::DataSplit);
+    return feeder >= 0 ? feeder : entry_of(NodeType::DataLoader);
+}
+
+// The table the canvas runs already prepared for training (TOFIX178 S0-d): the
+// feeder's result when it and every step before it are unchanged since. Empty
+// when the data must be prepared: no such result, a sparse feature output (the
+// canvas run keeps tables only) or a requested rebuild.
+std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
+                                        const std::vector<NodeLink>& links) {
+    if (!editor || IsGraphMaterializationRebuildRequested()) return {};
+    for (const auto& node : nodes) {
+        const auto format = node.parameters.find("output_format");
+        if (format != node.parameters.end() && format->second == "sparse") return {};
+    }
+    const int feeder = TrainingInputFeeder(nodes, links);
     if (feeder < 0) {
         spdlog::debug("StartTrainingFromGraph: no step feeds the Training Dataset input from its main output");
         return {};
@@ -4014,7 +4085,26 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 
         // The canvas already prepared this data: training reads that table and
         // prepares nothing, so it needs no memory plan for a preparation either.
-        const std::string canvas_dataset = CanvasPreparedTrainingInput(node_editor_.get(), nodes, links);
+        // A Train that just ran the steps itself reads that run's result.
+        std::string canvas_dataset = std::exchange(training_pipeline_result_, std::string());
+        if (canvas_dataset.empty()) canvas_dataset = CanvasPreparedTrainingInput(node_editor_.get(), nodes, links);
+        // SQL, Text Clean ... on the Training Dataset path run only in the
+        // pipeline run (TOFIX178 S0-e): run it through the Split's input, then
+        // train on its result.
+        if (canvas_dataset.empty() && config.training_data_needs_pipeline_run) {
+            if (StartTrainingPipelineRun(nodes, links)) {
+                folds_waiting = true;
+                return;
+            }
+            compile_result_success_ = false;
+            compile_result_issues_.clear();
+            compile_result_issues_.push_back({cyxwiz::IssueLevel::Error, -1, "",
+                                              "The data steps before the Data Split could not be started "
+                                              "(a data pipeline run is in progress, or nothing feeds the Split).",
+                                              cyxwiz::errors::Training::InvalidTrainingSetup});
+            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps could not run");
+            return;
+        }
         cyxwiz::MaterializationMemoryContext preflight_memory_context;
         preflight_memory_context.policy = materialization_memory_policy;
         GraphMaterializationPreflightResult memory_preflight;

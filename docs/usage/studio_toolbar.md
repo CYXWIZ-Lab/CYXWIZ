@@ -55,6 +55,20 @@ highlighted while shown); the node, link and selection counts.
   whose steps write sparse output always prepare again. `show logs grep
   "marked dirty"` in Console > Commands names the changed setting
   ("Standard Scaler marked dirty (parameters changed: with_mean)").
+- SQL Query, Text Clean, Fill Missing, Select Columns, Filter Rows, Data
+  Convert, Remove Duplicates, Sort, Rename, Join, Math Formula, String
+  Manipulation, Sample Rows, Binning and Polynomial Features can sit between
+  the Data Input and the Data Split's Training Dataset input. **Train** then
+  runs the data steps first, as **Execute Pipeline** would (the canvas shows
+  each step run), and trains on their result: "Train: running the data steps
+  before the Data Split first", then "Train: the data steps ended; training
+  reads 'ds_operator_StandardScaler_5'". If a step fails, *Cannot Start
+  Training* says which and why. A second **Train** with nothing changed
+  reads the same table without running the steps.
+- Not yet: these steps on a supplied Validation or Test dataset ("Test
+  dataset steps such as SQL or Text Clean are not applied by training yet;
+  connect its Data Input directly"), and Sparse output from a vectorizer after
+  one of them (set its Output format to Dense).
 - **Compile** opens the compile report (below); so does **Train** when it
   cannot start.
 - While a graph trains (from the moment its data is being prepared), tests,
