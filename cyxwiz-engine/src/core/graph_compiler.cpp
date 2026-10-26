@@ -743,6 +743,25 @@ void ValidateSparseFeatureTrainingContract(
     }
 }
 
+// TextVocabulary and TextPadding linked from a tokenizer are legacy: their
+// settings belong on the Text Tokenizer (ReportLegacyTextConfigNodes).
+void ReportLegacyTextConfigNodes(TrainingConfiguration& config,
+                                 const std::vector<gui::MLNode>& nodes,
+                                 const std::vector<gui::NodeLink>& links) {
+    for (const auto& link : links) {
+        const auto* from = FindNodeById(nodes, link.from_node);
+        const auto* to = FindNodeById(nodes, link.to_node);
+        if (!from || !to || from->type != gui::NodeType::TextTokenizer) continue;
+        if (to->type != gui::NodeType::TextVocabulary && to->type != gui::NodeType::TextPadding) continue;
+        AddIssue(config, IssueLevel::Warning,
+                 "'" + to->name + "' is a legacy node and its settings are not applied; set " +
+                     (to->type == gui::NodeType::TextVocabulary ? "Min Word Freq and Max Vocab Size"
+                                                                : "Max Length and Pad Value") +
+                     " on '" + from->name + "' instead",
+                 to->id, to->name);
+    }
+}
+
 // Suggests sparse output for a wide dense vectorizer when the selected path
 // meets every sparse training rule above (final preprocessing output,
 // non-sequence, Dense first, no external dev/test roles). Sparse output keeps
@@ -5206,6 +5225,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
+    ReportLegacyTextConfigNodes(config, nodes, links);
     ValidateSparseFeatureTrainingContract(
         config, nodes, links, training_path_ids, sorted_ids);
     const auto sequence_fusion =
@@ -7192,8 +7212,8 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
                  config.audio_preprocessing.pitch_shift);
 }
 
-// --- Text preprocessing (Arrow materializer path) ---
-// TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
+// --- Text preprocessing ---
+// TextTokenizer is applied by the pipeline run before training. The compiler
 // still extracts its shape contract so recurrent preflight uses the graph's
 // current max_length.
 static void ExtractTextTokenizerShape(
@@ -7222,8 +7242,6 @@ static void ExtractTextVectorizerShape(
         config.text_preprocessing.max_length);
 }
 
-// TextVocabulary and TextPadding fold into the reachable tokenizer in
-// PipelineMaterializer; they do not own a separate training shape.
 
 // --- TimeSeries extractors (Phase 4 — deferred) ---
 

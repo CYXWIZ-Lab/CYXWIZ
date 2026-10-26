@@ -13,6 +13,7 @@
 #include "patterns/pattern_library.h"
 #include "icons.h"
 #include "../core/data_registry.h"
+#include "../core/training_input_preparation.h"
 #include "../core/training_manager.h"
 #include "../core/training_trace_collector.h"
 #include "../core/async_task_manager.h"
@@ -4679,56 +4680,7 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
         return true;
     }
 
-    for (const auto& node : nodes_) {
-        // Plot and Dashboard nodes show data; they are not pipeline steps (TOFIX134 P2, P3).
-        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) continue;
-        nlohmann::json node_json;
-        node_json["id"] = node.id;
-        node_json["type"] = GetNodeTypeName(node.type);
-        node_json["name"] = node.name;
-
-        // Add parameters
-        node_json["parameters"] = nlohmann::json::object();
-        for (const auto& [key, value] : node.parameters) {
-            node_json["parameters"][key] = value;
-        }
-
-        pipeline_json["nodes"].push_back(node_json);
-    }
-
-    // PipelineExecutor treats this top-level list as the canonical graph
-    // connection contract. NodeLink already owns the resolved node IDs, so
-    // preserve them directly instead of deriving duplicate per-node edges.
-    pipeline_json["links"] = nlohmann::json::array();
-    for (const auto& link : links_) {
-        const MLNode* from_node = FindNodeById(link.from_node);
-        const MLNode* to_node = FindNodeById(link.to_node);
-        if (!from_node || !to_node) {
-            error = "Pipeline link " + std::to_string(link.id) + " references a missing node";
-            return false;
-        }
-        if (to_node->type == NodeType::Plot || to_node->type == NodeType::Dashboard) continue;
-        const auto from_pin = std::find_if(
-            from_node->outputs.begin(), from_node->outputs.end(),
-            [&link](const NodePin& pin) { return pin.id == link.from_pin; });
-        const auto to_pin = std::find_if(
-            to_node->inputs.begin(), to_node->inputs.end(),
-            [&link](const NodePin& pin) { return pin.id == link.to_pin; });
-        if (from_pin == from_node->outputs.end() ||
-            to_pin == to_node->inputs.end()) {
-            error = "Pipeline link " + std::to_string(link.id) + " references a missing pin";
-            return false;
-        }
-        pipeline_json["links"].push_back({
-            {"start_node", link.from_node},
-            {"end_node", link.to_node},
-            {"start_pin_index", static_cast<int>(
-                std::distance(from_node->outputs.begin(), from_pin))},
-            {"end_pin_index", static_cast<int>(
-                std::distance(to_node->inputs.begin(), to_pin))}
-        });
-    }
-    return true;
+    return cyxwiz::PipelineJsonFromGraph(nodes_, links_, pipeline_json, error);
 }
 
 std::vector<NodeEditor::DataLink> NodeEditor::GetDataPipelineLinks(std::string* error) const {

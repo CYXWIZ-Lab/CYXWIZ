@@ -166,7 +166,7 @@ struct AudioPreprocessingConfig {
 /**
  * Text shape contract the compiler reads from the graph: the reachable Text
  * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
- * Tokenizing itself runs in PipelineMaterializer.
+ * Tokenizing itself runs in the pipeline run before training.
  */
 struct TextPreprocessingConfig {
     int max_length = 512;
@@ -503,7 +503,7 @@ struct TrainingConfiguration {
     AudioPreprocessingConfig audio_preprocessing;
 
     // Preprocessing - text-specific legacy override bundle. Graph text
-    // nodes now route through PipelineMaterializer instead of this config.
+    // nodes now run in the pipeline run instead of this config.
     TextPreprocessingConfig text_preprocessing;
 
     // Structured sequence tagging / NER contract. Populated when the selected

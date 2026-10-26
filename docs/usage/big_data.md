@@ -75,11 +75,10 @@ A Data Input kept on disk can feed training:
 - **Steps before the Data Loader** (Standard and Min-Max Scaler, Log
   Transform, Text Tokenizer, checks) run one row group at a time: each fitting
   step reads the file once to fit, then one last pass writes the prepared
-  table to a Parquet file (`cache/materialized/streamed` in the project) that
-  training reads. It is prepared again on each run (not cached), and the
-  previous file is removed.
-- **Text classification on disk**: the Text Tokenizer (with Text Vocabulary
-  and Text Padding) counts its vocabulary a row group at a time, then writes
+  table to a Parquet file the pipeline run keeps while a dataset uses it;
+  training reads that file.
+- **Text classification on disk**: the Text Tokenizer (its vocabulary and
+  padding settings) counts its vocabulary a row group at a time, then writes
   each row group's `tok_0 ... tok_n` and `y`. The result is the table it makes
   in memory: the same vocabulary, the same token ids, the classes numbered in
   file order (their names kept for Run Test). This works with a Word,

@@ -182,7 +182,10 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
     } else if (const auto disk = registry.GetParquetBackedDataset(result.source_dataset_name)) {
         result.source_schema_fingerprint = ComputeSchemaFingerprint(disk->GetSchema());
     } else {
-        return refuse("the Data Input's data is not loaded");
+        // Still a table path: a run loads the data itself.
+        result.table_path = true;
+        result.reason = "the Data Input's data is not loaded";
+        return result;
     }
     result.table_path = true;
     if (!keep_out.empty()) {

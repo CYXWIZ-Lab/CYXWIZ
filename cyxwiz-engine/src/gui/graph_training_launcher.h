@@ -1,7 +1,8 @@
 #pragma once
 
 #include "../core/graph_compiler.h"
-#include "../core/pipeline_materializer.h"
+#include "../core/materialization_memory_types.h"
+#include "../core/node_executors/pipeline_operator.h"
 #include "../core/prepared_data_cache.h"
 #include "../core/execution_device_preferences.h"
 
@@ -25,12 +26,6 @@ struct GraphTrainingLaunchResult {
     std::string error_message;
     std::string effective_dataset_name;
     std::string label_column;
-    int operators_applied = 0;
-    cyxwiz::PipelineMaterializerSourceKind materializer_source_kind =
-        cyxwiz::PipelineMaterializerSourceKind::Unknown;
-    bool materializer_skipped_unsupported_source = false;
-    std::string materializer_unsupported_source_reason;
-    std::string materializer_diagnostic_message;
     bool materialization_cache_enabled = false;
     cyxwiz::MaterializationCacheMode materialization_cache_mode =
         cyxwiz::MaterializationCacheMode::Disabled;

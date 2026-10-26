@@ -41,7 +41,7 @@ int main() {
         {"Reviews", kBackingText, 50000, 0, 2, "D:/data/reviews.csv", 103},
         {"Reviews", kBackingArrow, 50000, 2, 0, "D:/data/reviews.csv", 104},
         {"Cats", kBackingImage, 2000, 0, 2, "D:/data/cats", 105},
-        {"tfidf__materialized", kBackingSparse, 50000, 20000, 0, "", 106},
+        {"ds_operator_TfidfVectorizer_7", kBackingSparse, 50000, 20000, 0, "", 106},
         {"old", kBackingLegacy, 10, 0, 0, "", 107},
     };
     DatasetCatalog catalog([&] { return reg.Snapshot(); });
@@ -49,7 +49,7 @@ int main() {
     // List: one entry per name, sorted, storage and modality by one rule.
     auto list = catalog.List();
     Check(list.size() == 6, "six datasets (Reviews merged)");
-    Check(list[0].name == "Cats" && list[1].name == "MNIST" && list.back().name == "tfidf__materialized", "sorted by name");
+    Check(list[0].name == "Cats" && list[1].name == "MNIST" && list[4].name == "ds_operator_TfidfVectorizer_7" && list.back().name == "old", "sorted by name");
     auto reviews = catalog.Resolve("Reviews");
     Check(reviews && reviews->storage == DatasetStorageKind::InMemoryArrow && reviews->modality == DatasetModality::Text &&
               reviews->Has(kBackingText) && reviews->Has(kBackingArrow) && reviews->rows == 50000 && reviews->columns == 2 && reviews->classes == 2,
@@ -57,8 +57,8 @@ int main() {
     Check(catalog.Resolve("MNIST")->storage == DatasetStorageKind::DiskBackedParquet && catalog.Resolve("MNIST")->modality == DatasetModality::Tabular,
           "Parquet: tabular");
     Check(catalog.Resolve("Cats")->storage == DatasetStorageKind::ImageCached && catalog.Resolve("Cats")->modality == DatasetModality::Image, "images");
-    auto tfidf = catalog.Resolve("tfidf__materialized");
-    Check(tfidf->storage == DatasetStorageKind::SparseFeatureCSR && tfidf->materialized, "sparse pipeline result");
+    auto tfidf = catalog.Resolve("ds_operator_TfidfVectorizer_7");
+    Check(tfidf->storage == DatasetStorageKind::SparseFeatureCSR, "sparse pipeline result");
     Check(catalog.Resolve("old")->modality == DatasetModality::Unknown, "old map: no modality");
     Check(!catalog.Resolve("nope") && !catalog.Resolve(""), "unknown names");
     Check(catalog.Resolve("Spotify")->generation == 0, "not pumped yet: generation 0");
@@ -124,9 +124,9 @@ int main() {
           "a label or a name leads to the dataset");
     catalog.SetTargets({{"World", "gdp_per_person"}});
     Check(catalog.Resolve("World")->target_column == "gdp_per_person" && catalog.Resolve("Cats")->target_column.empty(), "graph targets");
-    catalog.SetSources({{"World", "D:/other/world.csv"}, {"tfidf__materialized", "D:/data/reviews.csv"}});
+    catalog.SetSources({{"World", "D:/other/world.csv"}, {"ds_operator_TfidfVectorizer_7", "D:/data/reviews.csv"}});
     Check(catalog.Resolve("World")->source_path == "D:/data/world.csv", "the registry's source path wins");
-    Check(catalog.Resolve("tfidf__materialized")->source_path == "D:/data/reviews.csv", "the graph's file fills a missing source");
+    Check(catalog.Resolve("ds_operator_TfidfVectorizer_7")->source_path == "D:/data/reviews.csv", "the graph's file fills a missing source");
 
     // A listener that unsubscribes another during delivery; owner expiry.
     int calls_a = 0, calls_b = 0;

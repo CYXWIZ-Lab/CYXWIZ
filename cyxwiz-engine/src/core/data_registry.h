@@ -385,19 +385,6 @@ public:
     bool TryPublishArrowTable(const TabularPublicationToken& token,
                               std::shared_ptr<class ArrowDataset> candidate,
                               const std::string& source_path, std::string& error);
-    // Provenance only: no additional ownership of the potentially large table.
-    // Reuse requires the exact source/output snapshots and disk artifact stamp.
-    struct MaterializationProvenance {
-        std::string identity;
-        std::weak_ptr<arrow::Table> source;
-        std::weak_ptr<arrow::Table> table;
-        std::weak_ptr<const SparseFeatureDataset> sparse;
-    };
-    bool MatchesResidentMaterialization(
-        const std::string& name, const std::shared_ptr<arrow::Table>& source,
-        const std::string& identity) const;
-    void RecordMaterialization(const std::string& name,
-                               MaterializationProvenance provenance);
     std::shared_ptr<class ArrowDataset> GetArrowDataset(const std::string& name);
     bool IsArrowDataset(const std::string& name) const;
 
@@ -778,7 +765,6 @@ private:
 
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
-    std::map<std::string, MaterializationProvenance> materialization_provenance_;
     // How each table LoadTabularCSV / LoadTabularParquet put in memory was
     // loaded: the source file (path, size, time) and every option that
     // changes the table. A second load of the same thing under another name

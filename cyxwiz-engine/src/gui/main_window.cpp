@@ -26,6 +26,7 @@
 #include "node_config_dialog.h"
 #include "../core/graph_topology_utils.h"
 #include "graph_training_launcher.h"
+#include "../core/training_input_preparation.h"
 #include "engine_graph_training_dispatch.h"
 #include "node_editor.h"
 #include "console.h"
@@ -3669,10 +3670,6 @@ bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std
     return true;
 }
 
-namespace {
-int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
-}  // namespace
-
 // Runs the graph's data steps through the Training Dataset input's feeder on
 // the canvas executor (one run, one cache, the canvas shows it); training
 // starts when it ends (PollTrainingPipelineRun).
@@ -3682,7 +3679,7 @@ bool MainWindow::StartTrainingPipelineRun(const std::vector<MLNode>& nodes, cons
         spdlog::warn("Train: the data pipeline is running; train when it ends");
         return false;
     }
-    const int feeder = TrainingInputFeeder(nodes, links);
+    const int feeder = cyxwiz::TrainingInputFeeder(nodes, links);
     if (feeder < 0 || !node_editor_->ExecuteDataPipelineThrough(feeder, /*with_checks=*/false)) return false;
     training_pipeline_run_ = TrainingPipelineRun{node_editor_->GetDataPipelineTaskId(), feeder,
                                                  cyxwiz::ProjectManager::Instance().GetProjectRoot()};
@@ -3904,37 +3901,6 @@ std::string MainWindow::FoldsBlocker() const {
 
 namespace {
 
-// The node wired into the Data Split's Training Dataset input (the Data
-// Loader's input without a Split) from its main result (output 0); -1 if none.
-int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-    const auto find = [&](int id) -> const MLNode* {
-        for (const auto& node : nodes)
-            if (node.id == id) return &node;
-        return nullptr;
-    };
-    const auto pin_index = [](const std::vector<NodePin>& pins, int pin_id) {
-        for (size_t i = 0; i < pins.size(); ++i)
-            if (pins[i].id == pin_id) return static_cast<int>(i);
-        return -1;
-    };
-    // The Training Dataset input (the first; a Data Split can also take
-    // Validation and Test datasets from their own Data Inputs, which training
-    // reads as before), fed from its source's main result (output 0).
-    const auto entry_of = [&](NodeType type) -> int {
-        for (const auto& node : nodes) {
-            if (node.type != type) continue;
-            for (const auto& link : links) {
-                if (link.to_node != node.id || pin_index(node.inputs, link.to_pin) != 0) continue;
-                const MLNode* source = find(link.from_node);
-                return source && pin_index(source->outputs, link.from_pin) == 0 ? link.from_node : -1;
-            }
-        }
-        return -1;
-    };
-    const int feeder = entry_of(NodeType::DataSplit);
-    return feeder >= 0 ? feeder : entry_of(NodeType::DataLoader);
-}
-
 // The data the canvas runs already prepared for training (TOFIX178 S0-d): the
 // feeder's result (a table, or sparse features, S0-f) when it and every step
 // before it are unchanged since. Empty when the data must be prepared: no such
@@ -3942,7 +3908,7 @@ int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<Node
 std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
                                         const std::vector<NodeLink>& links) {
     if (!editor || IsGraphMaterializationRebuildRequested()) return {};
-    const int feeder = TrainingInputFeeder(nodes, links);
+    const int feeder = cyxwiz::TrainingInputFeeder(nodes, links);
     if (feeder < 0) {
         spdlog::debug("StartTrainingFromGraph: no step feeds the Training Dataset input from its main output");
         return {};
@@ -4088,7 +4054,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // training loads it and nothing runs.
         const std::string project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
         cyxwiz::PreparedDataKey prepared_key;
-        if (const int feeder = TrainingInputFeeder(nodes, links); feeder >= 0) {
+        if (const int feeder = cyxwiz::TrainingInputFeeder(nodes, links); feeder >= 0) {
             prepared_key = cyxwiz::ComputePreparedDataKey(nodes, links, feeder, registry, project_root);
             spdlog::debug("StartTrainingFromGraph: prepared data key {}", prepared_key.cacheable
                               ? prepared_key.key.substr(0, 16)
@@ -4998,6 +4964,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::SmokeRunOptions smoke_options;
         smoke_options.cache_config = GraphMaterializationCacheConfig(
             inputs ? inputs->project_root : std::filesystem::path{});
+        {
+            auto& project = cyxwiz::ProjectManager::Instance();
+            smoke_options.roots = {inputs ? inputs->project_root.string() : project.GetProjectRoot(),
+                                   project.GetArtifactsPath(), project.GetExportsPath(),
+                                   project.GetIngestionCachePath()};
+        }
         if (inputs && inputs->rebuild_prepared_data) {
             smoke_options.cache_config.mode = cyxwiz::MaterializationCacheMode::Rebuild;
         }
@@ -6314,8 +6286,8 @@ void MainWindow::LoadCheckpointForTesting() {
     fingerprint << std::hex << HashGraphStructure(nodes, links);
     const std::string graph_fingerprint = fingerprint.str();
     const std::string selected_path = *selected;
-    const std::string materialization_project_root =
-        project.GetProjectRoot();
+    const cyxwiz::StepRunRoots step_roots{project.GetProjectRoot(), project.GetArtifactsPath(),
+                                          project.GetExportsPath(), project.GetIngestionCachePath()};
     auto load_result =
         std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
     std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
@@ -6325,7 +6297,7 @@ void MainWindow::LoadCheckpointForTesting() {
         "Load checkpoint for testing",
         [config = std::move(config), nodes, links, selected_path,
          graph_fingerprint, load_result,
-         materialization_project_root](cyxwiz::LambdaTask& task) {
+         step_roots](cyxwiz::LambdaTask& task) {
             auto evaluation_config = config;
             task.ReportProgress(0.05f,
                                 "Preparing evaluation dataset...");
@@ -6341,39 +6313,20 @@ void MainWindow::LoadCheckpointForTesting() {
                     "source dataset. Apply the Data Input node first.");
             }
 
-            auto& registry = cyxwiz::DataRegistry::Instance();
-            cyxwiz::PipelineOperatorExecutionContext materialization_context;
-            materialization_context.cancellation_requested =
-                [&task]() { return task.ShouldStop(); };
-            const auto materialized =
-                cyxwiz::PipelineMaterializer::Materialize(
-                    nodes, links, registry, effective_dataset_name,
-                    GraphMaterializationCacheConfig(
-                        materialization_project_root),
-                    [&task](
-                        const cyxwiz::PipelineOperatorProgress& event) {
-                        const float progress =
-                            0.05f + 0.55f *
-                                std::clamp(event.progress, 0.0f, 1.0f);
-                        task.ReportProgress(
-                            progress,
-                            event.message.empty()
-                                ? event.stage
-                                : event.message);
-                    },
-                    std::move(materialization_context));
-            if (materialized.failure_kind ==
-                cyxwiz::MaterializationFailureKind::Cancelled) {
-                return;
-            }
-            if (!materialized.success) {
-                throw std::runtime_error(
-                    "Checkpoint evaluation preprocessing failed: " +
-                    materialized.error_message);
-            }
-            if (!materialized.effective_dataset_name.empty()) {
-                effective_dataset_name =
-                    materialized.effective_dataset_name;
+            // The data steps before the Data Split, as training ran them:
+            // the table kept on disk, else a run of those steps (TOFIX178 S0-f2).
+            if (const int feeder = cyxwiz::TrainingInputFeeder(nodes, links); feeder >= 0) {
+                const auto prepared = cyxwiz::PrepareStepResult(
+                    nodes, links, feeder, cyxwiz::DataRegistry::Instance(), step_roots,
+                    GraphMaterializationCacheConfig(step_roots.project),
+                    [&task]() { return task.ShouldStop(); },
+                    [&task](float progress, const std::string& message) {
+                        task.ReportProgress(0.05f + 0.55f * std::clamp(progress, 0.0f, 1.0f), message);
+                    });
+                if (prepared.cancelled) return;
+                if (!prepared.ok)
+                    throw std::runtime_error("Checkpoint evaluation preprocessing failed: " + prepared.error);
+                effective_dataset_name = prepared.dataset;
             }
             std::string effective_label =
                 evaluation_config.dataset_roles.train.label_column.empty()

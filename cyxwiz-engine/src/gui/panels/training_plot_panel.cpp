@@ -2202,18 +2202,8 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         }
     }
 
-    // Source -> prepared dataset and a one-line summary.
+    // The prepared dataset and a one-line summary.
     if (!materialization_output_dataset_.empty()) {
-        std::string source = materialization_output_dataset_;
-        const std::string suffix = "__materialized";
-        if (source.size() > suffix.size() &&
-            source.compare(source.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            source.erase(source.size() - suffix.size());
-            ImGui::TextUnformatted(source.c_str());
-            ImGui::SameLine(0.0f, 6.0f);
-            ImGui::TextColored(c.faint, ICON_FA_ARROW_RIGHT);
-            ImGui::SameLine(0.0f, 6.0f);
-        }
         ImGui::TextUnformatted(materialization_output_dataset_.c_str());
     }
     {
