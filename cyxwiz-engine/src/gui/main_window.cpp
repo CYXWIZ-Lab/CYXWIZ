@@ -4107,23 +4107,6 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         const bool prepared_on_disk = canvas_dataset.empty() && !IsGraphMaterializationRebuildRequested() &&
             cyxwiz::ProbePreparedData(GraphMaterializationCacheConfig(project_root), prepared_key);
         if (prepared_on_disk) spdlog::info("StartTrainingFromGraph: the prepared data is on disk from an earlier session");
-        // SQL, Text Clean ... on the Training Dataset path run only in the
-        // pipeline run (TOFIX178 S0-e): run it through the Split's input, then
-        // train on its result.
-        if (canvas_dataset.empty() && !prepared_on_disk && config.training_data_needs_pipeline_run) {
-            if (StartTrainingPipelineRun(nodes, links)) {
-                folds_waiting = true;
-                return;
-            }
-            compile_result_success_ = false;
-            compile_result_issues_.clear();
-            compile_result_issues_.push_back({cyxwiz::IssueLevel::Error, -1, "",
-                                              "The data steps before the Data Split could not be started "
-                                              "(a data pipeline run is in progress, or nothing feeds the Split).",
-                                              cyxwiz::errors::Training::InvalidTrainingSetup});
-            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps could not run");
-            return;
-        }
         cyxwiz::MaterializationMemoryContext preflight_memory_context;
         preflight_memory_context.policy = materialization_memory_policy;
         GraphMaterializationPreflightResult memory_preflight;
@@ -4201,6 +4184,27 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 "estimate at node '{}'",
                 memory_preflight.evidence.memory_risk_level,
                 memory_preflight.evidence.node_name);
+        }
+
+        // After the memory estimate: the data steps before the Split run once, in the pipeline run, the
+        // canvas's own engine (TOFIX178 S0-e): run it through the Split's
+        // input, then train on its result. Sparse output and non-table paths
+        // (images) are still prepared by training itself.
+        const bool run_steps = config.training_data_needs_pipeline_run ||
+                               (prepared_key.table_path && prepared_key.steps > 0);
+        if (canvas_dataset.empty() && !prepared_on_disk && run_steps) {
+            if (StartTrainingPipelineRun(nodes, links)) {
+                folds_waiting = true;
+                return;
+            }
+            compile_result_success_ = false;
+            compile_result_issues_.clear();
+            compile_result_issues_.push_back({cyxwiz::IssueLevel::Error, -1, "",
+                                              "The data steps before the Data Split could not be started "
+                                              "(a data pipeline run is in progress, or nothing feeds the Split).",
+                                              cyxwiz::errors::Training::InvalidTrainingSetup});
+            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps could not run");
+            return;
         }
 
         // Set up node editor callback to update training animation and pin state.

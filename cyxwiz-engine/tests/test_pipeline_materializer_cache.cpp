@@ -720,6 +720,11 @@ int main() {
         const auto sql_key = key_of(sql);
         Check(!sql_key.cacheable && sql_key.reason.find("SQL") != std::string::npos,
               "a SQL step is never cached: " + sql_key.reason);
+        Check(sql_key.table_path && sql_key.steps == 2, "a SQL path still runs in the pipeline run");
+        Check(base.table_path, "a cacheable path is a table path");
+        auto image = graph;
+        image[1].type = gui::NodeType::QualityAnalyzer;
+        Check(!key_of(image).table_path, "an image step is not a table path");
 
         cyxwiz::MaterializationCacheConfig config;
         config.mode = cyxwiz::MaterializationCacheMode::Auto;

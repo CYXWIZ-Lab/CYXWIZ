@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "operator_figures.h"
+#include "process_memory_snapshot.h"
 #include "pipeline_node_run_facts.h"
 
 namespace gui {
@@ -109,6 +110,14 @@ public:
      */
     void SetProjectRoot(std::string project_root) {
         project_root_ = std::move(project_root);
+    }
+
+    /**
+     * How the runtime memory guard reads the process's memory (TOFIX178
+     * S0-e2); empty reads it from the OS. Tests set one to drive the guard.
+     */
+    void SetProcessMemoryProbe(std::function<ProcessMemorySnapshot()> probe) {
+        process_memory_probe_ = std::move(probe);
     }
 
     /**
@@ -287,6 +296,7 @@ private:
     std::mutex status_mutex_;             // current_status_: nodes report progress from their own threads
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
+    std::function<ProcessMemorySnapshot()> process_memory_probe_;
     std::string graph_path_;              // the graph file the run came from (lineage)
     // In-memory copies of disk inputs (AdmitInputTable), kept until the next run.
     std::vector<std::string> admitted_inputs_;

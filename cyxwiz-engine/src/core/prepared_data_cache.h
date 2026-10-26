@@ -21,6 +21,9 @@ class ArrowDataset;
 class DataRegistry;
 
 struct PreparedDataKey {
+    // Every step before the Split is a table step on a loaded table: the
+    // pipeline run prepares it (TOFIX178 S0-e2), cached or not.
+    bool table_path = false;
     bool cacheable = false;
     std::string key;     // empty when not cacheable
     std::string reason;  // why not, when not

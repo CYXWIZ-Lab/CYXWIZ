@@ -79,11 +79,18 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
                                        DataRegistry& registry,
                                        const std::string& project_root) {
     PreparedDataKey result;
+    // Not a table path: nothing more to learn.
     const auto refuse = [&result](std::string reason) {
+        result.table_path = false;
         result.cacheable = false;
         result.key.clear();
         result.reason = std::move(reason);
         return result;
+    };
+    // A table path that is not kept on disk: the walk goes on.
+    std::string keep_out;
+    const auto not_kept = [&keep_out](std::string reason) {
+        if (keep_out.empty()) keep_out = std::move(reason);
     };
     if (!FindNode(nodes, feeder)) return refuse("no step feeds the Data Split");
 
@@ -111,27 +118,32 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
             continue;
         }
         ++result.steps;
-        if (node->type == gui::NodeType::SQLQuery)
-            return refuse("'" + node->name + "' runs SQL, which can read any file");
         const auto support = ResolvePipelineRuntimeSupport(node->type);
-        if (support.mode == PipelineRuntimeSupportMode::OperatorBacked) {
+        if (support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+            support.materializer_arrow_table_supported) {
             auto op = factory.Create(node->type);
-            if (!op) return refuse("'" + node->name + "' cannot be inspected");
             std::string error;
-            if (!op->Configure(node->parameters, error))
-                return refuse("'" + node->name + "' settings are invalid: " + error);
-            if (!op->IsCacheable()) return refuse("'" + node->name + "' keeps fitted state");
-            std::vector<PipelineOperatorCacheDependency> dependencies;
-            if (!op->CollectCacheDependencies(dependencies, error))
-                return refuse("'" + node->name + "': " + error);
-            for (const auto& dependency : dependencies) {
-                MaterializationCacheDependencyIdentity identity;
-                if (!ResolveMaterializationCacheDependencyIdentity(
-                        node->id, dependency.role, ResolveProjectDataPath(dependency.path, project_root),
-                        identity, &error))
-                    return refuse("'" + node->name + "': " + error);
-                result.dependencies.push_back(std::move(identity));
+            if (!op) {
+                not_kept("'" + node->name + "' cannot be inspected");
+            } else if (!op->Configure(node->parameters, error)) {
+                not_kept("'" + node->name + "' settings are invalid: " + error);
+            } else if (!op->IsCacheable()) {
+                not_kept("'" + node->name + "' keeps fitted state");
+            } else {
+                std::vector<PipelineOperatorCacheDependency> dependencies;
+                if (!op->CollectCacheDependencies(dependencies, error)) not_kept("'" + node->name + "': " + error);
+                for (const auto& dependency : dependencies) {
+                    MaterializationCacheDependencyIdentity identity;
+                    if (ResolveMaterializationCacheDependencyIdentity(
+                            node->id, dependency.role, ResolveProjectDataPath(dependency.path, project_root),
+                            identity, &error))
+                        result.dependencies.push_back(std::move(identity));
+                    else
+                        not_kept("'" + node->name + "': " + error);
+                }
             }
+        } else if (node->type == gui::NodeType::SQLQuery) {
+            not_kept("'" + node->name + "' runs SQL, which can read any file");
         } else if (IsPipelineRunTrainingStep(node->type)) {
             // A setting naming a file (a lookup table, a Data Convert target)
             // makes the step depend on that file's content.
@@ -163,6 +175,11 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
     } else {
         return refuse("the Data Input's data is not loaded");
     }
+    result.table_path = true;
+    if (!keep_out.empty()) {
+        result.reason = keep_out;
+        return result;
+    }
 
     // "executor:" keeps these entries apart from the materializer's.
     input.source_dataset_name = result.source_dataset_name;
@@ -176,7 +193,10 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
     }
     PopulateSourceFileIdentity(input, ResolveProjectDataPath(source_path, project_root));
     if (input.source_file_size == 0 && input.source_file_mtime == 0) {
-        if (!source_table) return refuse("the Data Input has no file and its rows are kept on disk");
+        if (!source_table) {
+            result.reason = "the Data Input has no file and its rows are kept on disk";
+            return result;
+        }
         input.source_content_fingerprint = ComputeTableContentFingerprint(source_table);
     }
     result.cacheable = true;

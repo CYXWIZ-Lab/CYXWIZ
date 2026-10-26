@@ -55,16 +55,24 @@ highlighted while shown); the node, link and selection counts.
   whose steps write sparse output always prepare again. `show logs grep
   "marked dirty"` in Console > Commands names the changed setting
   ("Standard Scaler marked dirty (parameters changed: with_mean)").
-- SQL Query, Text Clean, Fill Missing, Select Columns, Filter Rows, Data
-  Convert, Remove Duplicates, Sort, Rename, Join, Math Formula, String
-  Manipulation, Sample Rows, Binning and Polynomial Features can sit between
-  the Data Input and the Data Split's Training Dataset input. **Train** then
-  runs the data steps first, as **Execute Pipeline** would (the canvas shows
-  each step run), and trains on their result: "Train: running the data steps
+- Without a current canvas result, **Train** runs the data steps before the
+  Data Split first, as **Execute Pipeline** would (the canvas shows each
+  step run), and trains on their result: "Train: running the data steps
   before the Data Split first", then "Train: the data steps ended; training
   reads 'ds_operator_StandardScaler_5'". If a step fails, *Cannot Start
   Training* says which and why. A second **Train** with nothing changed
-  reads the same table without running the steps.
+  reads the same table without running the steps; in a later session it is
+  read from disk when it was kept (Loaded data > Disk caches).
+- The steps can be scalers, encoders, tokenizers and the other preparation
+  nodes, and also SQL Query, Text Clean, Fill Missing, Select Columns, Filter
+  Rows, Data Convert, Remove Duplicates, Sort, Rename, Join, Math Formula,
+  String Manipulation, Sample Rows, Binning and Polynomial Features. A Data
+  Input wired straight to the Split runs nothing. Graphs with a sparse
+  vectorizer output and image paths are still prepared by training itself.
+- A step whose run makes the Engine grow past the safe memory budget (the
+  data budget, at most 90% of free memory) stops: "the memory guard stopped
+  'Scale': the Engine grew by ... while it ran, the limit is 13.9 GB. Use
+  fewer rows or columns (Sample Rows, Select Columns) and run it again."
 - Not yet: these steps on a supplied Validation or Test dataset ("Test
   dataset steps such as SQL or Text Clean are not applied by training yet;
   connect its Data Input directly"), and Sparse output from a vectorizer after

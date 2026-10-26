@@ -14,6 +14,7 @@
 #include "test_evaluation_tables.h"
 #include "test_predictions_metrics.h"
 #include "data_budget.h"
+#include "materialization_memory_guard.h"
 #include "sql_step_presentation.h"
 #include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
@@ -6170,6 +6171,14 @@ bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& 
     return false;
 }
 
+namespace {
+// Thrown from an operator's progress report when the process grew past the
+// safe memory budget; caught around the operator's run.
+struct OperatorMemoryLimitReached {
+    std::string message;
+};
+}  // namespace
+
 bool PipelineExecutor::ExecutePipelineOperatorNode(
     const Node& node,
     ExecutionContext& ctx,
@@ -6246,9 +6255,34 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     operator_context.cancellation_requested =
         [this]() { return cancel_requested_.load(); };
     op->SetExecutionContext(std::move(operator_context));
+    // The runtime memory guard (TOFIX178 S0-e2, as training's own preparation
+    // had): a step whose process memory grows by the safe budget - the data
+    // budget, at most 90% of the memory free when it starts - stops with the
+    // numbers instead of exhausting the machine.
+    const std::function<ProcessMemorySnapshot()> read_memory =
+        process_memory_probe_ ? process_memory_probe_ : std::function<ProcessMemorySnapshot()>(DetectProcessMemorySnapshot);
+    const auto memory_baseline = read_memory();
+    const MaterializationMemoryPolicy memory_policy;
+    const uint64_t safe_budget = SaturatingScaleBytes(
+        DetectMaterializationMemorySnapshot().available_bytes, memory_policy.blocked_fraction);
+    const uint64_t data_budget = DataBudgetBytes();
+    const uint64_t memory_limit = data_budget > 0 && safe_budget > 0 ? std::min(data_budget, safe_budget)
+                                                                      : std::max(data_budget, safe_budget);
     // A long step (word2vec training, a vectorizer) reports its own progress:
     // Task View shows it as the run's status, the run's share unchanged.
-    op->SetProgressCallback([this, id = node.id, name = node.name](const PipelineOperatorProgress& event) {
+    op->SetProgressCallback([this, id = node.id, name = node.name, memory_baseline, memory_limit,
+                             read_memory](const PipelineOperatorProgress& event) {
+        if (memory_limit > 0 && memory_baseline.detected) {
+            const auto now = read_memory();
+            if (now.detected && now.resident_bytes > memory_baseline.resident_bytes &&
+                now.resident_bytes - memory_baseline.resident_bytes >= memory_limit) {
+                throw OperatorMemoryLimitReached{
+                    "the memory guard stopped '" + name + "': the Engine grew by " +
+                    FormatMaterializationBytes(now.resident_bytes - memory_baseline.resident_bytes) +
+                    " while it ran, the limit is " + FormatMaterializationBytes(memory_limit) +
+                    ". Use fewer rows or columns (Sample Rows, Select Columns) and run it again."};
+            }
+        }
         if (operator_figures_callback_ && (!event.figures.empty() || !event.notes.empty())) {
             OperatorFigures figures = event.Figures();
             figures.node_id = id;
@@ -6281,7 +6315,12 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     const auto input_ref = registry.GetTableRef(input_dataset_name);
     if (op->SupportsStreaming() && input_ref &&
         (input_ref->kind == TableRef::Kind::Parquet || input_ref->bytes > DataResultThresholdBytes())) {
-        if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        try {
+            if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        } catch (const OperatorMemoryLimitReached& stop) {
+            ReportError(node.type + ": " + stop.message);
+            return false;
+        }
         ctx.node_results[node.id] = output_dataset_name;
         ctx.output_dataset = output_dataset_name;
         if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
@@ -6320,7 +6359,13 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     WarnIfDenseTextVectorizerMaterializationIsLarge(
         node.type, operator_parameters, input_table);
 
-    auto result = op->Apply(input_table);
+    arrow::Result<std::shared_ptr<arrow::Table>> result;
+    try {
+        result = op->Apply(input_table);
+    } catch (const OperatorMemoryLimitReached& stop) {
+        ReportError(node.type + ": " + stop.message);
+        return false;
+    }
     if (!result.ok()) {
         ReportError(node.type + ": operator execution failed: " +
                     result.status().ToString());

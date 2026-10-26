@@ -2,6 +2,7 @@
 // (TOFIX160 P2): a node's own results go, a name another kept node uses
 // stays, a Save output the user named stays, and ReleaseAll leaves only that.
 #include "core/data_registry.h"
+#include "core/data_budget.h"
 #include "core/pipeline_executor.h"
 
 #include <arrow/memory_pool.h>
@@ -200,6 +201,38 @@ int main() try {
         cyxwiz::DataRegistry::Instance().UnloadDataset(scaled);
         Check(!canvas.CurrentNodeResult(graph("true", "1"), 12), "an unloaded result is not current");
         canvas.ReleaseAll();
+        registry.ClearAllTabularDatasets();
+    }
+
+    // The runtime memory guard (TOFIX178 S0-e2): a step during which the
+    // process grows by the safe budget stops with the numbers. The probe
+    // reports 1 TB of growth after the step starts.
+    {
+        const std::string scale =
+            R"({"nodes":[{"id":21,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":22,"type":"StandardScaler","name":"Scale","parameters":{"columns":"value"}}],)"
+            R"("links":[{"start_node":21,"end_node":22}]})";
+        cyxwiz::PipelineExecutor guarded;
+        guarded.SetIngestionCacheRoot((work_dir / "ingestion_guard").string());
+        int reads = 0;
+        guarded.SetProcessMemoryProbe([&reads] {
+            cyxwiz::ProcessMemorySnapshot snapshot;
+            snapshot.detected = true;
+            snapshot.resident_bytes = (1ULL << 30) + (reads++ == 0 ? 0 : (1ULL << 40));
+            return snapshot;
+        });
+        const bool ran = guarded.ExecutePipeline(scale);
+        const std::string error = guarded.GetLastError();
+        Check(!ran && error.find("the memory guard stopped 'Scale'") != std::string::npos,
+              "the guard stops the step with its reason: " + error);
+        Check(error.find("Sample Rows") != std::string::npos, "the reason says what to do");
+        guarded.ReleaseAll();
+        cyxwiz::PipelineExecutor unguarded;
+        unguarded.SetIngestionCacheRoot((work_dir / "ingestion_guard").string());
+        Check(unguarded.ExecutePipeline(scale), "the same step runs when memory stays: " + unguarded.GetLastError());
+        unguarded.ReleaseAll();
         registry.ClearAllTabularDatasets();
     }
 
