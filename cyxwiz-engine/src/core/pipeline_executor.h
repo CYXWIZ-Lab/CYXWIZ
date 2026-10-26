@@ -206,6 +206,12 @@ public:
     // Node ID -> fitted model file of the last run (nodes with a Model output).
     const std::map<int, std::string>& ModelArtifacts() const { return last_model_artifacts_; }
 
+    // The table node `node_id` left in this executor's runs, when the node and
+    // everything upstream of it is unchanged in `pipeline_json` and the table is
+    // still loaded; nothing while a run executes or when it would run again.
+    // Runs nothing (TOFIX178 S0-d: training uses the canvas run's result).
+    std::optional<std::string> CurrentNodeResult(const std::string& pipeline_json, int node_id);
+
 private:
     struct InputLink {
         int node_id = -1;
@@ -239,6 +245,8 @@ private:
         std::map<int, std::string> pin_outputs; // output pin >= 1 -> dataset
         std::string model_artifact;
         std::string outcome;
+        // What the hash covered, so a dirty node can say which key changed.
+        std::map<std::string, std::string> parameters;
     };
     std::map<int, NodeRunCache> run_cache_;
     // Restores each unchanged node's hash and output from run_cache_ (when

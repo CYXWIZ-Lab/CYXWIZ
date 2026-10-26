@@ -115,7 +115,10 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     cyxwiz::MaterializationMemoryPolicy materialization_memory_policy = {},
     std::optional<cyxwiz::PipelineOperatorProgress>
         materialization_preflight_evidence = std::nullopt,
-    std::filesystem::path project_root = {});
+    std::filesystem::path project_root = {},
+    // The table the canvas runs already prepared for training (TOFIX178 S0-d);
+    // empty prepares the data from the Data Input.
+    std::string canvas_prepared_dataset = {});
 
 // True while a graph's training data is being prepared (before the run
 // starts).

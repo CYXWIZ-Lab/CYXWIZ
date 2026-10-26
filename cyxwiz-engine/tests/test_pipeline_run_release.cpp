@@ -172,6 +172,37 @@ int main() try {
         registry.ClearAllTabularDatasets();
     }
 
+    // Training reads the canvas run's result while it is current (TOFIX178
+    // S0-d): Data Input -> Standard Scaler -> Min-Max Scaler.
+    {
+        const auto graph = [&](const std::string& with_mean, const std::string& max) {
+            return std::string(R"({"nodes":[)"
+                               R"({"id":11,"type":"DataInput","name":"Input","parameters":{)"
+                               R"("source_type":"file","file_path":")") + JsonEscapePath(csv_path.string()) +
+                   R"(","type":"csv","has_header":"true"}},)"
+                   R"({"id":12,"type":"StandardScaler","name":"Scale","parameters":{"columns":"value","with_mean":")" +
+                   with_mean + R"(","with_std":"true"}},)"
+                   R"({"id":13,"type":"MinMaxScaler","name":"Range","parameters":{"columns":"value","min":"0","max":")" +
+                   max + R"("}}],"links":[{"start_node":11,"end_node":12},{"start_node":12,"end_node":13}]})";
+        };
+        cyxwiz::PipelineExecutor canvas;
+        canvas.SetIngestionCacheRoot((work_dir / "ingestion").string());
+        Check(!canvas.CurrentNodeResult(graph("true", "1"), 12), "nothing is current before a run");
+        Check(canvas.ExecutePipeline(graph("true", "1")), "the canvas run: " + canvas.GetLastError());
+        const std::string scaled = canvas.NodeResults().at(12);
+        const auto current = canvas.CurrentNodeResult(graph("true", "1"), 12);
+        Check(current && *current == scaled, "an unchanged step's result is current: " + scaled);
+        const auto downstream_edit = canvas.CurrentNodeResult(graph("true", "2"), 12);
+        Check(downstream_edit && *downstream_edit == scaled, "an edit after the step keeps it current");
+        Check(!canvas.CurrentNodeResult(graph("false", "1"), 12), "an edit of the step makes it stale");
+        Check(!canvas.CurrentNodeResult(graph("false", "1"), 13), "an edit before a step makes it stale");
+        Check(Held(scaled), "asking ran nothing and released nothing");
+        cyxwiz::DataRegistry::Instance().UnloadDataset(scaled);
+        Check(!canvas.CurrentNodeResult(graph("true", "1"), 12), "an unloaded result is not current");
+        canvas.ReleaseAll();
+        registry.ClearAllTabularDatasets();
+    }
+
     // Unload from memory frees a dataset from every map (TOFIX160 P6).
     const auto table = cyxwiz::DataRegistry::Instance().LoadCSVToArrow(big_csv.string(), "unload_me");
     Check(table != nullptr && Held("unload_me"), "a dataset is loaded to unload");

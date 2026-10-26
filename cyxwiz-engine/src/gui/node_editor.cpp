@@ -4509,6 +4509,15 @@ bool NodeEditor::ExecuteDataPipeline() {
     return SubmitDataPipelineJson(std::move(pipeline_json));
 }
 
+std::optional<std::string> NodeEditor::CurrentRunResult(int node_id) {
+    if (!pipeline_executor_ || pipeline_executor_->IsExecuting()) return std::nullopt;
+    nlohmann::json pipeline_json;
+    std::map<int, std::vector<int>> recipe_steps;  // the editor's own map stays as the last run left it
+    std::string error;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_steps, error)) return std::nullopt;
+    return pipeline_executor_->CurrentNodeResult(pipeline_json.dump(), node_id);
+}
+
 bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step) {
     if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
         spdlog::warn("Data transformation pipeline is already running (task ID: {})",

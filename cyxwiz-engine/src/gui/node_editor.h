@@ -376,6 +376,11 @@ public:
     using NodeSelectedCallback = std::function<void(const MLNode&)>;
     void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
 
+    // The table node `node_id` holds from the canvas runs when it and every step
+    // before it are unchanged since (TOFIX178 S0-d: training uses it instead of
+    // preparing the data again); nothing while a run executes.
+    std::optional<std::string> CurrentRunResult(int node_id);
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
     // Graph replacement admission is checked by all load/clear entry points.

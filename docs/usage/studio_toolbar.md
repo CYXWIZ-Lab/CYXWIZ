@@ -43,6 +43,18 @@ highlighted while shown); the node, link and selection counts.
   training..."), then trains. If one cannot be loaded, *Cannot Start
   Training* says why ("Could not load the data before training: ... file not
   found: ..."). HDF5 sources are still applied in their dialog.
+- On a training graph, **Execute Pipeline** runs the data steps (Data Input
+  and the preparation steps before the Data Split) and leaves the Split,
+  Loader, model, loss and optimizer to training.
+- **Train** after **Execute Pipeline** reads the table the run prepared; the
+  data steps do not run again. The Console says "training reads
+  'ds_operator_StandardScaler_5', prepared by the canvas run". This holds
+  while nothing up to the Split's Training Dataset input changed: editing
+  the model (a Dense layer's units) keeps it, editing a data step (Standard
+  Scaler's With Mean) or the Data Input prepares the data again. Graphs
+  whose steps write sparse output always prepare again. `show logs grep
+  "marked dirty"` in Console > Commands names the changed setting
+  ("Standard Scaler marked dirty (parameters changed: with_mean)").
 - **Compile** opens the compile report (below); so does **Train** when it
   cannot start.
 - While a graph trains (from the moment its data is being prepared), tests,

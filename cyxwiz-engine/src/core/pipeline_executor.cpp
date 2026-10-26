@@ -7288,6 +7288,30 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     return hash;
 }
 
+std::optional<std::string> PipelineExecutor::CurrentNodeResult(const std::string& pipeline_json, int node_id) {
+    if (executing_) return std::nullopt;
+    // The same steps a run starts with, without running anything.
+    std::vector<Node> nodes;
+    const std::string kept_error = Error();
+    const bool parsed = ParsePipeline(pipeline_json, nodes) && ResolveAutomaticPreprocessingStatePaths(nodes);
+    Error() = kept_error;
+    if (!parsed) {
+        spdlog::debug("[Pipeline] Node {}: no current result (the graph does not parse)", node_id);
+        return std::nullopt;
+    }
+    RestoreRunCache(nodes);
+    MarkDirtyNodes(nodes);
+    const Node* node = FindNodeById(nodes, node_id);
+    if (!node || node->needs_execution || node->cached_output_dataset.empty()) {
+        spdlog::debug("[Pipeline] Node {}: no current result ({})", node_id,
+                      !node ? "not in the graph"
+                      : node->needs_execution ? "it or a step before it changed or has not run"
+                                              : "no result kept");
+        return std::nullopt;
+    }
+    return node->cached_output_dataset;
+}
+
 void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
     auto& registry = DataRegistry::Instance();
     for (auto& node : nodes) {
@@ -7314,7 +7338,20 @@ void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
         if (current_hash != node.last_execution_hash) {
             node.needs_execution = true;
             node.last_execution_hash = current_hash;
-            spdlog::debug("[Pipeline] Node {} marked dirty (parameters changed)", node.name);
+            // Name what changed since the kept run: a key, or the wiring or a file.
+            std::string changed;
+            if (const auto cache = run_cache_.find(node.id); cache != run_cache_.end()) {
+                std::map<std::string, std::string> now(node.parameters.begin(), node.parameters.end());
+                for (const auto& [key, value] : now) {
+                    const auto was = cache->second.parameters.find(key);
+                    if (was == cache->second.parameters.end() || was->second != value) changed += (changed.empty() ? "" : ", ") + key;
+                }
+                for (const auto& [key, value] : cache->second.parameters)
+                    if (!now.count(key)) changed += (changed.empty() ? "" : ", ") + key + " (removed)";
+                if (changed.empty()) changed = "its inputs or a file it reads";
+            }
+            spdlog::debug("[Pipeline] Node {} marked dirty (parameters changed{}{})", node.name,
+                          changed.empty() ? "" : ": ", changed);
         } else {
             node.needs_execution = false;
             spdlog::debug("[Pipeline] Node {} cache valid", node.name);
@@ -7570,6 +7607,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                     NodeRunCache cache;
                     cache.hash = node->last_execution_hash;
                     cache.output = result_it->second;
+                    cache.parameters.insert(node->parameters.begin(), node->parameters.end());
                     for (const auto& [key, dataset] : result.ctx.node_pin_results)
                         if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
                     if (const auto model = result.ctx.model_artifacts.find(node_id);

@@ -647,7 +647,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     cyxwiz::MaterializationMemoryPolicy materialization_memory_policy,
     std::optional<cyxwiz::PipelineOperatorProgress>
         materialization_preflight_evidence,
-    std::filesystem::path project_root) {
+    std::filesystem::path project_root,
+    std::string canvas_prepared_dataset) {
 
     GraphTrainingLaunchResult result;
 
@@ -810,7 +811,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
              std::move(materialization_preflight_evidence),
          plot_panel,
          callback = std::move(node_editor_callback),
-         dispatch = std::move(dispatch)](cyxwiz::LambdaTask& task) mutable {
+         dispatch = std::move(dispatch),
+         canvas_dataset = std::move(canvas_prepared_dataset)](cyxwiz::LambdaTask& task) mutable {
             CYXWIZ_PROFILE_ZONE("CyxWiz Prepare Graph Training");
             const auto now = std::chrono::system_clock::now().time_since_epoch();
             const auto run_ms =
@@ -845,125 +847,147 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             std::string effective_dataset_name = dataset_name;
             std::string effective_label_column = label_column;
 
-            task.ReportProgress(0.15f, "Materializing graph preprocessing...");
-            PostPlotPanelUpdate(
-                plot_panel,
-                [](cyxwiz::TrainingPlotPanel& panel) {
-                    panel.SetPreparationState(
-                        true, "Materializing graph preprocessing...", 0.15f);
-                });
-            cyxwiz::MaterializeResult materialize_result;
-            {
-                CYXWIZ_PROFILE_ZONE("CyxWiz Pipeline Materialization");
-                cyxwiz::PipelineOperatorExecutionContext materialization_context;
-                materialization_context.memory.policy =
-                    materialization_memory_policy;
-                materialization_context.cancellation_requested =
-                    [&task]() { return task.ShouldStop(); };
-                materialize_result = cyxwiz::PipelineMaterializer::Materialize(
-                    nodes, links, registry, effective_dataset_name, cache_config,
-                    [&task, plot_panel](const cyxwiz::PipelineOperatorProgress& event) {
-                        const float task_progress =
-                            0.15f + 0.50f * std::clamp(event.progress, 0.0f, 1.0f);
-                        ReportMaterializationProgress(
-                            task, plot_panel, event, task_progress);
-                    },
-                    std::move(materialization_context));
-            }
-            ReportMaterializationCacheStatus(
-                task,
-                plot_panel,
-                materialize_result,
-                materialization_preflight_evidence);
-            ReportMaterializationCacheUsage(
-                plot_panel, cache_config, &materialize_result);
-            if (materialize_result.failure_kind ==
-                cyxwiz::MaterializationFailureKind::Cancelled) {
-                cyxwiz::TrainingTraceCollector::Instance().RecordTaskProgress(
-                    task.GetId(),
-                    task.GetName(),
-                    "Materialization cancelled",
-                    0.15f,
-                    materialize_result.error_message,
-                    "cancelled",
-                    materialize_result.failed_node_id,
-                    materialize_result.failed_node_name);
-                return;
-            }
-            if (!materialize_result.success) {
-                std::string reason = materialize_result.error_message;
-                const std::string prefix = "PipelineMaterializer: ";
-                if (reason.rfind(prefix, 0) == 0) {
-                    reason.erase(0, prefix.size());
-                }
-                throw std::runtime_error(
-                    "Data preparation failed for dataset '" +
-                    effective_dataset_name + "': " + reason);
-            }
-            PostPlotPanelUpdate(
-                plot_panel,
-                [output_dataset = materialize_result.effective_dataset_name.empty()
-                     ? effective_dataset_name
-                     : materialize_result.effective_dataset_name,
-                 operators_applied = materialize_result.operators_applied,
-                 status = MaterializationCacheStatusLabel(
-                     materialize_result.cache_status)](
-                    cyxwiz::TrainingPlotPanel& panel) {
-                    panel.SetMaterializationComplete(
-                        output_dataset, operators_applied, status);
-                });
-
-            if (materialize_result.skipped_unsupported_source) {
-                const std::string skip_reason =
-                    materialize_result.unsupported_source_reason.empty()
-                        ? "storage backend is unsupported"
-                        : materialize_result.unsupported_source_reason;
-                const int table_operators =
-                    cyxwiz::PipelineMaterializer::CountTableOperatorNodes(nodes);
-                if (table_operators > 0) {
-                    // Preprocessing nodes exist but were not run: say so.
-                    spdlog::warn("StartTrainingFromGraph: {} preprocessing node(s) "
-                                 "not applied to '{}' ({}): {}",
-                                 table_operators, effective_dataset_name,
-                                 cyxwiz::PipelineMaterializerSourceKindName(
-                                     materialize_result.source_kind),
-                                 skip_reason);
-                    PostPlotPanelUpdate(
-                        plot_panel,
-                        [table_operators, skip_reason](cyxwiz::TrainingPlotPanel& panel) {
-                            panel.SetMaterializationNotice(
-                                std::to_string(table_operators) +
-                                " preprocessing node(s) were not applied: " +
-                                skip_reason + ".");
-                        });
-                } else {
-                    spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
-                                 "({}): {}",
-                                 effective_dataset_name,
-                                 cyxwiz::PipelineMaterializerSourceKindName(
-                                     materialize_result.source_kind),
-                                 skip_reason);
-                }
-            }
-
-            if (materialize_result.operators_applied > 0) {
-                task.ReportProgress(0.65f, "Resolving materialized dataset...");
+            // The canvas run's table (TOFIX178 S0-d), while it is loaded: the
+            // data steps already ran on it, nothing is prepared again.
+            const bool use_canvas =
+                !canvas_dataset.empty() &&
+                (registry.GetArrowDataset(canvas_dataset) || registry.GetParquetBackedDataset(canvas_dataset));
+            if (use_canvas) {
+                spdlog::info("StartTrainingFromGraph: training reads '{}', prepared by the canvas run; "
+                             "the data steps do not run again", canvas_dataset);
+                task.ReportProgress(0.65f, "Using the data the canvas run prepared...");
                 PostPlotPanelUpdate(
                     plot_panel,
-                    [](cyxwiz::TrainingPlotPanel& panel) {
-                        panel.SetPreparationState(
-                            true, "Resolving materialized dataset...", 0.65f);
+                    [canvas_dataset](cyxwiz::TrainingPlotPanel& panel) {
+                        panel.SetMaterializationComplete(canvas_dataset, 0, "Prepared by the canvas run");
                     });
-                spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' "
-                             "({} Cat-1 ops)",
-                             effective_dataset_name,
-                             materialize_result.effective_dataset_name,
-                             materialize_result.operators_applied);
-                effective_dataset_name = materialize_result.effective_dataset_name;
+                effective_dataset_name = canvas_dataset;
                 effective_label_column = ResolveRuntimeArrowLabelColumn(
                     registry, effective_dataset_name, effective_label_column);
                 cyxwiz::ReconcileRuntimeDatasetTarget(
                     config, effective_label_column, effective_dataset_name);
+            } else {
+                task.ReportProgress(0.15f, "Materializing graph preprocessing...");
+                PostPlotPanelUpdate(
+                    plot_panel,
+                    [](cyxwiz::TrainingPlotPanel& panel) {
+                        panel.SetPreparationState(
+                            true, "Materializing graph preprocessing...", 0.15f);
+                    });
+                cyxwiz::MaterializeResult materialize_result;
+                {
+                    CYXWIZ_PROFILE_ZONE("CyxWiz Pipeline Materialization");
+                    cyxwiz::PipelineOperatorExecutionContext materialization_context;
+                    materialization_context.memory.policy =
+                        materialization_memory_policy;
+                    materialization_context.cancellation_requested =
+                        [&task]() { return task.ShouldStop(); };
+                    materialize_result = cyxwiz::PipelineMaterializer::Materialize(
+                        nodes, links, registry, effective_dataset_name, cache_config,
+                        [&task, plot_panel](const cyxwiz::PipelineOperatorProgress& event) {
+                            const float task_progress =
+                                0.15f + 0.50f * std::clamp(event.progress, 0.0f, 1.0f);
+                            ReportMaterializationProgress(
+                                task, plot_panel, event, task_progress);
+                        },
+                        std::move(materialization_context));
+                }
+                ReportMaterializationCacheStatus(
+                    task,
+                    plot_panel,
+                    materialize_result,
+                    materialization_preflight_evidence);
+                ReportMaterializationCacheUsage(
+                    plot_panel, cache_config, &materialize_result);
+                if (materialize_result.failure_kind ==
+                    cyxwiz::MaterializationFailureKind::Cancelled) {
+                    cyxwiz::TrainingTraceCollector::Instance().RecordTaskProgress(
+                        task.GetId(),
+                        task.GetName(),
+                        "Materialization cancelled",
+                        0.15f,
+                        materialize_result.error_message,
+                        "cancelled",
+                        materialize_result.failed_node_id,
+                        materialize_result.failed_node_name);
+                    return;
+                }
+                if (!materialize_result.success) {
+                    std::string reason = materialize_result.error_message;
+                    const std::string prefix = "PipelineMaterializer: ";
+                    if (reason.rfind(prefix, 0) == 0) {
+                        reason.erase(0, prefix.size());
+                    }
+                    throw std::runtime_error(
+                        "Data preparation failed for dataset '" +
+                        effective_dataset_name + "': " + reason);
+                }
+                PostPlotPanelUpdate(
+                    plot_panel,
+                    [output_dataset = materialize_result.effective_dataset_name.empty()
+                         ? effective_dataset_name
+                         : materialize_result.effective_dataset_name,
+                     operators_applied = materialize_result.operators_applied,
+                     status = MaterializationCacheStatusLabel(
+                         materialize_result.cache_status)](
+                        cyxwiz::TrainingPlotPanel& panel) {
+                        panel.SetMaterializationComplete(
+                            output_dataset, operators_applied, status);
+                    });
+
+                if (materialize_result.skipped_unsupported_source) {
+                    const std::string skip_reason =
+                        materialize_result.unsupported_source_reason.empty()
+                            ? "storage backend is unsupported"
+                            : materialize_result.unsupported_source_reason;
+                    const int table_operators =
+                        cyxwiz::PipelineMaterializer::CountTableOperatorNodes(nodes);
+                    if (table_operators > 0) {
+                        // Preprocessing nodes exist but were not run: say so.
+                        spdlog::warn("StartTrainingFromGraph: {} preprocessing node(s) "
+                                     "not applied to '{}' ({}): {}",
+                                     table_operators, effective_dataset_name,
+                                     cyxwiz::PipelineMaterializerSourceKindName(
+                                         materialize_result.source_kind),
+                                     skip_reason);
+                        PostPlotPanelUpdate(
+                            plot_panel,
+                            [table_operators, skip_reason](cyxwiz::TrainingPlotPanel& panel) {
+                                panel.SetMaterializationNotice(
+                                    std::to_string(table_operators) +
+                                    " preprocessing node(s) were not applied: " +
+                                    skip_reason + ".");
+                            });
+                    } else {
+                        spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
+                                     "({}): {}",
+                                     effective_dataset_name,
+                                     cyxwiz::PipelineMaterializerSourceKindName(
+                                         materialize_result.source_kind),
+                                     skip_reason);
+                    }
+                }
+
+                if (materialize_result.operators_applied > 0) {
+                    task.ReportProgress(0.65f, "Resolving materialized dataset...");
+                    PostPlotPanelUpdate(
+                        plot_panel,
+                        [](cyxwiz::TrainingPlotPanel& panel) {
+                            panel.SetPreparationState(
+                                true, "Resolving materialized dataset...", 0.65f);
+                        });
+                    spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' "
+                                 "({} Cat-1 ops)",
+                                 effective_dataset_name,
+                                 materialize_result.effective_dataset_name,
+                                 materialize_result.operators_applied);
+                    effective_dataset_name = materialize_result.effective_dataset_name;
+                    effective_label_column = ResolveRuntimeArrowLabelColumn(
+                        registry, effective_dataset_name, effective_label_column);
+                    cyxwiz::ReconcileRuntimeDatasetTarget(
+                        config, effective_label_column, effective_dataset_name);
+                }
+
             }
 
             ReconcileRuntimeTabularFeatureWidth(

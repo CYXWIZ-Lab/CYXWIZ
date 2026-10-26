@@ -3836,6 +3836,57 @@ std::string MainWindow::FoldsBlocker() const {
     };
 }
 
+namespace {
+
+// The table the canvas runs already prepared for training (TOFIX178 S0-d): the
+// result of the node wired into the Data Split (the Data Loader without one),
+// when it and every step before it are unchanged since. Empty when the data
+// must be prepared: no such result, a sparse feature output (the canvas run
+// keeps tables only) or a requested rebuild.
+std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
+                                        const std::vector<NodeLink>& links) {
+    if (!editor || IsGraphMaterializationRebuildRequested()) return {};
+    for (const auto& node : nodes) {
+        const auto format = node.parameters.find("output_format");
+        if (format != node.parameters.end() && format->second == "sparse") return {};
+    }
+    const auto find = [&](int id) -> const MLNode* {
+        for (const auto& node : nodes)
+            if (node.id == id) return &node;
+        return nullptr;
+    };
+    const auto pin_index = [](const std::vector<NodePin>& pins, int pin_id) {
+        for (size_t i = 0; i < pins.size(); ++i)
+            if (pins[i].id == pin_id) return static_cast<int>(i);
+        return -1;
+    };
+    // The Training Dataset input (the first; a Data Split can also take
+    // Validation and Test datasets from their own Data Inputs, which training
+    // reads as before), fed from its source's main result (output 0).
+    const auto entry_of = [&](NodeType type) -> int {
+        for (const auto& node : nodes) {
+            if (node.type != type) continue;
+            for (const auto& link : links) {
+                if (link.to_node != node.id || pin_index(node.inputs, link.to_pin) != 0) continue;
+                const MLNode* source = find(link.from_node);
+                return source && pin_index(source->outputs, link.from_pin) == 0 ? link.from_node : -1;
+            }
+        }
+        return -1;
+    };
+    int feeder = entry_of(NodeType::DataSplit);
+    if (feeder < 0) feeder = entry_of(NodeType::DataLoader);
+    if (feeder < 0) {
+        spdlog::debug("StartTrainingFromGraph: no step feeds the Training Dataset input from its main output");
+        return {};
+    }
+    std::string result = editor->CurrentRunResult(feeder).value_or(std::string());
+    spdlog::debug("StartTrainingFromGraph: canvas result of node {}: '{}'", feeder, result);
+    return result;
+}
+
+}  // namespace
+
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
     // A launch Results > Cross-validation / Learning curve marked: Train's own
     // checks and preparation, then its own dispatch. A stop on the way ends it
@@ -3961,14 +4012,21 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
         materialization_memory_policy.hard_limit_bytes = cyxwiz::DataBudgetBytes();
 
+        // The canvas already prepared this data: training reads that table and
+        // prepares nothing, so it needs no memory plan for a preparation either.
+        const std::string canvas_dataset = CanvasPreparedTrainingInput(node_editor_.get(), nodes, links);
         cyxwiz::MaterializationMemoryContext preflight_memory_context;
         preflight_memory_context.policy = materialization_memory_policy;
-        spdlog::info(
-            "StartTrainingFromGraph: preparing materialization memory plan");
-        const auto memory_preflight = PreflightGraphMaterialization(
-            nodes, links, config, registry,
-            std::move(preflight_memory_context),
-            cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        GraphMaterializationPreflightResult memory_preflight;
+        if (canvas_dataset.empty()) {
+            spdlog::info("StartTrainingFromGraph: preparing materialization memory plan");
+            memory_preflight = PreflightGraphMaterialization(
+                nodes, links, config, registry,
+                std::move(preflight_memory_context),
+                cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        } else {
+            spdlog::info("StartTrainingFromGraph: the canvas run already prepared '{}'", canvas_dataset);
+        }
         if (memory_preflight.cache_hit) {
             spdlog::info("StartTrainingFromGraph: {}",
                          memory_preflight.status_detail);
@@ -4063,7 +4121,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             memory_preflight.estimate_available
                 ? std::make_optional(memory_preflight.evidence)
                 : std::nullopt,
-            cyxwiz::ProjectManager::Instance().GetProjectRoot());
+            cyxwiz::ProjectManager::Instance().GetProjectRoot(),
+            canvas_dataset);
 
         if (launch_result.started && folds) {
             folds_launch_.reset();  // the preparation runs; its task reports into the view
