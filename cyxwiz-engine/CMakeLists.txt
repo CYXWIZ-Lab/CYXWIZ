@@ -4415,6 +4415,17 @@ if(WIN32)
 endif()
 set_target_properties(cyxwiz-bench-out-of-core PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# Training data-path benchmark (TOFIX178 S0-a): batch preparation vs the model step.
+add_executable(cyxwiz-bench-training-data tests/tool_bench_training_data.cpp)
+target_include_directories(cyxwiz-bench-training-data PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(cyxwiz-bench-training-data PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(cyxwiz-bench-training-data PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(cyxwiz-bench-training-data PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Properties AS COMPILED card (TOFIX123) =====
 add_executable(test_compiled_node_presentation
     tests/test_compiled_node_presentation.cpp
