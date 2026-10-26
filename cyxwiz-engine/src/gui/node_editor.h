@@ -384,6 +384,10 @@ public:
     // loaded: Train reads it after running the steps itself (TOFIX178 S0-e;
     // a step that writes a file always runs, so its result is never current).
     std::optional<std::string> LastRunResult(int node_id) const;
+    // The columns of the table reaching `node_id`'s first input: the last
+    // run's result of the step feeding it, or the Data Input's loaded table
+    // when one is wired directly. Empty when neither is known yet.
+    std::vector<std::string> InputColumns(int node_id) const;
 
     // Check if graph is ready for training
     bool IsGraphValid() const;

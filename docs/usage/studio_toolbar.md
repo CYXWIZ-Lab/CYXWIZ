@@ -76,10 +76,14 @@ highlighted while shown); the node, link and selection counts.
 - The label column must be in the steps' result. When a SQL step drops or
   renames it, training stops before it starts: "The label column 'class' is
   not in the data the steps before the Data Split made (columns: f0, ...,
-  f7, species)". A renamed label is found when its new name is a common one
-  (label, target, class, y). A label set in the graph file that only the
-  steps make compiles with a warning ("... the steps before the Data Split
-  must make it (checked when they run)").
+  f7, species)". When a step makes or renames the label, pick it in the
+  Data Split's **Label Column** (Properties): after **Execute Pipeline** it
+  lists the columns reaching the Split, and "(the Data Input's label)"
+  keeps the Data Input's. Before a run it is a text field. The compile
+  report then warns "Label column 'species' is not in 'blobs'; the steps
+  before the Data Split must make it (checked when they run)", and training
+  uses it: "TabularLoader: Starting Arrow training: dataset=ds_sql_5, ...
+  label=species".
 - Not yet: these steps on a supplied Validation or Test dataset ("Test
   dataset steps such as SQL or Text Clean are not applied by training yet;
   connect its Data Input directly"), and Sparse output from a vectorizer after

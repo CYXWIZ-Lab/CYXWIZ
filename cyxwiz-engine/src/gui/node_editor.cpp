@@ -4518,6 +4518,30 @@ std::optional<std::string> NodeEditor::CurrentRunResult(int node_id) {
     return pipeline_executor_->CurrentNodeResult(pipeline_json.dump(), node_id);
 }
 
+std::vector<std::string> NodeEditor::InputColumns(int node_id) const {
+    const MLNode* node = FindNodeById(node_id);
+    if (!node || node->inputs.empty()) return {};
+    const MLNode* feeder = nullptr;
+    for (const auto& link : links_)
+        if (link.to_node == node_id && link.to_pin == node->inputs.front().id) feeder = FindNodeById(link.from_node);
+    if (!feeder) return {};
+    std::string dataset;
+    if (feeder->type == NodeType::DataInput || feeder->type == NodeType::DatasetInput) {
+        const auto name = feeder->parameters.find("dataset_name");
+        if (name != feeder->parameters.end()) dataset = name->second;
+    } else if (const auto result = LastRunResult(feeder->id)) {
+        dataset = *result;
+    }
+    std::shared_ptr<arrow::Schema> schema;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(dataset)) schema = memory->GetSchema();
+    else if (const auto disk = registry.GetParquetBackedDataset(dataset)) schema = disk->GetSchema();
+    std::vector<std::string> columns;
+    if (schema)
+        for (const auto& field : schema->fields()) columns.push_back(field->name());
+    return columns;
+}
+
 std::optional<std::string> NodeEditor::LastRunResult(int node_id) const {
     if (!pipeline_executor_ || pipeline_executor_->IsExecuting()) return std::nullopt;
     const auto& results = pipeline_executor_->NodeResults();

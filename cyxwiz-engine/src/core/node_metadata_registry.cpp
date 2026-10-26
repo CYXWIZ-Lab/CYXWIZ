@@ -1285,7 +1285,8 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"val_ratio", "float", "0.1", "Validation fraction", {}, "0-1", "", "Split", false, false},
          {"test_ratio", "float", "0.1", "Held-out test fraction", {}, "0-1", "", "Split", false, false},
          {"stratified", "bool", "true", "Preserve class proportions when labels allow it", {}, "", "", "Split", false, false},
-         {"seed", "int", "42", "Deterministic split seed", {}, "0-2147483647", "", "Split", false, false}},
+         {"seed", "int", "42", "Deterministic split seed", {}, "0-2147483647", "", "Split", false, false},
+         {"label_column", "column", "", "Label column of the data reaching the Training Dataset input; empty uses the Data Input's label. Set it when a step before the Split makes or renames the label", {}, "", "", "Split", false, false}},
         NodeImplementationStatus::Implemented, 0});
     RegisterNode({NodeType::DeployToNodeEditorNode, NodeCategory::DataSources, "Deploy to Node Editor", ICON_FA_FILE_EXPORT,
         {"deploy", "node", "editor", "handoff", "dataset"}, 0, false,

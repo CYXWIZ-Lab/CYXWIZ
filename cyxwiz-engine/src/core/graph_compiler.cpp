@@ -4724,9 +4724,17 @@ TrainingConfiguration GraphCompiler::Compile(
             ? cat_it_lbl->second : std::string();
         const bool labels_from_structure = GraphCategoryLabelsFromStructure(cat_str);
 
-        const std::string requested_label_col = dataset_node->parameters.count("label_column")
+        std::string requested_label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
+        // The Data Split's Label column wins (TOFIX178 S0-e): steps before the
+        // Split can make or rename the label.
+        if (const gui::MLNode* label_split =
+                FindFirstReachableNodeOfType(nodes, dataset_reachable, gui::NodeType::DataSplit)) {
+            const auto split_label = label_split->parameters.find("label_column");
+            if (split_label != label_split->parameters.end() && !TrimAscii(split_label->second).empty())
+                requested_label_col = TrimAscii(split_label->second);
+        }
 
         std::shared_ptr<arrow::Schema> tabular_schema;
         if (auto arrow_dataset = GraphArrowDataset(config.dataset_name)) {

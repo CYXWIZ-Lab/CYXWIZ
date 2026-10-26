@@ -198,6 +198,17 @@ void CheckLabelMadeBySteps(const gui::MLNode& source,
           "the missing source label is a warning naming who must make it");
     Check(config.dataset_roles.train.label_column == "species" && config.target.primary_column == "species",
           "training looks for the requested label on the steps' result");
+    // The Data Split's Label column wins over the Data Input's.
+    auto source_label = labelled;
+    source_label.parameters["label_column"] = "class";
+    nodes = {source_label};
+    nodes.insert(nodes.end(), steps_to_model.begin(), steps_to_model.end());
+    for (auto& node : nodes)
+        if (node.type == gui::NodeType::DataSplit) node.parameters["label_column"] = "species";
+    config = compiler.Compile(nodes, run_links, true);
+    Check(config.is_valid && config.dataset_roles.train.label_column == "species",
+          "the Split's label column is the label: " + config.dataset_roles.train.label_column);
+
     nodes = {labelled};
     nodes.insert(nodes.end(), plain_to_model.begin(), plain_to_model.end());
     config = compiler.Compile(nodes, plain_links, true);

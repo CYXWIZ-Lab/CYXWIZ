@@ -734,6 +734,36 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
             }
             ImGui::EndCombo();
         }
+    } else if (param.type == "column") {
+        // A column of the data reaching the node (TOFIX178 S0-e); empty keeps
+        // the Data Input's label.
+        const auto columns = node_editor_ ? node_editor_->InputColumns(node.id) : std::vector<std::string>{};
+        constexpr const char* kSourceLabel = "(the Data Input's label)";
+        ImGui::SetNextItemWidth(editor_width);
+        if (!columns.empty()) {
+            if (ImGui::BeginCombo("##value", value.empty() ? kSourceLabel : value.c_str())) {
+                if (ImGui::Selectable(kSourceLabel, value.empty())) {
+                    value.clear();
+                    changed = true;
+                }
+                for (const auto& column : columns) {
+                    if (ImGui::Selectable(column.c_str(), column == value)) {
+                        value = column;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            char buf[256];
+            std::strncpy(buf, value.c_str(), sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputTextWithHint("##value", kSourceLabel, buf, sizeof(buf))) {
+                value = buf;
+                changed = true;
+            }
+            cyxwiz::ui::Tooltip("Execute Pipeline lists the columns the steps before this node make");
+        }
     } else if (param.type == "file" || param.type == "directory" || param.type == "folder") {
         const bool folder = param.type != "file";
         char buf[512];

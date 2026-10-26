@@ -77,6 +77,7 @@ const cyxwiz::SupportAxisDefinition* FindSupportAxis(
 bool IsSupportedParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",
+        "column",
         "directory",
         "dropdown",
         "enum",

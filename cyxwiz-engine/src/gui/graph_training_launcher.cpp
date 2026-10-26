@@ -688,14 +688,21 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         return result;
     }
 
-    std::string label_column = FindLabelColumn(
-        nodes, dataset_name, config.data_source_node_id);
-    label_column = ResolveRuntimeArrowLabelColumn(
-        registry, dataset_name, label_column);
-    cyxwiz::ReconcileRuntimeDatasetTarget(config, label_column, dataset_name);
+    // The compiled label (the Data Split's Label column, else the Data
+    // Input's). Steps before the Split may make it: then it is resolved on
+    // their result, not on the source (TOFIX178 S0-e).
+    std::string label_column = !config.dataset_roles.train.label_column.empty()
+        ? config.dataset_roles.train.label_column
+        : FindLabelColumn(nodes, dataset_name, config.data_source_node_id);
+    if (!config.training_data_needs_pipeline_run) {
+        label_column = ResolveRuntimeArrowLabelColumn(
+            registry, dataset_name, label_column);
+        cyxwiz::ReconcileRuntimeDatasetTarget(config, label_column, dataset_name);
+    }
     // With preprocessing nodes the input width is known only after the data
     // is prepared (reconciled again then), so skip the raw-schema width.
-    if (cyxwiz::PipelineMaterializer::CountTableOperatorNodes(nodes) == 0) {
+    if (cyxwiz::PipelineMaterializer::CountTableOperatorNodes(nodes) == 0 &&
+        !config.training_data_needs_pipeline_run) {
         ReconcileRuntimeTabularFeatureWidth(
             registry, dataset_name, label_column, config);
     }
