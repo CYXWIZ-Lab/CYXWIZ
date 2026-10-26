@@ -459,6 +459,7 @@ MaterializationCacheability PipelineMaterializer::EvaluateCacheability(
     std::unordered_set<int> visited;
     queue.push(data_input->id);
     visited.insert(data_input->id);
+    result.key_nodes.push_back(*data_input);
     while (!queue.empty()) {
         const int node_id = queue.front();
         queue.pop();
@@ -479,6 +480,14 @@ MaterializationCacheability PipelineMaterializer::EvaluateCacheability(
             }
             std::string error;
             const auto parameters = BuildOperatorParams(*node, nodes, links);
+            // In the key as the materializer applies it: this order, these
+            // resolved parameters (text settings folded in from config nodes).
+            gui::MLNode keyed;
+            keyed.id = node->id;
+            keyed.type = node->type;
+            keyed.parameters = parameters;
+            keyed.parameters["__apply_order"] = std::to_string(result.key_nodes.size());
+            result.key_nodes.push_back(std::move(keyed));
             if (!op->Configure(parameters, error)) {
                 result.cacheable = false;
                 result.reason = "node '" + node->name +

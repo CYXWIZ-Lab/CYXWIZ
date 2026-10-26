@@ -610,6 +610,44 @@ int main() {
                   std::string::npos,
           "sparse output must fail closed when another materializer follows");
 
+    // The key covers what the prepared data depends on (TOFIX178 S0-c): the
+    // Data Input and the operators applied. Editing the model, the Split or the
+    // loss keeps the prepared data; editing an operator does not.
+    {
+        const auto node = [](int id, gui::NodeType type, std::map<std::string, std::string> parameters) {
+            gui::MLNode n;
+            n.id = id;
+            n.type = type;
+            n.name = "n" + std::to_string(id);
+            n.parameters = std::move(parameters);
+            return n;
+        };
+        auto graph = nodes;
+        graph.push_back(node(3, gui::NodeType::DataSplit, {{"train_ratio", "0.8"}, {"val_ratio", "0.1"}}));
+        graph.push_back(node(4, gui::NodeType::Dense, {{"units", "64"}}));
+        auto graph_links = links;
+        graph_links.push_back({20, 2, 0, 3, 0, gui::LinkType::TensorFlow});
+        graph_links.push_back({21, 3, 0, 4, 0, gui::LinkType::TensorFlow});
+        const auto key_of = [&](const std::vector<gui::MLNode>& g) {
+            return cyxwiz::PipelineMaterializer::ProbeCache(g, graph_links, registry, kDatasetName, cache_config)
+                .cache_key;
+        };
+        const std::string base = key_of(graph);
+        Check(!base.empty(), "the probe names a cache key");
+        auto model_edit = graph;
+        model_edit[3].parameters["units"] = "128";
+        Check(key_of(model_edit) == base, "a model layer edit keeps the prepared data's key");
+        auto split_edit = graph;
+        split_edit[2].parameters["train_ratio"] = "0.7";
+        Check(key_of(split_edit) == base, "a Data Split edit keeps the prepared data's key");
+        auto renamed = graph;
+        renamed[1].name = "Tokenizer renamed";
+        Check(key_of(renamed) == base, "a renamed step keeps the key");
+        auto operator_edit = graph;
+        operator_edit[1] = MakeTokenizerNode("7");
+        Check(key_of(operator_edit) != base, "an operator edit changes the key");
+    }
+
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(materialized_name);
     std::filesystem::remove_all(cache_root);

@@ -132,6 +132,11 @@ struct MaterializationCacheability {
     bool valid = true;
     std::string reason;
     std::vector<MaterializationCacheDependencyIdentity> dependencies;
+    // What the prepared data depends on, for the cache key (TOFIX178 S0-c): the
+    // Data Input and the operators applied, in order ("__apply_order"), each with
+    // its resolved parameters. Model layers, the Split, the Loader and the loss
+    // do not change the prepared data, so editing them keeps the cache entry.
+    std::vector<gui::MLNode> key_nodes;
 };
 
 /**

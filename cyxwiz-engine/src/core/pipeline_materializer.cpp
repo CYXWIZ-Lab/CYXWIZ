@@ -453,7 +453,7 @@ MaterializationCacheProbe PipelineMaterializer::ProbeCache(
     const std::string schema_fingerprint =
         ComputeSchemaFingerprint(source_table->schema());
     probe.cache_key = ComputeMaterializationCacheKey(BuildCacheKeyInput(
-        nodes, links, source_dataset_name, schema_fingerprint,
+        cacheability.key_nodes, {}, source_dataset_name, schema_fingerprint,
         cacheability.dependencies, source_table));
     MaterializationCacheManifest manifest;
     if (!ReadMaterializationCacheManifest(
@@ -666,7 +666,7 @@ MaterializeResult PipelineMaterializer::Materialize(
                          "Looking for prepared data from an earlier run...",
                          0.0f);
         result.cache_key = ComputeMaterializationCacheKey(BuildCacheKeyInput(
-            nodes, links, source_dataset_name, source_schema_fingerprint,
+            cacheability.key_nodes, {}, source_dataset_name, source_schema_fingerprint,
             cacheability.dependencies, source_table));
         const auto manifest_path =
             MaterializationCacheManifestPath(cache_config, result.cache_key);
