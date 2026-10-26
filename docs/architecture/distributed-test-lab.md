@@ -13,11 +13,14 @@ the plan; it does not change the plan.
 | Mac | macOS 15.7 (Intel) | 192.168.1.159 | Server node (training) | ssh `mac-intel` (set up) |
 | HP (Fedora) | Fedora Linux | 192.168.1.216 | Central server (the server side), plus a CyxCloud storage node with 20 GB | ssh not set up yet |
 | Lenovo | Windows | 192.168.1.246 | CyxCloud storage node and server node (training) | ssh not set up yet |
+| HP (Arch) | Arch Linux | 192.168.1.180 | CyxCloud storage node (1 TB disk, 700 GB offered) and server node (training) | ssh `hp-linux` (set up) |
 
 Hardware facts known so far: the Dev PC has an Intel Core i7-8750H (6 cores,
 12 threads), 48 GB RAM and a GeForce GTX 1050 Ti (4 GB); the Dell has Intel
 Iris Xe graphics (oneAPI / OpenCL); the Mac has Intel Iris Pro graphics. The
-HP (Fedora) and the Lenovo are recorded when they are first reached.
+HP (Arch) has an Intel Core i7-2620M (2 cores, 4 threads), 7.7 GB RAM and
+no discrete GPU (trains on the CPU through ArrayFire's CPU backend). The HP
+(Fedora) and the Lenovo are recorded when they are first reached.
 
 ## What runs where
 
@@ -31,7 +34,7 @@ HP (Fedora) and the Lenovo are recorded when they are first reached.
         │ reservations, jobs                 │ shards
         ▼                                    ▼
   server nodes (training)            CyxCloud storage nodes
-  Dell · Mac · Lenovo                HP (Fedora, 20 GB) · Lenovo
+  Dell · Mac · Lenovo · HP (Arch)    HP (Arch, 700 GB) · HP (Fedora, 20 GB) · Lenovo
 ```
 
 - **Engine to server side.** The Engine and the `cyxcloud` CLI point at the
@@ -41,11 +44,13 @@ HP (Fedora) and the Lenovo are recorded when they are first reached.
   sign-in 3002, central 50051).
 - **Training.** The Engine reserves a server node through the central server
   and sends the job to it peer to peer (Dell, Mac, Lenovo; several at once is
-  TOFIX166). Datasets stream to the node from CyxCloud (TOFIX164).
+  TOFIX166; candidates Dell, Mac, Lenovo, HP Arch). Datasets stream to the
+  node from CyxCloud (TOFIX164).
 - **Storage.** CyxCloud spreads each chunk's 14 shards over the storage nodes
-  (HP Fedora and Lenovo). With two storage nodes a lost node makes files
-  unreadable (7 lost shards, 4 parity); four or more are needed before a node
-  loss is survivable (TOFIX176).
+  (HP Arch, HP Fedora, Lenovo). With three nodes each holds 4 or 5 shards of
+  a chunk, so losing one can exceed the 4 parity shards; four or more nodes
+  are needed before any node loss is survivable (TOFIX176). The Dev PC's
+  storage node makes the fourth while testing.
 - **Dev PC.** Keeps running the whole stack locally for development
   (`deploy/local`), and its own storage node, until the HP (Fedora) takes the
   server side over.
@@ -69,6 +74,9 @@ HP (Fedora) and the Lenovo are recorded when they are first reached.
   on 2026-10-26 (switched off?).
 - HP (Fedora) and Lenovo: new; ssh to be set up, then a machine inventory
   (CPU, GPU, RAM, disk).
-- The earlier HP on Arch Linux (192.168.1.180, 1 TB disk, storage node set up
-  2026-10-22) did not answer on 2026-10-26 either; its place in the lab is
-  being confirmed with the owner.
+- HP (Arch): storage node built and registered on 2026-10-22 (700 GB offer,
+  node key since P2); confirmed in the lab by the owner on 2026-10-26 as a
+  storage node and a server node. It did not answer on 2026-10-26 (off?);
+  its storage node config still points at the Dev PC's old address (.116)
+  and moves to the HP (Fedora) once the server side runs there. The server
+  node (cyxwiz-server-node) needs a Linux build first (TOFIX163 D1).
