@@ -1481,12 +1481,9 @@ int main(int argc, char** argv) {
     auto sparse_preflight = gui::PreflightGraphMaterialization(
         sparse_nodes, sparse_links, sparse_config, registry, {},
         work_dir / "empty_prepared_data_cache");
-    // Known gap: EstimateFirstStepMemory runs the step's Apply, which a
-    // sparse-output vectorizer refuses before estimating (it needs
-    // ApplySparse), so no pre-start estimate is published for it. Restore
-    // `sparse_preflight.estimate_available` here when fixed.
-    Check(sparse_preflight.checked && !sparse_preflight.blocked,
-          "the sparse vectorizer's pre-start check does not block the launch");
+    Check(sparse_preflight.checked && !sparse_preflight.blocked && sparse_preflight.estimate_available,
+          "the sparse vectorizer publishes its pre-start estimate (from its sparse path): " +
+              sparse_preflight.status_detail);
 
     std::atomic<bool> sparse_dispatch_finished{false};
     auto sparse_dispatch = [&](

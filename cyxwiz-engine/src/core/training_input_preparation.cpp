@@ -4,9 +4,12 @@
 #include "materialization_memory_guard.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
+#include "sparse_feature_dataset.h"
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <set>
 
 namespace cyxwiz {
@@ -73,9 +76,20 @@ StepMemoryEstimate EstimateFirstStepMemory(const std::vector<gui::MLNode>& nodes
             SaturatingScaleBytes(snapshot.available_bytes, memory_context.policy.blocked_fraction);
         throw EstimatePublished{};
     });
+    // A vectorizer set to Sparse publishes from its sparse path (Apply refuses
+    // that setting). A step that fails before its estimate says why (a
+    // missing fitted state, a bad column), instead of "no estimate".
+    std::string format = first->parameters.count("output_format") ? first->parameters.at("output_format") : "";
+    std::transform(format.begin(), format.end(), format.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     try {
-        (void)op->Apply(source_table);
+        const arrow::Status status = format == "sparse" && op->SupportsSparseFeatureOutput()
+                                         ? op->ApplySparse(source_table, "memory_estimate").status()
+                                         : op->Apply(source_table).status();
+        if (!status.ok() && !out.available) out.error = "'" + first->name + "': " + status.message();
     } catch (const EstimatePublished&) {
+    } catch (const std::exception& error) {
+        out.error = "'" + first->name + "': " + error.what();
     }
     return out;
 }

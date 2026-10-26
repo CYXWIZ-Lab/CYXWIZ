@@ -454,9 +454,10 @@ void TestFirstStepMemoryEstimate() {
         (std::filesystem::temp_directory_path() / "cyxwiz_absent_parent" / "fitted.cyxstate.json").string();
     try {
         const auto missing = cyxwiz::EstimateFirstStepMemory(missing_state, links, 472, source_table, {});
-        // The step's Apply fails before it estimates: no estimate (and, today,
-        // no error either - the run itself reports the missing file).
-        Check(!missing.available, "a step that cannot load its fitted state publishes no estimate");
+        // The step fails before it estimates: no estimate, and its reason
+        // (the missing state file) instead of "no estimate required".
+        Check(!missing.available && !missing.error.empty(),
+              "a step that cannot load its fitted state says why: " + missing.error);
     } catch (const std::exception& e) {
         Check(false, std::string("a missing fitted state must not throw out of the estimate: ") + e.what());
     }
