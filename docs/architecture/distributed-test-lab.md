@@ -43,9 +43,8 @@ no discrete GPU (trains on the CPU through ArrayFire's CPU backend). The HP
   three services on their own ports (gateway HTTP 8180, gateway gRPC 50060,
   sign-in 3002, central 50051).
 - **Training.** The Engine reserves a server node through the central server
-  and sends the job to it peer to peer (Dell, Mac, Lenovo; several at once is
-  TOFIX166; candidates Dell, Mac, Lenovo, HP Arch). Datasets stream to the
-  node from CyxCloud (TOFIX164).
+  and sends the job to it peer to peer (Dell, Mac, Lenovo or HP Arch; several
+  at once is TOFIX166). Datasets stream to the node from CyxCloud (TOFIX164).
 - **Storage.** CyxCloud spreads each chunk's 14 shards over the storage nodes
   (HP Arch, HP Fedora, Lenovo). With three nodes each holds 4 or 5 shards of
   a chunk, so losing one can exceed the 4 parity shards; four or more nodes
