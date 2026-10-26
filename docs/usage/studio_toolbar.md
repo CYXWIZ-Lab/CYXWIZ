@@ -67,8 +67,12 @@ highlighted while shown); the node, link and selection counts.
   nodes, and also SQL Query, Text Clean, Fill Missing, Select Columns, Filter
   Rows, Data Convert, Remove Duplicates, Sort, Rename, Join, Math Formula,
   String Manipulation, Sample Rows, Binning and Polynomial Features. A Data
-  Input wired straight to the Split runs nothing. Graphs with a sparse
-  vectorizer output and image paths are still prepared by training itself.
+  Input wired straight to the Split runs nothing. A Count / TF-IDF
+  vectorizer set to Sparse output makes sparse features in the run
+  ("Registered sparse feature dataset 'ds_operator_TFIDFVectorizer_5':
+  rows=3000 features=10"), and training batches them as sparse; they are
+  kept on disk for the next session like a table. Image paths are still
+  prepared by training itself.
 - A step whose run makes the Engine grow past the safe memory budget (the
   data budget, at most 90% of free memory) stops: "the memory guard stopped
   'Scale': the Engine grew by ... while it ran, the limit is 13.9 GB. Use
@@ -86,8 +90,7 @@ highlighted while shown); the node, link and selection counts.
   label=species".
 - Not yet: these steps on a supplied Validation or Test dataset ("Test
   dataset steps such as SQL or Text Clean are not applied by training yet;
-  connect its Data Input directly"), and Sparse output from a vectorizer after
-  one of them (set its Output format to Dense).
+  connect its Data Input directly").
 - **Compile** opens the compile report (below); so does **Train** when it
   cannot start.
 - While a graph trains (from the moment its data is being prepared), tests,

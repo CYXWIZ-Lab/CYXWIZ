@@ -661,15 +661,6 @@ void ValidateSparseFeatureTrainingContract(
     if (sparse_vectorizers.empty()) return;
 
     const auto* vectorizer = sparse_vectorizers.front();
-    if (config.training_data_needs_pipeline_run) {
-        // The pipeline run keeps tables only (sparse output there: TOFIX178 S0-f).
-        AddIssue(config, IssueLevel::Error,
-                 "Sparse output from node '" + vectorizer->name +
-                     "' cannot follow SQL, Text Clean or another pipeline-run step yet; "
-                     "set its Output format to Dense",
-                 vectorizer->id, vectorizer->name,
-                 errors::Compiler::UnsupportedTrainingNode);
-    }
     const size_t sparse_width = ParsePositiveSizeParam(
         *vectorizer, "max_features", 2000);
     config.text_preprocessing.max_length = static_cast<int>(sparse_width);
@@ -763,8 +754,7 @@ void SuggestSparseFeatureOutput(
     const std::unordered_set<int>& training_path_ids,
     const std::vector<int>& sorted_ids) {
     constexpr size_t kSuggestSparseFromWidth = 1000;
-    if (config.training_data_needs_pipeline_run ||
-        config.sequence_batch.enabled || config.is_time_series ||
+    if (config.sequence_batch.enabled || config.is_time_series ||
         config.dataset_roles.dev.IsSupplied() ||
         config.dataset_roles.test.IsSupplied()) {
         return;

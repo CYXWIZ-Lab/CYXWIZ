@@ -25,9 +25,6 @@ namespace cyxwiz {
 
 namespace {
 
-constexpr const char* kSparseCacheArtifactFormat =
-    "sparse_csr_arrow_ipc_v1";
-
 PipelineStorageBackend ToStorageBackend(PipelineMaterializerSourceKind kind) {
     switch (kind) {
     case PipelineMaterializerSourceKind::ArrowTable:
@@ -118,13 +115,6 @@ bool GraphRequestsSparseFeatureMaterialization(
         }
     }
     return false;
-}
-
-std::filesystem::path SparseCacheArtifactPath(
-    const MaterializationCacheConfig& config,
-    const std::string& cache_key) {
-    return MaterializationCacheEntryDirectory(config, cache_key) /
-           "data.csr.arrow";
 }
 
 std::string FindNodeParameter(const gui::MLNode& node,

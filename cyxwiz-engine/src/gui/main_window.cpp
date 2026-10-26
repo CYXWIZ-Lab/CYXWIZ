@@ -3935,23 +3935,13 @@ int TrainingInputFeeder(const std::vector<MLNode>& nodes, const std::vector<Node
     return feeder >= 0 ? feeder : entry_of(NodeType::DataLoader);
 }
 
-// A Count / TF-IDF vectorizer set to sparse output: training prepares that
-// graph itself (the canvas run keeps tables only).
-bool GraphHasSparseOutput(const std::vector<MLNode>& nodes) {
-    for (const auto& node : nodes) {
-        const auto format = node.parameters.find("output_format");
-        if (format != node.parameters.end() && format->second == "sparse") return true;
-    }
-    return false;
-}
-
-// The table the canvas runs already prepared for training (TOFIX178 S0-d): the
-// feeder's result when it and every step before it are unchanged since. Empty
-// when the data must be prepared: no such result, a sparse feature output (the
-// canvas run keeps tables only) or a requested rebuild.
+// The data the canvas runs already prepared for training (TOFIX178 S0-d): the
+// feeder's result (a table, or sparse features, S0-f) when it and every step
+// before it are unchanged since. Empty when the data must be prepared: no such
+// result or a requested rebuild.
 std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
                                         const std::vector<NodeLink>& links) {
-    if (!editor || IsGraphMaterializationRebuildRequested() || GraphHasSparseOutput(nodes)) return {};
+    if (!editor || IsGraphMaterializationRebuildRequested()) return {};
     const int feeder = TrainingInputFeeder(nodes, links);
     if (feeder < 0) {
         spdlog::debug("StartTrainingFromGraph: no step feeds the Training Dataset input from its main output");
@@ -4098,7 +4088,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // training loads it and nothing runs.
         const std::string project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
         cyxwiz::PreparedDataKey prepared_key;
-        if (const int feeder = TrainingInputFeeder(nodes, links); feeder >= 0 && !GraphHasSparseOutput(nodes)) {
+        if (const int feeder = TrainingInputFeeder(nodes, links); feeder >= 0) {
             prepared_key = cyxwiz::ComputePreparedDataKey(nodes, links, feeder, registry, project_root);
             spdlog::debug("StartTrainingFromGraph: prepared data key {}", prepared_key.cacheable
                               ? prepared_key.key.substr(0, 16)
@@ -4188,8 +4178,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 
         // After the memory estimate: the data steps before the Split run once, in the pipeline run, the
         // canvas's own engine (TOFIX178 S0-e): run it through the Split's
-        // input, then train on its result. Sparse output and non-table paths
-        // (images) are still prepared by training itself.
+        // input, then train on its result (a table or sparse features).
+        // Non-table paths (images) are still prepared by training itself.
         const bool run_steps = config.training_data_needs_pipeline_run ||
                                (prepared_key.table_path && prepared_key.steps > 0);
         if (canvas_dataset.empty() && !prepared_on_disk && run_steps) {

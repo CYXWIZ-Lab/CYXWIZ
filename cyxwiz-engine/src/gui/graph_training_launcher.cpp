@@ -861,8 +861,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             // data steps already ran on it, nothing is prepared again. Without
             // one, the same table kept on disk by an earlier session (S0-e2).
             const auto loaded = [&registry](const std::string& name) {
-                return !name.empty() &&
-                       (registry.GetArrowDataset(name) || registry.GetParquetBackedDataset(name));
+                return !name.empty() && (registry.GetArrowDataset(name) || registry.GetParquetBackedDataset(name) ||
+                                         registry.IsSparseFeatureDataset(name));
             };
             std::string prepared_dataset = canvas_dataset;
             std::string prepared_origin = "Prepared by the canvas run";
@@ -870,11 +870,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 const std::string name = "prepared_" + prepared_key.key.substr(0, 16);
                 task.ReportProgress(0.3f, "Loading the prepared data from disk...");
                 std::string error;
-                if (cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
-                    prepared_dataset = name;
+                if (const auto registered =
+                        cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
+                    prepared_dataset = *registered;
                     prepared_origin = "Loaded from the prepared data cache";
                     spdlog::info("StartTrainingFromGraph: training reads '{}', prepared in an earlier session; "
-                                 "the data steps do not run", name);
+                                 "the data steps do not run", *registered);
                 } else {
                     spdlog::warn("StartTrainingFromGraph: the prepared data on disk could not be used ({}); "
                                  "preparing it again", error);
@@ -887,12 +888,17 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                                  "the data steps do not run again", canvas_dataset);
                     // Kept for the next session, once per prepared table.
                     const auto dataset = registry.GetArrowDataset(canvas_dataset);
-                    if (prepared_key.cacheable && dataset &&
+                    const auto sparse = registry.GetSparseFeatureDataset(canvas_dataset);
+                    if (prepared_key.cacheable && (dataset || sparse) &&
                         !cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
                         task.ReportProgress(0.5f, "Keeping the prepared data for the next session...");
                         std::string error;
-                        if (cyxwiz::SavePreparedData(cache_config, prepared_key, dataset->GetArrowTable(),
-                                                     canvas_dataset, &error)) {
+                        const bool kept = sparse ? cyxwiz::SavePreparedSparseData(cache_config, prepared_key, *sparse,
+                                                                                  &error)
+                                                 : cyxwiz::SavePreparedData(cache_config, prepared_key,
+                                                                            dataset->GetArrowTable(), canvas_dataset,
+                                                                            &error);
+                        if (kept) {
                             spdlog::info("StartTrainingFromGraph: '{}' is kept on disk for the next session",
                                          canvas_dataset);
                         } else {

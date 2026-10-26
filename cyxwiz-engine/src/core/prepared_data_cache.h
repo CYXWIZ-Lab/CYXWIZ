@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@ namespace cyxwiz {
 
 class ArrowDataset;
 class DataRegistry;
+class SparseFeatureDataset;
 
 struct PreparedDataKey {
     // Every step before the Split is a table step on a loaded table: the
@@ -31,7 +33,13 @@ struct PreparedDataKey {
     std::string source_schema_fingerprint;
     std::vector<MaterializationCacheDependencyIdentity> dependencies;
     int steps = 0;  // data steps before the feeder, the feeder included
+    bool sparse = false;  // the feeder makes sparse features (TOFIX178 S0-f)
 };
+
+// The artifact format and file of a sparse entry.
+inline constexpr const char* kSparseCacheArtifactFormat = "sparse_csr_arrow_ipc_v1";
+std::filesystem::path SparseCacheArtifactPath(const MaterializationCacheConfig& config,
+                                              const std::string& cache_key);
 
 // The key of the table `feeder` prepares: the Data Input (its file's size
 // and time, or its rows when it has no file), and each step from it to
@@ -49,13 +57,14 @@ bool ProbePreparedData(const MaterializationCacheConfig& config,
                        const PreparedDataKey& key,
                        MaterializationCacheManifest* manifest = nullptr);
 
-// Registers the entry's table as `name`; false (with the reason) when it
-// cannot be read.
-bool LoadPreparedData(const MaterializationCacheConfig& config,
-                      const PreparedDataKey& key,
-                      DataRegistry& registry,
-                      const std::string& name,
-                      std::string* error = nullptr);
+// Registers the entry: a table as `name`, sparse features under the name
+// they were saved with. Returns the registered name; nothing (with the
+// reason) when it cannot be read.
+std::optional<std::string> LoadPreparedData(const MaterializationCacheConfig& config,
+                                            const PreparedDataKey& key,
+                                            DataRegistry& registry,
+                                            const std::string& name,
+                                            std::string* error = nullptr);
 
 // Writes `table` as the entry for `key` (artifact, then manifest), then
 // applies the cache's size policy.
@@ -64,6 +73,12 @@ bool SavePreparedData(const MaterializationCacheConfig& config,
                       const std::shared_ptr<arrow::Table>& table,
                       const std::string& name,
                       std::string* error = nullptr);
+
+// Writes sparse features as the entry for `key`.
+bool SavePreparedSparseData(const MaterializationCacheConfig& config,
+                            const PreparedDataKey& key,
+                            const SparseFeatureDataset& dataset,
+                            std::string* error = nullptr);
 
 // Shared with the materializer: a source file's path, size and time in the
 // key, the artifact file written atomically, and read back as a dataset.

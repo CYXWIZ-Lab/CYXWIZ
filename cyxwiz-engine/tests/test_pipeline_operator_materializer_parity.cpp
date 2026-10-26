@@ -5,6 +5,7 @@
 #include "core/pipeline_executor.h"
 #include "core/pipeline_materializer.h"
 #include "core/parquet_backed_dataset.h"
+#include "core/sparse_feature_dataset.h"
 #include "core/node_executors/preprocessing_operators.h"
 #include "core/node_executors/regression_model_artifact.h"
 #include "core/node_executors/regression_model_predictor_operator.h"
@@ -285,6 +286,55 @@ void RunParityCase(
                                      type_name);
         }
     }
+}
+
+// Sparse output (TOFIX178 S0-f): the pipeline run's CSR features equal the
+// materializer's, value for value, with the same labels.
+void RunSparseParityCase(
+    const std::filesystem::path& csv_path,
+    const std::string& type_name,
+    gui::NodeType node_type,
+    int input_id,
+    int operator_id,
+    const std::map<std::string, std::string>& parameters) {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const std::string output_name = "ds_operator_" + type_name + "_" + std::to_string(operator_id);
+    registry.UnregisterTabularDataset(output_name);
+    const std::string pipeline_json =
+        R"({"nodes":[{"id":)" + std::to_string(input_id) +
+        R"(,"type":"DataInput","name":"ParityInput","parameters":{"source_type":"file","file_path":")" +
+        JsonEscapePath(csv_path.string()) + R"(","type":"csv","has_header":"true"}},{"id":)" +
+        std::to_string(operator_id) + R"(,"type":")" + type_name + R"(","name":"ParityOperator","parameters":{)" +
+        ParamsJson(parameters) + R"(}}],"links":[{"start_node":)" + std::to_string(input_id) +
+        R"(,"end_node":)" + std::to_string(operator_id) + R"(}]})";
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(pipeline_json), type_name + " sparse executor run: " + executor.GetLastError());
+    const auto ran = registry.GetSparseFeatureDataset(output_name);
+    Check(ran != nullptr, type_name + " the pipeline run registers sparse features");
+
+    const auto source_table =
+        registry.GetArrowDataset("ds_datainput_" + std::to_string(input_id))->GetArrowTable();
+    const std::string source_name = "sparse_parity_" + type_name;
+    std::vector<gui::MLNode> nodes = {MakeDataInputNode(input_id, source_name),
+                                      MakeOperatorNode(operator_id, node_type, type_name, parameters)};
+    std::vector<gui::NodeLink> links = {{1, input_id, 0, operator_id, 0, gui::LinkType::TensorFlow}};
+    const auto materialized = cyxwiz::PipelineMaterializer::MaterializeTable(nodes, links, source_table, source_name);
+    Check(materialized.success && materialized.sparse_dataset,
+          type_name + " sparse materializer run: " + materialized.error_message);
+    const auto& made = *materialized.sparse_dataset;
+    Check(ran->GetNumRows() == made.GetNumRows() && ran->GetNumFeatures() == made.GetNumFeatures(),
+          type_name + " sparse shapes match");
+    Check(ran->GetRowOffsets() == made.GetRowOffsets() && ran->GetColumnIndices() == made.GetColumnIndices(),
+          type_name + " sparse structure matches");
+    Check(ran->GetValues().size() == made.GetValues().size(), type_name + " sparse value counts match");
+    for (size_t i = 0; i < made.GetValues().size(); ++i)
+        Check(std::fabs(ran->GetValues()[i] - made.GetValues()[i]) < 1e-6f, type_name + " sparse values match");
+    Check(ran->GetFeatureNames() == made.GetFeatureNames(), type_name + " feature names match");
+    Check(ran->GetLabelName() == made.GetLabelName() && ran->GetClassNames() == made.GetClassNames(),
+          type_name + " labels match");
+    Check(ran->GetLabels() && made.GetLabels() && ran->GetLabels()->Equals(*made.GetLabels()),
+          type_name + " label values match");
+    registry.UnregisterTabularDataset(output_name);
 }
 
 void TestStandardScalerEmitsMemoryPreflight() {
@@ -1111,6 +1161,14 @@ int main() {
                    {"norm", "none"}, {"ngram_range", "1,1"},
                    {"stop_words", "none"}, {"output_format", "dense"}},
                   {});
+    RunSparseParityCase(text_csv_path, "TFIDFVectorizer", gui::NodeType::TFIDFVectorizer, 711, 712,
+                        {{"text_col", "text"}, {"label_col", "label"}, {"max_features", "4"}, {"min_df", "1"},
+                         {"use_idf", "true"}, {"smooth_idf", "true"}, {"norm", "l2"}, {"ngram_range", "1,1"},
+                         {"stop_words", "none"}, {"output_format", "sparse"}});
+    RunSparseParityCase(text_csv_path, "CountVectorizer", gui::NodeType::CountVectorizer, 713, 714,
+                        {{"text_col", "text"}, {"label_col", "label"}, {"max_features", "4"}, {"min_df", "1"},
+                         {"binary", "false"}, {"ngram_range", "1,1"}, {"stop_words", "none"},
+                         {"output_format", "sparse"}});
     RunParityCase(text_csv_path, "SentimentAnalyzer",
                   gui::NodeType::SentimentAnalyzer, 707, 708,
                   {{"text_col", "text"}, {"label_col", "label"},

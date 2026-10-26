@@ -11,6 +11,7 @@
 #include "html_document_text.h"
 #include "error_codes.h"
 #include "data_registry.h"
+#include "sparse_feature_dataset.h"
 #include "test_evaluation_tables.h"
 #include "test_predictions_metrics.h"
 #include "data_budget.h"
@@ -6310,6 +6311,46 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         return false;
     }
 
+    // Sparse output (a Count / TF-IDF vectorizer set to Sparse, TOFIX178
+    // S0-f): a CSR feature dataset made from the whole input; training batches
+    // it as sparse, made dense only at the model.
+    std::string output_format =
+        operator_parameters.count("output_format") ? operator_parameters.at("output_format") : std::string();
+    std::transform(output_format.begin(), output_format.end(), output_format.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (output_format == "sparse") {
+        if (!op->SupportsSparseFeatureOutput()) {
+            ReportError(node.type + ": its Output format is Sparse, but this step makes tables only");
+            return false;
+        }
+        if (const auto ref = registry.GetTableRef(input_dataset_name); ref && ref->kind == TableRef::Kind::Parquet) {
+            input_dataset_name = AdmitInputTable(node, input_dataset_name);
+            if (input_dataset_name.empty()) return false;
+            input_table = InputSchemaTable(input_dataset_name);
+        }
+        arrow::Result<std::shared_ptr<SparseFeatureDataset>> sparse;
+        try {
+            sparse = op->ApplySparse(input_table, output_dataset_name);
+        } catch (const OperatorMemoryLimitReached& stop) {
+            ReportError(node.type + ": " + stop.message);
+            return false;
+        }
+        if (!sparse.ok()) {
+            ReportError(node.type + ": operator execution failed: " + sparse.status().ToString());
+            return false;
+        }
+        if (!registry.RegisterSparseFeatureDataset(sparse.ValueOrDie())) {
+            ReportError(node.type + ": failed to register its sparse features");
+            return false;
+        }
+        spdlog::info("[Pipeline] {}: {} rows, {} sparse features", node.name, sparse.ValueOrDie()->GetNumRows(),
+                     sparse.ValueOrDie()->GetNumFeatures());
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) ctx.node_outcomes[node.id] = std::move(outcome);
+        return true;
+    }
+
     // An operator that streams runs a row group at a time when its input is
     // on disk or large (TOFIX154 step 4); the others read it whole (admitted).
     const auto input_ref = registry.GetTableRef(input_dataset_name);
@@ -7364,7 +7405,8 @@ void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
         if (it == run_cache_.end()) continue;
         const NodeRunCache& cache = it->second;
         std::error_code error;
-        const bool output_kept = !cache.output.empty() && registry.GetTableRef(cache.output).has_value();
+        const bool output_kept = !cache.output.empty() && (registry.GetTableRef(cache.output).has_value() ||
+                                                           registry.IsSparseFeatureDataset(cache.output));
         const bool artifact_kept = cache.model_artifact.empty() ||
                                    std::filesystem::exists(cache.model_artifact, error);
         if (!output_kept || !artifact_kept) {

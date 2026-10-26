@@ -735,7 +735,8 @@ int main() {
         Check(cyxwiz::SavePreparedData(config, base, table, "prepared_out", &error), "the save works: " + error);
         Check(cyxwiz::ProbePreparedData(config, base), "the saved entry is found");
         Check(!cyxwiz::ProbePreparedData(config, key_of(filter_edit)), "another key finds nothing");
-        Check(cyxwiz::LoadPreparedData(config, base, registry, "prepared_loaded", &error), "the load works: " + error);
+        Check(cyxwiz::LoadPreparedData(config, base, registry, "prepared_loaded", &error) == "prepared_loaded",
+              "the load works: " + error);
         const auto loaded = registry.GetArrowDataset("prepared_loaded");
         Check(loaded && loaded->GetArrowTable()->Equals(*table), "the loaded table equals the saved one");
         auto rebuild = config;

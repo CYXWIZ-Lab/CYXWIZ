@@ -6,10 +6,13 @@
 #include "parquet_backed_dataset.h"
 #include "pipeline_runtime_capabilities.h"
 #include "project_data_path.h"
+#include "sparse_feature_dataset.h"
+#include "sparse_feature_dataset_cache.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <set>
 #include <system_error>
@@ -93,6 +96,12 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
         if (keep_out.empty()) keep_out = std::move(reason);
     };
     if (!FindNode(nodes, feeder)) return refuse("no step feeds the Data Split");
+    {
+        std::string format = Param(*FindNode(nodes, feeder), "output_format");
+        std::transform(format.begin(), format.end(), format.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        result.sparse = format == "sparse";
+    }
 
     // The feeder and every node before it.
     std::set<int> slice;
@@ -204,6 +213,11 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
     return result;
 }
 
+std::filesystem::path SparseCacheArtifactPath(const MaterializationCacheConfig& config,
+                                              const std::string& cache_key) {
+    return MaterializationCacheEntryDirectory(config, cache_key) / "data.csr.arrow";
+}
+
 bool ProbePreparedData(const MaterializationCacheConfig& config,
                        const PreparedDataKey& key,
                        MaterializationCacheManifest* manifest) {
@@ -215,57 +229,72 @@ bool ProbePreparedData(const MaterializationCacheConfig& config,
         return false;
     const auto validation =
         ValidateMaterializationCacheManifest(read, key.key, key.source_schema_fingerprint);
-    if (!validation.usable || validation.manifest.artifact_format != config.artifact_format) return false;
+    const std::string format = key.sparse ? kSparseCacheArtifactFormat : config.artifact_format;
+    if (!validation.usable || validation.manifest.artifact_format != format) return false;
     if (manifest) *manifest = validation.manifest;
     return true;
 }
 
-bool LoadPreparedData(const MaterializationCacheConfig& config,
-                      const PreparedDataKey& key,
-                      DataRegistry& registry,
-                      const std::string& name,
-                      std::string* error) {
+std::optional<std::string> LoadPreparedData(const MaterializationCacheConfig& config,
+                                            const PreparedDataKey& key,
+                                            DataRegistry& registry,
+                                            const std::string& name,
+                                            std::string* error) {
     MaterializationCacheManifest manifest;
     if (!ProbePreparedData(config, key, &manifest)) {
         if (error) *error = "no usable prepared data on disk";
-        return false;
+        return std::nullopt;
     }
-    const auto dataset = LoadPreparedArtifact(manifest, name);
-    if (!dataset || !dataset->GetArrowTable()) {
-        if (error) *error = "the prepared data file could not be read: " + manifest.artifact_path;
-        return false;
-    }
-    if (!registry.RegisterArrowTable(dataset->GetArrowTable(), name)) {
-        if (error) *error = "the prepared data could not be registered";
-        return false;
+    std::string registered = name;
+    if (key.sparse) {
+        // Sparse features keep the name they were saved under.
+        auto loaded = SparseFeatureDatasetCache::Load(manifest.artifact_path);
+        if (!loaded.ok()) {
+            if (error) *error = "the prepared sparse features could not be read: " + loaded.status().ToString();
+            return std::nullopt;
+        }
+        registered = loaded.ValueOrDie()->GetName();
+        if (!registry.RegisterSparseFeatureDataset(loaded.ValueOrDie())) {
+            if (error) *error = "the prepared sparse features could not be registered";
+            return std::nullopt;
+        }
+    } else {
+        const auto dataset = LoadPreparedArtifact(manifest, name);
+        if (!dataset || !dataset->GetArrowTable()) {
+            if (error) *error = "the prepared data file could not be read: " + manifest.artifact_path;
+            return std::nullopt;
+        }
+        if (!registry.RegisterArrowTable(dataset->GetArrowTable(), name)) {
+            if (error) *error = "the prepared data could not be registered";
+            return std::nullopt;
+        }
     }
     auto used = manifest;
     used.cache_status = MaterializationCacheStatus::Hit;
     used.last_used_at.clear();
     WriteMaterializationCacheManifest(used, MaterializationCacheManifestPath(config, key.key));
-    return true;
+    return registered;
 }
 
-bool SavePreparedData(const MaterializationCacheConfig& config,
-                      const PreparedDataKey& key,
-                      const std::shared_ptr<arrow::Table>& table,
-                      const std::string& name,
-                      std::string* error) {
-    if (!key.cacheable || !table || config.mode == MaterializationCacheMode::Disabled ||
-        config.cache_root.empty()) {
-        if (error) *error = key.cacheable ? "the cache is off" : key.reason;
-        return false;
-    }
-    std::filesystem::path artifact_path;
-    if (!ExportPreparedArtifact(table, name, config, key.key, artifact_path, error)) return false;
+namespace {
+
+// The manifest after an artifact is written, then the size policy.
+bool FinishPreparedEntry(const MaterializationCacheConfig& config,
+                         const PreparedDataKey& key,
+                         const std::string& name,
+                         const std::filesystem::path& artifact_path,
+                         const std::string& format,
+                         int64_t rows,
+                         int64_t columns,
+                         std::string* error) {
     MaterializationCacheManifest manifest;
     manifest.cache_key = key.key;
     manifest.source_dataset_name = key.source_dataset_name;
     manifest.effective_dataset_name = name;
     manifest.artifact_path = artifact_path.string();
-    manifest.artifact_format = config.artifact_format;
-    manifest.row_count = table->num_rows();
-    manifest.column_count = table->num_columns();
+    manifest.artifact_format = format;
+    manifest.row_count = rows;
+    manifest.column_count = columns;
     manifest.schema_fingerprint = key.source_schema_fingerprint;
     manifest.dependencies = key.dependencies;
     manifest.operators_applied = key.steps;
@@ -280,6 +309,44 @@ bool SavePreparedData(const MaterializationCacheConfig& config,
         if (!pruned.error.empty()) spdlog::warn("Prepared data cache cleanup: {}", pruned.error);
     }
     return true;
+}
+
+bool CanSave(const MaterializationCacheConfig& config, const PreparedDataKey& key, std::string* error) {
+    if (key.cacheable && config.mode != MaterializationCacheMode::Disabled && !config.cache_root.empty())
+        return true;
+    if (error) *error = key.cacheable ? "the cache is off" : key.reason;
+    return false;
+}
+
+}  // namespace
+
+bool SavePreparedData(const MaterializationCacheConfig& config,
+                      const PreparedDataKey& key,
+                      const std::shared_ptr<arrow::Table>& table,
+                      const std::string& name,
+                      std::string* error) {
+    if (!table || !CanSave(config, key, error)) return false;
+    std::filesystem::path artifact_path;
+    if (!ExportPreparedArtifact(table, name, config, key.key, artifact_path, error)) return false;
+    return FinishPreparedEntry(config, key, name, artifact_path, config.artifact_format, table->num_rows(),
+                               table->num_columns(), error);
+}
+
+bool SavePreparedSparseData(const MaterializationCacheConfig& config,
+                            const PreparedDataKey& key,
+                            const SparseFeatureDataset& dataset,
+                            std::string* error) {
+    if (!CanSave(config, key, error)) return false;
+    const auto artifact_path = SparseCacheArtifactPath(config, key.key);
+    std::error_code ec;
+    std::filesystem::create_directories(artifact_path.parent_path(), ec);
+    const auto status = SparseFeatureDatasetCache::SaveAtomically(dataset, artifact_path.string());
+    if (!status.ok()) {
+        if (error) *error = status.ToString();
+        return false;
+    }
+    return FinishPreparedEntry(config, key, dataset.GetName(), artifact_path, kSparseCacheArtifactFormat,
+                               dataset.GetNumRows(), dataset.GetNumFeatures() + (dataset.GetLabels() ? 1 : 0), error);
 }
 
 bool ExportPreparedArtifact(const std::shared_ptr<arrow::Table>& table,

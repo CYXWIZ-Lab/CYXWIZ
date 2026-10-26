@@ -4548,7 +4548,9 @@ std::optional<std::string> NodeEditor::LastRunResult(int node_id) const {
     const auto it = results.find(node_id);
     if (it == results.end() || it->second.empty()) return std::nullopt;
     auto& registry = cyxwiz::DataRegistry::Instance();
-    if (!registry.GetArrowDataset(it->second) && !registry.GetParquetBackedDataset(it->second)) return std::nullopt;
+    if (!registry.GetArrowDataset(it->second) && !registry.GetParquetBackedDataset(it->second) &&
+        !registry.IsSparseFeatureDataset(it->second))
+        return std::nullopt;
     return it->second;
 }
 
