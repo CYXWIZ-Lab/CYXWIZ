@@ -13,6 +13,7 @@
 #include <thread>
 #include <utility>
 
+#include <arrayfire.h>
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
@@ -158,7 +159,19 @@ private:
         source_complete_ = false;
         worker_error_ = nullptr;
         started_ = true;
-        worker_ = std::thread([this]() { WorkerLoop(); });
+        // ArrayFire's backend and device are per thread: the worker prepares
+        // batches on the consumer's (device-resident features, TOFIX178 S0-b).
+        const af::Backend backend = af::getActiveBackend();
+        const int device = af::getDevice();
+        worker_ = std::thread([this, backend, device]() {
+            try {
+                af::setBackend(backend);
+                af::setDevice(device);
+            } catch (const af::exception& e) {
+                spdlog::warn("PrefetchBatcher '{}': could not use the training device on its thread ({})", name_, e.what());
+            }
+            WorkerLoop();
+        });
         spdlog::info("PrefetchBatcher '{}': started async queue with depth={}",
                      name_, queue_depth_);
     }
