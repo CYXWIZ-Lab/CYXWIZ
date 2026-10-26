@@ -1453,37 +1453,6 @@ GetPipelineSupportedTrainingRoleCapabilities() {
     return capabilities;
 }
 
-const std::vector<PipelineMaterializerStorageBackendCapability>&
-GetPipelineMaterializerStorageBackendCapabilities() {
-    static const std::vector<PipelineMaterializerStorageBackendCapability> capabilities = {
-        {PipelineStorageBackend::ArrowTable,
-         PipelineMaterializerStorageSupport::ArrowTableOnly,
-         true,
-         "in-memory Arrow tables are the only PipelineMaterializer storage backend"},
-        {PipelineStorageBackend::ParquetBacked,
-         PipelineMaterializerStorageSupport::StreamingOperatorsOnly,
-         true,
-         "a table on disk runs through operators that stream, one row group at a time"},
-        {PipelineStorageBackend::ImageDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer only applies Arrow-table operators; image datasets use domain batchers"},
-        {PipelineStorageBackend::AudioDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer only applies Arrow-table operators; audio datasets use domain batchers"},
-        {PipelineStorageBackend::TextDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer only applies Arrow-table operators; text datasets use domain batchers"},
-        {PipelineStorageBackend::SparseFeatureDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer does not apply table operators to an already materialized sparse CSR artifact"},
-    };
-    return capabilities;
-}
-
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     const auto with_validation_axes =
         [&legacy_type_name](PipelineRuntimeSupport support) {
@@ -1576,26 +1545,6 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type) {
         return {};
     }
     return ResolvePipelineRuntimeSupport(legacy_type_name);
-}
-
-const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
-    switch (backend) {
-    case PipelineStorageBackend::ArrowTable:
-        return "ArrowTable";
-    case PipelineStorageBackend::ParquetBacked:
-        return "ParquetBacked";
-    case PipelineStorageBackend::ImageDataset:
-        return "ImageDataset";
-    case PipelineStorageBackend::AudioDataset:
-        return "AudioDataset";
-    case PipelineStorageBackend::TextDataset:
-        return "TextDataset";
-    case PipelineStorageBackend::SparseFeatureDataset:
-        return "SparseFeatureDataset";
-    case PipelineStorageBackend::Unknown:
-        return "Unknown";
-    }
-    return "Unknown";
 }
 
 const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode) {
@@ -1713,22 +1662,6 @@ const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
         return "training_workflow";
     }
     return "unknown";
-}
-
-PipelineMaterializerStorageBackendCapability
-ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend) {
-    const auto& capabilities = GetPipelineMaterializerStorageBackendCapabilities();
-    auto it = std::find_if(capabilities.begin(), capabilities.end(),
-        [backend](const PipelineMaterializerStorageBackendCapability& capability) {
-            return capability.backend == backend;
-        });
-    if (it != capabilities.end()) {
-        return *it;
-    }
-    return {backend,
-            PipelineMaterializerStorageSupport::None,
-            false,
-            "storage backend is unknown to PipelineMaterializer"};
 }
 
 std::optional<gui::NodeType>

@@ -36,8 +36,6 @@ struct GraphTrainingLaunchResult {
 
 struct GraphMaterializationPreflightResult {
     bool checked = false;
-    // Prepared data for this graph is already cached: no estimate needed.
-    bool cache_hit = false;
     bool estimate_available = false;
     bool blocked = false;
     bool requires_confirmation = false;
@@ -64,7 +62,7 @@ cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig(
 // Synchronous, allocation-light pre-start check. It executes the existing
 // operator-owned estimator and stops at its first memory decision; it does not
 // publish a dataset or approximate unknown downstream shapes.
-// A cached prepared dataset for the graph skips the estimate (cache_hit).
+// Train skips it when the prepared data is current or on disk.
 GraphMaterializationPreflightResult PreflightGraphMaterialization(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,

@@ -4075,10 +4075,6 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         } else if (!canvas_dataset.empty()) {
             spdlog::info("StartTrainingFromGraph: the canvas run already prepared '{}'", canvas_dataset);
         }
-        if (memory_preflight.cache_hit) {
-            spdlog::info("StartTrainingFromGraph: {}",
-                         memory_preflight.status_detail);
-        }
         if (memory_preflight.blocked) {
             compile_result_success_ = false;
             compile_result_issues_.clear();

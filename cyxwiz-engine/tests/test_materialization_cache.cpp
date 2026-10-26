@@ -61,9 +61,6 @@ cyxwiz::MaterializationCacheKeyInput MakeKeyInput() {
 } // namespace
 
 int main() {
-    Check(std::string(cyxwiz::MaterializationCacheModeName(
-              cyxwiz::MaterializationCacheMode::RequireHit)) == "require_hit",
-          "cache mode names should expose require-hit policy");
     Check(std::string(cyxwiz::MaterializationCacheStatusName(
               cyxwiz::MaterializationCacheStatus::SaveFailed)) == "save_failed",
           "cache status names should expose save failures");

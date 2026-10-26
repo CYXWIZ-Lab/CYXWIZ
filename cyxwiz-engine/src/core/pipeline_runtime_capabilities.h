@@ -138,16 +138,6 @@ struct PipelineTrainingBackendSupport {
         PipelineBackendPrimitiveEvidence::NotApplicable;
 };
 
-enum class PipelineStorageBackend {
-    Unknown,
-    ArrowTable,
-    ParquetBacked,
-    ImageDataset,
-    AudioDataset,
-    TextDataset,
-    SparseFeatureDataset,
-};
-
 enum class PipelineRuntimeSupportMode {
     Unknown,
     LegacyExecutor,
@@ -174,14 +164,6 @@ enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
     StreamingOperatorsOnly,  // a table on disk: operators that stream (TOFIX154)
-};
-
-struct PipelineMaterializerStorageBackendCapability {
-    PipelineStorageBackend backend = PipelineStorageBackend::Unknown;
-    PipelineMaterializerStorageSupport storage_support =
-        PipelineMaterializerStorageSupport::None;
-    bool materializer_supported = false;
-    const char* reason = nullptr;
 };
 
 struct PipelineRuntimeSupport {
@@ -276,14 +258,9 @@ GetPipelineSupportedTrainingBackendCapabilities();
 const std::vector<PipelineSupportedTrainingRoleCapability>&
 GetPipelineSupportedTrainingRoleCapabilities();
 
-const std::vector<PipelineMaterializerStorageBackendCapability>&
-GetPipelineMaterializerStorageBackendCapabilities();
-
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type);
-
-const char* PipelineStorageBackendName(PipelineStorageBackend backend);
 
 const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode);
 
@@ -305,9 +282,6 @@ const char* PipelineBackendPrimitiveEvidenceName(
     PipelineBackendPrimitiveEvidence evidence);
 
 const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role);
-
-PipelineMaterializerStorageBackendCapability
-ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend);
 
 std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name);

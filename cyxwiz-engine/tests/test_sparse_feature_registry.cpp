@@ -80,36 +80,37 @@ void TestRegistrationInspectionAndReplacement() {
           "an existing reader snapshot should remain immutable");
 }
 
-void TestListingCascadeAndClear() {
+void TestListingAndClear() {
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.ClearAllSparseFeatureDatasets();
 
     Check(registry.RegisterSparseFeatureDataset(MakeDataset("source")),
           "source registration failed");
-    Check(registry.RegisterSparseFeatureDataset(
-              MakeDataset("source__materialized")),
-          "materialized registration failed");
+    Check(registry.RegisterSparseFeatureDataset(MakeDataset("source_features")),
+          "second registration failed");
     Check(registry.RegisterSparseFeatureDataset(MakeDataset("other")),
           "other registration failed");
 
     const auto listed = registry.ListSparseFeatureDatasets();
     Check(listed.size() == 3, "sparse listing count mismatch");
     Check(listed[0].name == "other" && listed[1].name == "source" &&
-              listed[2].name == "source__materialized",
+              listed[2].name == "source_features",
           "sparse listing should be deterministic by dataset name");
 
     Check(registry.UnregisterSparseFeatureDataset("source"),
           "source unregister should report removal");
+    // Each name stands alone (the "__materialized" cascade went with the
+    // materializer, TOFIX178 S0-f2).
     Check(!registry.IsSparseFeatureDataset("source") &&
-              !registry.IsSparseFeatureDataset("source__materialized"),
-          "source unregister should cascade to its materialized dataset");
+              registry.IsSparseFeatureDataset("source_features"),
+          "source unregister should remove only its own name");
     Check(registry.IsSparseFeatureDataset("other"),
           "unrelated sparse dataset should remain registered");
     Check(!registry.UnregisterSparseFeatureDataset("missing"),
           "missing unregister should report no removal");
 
-    Check(registry.ClearAllSparseFeatureDatasets() == 1,
-          "clear should report the remaining sparse dataset");
+    Check(registry.ClearAllSparseFeatureDatasets() == 2,
+          "clear should report the two remaining sparse datasets");
     Check(registry.ListSparseFeatureDatasets().empty(),
           "clear should remove all sparse datasets");
 }
@@ -118,7 +119,7 @@ void TestListingCascadeAndClear() {
 
 int main() {
     TestRegistrationInspectionAndReplacement();
-    TestListingCascadeAndClear();
+    TestListingAndClear();
     std::cout << "Sparse feature registry lifecycle tests passed\n";
     return 0;
 }

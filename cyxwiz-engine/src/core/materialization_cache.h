@@ -20,8 +20,7 @@ inline constexpr int kMaterializationCacheSchemaVersion = 4;
 enum class MaterializationCacheMode {
     Disabled,
     Auto,
-    Rebuild,
-    RequireHit
+    Rebuild
 };
 
 enum class MaterializationCacheStatus {
@@ -130,11 +129,6 @@ bool ReadMaterializationCacheManifest(
     const std::filesystem::path& manifest_path,
     MaterializationCacheManifest& manifest,
     std::string* error = nullptr);
-
-// Lightweight disk identity for registry-resident reuse. Empty means the
-// artifact cannot be inspected and must not be reused from memory.
-std::string MaterializationArtifactIdentity(
-    const MaterializationCacheManifest& manifest);
 
 // Directory holding every cache entry: <cache_root>/cache/materialized.
 std::filesystem::path MaterializationCacheDirectory(

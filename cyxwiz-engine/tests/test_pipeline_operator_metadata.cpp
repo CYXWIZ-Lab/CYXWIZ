@@ -4006,69 +4006,6 @@ int main() {
                   "supported training backend reason should be shared: " +
                       TypeId(capability.node_type));
         }
-
-        std::set<int> materializer_storage_backends;
-        int materializer_supported_backends = 0;
-        const std::set<std::string> expected_materializer_storage_backends = {
-            "ArrowTable",
-            "ParquetBacked",
-            "ImageDataset",
-            "AudioDataset",
-            "TextDataset",
-            "SparseFeatureDataset",
-        };
-        for (const auto& capability :
-             cyxwiz::GetPipelineMaterializerStorageBackendCapabilities()) {
-            const std::string backend_name =
-                cyxwiz::PipelineStorageBackendName(capability.backend);
-            const int key = static_cast<int>(capability.backend);
-            Check(materializer_storage_backends.insert(key).second,
-                  "duplicate materializer storage backend capability: " +
-                      backend_name);
-            Check(ContainsString(expected_materializer_storage_backends,
-                                 backend_name),
-                  "unexpected materializer storage backend capability: " +
-                      backend_name);
-            const auto resolved =
-                cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
-                    capability.backend);
-            Check(resolved.backend == capability.backend,
-                  "materializer storage backend capability does not resolve: " +
-                      backend_name);
-            Check(resolved.materializer_supported ==
-                      capability.materializer_supported,
-                  "materializer storage backend support mismatch: " +
-                      backend_name);
-            Check(resolved.storage_support == capability.storage_support,
-                  "materializer storage support scope mismatch: " +
-                      backend_name);
-            Check(capability.reason != nullptr &&
-                      std::string(capability.reason).size() > 16,
-                  "materializer storage backend reason is too weak: " +
-                      backend_name);
-            if (capability.materializer_supported) {
-                ++materializer_supported_backends;
-                // In memory every operator; a table on disk (TOFIX154) the
-                // operators that stream.
-                Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable ||
-                          capability.backend == cyxwiz::PipelineStorageBackend::ParquetBacked,
-                      "only ArrowTable and ParquetBacked should be materializer-supported today");
-                Check(capability.storage_support ==
-                          (capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable
-                               ? cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly
-                               : cyxwiz::PipelineMaterializerStorageSupport::StreamingOperatorsOnly),
-                      "materializer support scope per backend");
-            } else {
-                Check(capability.storage_support ==
-                          cyxwiz::PipelineMaterializerStorageSupport::None,
-                      "unsupported materializer backend should advertise no storage scope");
-            }
-        }
-        Check(materializer_supported_backends == 2,
-              "exactly two materializer storage backends should be supported today");
-        Check(materializer_storage_backends.size() ==
-                  expected_materializer_storage_backends.size(),
-              "materializer storage scope should pin Arrow plus five pass-through domains");
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
