@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Part of the CyxWiz plugin SDK examples (see cmake/sdk/NOTICE).
-"""Checks the ten Python layers in builtin_layers.py.
+"""Checks the ten Python layers and four losses in builtin_layers.py.
 
     python test_builtin_layers.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
 1. Every node passes the gradient check with its default settings.
-2. Each one computes what the Engine's built-in module computes: forward,
-   the input gradient and, for Dense, the weight gradients (with the same
-   weights). LayerNorm and Softplus have no Python-bound built-in, so they
-   are checked against their formulas.
+2. Each one computes what the Engine's built-in module or loss computes:
+   forward, the input gradient and, for Dense, the weight gradients (with
+   the same weights). LayerNorm, Softplus, L1 and Huber have no
+   Python-bound built-in, so they are checked against their formulas.
 3. The bundle beside this file (nodes/builtin-layers.cyxnode) is current:
    its node.py is this folder's builtin_layers.py and every node is
    recorded as passing the gradient check.
@@ -33,7 +33,8 @@ from pycyxwiz import nodes  # noqa: E402
 import builtin_layers as b  # noqa: E402
 
 check = Checks()
-ALL = [b.Dense, b.LayerNorm, b.ReLU, b.LeakyReLU, b.ELU, b.Sigmoid, b.Tanh, b.Softplus, b.GELU, b.SiLU]
+ALL = b.ALL
+LOSSES = [b.CrossEntropy, b.MSE, b.L1, b.Huber]
 TOLERANCE = 1e-5
 
 
@@ -53,7 +54,7 @@ def uniform(shape, low, high):
 
 
 print("1. the gradient check, default settings")
-check(len(ALL) == 10, "ten nodes")
+check(len(ALL) == 14 and all(nodes.is_loss(cls) for cls in LOSSES), "ten layers and four losses")
 for cls in ALL:
     result = nodes.gradcheck(cls, {})
     check(result.passed, "%s: %s" % (cls.__name__, result.error or "largest relative error %.1e" % result.max_relative_error))
@@ -117,6 +118,37 @@ check(worst < TOLERANCE and worst_grad < TOLERANCE,
 big = cyx.Tensor.full([2], 100.0)
 check(abs(values(soft.forward(big))[0] - 100.0) < 1e-3, "Softplus(100) = 100, no overflow")
 
+# The losses: CrossEntropy and MSE against the bound built-ins (one-hot
+# targets for the cross entropy, as the Engine gives them), L1 and Huber
+# against their formulas.
+p = uniform([4, 3], -3.0, 3.0)
+t = uniform([4, 3], -1.0, 1.0)
+labels = cyx.Tensor.zeros([4, 3])
+for row, c in enumerate([0, 2, 1, 2]):
+    labels.set(row, c, 1.0)
+for cls, builtin, targets in ((b.CrossEntropy, cyx.CrossEntropyLoss(), labels), (b.MSE, cyx.MSELoss(), t)):
+    ours = nodes.create(cls, {})
+    forward = largest_difference(ours.forward(p, targets), builtin.forward(p, targets))
+    backward = largest_difference(ours.backward(p, targets), builtin.backward(p, targets))
+    check(forward < TOLERANCE and backward < TOLERANCE,
+          "%s = %s (forward %.1e, gradient %.1e)" % (cls.__name__, type(builtin).__name__, forward, backward))
+
+ps, ts = values(p), values(t)
+n = len(ps)
+l1 = nodes.create(b.L1, {})
+forward = abs(values(l1.forward(p, t))[0] - sum(abs(a - c) for a, c in zip(ps, ts)) / n)
+backward = max(abs(g - ((a > c) - (a < c)) / n) for g, a, c in zip(values(l1.backward(p, t)), ps, ts))
+check(forward < TOLERANCE and backward < TOLERANCE, "L1 = mean|p - t| (forward %.1e, gradient %.1e)" % (forward, backward))
+
+delta = 0.5
+huber = nodes.create(b.Huber, {"delta": str(delta)})
+expected = sum(0.5 * (a - c) ** 2 if abs(a - c) < delta else delta * (abs(a - c) - 0.5 * delta)
+               for a, c in zip(ps, ts)) / n
+forward = abs(values(huber.forward(p, t))[0] - expected)
+backward = max(abs(g - max(-delta, min(delta, a - c)) / n) for g, a, c in zip(values(huber.backward(p, t)), ps, ts))
+check(forward < TOLERANCE and backward < TOLERANCE,
+      "Huber(delta 0.5) = the Engine's Huber formula (forward %.1e, gradient %.1e)" % (forward, backward))
+
 print("3. the bundle beside this file is current")
 bundle = os.path.join(HERE, "nodes", "builtin-layers.cyxnode")
 with open(os.path.join(HERE, "builtin_layers.py"), "rb") as source, \
@@ -127,7 +159,9 @@ with open(os.path.join(HERE, "builtin_layers.py"), "rb") as source, \
 with open(os.path.join(bundle, "node.json"), encoding="utf-8") as handle:
     manifest = json.load(handle)
 names = sorted(n["name"] for n in manifest["nodes"])
-check(names == sorted(cls.__name__ for cls in ALL), "node.json lists the ten nodes")
+check(names == sorted(cls.__name__ for cls in ALL), "node.json lists the fourteen nodes")
+check(sorted(n["name"] for n in manifest["nodes"] if n["role"] == "loss") == sorted(c.__name__ for c in LOSSES),
+      "the four losses are loss nodes")
 not_passed = [n["name"] for n in manifest["nodes"] if n["verification"]["status"] != "passed"]
 check(not not_passed, "every node is recorded as passing the gradient check" + (": not " + ", ".join(not_passed) if not_passed else ""))
 

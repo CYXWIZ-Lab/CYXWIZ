@@ -14,6 +14,7 @@
 #include "../plot/plot_view.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <arrow/api.h>
 #include <imgui.h>
@@ -151,9 +152,14 @@ void DashboardWindow::DrawSparse() {
         return;
     }
     const SparseSummary& s = *sparse_summary_;
+    // Nothing lets go of the matrix yet (TOFIX160): say how to free it.
+    static const char* kHeld =
+        "The feature matrix stays in memory until the project closes, also after this dashboard closes, its Data "
+        "Input is deleted or unloaded, or another graph opens.";
     ImGui::TextColored(t.text_dim, "%s", ICON_FA_TABLE_CELLS);
     ImGui::SameLine();
     ImGui::Text("Sparse features \xC2\xB7 %s rows \xC3\x97 %s features \xC2\xB7 exact", Count(s.rows_all).c_str(), Count(s.features).c_str());
+    ui::Tooltip(kHeld);
     if (sparse_task_) {
         ImGui::SameLine();
         ImGui::TextColored(t.text_dim, ICON_FA_SPINNER " updating");
@@ -199,6 +205,7 @@ void DashboardWindow::DrawSparse() {
         ImGui::TextColored(t.text_dim, "%s", kpis[i].first);
         ImGui::TextColored(t.text_bright, "%s", kpis[i].second.c_str());
         ImGui::EndChild();
+        if (i == 4) ui::Tooltip(kHeld);  // Memory
     }
 
     // The cards, three across.

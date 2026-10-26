@@ -3,7 +3,7 @@
   "data_boundary_version": 2,
   "framework": 0,
   "execution_mode": 1,
-  "workflow_description": "Python example layers (the SDK's builtin-layers bundle) fed by a Data Input: Dense 16 -> ReLU -> Layer Norm -> Dense 4, trained with the built-in cross entropy and Adam on four blobs. Install and approve the bundle (Plugin Manager > Python node bundles) first.",
+  "workflow_description": "Python example layers (the SDK's builtin-layers bundle) fed by a Data Input: Dense 16 -> ReLU -> Layer Norm -> Dense 4 -> Cross Entropy, all Python, trained with Adam on four blobs. Install and approve the bundle (Plugin Manager > Python node bundles) first.",
   "annotations": [],
   "groups": [],
   "nodes": [
@@ -65,7 +65,7 @@
         "contract": 1,
         "type_id": "com.cyxwiz.examples.layers:Dense",
         "version": "1.0.0",
-        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "content_hash": "sha256:86c5bfc29dcc9f3b2a229edbbc3412cd5a4d0b550bf5e5fdf63d64780f3808aa",
         "inputs": [
           {
             "name": "Input",
@@ -91,7 +91,7 @@
         "contract": 1,
         "type_id": "com.cyxwiz.examples.layers:ReLU",
         "version": "1.0.0",
-        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "content_hash": "sha256:86c5bfc29dcc9f3b2a229edbbc3412cd5a4d0b550bf5e5fdf63d64780f3808aa",
         "inputs": [
           {
             "name": "Input",
@@ -119,7 +119,7 @@
         "contract": 1,
         "type_id": "com.cyxwiz.examples.layers:LayerNorm",
         "version": "1.0.0",
-        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "content_hash": "sha256:86c5bfc29dcc9f3b2a229edbbc3412cd5a4d0b550bf5e5fdf63d64780f3808aa",
         "inputs": [
           {
             "name": "Input",
@@ -148,7 +148,7 @@
         "contract": 1,
         "type_id": "com.cyxwiz.examples.layers:Dense",
         "version": "1.0.0",
-        "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097",
+        "content_hash": "sha256:86c5bfc29dcc9f3b2a229edbbc3412cd5a4d0b550bf5e5fdf63d64780f3808aa",
         "inputs": [
           {
             "name": "Input",
@@ -165,11 +165,33 @@
     },
     {
       "id": 20,
-      "type": 73,
-      "name": "Cross entropy",
+      "type": 321,
+      "name": "Cross Entropy (Python)",
       "pos_x": 1540,
       "pos_y": 200,
-      "parameters": {}
+      "parameters": {},
+      "extension": {
+        "contract": 1,
+        "type_id": "com.cyxwiz.examples.layers:CrossEntropy",
+        "version": "1.0.0",
+        "content_hash": "sha256:86c5bfc29dcc9f3b2a229edbbc3412cd5a4d0b550bf5e5fdf63d64780f3808aa",
+        "inputs": [
+          {
+            "name": "Predictions",
+            "type": "Tensor"
+          },
+          {
+            "name": "Targets",
+            "type": "Labels"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Loss",
+            "type": "Loss"
+          }
+        ]
+      }
     },
     {
       "id": 21,

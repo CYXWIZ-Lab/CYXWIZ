@@ -3,6 +3,7 @@
 #include "dataset_base.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "sparse_feature_dataset.h"
 #include "data_budget.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
@@ -832,21 +833,90 @@ void DataRegistry::SetMemoryLimit(size_t bytes) {
     memory_limit_ = bytes;
 }
 
+LoadedDataReport DataRegistry::LoadedData() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return LoadedDataUnlocked();
+}
+
+LoadedDataReport DataRegistry::LoadedDataUnlocked() const {
+    LoadedDataReportBuilder builder;
+    const auto source = [this](const std::string& name) {
+        const auto it = tabular_source_paths_by_name_.find(name);
+        return it == tabular_source_paths_by_name_.end() ? std::string() : it->second;
+    };
+    for (const auto& [name, dataset] : arrow_datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::TableInMemory;
+        e.path = source(name);
+        builder.AddTable(std::move(e), dataset->GetArrowTable());
+    }
+    for (const auto& [name, dataset] : parquet_backed_datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::TableOnDisk;
+        e.disk_bytes = dataset->GetFileSizeBytes();
+        e.path = dataset->GetFilePath();
+        e.rows = dataset->GetNumRows();
+        builder.Add(std::move(e));
+    }
+    for (const auto& [name, dataset] : sparse_feature_datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::SparseFeatures;
+        e.memory_bytes = dataset->GetEstimatedHostMemoryBytes();
+        builder.Add(std::move(e));
+    }
+    // Image, audio and text datasets read their files as training goes:
+    // they hold their file lists, not the data.
+    const auto files = [&builder](const std::string& name, LoadedDataKind kind, const std::string& path, size_t n) {
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = kind;
+        e.path = path;
+        e.rows = static_cast<int64_t>(n);
+        builder.Add(std::move(e));
+    };
+    for (const auto& [name, entry] : image_dataset_entries_) files(name, LoadedDataKind::Images, entry.folder_path, entry.num_images);
+    for (const auto& [name, entry] : audio_dataset_entries_) files(name, LoadedDataKind::Audio, entry.folder_path, entry.num_samples);
+    for (const auto& [name, entry] : text_dataset_entries_) files(name, LoadedDataKind::Text, entry.source_path, entry.num_samples);
+    for (const auto& [name, dataset] : datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::Other;
+        e.memory_bytes = dataset->GetInfo().memory_usage;
+        builder.Add(std::move(e));
+    }
+    return builder.Finish();
+}
+
+std::function<bool(const std::filesystem::path&)> DataRegistry::FileInUse() const {
+    std::set<std::string> held;
+    for (const auto& e : LoadedData().entries)
+        if (!e.path.empty()) held.insert(std::filesystem::path(e.path).lexically_normal().string());
+    return [held = std::move(held)](const std::filesystem::path& p) {
+        return held.count(p.lexically_normal().string()) > 0;
+    };
+}
+
 MemoryStats DataRegistry::GetMemoryStats() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     MemoryStats stats;
     stats.memory_limit = memory_limit_;
-    stats.datasets_count = datasets_.size();
     stats.cache_hits = total_cache_hits_;
     stats.cache_misses = total_cache_misses_;
     stats.cache_evictions = total_cache_evictions_;
 
-    // Sum up memory from all datasets
+    const LoadedDataReport loaded = LoadedDataUnlocked();
+    stats.datasets_count = loaded.entries.size();
+    stats.total_allocated = loaded.memory_bytes;
     for (const auto& [_, dataset] : datasets_) {
-        auto info = dataset->GetInfo();
-        stats.total_allocated += info.memory_usage;
-        stats.total_cached += info.cache_usage;
+        if (dataset) stats.total_cached += dataset->GetInfo().cache_usage;
     }
 
     // Update peak usage

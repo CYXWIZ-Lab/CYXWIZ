@@ -518,6 +518,13 @@ int main() {
     fs::remove(limited_parquet_path, ec);
     fs::remove(preambled_csv_path, ec);
 
+    // Dataset names are unique among a graph's Data Inputs (TOFIX160 P2).
+    namespace di = gui::data_input;
+    Check(di::UniqueDatasetName("mnist", {}) == "mnist", "a free name stays");
+    Check(di::UniqueDatasetName("mnist", {"other"}) == "mnist", "another name does not matter");
+    Check(di::UniqueDatasetName("mnist", {"mnist"}) == "mnist_2", "a taken name gets _2");
+    Check(di::UniqueDatasetName("mnist", {"mnist", "mnist_2"}) == "mnist_3", "the next free number");
+
     std::cout << "Data preview service test passed: " << checks << " checks\n";
     return 0;
 }

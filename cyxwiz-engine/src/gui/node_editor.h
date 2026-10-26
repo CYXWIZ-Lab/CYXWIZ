@@ -372,6 +372,10 @@ public:
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
 
+    // A node newly selected on the canvas (the Info panel shows it).
+    using NodeSelectedCallback = std::function<void(const MLNode&)>;
+    void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
     // Graph replacement admission is checked by all load/clear entry points.
@@ -730,6 +734,11 @@ public:
     bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
                            const std::vector<std::string>& erase = {}, const std::string& name = {});
 
+    // What pipeline runs registered for these nodes (their copies of the
+    // data, their results): released now, or when the run in flight ends
+    // (TOFIX160 P2; a Data Input's Unload uses it too).
+    void ReleaseRunData(const std::set<int>& node_ids);
+
 private:
     void ShowToolbar();
     // Studio nav (node_editor_toolbar.cpp, approved board 7): the graph menu,
@@ -1024,6 +1033,8 @@ private:
 
     // Explain selected node in Studio Debugger.
     ExplainNodeCallback explain_node_callback_;
+    NodeSelectedCallback node_selected_callback_;
+    int info_node_id_ = -1;  // the node last sent to node_selected_callback_
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
@@ -1302,6 +1313,20 @@ private:
     // The executor of the run in flight or last run; its facts are copied
     // into node_run_facts_ while it runs and once when it ends.
     std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    // What the runs registered for nodes that left the graph (TOFIX160 P2):
+    // released now, or when the run in flight ends (ReleaseRunData, public).
+    void ReleaseAllRunData();
+    void ApplyPendingRunRelease();
+    // After undo / redo swapped the graph (TOFIX160 P3): datasets no Data
+    // Input names any more are unregistered (with their run data), and a
+    // restored Data Input whose data is gone reads Not loaded.
+    void SyncDataAfterSwap(const std::vector<MLNode>& before);
+    std::set<int> pending_run_release_;
+    bool pending_run_release_all_ = false;
+    // Executors replaced while their run was in flight (a new run started):
+    // when each ends, what it registered goes, except the names the current
+    // executor also owns (the same node ids).
+    std::vector<std::shared_ptr<cyxwiz::PipelineExecutor>> retired_executors_;
     bool pipeline_facts_final_ = true;
     // The run's step figures read so far, and the step that sent them.
     WordVectorFeed word_vector_feed_;

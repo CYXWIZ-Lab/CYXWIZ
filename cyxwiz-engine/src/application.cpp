@@ -713,13 +713,36 @@ void CyxWizApp::Update(float delta_time) {
     // Process async task completion callbacks
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
     // Dataset changes (loaded, replaced, removed) to their subscribers, on this thread.
-    // Each change is logged once (one subscriber for the app's lifetime).
-    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe({}, [](const cyxwiz::DatasetChange& c) {
-        const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added ? "added" : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced" : "removed";
-        spdlog::debug("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
-    });
+    // Each change is logged once (one subscriber for the app's lifetime), with
+    // its bytes and what loaded data holds after the batch (one report a batch).
+    static std::vector<cyxwiz::DatasetChange> catalog_changes;
+    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe(
+        {}, [](const cyxwiz::DatasetChange& c) { catalog_changes.push_back(c); });
     (void)catalog_log;
     cyxwiz::DatasetCatalog::Instance().Pump();
+    if (!catalog_changes.empty()) {
+        const cyxwiz::LoadedDataReport loaded = cyxwiz::DataRegistry::Instance().LoadedData();
+        const cyxwiz::MemoryStats fmt;
+        for (const auto& c : catalog_changes) {
+            const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added      ? "added"
+                               : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced"
+                                                                                 : "removed";
+            const auto it = std::find_if(loaded.entries.begin(), loaded.entries.end(),
+                                         [&c](const cyxwiz::LoadedDataEntry& e) { return e.name == c.name; });
+            std::string bytes;
+            if (it != loaded.entries.end())
+                bytes = ", " + fmt.FormatBytes(it->memory_bytes) + " in memory" +
+                        (it->shared_bytes ? " (" + fmt.FormatBytes(it->shared_bytes) + " shared)" : "") +
+                        (it->disk_bytes ? ", " + fmt.FormatBytes(it->disk_bytes) + " on disk" : "");
+            spdlog::debug("Dataset catalog: {} '{}' ({}, {} rows{}, generation {})", what, c.name,
+                          cyxwiz::StorageText(c.entry.storage), c.entry.rows, bytes, c.generation);
+        }
+        spdlog::debug("Loaded data: {} dataset{}, {} in memory, {} on disk; Arrow holds {} (peak {})",
+                      loaded.entries.size(), loaded.entries.size() == 1 ? "" : "s", fmt.FormatBytes(loaded.memory_bytes), fmt.FormatBytes(loaded.disk_bytes),
+                      fmt.FormatBytes(static_cast<size_t>(loaded.arrow_pool_bytes)),
+                      fmt.FormatBytes(static_cast<size_t>(loaded.arrow_pool_peak_bytes)));
+        catalog_changes.clear();
+    }
 }
 
 void CyxWizApp::RenderPythonWait() {

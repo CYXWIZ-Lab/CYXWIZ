@@ -143,7 +143,7 @@ int main() {
     ExpectRefused(Variant(work, "entry", [](json& m) { m["nodes"][1]["entry"] = "other.py:Snake"; }),
                   "entry must be node.py:<Class>");
     ExpectRefused(Variant(work, "tier", [](json& m) { m["nodes"][1]["tier"] = "autograd"; }),
-                  "tier must be activation or module");
+                  "tier must be activation, module or loss");
     ExpectRefused(Variant(work, "shape", [](json& m) { m["nodes"][1]["shape_rule"] = "guess"; }),
                   "shape_rule must be");
     ExpectRefused(Variant(work, "param-type", [](json& m) { m["nodes"][1]["parameters"][0]["type"] = "tensor"; }),
@@ -162,6 +162,38 @@ int main() {
         Check(mode.type == "enum" && mode.enum_values == std::vector<std::string>{"fast", "exact"},
               "a setting with choices becomes an enum");
     }
+
+    // A loss node (P7): tier and role loss, the built-in losses' pins, a target.
+    const auto as_loss = [](json& m) {
+        json& n = m["nodes"][1];
+        n["tier"] = "loss";
+        n["role"] = "loss";
+        n["target"] = "continuous";
+        n.erase("shape_rule");
+        n["inputs"] = json::array({{{"name", "Predictions"}, {"type", "Tensor"}}, {{"name", "Targets"}, {"type", "Labels"}}});
+        n["outputs"] = json::array({{{"name", "Loss"}, {"type", "Loss"}}});
+    };
+    {
+        cyxwiz::PythonBundle with_loss;
+        const bool read = cyxwiz::ReadPythonBundle(Variant(work, "loss", as_loss), with_loss, error);
+        Check(read, "a loss node reads" + (error.empty() ? std::string() : ": " + error));
+        const auto& loss_node = with_loss.nodes[1].descriptor;
+        Check(loss_node.kind == cyxwiz::ExtensionNodeKind::Loss && with_loss.nodes[1].tier == "loss" &&
+                  loss_node.loss_target == cyxwiz::ExtensionLossTarget::Continuous,
+              "it is a Loss node with continuous targets");
+        Check(loss_node.metadata.inputs.size() == 2 && loss_node.metadata.inputs[1].type == cyxwiz::PinType::Labels &&
+                  loss_node.metadata.outputs.size() == 1 &&
+                  loss_node.metadata.outputs[0].type == cyxwiz::PinType::Loss,
+              "with the built-in losses' pins");
+        Check(with_loss.nodes[0].descriptor.kind == cyxwiz::ExtensionNodeKind::TensorLayer,
+              "the other node of the bundle stays a layer");
+    }
+    ExpectRefused(Variant(work, "loss-target", [&](json& m) { as_loss(m); m["nodes"][1]["target"] = "ranked"; }),
+                  "target must be categorical or continuous");
+    ExpectRefused(Variant(work, "loss-pins", [&](json& m) { as_loss(m); m["nodes"][1]["inputs"][1]["type"] = "Tensor"; }),
+                  "a loss has the pins Predictions (Tensor), Targets (Labels) -> Loss (Loss)");
+    ExpectRefused(Variant(work, "loss-tier", [&](json& m) { as_loss(m); m["nodes"][1]["tier"] = "module"; }),
+                  "a loss has tier and role loss");
 
     fs::remove_all(work);
     std::cout << "test_python_node_bundle: all checks passed\n";

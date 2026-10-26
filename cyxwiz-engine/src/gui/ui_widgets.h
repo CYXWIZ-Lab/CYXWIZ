@@ -124,6 +124,9 @@ bool NumberField(const char* id, int* value, int min, int max, int step = 0, flo
 
 // Centred empty state: icon (may be empty), title, muted hint.
 void EmptyState(const char* icon, const char* title, const char* hint = nullptr);
+// A tinted line across the area with a dot in `tone` and wrapped text: a
+// notice about what is shown (a frozen copy of removed data).
+void NoticeLine(const std::string& text, const ImVec4& tone);
 
 struct DialogOptions {
     ImVec2 size = ImVec2(560.0f, 400.0f);      // first size, clamped to 92% of the work area

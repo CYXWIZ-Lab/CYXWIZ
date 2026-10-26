@@ -27,6 +27,10 @@ int main() {
         Check(gui::GraphReplacementBlockReason(state) == "the graph's data is loading before training",
               "Train's data load owns the graph it will train");
         state.loading_training_data = false;
+        state.loading_node_data = true;
+        Check(gui::GraphReplacementBlockReason(state) == "a Data Input is loading its data",
+              "a dialog's load owns the node it will register for");
+        state.loading_node_data = false;
         state.simulation = state.pipeline = state.reinforcement_learning = true;
         state.simulation = false;
         Check(!allowed(), "pipeline remains active after simulation stops");

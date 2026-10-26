@@ -173,6 +173,7 @@ set(ENGINE_SOURCES
     src/core/data_registry_publication.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
+    src/core/loaded_data_report.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -241,6 +242,7 @@ set(ENGINE_SOURCES
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
+    src/core/storage_caches.cpp  # Preferences > Storage: measure and clear the prepared-data caches
     src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
@@ -525,6 +527,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_dialogs.cpp
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
+    src/gui/panels/toolbar_preferences_storage.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/dataset_picker.cpp
@@ -617,6 +620,7 @@ set(ENGINE_SOURCES
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
     src/gui/panels/memory_panel.cpp
+    src/gui/panels/memory_panel_loaded_data.cpp
     src/gui/panels/memory_monitor.cpp
     src/gui/panels/pattern_browser.cpp
     src/gui/panels/variable_explorer.cpp
@@ -3058,6 +3062,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/pipeline_type_names.cpp
     src/core/preparation_recipe.cpp
     src/core/data_registry.cpp
+    src/core/loaded_data_report.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
@@ -3271,6 +3276,40 @@ endif()
 set_target_properties(test_data_convert_pipeline_input PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: a pipeline run's datasets are released when its nodes leave the graph (TOFIX160 P2) =====
+add_executable(test_pipeline_run_release
+    tests/test_pipeline_run_release.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+)
+target_link_libraries(test_pipeline_run_release PRIVATE cyxwiz-training-core)
+
+target_include_directories(test_pipeline_run_release PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_pipeline_run_release PRIVATE
+    cyxwiz-backend
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_pipeline_run_release PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_pipeline_run_release PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME pipeline_run_release COMMAND test_pipeline_run_release)
 
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard
@@ -4706,7 +4745,7 @@ foreach(hdf5_inspection_test IN ITEMS test_hdf5_inspection_task test_hdf5_inspec
         if(hdf5_inspection_test STREQUAL "test_hdf5_source_load_task")
             target_sources(${hdf5_inspection_test} PRIVATE
                 src/core/arrow_dataset.cpp src/core/dataset_audit.cpp
-                src/core/image_utils.cpp src/core/parquet_backed_dataset.cpp)
+                src/core/image_utils.cpp src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
             target_link_libraries(${hdf5_inspection_test} PRIVATE
                 Parquet::parquet_shared ${OpenCV_LIBS})
         endif()
@@ -4815,7 +4854,7 @@ add_executable(test_hdf5_prepared_source
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/arrow_dataset.cpp
-    src/core/parquet_backed_dataset.cpp)
+    src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
 target_include_directories(test_hdf5_prepared_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_prepared_source PRIVATE
     cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared ${OpenCV_LIBS}
@@ -4839,7 +4878,7 @@ add_executable(test_hdf5_loaded_source_verifier
     src/core/training_trace_collector.cpp
     src/core/crash_run_recorder.cpp
     src/core/arrow_dataset.cpp
-    src/core/parquet_backed_dataset.cpp)
+    src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
 target_include_directories(test_hdf5_loaded_source_verifier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_loaded_source_verifier PRIVATE
     cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
@@ -4862,7 +4901,7 @@ add_executable(test_tabular_publication
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/arrow_dataset.cpp
-    src/core/parquet_backed_dataset.cpp)
+    src/core/parquet_backed_dataset.cpp src/core/cache_prune.cpp)
 target_include_directories(test_tabular_publication PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_tabular_publication PRIVATE
     cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
@@ -6027,6 +6066,49 @@ set_target_properties(test_table_grid_rows PROPERTIES
 )
 add_test(NAME table_grid_rows COMMAND test_table_grid_rows)
 
+# ===== Test: what loaded data holds, shared buffers counted once (TOFIX160 P1) =====
+add_executable(test_loaded_data_report
+    tests/test_loaded_data_report.cpp
+    src/core/loaded_data_report.cpp
+)
+target_include_directories(test_loaded_data_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_loaded_data_report PRIVATE Arrow::arrow_shared)
+if(WIN32)
+    target_compile_definitions(test_loaded_data_report PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_loaded_data_report PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME loaded_data_report COMMAND test_loaded_data_report)
+
+# ===== Test: the prepared-data caches' prune rule (TOFIX160 P7) =====
+add_executable(test_cache_prune tests/test_cache_prune.cpp)
+target_include_directories(test_cache_prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_cache_prune PRIVATE cyxwiz-training-core spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_cache_prune PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_cache_prune PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME cache_prune COMMAND test_cache_prune)
+
+# ===== Test: Preferences > Storage's caches (TOFIX160 P7) =====
+add_executable(test_storage_caches tests/test_storage_caches.cpp src/core/storage_caches.cpp
+    src/core/materialization_cache.cpp)
+target_include_directories(test_storage_caches PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_storage_caches PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_storage_caches PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_storage_caches PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME storage_caches COMMAND test_storage_caches)
+
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/linear_algebra_pytorch.json"
@@ -7069,11 +7151,11 @@ set_target_properties(test_large_text_file PROPERTIES
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
         test_data_convert_pipeline_input test_pipeline_executor_operator_routing
-        test_pipeline_operator_materializer_parity test_column_transform_operators cyxwiz-bench-out-of-core)
+        test_pipeline_operator_materializer_parity test_column_transform_operators cyxwiz-bench-out-of-core test_pipeline_run_release)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
 if(HighFive_FOUND)
-    foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input
+    foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input test_pipeline_run_release
             test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity test_column_transform_operators
             cyxwiz-bench-out-of-core)
         target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
@@ -7131,7 +7213,7 @@ add_executable(test_archive_text_source
 target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
-foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input
+foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
         test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity test_column_transform_operators
         cyxwiz-bench-out-of-core)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
@@ -7140,7 +7222,7 @@ endforeach()
 set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
-foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input
+foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
         test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity test_column_transform_operators
         cyxwiz-bench-out-of-core)
     cyxwiz_target_html_parser(${html_target})
@@ -7342,6 +7424,11 @@ endif()
 add_executable(test_extension_training tests/test_extension_training.cpp)
 target_link_libraries(test_extension_training PRIVATE cyxwiz-training-core)
 target_compile_definitions(test_extension_training PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
+# Loss nodes from extensions: compile, build, train (TOFIX125 P7 steps 7.2-7.3)
+add_executable(test_extension_loss tests/test_extension_loss.cpp)
+target_link_libraries(test_extension_loss PRIVATE cyxwiz-training-core)
+add_test(NAME extension_loss COMMAND test_extension_loss)
 
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)

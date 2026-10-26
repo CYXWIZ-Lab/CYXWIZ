@@ -234,6 +234,7 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         cyxwiz::TestManager::Instance().IsTestingActive(),
         graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
         training_data_loading_callback_ && training_data_loading_callback_(),
+        properties_panel_ && properties_panel_->IsDialogBusy(),
         is_simulating_.load(), pipeline_execution_active_,
         rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())}));
 }
@@ -834,6 +835,14 @@ void NodeEditor::Render() {
                     properties_panel_->ClearSelection();
                 }
             }
+        }
+        // The Info panel follows the canvas selection, as it follows a click
+        // in the Nodes panel: once per newly selected node, any node type.
+        const int info_id = frame_selected_subgraph_id_ >= 0 ? frame_selected_subgraph_id_ : selected_node_id_;
+        if (info_id != info_node_id_) {
+            info_node_id_ = info_id;
+            if (const MLNode* node = info_id > 0 ? FindNodeById(info_id) : nullptr; node && node_selected_callback_)
+                node_selected_callback_(*node);
         }
     }
     ImGui::End();
@@ -1676,8 +1685,10 @@ void NodeEditor::RenderNodes() {
         if (is_knime_style) {
             // Make ImNodes node completely invisible - we draw our own icon box
             ImU32 transparent = IM_COL32(0, 0, 0, 0);
-            // Push pin closer to node content (negative offset pulls it inward)
-            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 0.0f);
+            // Pins sit just outside the icon box: centred on its edge, the box
+            // covered half of each and the rest was too small to hover (its
+            // tooltip seemed missing). Radius as pushed above, plus a gap.
+            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 4.0f * zoom_ + 1.0f);
             // Remove node padding so pins sit flush with the icon box
             ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(0.0f, 0.0f));
             ImNodes::PushColorStyle(ImNodesCol_TitleBar, transparent);
@@ -4745,11 +4756,13 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // executor is kept between runs (lazy evaluation, TOFIX154): it reuses an
     // unchanged node's result, and drops the earlier result of each node it
     // runs again, so a node the run fails at leaves nothing stale.
+    ApplyPendingRunRelease();
     for (const auto& node : pipeline_json.at("nodes")) node_run_facts_.erase(node.at("id").get<int>());
     std::string pipeline_str = pipeline_json.dump(2);
     // One line: Debug is recorded in every build, and the indented form was
     // about 140 lines per run.
     spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
+    if (pipeline_executor_ && pipeline_executor_->IsExecuting()) retired_executors_.push_back(pipeline_executor_);
     auto executor = pipeline_executor_ && !pipeline_executor_->IsExecuting()
         ? pipeline_executor_
         : std::make_shared<cyxwiz::PipelineExecutor>();
@@ -4795,6 +4808,7 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
 // ===== Unified Canvas Phase 6: Execution Visualization =====
 
 void NodeEditor::SyncPipelineExecutionVisualization() {
+    ApplyPendingRunRelease();  // releases asked for during a run
     if (pipeline_task_id_ == 0 || !pipeline_execution_tracker_) {
         pipeline_execution_active_ = false;
         return;

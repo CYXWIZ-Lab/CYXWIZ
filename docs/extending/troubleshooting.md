@@ -63,6 +63,9 @@ run, but the node may learn wrongly.
 - Compare `Backward` with the derivative of `Forward` by hand. A common slip
   is a missing factor (for Softsign, dividing by `1 + |x|` instead of
   `(1 + |x|)²`).
+- For a loss, `predictions` is the place. The usual slip is the mean
+  scaling: `backward` must divide as `forward` averages (by the element
+  count for a mean over everything, by the row count for a mean over rows).
 - If you are not the author, tell the plugin's author.
 
 *Could not check* means the node could not be built or run for the check;
@@ -76,6 +79,12 @@ the node may need a specific input shape.
 The Engine's guard caught a broken rule. The end of the message says which
 one; the [developer guide](plugin-developer-guide.md#6-what-the-engine-checks-for-you)
 lists them.
+
+## Training stops with "Extension loss '...' (...): ..."
+
+The same guard around a loss node. *forward must return one value*: return
+a Tensor of one element (end with `.mean()` or `.sum()`). *backward returned
+gradient shape ...*: return a gradient with the predictions' shape.
 
 ## "Remote nodes do not run extension nodes yet"
 

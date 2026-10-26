@@ -139,6 +139,8 @@ private:
     char title_buf_[128] = {};
     std::string title_for_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    bool editor_released_ = false;  // the plot editor let go of a dataset that is gone
+    void ReleaseEditorIfGone();
     // Export PNG: the centre is read back the frame after the click.
     struct Capture {
         bool ready = false;

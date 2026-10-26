@@ -3074,6 +3074,127 @@ PipelineExecutor::PipelineExecutor()
     // like the SQL step: RunStepSql, one restricted DuckDB per step.
 }
 
+void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids, const std::set<std::string>& keep) {
+    if (node_ids.empty()) return;
+    std::set<std::string> release;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        // Names another kept node still uses (a pass-through result is the
+        // input's table) stay, and so do the outputs the user named.
+        std::set<std::string> kept;
+        for (const auto& [id, names] : owned_names_)
+            if (!node_ids.count(id) || kept_nodes_.count(id)) kept.insert(names.begin(), names.end());
+        for (const int id : node_ids) {
+            const auto it = owned_names_.find(id);
+            if (it == owned_names_.end()) continue;
+            if (!kept_nodes_.count(id))
+                for (const auto& name : it->second)
+                    if (!kept.count(name) && !keep.count(name)) release.insert(name);
+            owned_names_.erase(it);
+            kept_nodes_.erase(id);
+        }
+    }
+    for (const int id : node_ids) {
+        run_cache_.erase(id);
+        last_node_results_.erase(id);
+        last_model_artifacts_.erase(id);
+    }
+    for (auto it = last_node_pin_results_.begin(); it != last_node_pin_results_.end();)
+        it = node_ids.count(it->first.first) ? last_node_pin_results_.erase(it) : std::next(it);
+    {
+        // The in-memory copy of a released input goes with it.
+        static const std::string kAdmitted = "_in_memory";
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        for (auto it = admitted_inputs_.begin(); it != admitted_inputs_.end();) {
+            const std::string source = it->size() > kAdmitted.size() ? it->substr(0, it->size() - kAdmitted.size()) : "";
+            if (release.count(source) && !keep.count(*it)) {
+                release.insert(*it);
+                it = admitted_inputs_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    auto& registry = DataRegistry::Instance();
+    for (const auto& name : release) registry.UnregisterTabularDataset(name);
+    if (!release.empty()) {
+        spdlog::debug("[Pipeline] Released {} dataset(s) of {} node(s) that left the graph", release.size(),
+                      node_ids.size());
+        RemoveUnusedStepFiles();
+    }
+}
+
+void PipelineExecutor::ReleaseAll(const std::set<std::string>& keep) {
+    std::set<int> ids;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (const auto& [id, names] : owned_names_) ids.insert(id);
+    }
+    for (const auto& [id, cache] : run_cache_) ids.insert(id);
+    ReleaseNodes(ids, keep);
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        for (auto it = admitted_inputs_.begin(); it != admitted_inputs_.end();) {
+            if (keep.count(*it)) {
+                ++it;
+            } else {
+                admitted.push_back(*it);
+                it = admitted_inputs_.erase(it);
+            }
+        }
+    }
+    for (const auto& name : admitted) DataRegistry::Instance().UnregisterTabularDataset(name);
+    if (!admitted.empty()) RemoveUnusedStepFiles();
+}
+
+std::set<std::string> PipelineExecutor::OwnedNames() {
+    std::set<std::string> names;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (const auto& [id, owned] : owned_names_)
+            if (!kept_nodes_.count(id)) names.insert(owned.begin(), owned.end());
+    }
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    names.insert(admitted_inputs_.begin(), admitted_inputs_.end());
+    return names;
+}
+
+void PipelineExecutor::ReleaseAdmittedInputs() {
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        admitted.swap(admitted_inputs_);
+    }
+    for (const auto& name : admitted) DataRegistry::Instance().UnregisterTabularDataset(name);
+    if (!admitted.empty()) RemoveUnusedStepFiles();
+}
+
+void PipelineExecutor::AdoptOwnership(PipelineExecutor& from) {
+    if (&from == this) return;
+    std::map<int, std::set<std::string>> owned;
+    std::set<int> kept;
+    {
+        std::lock_guard<std::mutex> lock(from.owned_mutex_);
+        owned.swap(from.owned_names_);
+        kept.swap(from.kept_nodes_);
+    }
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(from.step_files_mutex_);
+        admitted.swap(from.admitted_inputs_);
+    }
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (auto& [id, names] : owned) owned_names_[id].insert(names.begin(), names.end());
+        kept_nodes_.insert(kept.begin(), kept.end());
+    }
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    for (auto& name : admitted)
+        if (std::find(admitted_inputs_.begin(), admitted_inputs_.end(), name) == admitted_inputs_.end())
+            admitted_inputs_.push_back(std::move(name));
+}
+
 PipelineExecutor::~PipelineExecutor() {
     // Its copies of memory tables go with it; result files a dataset still
     // uses stay until the next prune.
@@ -7427,6 +7548,19 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                                    dataset == result.ctx.node_results.end() ? "" : dataset->second,
                                    outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "",
                                    written == result.ctx.node_written.end() ? "" : written->second);
+            }
+
+            // What it registered, released when it leaves the graph.
+            {
+                std::lock_guard<std::mutex> lock(owned_mutex_);
+                auto& names = owned_names_[node_id];
+                if (const auto dataset = result.ctx.node_results.find(node_id);
+                    dataset != result.ctx.node_results.end() && !dataset->second.empty())
+                    names.insert(dataset->second);
+                for (const auto& [key, dataset] : result.ctx.node_pin_results)
+                    if (key.first == node_id && !dataset.empty()) names.insert(dataset);
+                if (node->type == "SaveDataset" || node->type == "DeployToNodeEditor" || node->type == "DataOutput")
+                    kept_nodes_.insert(node_id);
             }
 
             // Cache the output for the next run on this executor; a node

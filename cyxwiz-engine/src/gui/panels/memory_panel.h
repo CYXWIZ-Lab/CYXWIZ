@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/loaded_data_report.h"
 #include <imgui.h>
 #include <string>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <chrono>
 #include <functional>
+#include <memory>
 
 namespace cyxwiz {
 
@@ -33,7 +35,7 @@ struct MemorySnapshot {
 class MemoryPanel : public Panel {
 public:
     MemoryPanel();
-    ~MemoryPanel() override = default;
+    ~MemoryPanel() override;
 
     void Render() override;
 
@@ -67,6 +69,9 @@ private:
     void RenderLayerBreakdown();
     void RenderGPUDetails();
     void RenderMemoryStats();
+    // Loaded data (TOFIX160 P1, memory_panel_loaded_data.cpp): every dataset
+    // held, shared memory counted once; rebuilt when the catalog changes.
+    void RenderLoadedData();
 
     // Helper functions
     std::string FormatBytes(size_t bytes) const;
@@ -119,6 +124,13 @@ private:
 
     // Callback
     LayerClickCallback layer_click_callback_;
+
+    // Loaded data
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    int catalog_subscription_ = 0;
+    bool loaded_stale_ = true;
+    LoadedDataReport loaded_;
+    std::string loaded_pick_;
 };
 
 } // namespace cyxwiz

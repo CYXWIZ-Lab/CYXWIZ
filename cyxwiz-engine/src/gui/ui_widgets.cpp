@@ -367,6 +367,23 @@ void EndInsetList() {
 // ---------------------------------------------------------------------------
 // Empty state
 
+void NoticeLine(const std::string& text, const ImVec4& tone) {
+    const Tokens& t = CurrentTokens();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float wrap = std::max(40.0f, w - 36.0f);
+    const float h = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap).y + 10.0f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ToU32(Mix(t.bg_window, tone, 0.10f)), 4.0f);
+    dl->AddCircleFilled(ImVec2(p.x + 14.0f, p.y + 5.0f + ImGui::GetTextLineHeight() * 0.5f), 3.5f, ToU32(tone));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 26.0f, p.y + 5.0f));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+    ImGui::TextColored(t.text, "%s", text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 4.0f));
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+}
+
 bool NumberField(const char* id, double* value, const NumberFieldOptions& o) {
     // Drafts by widget id while a field is being typed in.
     static std::unordered_map<ImGuiID, double> drafts;

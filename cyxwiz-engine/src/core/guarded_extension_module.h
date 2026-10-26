@@ -4,7 +4,9 @@
 // (TOFIX125 P2). It checks what custom code returns and names the node in
 // every error, so a wrong shape from an extension stops training at that node
 // instead of surfacing two layers later in a built-in module.
+// GuardedExtensionLoss does the same for an extension's loss (P7).
 
+#include <cyxwiz/losses/loss_base.h>
 #include <cyxwiz/sequential.h>
 
 #include <map>
@@ -53,6 +55,32 @@ private:
     std::shared_ptr<void> lease_;
     std::vector<size_t> last_input_shape_;
     bool gradients_checked_ = false;
+};
+
+// Around a loss an extension creates: Forward must give one value and
+// Backward a gradient with the predictions' shape; errors name the node.
+// The reduction is the inner loss's, so the trainer weighs it the same way.
+class GuardedExtensionLoss : public Loss {
+public:
+    GuardedExtensionLoss(std::unique_ptr<Loss> inner, int node_id, std::string node_name,
+                         std::string type_id, std::shared_ptr<void> lease);
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override;
+    const Tensor* GetLastMeanReductionDenominator() const override;
+
+    const Loss& Inner() const { return *inner_; }
+    const std::string& TypeId() const { return type_id_; }
+
+private:
+    [[noreturn]] void Fail(const std::string& what) const;
+
+    std::unique_ptr<Loss> inner_;
+    int node_id_ = -1;
+    std::string node_name_;
+    std::string type_id_;
+    std::shared_ptr<void> lease_;
 };
 
 // "[2, 8, 32]".

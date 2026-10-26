@@ -216,7 +216,7 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     return FindNodeById(nodes, *origins.begin());
 }
 
-bool IsLossNodeType(gui::NodeType type);
+bool IsLossNode(const gui::MLNode& node);
 
 bool SplitReachesLoss(
     const gui::MLNode& split_node,
@@ -224,7 +224,7 @@ bool SplitReachesLoss(
     const std::vector<gui::NodeLink>& links) {
     const auto reachable = CollectReachableNodeIds(split_node.id, links);
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type) && reachable.count(node.id) > 0) {
+        if (IsLossNode(node) && reachable.count(node.id) > 0) {
             return true;
         }
     }
@@ -798,7 +798,7 @@ void SuggestSparseFeatureOutput(
              vectorizer->id, vectorizer->name);
 }
 
-bool IsLossNodeType(gui::NodeType type) {
+bool IsBuiltInLossNodeType(gui::NodeType type) {
     return type == gui::NodeType::MSELoss ||
            type == gui::NodeType::CrossEntropyLoss ||
            type == gui::NodeType::FocalLoss ||
@@ -814,6 +814,22 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::TripletLoss ||
            type == gui::NodeType::ContrastiveLoss ||
            type == gui::NodeType::CosineEmbeddingLoss;
+}
+
+// A loss node from a plugin or a Python bundle (TOFIX125 P7). One that is
+// not installed keeps the pins it was saved with: a Loss output says it was
+// a loss, so the graph is refused for the missing node, not for "no loss".
+bool IsExtensionLossNode(const gui::MLNode& node) {
+    if (node.type != gui::NodeType::PluginCustom) return false;
+    const auto descriptor = ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    if (descriptor) return descriptor->kind == ExtensionNodeKind::Loss;
+    return std::any_of(node.outputs.begin(), node.outputs.end(),
+                       [](const gui::NodePin& pin) { return pin.type == gui::PinType::Loss; });
+}
+
+// The graph's training objective: a built-in loss or an extension loss.
+bool IsLossNode(const gui::MLNode& node) {
+    return IsBuiltInLossNodeType(node.type) || IsExtensionLossNode(node);
 }
 
 bool IsTrueParameter(const gui::MLNode& node, const char* key) {
@@ -837,7 +853,7 @@ TargetContract InferTargetContract(
     // stream. Future target-free estimator objectives should leave this false;
     // RL compilers should resolve Environment rather than a dataset label.
     contract.required_by_objective =
-        loss_node && IsLossNodeType(loss_node->type);
+        loss_node && IsLossNode(*loss_node);
 
     for (const auto& node : nodes) {
         if (training_path_ids.count(node.id) == 0) continue;
@@ -2967,7 +2983,7 @@ const gui::MLNode* FindFirstLossNodeInSet(
     const std::unordered_set<int>& node_ids) {
 
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type) &&
+        if (IsLossNode(node) &&
             node_ids.count(node.id) > 0) {
             return &node;
         }
@@ -2999,7 +3015,7 @@ void ValidateSingleDatasetReachableLossNode(
 
     std::vector<const gui::MLNode*> reachable_losses;
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type) &&
+        if (IsLossNode(node) &&
             dataset_reachable.count(node.id) > 0) {
             reachable_losses.push_back(&node);
         }
@@ -4162,7 +4178,8 @@ void ValidateExtensionNodes(
         }
 
         // A trainable node on the training path becomes a layer in the
-        // layer loop (CompileExtensionLayer), which reports shape problems.
+        // layer loop (CompileExtensionLayer), which reports shape problems;
+        // a loss node becomes the training objective.
     }
 }
 
@@ -5438,8 +5455,9 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         // Extension nodes (TOFIX125): their own shape function and module.
+        // An extension loss is the objective, not a layer (P7).
         if (node->type == gui::NodeType::PluginCustom) {
-            if (!ContainsWhenFiltered(training_path_ids, node->id)) {
+            if (!ContainsWhenFiltered(training_path_ids, node->id) || IsExtensionLossNode(*node)) {
                 continue;
             }
             CompiledLayer layer;
@@ -5751,6 +5769,21 @@ TrainingConfiguration GraphCompiler::Compile(
     if (loss_node) {
         config.loss_type = loss_node->type;
         config.loss_params = loss_node->parameters;
+        const auto descriptor = IsExtensionLossNode(*loss_node)
+            ? ExtensionNodeRegistry::Instance().Find(loss_node->extension_type_id)
+            : std::nullopt;
+        // Not installed: ValidateExtensionNodes refused the graph.
+        if (descriptor) {
+            config.loss_extension_type_id = loss_node->extension_type_id;
+            config.loss_extension_version = descriptor->version;
+            config.loss_extension_name = descriptor->metadata.name;
+            // The extension says what its targets are.
+            if (config.target.value_kind == TargetValueKind::Unspecified) {
+                config.target.value_kind = descriptor->loss_target == ExtensionLossTarget::Continuous
+                    ? TargetValueKind::Continuous
+                    : TargetValueKind::Categorical;
+            }
+        }
 
         // Resolve target semantics once, at compile time. Target-producing
         // graph operators may already be more specific; otherwise the
@@ -6615,7 +6648,7 @@ const gui::MLNode* GraphCompiler::FindDatasetInputNode(
 
         const auto reachable = CollectReachableNodeIds(node.id, links);
         for (const auto& candidate : nodes) {
-            if (IsLossNodeType(candidate.type) &&
+            if (IsLossNode(candidate) &&
                 reachable.count(candidate.id) > 0) {
                 return &node;
             }
@@ -6626,7 +6659,7 @@ const gui::MLNode* GraphCompiler::FindDatasetInputNode(
 
 const gui::MLNode* GraphCompiler::FindLossNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type)) {
+        if (IsLossNode(node)) {
             return &node;
         }
     }
@@ -7763,7 +7796,7 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
     // a random preprocessing tensor, etc.). That's the canonical "pin
     // is fooling user" case.
     for (const auto& node : nodes) {
-        if (!IsLossNodeType(node.type)) continue;
+        if (!IsLossNode(node)) continue;
 
         // Identify Targets pin. Every loss node above creates the
         // Targets input as PinType::Labels (see node_editor_nodes.cpp);
@@ -7885,7 +7918,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
     for (const auto& node : nodes) node_by_id[node.id] = &node;
 
     for (const auto& node : nodes) {
-        if (!IsLossNodeType(node.type)) continue;
+        if (!IsLossNode(node)) continue;
 
         // Predictions is the FIRST input on every loss node above —
         // it's PinType::Tensor. Match by name "Predictions" for older
@@ -8053,7 +8086,7 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                 auto node_it = node_by_id.find(owner_it->second);
                 if (node_it == node_by_id.end()) continue;
 
-                if (IsLossNodeType(node_it->second->type)) {
+                if (IsLossNode(*node_it->second)) {
                     found_loss_node = true;
                     break;
                 }

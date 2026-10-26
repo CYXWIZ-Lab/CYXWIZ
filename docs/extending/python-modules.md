@@ -94,6 +94,9 @@ for step in range(150):
 - `Sequential.add` keeps your object alive while the model holds it.
 - The model names your parameters `layer<N>.<name>` (`layer1.a` above).
 - `get_name()` is your class name unless you define `get_name`.
+- A loss is written the same way: subclass `pycyxwiz.Loss` with
+  `forward(predictions, targets)` and `backward(predictions, targets)`; see
+  [python-nodes.md](python-nodes.md) section 3.
 
 ## 4. Check your gradient
 

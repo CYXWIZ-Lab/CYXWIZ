@@ -66,7 +66,8 @@ std::string Method(double floor) {
 ExtensionGradientView BuildGradient(const ExtensionPropertiesInputs& in,
                                     const std::map<std::string, std::string>& values) {
     ExtensionGradientView view;
-    view.shown = in.descriptor->kind == ExtensionNodeKind::TensorLayer;
+    // Layers and losses (P7) have a hand-written gradient to check.
+    view.shown = in.descriptor->kind != ExtensionNodeKind::Signal;
     if (!view.shown) return view;
 
     const ExtensionGradientRecord* record = in.last_check;

@@ -105,8 +105,31 @@ const PlotNodeLane::Status& PlotNodeLane::StatusOf(int plot_id) { return entries
 
 void PlotNodeLane::Forget(int plot_id) {
     Cancel(plot_id);
+    if (const auto it = entries_.find(plot_id); it != entries_.end()) ReleaseModelTable(it->second.model_table, plot_id);
     entries_.erase(plot_id);
 }
+
+void PlotNodeLane::ReleaseModelTable(const std::string& name, int plot_id) {
+    if (name.empty()) return;
+    for (const auto& [id, entry] : entries_)
+        if (id != plot_id && entry.model_table == name) return;
+    DataRegistry::Instance().UnregisterTabularDataset(name);
+}
+
+PipelineExecutor& PlotNodeLane::Owned() {
+    if (!owned_) owned_ = std::make_shared<PipelineExecutor>();
+    return *owned_;
+}
+
+void PlotNodeLane::ReleaseNodes(const std::set<int>& node_ids) {
+    if (owned_) owned_->ReleaseNodes(node_ids);
+}
+
+void PlotNodeLane::ReleaseAll() {
+    if (owned_) owned_->ReleaseAll();
+}
+
+std::set<std::string> PlotNodeLane::OwnedNames() { return owned_ ? owned_->OwnedNames() : std::set<std::string>{}; }
 
 void PlotNodeLane::Cancel(int plot_id) {
     auto it = entries_.find(plot_id);
@@ -122,12 +145,25 @@ void PlotNodeLane::Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& n
     s.needs_run = e.plan.state == NodeResultPlan::State::Run;
     s.run_node_count = e.plan.run_node_count;
     if (s.state == Status::State::Running) return;  // finishes first
+    // Nothing to show: the rows it read go (a deleted or unwired input's
+    // table stayed held here).
+    const auto drop_table = [&]() {
+        if (!s.table && !s.sparse && s.dataset_name.empty()) return;
+        s.table.reset();
+        s.sparse = false;
+        s.dataset_name.clear();
+        s.source_rows = 0;
+        e.result_fingerprint.clear();
+        ++s.data_version;
+    };
     switch (e.plan.state) {
         case NodeResultPlan::State::NotConnected:
             s.state = Status::State::NotConnected;
+            drop_table();
             break;
         case NodeResultPlan::State::Unavailable:
             s.state = Status::State::Unavailable;
+            drop_table();
             s.reason = e.plan.reason;
             s.alternative_id = e.plan.alternative_id;
             s.alternative_name = e.plan.alternative_name;
@@ -197,9 +233,10 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
             closure_links.push_back(l);
     auto& pm = ProjectManager::Instance();
     auto result = std::make_shared<std::string>();
+    Owned();
     const std::string name = "Sparse features: " + (e.plan.feeder_name.empty() ? std::string("node") : e.plan.feeder_name);
     auto task = std::make_shared<LambdaTask>(
-        name, [plan = e.plan, closure = std::move(closure), closure_links = std::move(closure_links), result,
+        name, [plan = e.plan, closure = std::move(closure), closure_links = std::move(closure_links), result, owned = owned_,
                artifacts = pm.GetArtifactsPath(), exports = pm.GetExportsPath(), ingestion = pm.GetIngestionCachePath(),
                project = pm.GetProjectRoot(),
                // Training's prepared-data cache: the matrix is built once and read after
@@ -219,6 +256,7 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
                 auto it = executor.NodeResults().find(plan.source_input_id);
                 if (it == executor.NodeResults().end()) throw std::runtime_error("The Data Input gave no table.");
                 source = it->second;
+                owned->AdoptOwnership(executor);  // the table it read goes with its node
             }
             if (t.ShouldStop()) return;
             // 2. The vectorizer through the materializer, as training runs it.
@@ -288,6 +326,11 @@ void PlotNodeLane::Finish(Entry& e) {
             auto table = it != models.end() ? TreeModelTable(it->second, &error) : nullptr;
             const std::string name = "ds_plot_model_" + std::to_string(e.plan.feeder_id);
             if (table && DataRegistry::Instance().RegisterArrowTable(table, name)) {
+                if (e.model_table != name) {
+                    const std::string previous = e.model_table;
+                    e.model_table = name;
+                    ReleaseModelTable(previous, -1);  // another feeder's model, no longer shown here
+                }
                 s.table = table;
                 s.source_rows = table->num_rows();
                 s.dataset_name = name;
@@ -331,6 +374,12 @@ void PlotNodeLane::Finish(Entry& e) {
         s.state = s.table ? Status::State::OutOfDate : Status::State::Idle;
     }
     e.task_id = 0;
+    // Its in-memory copies of disk inputs go now (the plot holds the rows it
+    // read); its other names stay owned here until their nodes leave.
+    if (e.executor) {
+        e.executor->ReleaseAdmittedInputs();
+        Owned().AdoptOwnership(*e.executor);
+    }
     e.executor.reset();
     e.sparse_result.reset();
 }
@@ -350,8 +399,10 @@ void PlotNodeLane::Poll(const std::vector<gui::MLNode>& nodes, const std::vector
         Plan(n.id, entries_[n.id], nodes, links);
     }
     for (auto it = entries_.begin(); it != entries_.end();) {
-        if (std::find(alive.begin(), alive.end(), it->first) == alive.end() && it->second.task_id == 0)
+        if (std::find(alive.begin(), alive.end(), it->first) == alive.end() && it->second.task_id == 0) {
+            ReleaseModelTable(it->second.model_table, it->first);
             it = entries_.erase(it);
+        }
         else
             ++it;
     }

@@ -13,6 +13,7 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "node_editor.h"
 #include "data_studio/profile_view.h"
 #include "node_editor.h"
 #include "ui_tokens.h"
@@ -418,8 +419,10 @@ void DataInputDialog::UnloadDataset() {
     ResetPreviewPaging();
     preview_loaded_ = false;
 
+    // Every map it could be in, and the copies pipeline runs made of it.
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset(loaded_dataset_name_);
+    if (node_editor_ && node_) node_editor_->ReleaseRunData({node_->id});
 
     data_load_state_ = DataLoadState::NotLoaded;
     loaded_rows_ = 0;

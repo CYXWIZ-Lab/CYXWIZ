@@ -232,6 +232,17 @@ std::string GenerateDatasetName(const std::string& file_path, const std::string&
     return name;
 }
 
+std::string UniqueDatasetName(const std::string& base, const std::vector<std::string>& taken) {
+    const auto used = [&taken](const std::string& name) {
+        return std::find(taken.begin(), taken.end(), name) != taken.end();
+    };
+    if (!used(base)) return base;
+    for (int n = 2;; ++n) {
+        const std::string candidate = base + "_" + std::to_string(n);
+        if (!used(candidate)) return candidate;
+    }
+}
+
 std::string FormatBytes(std::size_t bytes) {
     const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     int unit_idx = 0;
