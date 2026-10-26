@@ -54,13 +54,17 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has nine views: **Query**, **Profile**, **Missing**, **Outliers**,
-**Correlation**, **Distribution**, **Tests**, **Regression** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+Explore has eleven views: **Query**, **Profile**, **Missing**, **Outliers**,
+**Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
+**Projection** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
 Distribution Fitter open Distribution; Hypothesis Testing opens Tests; Linear /
-Polynomial Regression opens Regression). In Profile, a column's missing or outlier count opens
+Polynomial Regression opens Regression) and Tools > Clustering and Projection
+(K-Means, DBSCAN, Hierarchical Clustering and Gaussian Mixture Models open
+Groups on that method, Cluster Evaluation opens Groups, PCA / t-SNE / UMAP opens
+Projection). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -313,6 +317,74 @@ Predict a number column from others, or a curve (degree 1 to 6) in one:
 coefficients with CIs, the equation, R², AIC, what the fit says, and the
 residual plots; **Add to the graph** adds a Linear or Polynomial Regression
 node. See [statistics](statistics.md#regression).
+
+## Groups
+
+Which rows group together. Pick the number columns (every number column, up
+to eight, to start), **Scale** (Standardise turns each column into z-scores,
+so a column in large units such as grams does not decide the groups alone; As
+they are uses the raw values) and the **Method**, then its settings; every
+number is typed:
+
+| Method | Settings |
+| --- | --- |
+| K-Means | groups (2 to 50), seed |
+| DBSCAN | eps, min samples (the row itself counts), metric (euclidean, manhattan, cosine) |
+| Hierarchical | groups (where the tree is cut), linkage (ward, complete, average, single); metric when not ward |
+| Gaussian mixture | components, seed, covariance (full, tied, diag, spherical) |
+
+The same seed gives the same groups. Rows missing one of the columns are left
+out and counted. The answer shows:
+
+- the scores: silhouette (with its words: above 0.70 strong, 0.50 reasonable,
+  0.25 weak structure), Davies-Bouldin, Calinski-Harabasz, and the rows used;
+  what the method says about itself (K-Means inertia and iterations, the
+  tree's cophenetic correlation, the mixture's BIC and AIC);
+- the rows on their first two principal components, coloured by group (DBSCAN's
+  noise faint), with each group's size;
+- **What each group is**: the mean of each column per group, in the column's own
+  units, each group's silhouette, and a sentence per group ("high
+  flipper_length_mm, low bill_depth_mm": columns at least half a standard
+  deviation from the mean of all rows);
+- **Compare with a column** (any column with 2 to 50 values): the counts per
+  group and value, the adjusted Rand index (1: the groups are the column's
+  values, 0: chance) and what it means ("Group 3 is all Gentoo (123)").
+
+**How many groups?** opens a chart for the method: K-Means inertia (the elbow)
+and silhouette for 2 to 8 groups; Gaussian mixture BIC and AIC; the top 12
+merges of the hierarchical tree, with the cut and the silhouette of each cut;
+DBSCAN's sorted distance from each row to its (min samples − 1)-th neighbour,
+with eps drawn and its knee (Kneedle). The suggestion comes in words, and
+**Use 3** (or **Use eps 0.643**) sets it.
+
+**Add as a step** puts the method's node after the data in use (the rest of the
+graph gets a `cluster_id` column; a Gaussian mixture also adds
+`probability_0` ..); **Keep as a node** adds it as a branch. The node gets the
+tab's settings, so it gives the same groups ([clustering](clustering.md#the-nodes)).
+**Export CSV...** saves the groups and a row per row used; **Copy** copies the
+summary.
+
+## Projection
+
+What the rows look like in two dimensions: **PCA**, **t-SNE** or **UMAP** of the
+chosen number columns (Scale as in Groups).
+
+- PCA shows each component's share of the variation (a bar each), the loadings
+  of the first two (those of 0.4 or more stand out) and what the components
+  are in words ("Component 1: flipper_length_mm, body_mass_g and
+  bill_length_mm together, against bill_depth_mm").
+- t-SNE takes perplexity, learning rate and iterations; UMAP neighbours and
+  min distance. Both read at most 5,000 rows: beyond that a seeded sample (the
+  seed is typed) in table order, and the sentence says so. t-SNE shows its
+  iteration, KL divergence and a progress bar; **Cancel** stops it. UMAP has no
+  progress to show, so Cancel only stops waiting for it.
+
+**Colour by** any column (text: a colour per value, the 17 most common beyond
+18 values; numbers: four quartile bins) or by the groups of the Groups tab when
+they were found on the same columns. **Add as a step** / **Keep as a node**
+add the PCA, t-SNE or UMAP node, which keeps the input columns and adds
+`pc_*`, `tsne_*` or `umap_*` beside them; the t-SNE and UMAP nodes work on
+every row ([dimensionality reduction](dimensionality_reduction.md#the-nodes)).
 
 ## Visualize
 
