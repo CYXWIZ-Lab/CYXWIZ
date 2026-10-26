@@ -6371,6 +6371,14 @@ int main() {
         }
         Check(found, "DataConvert runtime format constraint must exist: " + key);
     }
+    // Execute Pipeline on a training graph runs the data steps and leaves
+    // the training nodes to training.
+    for (const auto type : {gui::NodeType::DataInput, gui::NodeType::StandardScaler, gui::NodeType::MinMaxScaler})
+        Check(!cyxwiz::IsTrainingOnlyNode(type), "a data step runs in the data pipeline");
+    for (const auto type : {gui::NodeType::DataSplit, gui::NodeType::DataLoader, gui::NodeType::Dense,
+                            gui::NodeType::ReLU, gui::NodeType::CrossEntropyLoss, gui::NodeType::Adam,
+                            gui::NodeType::Output})
+        Check(cyxwiz::IsTrainingOnlyNode(type), "a training node is left to training");
     std::cout << "Pipeline operator metadata drift guard passed\n";
     return 0;
 }

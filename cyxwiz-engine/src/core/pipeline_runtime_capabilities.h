@@ -364,6 +364,10 @@ bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type);
 
 bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type);
 
+// A node only training runs (Data Split, Data Loader, model layers, losses,
+// optimizers, Output): a data pipeline run leaves it out.
+bool IsTrainingOnlyNode(gui::NodeType node_type);
+
 PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);
 

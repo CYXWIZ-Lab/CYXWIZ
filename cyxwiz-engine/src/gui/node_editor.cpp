@@ -4757,6 +4757,33 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // unchanged node's result, and drops the earlier result of each node it
     // runs again, so a node the run fails at leaves nothing stale.
     ApplyPendingRunRelease();
+    // A training graph's data steps run; its Data Split, Data Loader, model,
+    // loss and optimizer belong to training (the executor refused the whole
+    // graph: "Node 'Split' has unsupported node type 'Unknown'").
+    {
+        std::set<int> training_only;
+        nlohmann::json kept_nodes = nlohmann::json::array();
+        for (auto& node : pipeline_json.at("nodes")) {
+            const MLNode* editor_node = FindNodeById(node.at("id").get<int>());
+            if (editor_node && cyxwiz::IsTrainingOnlyNode(editor_node->type)) {
+                training_only.insert(editor_node->id);
+                continue;
+            }
+            kept_nodes.push_back(std::move(node));
+        }
+        pipeline_json["nodes"] = std::move(kept_nodes);
+        if (!training_only.empty()) {
+            nlohmann::json kept_links = nlohmann::json::array();
+            for (auto& link : pipeline_json.at("links")) {
+                if (training_only.count(link.at("start_node").get<int>()) ||
+                    training_only.count(link.at("end_node").get<int>()))
+                    continue;
+                kept_links.push_back(std::move(link));
+            }
+            pipeline_json["links"] = std::move(kept_links);
+            spdlog::info("Pipeline: the data steps run; {} training node(s) are left to training", training_only.size());
+        }
+    }
     for (const auto& node : pipeline_json.at("nodes")) node_run_facts_.erase(node.at("id").get<int>());
     std::string pipeline_str = pipeline_json.dump(2);
     // One line: Debug is recorded in every build, and the indented form was

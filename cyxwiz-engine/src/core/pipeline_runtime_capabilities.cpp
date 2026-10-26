@@ -1962,6 +1962,15 @@ bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
     return it != capabilities.end();
 }
 
+bool IsTrainingOnlyNode(gui::NodeType node_type) {
+    for (const auto& capability : GetPipelineSupportedTrainingRoleCapabilities()) {
+        if (capability.node_type != node_type) continue;
+        return capability.role != PipelineTrainingSupportRole::DataSource &&
+               capability.role != PipelineTrainingSupportRole::Preprocessing;
+    }
+    return false;
+}
+
 bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type) {
     const auto& capabilities = GetPipelineSupportedTrainingRoleCapabilities();
     auto it = std::find_if(
