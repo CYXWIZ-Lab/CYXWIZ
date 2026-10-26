@@ -4758,6 +4758,22 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         if (!requested_label_col.empty() && tabular_schema &&
+            resolved_label_index < 0 && !labels_from_structure &&
+            config.training_data_needs_pipeline_run &&
+            !config.target.IsGeneratedByGraph()) {
+            // A SQL / Rename / Math Formula step before the Split can make the
+            // label column (TOFIX178 S0-e): training checks it on their result.
+            config.dataset_roles.train.label_column = requested_label_col;
+            config.target.origin = TargetOrigin::DatasetColumn;
+            config.target.producer_node_id = dataset_node->id;
+            config.target.producer_node_name = dataset_node->name;
+            config.target.primary_column = requested_label_col;
+            config.target.width = 1;
+            AddIssue(config, IssueLevel::Warning,
+                     "Label column '" + requested_label_col + "' is not in '" + config.dataset_name +
+                         "'; the steps before the Data Split must make it (checked when they run)",
+                     dataset_node->id, dataset_node->name);
+        } else if (!requested_label_col.empty() && tabular_schema &&
             resolved_label_index < 0 && !labels_from_structure) {
             if (config.target.IsGeneratedByGraph()) {
                 AddIssue(config, IssueLevel::Warning,

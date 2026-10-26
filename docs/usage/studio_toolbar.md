@@ -73,6 +73,13 @@ highlighted while shown); the node, link and selection counts.
   data budget, at most 90% of free memory) stops: "the memory guard stopped
   'Scale': the Engine grew by ... while it ran, the limit is 13.9 GB. Use
   fewer rows or columns (Sample Rows, Select Columns) and run it again."
+- The label column must be in the steps' result. When a SQL step drops or
+  renames it, training stops before it starts: "The label column 'class' is
+  not in the data the steps before the Data Split made (columns: f0, ...,
+  f7, species)". A renamed label is found when its new name is a common one
+  (label, target, class, y). A label set in the graph file that only the
+  steps make compiles with a warning ("... the steps before the Data Split
+  must make it (checked when they run)").
 - Not yet: these steps on a supplied Validation or Test dataset ("Test
   dataset steps such as SQL or Text Clean are not applied by training yet;
   connect its Data Input directly"), and Sparse output from a vectorizer after

@@ -905,6 +905,21 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 effective_dataset_name = prepared_dataset;
                 effective_label_column = ResolveRuntimeArrowLabelColumn(
                     registry, effective_dataset_name, effective_label_column);
+                // The label a SQL / Rename step was to make (TOFIX178 S0-e):
+                // missing from the result, training stops with its columns.
+                if (config.target.origin == cyxwiz::TargetOrigin::DatasetColumn && !effective_label_column.empty()) {
+                    std::shared_ptr<arrow::Schema> schema;
+                    if (const auto memory = registry.GetArrowDataset(effective_dataset_name)) schema = memory->GetSchema();
+                    else if (const auto disk = registry.GetParquetBackedDataset(effective_dataset_name)) schema = disk->GetSchema();
+                    if (schema && !schema->GetFieldByName(effective_label_column)) {
+                        std::string columns;
+                        for (const auto& field : schema->fields())
+                            columns += (columns.empty() ? "" : ", ") + field->name();
+                        throw std::runtime_error("The label column '" + effective_label_column +
+                                                 "' is not in the data the steps before the Data Split made "
+                                                 "(columns: " + columns + ")");
+                    }
+                }
                 cyxwiz::ReconcileRuntimeDatasetTarget(
                     config, effective_label_column, effective_dataset_name);
             } else {

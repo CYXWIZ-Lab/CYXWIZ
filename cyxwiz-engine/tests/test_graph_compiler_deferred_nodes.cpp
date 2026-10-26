@@ -177,6 +177,35 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
     return nullptr;
 }
 
+// A label the steps make (a SQL / Rename before the Split): not in the
+// source, so it is a warning checked when they run (TOFIX178 S0-e). Its own
+// function: main's frame is near the stack limit.
+void CheckLabelMadeBySteps(const gui::MLNode& source,
+                           const std::vector<gui::MLNode>& steps_to_model,
+                           const std::vector<gui::MLNode>& plain_to_model,
+                           const std::vector<gui::NodeLink>& run_links,
+                           const std::vector<gui::NodeLink>& plain_links) {
+    cyxwiz::GraphCompiler compiler;
+    auto labelled = source;
+    labelled.parameters["dataset_name"] = "compiler_schema_contract";
+    labelled.parameters["file_category"] = "tabular";
+    labelled.parameters["label_column"] = "species";
+    std::vector<gui::MLNode> nodes{labelled};
+    nodes.insert(nodes.end(), steps_to_model.begin(), steps_to_model.end());
+    auto config = compiler.Compile(nodes, run_links, true);
+    Check(config.is_valid, "a label the steps make compiles: " + config.error_message);
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning, "the steps before the Data Split must make it"),
+          "the missing source label is a warning naming who must make it");
+    Check(config.dataset_roles.train.label_column == "species" && config.target.primary_column == "species",
+          "training looks for the requested label on the steps' result");
+    nodes = {labelled};
+    nodes.insert(nodes.end(), plain_to_model.begin(), plain_to_model.end());
+    config = compiler.Compile(nodes, plain_links, true);
+    Check(!HasIssueText(config, cyxwiz::IssueLevel::Warning, "the steps before the Data Split must make it") &&
+              HasIssueText(config, "is not present in registered dataset"),
+          "without a pipeline-run step a missing label is reported as before");
+}
+
 } // namespace
 
 int main() {
@@ -2574,6 +2603,11 @@ int main() {
           "a pipeline-run step on the Training path asks for the pipeline run");
     Check(config.dataset_roles.train.source_node_id == role_train.id,
           "the Training source is still the Data Input behind the run step");
+
+    CheckLabelMadeBySteps(role_train,
+                          {run_step, role_transform, role_split, role_loader, binary_dense, binary_loss, optimizer},
+                          {role_transform, role_split, role_loader, binary_dense, binary_loss, optimizer},
+                          run_links, links);
 
     auto false_dataset_transform = Node(
         67,
