@@ -1,4 +1,5 @@
 #include "sparse_feature_dataset_batcher.h"
+#include "split_partitioning.h"
 
 #include "materialization_memory_guard.h"
 
@@ -72,7 +73,8 @@ SparseFeatureDatasetBatcher::SparseFeatureDatasetBatcher(
     MaterializationMemoryContext memory_context,
     bool stratified,
     bool full_dataset,
-    bool sparse_feature_output)
+    bool sparse_feature_output,
+    SparseSplitRule split_rule)
     : dataset_(std::move(dataset))
     , batch_size_(batch_size)
     , shuffle_(shuffle)
@@ -108,55 +110,32 @@ SparseFeatureDatasetBatcher::SparseFeatureDatasetBatcher(
         for (int64_t row = 0; row < num_rows; ++row) {
             indices_.push_back(row);
         }
-    } else if (stratified) {
-        if (!dataset_->GetLabels()) {
-            throw std::invalid_argument(
-                "SparseFeatureDatasetBatcher stratified split requires labels");
-        }
-        float safe_test_split = std::max(
-            0.0f, 1.0f - safe_train_split - safe_val_split);
-        float ratio_sum =
-            safe_train_split + safe_val_split + safe_test_split;
-        float train_ratio = safe_train_split;
-        float dev_ratio = safe_val_split;
-        if (!(ratio_sum > 0.0f)) {
-            train_ratio = 0.8f;
-            dev_ratio = 0.1f;
-            safe_test_split = 0.1f;
-            ratio_sum = 1.0f;
-        }
-        train_ratio /= ratio_sum;
-        dev_ratio /= ratio_sum;
-
-        std::map<int64_t, std::vector<int64_t>> by_label;
-        for (int64_t row = 0; row < num_rows; ++row) {
-            by_label[ReadLabel(row, true).class_index].push_back(row);
-        }
-        std::mt19937 split_rng(seed);
-        for (auto& [label, rows] : by_label) {
-            (void)label;
-            if (shuffle_) {
-                std::shuffle(rows.begin(), rows.end(), split_rng);
+    } else if (stratified || split_rule.shared) {
+        // The shared split rule: every phase's batcher marks the same rows.
+        std::vector<uint32_t> class_of_row;
+        if (stratified) {
+            if (!dataset_->GetLabels()) {
+                throw std::invalid_argument(
+                    "SparseFeatureDatasetBatcher stratified split requires labels");
             }
-            size_t train_count = static_cast<size_t>(rows.size() * train_ratio);
-            size_t val_count = static_cast<size_t>(rows.size() * dev_ratio);
-            if (!rows.empty() && train_count == 0) {
-                train_count = 1;
+            std::map<int64_t, uint32_t> ids;
+            class_of_row.reserve(static_cast<size_t>(num_rows));
+            for (int64_t row = 0; row < num_rows; ++row) {
+                const auto [it, added] =
+                    ids.emplace(ReadLabel(row, true).class_index, static_cast<uint32_t>(ids.size()));
+                (void)added;
+                class_of_row.push_back(it->second);
             }
-            train_count = std::min(train_count, rows.size());
-            val_count = std::min(val_count, rows.size() - train_count);
-            size_t begin = 0;
-            size_t end = train_count;
-            if (split_phase_ == BatcherPhase::Val) {
-                begin = train_count;
-                end = train_count + val_count;
-            } else if (split_phase_ == BatcherPhase::Test) {
-                begin = train_count + val_count;
-                end = rows.size();
-            }
-            indices_.insert(
-                indices_.end(), rows.begin() + begin, rows.begin() + end);
         }
+        const float test_split = split_rule.test_split > 0.0f
+            ? split_rule.test_split
+            : std::max(0.0f, 1.0f - safe_train_split - safe_val_split);
+        const auto partitions = AssignSplitPartitions(
+            static_cast<size_t>(num_rows), class_of_row, safe_train_split, safe_val_split, test_split,
+            split_rule.shuffle, split_rule.seed);
+        const int8_t want = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
+        for (int64_t row = 0; row < num_rows; ++row)
+            if (partitions[static_cast<size_t>(row)] == want) indices_.push_back(row);
     } else {
         const int64_t train_count =
             static_cast<int64_t>(num_rows * safe_train_split);

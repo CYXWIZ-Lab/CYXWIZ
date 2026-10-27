@@ -95,10 +95,14 @@ A Data Input kept on disk can feed training:
   > raise the data budget (Preferences > Data) to load it in memory.
 
 - **A table on disk** trains a row group at a time, with the Data Split
-  made row by row as in memory: without stratification Train is the first
-  rows of the file, then Validation, then Test; with **Stratified** each
-  class gets its share (in file order, or drawn by the split seed when
-  shuffling). The split takes one byte of memory per row (100 MB for 100
+  made row by row by the same rule as in memory, so the same rows land in
+  Train, Validation and Test either way: when the Data Loader shuffles, each
+  row's share is drawn by the Split's seed (each class's shares with
+  **Stratified**, the whole table's without), like scikit-learn's
+  `train_test_split`; without shuffling each class (or the table) fills
+  Train, then Validation, then Test in file order. Without a Data Split,
+  Train is the first rows and Validation the rest. The draw is the same on
+  Windows, Linux and macOS. The split takes one byte of memory per row (100 MB for 100
   million rows). **Class balancing** in the Data Loader works on disk with
   the same modes and targets as in memory (oversample, undersample, weighted
   sampler; min, median, a number or the largest class): one pass over the

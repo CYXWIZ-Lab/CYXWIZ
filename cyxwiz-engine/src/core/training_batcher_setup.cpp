@@ -167,6 +167,15 @@ std::string FormatFloatVector(const std::vector<float>& values) {
 // order. The batchers give Validation every row after Train when its share is
 // 0 (their two-way rule), so that slice is the Test holdout and the Test
 // slice is empty: the caller swaps the two.
+// The shared split rule (split_partitioning.h, TOFIX178 S0-g1) marks each
+// row's partition: a stratified split, or any Data Split that shuffles (a
+// seeded shuffle over its three shares, like scikit-learn's
+// train_test_split). Without a Data Split, or for time series, the rows keep
+// the contiguous two-way slices.
+bool UsesSharedSplitRule(const TrainingConfiguration& config) {
+    return !config.is_time_series && (config.stratified || (config.has_data_split && config.shuffle));
+}
+
 bool HoldoutIsTestOnly(const TrainingConfiguration& config) {
     return config.has_data_split && config.val_ratio <= 0.0f && config.test_ratio > 0.0f;
 }
@@ -222,7 +231,7 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
 
     std::shared_ptr<arrow::Table> effective_table = table;
     std::string effective_partition = partition_column;
-    if (effective_partition.empty() && config.stratified && !config.is_time_series) {
+    if (effective_partition.empty() && UsesSharedSplitRule(config)) {
         auto partitioned = AddSplitPartitionColumn(
             table,
             SplitPartitionOptions{
@@ -232,7 +241,7 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
                 config.test_ratio,
                 config.shuffle,
                 static_cast<uint32_t>(std::max(0, config.split_seed)),
-                true,
+                config.stratified,
                 context + " class weights"});
         if (partitioned.ok()) {
             effective_table = partitioned.ValueOrDie();
@@ -382,7 +391,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     std::string partition_col = config.is_time_series
         ? kSplitPartitionColumn : "";
     auto effective_dataset = dataset;
-    if (config.stratified && !config.is_time_series) {
+    if (UsesSharedSplitRule(config)) {
         auto partitioned = AddSplitPartitionColumn(
             dataset ? dataset->GetArrowTable() : nullptr,
             SplitPartitionOptions{
@@ -392,7 +401,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                 config.test_ratio,
                 config.shuffle,
                 static_cast<uint32_t>(std::max(0, config.split_seed)),
-                true,
+                config.stratified,
                 "TrainingExecutor Arrow"});
         if (partitioned.ok()) {
             effective_dataset = std::make_shared<ArrowDataset>(
@@ -577,12 +586,13 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     if (partition_col.empty() && dataset && config.train_ratio < 1.0f) {
         const bool stratified = config.stratified && !continuous_target;
         const std::string stratify = stratified ? class_label : std::string();
-        const std::array<double, 3> shares = stratified
+        const bool shared_rule = stratified || UsesSharedSplitRule(config);
+        const std::array<double, 3> shares = shared_rule
             ? std::array<double, 3>{config.train_ratio, config.val_ratio, config.test_ratio}
             : std::array<double, 3>{config.train_ratio, effective_val_ratio, 0.0};
         {
             std::string split_error;
-            auto split = BuildParquetRowSplit(*dataset, stratify, shares, config.shuffle,
+            auto split = BuildParquetRowSplit(*dataset, stratify, shares, shared_rule && config.shuffle,
                                               static_cast<uint32_t>(std::max(0, config.split_seed)), split_error);
             if (!split) throw std::runtime_error("Parquet split: " + split_error);
             spdlog::info("TrainingExecutor: Parquet row split{} train={} val={} test={} ({} in memory)",
@@ -644,7 +654,8 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     }
 
     // A stratified split gives every share its rows; a time series has its partitions.
-    if (partition_col.empty() && !(config.stratified && !continuous_target) && HoldoutIsTestOnly(config))
+    if (partition_col.empty() && !(config.stratified && !continuous_target) && !UsesSharedSplitRule(config) &&
+        HoldoutIsTestOnly(config))
         std::swap(result.parquet_val, result.parquet_test);
 
     result.num_train_samples = result.parquet_train->GetNumSamples();

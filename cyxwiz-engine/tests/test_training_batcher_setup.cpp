@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/split_partitioning.h"
 #include "../src/core/classification_decision.h"
 #include "../src/core/label_vocabulary.h"
 #include "../src/core/model_builder.h"
@@ -572,6 +573,37 @@ void RunModelTrainValidationSmoke(cyxwiz::IBatcher& train,
 
 } // namespace
 
+// One split rule (TOFIX178 S0-g1): the same rows land in the same partition
+// in memory (AddSplitPartitionColumn) and on disk (BuildParquetRowSplit),
+// stratified or not; a shuffled split draws the shares exactly; and the rows
+// drawn are pinned, so a C++ library that shuffles differently (Linux, macOS)
+// is caught.
+void CheckOneSplitRule(const std::shared_ptr<arrow::Table>& table, const cyxwiz::ParquetBackedDataset& dataset) {
+    for (const bool stratified : {true, false}) {
+        const std::string kind = stratified ? "stratified" : "unstratified";
+        std::string error;
+        auto disk = cyxwiz::BuildParquetRowSplit(dataset, stratified ? "label" : "", {0.8, 0.1, 0.1}, true, 17, error);
+        Check(disk != nullptr, kind + " shuffled row split builds: " + error);
+        auto memory = cyxwiz::AddSplitPartitionColumn(
+            table, cyxwiz::SplitPartitionOptions{"label", 0.8f, 0.1f, 0.1f, true, 17, stratified, "split rule test"});
+        Check(memory.ok(), kind + " in-memory split: " + memory.status().ToString());
+        auto column = std::static_pointer_cast<arrow::Int8Array>(
+            memory.ValueOrDie()->GetColumnByName(cyxwiz::kSplitPartitionColumn)->chunk(0));
+        bool same = true;
+        uint64_t checksum = 0;
+        for (int64_t i = 0; i < column->length(); ++i) {
+            same = same && static_cast<int>(column->Value(i)) == static_cast<int>(disk->bucket[static_cast<size_t>(i)]);
+            checksum = checksum * 31 + static_cast<uint64_t>(column->Value(i)) + 1;
+        }
+        Check(same, kind + ": memory and disk put every row in the same partition");
+        Check(disk->counts == std::array<size_t, 3>{800, 100, 100}, kind + ": shares 800 / 100 / 100");
+        // Pinned on Windows (MSVC), 2026-10-27; every platform must draw these rows.
+        const uint64_t pinned = stratified ? 2207020142659871470ULL : 10682958903946904628ULL;
+        Check(checksum == pinned,
+              kind + ": the rows drawn match the pinned split (" + std::to_string(checksum) + ")");
+    }
+}
+
 // Text class labels (TOFIX145): one sorted vocabulary, encoded before the
 // batchers; Arrow and Parquet paths agree; unencoded text is refused.
 // A table on disk splits by row (TOFIX154): 1,000 rows sorted by class
@@ -622,11 +654,12 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(again && again->bucket == shuffled->bucket, "the same seed draws the same rows");
     auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 18, error);
     Check(other && other->bucket != shuffled->bucket, "another seed draws other rows");
-    // Unstratified: ArrowDatasetBatcher's contiguous slices.
-    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, true, 17, error);
+    // Unstratified, unshuffled: ArrowDatasetBatcher's contiguous slices.
+    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, false, 17, error);
     bool contiguous = plain != nullptr;
     for (int i = 0; contiguous && i < kRows; ++i) contiguous = plain->bucket[i] == (i < 800 ? 0 : i < 900 ? 1 : 2);
-    Check(contiguous, "unstratified: rows 0-799 train, 800-899 validation, 900-999 test");
+    Check(contiguous, "unstratified, unshuffled: rows 0-799 train, 800-899 validation, 900-999 test");
+    CheckOneSplitRule(table, *dataset);
     Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, 17, error) &&
               error.find("missing") != std::string::npos,
           "a missing column is refused with its name");

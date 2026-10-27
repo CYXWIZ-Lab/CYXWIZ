@@ -138,7 +138,10 @@ TrainingBatcherSet BuildSparseTrainingBatchers(
             static_cast<uint32_t>(config.dataloader_seed),
             balance, config.balance_mode, config.balance_target,
             static_cast<uint32_t>(std::max(0, config.balance_seed)),
-            MaterializationMemoryContext{}, config.stratified, false, true);
+            MaterializationMemoryContext{}, config.stratified, false, true,
+            SparseSplitRule{config.has_data_split && config.shuffle, config.shuffle,
+                            static_cast<uint32_t>(std::max(0, config.split_seed)),
+                            config.has_data_split ? config.test_ratio : 0.0f});
     };
     const bool continuous_target = UsesContinuousTargetMetrics(config);
     result.sparse_train = make(

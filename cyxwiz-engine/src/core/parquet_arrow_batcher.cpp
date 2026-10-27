@@ -304,6 +304,17 @@ std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedD
     }
     split->bucket.resize(static_cast<size_t>(rows));
 
+    if (stratify_column.empty() && shuffle) {
+        // The shared split rule (split_partitioning.h), one class.
+        SplitAssigner assigner({static_cast<uint64_t>(rows)}, static_cast<float>(ratios[0]),
+                               static_cast<float>(ratios[1]), static_cast<float>(ratios[2]), true, seed);
+        for (int64_t row = 0; row < rows; ++row) {
+            const auto bucket = static_cast<uint8_t>(assigner.Next(0));
+            split->bucket[static_cast<size_t>(row)] = bucket;
+            ++split->counts[bucket];
+        }
+        return split;
+    }
     if (stratify_column.empty()) {
         // ArrowDatasetBatcher's slices, row by row.
         const auto train = static_cast<int64_t>(rows * std::clamp(ratios[0], 0.0, 1.0));
@@ -339,30 +350,15 @@ std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedD
         for (const auto id : class_of) ++class_rows[id];
     }
 
-    // Each class's rows per split, by the in-memory split's rule
-    // (split_partitioning.h), so both paths give the same sizes.
-    const auto normalized = split_partition_detail::Normalize(
-        static_cast<float>(ratios[0]), static_cast<float>(ratios[1]), static_cast<float>(ratios[2]));
-    std::vector<std::array<uint64_t, 3>> remaining(class_rows.size());
-    for (size_t c = 0; c < class_rows.size(); ++c) {
-        const auto counts = split_partition_detail::CountsFor(static_cast<size_t>(class_rows[c]), normalized);
-        remaining[c] = {counts.train, counts.val, counts.test};
-    }
-
-    // Pass 2: in file order each class fills Train, then Validation, then
-    // Test (the in-memory split unshuffled); shuffled, a draw without
-    // replacement meets every quota exactly.
-    std::mt19937_64 rng(seed);
+    // Pass 2: the shared split rule (split_partitioning.h) row by row in file
+    // order, so a table on disk splits exactly like the same rows in memory.
+    SplitAssigner assigner(class_rows, static_cast<float>(ratios[0]), static_cast<float>(ratios[1]),
+                           static_cast<float>(ratios[2]), shuffle, seed);
     for (int g = 0; g < groups; ++g) {
         if (!classes_of_group(g)) return nullptr;
         const int64_t offset = split->group_offset[static_cast<size_t>(g)];
         for (size_t i = 0; i < class_of.size(); ++i) {
-            auto& left = remaining[class_of[i]];
-            const uint64_t total = left[0] + left[1] + left[2];
-            uint64_t draw = shuffle && total > 0 ? std::uniform_int_distribution<uint64_t>(0, total - 1)(rng) : 0;
-            uint8_t bucket = 0;
-            while (bucket < 2 && draw >= left[bucket]) draw -= left[bucket++];
-            if (left[bucket] > 0) --left[bucket];
+            const auto bucket = static_cast<uint8_t>(assigner.Next(class_of[i]));
             split->bucket[static_cast<size_t>(offset) + i] = bucket;
             ++split->counts[bucket];
         }
