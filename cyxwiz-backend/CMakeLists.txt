@@ -570,9 +570,23 @@ if(CYXWIZ_ENABLE_CUDA)
             # The CUDA runtime is linked statically: the pack ships cuBLAS
             # and NVRTC (ArrayFire's CUDA backend needs them too); the driver
             # API comes with the NVIDIA driver.
+            # Only the backend's headers and its import library: its link
+            # interface carries static libraries (cyxwiz-protocol, gRPC) that
+            # must exist once per process - a second copy in the module
+            # registers the same .proto files again in libprotobuf.dll, and
+            # protobuf aborts when the module loads in the Engine.
+            if(CMAKE_VERSION VERSION_LESS 3.27)
+                message(FATAL_ERROR "The NVIDIA provider module needs CMake 3.27 or newer ($<COMPILE_ONLY>)")
+            endif()
             target_link_libraries(cyxwiz-nvidia-provider PRIVATE
-                cyxwiz-backend CUDA::cudart_static CUDA::cublas CUDA::nvrtc CUDA::cuda_driver
+                $<COMPILE_ONLY:cyxwiz-backend> $<TARGET_LINKER_FILE:cyxwiz-backend>
+                CUDA::cudart_static CUDA::cublas CUDA::nvrtc CUDA::cuda_driver
                 spdlog::spdlog)
+            add_dependencies(cyxwiz-nvidia-provider cyxwiz-backend)
+            if(MSVC)
+                # cudart_static.lib names the static CRT; the module uses the DLL CRT.
+                target_link_options(cyxwiz-nvidia-provider PRIVATE /NODEFAULTLIB:LIBCMT)
+            endif()
             set_target_properties(cyxwiz-nvidia-provider PROPERTIES
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
                 LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
