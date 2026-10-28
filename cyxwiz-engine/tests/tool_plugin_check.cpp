@@ -28,8 +28,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// One sample of the shapes the gradient check uses, without the batch.
-constexpr size_t kCheckWidth = 3;
+std::string ShapeText(const std::vector<size_t>& shape) {
+    std::string text;
+    for (const size_t d : shape) text += (text.empty() ? "" : ", ") + std::to_string(d);
+    return "[" + text + "]";
+}
 
 bool CheckFolder(const fs::path& folder) {
     std::cout << folder.string() << "\n";
@@ -82,20 +85,36 @@ bool CheckFolder(const fs::path& folder) {
         std::map<std::string, std::string> settings;
         for (const auto& parameter : node.metadata.parameters) settings[parameter.name] = parameter.default_value;
 
-        const auto shape = factory->InferOutputShape({kCheckWidth}, settings);
-        if (!shape.ok) {
-            std::cout << "  FAIL node " << node.type_id << ": refuses a [" << kCheckWidth
-                      << "] input with its default settings: " << shape.error << "\n";
+        // The gradient check's batches (GradientCheckOptions::input_shapes);
+        // a node that refuses one of their sample shapes is checked with the
+        // others, and says which it refused and why.
+        cyxwiz::GradientCheckOptions options;
+        std::vector<std::vector<size_t>> accepted;
+        for (const auto& batch : options.input_shapes) {
+            const std::vector<size_t> sample(batch.begin() + 1, batch.end());
+            const auto shape = factory->InferOutputShape(sample, settings);
+            if (shape.ok) {
+                accepted.push_back(batch);
+            } else {
+                std::cout << "  node " << node.type_id << ": refuses a " << ShapeText(sample)
+                          << " input with its default settings: " << shape.error << "\n";
+            }
+        }
+        if (accepted.empty()) {
+            std::cout << "  FAIL node " << node.type_id << ": refuses every input shape the check uses\n";
             ok = false;
             continue;
         }
-        const auto result = cyxwiz::CheckModuleGradients([&](const std::vector<size_t>& input_shape) {
-            std::string create_error;
-            const std::vector<size_t> sample(input_shape.begin() + 1, input_shape.end());
-            auto module = factory->CreateModule(sample, settings, create_error);
-            if (!module && !create_error.empty()) std::cout << "  CreateModule: " << create_error << "\n";
-            return module;
-        });
+        options.input_shapes = accepted;
+        const auto result = cyxwiz::CheckModuleGradients(
+            [&](const std::vector<size_t>& input_shape) {
+                std::string create_error;
+                const std::vector<size_t> sample(input_shape.begin() + 1, input_shape.end());
+                auto module = factory->CreateModule(sample, settings, create_error);
+                if (!module && !create_error.empty()) std::cout << "  CreateModule: " << create_error << "\n";
+                return module;
+            },
+            options);
         std::cout << (result.passed ? "  ok   node " : "  FAIL node ") << node.type_id << ": "
                   << cyxwiz::DescribeGradientCheck(result) << "\n";
         ok = ok && result.passed;
