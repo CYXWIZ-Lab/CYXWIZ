@@ -413,12 +413,19 @@ void RenderLocation(InstallerViewState &state,
   ImGui::Spacing();
   if (catalog.mode == CyxWizInstallerMode::FreshInstall) {
     const bool can_browse = InstallFolderPickerAvailable();
-    ImGui::SetNextItemWidth(can_browse ? -250.0f : -140.0f);
+    ImGui::SetNextItemWidth(can_browse ? -120.0f : -1.0f);
+    ImGui::BeginDisabled(operation_running);
     if (ImGui::InputText("##install-location", state.install_path_text.data(),
                          state.install_path_text.size())) {
       state.install_location_dirty = true;
     }
-    ImGui::BeginDisabled(operation_running);
+    // A typed or pasted path is used when the field is left (Enter, Tab or a
+    // click elsewhere); Browse... uses the picked folder at once.
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      action.kind = InstallerViewActionKind::UseInstallLocation;
+      action.install_root = ParseInstallLocationText(state.install_path_text.data());
+      action.scope = state.install_scope;
+    }
     if (can_browse) {
       ImGui::SameLine();
       if (ImGui::Button("Browse...")) {
@@ -440,12 +447,6 @@ void RenderLocation(InstallerViewState &state,
           action.scope = state.install_scope;
         }
       }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use location")) {
-      action.kind = InstallerViewActionKind::UseInstallLocation;
-      action.install_root = ParseInstallLocationText(state.install_path_text.data());
-      action.scope = state.install_scope;
     }
     ImGui::EndDisabled();
 
@@ -702,7 +703,8 @@ void RenderSummary(InstallerViewState &state,
           "The signed package catalog is not available; use Refresh catalog.";
     } else if (state.install_location_dirty) {
       apply_block_reason =
-          "Apply or discard the installation location change first.";
+          "Finish the installation location first: press Enter after "
+          "typing it, or choose a folder with Browse...";
     } else if (!install_location.valid) {
       apply_block_reason = install_location.message.empty()
           ? "The installation location cannot be used."
