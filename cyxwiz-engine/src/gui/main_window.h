@@ -372,6 +372,7 @@ private:
     void SyncProjectPython();
     std::string python_restart_reason_;  // non-empty: this project needs a restart
     std::string python_restart_project_; // the project that verdict is for
+    bool python_sync_pending_ = false;   // a project closed: sync on the next frame
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;

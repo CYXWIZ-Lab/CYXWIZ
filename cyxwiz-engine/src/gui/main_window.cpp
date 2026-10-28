@@ -3173,6 +3173,10 @@ static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
 }
 
 void MainWindow::UpdatePythonNodes() {
+    if (python_sync_pending_) {
+        python_sync_pending_ = false;
+        SyncProjectPython();
+    }
     // Bundles: every 2 s, cheap (file names, sizes and times; node.json is
     // read only when something changed).
     const double now = ImGui::GetTime();
@@ -5887,7 +5891,9 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     // Note: Settings should be saved before CloseProject() is called
     // (the toolbar handles this in its Close Project menu action)
 
-    SyncProjectPython();
+    // Next frame: opening another project closes this one first in the same
+    // call, and Python then moves once, to the new project's environment.
+    python_sync_pending_ = true;
 
     // Clear the asset browser
     if (asset_browser_) {
