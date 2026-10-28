@@ -128,7 +128,7 @@ bool PythonNodeRuntime::Available() { return true; }
 bool PythonNodeRuntime::Ready(std::string& error) {
     if (Py_IsInitialized()) return true;
     wanted_.store(true);
-    error = "Python is not running yet; the Engine starts it for Python nodes (open a project)";
+    error = "Python is starting for the Python nodes (it needs an open project); try again in a moment";
     return false;
 }
 

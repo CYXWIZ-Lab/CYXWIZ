@@ -72,4 +72,15 @@ ProductUnregistrationResult UnregisterInstalledProduct(
     return detail::UnregisterPlatformProduct(request);
 }
 
+std::optional<std::filesystem::path> RegisteredInstallRoot(ProductInstallScope scope) {
+    auto root = detail::RegisteredPlatformInstallRoot(scope);
+    // Only an absolute root that still holds a CyxWiz runtime counts.
+    std::error_code error;
+    if (!root || !root->is_absolute() ||
+        !std::filesystem::is_directory(*root / "runtime", error)) {
+        return std::nullopt;
+    }
+    return root->lexically_normal();
+}
+
 }  // namespace cyxwiz::runtime

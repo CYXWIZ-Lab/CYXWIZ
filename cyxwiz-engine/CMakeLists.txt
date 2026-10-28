@@ -1174,9 +1174,12 @@ if(WIN32)
     )
     # Link Windows-specific libraries (PDH for CPU metrics in System Monitor)
     target_link_libraries(cyxwiz-engine PRIVATE pdh)
-    # Add icon resource if available
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.rc")
-        target_sources(cyxwiz-engine PRIVATE resources/icon.rc)
+    cyxwiz_windows_resources(cyxwiz-engine DESCRIPTION "CyxWiz Engine" ICON)
+    # A windowed application: no console window beside the Engine. Debug
+    # builds keep the console for developers. main() stays the entry point.
+    if(MSVC)
+        target_link_options(cyxwiz-engine PRIVATE
+            $<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>)
     endif()
     # Set Visual Studio debugger working directory to executable location
     # This ensures resources (fonts, icons) are found when running from VS IDE
@@ -7416,6 +7419,7 @@ add_executable(cyxwiz-plugin-check
     src/plugin/plugin_loader.cpp
 )
 target_link_libraries(cyxwiz-plugin-check PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+cyxwiz_windows_resources(cyxwiz-plugin-check DESCRIPTION "CyxWiz plugin check")
 if(WIN32)
     target_compile_definitions(cyxwiz-plugin-check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()

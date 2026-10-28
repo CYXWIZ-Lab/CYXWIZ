@@ -23,6 +23,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 
 #else
 #include <sys/types.h>
@@ -871,6 +872,61 @@ CreateBackendPackInstallerPlatform(
         std::move(executable_directory), scope, std::move(catalog_url),
         package_source);
 }
+
+#ifdef _WIN32
+bool InstallFolderPickerAvailable() { return true; }
+
+std::optional<std::filesystem::path> PickInstallFolder(
+    const std::filesystem::path &start) {
+    const HRESULT com = ::CoInitializeEx(
+        nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    std::optional<std::filesystem::path> picked;
+    IFileOpenDialog *dialog = nullptr;
+    if (SUCCEEDED(::CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                                     CLSCTX_INPROC_SERVER,
+                                     IID_PPV_ARGS(&dialog)))) {
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM |
+                           FOS_PATHMUSTEXIST);
+        dialog->SetTitle(L"Choose where to install CyxWiz");
+        // Open in the nearest existing folder of the current choice.
+        auto folder = start;
+        std::error_code error;
+        while (!folder.empty() && !std::filesystem::is_directory(folder, error) &&
+               folder != folder.parent_path()) {
+            folder = folder.parent_path();
+        }
+        IShellItem *initial = nullptr;
+        if (!folder.empty() &&
+            SUCCEEDED(::SHCreateItemFromParsingName(folder.c_str(), nullptr,
+                                                    IID_PPV_ARGS(&initial)))) {
+            dialog->SetFolder(initial);
+            initial->Release();
+        }
+        IShellItem *result = nullptr;
+        if (SUCCEEDED(dialog->Show(nullptr)) &&
+            SUCCEEDED(dialog->GetResult(&result))) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                picked = std::filesystem::path(path);
+                ::CoTaskMemFree(path);
+            }
+            result->Release();
+        }
+        dialog->Release();
+    }
+    if (SUCCEEDED(com)) ::CoUninitialize();
+    return picked;
+}
+#else
+bool InstallFolderPickerAvailable() { return false; }
+
+std::optional<std::filesystem::path> PickInstallFolder(
+    const std::filesystem::path &) {
+    return std::nullopt;
+}
+#endif
 
 std::filesystem::path DefaultCyxWizInstallRoot(
     CyxWizInstallScope scope) {

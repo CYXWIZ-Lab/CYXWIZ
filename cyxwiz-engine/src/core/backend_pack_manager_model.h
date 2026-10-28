@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz {
@@ -133,6 +134,17 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
 CyxWizInstallLocation ResolveCyxWizInstallLocation(
     std::filesystem::path install_root,
     CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser);
+
+// GPU packs that suit this computer (compatible, a recommendation target)
+// and are neither installed nor chosen: the installer names them so a
+// CPU-only Recommended choice does not hide them. Backend names, catalog order.
+std::vector<std::string> OptionalPacksForThisComputer(
+    const std::vector<BackendPackManagerRecord> &records,
+    const std::vector<std::string> &selected_pack_ids);
+
+// The installation folder as typed or pasted: surrounding spaces and one pair
+// of surrounding quotes (as Explorer's "Copy as path" adds) are removed.
+std::filesystem::path ParseInstallLocationText(std::string_view text);
 
 const char *BackendPackCatalogSupportName(BackendPackCatalogSupport support);
 std::string FormatBackendPackByteSize(std::uint64_t bytes);

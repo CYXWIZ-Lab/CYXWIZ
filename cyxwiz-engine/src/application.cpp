@@ -133,11 +133,11 @@ static bool load_window_icon(GLFWwindow* window) {
     spdlog::debug("macOS uses the application bundle icon for regular windows");
     return true;
 #else
-    // Try both possible locations
-    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
+    // Try both possible locations. The icon is the mark alone (no wordmark).
+    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz_icon.png";
 
     if (!std::filesystem::exists(icon_path)) {
-        icon_path = "resources/cyxwiz.png";
+        icon_path = "resources/cyxwiz_icon.png";
         if (!std::filesystem::exists(icon_path)) {
             spdlog::warn("Window icon not found at either location");
             return false;

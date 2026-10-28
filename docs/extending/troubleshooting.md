@@ -113,7 +113,7 @@ CyxWiz, or export a CyxWiz package.
 A CyxWiz package keeps the graph and the extension node's weights, but not
 the extension itself. Install and approve the plugin or Python node bundle
 the model was trained with, then import again. If the extension is installed
-but cannot create its module (for example Python is not running yet), the
+but cannot create its module (for example Python is still starting), the
 import message ends with the extension's own reason.
 
 The package's `manifest.json` lists the extensions it needs under

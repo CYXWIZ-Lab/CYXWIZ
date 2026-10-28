@@ -106,6 +106,14 @@ int main() {
         const auto refused = registry.TensorFactory(kSnake)->InferOutputShape({8, 32}, {});
         Check(!refused.ok && refused.error == cyxwiz::PythonBundleNotApprovedMessage("com.example.acts"),
               "an unapproved node refuses: " + refused.error);
+        // The Engine starts Python ahead of a compile only for approved code.
+        gui::MLNode snake_node;
+        snake_node.type = gui::NodeType::PluginCustom;
+        snake_node.extension_type_id = kSnake;
+        gui::MLNode dense_node;
+        dense_node.type = gui::NodeType::Dense;
+        Check(!provider.UsesApprovedNode({dense_node, snake_node}),
+              "a graph with an unapproved Python node does not ask for Python");
         const std::string issues = CompileErrorOnSnake(root);
         Check(issues.find("not approved yet") != std::string::npos,
               "compiling a graph with it reports the reason on the node: " + issues);
@@ -117,6 +125,9 @@ int main() {
               "approve");
         Check(provider.Refresh(roots), "an approval triggers a rescan");
         Check(provider.Bundles()[0].approved, "the bundle is approved");
+        Check(provider.UsesApprovedNode({dense_node, snake_node}),
+              "a graph with an approved Python node asks for Python before any compile");
+        Check(!provider.UsesApprovedNode({dense_node}), "a graph without Python nodes does not");
         const auto shape = registry.TensorFactory(kSnake)->InferOutputShape({8, 32}, {{"initial_a", "2.0"}});
         Check(shape.ok && shape.output_shape == std::vector<size_t>({8, 32}),
               "the Python factory answers the shape (no Python needed)");
@@ -205,7 +216,7 @@ int main() {
         provider.Refresh(roots);
         error.clear();
         created = registry.LossFactory(loss_id)->CreateLoss({}, error) != nullptr;
-        Check(!created && error.find("Python is not running yet") != std::string::npos,
+        Check(!created && error.find("Python is starting for the Python nodes") != std::string::npos,
               "approved: the Python factory asks for Python (not running in this test): " + error);
         error.clear();
         created = registry.LossFactory(loss_id)->CreateLoss({{"no_such", "1"}}, error) != nullptr;

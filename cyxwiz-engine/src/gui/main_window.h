@@ -364,6 +364,7 @@ private:
     std::unique_ptr<cyxwiz::PythonNodeProvider> python_node_provider_;
     double python_nodes_checked_at_ = -1.0;
     std::string python_start_error_logged_;
+    bool graph_needs_python_ = false;  // the open graph uses an approved Python node
     void UpdatePythonNodes();
 
     // New panel system

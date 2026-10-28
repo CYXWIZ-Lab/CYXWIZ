@@ -412,18 +412,41 @@ void RenderLocation(InstallerViewState &state,
                       "global loader path.");
   ImGui::Spacing();
   if (catalog.mode == CyxWizInstallerMode::FreshInstall) {
-    ImGui::SetNextItemWidth(-140.0f);
+    const bool can_browse = InstallFolderPickerAvailable();
+    ImGui::SetNextItemWidth(can_browse ? -120.0f : -1.0f);
+    ImGui::BeginDisabled(operation_running);
     if (ImGui::InputText("##install-location", state.install_path_text.data(),
                          state.install_path_text.size())) {
       state.install_location_dirty = true;
     }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(operation_running);
-    if (ImGui::Button("Use location")) {
+    // A typed or pasted path is used when the field is left (Enter, Tab or a
+    // click elsewhere); Browse... uses the picked folder at once.
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
       action.kind = InstallerViewActionKind::UseInstallLocation;
-      action.install_root = std::filesystem::path(std::u8string(
-          reinterpret_cast<const char8_t *>(state.install_path_text.data())));
+      action.install_root = ParseInstallLocationText(state.install_path_text.data());
       action.scope = state.install_scope;
+    }
+    if (can_browse) {
+      ImGui::SameLine();
+      if (ImGui::Button("Browse...")) {
+        const auto start = ParseInstallLocationText(state.install_path_text.data());
+        if (const auto picked = PickInstallFolder(start)) {
+          // An empty folder (or one named CyxWiz) is used as it is; any other
+          // gets its own CyxWiz folder, since removal deletes the whole root.
+          std::error_code empty_error;
+          const bool own = picked->filename() == "CyxWiz" ||
+                           std::filesystem::is_empty(*picked, empty_error);
+          const auto root = own ? *picked : *picked / "CyxWiz";
+          const auto value = root.u8string();
+          if (value.size() < state.install_path_text.size()) {
+            state.install_path_text.fill('\0');
+            std::memcpy(state.install_path_text.data(), value.data(), value.size());
+          }
+          action.kind = InstallerViewActionKind::UseInstallLocation;
+          action.install_root = root;
+          action.scope = state.install_scope;
+        }
+      }
     }
     ImGui::EndDisabled();
 
@@ -680,7 +703,8 @@ void RenderSummary(InstallerViewState &state,
           "The signed package catalog is not available; use Refresh catalog.";
     } else if (state.install_location_dirty) {
       apply_block_reason =
-          "Apply or discard the installation location change first.";
+          "Finish the installation location first: press Enter after "
+          "typing it, or choose a folder with Browse...";
     } else if (!install_location.valid) {
       apply_block_reason = install_location.message.empty()
           ? "The installation location cannot be used."
@@ -720,6 +744,17 @@ void RenderSummary(InstallerViewState &state,
     if (record != catalog.records.end()) {
       ImGui::BulletText("%s", BackendName(record->backend));
     }
+  }
+  if (const auto optional = OptionalPacksForThisComputer(catalog.records, selection.pack_ids);
+      !optional.empty()) {
+    std::string names;
+    for (const auto &backend : optional) {
+      names += (names.empty() ? "" : ", ") + std::string(BackendName(backend));
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+    ImGui::TextWrapped("%s Optional for this computer: %s. Add them under Individual components.",
+                       ICON_FA_CIRCLE_INFO, names.c_str());
+    ImGui::PopStyleColor();
   }
   ImGui::Spacing();
   ImGui::TextDisabled("Required download");
@@ -796,6 +831,12 @@ void RenderSummary(InstallerViewState &state,
   }
   if (state.uninstall_completed) {
     ImGui::TextColored(kSuccess, "%s Uninstalled successfully", ICON_FA_CIRCLE_CHECK);
+  }
+  if (!state.uninstall_refused.empty() && !operation_running) {
+    ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
+    ImGui::TextWrapped("%s Not uninstalled: CyxWiz is still installed. %s",
+                       ICON_FA_TRIANGLE_EXCLAMATION, state.uninstall_refused.c_str());
+    ImGui::PopStyleColor();
   }
   if (show_launch) {
     ImGui::BeginDisabled(operation_running);

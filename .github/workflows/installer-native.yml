@@ -553,7 +553,12 @@ jobs:
 
       - name: Smoke staged Windows setup
         if: runner.os == 'Windows'
-        run: ./setup-stage/cyxwiz-setup.exe --help
+        # A windowed program: run it through Python, which waits and captures.
+        run: >-
+          python -c "import os,subprocess,sys;
+          r=subprocess.run([os.path.abspath('setup-stage/cyxwiz-setup.exe'),'--help'],capture_output=True,text=True);
+          print(r.stdout, r.stderr);
+          sys.exit(0 if r.returncode == 0 and 'Usage: cyxwiz-setup' in r.stdout else 1)"
 
       # Runners ship the VC++ redistributable, so the smoke above cannot catch
       # a setup that would fail to start on a clean machine.
