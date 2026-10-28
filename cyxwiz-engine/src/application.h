@@ -37,6 +37,7 @@ private:
     void ProcessCommandLine(int argc, char** argv);
     void OpenStartupProjectIfRequested();
     void OpenStartupGraphIfRequested();
+    // Every frame: the title follows the open project (set only on a change).
     void UpdateWindowTitle();
     void RenderPythonWait();
     void MainLoop();
@@ -104,6 +105,7 @@ private:
     bool log_idle_transitions_ = false;  // Log idle mode enter/exit
 
     // Startup project path (from command line)
+    std::string window_title_;  // as last set
     std::string startup_project_path_;
     std::string startup_graph_path_;
     std::vector<std::string> startup_scripts_;  // .py / .cyx files named on the command line
