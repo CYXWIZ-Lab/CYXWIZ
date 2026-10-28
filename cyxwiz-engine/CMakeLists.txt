@@ -5324,6 +5324,10 @@ add_executable(test_sparse_training_executor
 )
 configure_training_executor_harness(test_sparse_training_executor)
 
+# Training loop benchmark (TOFIX178 0.6): an epoch of TrainingExecutor on TF-IDF-shaped sparse rows.
+add_executable(cyxwiz-bench-training-loop tests/tool_bench_training_loop.cpp)
+configure_training_executor_harness(cyxwiz-bench-training-loop)
+
 # ===== Test: Legacy DatasetHandle cooperative lifecycle =====
 add_executable(test_training_executor_dataset_handle
     tests/test_training_executor_dataset_handle.cpp
