@@ -133,7 +133,12 @@ bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
             *error_out = "The project's Python environment is still being set up. "
                          "Python will be available in a few seconds.";
         }
-        spdlog::info("Python initialization deferred: project environment setup in progress");
+        // Asked by every panel and timer while the venv is created: once.
+        std::lock_guard<std::mutex> lock(init_error_mutex_);
+        if (deferred_logged_for_ != pm.GetProjectRoot()) {
+            deferred_logged_for_ = pm.GetProjectRoot();
+            spdlog::info("Python start waits for the project environment setup");
+        }
         return false;
     }
 

@@ -269,6 +269,7 @@ public:
 private:
     mutable std::mutex init_error_mutex_;
     std::string last_init_error_;
+    std::string deferred_logged_for_;  // project whose pending setup was logged once
     std::string cached_python_version_;
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends
