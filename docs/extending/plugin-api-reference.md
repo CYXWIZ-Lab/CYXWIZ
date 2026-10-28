@@ -368,14 +368,17 @@ plugin_sdk --prefix <folder>` installs the SDK.
 ## 12. `cyxwiz-plugin-check`
 
 ```
-<installation folder>/cyxwiz-runtime-bootstrapper --plugin-check <plugin folder> [<plugin folder> ...]
+cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
 ```
 
-The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). Start it
-through the launcher in the installation folder, as above: the launcher gives
-it the Engine's runtime libraries and keeps your current folder for relative
-paths ([quickstart](plugin-quickstart.md#3-check-it) has the PowerShell,
-Command Prompt and shell forms). In a source build run
+The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). On Windows
+run it directly, with the base's `arrayfire\bin` on `PATH`; on Linux and
+macOS run it through the launcher in the installation folder,
+`cyxwiz-runtime-bootstrapper --plugin-check <plugin folder> ...`, which sets
+the library path and keeps your current folder for relative paths. The
+Windows launcher is a windowed program and shows nothing in a terminal
+([quickstart](plugin-quickstart.md#3-check-it) has the PowerShell, Command
+Prompt and shell forms). In a source build run
 `bin/Release/cyxwiz-plugin-check` directly, with ArrayFire on `PATH`.
 
 For each folder it:
@@ -387,10 +390,13 @@ For each folder it:
    `plugin.json` declares them, for this run only, saving nothing
    (*permission X: granted for this check only (the Engine asks the user)*);
 4. initialises the plugin (*FAIL the plugin did not initialise: ...*);
-5. for each trainable node: calls `InferOutputShape` with the shape `[3]`
-   and the default settings, then runs the gradient check with the default
-   settings ([developer guide](plugin-developer-guide.md#8-the-gradient-check));
-   prints *ok node ...* or *FAIL node ...*;
+5. for each trainable node: calls `InferOutputShape` with the default
+   settings for each sample shape the gradient check uses (`[3]` and
+   `[4, 5]`), prints *node ...: refuses a [4, 5] input ...* for one it
+   refuses, then runs the gradient check on the accepted shapes
+   ([developer guide](plugin-developer-guide.md#8-the-gradient-check));
+   prints *ok node ...* or *FAIL node ...* (*refuses every input shape the
+   check uses* when it accepts neither);
 6. prints *FAIL node not added: &lt;reason&gt;* for each node the Engine
    refused, and *FAIL the plugin registered no nodes* when there are none;
 7. unloads the plugin.

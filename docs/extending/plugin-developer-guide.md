@@ -449,7 +449,7 @@ settings; `cyxwiz-plugin-check` uses the default settings.
 
 | Step | Detail |
 |---|---|
-| Modules | One module per shape, from your `CreateModule`, with the sample shapes `[3]` and `[4, 5]`, in evaluation mode (`SetTraining(false)`). Your module must accept both |
+| Modules | One module per shape, from your `CreateModule`, with the sample shapes `[3]` and `[4, 5]`, in evaluation mode (`SetTraining(false)`). Properties checks both; `cyxwiz-plugin-check` skips a shape your `InferOutputShape` refuses |
 | Inputs | Batches of shape `[2, 3]` and `[3, 4, 5]`, random values in [-2, 2]; values closer to zero than 0.05 are moved to ±0.05, away from the kink of `\|x\|`-style functions |
 | Loss | sum(Forward(x) · r) for a fixed random r in [-1, 1] |
 | Numerical gradient | Central differences with step 0.01, on up to 48 evenly spread elements per tensor |
@@ -462,8 +462,10 @@ reading as a large error; a wrong gradient is typically off by 0.1 or more.
 - In Properties the check runs only on settings your `InferOutputShape`
   accepts; while it refuses them, Properties shows *Could not check* with
   your message. The result goes stale when you change a setting.
-- `cyxwiz-plugin-check` calls `InferOutputShape` once, with the shape `[3]`
-  and the default settings, then runs the check above.
+- `cyxwiz-plugin-check` asks `InferOutputShape`, with the default settings,
+  about each of the two sample shapes, says which it refuses and why, and
+  runs the check above on the shapes it accepts; a node that accepts
+  neither fails.
 - The check does not go through the guard of section 7: a wrong output shape
   shows up only in training.
 

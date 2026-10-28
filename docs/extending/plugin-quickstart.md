@@ -36,7 +36,7 @@ the macOS app start it. Everything else is in `runtime/base/<base>/`:
 | `cyxwiz-engine` (`.exe`) | The Engine. Start it through the launcher, not directly: the launcher gives it its runtime libraries |
 | `cyxwiz-plugin-check` (`.exe`) | Loads a plugin folder the way the Engine does and checks its nodes. Start it through the launcher too ([section 3](#3-check-it)) |
 | `sdk/` | The plugin SDK |
-| `plugins/` | The Engine's own plugin folder. Do not put your plugins here: CyxWiz replaces this folder when it updates |
+| `plugins/` | Not created by the installer, but **Refresh** searches it. Do not put your plugins here: CyxWiz replaces the base folder when it updates |
 | `engine_log.txt` | The Engine's log of the current launch (`engine_log.1.txt` to `engine_log.4.txt` are the four launches before) |
 
 `<base>` is the active base, named by `base_pack_id` in
@@ -150,8 +150,13 @@ cmake --build my_nodes/build
 
 - **Windows:** CMake finds Visual Studio by itself; any shell works. With
   several versions installed it takes the newest. Choose one with `-G` on
-  the first `cmake` line, for example `-G "Visual Studio 17 2022"`; to change
-  it later, delete `my_nodes\build` first.
+  the first `cmake` line, for example `-G "Visual Studio 17 2022"`. A newer
+  Visual Studio can also build with an older toolset it has installed
+  (Visual Studio Installer, *MSVC v143 build tools*): add `-T v143` for the
+  Visual Studio 2022 compiler (MSVC 19.3x-19.4x), and check the configure
+  output's line *The CXX compiler identification is MSVC 19.44...* against
+  the SDK's "Built with" line. To change the compiler later, delete
+  `my_nodes\build` first.
 - **Linux, macOS:** choose the compiler on the first `cmake` line, for
   example `-DCMAKE_CXX_COMPILER=g++-11`.
 
@@ -201,24 +206,35 @@ macOS a Debug build (`-DCMAKE_BUILD_TYPE=Debug`) loads unless you define
 
 ## 3. Check it
 
-Run the check through the launcher, which gives the check tool the Engine's
-runtime libraries and keeps your current folder, so relative paths work:
+`cyxwiz-plugin-check` is in the base folder, beside the Engine. It finds the
+Engine's libraries there, and ArrayFire's in the base's `arrayfire\bin`,
+which must be on `PATH` (without it Windows stops the tool before it starts:
+exit code -1073741515, a missing DLL). The first line adds it for this
+terminal only.
+
+PowerShell:
 
 ```powershell
-& "$cyxwiz\cyxwiz-runtime-bootstrapper.exe" --plugin-check my_nodes\build\my_nodes
+$env:PATH = "$cyxwiz\runtime\base\$base\arrayfire\bin;$env:PATH"
+& "$cyxwiz\runtime\base\$base\cyxwiz-plugin-check.exe" my_nodes\build\my_nodes
 ```
 
+Command Prompt:
+
 ```bat
-"%CYXWIZ%\cyxwiz-runtime-bootstrapper.exe" --plugin-check my_nodes\build\my_nodes
+set "PATH=%SDK%\..\arrayfire\bin;%PATH%"
+"%SDK%\..\cyxwiz-plugin-check.exe" my_nodes\build\my_nodes
 ```
+
+Linux and macOS, through the launcher, which sets the library path:
 
 ```bash
 "$cyxwiz/cyxwiz-runtime-bootstrapper" --plugin-check my_nodes/build/my_nodes
 ```
 
-PowerShell needs the `&` to run a quoted path. Started directly,
-`cyxwiz-plugin-check` does not find the Engine's libraries. Several folders
-may follow `--plugin-check`.
+PowerShell needs the `&` to run a quoted path. Several plugin folders may
+follow. On Windows, do not check through the launcher: it is a windowed
+program, so a terminal neither waits for it nor shows what the check prints.
 
 For each folder the check reads `plugin.json`, loads the library the way the
 Engine does (API version, build fingerprint), initialises the plugin, and
@@ -239,7 +255,8 @@ cyxwiz-plugin-check: all plugins pass
 | `permission X: granted for this check only (the Engine asks the user)` | `plugin.json` declares a permission the user must approve in the Engine; the check grants it for this run only and saves nothing |
 | `FAIL the plugin did not initialise: ...` | `OnLoad` or `OnInitialize` returned `false`, threw or crashed |
 | `FAIL node not added: ...` | The Engine refused one of your nodes; the reason says why ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
-| `FAIL node ...: refuses a [3] input with its default settings: ...` | `InferOutputShape` refused one sample of shape `[3]` |
+| `node ...: refuses a [4, 5] input with its default settings: ...` | `InferOutputShape` refused one of the two sample shapes the gradient check uses (`[3]` and `[4, 5]`); the node is checked with the other |
+| `FAIL node ...: refuses every input shape the check uses` | `InferOutputShape` refused both `[3]` and `[4, 5]`, so nothing could be checked |
 | `ok   node ...: Passed ...`, `FAIL node ...: Failed ...` | The gradient check ([developer guide](plugin-developer-guide.md#8-the-gradient-check)) |
 | `FAIL the plugin registered no nodes` | The check expects at least one node |
 
