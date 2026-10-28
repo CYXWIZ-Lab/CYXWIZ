@@ -472,9 +472,9 @@ private:
     // A step without its input table: keeps the lookup's own reason.
     void ReportMissingInput(const std::string& step);
 
-    // SQL over files (TOFIX154 step 3). A step's inputs are Parquet files
-    // DuckDB reads in place: a disk table's own file, or a memory table
-    // written once (StepInputFile). The result comes back as a table, or,
+    // SQL over files (TOFIX154 step 3). A step's inputs: a disk table's own
+    // Parquet file, read in place, or a memory table, which DuckDB scans as
+    // it is (TOFIX178 0.5). The result comes back as a table, or,
     // when an input is on disk or large, DuckDB writes it to the pipeline
     // cache; a result above the data budget's threshold stays there on disk.
     // A check's output is its input (the same table or file) under output_name.
@@ -507,40 +507,31 @@ private:
     // same files; null after ReportError.
     std::shared_ptr<arrow::Table> FetchStepSql(const std::vector<StepSqlInput>& inputs, const std::string& sql,
                                                const std::string& error_prefix);
-    // The SqlTransform inputs for a step: one file per input; false after
-    // ReportError.
+    // The SqlTransform inputs for a step (a file or a table each); false
+    // after ReportError.
     bool PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
                               std::vector<SqlTransformInput>& files, uint64_t& input_bytes, bool& any_on_disk);
-    // The Parquet file a dataset is read from ("" after ReportError).
-    std::string StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
-                              uint64_t& bytes, bool& on_disk);
     // Steps that read their inputs from the files, never whole: SQL steps
     // (RunStepSql) and operators that stream (RunStreamingOperator). They are
     // not admitted first.
     static bool StepReadsInputFiles(const Node& node);
     // <project>/cache/pipeline, or <temp>/cyxwiz/pipeline outside a project.
     std::filesystem::path PipelineCacheRoot() const;
-    // Parquet copies of memory tables, kept while their table lives.
-    struct StepInputCopy {
-        std::weak_ptr<arrow::Table> table;
-        std::string path;
-    };
-    std::map<std::string, StepInputCopy> step_input_copies_;
     // Result files this executor wrote (output dataset -> file); one name per
     // run, since Windows cannot replace a file that is still mapped.
     std::map<std::string, std::string> step_result_files_;
-    // Sibling branches run at once (TOFIX157 A2): step_input_copies_,
-    // step_result_files_ and admitted_inputs_ change under step_files_mutex_,
-    // and a table's copy is made under its own name lock, so two steps reading
-    // one table write (or read in) one copy, the second waiting for the first.
+    // Sibling branches run at once (TOFIX157 A2): step_result_files_ and
+    // admitted_inputs_ change under step_files_mutex_; a disk table read in
+    // is made under its own name lock, so two steps reading one table read
+    // it in once, the second waiting for the first.
     std::mutex step_files_mutex_;
     std::map<std::string, std::shared_ptr<std::mutex>> name_locks_;
     std::shared_ptr<std::mutex> NameLock(const std::string& key);
     // Held while a node writes an export file: two branches exporting to one
     // file write it one after the other (none for an empty path).
     std::unique_lock<std::mutex> LockExportPath(const std::string& path);
-    // Removes the copies whose table is gone and the result files no dataset
-    // uses any more (at run start and when the executor goes).
+    // Removes the result files no dataset uses any more (at run start and
+    // when the executor goes).
     void RemoveUnusedStepFiles();
     Node* FindNodeById(std::vector<Node>& nodes, int node_id);
     const Node* FindNodeById(const std::vector<Node>& nodes, int node_id) const;

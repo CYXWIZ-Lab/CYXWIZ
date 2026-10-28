@@ -3197,9 +3197,7 @@ void PipelineExecutor::AdoptOwnership(PipelineExecutor& from) {
 }
 
 PipelineExecutor::~PipelineExecutor() {
-    // Its copies of memory tables go with it; result files a dataset still
-    // uses stay until the next prune.
-    for (auto& entry : step_input_copies_) entry.second.table.reset();
+    // Result files a dataset still uses stay until the next prune.
     RemoveUnusedStepFiles();
 }
 
@@ -5807,58 +5805,6 @@ int64_t PipelineExecutor::DatasetRows(const std::string& dataset) const {
     return table ? table->rows : 0;
 }
 
-std::string PipelineExecutor::StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
-                                            uint64_t& bytes, bool& on_disk) {
-    auto& registry = DataRegistry::Instance();
-    if (const auto disk = registry.GetParquetBackedDataset(dataset)) {
-        schema = disk->GetSchema();
-        bytes = disk->GetInMemoryBytesEstimate();
-        on_disk = true;
-        return disk->GetFilePath();
-    }
-    const auto memory = registry.GetArrowDataset(dataset);
-    const auto table = memory ? memory->GetArrowTable() : nullptr;
-    if (!table) {
-        ReportError("input dataset '" + dataset + "' is not a table");
-        return "";
-    }
-    schema = table->schema();
-    bytes = memory->GetMemoryUsage();
-    on_disk = false;
-    // Written once per table: a step reads the same copy as the steps before
-    // it (or a sibling writing it now), and a table that changes is a new
-    // table object.
-    const auto name_lock = NameLock("input:" + dataset);
-    std::lock_guard<std::mutex> writing(*name_lock);
-    StepInputCopy* found = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(step_files_mutex_);
-        found = &step_input_copies_[dataset];  // map nodes stay put; erased only between runs
-    }
-    auto& copy = *found;
-    if (copy.table.lock() == table && std::filesystem::exists(copy.path)) return copy.path;
-    std::error_code error;
-    if (!copy.path.empty()) std::filesystem::remove(copy.path, error);
-    const auto folder = PipelineCacheRoot() / "inputs";
-    std::filesystem::create_directories(folder, error);
-    const auto path = (folder / (dataset + "_" + std::to_string(reinterpret_cast<uintptr_t>(table.get())) +
-                                 ".parquet")).string();
-    auto out = arrow::io::FileOutputStream::Open(path);
-    arrow::Status status = out.ok() ? parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 128 * 1024)
-                                    : out.status();
-    if (out.ok()) {
-        const auto closed = (*out)->Close();
-        if (status.ok()) status = closed;
-    }
-    if (!status.ok()) {
-        std::filesystem::remove(path, error);
-        ReportError("could not write '" + dataset + "' for DuckDB to read: " + status.ToString());
-        return "";
-    }
-    copy = {table, path};
-    return path;
-}
-
 std::shared_ptr<std::mutex> PipelineExecutor::NameLock(const std::string& key) {
     std::lock_guard<std::mutex> lock(step_files_mutex_);
     auto& entry = name_locks_[key];
@@ -5876,14 +5822,6 @@ void PipelineExecutor::RemoveUnusedStepFiles() {
     std::lock_guard<std::mutex> lock(step_files_mutex_);
     name_locks_.clear();
     std::error_code error;
-    for (auto it = step_input_copies_.begin(); it != step_input_copies_.end();) {
-        if (it->second.table.expired()) {
-            std::filesystem::remove(it->second.path, error);
-            it = step_input_copies_.erase(it);
-        } else {
-            ++it;
-        }
-    }
     auto& registry = DataRegistry::Instance();
     for (auto it = step_result_files_.begin(); it != step_result_files_.end();) {
         const auto disk = registry.GetParquetBackedDataset(it->first);
@@ -5900,7 +5838,7 @@ bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inp
                                             std::vector<SqlTransformInput>& files, uint64_t& input_bytes,
                                             bool& any_on_disk) {
     // The time-series steps order rows by DuckDB's rowid, which a table has
-    // and a view on a file does not: their input is loaded into DuckDB.
+    // and a view on a file does not: a file input is loaded into DuckDB.
     static const std::regex rowid_pattern(R"(\browid\b)", std::regex::icase);
     const bool needs_rowid = std::regex_search(sql, rowid_pattern);
     input_bytes = 0;
@@ -5908,13 +5846,23 @@ bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inp
     for (const auto& input : inputs) {
         SqlTransformInput file;
         file.alias = input.alias;
-        uint64_t bytes = 0;
-        bool on_disk = false;
-        file.parquet_path = StepInputFile(input.dataset, file.schema, bytes, on_disk);
-        file.load_file = needs_rowid;
-        if (file.parquet_path.empty()) return false;
-        input_bytes += bytes;
-        any_on_disk = any_on_disk || on_disk;
+        // A disk table's own file, read in place; a memory table as it is
+        // (DuckDB scans its Arrow batches, TOFIX178 0.5).
+        auto& registry = DataRegistry::Instance();
+        if (const auto disk = registry.GetParquetBackedDataset(input.dataset)) {
+            file.parquet_path = disk->GetFilePath();
+            file.schema = disk->GetSchema();
+            file.load_file = needs_rowid;
+            input_bytes += disk->GetInMemoryBytesEstimate();
+            any_on_disk = true;
+        } else if (const auto memory = registry.GetArrowDataset(input.dataset);
+                   memory && memory->GetArrowTable()) {
+            file.table = memory->GetArrowTable();
+            input_bytes += memory->GetMemoryUsage();
+        } else {
+            ReportError("input dataset '" + input.dataset + "' is not a table");
+            return false;
+        }
         files.push_back(std::move(file));
     }
     return true;
