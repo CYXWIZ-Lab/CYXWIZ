@@ -30,7 +30,7 @@ A CNN (any graph with Conv2D) trained on CUDA where the NVIDIA provider is
 not installed does not stop half-way. Training starts on ArrayFire CPU
 instead, and the Console says why:
 
-> Conv2D cannot run on ArrayFire CUDA in this build: ArrayFire cannot compile
+> Conv2D cannot run on ArrayFire CUDA here: ArrayFire cannot compile
 > its CUDA convolution kernel and the NVIDIA provider
 > (cyxwiz.nvidia-cublas-cell) is not installed. Install the CUDA GPU pack, or
 > choose ArrayFire OpenCL on this GPU in Preferences > Devices (faster than

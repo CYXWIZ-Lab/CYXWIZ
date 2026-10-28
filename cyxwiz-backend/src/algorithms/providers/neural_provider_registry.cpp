@@ -2,9 +2,24 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <filesystem>
 #include <mutex>
+#include <string>
 
 #include <arrayfire.h>
+#include <spdlog/spdlog.h>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace cyxwiz {
 
@@ -16,10 +31,110 @@ void SetNeuralProvidersDisabledForTesting(bool disabled) {
     g_neural_providers_disabled_for_testing.store(disabled);
 }
 
+// The NVIDIA provider is a module of its own (cyxwiz-nvidia-provider,
+// TOFIX178 1.0(c)), loaded at first use: installed with the CUDA GPU pack,
+// or next to the backend in a build. Absent, NVIDIA devices use the
+// portable path.
+namespace {
+
+#if defined(_WIN32)
+constexpr const wchar_t* kNvidiaProviderModule = L"cyxwiz-nvidia-provider.dll";
+#else
+constexpr const char* kNvidiaProviderModule = "libcyxwiz-nvidia-provider.so";
+#endif
+
+struct NvidiaProviderModule {
+    void (*register_fn)(NeuralProviderRegistry*) = nullptr;
+    bool (*device_memory_fn)(size_t*, size_t*) = nullptr;
+};
+
+void* NvidiaProviderSymbol(void* module, const char* name) {
+#if defined(_WIN32)
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module), name));
+#else
+    return dlsym(module, name);
+#endif
+}
+
+// The module next to this backend library (a build's bin folder).
+#if defined(_WIN32)
+std::filesystem::path BesideBackend() {
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&BesideBackend), &self))
+        return {};
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(self, path, MAX_PATH);
+    if (length == 0 || length == MAX_PATH) return {};
+    return std::filesystem::path(path).parent_path() / kNvidiaProviderModule;
+}
+#else
+std::filesystem::path BesideBackend() {
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void*>(&BesideBackend), &info) == 0 || !info.dli_fname) return {};
+    return std::filesystem::path(info.dli_fname).parent_path() / kNvidiaProviderModule;
+}
+#endif
+
+const NvidiaProviderModule& LoadNvidiaProviderModule() {
+    static const NvidiaProviderModule module = [] {
+        NvidiaProviderModule loaded;
+        void* handle = nullptr;
+        std::string where;
+        const std::filesystem::path beside = BesideBackend();
+#if defined(_WIN32)
+        // The runtime's DLL folders (the GPU packs), then the backend's own.
+        handle = LoadLibraryW(kNvidiaProviderModule);
+        if (!handle && !beside.empty() && std::filesystem::exists(beside))
+            handle = LoadLibraryExW(beside.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+        if (handle) {
+            wchar_t path[MAX_PATH];
+            const DWORD length = GetModuleFileNameW(static_cast<HMODULE>(handle), path, MAX_PATH);
+            where = length > 0 && length < MAX_PATH ? std::filesystem::path(path).string() : "cyxwiz-nvidia-provider.dll";
+        }
+#else
+        handle = dlopen(kNvidiaProviderModule, RTLD_NOW | RTLD_LOCAL);
+        if (!handle && !beside.empty() && std::filesystem::exists(beside))
+            handle = dlopen(beside.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (handle) where = kNvidiaProviderModule;
+#endif
+        if (!handle) {
+            spdlog::debug("NVIDIA neural provider module not installed ({}): NVIDIA devices use the portable path",
+                          beside.empty() ? std::string("cyxwiz-nvidia-provider") : beside.filename().string());
+            return loaded;
+        }
+        const auto abi = reinterpret_cast<int (*)()>(NvidiaProviderSymbol(handle, "cyxwiz_nvidia_provider_abi"));
+        const auto register_fn = reinterpret_cast<void (*)(NeuralProviderRegistry*)>(
+            NvidiaProviderSymbol(handle, "cyxwiz_nvidia_provider_register"));
+        if (!abi || !register_fn) {
+            spdlog::warn("NVIDIA neural provider module {} lacks its entry points; not used", where);
+            return loaded;
+        }
+        if (abi() != CYXWIZ_NEURAL_PROVIDER_MODULE_ABI) {
+            spdlog::warn("NVIDIA neural provider module {} has ABI {}, this Engine needs {}; not used (install the "
+                         "CUDA GPU pack of this version)",
+                         where, abi(), CYXWIZ_NEURAL_PROVIDER_MODULE_ABI);
+            return loaded;
+        }
+        // The module stays loaded for the process: its provider lives in
+        // the registry until exit.
+        loaded.register_fn = register_fn;
+        loaded.device_memory_fn = reinterpret_cast<bool (*)(size_t*, size_t*)>(
+            NvidiaProviderSymbol(handle, "cyxwiz_nvidia_provider_device_memory"));
+        spdlog::info("NVIDIA neural provider module loaded: {}", where);
+        return loaded;
+    }();
+    return module;
+}
+
+}  // namespace
+
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
-// Defined in nvidia_cublas_provider.cpp; registers the provider when its
-// runtime probe succeeds. No-op stub otherwise.
-void RegisterNvidiaCublasNeuralProvider(NeuralProviderRegistry& registry);
+bool NvidiaProviderDeviceMemoryForTesting(size_t& free_bytes, size_t& total_bytes) {
+    free_bytes = total_bytes = 0;
+    const auto& module = LoadNvidiaProviderModule();
+    return module.device_memory_fn && module.device_memory_fn(&free_bytes, &total_bytes);
+}
 #endif
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
 // Defined in opencl_cell_provider.cpp; registers when an OpenCL GPU device
@@ -93,9 +208,7 @@ NeuralProviderRegistry& NeuralProviderRegistry::Instance() {
     static NeuralProviderRegistry registry;
     static std::once_flag built_ins_registered;
     std::call_once(built_ins_registered, [] {
-#ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
-        RegisterNvidiaCublasNeuralProvider(registry);
-#endif
+        if (const auto& nvidia = LoadNvidiaProviderModule(); nvidia.register_fn) nvidia.register_fn(&registry);
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
         RegisterOpenclCellNeuralProvider(registry);
 #endif

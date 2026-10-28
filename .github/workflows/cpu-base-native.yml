@@ -159,9 +159,49 @@ jobs:
           $root = (Resolve-Path deps/python-runtime/python).Path -replace '\\', '/'
           "CYXWIZ_PYTHON_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      # The NVIDIA provider module (cyxwiz-nvidia-provider, shipped in the CUDA
+      # pack; TOFIX178 1.0(c)) builds against the CUDA Toolkit: pinned NVIDIA
+      # redistributable archives, CUDA 12.6 (ArrayFire 3.10 ships the 12.8
+      # runtime, which runs 12.6 code).
+      - name: Restore CUDA Toolkit parts
+        id: cuda-cache
+        uses: actions/cache@v4
+        with:
+          path: deps/cuda
+          key: cuda-toolkit-12.6.3-windows-x86_64-cudart-nvcc-cublas-nvrtc
+
+      - name: Download pinned CUDA Toolkit parts
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $redist = 'https://developer.download.nvidia.com/compute/cuda/redist'
+          $parts = @(
+            @('cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.6.77-archive.zip',
+              '7A313BC0C93B1A50BB03AA9783A199AE70C3B66E2D8084DA65E8254A8577B925'),
+            @('cuda_nvcc/windows-x86_64/cuda_nvcc-windows-x86_64-12.6.85-archive.zip',
+              '3FB9F76B87C37D02F947354BE89B718AD5F2C76B6AB47995265BFA3A068A5E14'),
+            @('libcublas/windows-x86_64/libcublas-windows-x86_64-12.6.4.1-archive.zip',
+              '1A87EC80F8C0E5A39BADC87010D479930C5B63ABD788B3A05BD688A5980A3D07'),
+            @('cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-12.6.85-archive.zip',
+              'B1221A95A3758561BC73C56905743730F7459CBAFF54A4870AA899FA3489219E')
+          )
+          New-Item -ItemType Directory -Force deps/cuda, deps/cuda-download | Out-Null
+          foreach ($part in $parts) {
+            $archive = Join-Path deps/cuda-download (Split-Path $part[0] -Leaf)
+            Invoke-WebRequest -Uri "$redist/$($part[0])" -OutFile $archive
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $part[1]) {
+              throw "CUDA Toolkit input digest mismatch: $($part[0])"
+            }
+            $unpacked = Join-Path deps/cuda-download ([IO.Path]::GetFileNameWithoutExtension($archive))
+            Expand-Archive $archive -DestinationPath deps/cuda-download
+            Copy-Item "$unpacked/*" deps/cuda -Recurse -Force
+          }
+          Remove-Item deps/cuda-download -Recurse -Force
+
       - name: Configure Release CPU build
         shell: pwsh
         run: |
+          $cudaRoot = (Resolve-Path deps/cuda).Path -replace '\\', '/'
           $configureArgs = @(
             '-S', '.', '-B', 'build',
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake",
@@ -181,6 +221,8 @@ jobs:
             '-DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF',
             '-DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF',
             '-DCYXWIZ_ENABLE_CUDA=ON',
+            '-DCYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON',
+            "-DCUDAToolkit_ROOT=$cudaRoot",
             '-DCYXWIZ_ENABLE_OPENCL=ON',
             '-DCYXWIZ_ENABLE_NCCL=OFF'
           )
@@ -209,6 +251,7 @@ jobs:
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
           cyxwiz-plugin-check
+          cyxwiz-nvidia-provider
           pycyxwiz
 
       - name: Download pinned redistribution inputs

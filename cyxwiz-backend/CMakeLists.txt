@@ -550,19 +550,32 @@ if(CYXWIZ_ENABLE_CUDA)
     message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
 
     # Optional NVIDIA neural-network provider (tofix68): cuBLAS GEMMs +
-    # fused cell kernels behind the INeuralNetworkProvider boundary.
-    # OFF by default so portable builds never require the CUDA Toolkit.
+    # fused cell kernels behind the INeuralNetworkProvider boundary. A
+    # module of its own (cyxwiz-nvidia-provider, TOFIX178 1.0(c)): the
+    # backend loads it at run time when it is installed (the CUDA GPU pack,
+    # or next to the backend in a build), so cyxwiz-backend itself never
+    # needs the CUDA libraries. CYXWIZ_HAS_NVIDIA_DNN_PROVIDER says the
+    # build made the module (tests use it).
     option(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER
-           "Enable the optional NVIDIA cuBLAS neural-network provider" OFF)
+           "Build the optional NVIDIA cuBLAS neural-network provider module" OFF)
     if(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER)
         find_package(CUDAToolkit QUIET)
         if(CUDAToolkit_FOUND)
-            message(STATUS "NVIDIA DNN provider enabled (CUDA Toolkit ${CUDAToolkit_VERSION})")
-            target_sources(cyxwiz-backend PRIVATE
+            message(STATUS "NVIDIA DNN provider module enabled (CUDA Toolkit ${CUDAToolkit_VERSION})")
+            add_library(cyxwiz-nvidia-provider SHARED
                 src/algorithms/providers/nvidia_cublas_provider.cpp
             )
-            target_link_libraries(cyxwiz-backend PUBLIC
-                CUDA::cudart CUDA::cublas CUDA::nvrtc CUDA::cuda_driver)
+            target_include_directories(cyxwiz-nvidia-provider PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/providers)
+            # The CUDA runtime is linked statically: the pack ships cuBLAS
+            # and NVRTC (ArrayFire's CUDA backend needs them too); the driver
+            # API comes with the NVIDIA driver.
+            target_link_libraries(cyxwiz-nvidia-provider PRIVATE
+                cyxwiz-backend CUDA::cudart_static CUDA::cublas CUDA::nvrtc CUDA::cuda_driver
+                spdlog::spdlog)
+            set_target_properties(cyxwiz-nvidia-provider PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
             target_compile_definitions(cyxwiz-backend PUBLIC
                 CYXWIZ_HAS_NVIDIA_DNN_PROVIDER)
             set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER TRUE)

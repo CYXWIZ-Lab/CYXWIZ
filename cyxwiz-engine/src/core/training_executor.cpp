@@ -349,7 +349,7 @@ std::string ModelUnsupportedOnRoute(const TrainingConfiguration& config, DeviceT
     request.conv_padding = 1;
     request.conv_bias = true;
     if (NeuralProviderRegistry::Instance().FindSupporting(request)) return {};
-    return "Conv2D cannot run on ArrayFire CUDA in this build: ArrayFire cannot compile its CUDA convolution "
+    return "Conv2D cannot run on ArrayFire CUDA here: ArrayFire cannot compile its CUDA convolution "
            "kernel and the NVIDIA provider (cyxwiz.nvidia-cublas-cell) is not installed. Install the CUDA GPU "
            "pack, or choose ArrayFire OpenCL on this GPU in Preferences > Devices (faster than the CPU)";
 }

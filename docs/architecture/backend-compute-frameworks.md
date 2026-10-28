@@ -50,12 +50,23 @@ convolution), with NVIDIA cuBLAS for the matrix multiplies.
   with explicit host copies). The Console says "Conv2D: convolution via
   cyxwiz.nvidia-cublas-cell".
 - **Built** with `CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON` and the CUDA Toolkit
-  (CUDA runtime, cuBLAS, NVRTC, driver API). Today it is compiled into
-  `cyxwiz-backend`, so it is OFF by default and release builds do not include
-  it (linking it in would make every machine need the CUDA libraries).
-  **Decision 2026-10-28 (TOFIX178 1.0(c), option 1)**: the provider becomes a
-  module of its own, shipped in the CUDA GPU pack and loaded only when that
-  pack is installed and an NVIDIA device is selected.
+  (CUDA runtime, cuBLAS, NVRTC, driver API) as a module of its own,
+  `cyxwiz-nvidia-provider` (`.dll` / `.so`), beside the backend in `bin`
+  (TOFIX178 1.0(c), option 1, 2026-10-28). `cyxwiz-backend` links no CUDA
+  library, so the base runs on every machine. The release workflow
+  (`cpu-base-native.yml`) builds the module against pinned CUDA 12.6
+  redistributable archives, and `package_release.py` ships it only in the
+  CUDA GPU pack (`runtime/`, beside afcuda); a CUDA pack without it fails to
+  package.
+- **Loaded** by the provider registry when it starts: by name (the pack's
+  `runtime/` is on the Engine's PATH), then from beside `cyxwiz-backend`. The
+  module exports `cyxwiz_nvidia_provider_abi` (must equal
+  `CYXWIZ_NEURAL_PROVIDER_MODULE_ABI`, `neural_provider.h`),
+  `cyxwiz_nvidia_provider_register` and
+  `cyxwiz_nvidia_provider_device_memory`. A missing module, or one that
+  cannot load (no NVIDIA driver: `nvcuda.dll`), counts as not installed
+  (a Debug log line); a loaded one logs "NVIDIA neural provider module
+  loaded: <path>".
 - **Without it**, a CUDA run of a model with Conv2D does not start on CUDA:
   under the Compatibility policy it moves to ArrayFire CPU and says why;
   under Strict it refuses with the reason (TOFIX178 1.0(d)).
