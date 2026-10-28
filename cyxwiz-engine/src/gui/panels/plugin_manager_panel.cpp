@@ -505,8 +505,10 @@ void PluginManagerPanel::RenderInstallPopup() {
                     if (task.ShouldStop()) return;
 
                     auto& mgr = plugin::PluginManager::Instance();
-                    if (!mgr.LoadPlugin(dir)) {
-                        task.MarkFailed("Failed to load plugin from " + path_str);
+                    std::string load_error;
+                    if (!mgr.LoadPlugin(dir, &load_error)) {
+                        task.MarkFailed("Failed to load plugin from " + path_str +
+                                        (load_error.empty() ? "" : ": " + load_error));
                         return;
                     }
 
@@ -546,9 +548,22 @@ void PluginManagerPanel::RenderInstallPopup() {
 
                     const bool initialized = mgr.InitializePlugin(plugin_id);
                     const auto final_state = mgr.GetPluginState(plugin_id);
+                    const auto* loaded = mgr.GetLoadedPlugin(plugin_id);
                     if (!initialized && final_state != plugin::PluginState::Loaded) {
                         install_error_ =
                             "Plugin loaded but could not be initialized: " + path_str;
+                        if (loaded && !loaded->error_message.empty())
+                            install_error_ += "\n" + loaded->error_message;
+                        show_install_error_ = true;
+                        return;
+                    }
+                    // Nodes the plugin offered but the Engine refused stay
+                    // visible here, not only in the Console.
+                    if (loaded && !loaded->skipped_nodes.empty()) {
+                        install_error_ = "Plugin installed, but " +
+                            std::to_string(loaded->skipped_nodes.size()) +
+                            " of its nodes were not added:";
+                        for (const auto& reason : loaded->skipped_nodes) install_error_ += "\n- " + reason;
                         show_install_error_ = true;
                         return;
                     }

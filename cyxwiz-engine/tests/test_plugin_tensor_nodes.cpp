@@ -219,6 +219,50 @@ int main() {
         Check(!LibraryLoaded(), "nothing held it: the library is freed with the unload");
     }
 
+    std::cout << "a node the Engine refuses is reported with its reason, not only logged\n";
+    {
+        // Something else already holds the Snake type id, so the plugin's
+        // Snake cannot register; Softsign still does.
+        struct NoFactory : cyxwiz::ITensorNodeFactory {
+            cyxwiz::ExtensionShapeResult InferOutputShape(const std::vector<size_t>&,
+                                                          const std::map<std::string, std::string>&) const override {
+                return {};
+            }
+            std::unique_ptr<cyxwiz::Module> CreateModule(const std::vector<size_t>&,
+                                                         const std::map<std::string, std::string>&,
+                                                         std::string&) const override {
+                return nullptr;
+            }
+        };
+        cyxwiz::ExtensionNodeRegistry::Registration taken;
+        taken.descriptor.provider_id = kPluginId;
+        taken.descriptor.type_name = "Snake";
+        taken.descriptor.kind = cyxwiz::ExtensionNodeKind::TensorLayer;
+        taken.descriptor.source_path = "a test that took the id first";
+        taken.tensor_factory = std::make_shared<NoFactory>();
+        std::string error;
+        const bool registered = registry.Register(std::move(taken), error);
+        Check(registered, "the Snake id is taken first" + (error.empty() ? std::string() : ": " + error));
+
+        Check(manager.LoadPlugin(plugin_dir) && manager.InitializePlugin(kPluginId), "the plugin still loads");
+        const auto* loaded = manager.GetLoadedPlugin(kPluginId);
+        Check(loaded && loaded->skipped_nodes.size() == 1, "one node is reported as not added");
+        Check(loaded && !loaded->skipped_nodes.empty() &&
+                  loaded->skipped_nodes[0].find("Snake") != std::string::npos &&
+                  loaded->skipped_nodes[0].find("already registered") != std::string::npos,
+              "the reason names the node and why: " +
+                  (loaded && !loaded->skipped_nodes.empty() ? loaded->skipped_nodes[0] : std::string("none")));
+        Check(registry.Has(std::string(kPluginId) + ":Softsign"), "the other node is added");
+        manager.UnloadPlugin(kPluginId);
+    }
+
+    std::cout << "a folder that cannot load says why\n";
+    {
+        std::string error;
+        const bool loaded = manager.LoadPlugin(work / "no-such-plugin", &error);
+        Check(!loaded && !error.empty(), "LoadPlugin gives its reason: " + error);
+    }
+
     fs::remove_all(work, ec);
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";

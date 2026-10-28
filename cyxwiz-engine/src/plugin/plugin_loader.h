@@ -4,6 +4,7 @@
 #include <memory>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace cyxwiz::plugin {
 
@@ -21,6 +22,9 @@ struct LoadedPlugin {
     PluginManifest manifest;
     PluginState state = PluginState::Unloaded;
     std::string error_message;
+    // Why nodes the plugin offered were not added (wrong pins, bad ids);
+    // filled when the plugin is initialised.
+    std::vector<std::string> skipped_nodes;
 
     ~LoadedPlugin();
 };

@@ -43,8 +43,9 @@ bool CheckFolder(const fs::path& folder) {
               << manifest.api_version.ToString() << ")\n";
 
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
-    if (!manager.LoadPlugin(folder)) {
-        std::cout << "  FAIL the plugin did not load (the reason is in the log above)\n";
+    std::string load_error;
+    if (!manager.LoadPlugin(folder, &load_error)) {
+        std::cout << "  FAIL the plugin did not load: " << load_error << "\n";
         return false;
     }
     // The Engine asks the user before a plugin with a dangerous permission
@@ -59,7 +60,10 @@ bool CheckFolder(const fs::path& folder) {
             std::cout << "  permission " << name << ": granted for this check only (the Engine asks the user)\n";
     }
     if (!manager.InitializePlugin(manifest.id)) {
-        std::cout << "  FAIL the plugin did not initialise\n";
+        const auto* loaded = manager.GetLoadedPlugin(manifest.id);
+        std::cout << "  FAIL the plugin did not initialise"
+                  << (loaded && !loaded->error_message.empty() ? ": " + loaded->error_message : std::string())
+                  << "\n";
         manager.UnloadPlugin(manifest.id);
         return false;
     }
@@ -95,6 +99,12 @@ bool CheckFolder(const fs::path& folder) {
         std::cout << (result.passed ? "  ok   node " : "  FAIL node ") << node.type_id << ": "
                   << cyxwiz::DescribeGradientCheck(result) << "\n";
         ok = ok && result.passed;
+    }
+    if (const auto* loaded = manager.GetLoadedPlugin(manifest.id)) {
+        for (const auto& reason : loaded->skipped_nodes) {
+            std::cout << "  FAIL node not added: " << reason << "\n";
+            ok = false;
+        }
     }
     if (nodes == 0) {
         std::cout << "  FAIL the plugin registered no nodes\n";

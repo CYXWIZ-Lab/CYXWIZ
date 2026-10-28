@@ -148,7 +148,7 @@ std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
 // Loading
 // ============================================================================
 
-bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
+bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir, std::string* error_out) {
     // Pre-check: parse manifest to get ID before loading DLL.
     // Avoids loading (and then unloading) a DLL that's already in use,
     // which would FreeLibrary the active plugin's code and crash.
@@ -169,6 +169,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
 
     if (!loaded) {
         spdlog::error("PluginManager: Failed to load plugin from {}: {}", plugin_dir.string(), error);
+        if (error_out) *error_out = error;
         return false;
     }
 
@@ -179,6 +180,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
     // Double-check for duplicate (race condition guard)
     if (plugins_.count(id)) {
         spdlog::warn("PluginManager: Plugin {} already loaded, skipping", id);
+        if (error_out) *error_out = "a plugin with the id " + id + " is already loaded";
         return false;
     }
 
@@ -402,6 +404,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 std::shared_ptr<void> lease;
                 ExtensionNodeDescriptor current;
                 size_t count = 0;
+                std::vector<std::string> skipped;
             };
             TensorEnumState tstate;
             tstate.plugin_id = plugin_id;
@@ -454,12 +457,14 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 std::string error;
                 if (registration.descriptor.metadata.inputs.size() != 1 ||
                     registration.descriptor.metadata.outputs.size() != 1) {
-                    spdlog::warn("PluginManager: trainable node {}:{} not registered: it needs exactly "
-                                 "one input and one output pin", s->plugin_id,
-                                 registration.descriptor.type_name);
+                    s->skipped.push_back(registration.descriptor.type_name +
+                                         ": it needs exactly one input and one output pin");
+                    spdlog::warn("PluginManager: trainable node {}:{} not registered: {}", s->plugin_id,
+                                 registration.descriptor.type_name, s->skipped.back());
                 } else if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
                     s->count++;
                 } else {
+                    s->skipped.push_back(error);
                     spdlog::warn("PluginManager: trainable node not registered: {}", error);
                 }
             };
@@ -472,6 +477,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 plugin->error_message = reg_result.error_message;
                 return false;
             }
+            plugin->skipped_nodes = std::move(tstate.skipped);
             spdlog::info("PluginManager: Registered {} trainable nodes for '{}'", tstate.count, plugin_id);
         }
 

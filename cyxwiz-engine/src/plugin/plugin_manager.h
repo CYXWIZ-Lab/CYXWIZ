@@ -43,8 +43,9 @@ public:
 
     // ===== Loading =====
 
-    // Load a single plugin from a directory containing plugin.json
-    bool LoadPlugin(const std::filesystem::path& plugin_dir);
+    // Load a single plugin from a directory containing plugin.json. On
+    // failure the reason goes to the log and, when given, to *error.
+    bool LoadPlugin(const std::filesystem::path& plugin_dir, std::string* error = nullptr);
 
     // Load all plugins from search paths
     void LoadAllFromSearchPaths();
