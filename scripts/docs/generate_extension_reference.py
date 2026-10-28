@@ -119,7 +119,10 @@ SHOWN_DUNDERS = {
 
 def class_section(cls, name, out):
     out.append("### `{}`\n".format(name))
-    doc = " ".join((inspect.getdoc(cls) or "").split())
+    # The class's own docstring only: inspect.getdoc falls back to a base
+    # class's, which would describe Module under every layer.
+    own = cls.__dict__.get("__doc__")
+    doc = " ".join((inspect.cleandoc(own) if isinstance(own, str) else "").split())
     if doc and not doc.startswith(name + "("):
         out.append(doc + "\n")
     bases = [b.__name__ for b in cls.__mro__[1:] if b.__module__ == cls.__module__ and b.__name__ != name]

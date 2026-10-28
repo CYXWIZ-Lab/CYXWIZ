@@ -132,8 +132,6 @@ Derives from `Adam`.
 
 ### `AttentionModule`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -193,8 +191,6 @@ Derives from `Layer`.
 
 ### `BCEWithLogitsLoss`
 
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
-
 Derives from `Loss`.
 
 | Member | What it does |
@@ -244,8 +240,6 @@ Information about a column in a dataset
 | `type` (property) |  |
 
 ### `ContrastiveLoss`
-
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
 
 Derives from `Loss`.
 
@@ -311,8 +305,6 @@ Derives from `Layer`.
 | `stride` (property) |  |
 
 ### `CrossEntropyLoss`
-
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
 
 Derives from `Loss`.
 
@@ -456,8 +448,6 @@ Derives from `Layer`.
 
 ### `DropoutModule`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -465,8 +455,6 @@ Derives from `Module`.
 | `DropoutModule(self: DropoutModule, p: float = 0.5) -> None` | Create a Dropout module |
 
 ### `ELUModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -521,8 +509,6 @@ Derives from `Layer`.
 
 ### `FlattenModule`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -530,8 +516,6 @@ Derives from `Module`.
 | `FlattenModule(self: FlattenModule, start_dim: int = 1) -> None` | Create a Flatten module |
 
 ### `FocalLoss`
-
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
 
 Derives from `Loss`.
 
@@ -544,8 +528,6 @@ Derives from `Loss`.
 | `gamma` (property) | Focusing parameter - higher = more focus on hard examples (default: 2.0) |
 
 ### `GELUModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -635,8 +617,6 @@ Derives from `Layer`.
 
 ### `JaccardLoss`
 
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
-
 Derives from `Loss`.
 
 | Member | What it does |
@@ -719,8 +699,6 @@ Derives from `Layer`.
 
 ### `LeakyReLUModule`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -728,8 +706,6 @@ Derives from `Module`.
 | `LeakyReLUModule(self: LeakyReLUModule, negative_slope: float = 0.009999999776482582) -> None` | Create a LeakyReLU module |
 
 ### `LearnedPositionalEmbedding`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -755,8 +731,6 @@ Derives from `Layer`.
 | `set_parameters(self: LinearLayer, params: Mapping[str, Tensor]) -> None` | Set parameters from dict |
 
 ### `LinearModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -786,8 +760,6 @@ Derives from `MelConfig`.
 | `use_energy` (property) |  |
 
 ### `MSELoss`
-
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
 
 Derives from `Loss`.
 
@@ -821,8 +793,6 @@ Derives from `SpectrogramConfig`.
 | `n_mels` (property) |  |
 
 ### `MishModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -920,8 +890,6 @@ Derives from `Layer`.
 
 ### `PositionalEncoding`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -991,8 +959,6 @@ Derives from `Layer`.
 | `set_parameters(self: RNN, params: Mapping[str, Tensor]) -> None` | Set RNN parameters |
 
 ### `ReLUModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -1092,8 +1058,6 @@ Derives from `Activation`.
 
 ### `SigmoidModule`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -1101,8 +1065,6 @@ Derives from `Module`.
 | `SigmoidModule(self: SigmoidModule) -> None` | Create a Sigmoid module |
 
 ### `SoftDiceLoss`
-
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
 
 Derives from `Loss`.
 
@@ -1114,8 +1076,6 @@ Derives from `Loss`.
 | `smooth` (property) | Smoothing constant |
 
 ### `SoftmaxModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -1147,8 +1107,6 @@ Derives from `Module`.
 
 ### `SwishModule`
 
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
-
 Derives from `Module`.
 
 | Member | What it does |
@@ -1156,8 +1114,6 @@ Derives from `Module`.
 | `SwishModule(self: SwishModule) -> None` | Create a Swish module |
 
 ### `TanhModule`
-
-Base class of every module. Subclass it in Python to write your own: define forward(self, x) and backward(self, grad_output), call super().__init__() first, and declare learnable tensors with add_parameter.
 
 Derives from `Module`.
 
@@ -1303,8 +1259,6 @@ Derives from `Layer`.
 
 ### `TripletLoss`
 
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
-
 Derives from `Loss`.
 
 | Member | What it does |
@@ -1316,8 +1270,6 @@ Derives from `Loss`.
 | `set_negative(self: TripletLoss, negative: Tensor) -> None` | Set negative samples for triplet computation |
 
 ### `TverskyLoss`
-
-Base class of every loss. Subclass it in Python to write your own: define forward(self, predictions, targets) returning one value (a Tensor of one element) and backward(self, predictions, targets) returning dLoss/dpredictions with the predictions' shape, the mean scaling included. Call super().__init__() first.
 
 Derives from `Loss`.
 
