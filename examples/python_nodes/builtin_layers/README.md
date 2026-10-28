@@ -41,7 +41,10 @@ built-in Huber calls it `beta`).
 python test_builtin_layers.py <folder holding pycyxwiz>
 ```
 
-(in an installed CyxWiz, the folder is `runtime/base/<base>`). It runs the
+(in an installed CyxWiz, the folder is `runtime/base/<base>`, and the
+Python is the base's own: `<base>\python\python.exe` on Windows,
+`<base>/python/bin/python3.12` on Linux and macOS. CyxWiz 1.0.7 on macOS
+also needs `AF_PATH=<base>/arrayfire` in the environment.) It runs the
 gradient check on each node, compares each with the Engine's built-in module
 (forward, input gradient and Dense's weight gradients agree to 1e-5), and
 checks the bundle is current. The losses are checked the same way: Cross

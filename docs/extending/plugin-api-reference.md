@@ -95,14 +95,19 @@ the library. Unknown fields, capabilities and permissions are ignored.
 
 | Permission | Granted | Checked by |
 |---|---|---|
-| `Training` | Without asking | `RegisterTrainingHook`. Not checked for trainable nodes |
-| `UIModify` | Without asking | `RegisterNodeProvider`, `RegisterPanelProvider` |
-| `DataRegistry` | Without asking | `RegisterDataProvider`, `RegisterAnalyticsProvider` |
+| `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `ITrainingHook`, `RegisterTrainingHook` |
+| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
+| `DataRegistry` | Without asking | `IDataProvider`, `IAnalyticsProvider`, `RegisterDataProvider`, `RegisterAnalyticsProvider` |
 | `GPU` | Without asking | Nothing |
 | `FileSystem`, `Network`, `SystemCommands`, `Python` | The user is asked to allow or deny each before the plugin starts; the answer is stored per plugin id and version (`%APPDATA%\cyxwiz\plugin_permissions.json`, `~/.cyxwiz/plugin_permissions.json`), so a new version asks again. A denied permission does not stop the plugin | Nothing in the Engine today |
 
-The `Register*` calls check the flags `GetRequiredPermissions()` returns, not
-`plugin.json`: declare a permission in both when you use one of them. The
+The interfaces your `QueryInterface` returns and the `Register*` calls check
+the flags `GetRequiredPermissions()` returns, not `plugin.json`: declare a
+permission in both. Without it that interface is not registered, and the
+Install dialog, Plugin Manager and `cyxwiz-plugin-check` say so
+("ITrainingHook: GetRequiredPermissions() does not include the Training
+permission"). Offering one provider both ways (through `QueryInterface` and a
+`Register*` call) registers it once. The
 approval dialog asks about the permissions in `plugin.json`. Permissions are
 a statement to the user: the Engine does not sandbox native code.
 `cyxwiz-plugin-check` grants the four asked permissions for its own run
@@ -371,14 +376,13 @@ plugin_sdk --prefix <folder>` installs the SDK.
 cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
 ```
 
-The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). On Windows
-run it directly, with the base's `arrayfire\bin` on `PATH`; on Linux and
-macOS run it through the launcher in the installation folder,
-`cyxwiz-runtime-bootstrapper --plugin-check <plugin folder> ...`, which sets
-the library path and keeps your current folder for relative paths. The
-Windows launcher is a windowed program and shows nothing in a terminal
-([quickstart](plugin-quickstart.md#3-check-it) has the PowerShell, Command
-Prompt and shell forms). In a source build run
+The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). Start it
+with `cyxwiz-cli plugin-check <plugin folder> ...` from the installation
+folder, on every platform: `cyxwiz-cli` finds the active base, sets the
+library path, keeps your current folder for relative paths, and returns the
+tool's exit code ([quickstart](plugin-quickstart.md#3-check-it) has the
+PowerShell, Command Prompt and shell forms, and the CyxWiz 1.0.7 commands,
+which has no `cyxwiz-cli`). In a source build run
 `bin/Release/cyxwiz-plugin-check` directly, with ArrayFire on `PATH`.
 
 For each folder it:

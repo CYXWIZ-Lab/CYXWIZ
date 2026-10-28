@@ -78,7 +78,7 @@ What a node's `forward` and `backward` can do with a tensor, from the C++ header
 | permute | `Tensor Permute(const std::vector<int>& dims) const` | `permute(dims: Sequence[int]) -> Tensor` |
 | pow | `Tensor Pow(float exponent) const`<br>`Tensor Pow(const Tensor& exponent) const` | `pow(exponent: object) -> Tensor` |
 | prod | `Tensor Prod() const`<br>`Tensor Prod(int dim, bool keepdim = false) const` | `prod(dim: object = None, keepdim: bool = False) -> Tensor` |
-| random | `static Tensor Random(const std::vector<size_t>& shape, DataType dtype = DataType::Float32)` | `random(shape: Sequence[int], dtype: DataType = DataType.Float32) -> Tensor` |
+| random | `static Tensor Random(const std::vector<size_t>& shape, DataType dtype = DataType::Float32)` | `random(shape: Sequence[int], dtype: DataType = DataType.Float32, seed: int \| None = None) -> Tensor` |
 | RandomSeeded | `static Tensor RandomSeeded(const std::vector<size_t>& shape, uint64_t seed, DataType dtype = DataType::Float32)` |  |
 | range_n | `static Tensor RangeN(const std::vector<size_t>& shape, DataType dtype = DataType::Float32)` | `range_n(shape: Sequence[int], dtype: DataType = DataType.Float32) -> Tensor` |
 | ReadData | `const void* ReadData() const`<br>`const T* ReadData() const` |  |

@@ -258,10 +258,11 @@ node; `cyxwiz-plugin-check` prints *FAIL node not added: &lt;reason&gt;*.
 
 A permission is a statement to the user, not a sandbox: your library runs
 with the Engine's rights whatever was approved, and a denied permission does
-not stop the plugin. Only the `Register*` calls of the context check
-permissions (none of the four asked ones), and they check the flags your
-`GetRequiredPermissions()` returns, not `plugin.json`. Declare a permission
-in both places when you use a `Register*` call.
+not stop the plugin. What you register checks the permission for it
+(Training for trainable nodes and training hooks, UIModify for panels and
+signal nodes, DataRegistry for data and analytics providers; none of the four
+asked ones), against the flags your `GetRequiredPermissions()` returns, not
+`plugin.json`. Declare a permission in both places.
 
 ## 5. Shapes: `InferOutputShape`
 

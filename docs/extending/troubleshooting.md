@@ -30,10 +30,10 @@ Engine's own words.
 ### *&lt;name&gt; &lt;version&gt; is already loaded from &lt;folder&gt;*
 
 A plugin id loads once. To load a new build of a plugin that is loaded:
-**Unload** it, rebuild, then **Install...** again. While a model still uses
-the plugin's nodes, Windows keeps its library open (the rebuild cannot
-replace the file) and an unload keeps the old code in memory: close the
-Engine instead, rebuild, and start it again.
+rebuild (the Engine runs a copy, so the build output is never locked), then
+**Unload** it and **Install...** the same folder again. A model made with
+the old build keeps the old code until it is gone
+([quickstart section 6](plugin-quickstart.md#6-change-rebuild-reload)).
 
 ### *needs &lt;id&gt; &lt;version&gt;, which is not installed* (or *version ... is installed*, *which did not start*)
 

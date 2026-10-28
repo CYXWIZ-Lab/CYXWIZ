@@ -16,13 +16,14 @@ a node in the Engine's palette, bundles it and uses it in a graph.
 
 **Inside the Engine** pycyxwiz is already there: in the Script Editor and in
 the Console, `import pycyxwiz` works. A script run from the Script Editor
-runs in the project folder, with the project folder on `sys.path`.
+runs in the project folder, with the project folder on `sys.path`, and as
+its saved file (`__file__` is its path).
 
 **Outside the Engine** (a terminal, your own editor, a test) you need:
 
 | What | Where |
 |---|---|
-| Python 3.12 | pycyxwiz is built for Python 3.12 only. An installed Engine carries one: `<base>\python\python.exe` |
+| Python 3.12 | pycyxwiz is built for Python 3.12 only. An installed Engine carries one: `<base>\python\python.exe` on Windows, `<base>/python/bin/python3.12` on Linux and macOS |
 | The folder with pycyxwiz | Installed Engine: `<base>` itself; it holds `pycyxwiz.pyd` and the Engine's DLLs. Source build: `build\lib\Release` holds `pycyxwiz.cp312-win_amd64.pyd`; its DLLs are in `build\bin\Release` |
 | ArrayFire | Installed Engine: `<base>\arrayfire\bin`. Source build: `C:\Program Files\ArrayFire\v3\lib` |
 | CUDA (a source build with CUDA only) | `%CUDA_PATH%\bin` |
@@ -59,9 +60,17 @@ for the tests. "DLL load failed while importing pycyxwiz" means a DLL folder
 is missing; "No module named 'pycyxwiz'" means the `sys.path` entry is.
 
 On Linux and macOS the module is `pycyxwiz.cpython-312-*.so` in `<base>`:
-put `<base>` on `sys.path`. If the import cannot find a library, start Python
-with `<base>` and `<base>/arrayfire/lib` in `LD_LIBRARY_PATH`
-(`DYLD_LIBRARY_PATH` on macOS).
+put `<base>` on `sys.path`. pycyxwiz finds the base's libraries itself and
+points ArrayFire at `<base>/arrayfire` (it sets `AF_PATH` when you have not).
+CyxWiz 1.0.7 on macOS does not: the import works but the first tensor fails
+with "ArrayFire couldn't locate any backends". There, start Python with
+`AF_PATH` set:
+
+<!-- not run: the paths depend on your installation -->
+```bash
+base=~/Applications/CyxWiz/runtime/base/cyxwiz-base-0.2.0-6-macos-x86_64
+AF_PATH="$base/arrayfire" "$base/python/bin/python3.12" my_script.py
+```
 
 ## 2. A module without parameters: Softsign
 
@@ -212,8 +221,17 @@ d.set_training(False)
 print(d.is_training())   # False
 ```
 
-pycyxwiz 0.2.0 has no function to seed `Tensor.random`: random draws
-(starting weights, masks) differ from run to run.
+Random draws (starting weights, masks) come from the run's random stream:
+inside a training run the Engine seeds it with the run's model seed, so the
+same seed trains the same way. Outside a run, or for values of your own that
+must repeat, pass a seed: `cyx.Tensor.random([2, 3], seed=7)` gives the same
+values every time.
+
+```python
+check_a = cyx.Tensor.random([4], seed=7)
+check_b = cyx.Tensor.random([4], seed=7)
+print([check_a.at(i) == check_b.at(i) for i in range(4)])   # [True, True, True, True]
+```
 
 ## 6. Train it
 

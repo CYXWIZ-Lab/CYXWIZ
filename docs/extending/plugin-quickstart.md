@@ -13,8 +13,8 @@ every installation carries the plugin SDK and the check tool.
 | Need | Detail |
 |---|---|
 | An installed CyxWiz | From the [Releases page](https://github.com/CYXWIZ-Lab/CYXWIZ/releases) (root README, *Install a pre-release*) |
-| CMake 3.20 or newer | On `PATH` |
-| The C++ compiler the Engine was built with | See [The compiler](#the-compiler). Another compiler builds, but the Engine refuses to load the result |
+| CMake 3.20 or newer | On `PATH`. Windows: the Visual Studio installer or [cmake.org](https://cmake.org/download/); macOS: `brew install cmake`, the cmake.org app, or `python3 -m pip install --user cmake`; Linux: your package manager |
+| The C++ compiler the Engine was built with | See [The compiler](#the-compiler). Another compiler builds, but the Engine refuses to load the result. On macOS, Apple clang comes with the Xcode Command Line Tools (`xcode-select --install`) |
 
 ### Where CyxWiz is installed
 
@@ -34,7 +34,7 @@ the macOS app start it. Everything else is in `runtime/base/<base>/`:
 | In `runtime/base/<base>/` | What it is |
 |---|---|
 | `cyxwiz-engine` (`.exe`) | The Engine. Start it through the launcher, not directly: the launcher gives it its runtime libraries |
-| `cyxwiz-plugin-check` (`.exe`) | Loads a plugin folder the way the Engine does and checks its nodes. Start it through the launcher too ([section 3](#3-check-it)) |
+| `cyxwiz-plugin-check` (`.exe`) | Loads a plugin folder the way the Engine does and checks its nodes. Start it with `cyxwiz-cli` in the installation folder ([section 3](#3-check-it)) |
 | `sdk/` | The plugin SDK |
 | `plugins/` | Not created by the installer, but **Refresh** searches it. Do not put your plugins here: CyxWiz replaces the base folder when it updates |
 | `engine_log.txt` | The Engine's log of the current launch (`engine_log.1.txt` to `engine_log.4.txt` are the four launches before) |
@@ -68,7 +68,7 @@ set SDK=%CYXWIZ%\runtime\base\<the folder name>\sdk
 Linux and macOS (`bash`, `zsh`):
 
 ```bash
-cyxwiz=~/.local/share/cyxwiz          # macOS: cyxwiz=~/Applications/CyxWiz
+cyxwiz="${XDG_DATA_HOME:-$HOME/.local/share}/cyxwiz"   # macOS: cyxwiz=~/Applications/CyxWiz
 base=$(sed -n 's/.*"base_pack_id": *"\([^"]*\)".*/\1/p' "$cyxwiz/runtime/active-runtime.json")
 sdk="$cyxwiz/runtime/base/$base/sdk"
 ```
@@ -79,7 +79,7 @@ The SDK folder holds:
 |---|---|
 | `include/plugin/`, `include/core/` | The plugin headers |
 | `include/cyxwiz/` | The backend headers: `cyxwiz::Tensor`, `cyxwiz::Module`, the built-in layers |
-| `lib/` | The backend's import library (`cyxwiz-backend.lib`; `libcyxwiz-backend.so`, `.dylib`). At run time your plugin uses the Engine's own copy |
+| `lib/` | The library your plugin links: `cyxwiz-backend.lib` on Windows, `libcyxwiz-backend.so` on Linux, `libcyxwiz-backend.dylib` on macOS. At run time your plugin uses the Engine's own copy. (The 1.0.7 Linux and macOS SDKs lack it: there, add `-DCYXWIZ_SDK_BACKEND_LIBRARY="$sdk/../libcyxwiz-backend.so"` (`.dylib` on macOS) to the first `cmake` line of section 2) |
 | `lib/cmake/CyxWizSDK/` | The CMake package: `find_package(CyxWizSDK)`, the target `CyxWiz::PluginSDK`, the function `cyxwiz_plugin_folder()` |
 | `template/` | My Nodes: a plugin with one trainable node, Bent Identity, that builds as delivered |
 | `examples/python-nodes/` | Python example nodes ([python-nodes.md](python-nodes.md)) |
@@ -113,8 +113,8 @@ It prints a line such as `# Built with: MSVC 19.44.35211.0 on Windows`.
 | Platform | Use | Refused or unsafe |
 |---|---|---|
 | Windows | x64 only. Visual Studio (MSVC) 2019 or later, and **not newer than the "Built with" version**. MSVC 19.44 is Visual Studio 2022 version 17.14; 19.50 is Visual Studio 2026 | clang-cl and MinGW are refused at load. A newer Visual Studio than the Engine's builds and loads, but your plugin may then need a newer Visual C++ runtime than the one the Engine ships, and can crash |
-| Linux | GCC with the same major version (`GNU 11.4.0` means `g++-11`), libstdc++ | Clang; another GCC major |
-| macOS | Apple clang with the same major version (`AppleClang 16.0.0` means Xcode 16), libc++, and the architecture of your CyxWiz download (`x86_64` for macOS Intel, `arm64` for Apple Silicon) | Another clang major. A library of the other architecture fails to load |
+| Linux | GCC with the same major version (`GNU 11.4.0` means `g++-11`), libstdc++. Ubuntu 22.04 and Debian have a `g++-11` package; on a distribution without one (Arch, recent Fedora) use GCC 11 from conda-forge in a folder of your own (`micromamba create -p ~/gcc11 -c conda-forge gxx_linux-64=11`, then `-DCMAKE_CXX_COMPILER=~/gcc11/bin/x86_64-conda-linux-gnu-g++`) or an Ubuntu 22.04 container | Clang; another GCC major. The check and the Engine say *built with compiler=gcc-15; this Engine with compiler=gcc-11* |
+| macOS | Apple clang with the same major version as "Built with" (`AppleClang 17.0.0`: compare with `clang --version`, or the *CXX compiler identification* line CMake prints; Xcode's version number does not follow clang's), libc++, and the architecture of your CyxWiz download (`x86_64` for macOS Intel, `arm64` for Apple Silicon) | Another clang major. A library of the other architecture fails to load |
 
 The [developer guide](plugin-developer-guide.md#10-build-fingerprint)
 explains what the Engine compares.
@@ -206,35 +206,42 @@ macOS a Debug build (`-DCMAKE_BUILD_TYPE=Debug`) loads unless you define
 
 ## 3. Check it
 
-`cyxwiz-plugin-check` is in the base folder, beside the Engine. It finds the
-Engine's libraries there, and ArrayFire's in the base's `arrayfire\bin`,
-which must be on `PATH` (without it Windows stops the tool before it starts:
-exit code -1073741515, a missing DLL). The first line adds it for this
-terminal only.
+`cyxwiz-cli`, beside the launcher in the installation folder, runs the
+active base's `cyxwiz-plugin-check` with the Engine's and ArrayFire's
+libraries found, in your current folder, and returns its exit code.
 
 PowerShell:
+
+```powershell
+& "$cyxwiz\cyxwiz-cli.exe" plugin-check my_nodes\build\my_nodes
+```
+
+Command Prompt:
+
+```bat
+"%CYXWIZ%\cyxwiz-cli.exe" plugin-check my_nodes\build\my_nodes
+```
+
+Linux and macOS:
+
+```bash
+"$cyxwiz/cyxwiz-cli" plugin-check my_nodes/build/my_nodes
+```
+
+PowerShell needs the `&` to run a quoted path. Several plugin folders may
+follow.
+
+CyxWiz 1.0.7 has no `cyxwiz-cli`. There, on Windows, run the base's tool
+with its `arrayfire\bin` on `PATH` (without it Windows stops the tool
+before it starts: exit code -1073741515, a missing DLL):
 
 ```powershell
 $env:PATH = "$cyxwiz\runtime\base\$base\arrayfire\bin;$env:PATH"
 & "$cyxwiz\runtime\base\$base\cyxwiz-plugin-check.exe" my_nodes\build\my_nodes
 ```
 
-Command Prompt:
-
-```bat
-set "PATH=%SDK%\..\arrayfire\bin;%PATH%"
-"%SDK%\..\cyxwiz-plugin-check.exe" my_nodes\build\my_nodes
-```
-
-Linux and macOS, through the launcher, which sets the library path:
-
-```bash
-"$cyxwiz/cyxwiz-runtime-bootstrapper" --plugin-check my_nodes/build/my_nodes
-```
-
-PowerShell needs the `&` to run a quoted path. Several plugin folders may
-follow. On Windows, do not check through the launcher: it is a windowed
-program, so a terminal neither waits for it nor shows what the check prints.
+and on Linux and macOS go through the launcher:
+`"$cyxwiz/cyxwiz-runtime-bootstrapper" --plugin-check my_nodes/build/my_nodes`.
 
 For each folder the check reads `plugin.json`, loads the library the way the
 Engine does (API version, build fingerprint), initialises the plugin, and
@@ -322,27 +329,24 @@ train until the plugin is loaded.
 
 ## 6. Change, rebuild, reload
 
-The Engine keeps a loaded library in memory, and Windows locks the file while
-it is loaded: building into the same folder then fails with
-*LNK1104: cannot open file '...\bin\my_nodes.dll'*. **Refresh** does not
-reload a plugin that is already loaded, and **Install...** refuses it with
-the *already loaded* message. The loop is:
+The Engine never runs your build output itself: it loads a private copy of
+the plugin's library folder (`%LOCALAPPDATA%\CyxWiz\cache\plugins`,
+`~/Library/Caches/CyxWiz/plugins` on macOS, `~/.cache/cyxwiz/plugins` on
+Linux). So you can rebuild while the Engine runs, on every platform. A loaded
+plugin keeps running the build it was loaded from until you load the new one:
 
-1. In the Plugin Manager, press **Unload** on the plugin's card. This also
-   takes it off the plugins loaded at start.
-2. Rebuild (`cmake --build my_nodes\build --config Release`).
-3. Run the check ([section 3](#3-check-it)).
-4. **Install...** the same folder again.
+1. Rebuild (`cmake --build my_nodes\build --config Release`).
+2. Run the check ([section 3](#3-check-it)).
+3. In the Plugin Manager, press **Unload** on the plugin's card (this also
+   takes it off the plugins loaded at start), then **Install...** the same
+   folder again. **Refresh** does not reload a plugin that is already
+   loaded, and **Install...** without **Unload** refuses it with the
+   *already loaded* message.
 
-While a model built from a graph with the plugin's nodes still exists (a
-training run, a trained model kept for testing or export), **Unload** removes
-the nodes but the Engine keeps the library loaded until that model is gone,
-so the rebuild still fails. Then close the Engine, rebuild and start it
-again: the plugin loads at start with the new build, as long as you did not
-press **Unload**.
-
-On Linux and macOS the file is not locked and the rebuild succeeds, but the
-Engine runs the old code until you Unload and Install again.
+A model made with the old build (a training run, a trained model kept for
+testing or export) keeps the old code until it is gone; graphs you build or
+train after **Install...** use the new one. Copies no Engine uses any more
+are removed when the Engine starts.
 
 ## 7. Make it yours
 

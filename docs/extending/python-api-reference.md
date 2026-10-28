@@ -1178,7 +1178,7 @@ Multi-dimensional array with GPU/CPU acceleration support
 | `permute(self: Tensor, dims: Sequence[int]) -> Tensor` | Reorder dimensions |
 | `pow(self: Tensor, exponent: object) -> Tensor` | Raise tensor values to a power |
 | `prod(self: Tensor, dim: object = None, keepdim: bool = False) -> Tensor` | Reduce tensor values by product |
-| `random(shape: Sequence[int], dtype: DataType = DataType.Float32) -> Tensor` | Create a tensor with random values [0, 1) |
+| `random(shape: Sequence[int], dtype: DataType = DataType.Float32, seed: int \| None = None) -> Tensor` | Create a tensor with random values [0, 1). Without a seed it draws from the run's random stream (seeded by the training run's model seed); with a seed the same seed gives the same values |
 | `range_n(shape: Sequence[int], dtype: DataType = DataType.Float32) -> Tensor` | Create a tensor filled with row-major sequential values |
 | `reshape(self: Tensor, shape: Sequence[int]) -> Tensor` | Return a tensor with a new shape |
 | `set(self: Tensor, *args) -> None` | Set an element from a float value |

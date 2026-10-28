@@ -330,11 +330,13 @@ print(nodes.bundle(my_nodes.Softsign, folder="nodes", name="example-acts"))
 In the Engine, Python keeps running between scripts, so a second
 `import my_nodes` returns the module as first imported: call
 `importlib.reload(my_nodes)` after editing the file, as above, or use
-**Create node from script** (section 11), which reads the file afresh. Running
-`my_nodes.py` itself from the Script Editor does not bundle: the Script
-Editor runs a script's text, not an imported file, and `bundle` stops with
-"Softsign is not defined in a .py file; save it in a file and import it to
-bundle it".
+**Create node from script** (section 11), which reads the file afresh. You
+can also run `my_nodes.py` itself with **Run Script** (F5) in the Script Editor: a saved
+script runs as its file (`__file__` is its path, tracebacks name it), so the
+`bundle(...)` under its `__main__` guard copies that file. **Run selection**
+and **Run section** run part of the file without a file name; `bundle` then
+stops with "Softsign is not defined in a .py file; save it in a file and
+import it to bundle it".
 
 The bundle is a folder:
 
