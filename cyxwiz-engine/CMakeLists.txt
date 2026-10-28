@@ -7423,6 +7423,13 @@ cyxwiz_windows_resources(cyxwiz-plugin-check DESCRIPTION "CyxWiz plugin check")
 if(WIN32)
     target_compile_definitions(cyxwiz-plugin-check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
+# A dangerous permission is granted for the run, not waited on (needs the
+# activation_nodes example built, as test_plugin_tensor_nodes does).
+add_test(NAME plugin_check_permissions
+         COMMAND ${CMAKE_COMMAND} -DCHECK=$<TARGET_FILE:cyxwiz-plugin-check>
+                 -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/activation_nodes
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_permissions
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_permissions.cmake)
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)

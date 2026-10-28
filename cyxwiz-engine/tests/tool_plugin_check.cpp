@@ -4,7 +4,9 @@
 //   cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
 //
 // For each folder: read plugin.json, load the library (the build fingerprint
-// is checked before any plugin code runs), initialise the plugin, list the
+// is checked before the plugin is created; the library's static
+// initialisers have already run), grant the permissions plugin.json declares
+// for this run, initialise the plugin, list the
 // nodes it registers, and for each trainable node check its output shape and
 // its gradients with the node's default settings, as the Plugin Manager's
 // "Check gradient" does. Exit code 0 when every folder loads and every node
@@ -13,6 +15,7 @@
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/plugin_loader.h"
 #include "../src/plugin/plugin_manager.h"
+#include "../src/plugin/security/permission_store.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -43,6 +46,17 @@ bool CheckFolder(const fs::path& folder) {
     if (!manager.LoadPlugin(folder)) {
         std::cout << "  FAIL the plugin did not load (the reason is in the log above)\n";
         return false;
+    }
+    // The Engine asks the user before a plugin with a dangerous permission
+    // starts; a command line cannot, so the check grants what plugin.json
+    // declares for this run only (the store is never loaded or saved here).
+    auto& permissions = cyxwiz::plugin::security::PermissionStore::Instance();
+    const std::string version = manifest.version.ToString();
+    for (const auto permission : permissions.GetUndecidedDangerous(manifest.id, version, manifest.permissions)) {
+        permissions.SetDecision(manifest.id, version, permission,
+                                cyxwiz::plugin::security::PermissionDecision::Allowed);
+        for (const auto& name : cyxwiz::plugin::PermissionsToStrings(static_cast<uint32_t>(permission)))
+            std::cout << "  permission " << name << ": granted for this check only (the Engine asks the user)\n";
     }
     if (!manager.InitializePlugin(manifest.id)) {
         std::cout << "  FAIL the plugin did not initialise\n";
