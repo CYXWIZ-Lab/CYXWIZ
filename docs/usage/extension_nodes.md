@@ -17,7 +17,8 @@ Softplus, GELU and SiLU; Cross Entropy, MSE, L1 and Huber. They are in the plugi
 `examples/python_nodes/builtin_layers/`).
 
 1. Copy `nodes/builtin-layers.cyxnode` from that folder into your project's
-   `nodes/` folder.
+   `nodes/` folder (create `nodes/` in the project folder if it is not
+   there; a new project does not have it).
 2. **Apps > Plugin Manager**, section *Python node bundles*: on the
    *builtin-layers* card press **Approve code...**, read what it adds (and
    **View code** if you like), and approve.
@@ -27,8 +28,10 @@ Softplus, GELU and SiLU; Cross Entropy, MSE, L1 and Huber. They are in the plugi
    `blobs.csv` beside it), open the Data Input and apply the file, and press
    **Train**. The graph is Data Input -> Split -> Loader -> Dense 16 -> ReLU
    -> Layer Norm -> Dense 4 -> Cross Entropy -> Adam -> Output, every layer
-   and the loss in Python; it reaches about 97% accuracy on the four classes
-   in 10 epochs.
+   and the loss in Python. It is set to 20 epochs with early stopping: it
+   reaches about 97% training and 96% validation accuracy on the four
+   classes by epoch 6, usually stops after about 11 epochs when validation
+   loss stops improving, and keeps the best epoch.
 
 Each example computes the same numbers as the built-in node of the same name,
 so you can swap one for the other in any graph.
@@ -84,7 +87,12 @@ within 2 seconds, without a restart.
   node, or when the first one is built; it needs an open project. Until it
   runs, compiling says "Python is starting for the Python nodes (it needs an
   open project); try again in a moment". A CyxWiz built without Python says
-  "Python is not available in this build of CyxWiz".
+  "Python is not available in this build of CyxWiz". Python nodes run in the
+  open project's Python environment: after opening another project, Python
+  moves to its environment by itself, or, when it cannot (see
+  [Notebooks: Changing project](notebooks.md)), they say "Python runs another
+  project's environment; restart the Engine (File > Restart) ..." until you
+  restart.
 - **Errors.** An error in a node's code stops training: the training status
   says *Training failed:* with the node's name and the Python traceback, and
   the Console (Logs) has the full text. How to find the cause:
