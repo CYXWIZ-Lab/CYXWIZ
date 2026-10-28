@@ -494,6 +494,26 @@ void PluginManagerPanel::RenderInstallPopup() {
                 return false;
             }
 
+            // A plugin id loads once. Installing it again would keep the code
+            // already in memory and look like a fresh install, so say what to
+            // do instead.
+            if (const auto* existing = plugin::PluginManager::Instance().GetLoadedPlugin(manifest.id)) {
+                if (existing->state == plugin::PluginState::Disabled) {
+                    install_error_ = "Plugin is already installed but disabled. "
+                        "Close this dialog and use Enable.";
+                } else if (existing->state == plugin::PluginState::Failed) {
+                    install_error_ = "Plugin is already installed but failed. "
+                        "Close this dialog and use Retry.";
+                } else {
+                    install_error_ = manifest.name + " " + existing->manifest.version.ToString() +
+                        " is already loaded from " + existing->plugin_dir.string() +
+                        ". To load a new build: Unload it, rebuild, then Install again. "
+                        "If a model still uses its nodes, restart the Engine instead of Unload.";
+                }
+                show_install_error_ = true;
+                return false;
+            }
+
             is_installing_plugin_ = true;
             install_status_ = "Installing...";
             const std::string task_name = "Installing plugin: " + dir.filename().string();
@@ -532,20 +552,6 @@ void PluginManagerPanel::RenderInstallPopup() {
                     auto& mgr = plugin::PluginManager::Instance();
                     plugin::RecordLoadedPlugins(mgr);
                     ReloadStartupList();
-                    const auto state = mgr.GetPluginState(plugin_id);
-                    if (state == plugin::PluginState::Disabled) {
-                        install_error_ = "Plugin is already installed but disabled. "
-                            "Close this dialog and use Enable.";
-                        show_install_error_ = true;
-                        return;
-                    }
-                    if (state == plugin::PluginState::Failed) {
-                        install_error_ = "Plugin is already installed but failed. "
-                            "Close this dialog and use Retry.";
-                        show_install_error_ = true;
-                        return;
-                    }
-
                     const bool initialized = mgr.InitializePlugin(plugin_id);
                     const auto final_state = mgr.GetPluginState(plugin_id);
                     const auto* loaded = mgr.GetLoadedPlugin(plugin_id);
