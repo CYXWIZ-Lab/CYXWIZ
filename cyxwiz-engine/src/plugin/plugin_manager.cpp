@@ -1,4 +1,5 @@
 #include "plugin_manager.h"
+#include "plugin_version_constraint.h"
 #include "plugin_context.h"
 #include <imgui.h>
 #include "security/safe_execute.h"
@@ -227,6 +228,23 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         spdlog::error("PluginManager: Plugin {} has no instance", plugin_id);
         plugin->state = PluginState::Failed;
         return false;
+    }
+
+    // Its dependencies run first (plugin.json "dependencies"); one that has
+    // not started yet starts this plugin when it does.
+    {
+        bool wait = false;
+        const std::string problem = DependencyProblem(*plugin, wait);
+        if (!problem.empty()) {
+            plugin->error_message = problem;
+            if (wait) {
+                spdlog::info("PluginManager: Plugin {} {}", plugin_id, problem);
+            } else {
+                spdlog::error("PluginManager: Plugin {} cannot start: {}", plugin_id, problem);
+                plugin->state = PluginState::Failed;
+            }
+            return false;
+        }
     }
 
     // Check for undecided dangerous permissions
@@ -503,10 +521,47 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     }
 
     plugin->state = PluginState::Initialized;
+    plugin->error_message.clear();
     contexts_[plugin_id] = std::move(ctx);
 
     spdlog::info("PluginManager: Plugin {} initialized successfully", plugin_id);
+
+    // Plugins that waited for this one.
+    std::vector<std::string> waiting;
+    for (const auto& [id, other] : plugins_) {
+        if (other->state != PluginState::Loaded) continue;
+        for (const auto& dep : other->manifest.dependencies) {
+            if (dep.plugin_id == plugin_id) waiting.push_back(id);
+        }
+    }
+    for (const auto& id : waiting) InitializePlugin(id);
     return true;
+}
+
+std::string PluginManager::DependencyProblem(const LoadedPlugin& plugin, bool& wait) const {
+    wait = false;
+    std::string waiting_for;
+    for (const auto& dep : plugin.manifest.dependencies) {
+        const std::string wanted = dep.plugin_id + (dep.version_constraint.empty() ? "" : " " + dep.version_constraint);
+        const auto it = plugins_.find(dep.plugin_id);
+        if (it == plugins_.end()) return "needs " + wanted + ", which is not installed";
+        const LoadedPlugin& other = *it->second;
+        std::string error;
+        if (!VersionMeetsConstraint(other.manifest.version, dep.version_constraint, &error)) {
+            if (!error.empty()) return "its dependency on " + dep.plugin_id + ": " + error;
+            return "needs " + wanted + "; version " + other.manifest.version.ToString() + " is installed";
+        }
+        if (other.state == PluginState::Initialized || other.state == PluginState::Active) continue;
+        if (other.state == PluginState::Loaded) {
+            if (waiting_for.empty()) waiting_for = dep.plugin_id;
+            continue;
+        }
+        return "needs " + dep.plugin_id + ", which did not start" +
+               (other.error_message.empty() ? std::string() : " (" + other.error_message + ")");
+    }
+    if (waiting_for.empty()) return {};
+    wait = true;
+    return "waits for " + waiting_for + ", which has not started yet";
 }
 
 void PluginManager::InitializeAll() {
@@ -795,11 +850,9 @@ std::vector<std::string> PluginManager::ResolveLoadOrder() const {
 
         for (const auto& dep : plugin->manifest.dependencies) {
             // Only add dependency edges for plugins that are actually loaded
+            // A missing one is reported when the plugin starts.
             if (plugins_.count(dep.plugin_id)) {
                 graph[id].push_back(dep.plugin_id);
-            } else {
-                spdlog::warn("PluginManager: Plugin {} depends on {} which is not loaded",
-                             id, dep.plugin_id);
             }
             if (graph.find(dep.plugin_id) == graph.end()) {
                 graph[dep.plugin_id] = {};

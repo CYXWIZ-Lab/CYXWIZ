@@ -7,6 +7,7 @@
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/plugin/plugin_manager.h"
+#include "../src/plugin/plugin_version_constraint.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -253,6 +255,75 @@ int main() {
               "the reason names the node and why: " +
                   (loaded && !loaded->skipped_nodes.empty() ? loaded->skipped_nodes[0] : std::string("none")));
         Check(registry.Has(std::string(kPluginId) + ":Softsign"), "the other node is added");
+        manager.UnloadPlugin(kPluginId);
+    }
+
+    std::cout << "plugin.json dependency versions\n";
+    {
+        using cyxwiz::plugin::PluginVersion;
+        using cyxwiz::plugin::VersionMeetsConstraint;
+        const PluginVersion v = PluginVersion::Parse("1.4.2");
+        Check(VersionMeetsConstraint(v, "") && VersionMeetsConstraint(v, "*"), "no constraint accepts any version");
+        Check(VersionMeetsConstraint(v, "1.4.2") && !VersionMeetsConstraint(v, "1.4.3"), "a bare version is exact");
+        Check(VersionMeetsConstraint(v, ">=1.4") && !VersionMeetsConstraint(v, ">1.4.2") &&
+                  VersionMeetsConstraint(v, "<2") && !VersionMeetsConstraint(v, "<=1.4.1"),
+              ">=, >, <, <= compare");
+        Check(VersionMeetsConstraint(v, "^1.2.0") && !VersionMeetsConstraint(v, "^2.0.0") &&
+                  !VersionMeetsConstraint(PluginVersion::Parse("0.3.0"), "^0.2.0"),
+              "^ keeps the major (the minor below 1.0)");
+        Check(VersionMeetsConstraint(v, "~1.4.0") && !VersionMeetsConstraint(v, "~1.3.0"), "~ keeps major.minor");
+        Check(VersionMeetsConstraint(v, ">=1.0 <2.0") && !VersionMeetsConstraint(v, ">=1.0 <1.4"),
+              "several constraints must all hold");
+        std::string error;
+        Check(!VersionMeetsConstraint(v, ">=one", &error) && error.find("cannot read") != std::string::npos,
+              "an unreadable constraint is refused with the reason: " + error);
+    }
+
+    std::cout << "a plugin starts only after its dependencies\n";
+    {
+        // A copy of the example plugin under another id, with dependencies.
+        const fs::path dependent = work / "dependent";
+        fs::create_directories(dependent / "bin");
+        fs::copy(plugin_dir / "bin", dependent / "bin", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        nlohmann::json manifest;
+        std::ifstream(plugin_dir / "plugin.json") >> manifest;
+        const std::string dependent_id = "com.cyxwiz.test.dependent";
+        manifest["id"] = dependent_id;
+        const auto start = [&](const nlohmann::json& dependencies) {
+            manifest["dependencies"] = dependencies;
+            std::ofstream(dependent / "plugin.json") << manifest.dump(2);
+            manager.UnloadPlugin(dependent_id);
+            std::string error;
+            Check(manager.LoadPlugin(dependent, &error), "the dependent copy loads" + (error.empty() ? "" : ": " + error));
+            return manager.InitializePlugin(dependent_id);
+        };
+        const auto reason = [&]() {
+            const auto* loaded = manager.GetLoadedPlugin(dependent_id);
+            return loaded ? loaded->error_message : std::string("not loaded");
+        };
+        using cyxwiz::plugin::PluginState;
+
+        // Each result first: the message reads the reason it left.
+        const auto outcome = [&](const nlohmann::json& dependencies, PluginState state, const std::string& words) {
+            const bool started = start(dependencies);
+            return !started && manager.GetPluginState(dependent_id) == state &&
+                   reason().find(words) != std::string::npos;
+        };
+        bool ok = outcome({{{"id", "com.cyxwiz.test.missing"}, {"version", ">=1.0.0"}}}, PluginState::Failed,
+                          "not installed");
+        Check(ok, "a missing dependency stops it: " + reason());
+
+        manager.UnloadPlugin(kPluginId);
+        Check(manager.LoadPlugin(plugin_dir), "the dependency loads (not started)");
+        ok = outcome({{{"id", kPluginId}, {"version", ">=2.0.0"}}}, PluginState::Failed, "version 1.0.0 is installed");
+        Check(ok, "a dependency of another version stops it: " + reason());
+
+        ok = outcome({{{"id", kPluginId}, {"version", "^1.0.0"}}}, PluginState::Loaded, "waits for");
+        Check(ok, "a dependency not started yet makes it wait: " + reason());
+        Check(manager.InitializePlugin(kPluginId) &&
+                  manager.GetPluginState(dependent_id) == PluginState::Initialized,
+              "it starts when its dependency does");
+        manager.UnloadPlugin(dependent_id);
         manager.UnloadPlugin(kPluginId);
     }
 

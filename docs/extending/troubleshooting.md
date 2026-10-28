@@ -35,6 +35,15 @@ the plugin's nodes, Windows keeps its library open (the rebuild cannot
 replace the file) and an unload keeps the old code in memory: close the
 Engine instead, rebuild, and start it again.
 
+### *needs &lt;id&gt; &lt;version&gt;, which is not installed* (or *version ... is installed*, *which did not start*)
+
+Your `plugin.json` lists that plugin under `dependencies`, and it is missing,
+has a version outside the constraint, or failed to start (its own error
+follows in brackets). Install or update that plugin, or change the
+constraint ([plugin.json fields](plugin-api-reference.md)). *waits for
+&lt;id&gt;, which has not started yet* is not an error: yours starts as soon
+as that one does (for example after its permissions are approved).
+
 ### *Plugin installed, but N of its nodes were not added*
 
 The plugin loaded, but the Engine refused some of the nodes it offered. The
