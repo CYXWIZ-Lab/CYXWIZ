@@ -449,6 +449,15 @@ def _source_file(cls):
     if not path or not __import__("os").path.isfile(path):
         raise ValueError("%s is not defined in a .py file; save it in a file and import it to bundle it"
                          % cls.__name__)
+    # The module's file is not always where the class came from: code run
+    # with exec() under __main__ reports the main script's file. Copying
+    # that file would bundle other code, so the class must be defined in it.
+    import re
+    with open(path, encoding="utf-8", errors="replace") as f:
+        defined = re.search(r"^class\s+%s\b" % re.escape(cls.__name__), f.read(), re.M)
+    if not defined:
+        raise ValueError("%s is not defined in %s; save it in a .py file and import it to bundle it"
+                         % (cls.__name__, path))
     return __import__("os").path.abspath(path)
 
 

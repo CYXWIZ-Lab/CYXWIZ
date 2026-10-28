@@ -122,4 +122,35 @@ for name, module in (("Softsign", nodes.create(Softsign)),
         model.update_parameters(optimizer)
     check(last < first * 0.5, "%s node trains (%.4f -> %.4f)" % (name, first, last))
 
+# bundle() copies the file a class is defined in. Code run with exec() under
+# a module whose __file__ is another script must be refused, not bundled as
+# that other file.
+import tempfile
+import types
+with tempfile.TemporaryDirectory() as work:
+    other = os.path.join(work, "other_script.py")
+    with open(other, "w") as f:
+        f.write("print('not a node')\n")
+    fake_main = types.ModuleType("fake_main")
+    fake_main.__file__ = other
+    sys.modules["fake_main"] = fake_main
+    exec('''
+import pycyxwiz as cyx
+from pycyxwiz import nodes
+
+@nodes.activation(id="com.example.exec", name="Doubled", version="1.0.0")
+class Doubled:
+    def f(self, x):
+        return x * 2.0
+    def df(self, x):
+        return x * 0.0 + 2.0
+''', fake_main.__dict__)
+    try:
+        nodes.bundle(fake_main.Doubled, folder=os.path.join(work, "nodes"), check_gradients=False)
+        check(False, "a class not defined in its module's file is refused")
+    except ValueError as error:
+        check("is not defined in" in str(error) and not os.path.exists(os.path.join(work, "nodes")),
+              "a class not defined in its module's file is refused: %s" % error)
+    del sys.modules["fake_main"]
+
 check.finish("test_python_nodes")
