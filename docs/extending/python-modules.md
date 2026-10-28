@@ -166,7 +166,7 @@ class Snake(cyx.Module):
 
 | Method | Use |
 |---|---|
-| `super().__init__()` | Call it first in your `__init__`. Without it the object is not a working module: using it fails with "Module does not define forward(self, x)" |
+| `super().__init__()` | Call it first in your `__init__`. Without it, making the module fails with "pycyxwiz.Module.__init__() must be called when overriding __init__" (for a loss, `pycyxwiz.Loss.__init__()`) |
 | `add_parameter(name, tensor)` | Declare a learnable tensor (in `__init__`, or in a node's `build`). Each name once |
 | `parameter(name)` | Its current value. Read it in `forward`: the optimizer replaces it after each step |
 | `set_gradient(name, tensor)` | In `backward`: the loss gradient of the parameter, with the parameter's shape (another shape is refused) |

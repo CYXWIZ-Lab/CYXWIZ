@@ -34,6 +34,11 @@ _ROLES = ("activation", "layer")
 _TARGETS = ("categorical", "continuous")
 _TYPES = {float: "float", int: "int", bool: "bool", str: "string"}
 
+# The settings of the node create() is making, per thread, so a node's
+# __init__ can read them before they are stored on the instance.
+import threading as _threading
+_creating = _threading.local()
+
 
 class Param:
     """A node setting: Param(float, default=1.0, min=0.01, description="...").
@@ -63,7 +68,10 @@ class Param:
     def __get__(self, instance, owner):
         if instance is None:
             return self
-        return instance.__dict__.get("_cyxwiz_settings", {}).get(self.name, self.default)
+        settings = instance.__dict__.get("_cyxwiz_settings")
+        if settings is None:
+            settings = getattr(_creating, "settings", None) or {}
+        return settings.get(self.name, self.default)
 
     def __set__(self, instance, value):
         raise AttributeError("setting '%s' is read-only inside the node; set it in the graph" % self.name)
@@ -259,9 +267,16 @@ def create(cls, settings=None, input_shape=None):
         raise ValueError("%s has no setting %s" % (cls.__cyxwiz_node__["name"], ", ".join(unknown)))
     values = {name: param.convert(settings[name]) if name in settings else param.default
               for name, param in params.items()}
-    module = cls.__new__(cls)
+    # cls() rather than __new__ + __init__: pycyxwiz's own check then refuses
+    # an __init__ that does not call super().__init__() with a clear error;
+    # without it, the half-made module crashes the process when it is used.
+    previous = getattr(_creating, "settings", None)
+    _creating.settings = values
+    try:
+        module = cls()
+    finally:
+        _creating.settings = previous
     module.__dict__["_cyxwiz_settings"] = values
-    module.__init__()
     if input_shape is not None and callable(getattr(module, "build", None)):
         module.build(list(input_shape))
     return module

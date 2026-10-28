@@ -153,4 +153,44 @@ class Doubled:
               "a class not defined in its module's file is refused: %s" % error)
     del sys.modules["fake_main"]
 
+# A node whose __init__ forgets super().__init__() is refused when it is
+# created, with pycyxwiz's message; before, create() made a half-built module
+# that crashed the process on first use.
+@nodes.node(id="com.example.noinit", name="NoInit", version="1.0.0")
+class NoInit(cyx.Module):
+    def __init__(self):
+        self.k = 2.0
+
+    def forward(self, x):
+        return x * self.k
+
+    def backward(self, grad_output):
+        return grad_output * self.k
+
+
+try:
+    nodes.create(NoInit, {}, [3])
+    check(False, "a node without super().__init__() is refused")
+except TypeError as error:
+    check("__init__() must be called" in str(error), "a node without super().__init__() is refused: %s" % error)
+
+
+# Settings are readable inside __init__ (create() passes them while it runs).
+@nodes.node(id="com.example.initread", name="InitRead", version="1.0.0")
+class InitRead(cyx.Module):
+    width = nodes.Param(int, default=3)
+
+    def __init__(self):
+        super().__init__()
+        self.seen = self.width
+
+    def forward(self, x):
+        return x
+
+    def backward(self, grad_output):
+        return grad_output
+
+
+check(nodes.create(InitRead, {"width": "5"}).seen == 5, "a setting is readable inside __init__")
+
 check.finish("test_python_nodes")
