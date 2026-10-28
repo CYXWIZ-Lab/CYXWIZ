@@ -1040,10 +1040,16 @@ bool ArrowDatasetBatcher::PrepareResidentFeatures(const std::shared_ptr<arrow::T
     const size_t rows = base_indices_.size();
     const uint64_t bytes = static_cast<uint64_t>(rows) * num_features_ * sizeof(float);
     const uint64_t budget = ResidentFeatureBudgetBytes();
-    if (rows > static_cast<size_t>(std::numeric_limits<int32_t>::max()) || bytes > budget) {
-        spdlog::info("ArrowDatasetBatcher: {} rows x {} features ({:.1f} MB) stay on the host (device budget {:.1f} MB); "
-                     "batches are prepared per batch",
-                     rows, num_features_, bytes / 1048576.0, budget / 1048576.0);
+    // Too large for the device: the converted rows can still stay in memory
+    // (a quarter of the data budget, as on the CPU backend), so a batch is one
+    // contiguous copy per row and an upload, not a gather over every column
+    // (TOFIX178 0.6: 8000 TF-IDF columns took 24 ms a batch to gather).
+    const bool on_host = af::getActiveBackend() != AF_BACKEND_CPU && bytes > budget &&
+                         bytes <= DataBudgetBytes() / 4;
+    if (rows > static_cast<size_t>(std::numeric_limits<int32_t>::max()) || (bytes > budget && !on_host)) {
+        spdlog::info("ArrowDatasetBatcher: {} rows x {} features ({:.1f} MB) are prepared per batch (device budget "
+                     "{:.1f} MB, memory budget {:.1f} MB)",
+                     rows, num_features_, bytes / 1048576.0, budget / 1048576.0, DataBudgetBytes() / 4 / 1048576.0);
         return false;
     }
     try {
@@ -1055,7 +1061,7 @@ bool ArrowDatasetBatcher::PrepareResidentFeatures(const std::shared_ptr<arrow::T
             const int64_t row = base_indices_[i];
             if (row >= 0 && row < table->num_rows()) position[static_cast<size_t>(row)] = static_cast<int32_t>(i);
         }
-        if (af::getActiveBackend() == AF_BACKEND_CPU) {
+        if (on_host || af::getActiveBackend() == AF_BACKEND_CPU) {
             // The CPU backend's device memory is this memory; a per-batch
             // device lookup there is slower than copying the rows (S0-b bench).
             resident_host_ = std::move(values);
@@ -1065,8 +1071,13 @@ bool ArrowDatasetBatcher::PrepareResidentFeatures(const std::shared_ptr<arrow::T
             resident_features_ = std::move(features);
         }
         resident_position_ = std::move(position);
-        spdlog::info("ArrowDatasetBatcher: {} rows x {} features ({:.1f} MB) on the device for the run",
-                     rows, num_features_, bytes / 1048576.0);
+        if (on_host)
+            spdlog::info("ArrowDatasetBatcher: {} rows x {} features ({:.1f} MB) converted once and kept in memory "
+                         "for the run (over the device budget of {:.1f} MB); each batch is copied and uploaded",
+                         rows, num_features_, bytes / 1048576.0, budget / 1048576.0);
+        else
+            spdlog::info("ArrowDatasetBatcher: {} rows x {} features ({:.1f} MB) on the device for the run",
+                         rows, num_features_, bytes / 1048576.0);
         return true;
     } catch (const std::exception& e) {
         spdlog::warn("ArrowDatasetBatcher: the features could not stay on the device ({}); batches are "
