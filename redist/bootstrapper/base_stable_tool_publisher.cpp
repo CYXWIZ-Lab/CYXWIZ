@@ -207,9 +207,24 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
       CurrentRuntimeBootstrapperExecutableName(), result.message);
   if (!launcher)
     return result;
-  ToolBackup backup, launcher_backup;
+  // cyxwiz-cli, the launcher's command-line build (TOFIX125), is published
+  // when the base has it; bases made before it have none.
+  const VerifiedPackComponent *cli = nullptr;
+  const auto cli_name = CurrentCommandLineToolExecutableName();
+  if (std::any_of(manifest.components.begin(), manifest.components.end(),
+                  [&](const VerifiedPackComponent &candidate) {
+                    return candidate.relative_path == cli_name;
+                  })) {
+    cli = ValidateStableTool(manifest, installed_base_directory, cli_name,
+                             result.message);
+    if (!cli)
+      return result;
+  }
+  ToolBackup backup, launcher_backup, cli_backup;
   const auto finalizer_destination = install_root / finalizer->relative_path;
   const auto launcher_destination = install_root / launcher->relative_path;
+  const auto cli_destination =
+      cli ? install_root / cli->relative_path : std::filesystem::path{};
   if (!CaptureTool(finalizer_destination, backup, result.message)) {
     result.recovery_directory = backup.directory;
     if (!backup.directory.empty())
@@ -226,8 +241,20 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
     }
     return result;
   }
+  if (cli && commit &&
+      !CaptureTool(cli_destination, cli_backup, result.message)) {
+    DiscardBackup(launcher_backup, result);
+    DiscardBackup(backup, result);
+    if (!cli_backup.directory.empty()) {
+      result.recovery_directory = cli_backup.directory;
+      result.message +=
+          "; recovery directory: " + cli_backup.directory.string();
+    }
+    return result;
+  }
   bool finalizer_published = false;
   bool launcher_published = false;
+  bool cli_published = false;
   try {
     finalizer_published = PublishVerifiedStableTool(
         *finalizer, installed_base_directory, install_root,
@@ -236,7 +263,11 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
                          PublishVerifiedStableTool(
                              *launcher, installed_base_directory, install_root,
                              result.launcher_path, result.message);
-    result.published = launcher_published;
+    cli_published = launcher_published && cli &&
+                    PublishVerifiedStableTool(*cli, installed_base_directory,
+                                              install_root, result.cli_path,
+                                              result.message);
+    result.published = launcher_published && (!cli || cli_published);
   } catch (const std::exception &exception) {
     result.message =
         "Stable-tool publication failed: " + std::string(exception.what());
@@ -251,7 +282,7 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
       result.commit_uncertain = true;
       result.message =
           "Activation outcome is uncertain; tools and recovery copies retained";
-      for (const auto *saved : {&backup, &launcher_backup}) {
+      for (const auto *saved : {&backup, &launcher_backup, &cli_backup}) {
         if (!saved->directory.empty()) {
           result.recovery_directory = saved->directory;
           result.message +=
@@ -263,6 +294,15 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
   }
   if (!result.published) {
     bool restored = true;
+    if (cli_published) {
+      std::string rollback_error;
+      if (!RestoreTool(cli_destination, cli_backup, rollback_error)) {
+        restored = false;
+        result.message += "; cyxwiz-cli rollback failed: " + rollback_error;
+      } else {
+        result.cli_path.clear();
+      }
+    }
     if (launcher_published) {
       std::string rollback_error;
       if (!RestoreTool(launcher_destination, launcher_backup, rollback_error)) {
@@ -283,7 +323,7 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
       }
     }
     if (!restored) {
-      for (const auto *saved : {&backup, &launcher_backup}) {
+      for (const auto *saved : {&backup, &launcher_backup, &cli_backup}) {
         if (!saved->directory.empty()) {
           result.recovery_directory = saved->directory;
           result.message +=
@@ -292,12 +332,16 @@ BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
       }
       return result;
     }
+    DiscardBackup(cli_backup, result);
     DiscardBackup(launcher_backup, result);
     DiscardBackup(backup, result);
     return result;
   }
-  result.message = "Verified stable launcher and removal finalizer published "
-                   "with per-file atomic replacement";
+  result.message = cli ? "Verified stable launcher, cyxwiz-cli and removal "
+                         "finalizer published with per-file atomic replacement"
+                       : "Verified stable launcher and removal finalizer "
+                         "published with per-file atomic replacement";
+  DiscardBackup(cli_backup, result);
   DiscardBackup(launcher_backup, result);
   DiscardBackup(backup, result);
   return result;

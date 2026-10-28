@@ -13,6 +13,7 @@ struct BaseStableToolsPublishResult {
   bool commit_uncertain = false;
   std::filesystem::path launcher_path;
   std::filesystem::path finalizer_path;
+  std::filesystem::path cli_path;  // empty when the base has no cyxwiz-cli
   // Retained if rollback/cleanup fails; never automatically discard recovery
   // evidence.
   std::filesystem::path recovery_directory;

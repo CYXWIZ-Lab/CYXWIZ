@@ -76,6 +76,7 @@ InspectRuntimeInstallation(const std::filesystem::path &root) {
   for (const auto &marker :
        {ProductInstallationReceiptPath(root.parent_path()),
         root.parent_path() / CurrentRuntimeBootstrapperExecutableName(),
+        root.parent_path() / CurrentCommandLineToolExecutableName(),
         root.parent_path() / CurrentProductRemovalFinalizerExecutableName()}) {
     const auto status = InspectPath(marker, error);
     if (error || status.type() != fs::file_type::not_found)

@@ -1085,7 +1085,7 @@ target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )
 if(WIN32)
-    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper)
+    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper cyxwiz-cli)
 endif()
 
 # Include directories

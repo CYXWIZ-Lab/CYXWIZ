@@ -62,6 +62,7 @@ class PackageReleaseTests(unittest.TestCase):
             "cyxwiz-route-probe.exe",
             "cyxwiz-installer.exe",
             "cyxwiz-runtime-bootstrapper.exe",
+            "cyxwiz-cli.exe",
             "cyxwiz-product-removal-finalizer.exe",
             "cyxwiz-backend-pack-installer.exe",
             "cyxwiz-plugin-check.exe",

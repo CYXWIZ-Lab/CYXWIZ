@@ -89,6 +89,33 @@ void Run() {
           "Activation rejection must restore both tools; success must keep "
           "both new tools");
   }
+  // A base with cyxwiz-cli (TOFIX125) publishes it with the launcher; a
+  // rejected activation restores the old one. A base without it (every
+  // other case here) publishes the pair and leaves cli_path empty.
+  for (const bool accept : {false, true}) {
+    Fixture f;
+    const std::string cli = std::string(CurrentCommandLineToolExecutableName());
+    Write(f.root / cli, 'o');
+    Write(f.base / cli, 'n');
+    std::string hash, error;
+    Check(Sha256File(f.base / cli, hash, error), error);
+    f.manifest.components.push_back({cli, 1, hash});
+    const auto result = PublishVerifiedBaseStableTools(
+        f.manifest, f.base, f.runtime, [&](std::string &reason) {
+          Check(Read(f.root / cli) == 'n', "cyxwiz-cli must be published before activation");
+          reason = accept ? "" : "Injected activation rejection";
+          return accept;
+        });
+    Check(result.published == accept && Read(f.root / cli) == (accept ? 'n' : 'o') &&
+              (accept ? !result.cli_path.empty() : result.cli_path.empty()),
+          "cyxwiz-cli must follow the activation like the launcher");
+  }
+  {
+    Fixture f;
+    const auto result = PublishVerifiedBaseStableTools(f.manifest, f.base, f.runtime);
+    Check(result.published && result.cli_path.empty(),
+          "A base without cyxwiz-cli must still publish its launcher and finalizer");
+  }
   {
     Fixture f;
     fs::remove(f.root / f.launcher);

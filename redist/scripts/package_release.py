@@ -468,6 +468,10 @@ def copy_build_payload(
             "package-local runtime bootstrapper",
         ),
         require_file(
+            paths.build / f"cyxwiz-cli{exe_suffix}",
+            "command-line launcher (cyxwiz-cli plugin-check)",
+        ),
+        require_file(
             paths.build / f"cyxwiz-product-removal-finalizer{exe_suffix}",
             "detached product-removal finalizer",
         ),
@@ -996,6 +1000,7 @@ def create_deterministic_zip(stage: Path, destination: Path) -> Path:
                     "cyxwiz-installer",
                     "cyxwiz-backend-pack-installer",
                     "cyxwiz-runtime-bootstrapper",
+                    "cyxwiz-cli",
                     "cyxwiz-product-removal-finalizer",
                     "cyxwiz-route-probe",
                     "cyxwiz-plugin-check",
