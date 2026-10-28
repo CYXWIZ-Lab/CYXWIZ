@@ -16,6 +16,25 @@ The bar at the top of the CyxWiz Studio canvas, one row in groups.
     file changes only when you save.
 - **Save** is also on the bar.
 
+## A narrow canvas
+
+Nothing hides behind a "more" menu; the bar folds by width, in this order,
+and comes back as it widens: the labels go first (Code / Pipeline /
+Training, the mode's actions as icons, Compile as a check mark and Local
+Debug as "Debug" with short results such as "Changed"); then Edit and View
+become one-level menus (**Edit**, **View · 100%**); then the mode becomes a
+menu (**Pipeline**); last, Compile and Local Debug become coloured dots
+(their result on hover, their menu on click) and the graph shows its file
+name without the extension. The graph, Save, the Compile and Debug results,
+Train and a running pipeline's progress always stay.
+
+## The canvas footer
+
+Along the canvas bottom: the node and link counts, the selection ("2
+selected"), and what the canvas is doing: "Graph replacement locked:
+training is running" while a load or clear would be refused, else the mode
+("Data Pipeline mode · training nodes run in Train").
+
 A starter opened from the start page, a pattern template and an imported
 model open as *Untitled graph*: Save asks for a name, so the example files
 next to the Engine are never overwritten.
@@ -23,20 +42,45 @@ next to the Engine are never overwritten.
 Ctrl+S and Ctrl+Shift+S save the graph while the canvas is focused (in the
 Script Editor they save the script); see Preferences > Shortcuts.
 
-## Edit and view (middle)
+## Edit and view (left)
 
 Icons, with their names on hover: **Select all** (Ctrl+A), **Duplicate**
-(Ctrl+D) and **Delete** (Delete), dimmed until nodes are selected; zoom out,
-the zoom level, zoom in; **Fit** frames all nodes (F); **Minimap** (M,
-highlighted while shown); the node, link and selection counts.
+(Ctrl+D) and **Delete** (Delete), dimmed until nodes are selected (hover
+says "select nodes first"); zoom out, the zoom level (click it for the zoom
+menu: zoom in / out, zoom to 100%, fit all nodes, minimap), zoom in;
+**Fit** frames all nodes (F); **Minimap** (M, highlighted while shown).
 
-## Code and run (right)
+## The mode (middle)
 
-- The mode (**Code Gen**, **Data Pipeline**, **Local Training**). Code Gen:
-  the framework and **Generate**. Data Pipeline: **Execute Pipeline**, then
-  its progress and **Cancel** while it runs. **Export**.
-- **Compile** (F7), **Local Debug** (F6) and **Train**. While training,
-  Train becomes the epoch and **Stop**.
+**Code Gen**, **Data Pipeline** and **Local Training** side by side, one
+click each (hover for what each does). Next to it the mode's action: Code
+Gen, the framework (PyTorch, TensorFlow, Keras, PyCyxWiz) and **Generate**;
+Data Pipeline, **Execute Pipeline**, then its progress, the step it is on
+(hover) and **Cancel** while it runs; then **Export**. A graph with
+simulation or RL nodes shows **Run Sim** / **Train RL** / **Export ONNX**
+here instead, with the sim time, its speed or the RL episode and reward.
+
+## Compile, Local Debug, Train (right)
+
+- **Compile** (F7) and **Local Debug** (F6) each show their last result.
+  Click the name to run the step (Compile opens its report, Local Debug the
+  Studio Debugger); click the result for its menu (the result in a line,
+  **Open the compile report** / **Show the first finding on the canvas**,
+  or **Run Local Debug** / **Open the Studio Debugger**).
+  - Compile, checked as you edit (400 ms after a change): **Checking...**,
+    **Ready** (with the warnings in its menu), **N errors**, **Empty**. In
+    Data Pipeline mode the graph is not checked as you edit (a data graph
+    has no model): **Not checked**, and Compile checks it when you press it.
+  - Local Debug: **Not run**, **Passed 19:12**, **Failed** (its menu says
+    where, for example "Compile gate failed"), **Graph changed** (it ran on
+    the graph before your last edit; Apply on a Data Input counts),
+    **Running...**.
+- **Train** (F5). Its tooltip says when Local Debug is not a pass on this
+  graph: "Local Debug passed at 18:40; the graph changed since. Train runs
+  anyway; F6 checks the new graph first." With `require_debug_before_train`
+  on (the `debug` section of the Engine's settings file), Train is disabled until Local Debug passes on
+  the graph as it is: "This project requires a passing Local Debug (F6) on
+  this graph". While training, Train becomes the epoch and **Stop**.
 - A reopened project keeps each Data Input's settings, not its loaded data.
   **Train** loads the Data Inputs that feed the Data Loader first, as their
   **Apply** would (the Training Dashboard says "Loading Sentiment CSV before

@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <utility>
+#include "../core/studio_toolbar_presentation.h"
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 #include "../core/compile_report_presentation.h"
 #include "../core/cross_validation_runner.h"
@@ -355,15 +356,15 @@ private:
     std::string training_pipeline_result_;  // read by the next StartTrainingFromGraph
     void PollDataInputLoads();
 
-    // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
-    // fingerprint of the (nodes, links) tuple at the moment of the last
-    // *successful* Local Debug run. `have_last_debug_result_` gates the
-    // cache (0 is a valid hash and "no prior run" needs to be
-    // distinguishable). StartTrainingFromGraph checks these to warn the
-    // user if the graph has drifted since the last debug — or, under
-    // EngineConfig::RequireDebugBeforeTrain(), blocks training outright.
-    uint64_t last_debug_graph_hash_ = 0;
-    bool have_last_debug_result_ = false;
+    // The last Local Debug run (TOFIX178 UI-1): passed or failed, when, why,
+    // and the HashGraphStructure of the graph it ran on. The canvas bar shows
+    // it; StartTrainingFromGraph warns when it is not a pass on the graph as
+    // it is now, or, under EngineConfig::RequireDebugBeforeTrain(), refuses.
+    cyxwiz::studio_toolbar::DebugInputs local_debug_;
+    uint64_t local_debug_graph_hash_ = 0;
+    double local_debug_checked_at_ = -1.0;
+    // Twice a second: is the canvas still the graph the run used?
+    void UpdateLocalDebugStatus();
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;

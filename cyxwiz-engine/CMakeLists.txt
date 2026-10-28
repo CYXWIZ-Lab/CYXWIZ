@@ -436,6 +436,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
     src/core/test_results_presentation.cpp
     src/core/test_evaluation_tables.cpp
@@ -4577,6 +4578,19 @@ if(WIN32)
 endif()
 set_target_properties(test_compile_report_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME compile_report_presentation COMMAND test_compile_report_presentation)
+
+# The Studio canvas bar's words and folding (TOFIX178 UI-1).
+add_executable(test_studio_toolbar_presentation
+    tests/test_studio_toolbar_presentation.cpp
+    src/core/studio_toolbar_presentation.cpp
+)
+target_include_directories(test_studio_toolbar_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_studio_toolbar_presentation PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_studio_toolbar_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_studio_toolbar_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME studio_toolbar_presentation COMMAND test_studio_toolbar_presentation)
 
 # ===== Test: Test Results wording and exports (TOFIX129 B5) =====
 add_executable(test_test_results_presentation

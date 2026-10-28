@@ -20,6 +20,7 @@
 #include "appearance_settings.h"
 #include "panel_memory.h"
 #include "../core/live_graph_compile.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "loaders/data_loader.h"
@@ -196,6 +197,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <ctime>
 #include <iterator>
 #include <stdexcept>
 #include <sstream>
@@ -1000,6 +1002,9 @@ MainWindow::MainWindow()
     node_editor_->SetDebugCallback([this]() {
         this->LocalDebugGraphAndReport();
     });
+    node_editor_->SetOpenDebuggerCallback([this]() {
+        if (studio_debugger_panel_) studio_debugger_panel_->Show();
+    });
 
     if (studio_debugger_panel_) {
         // One run path for the panel's Run, F6 and Explain Node: the graph is
@@ -1034,13 +1039,36 @@ MainWindow::MainWindow()
         });
         studio_debugger_panel_->SetRunCompletedCallback(
             [this](const cyxwiz::StudioDebuggerSnapshot& session) {
-                // Staleness cache for the Train gate: only a successful Local
-                // Debug of this exact graph counts.
-                if (session.has_debug_result && session.debug_result.success) {
-                    last_debug_graph_hash_ = session.graph_hash;
-                    have_last_debug_result_ = true;
-                    spdlog::info("Studio Debugger: cached debug hash {:#018x}",
-                                 last_debug_graph_hash_);
+                // The last run, pass or failure, of this exact graph: the
+                // canvas bar shows it and the Train gate reads it.
+                // A Local Debug run that stopped at its compile gate has no
+                // debug result but did fail; a stopped run says nothing.
+                const bool local_debug_run = session.mode == cyxwiz::StudioDebuggerRunMode::LocalDebug ||
+                                             session.has_debug_result;
+                if (local_debug_run && session.outcome != cyxwiz::StudioDebuggerOutcome::Stopped &&
+                    session.outcome != cyxwiz::StudioDebuggerOutcome::NotStarted) {
+                    using cyxwiz::studio_toolbar::DebugOutcome;
+                    const bool passed = session.has_debug_result ? session.debug_result.success : session.success;
+                    local_debug_.outcome = passed ? DebugOutcome::Passed : DebugOutcome::Failed;
+                    local_debug_.failure = passed ? std::string()
+                                           : !session.debug_result.failure_summary.empty()
+                                               ? session.debug_result.failure_summary
+                                               : session.failure_summary;
+                    const std::time_t now = std::time(nullptr);
+                    std::tm local{};
+#if defined(_WIN32)
+                    localtime_s(&local, &now);
+#else
+                    localtime_r(&now, &local);
+#endif
+                    char at[8];
+                    std::strftime(at, sizeof(at), "%H:%M", &local);
+                    local_debug_.at = at;
+                    local_debug_.graph_changed = false;
+                    local_debug_graph_hash_ = session.graph_hash;
+                    spdlog::info("Studio Debugger: Local Debug {} at {} (graph {:#018x})",
+                                 passed ? "passed" : "failed", local_debug_.at,
+                                 local_debug_graph_hash_);
                 }
             });
         studio_debugger_panel_->SetGraphDomainCallback([this]() -> std::string {
@@ -3031,6 +3059,7 @@ void MainWindow::Render() {
     }
     UpdatePythonNodes();
     UpdateLiveCompile();
+    UpdateLocalDebugStatus();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
     if (plugin_manager.GetPluginCount() > 0) {
@@ -3268,6 +3297,19 @@ void MainWindow::UpdatePythonNodes() {
         python_start_error_logged_ = error;
         spdlog::warn("Python nodes need Python, which did not start: {}", error);
     }
+}
+
+void MainWindow::UpdateLocalDebugStatus() {
+    if (!node_editor_) return;
+    const double now = ImGui::GetTime();
+    if (local_debug_.outcome != cyxwiz::studio_toolbar::DebugOutcome::NotRun &&
+        now - local_debug_checked_at_ >= 0.5) {
+        local_debug_checked_at_ = now;
+        local_debug_.graph_changed =
+            HashGraphStructure(node_editor_->GetNodes(), node_editor_->GetLinks()) != local_debug_graph_hash_;
+    }
+    local_debug_.running = studio_debugger_panel_ && studio_debugger_panel_->IsRunning();
+    node_editor_->SetLocalDebugStatus(local_debug_, cyxwiz::core::EngineConfig::Instance().RequireDebugBeforeTrain());
 }
 
 void MainWindow::UpdateLiveCompile() {
@@ -3985,18 +4027,20 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         //   - prior debug on same graph      => silent
         // Under EngineConfig::RequireDebugBeforeTrain() the warning becomes
         // an Error-level issue and training refuses to start.
+        using cyxwiz::studio_toolbar::DebugOutcome;
         const uint64_t current_graph_hash = HashGraphStructure(nodes, links);
         const bool same_as_last_debug =
-            have_last_debug_result_ &&
-            current_graph_hash == last_debug_graph_hash_;
+            local_debug_.outcome == DebugOutcome::Passed &&
+            current_graph_hash == local_debug_graph_hash_;
         if (!same_as_last_debug) {
             const bool strict = cyxwiz::core::EngineConfig::Instance()
                                     .RequireDebugBeforeTrain();
-            const std::string msg = have_last_debug_result_
-                ? "Graph changed since last successful Local Debug run. "
-                  "Consider F6 before F5."
-                : "No Local Debug (F6) run on this graph yet. "
-                  "Consider running one before Train.";
+            const std::string msg =
+                local_debug_.outcome == DebugOutcome::NotRun
+                    ? "No Local Debug (F6) run on this graph yet. Consider running one before Train."
+                : current_graph_hash != local_debug_graph_hash_
+                    ? "Graph changed since the last Local Debug run. Consider F6 before F5."
+                    : "The last Local Debug (F6) failed on this graph. Consider fixing it before Train.";
             const cyxwiz::IssueLevel lvl = strict
                 ? cyxwiz::IssueLevel::Error
                 : cyxwiz::IssueLevel::Warning;

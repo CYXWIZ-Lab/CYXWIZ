@@ -286,10 +286,6 @@ void NodeEditor::Render() {
     ::gui::TabMenu("CyxWiz Studio", &show_window_);
     if (expanded) {
         ShowToolbar();
-        const auto replacement_block = GetGraphReplacementBlockReason();
-        if (!replacement_block.empty()) {
-            ImGui::TextWrapped("Graph replacement locked: %s. Wait for completion or stop the active operation before loading or clearing a graph.", replacement_block.c_str());
-        }
 
         // Check if mouse is over minimap (using stored bounds from previous frame)
         // This needs to be done before ImNodes::BeginNodeEditor to prevent canvas panning
@@ -315,6 +311,7 @@ void NodeEditor::Render() {
         ImNodes::EditorContextSetZoom(zoom_);
 
         canvas_size_ = ImGui::GetContentRegionAvail();
+        canvas_origin_ = ImGui::GetCursorScreenPos();
         ImNodes::BeginNodeEditor();
 
         // Moving the view while the left button is down (the second press of
@@ -650,7 +647,8 @@ void NodeEditor::Render() {
         ImNodes::PopStyleVar(5);
         ImGui::SetWindowFontScale(1.0f);
 
-        // Render minimap overlay in bottom-right corner
+        RenderCanvasFooter();
+        // Render minimap overlay in bottom-right corner, above the footer
         if (show_minimap_) {
             RenderMinimap();
         }
@@ -1138,7 +1136,7 @@ void NodeEditor::RenderMinimap() {
     // Additional offset for the toolbar and separator rendered before the node canvas
     float toolbar_offset = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 10.0f;
     float content_top = parent_window_pos.y + content_min.y + toolbar_offset;
-    float content_bottom = parent_window_pos.y + content_max.y;
+    float content_bottom = parent_window_pos.y + content_max.y - kCanvasFooterHeight;
     float content_left = parent_window_pos.x + content_min.x;
     float content_right = parent_window_pos.x + content_max.x;
     // A window of its own: on a canvas smaller than the minimap it drew over
