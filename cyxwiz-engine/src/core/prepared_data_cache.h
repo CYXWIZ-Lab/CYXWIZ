@@ -80,16 +80,4 @@ bool SavePreparedSparseData(const MaterializationCacheConfig& config,
                             const SparseFeatureDataset& dataset,
                             std::string* error = nullptr);
 
-// Shared with the materializer: a source file's path, size and time in the
-// key, the artifact file written atomically, and read back as a dataset.
-void PopulateSourceFileIdentity(MaterializationCacheKeyInput& input, const std::string& source_path);
-bool ExportPreparedArtifact(const std::shared_ptr<arrow::Table>& table,
-                            const std::string& name,
-                            const MaterializationCacheConfig& config,
-                            const std::string& cache_key,
-                            std::filesystem::path& artifact_path,
-                            std::string* error);
-std::shared_ptr<ArrowDataset> LoadPreparedArtifact(const MaterializationCacheManifest& manifest,
-                                                   const std::string& name);
-
 }  // namespace cyxwiz

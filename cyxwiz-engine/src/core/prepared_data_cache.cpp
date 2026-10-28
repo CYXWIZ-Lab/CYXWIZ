@@ -54,8 +54,7 @@ bool ReplacePath(const std::filesystem::path& source, const std::filesystem::pat
     return true;
 }
 
-}  // namespace
-
+// A source file's path, size and time in the key.
 void PopulateSourceFileIdentity(MaterializationCacheKeyInput& input, const std::string& source_path) {
     if (source_path.empty()) return;
     std::error_code ec;
@@ -76,6 +75,18 @@ void PopulateSourceFileIdentity(MaterializationCacheKeyInput& input, const std::
         if (ec) input.source_file_mtime = 0;
     }
 }
+
+// The artifact file written atomically, and read back as a dataset.
+bool ExportPreparedArtifact(const std::shared_ptr<arrow::Table>& table,
+                            const std::string& name,
+                            const MaterializationCacheConfig& config,
+                            const std::string& cache_key,
+                            std::filesystem::path& artifact_path,
+                            std::string* error);
+std::shared_ptr<ArrowDataset> LoadPreparedArtifact(const MaterializationCacheManifest& manifest,
+                                                   const std::string& name);
+
+}  // namespace
 
 PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
                                        const std::vector<gui::NodeLink>& links,
@@ -384,6 +395,8 @@ bool SavePreparedSparseData(const MaterializationCacheConfig& config,
                                dataset.GetNumRows(), dataset.GetNumFeatures() + (dataset.GetLabels() ? 1 : 0), error);
 }
 
+namespace {
+
 bool ExportPreparedArtifact(const std::shared_ptr<arrow::Table>& table,
                             const std::string& name,
                             const MaterializationCacheConfig& config,
@@ -415,5 +428,7 @@ std::shared_ptr<ArrowDataset> LoadPreparedArtifact(const MaterializationCacheMan
     if (manifest.artifact_format == "feather") return ArrowDataset::FromFeather(manifest.artifact_path, name);
     return ArrowDataset::FromParquet(manifest.artifact_path, name);
 }
+
+}  // namespace
 
 }  // namespace cyxwiz
