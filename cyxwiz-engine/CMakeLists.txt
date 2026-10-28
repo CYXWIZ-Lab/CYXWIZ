@@ -703,6 +703,7 @@ set(ENGINE_SOURCES
     src/data/table_text_export.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
+    src/scripting/python_environment.cpp
     src/scripting/script_manager.cpp
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
@@ -1381,6 +1382,7 @@ if(CYXWIZ_HAS_PYTHON)
 add_executable(test_sandbox_timeout
     tests/test_sandbox_timeout.cpp
     src/scripting/python_engine.cpp
+    src/scripting/python_environment.cpp
     src/scripting/python_sandbox.cpp
 )
 
@@ -7541,6 +7543,18 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
     add_dependencies(test_python_builtin_layers pycyxwiz)
     add_test(NAME python_builtin_layers COMMAND test_python_builtin_layers)
+
+    # A running interpreter moves to another project's venv in place
+    # (TOFIX125 walk). Starts its own interpreter: the Python the build uses.
+    add_executable(test_python_environment_switch
+        tests/test_python_environment_switch.cpp
+        src/scripting/python_environment.cpp
+    )
+    target_link_libraries(test_python_environment_switch PRIVATE pybind11::embed)
+    target_compile_definitions(test_python_environment_switch PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}")
+    add_test(NAME python_environment_switch COMMAND test_python_environment_switch)
 
     # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
     add_executable(bench_python_node_cost

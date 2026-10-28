@@ -216,6 +216,7 @@ private:
     // Status bar height follows the interface text size (TOFIX129).
     static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
+    void RenderPythonRestartNotice();
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
@@ -366,6 +367,11 @@ private:
     std::string python_start_error_logged_;
     bool graph_needs_python_ = false;  // the open graph uses an approved Python node
     void UpdatePythonNodes();
+    // The running interpreter follows the open project's environment: moved
+    // in place when it can be, otherwise a restart is asked for.
+    void SyncProjectPython();
+    std::string python_restart_reason_;  // non-empty: this project needs a restart
+    std::string python_restart_project_; // the project that verdict is for
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;

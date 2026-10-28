@@ -2,6 +2,18 @@
 
 #include <string>
 
+namespace scripting {
+
+// What opening a project did to a running interpreter.
+enum class PythonProjectSwitch {
+    Unchanged,     // already the project's environment, or Python not started
+    Switched,      // moved to the project's environment in place
+    RestartNeeded, // the project's environment needs a new Engine process
+    Busy           // Python is running something; try again later
+};
+
+} // namespace scripting
+
 #ifdef CYXWIZ_HAS_PYTHON
 
 #include <Python.h>
@@ -15,7 +27,10 @@ public:
 
     bool Initialize(std::string* error_out = nullptr);
     void Shutdown();
-    bool ReloadForProject(std::string* error_out = nullptr);
+    // Moves a running interpreter to the active project's environment (or
+    // the Engine's Python with no project). `detail_out`: the new
+    // interpreter, or why a restart is needed.
+    PythonProjectSwitch SwitchToProjectEnvironment(std::string* detail_out = nullptr);
     bool IsInitialized() const { return initialized_; }
     bool HasInterpreterMismatch(std::string* reason_out = nullptr) const;
 
@@ -46,6 +61,7 @@ private:
     std::string effective_interpreter_path_;
     std::string active_interpreter_path_;
     std::string active_source_;
+    std::string active_scripts_path_;  // the project scripts folder on sys.path
 
     // Configure PYTHONHOME before initialization (venv or system Python)
     bool ConfigurePythonHome(std::string* error_out);
@@ -73,7 +89,7 @@ public:
 
     bool Initialize(std::string* = nullptr) { return false; }
     void Shutdown() {}
-    bool ReloadForProject(std::string* = nullptr) { return false; }
+    PythonProjectSwitch SwitchToProjectEnvironment(std::string* = nullptr) { return PythonProjectSwitch::Unchanged; }
     bool IsInitialized() const { return false; }
     bool HasInterpreterMismatch(std::string* = nullptr) const { return false; }
     const std::string& ActiveInterpreterPath() const { static const std::string e; return e; }

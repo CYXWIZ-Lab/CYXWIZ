@@ -239,8 +239,10 @@ public:
     // Runtime diagnostics for current Python interpreter
     std::string GetPythonRuntimeDiagnostics();
 
-    // Reload interpreter config for active project (picks up python_env.json)
-    bool ReloadPythonForProject();
+    // Moves a running interpreter to the active project's environment
+    // (python_env.json). `detail_out`: the new interpreter, or why a restart
+    // is needed.
+    scripting::PythonProjectSwitch SwitchPythonToProject(std::string* detail_out = nullptr);
 
     // ---- Python REPL support (tofix121) ----
     struct InterpreterInfo {

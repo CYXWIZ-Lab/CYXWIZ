@@ -338,26 +338,18 @@ std::string ScriptingEngine::GetPythonRuntimeDiagnostics() {
     }
 }
 
-bool ScriptingEngine::ReloadPythonForProject() {
-    if (!python_engine_) {
-        spdlog::warn("ReloadPythonForProject: scripting engine not initialized");
-        return false;
+scripting::PythonProjectSwitch ScriptingEngine::SwitchPythonToProject(std::string* detail_out) {
+    if (!python_engine_ || !python_engine_->IsInitialized()) {
+        return scripting::PythonProjectSwitch::Unchanged;
     }
-
     if (!IsSafeForNewCommand()) {
-        spdlog::warn("ReloadPythonForProject: Python interpreter is busy");
-        return false;
+        return scripting::PythonProjectSwitch::Busy;
     }
-
-    std::string error;
-    if (!python_engine_->ReloadForProject(&error)) {
-        if (!error.empty()) {
-            spdlog::warn("ReloadPythonForProject: {}", error);
-        }
-        return false;
+    const auto result = python_engine_->SwitchToProjectEnvironment(detail_out);
+    if (result == scripting::PythonProjectSwitch::Switched) {
+        cached_python_version_.clear();
     }
-
-    return true;
+    return result;
 }
 
 ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {

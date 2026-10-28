@@ -3196,6 +3196,7 @@ void MainWindow::UpdatePythonNodes() {
             if (plugin) roots.push_back(plugin->plugin_dir / "nodes");
         }
         python_node_provider_->Refresh(roots);
+        SyncProjectPython();
         // Start Python before a compile needs it: the open graph uses a node
         // whose code is approved (TOFIX125). Otherwise the first compile
         // would fail and only start Python for the next one.
@@ -5863,12 +5864,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     // Load project settings and layout
     LoadProjectSettings();
 
-    // If Python is already initialized, check for interpreter mismatch
-    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
-        if (!scripting_engine_->ReloadPythonForProject()) {
-            spdlog::warn("Python interpreter mismatch after project open (project: {})", project_root);
-        }
-    }
+    SyncProjectPython();
 
     // Show the project's files (SetProjectRoot scans when the root is new).
     if (asset_browser_) {
@@ -5891,12 +5887,7 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     // Note: Settings should be saved before CloseProject() is called
     // (the toolbar handles this in its Close Project menu action)
 
-    // If Python is already initialized, check for interpreter mismatch after closing
-    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
-        if (!scripting_engine_->ReloadPythonForProject()) {
-            spdlog::warn("Python interpreter mismatch after project close");
-        }
-    }
+    SyncProjectPython();
 
     // Clear the asset browser
     if (asset_browser_) {
@@ -5928,11 +5919,53 @@ void MainWindow::OnProjectVenvReady(const std::string& project_root) {
         return;
     }
 
-    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
-        if (!scripting_engine_->ReloadPythonForProject()) {
-            spdlog::warn("Python interpreter mismatch after venv creation");
-        }
+    SyncProjectPython();
+}
+
+void MainWindow::SyncProjectPython() {
+    if (!scripting_engine_ || !scripting_engine_->IsInitialized()) return;
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    const std::string project = pm.HasActiveProject() ? pm.GetProjectRoot() : std::string();
+    // A restart verdict holds until another project opens.
+    if (!python_restart_reason_.empty() && python_restart_project_ == project) return;
+    // A training run's Python nodes use the interpreter; the next check tries.
+    if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) return;
+
+    std::string detail;
+    std::string reason;
+    switch (scripting_engine_->SwitchPythonToProject(&detail)) {
+        case scripting::PythonProjectSwitch::Unchanged:
+            break;
+        case scripting::PythonProjectSwitch::Switched:
+            spdlog::info("Python now runs {} (switched without a restart)", detail);
+            if (live_compile_) live_compile_->Invalidate();
+            break;
+        case scripting::PythonProjectSwitch::RestartNeeded:
+            reason = detail;
+            spdlog::warn("This project's Python environment needs a restart of the Engine: {}", detail);
+            break;
+        case scripting::PythonProjectSwitch::Busy:
+            return;  // the next check (2 s) tries again
     }
+    python_restart_reason_ = reason;
+    python_restart_project_ = project;
+    cyxwiz::PythonNodeRuntime::Instance().SetRestartReason(
+        reason.empty() ? std::string()
+                       : "Python runs another project's environment; restart the Engine (File > Restart) "
+                         "to use this project's: " + reason);
+}
+
+void MainWindow::RenderPythonRestartNotice() {
+    if (python_restart_reason_.empty()) return;
+    ImGui::SameLine(0.0f, 16.0f);
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, "%s Restart to use this project's Python",
+                       ICON_FA_TRIANGLE_EXCLAMATION);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Python already runs another environment and cannot move to this project's in place:\n%s",
+                          python_restart_reason_.c_str());
+    }
+    ImGui::SameLine();
+    if (cyxwiz::ui::LinkButton("Restart##python_env") && toolbar_) toolbar_->Dispatch("file.restart");
 }
 
 void MainWindow::RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm) {
@@ -6001,6 +6034,7 @@ void MainWindow::RenderStatusBar() {
         if (pm.HasActiveProject()) {
             ImGui::Text("%s %s", ICON_FA_FOLDER_OPEN, pm.GetProjectName().c_str());
             RenderPythonEnvSetupStatus(pm);
+            RenderPythonRestartNotice();
         } else {
             ImGui::TextDisabled("%s No Project", ICON_FA_FOLDER);
         }
