@@ -265,6 +265,7 @@ BuildSparseTextFeatureDataset(TextFeatureMatrix matrix,
         contents.label_name = std::move(matrix.label_name);
         contents.class_names = std::move(matrix.class_names);
     }
+    contents.partition = std::move(matrix.partition);
     return SparseFeatureDataset::Create(std::move(contents));
 }
 

@@ -39,6 +39,10 @@ public:
         std::string label_name;
         // The label codes' names (code i is class_names[i]; empty: unknown).
         std::vector<std::string> class_names;
+        // Each row's partition as the pipeline run marked it (0 train,
+        // 1 validation, 2 test; TOFIX178 S0-g2), so training reads the rows
+        // the vectorizer learned from; empty when not marked.
+        std::vector<int8_t> partition;
     };
 
     static arrow::Result<std::shared_ptr<SparseFeatureDataset>> Create(
@@ -67,6 +71,7 @@ public:
     }
     const std::string& GetLabelName() const noexcept { return label_name_; }
     const std::vector<std::string>& GetClassNames() const noexcept { return class_names_; }
+    const std::vector<int8_t>& GetPartition() const noexcept { return partition_; }
 
     // Logical owned bytes. Container capacity and allocator bookkeeping are
     // intentionally excluded so this remains deterministic for diagnostics.
@@ -101,6 +106,7 @@ private:
     std::shared_ptr<const arrow::ChunkedArray> labels_;
     std::string label_name_;
     std::vector<std::string> class_names_;
+    std::vector<int8_t> partition_;
     double density_ = 0.0;
     uint64_t feature_storage_bytes_ = 0;
     uint64_t label_storage_bytes_ = 0;

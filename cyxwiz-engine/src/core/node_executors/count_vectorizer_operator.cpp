@@ -618,6 +618,7 @@ CountVectorizerOperator::ApplyConfigured(
 
     TextVectorizerMaterialization output;
     if (sparse_output) {
+        feature_matrix.partition = PartitionValues(input);
         ARROW_ASSIGN_OR_RAISE(
             output.sparse_dataset,
             BuildSparseTextFeatureDataset(

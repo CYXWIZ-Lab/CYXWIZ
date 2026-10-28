@@ -135,6 +135,16 @@ SparseFeatureDataset::Create(Contents contents) {
     } else if (!contents.label_name.empty()) {
         return Invalid("label_name must be empty when labels are absent");
     }
+    if (!contents.partition.empty()) {
+        if (contents.partition.size() != static_cast<size_t>(contents.num_rows)) {
+            return Invalid("partition must be empty or have one entry per row");
+        }
+        for (const int8_t part : contents.partition) {
+            if (part < 0 || part > 2) {
+                return Invalid("partition entries must be 0 (train), 1 (validation) or 2 (test)");
+            }
+        }
+    }
 
     uint64_t offset_bytes = 0;
     uint64_t column_bytes = 0;
@@ -227,6 +237,7 @@ SparseFeatureDataset::SparseFeatureDataset(
       labels_(std::move(contents.labels)),
       label_name_(std::move(contents.label_name)),
       class_names_(std::move(contents.class_names)),
+      partition_(std::move(contents.partition)),
       density_(density),
       feature_storage_bytes_(feature_storage_bytes),
       label_storage_bytes_(label_storage_bytes),

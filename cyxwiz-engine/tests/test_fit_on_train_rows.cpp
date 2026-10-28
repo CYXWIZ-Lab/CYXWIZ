@@ -15,6 +15,9 @@
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/node_executors/tfidf_vectorizer_operator.h"
 #include "../src/core/pipeline_executor.h"
+#include "../src/core/sparse_feature_dataset.h"
+#include "../src/core/sparse_feature_dataset_batcher.h"
+#include "../src/core/sparse_feature_dataset_cache.h"
 #include "../src/core/split_partitioning.h"
 
 #include <arrow/api.h>
@@ -166,6 +169,30 @@ void CheckOperators() {
                         {"fish", {0, 1.5108256237659907, 0, 0, 0, 1.5108256237659907}}},
                        "TF-IDF");
         CheckPartitionCarried(out, "TF-IDF");
+
+        // Sparse output: the dataset carries the partition, its cache file
+        // keeps it, and the batcher serves the Train rows the vectorizer
+        // learned from (it no longer splits the rows again).
+        TFIDFVectorizerOperator sparse_op;
+        params["output_format"] = "sparse";
+        std::string error;
+        Check(sparse_op.Configure(params, error), "sparse TF-IDF configure: " + error);
+        auto sparse = sparse_op.ApplySparse(table, "fit_on_train_sparse");
+        Check(sparse.ok(), "sparse TF-IDF: " + sparse.status().ToString());
+        const std::vector<int8_t> want = {0, 0, 0, 1, 2, 0};
+        Check((*sparse)->GetPartition() == want, "sparse TF-IDF carries the rows' partition");
+        Check((*sparse)->GetNumFeatures() == 4, "sparse TF-IDF: 4 features (none from validation / test rows only)");
+        const fs::path file = fs::temp_directory_path() / "cyxwiz_fit_on_train_rows.csr.arrow";
+        Check(SparseFeatureDatasetCache::SaveAtomically(**sparse, file.string()).ok(), "save the sparse dataset");
+        auto loaded = SparseFeatureDatasetCache::Load(file.string());
+        Check(loaded.ok() && (*loaded)->GetPartition() == want, "the cache file keeps the partition");
+        std::error_code ec;
+        fs::remove(file, ec);
+        for (const auto& [phase, rows] : std::vector<std::pair<BatcherPhase, size_t>>{
+                 {BatcherPhase::Train, 4}, {BatcherPhase::Val, 1}, {BatcherPhase::Test, 1}}) {
+            SparseFeatureDatasetBatcher batcher(*loaded, 2, false, 0.8f, phase == BatcherPhase::Train, phase, 0.1f);
+            Check(batcher.GetNumSamples() == rows, "the sparse batcher serves the marked rows of each phase");
+        }
     }
     {
         CountVectorizerOperator op;

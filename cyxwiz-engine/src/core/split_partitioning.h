@@ -342,6 +342,21 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> CarryPartition(const std::sh
     return output->AddColumn(output->num_columns(), arrow::field(kSplitPartitionColumn, arrow::int8()), column);
 }
 
+// Each row's partition of a marked table (0 train, 1 validation, 2 test);
+// empty when the table is not marked.
+inline std::vector<int8_t> PartitionValues(const std::shared_ptr<arrow::Table>& table) {
+    std::vector<int8_t> parts;
+    const auto column = table ? table->GetColumnByName(kSplitPartitionColumn) : nullptr;
+    if (!column) return parts;
+    parts.reserve(static_cast<size_t>(table->num_rows()));
+    for (const auto& chunk : column->chunks()) {
+        if (chunk->type_id() != arrow::Type::INT8) return {};
+        const auto values = std::static_pointer_cast<arrow::Int8Array>(chunk);
+        for (int64_t i = 0; i < values->length(); ++i) parts.push_back(values->IsNull(i) ? 0 : values->Value(i));
+    }
+    return parts;
+}
+
 // Which rows are Train rows, for a step that reads its rows itself; empty
 // when the table is not marked (every row learns).
 inline std::vector<bool> TrainRowMask(const std::shared_ptr<arrow::Table>& table) {

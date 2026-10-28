@@ -110,6 +110,13 @@ SparseFeatureDatasetBatcher::SparseFeatureDatasetBatcher(
         for (int64_t row = 0; row < num_rows; ++row) {
             indices_.push_back(row);
         }
+    } else if (!dataset_->GetPartition().empty()) {
+        // Marked by the pipeline run: the rows the vectorizer learned from
+        // are the Train rows (TOFIX178 S0-g2).
+        const auto& partitions = dataset_->GetPartition();
+        const int8_t want = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
+        for (int64_t row = 0; row < num_rows; ++row)
+            if (partitions[static_cast<size_t>(row)] == want) indices_.push_back(row);
     } else if (stratified || split_rule.shared) {
         // The shared split rule: every phase's batcher marks the same rows.
         std::vector<uint32_t> class_of_row;
@@ -182,9 +189,11 @@ SparseFeatureDatasetBatcher::SparseFeatureDatasetBatcher(
     }
 
     spdlog::info(
-        "SparseFeatureDatasetBatcher: {} split, {} samples, {} features, "
+        "SparseFeatureDatasetBatcher: {} split{}, {} samples, {} features, "
         "batch_size={}, shuffle={}, output={}, batch_dense_peak={}",
-        PhaseName(split_phase_), indices_.size(), dataset_->GetNumFeatures(),
+        PhaseName(split_phase_),
+        !full_dataset && !dataset_->GetPartition().empty() ? " (rows marked by the pipeline run)" : "",
+        indices_.size(), dataset_->GetNumFeatures(),
         batch_size_, shuffle_,
         sparse_feature_output_ ? "sparse CSR" : "dense Tensor",
         FormatMaterializationBytes(
