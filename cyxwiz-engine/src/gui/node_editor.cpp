@@ -4604,6 +4604,15 @@ bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bo
             return false;
         }
     }
+    // A training graph's supplied Validation / Test inputs run with its
+    // training input: their rows join it (TOFIX178 S0-g4).
+    if (const auto split = pipeline_json.find("training_split"); split != pipeline_json.end()) {
+        const auto policy = cyxwiz::TrainingSplitPolicyFromJson(pipeline_json);
+        if (policy && policy->Supplies() && keep.count(policy->training_input)) {
+            if (policy->validation_input >= 0) keep.insert(policy->validation_input);
+            if (policy->test_input >= 0) keep.insert(policy->test_input);
+        }
+    }
     if (with_checks && include_step) {
         for (int at : node_ids) {
             for (;;) {

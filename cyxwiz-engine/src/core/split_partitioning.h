@@ -330,6 +330,67 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> TrainRowsOf(const std::share
     return filtered.table();
 }
 
+// `marked` (a training input's rows with their partition) followed by the
+// rows of a supplied Validation (partition 1) or Test (2) input (TOFIX178
+// S0-g4), so the steps after it transform them with what they learned from
+// the Train rows. The supplied rows take the training input's columns, by
+// name (extra columns are left out); its label column `supplied_label`
+// stands for `label` when they differ. Numeric columns of different widths
+// (a CSV's inferred uint8 and uint16) both become int64, or float64 when one
+// is floating; other types are cast to the training input's. A missing
+// column, or a type that cannot be cast, is an error naming `role`.
+inline arrow::Result<std::shared_ptr<arrow::Table>> AppendSuppliedRows(
+    const std::shared_ptr<arrow::Table>& marked, const std::shared_ptr<arrow::Table>& supplied, int8_t partition,
+    const std::string& label, const std::string& supplied_label, const std::string& role) {
+    if (!marked || !supplied) return arrow::Status::Invalid(role + " input: no rows");
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::ChunkedArray>> base_columns, added_columns;
+    for (int i = 0; i < marked->num_columns(); ++i) {
+        const auto field = marked->schema()->field(i);
+        auto base = marked->column(i);
+        if (field->name() == kSplitPartitionColumn) {
+            arrow::Int8Builder parts;
+            ARROW_RETURN_NOT_OK(parts.AppendValues(std::vector<int8_t>(static_cast<size_t>(supplied->num_rows()), partition)));
+            ARROW_ASSIGN_OR_RAISE(auto array, parts.Finish());
+            fields.push_back(field);
+            base_columns.push_back(base);
+            added_columns.push_back(std::make_shared<arrow::ChunkedArray>(array));
+            continue;
+        }
+        auto column = supplied->GetColumnByName(field->name());
+        if (!column && field->name() == label && !supplied_label.empty())
+            column = supplied->GetColumnByName(supplied_label);
+        if (!column)
+            return arrow::Status::Invalid(role + " input has no column '" + field->name() +
+                                          "' (it needs the training input's columns)");
+        std::shared_ptr<arrow::DataType> type = field->type();
+        if (!column->type()->Equals(*type) && arrow::is_numeric(type->id()) &&
+            arrow::is_numeric(column->type()->id())) {
+            type = arrow::is_floating(type->id()) || arrow::is_floating(column->type()->id())
+                ? arrow::float64() : arrow::int64();
+        }
+        const auto cast_to = [&](std::shared_ptr<arrow::ChunkedArray>& values) -> arrow::Status {
+            if (values->type()->Equals(*type)) return arrow::Status::OK();
+            auto cast = arrow::compute::Cast(values, type);
+            if (!cast.ok())
+                return arrow::Status::Invalid(role + " input column '" + field->name() + "' is " +
+                                              values->type()->ToString() + ", not " + type->ToString());
+            values = cast->chunked_array();
+            return arrow::Status::OK();
+        };
+        ARROW_RETURN_NOT_OK(cast_to(column));
+        ARROW_RETURN_NOT_OK(cast_to(base));
+        fields.push_back(field->WithType(type));
+        base_columns.push_back(base);
+        added_columns.push_back(column);
+    }
+    const auto schema = arrow::schema(fields, marked->schema()->metadata());
+    const auto base = arrow::Table::Make(schema, base_columns, marked->num_rows());
+    const auto added = arrow::Table::Make(schema, added_columns, supplied->num_rows());
+    ARROW_ASSIGN_OR_RAISE(auto joined, arrow::ConcatenateTables({base, added}));
+    return joined;
+}
+
 // `output` with `input`'s row partition, for a step that builds a new table
 // with one row per input row (vectorizers, the tokenizer): training then
 // reads the partition the step learned from.

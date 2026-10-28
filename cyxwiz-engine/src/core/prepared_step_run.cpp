@@ -108,15 +108,25 @@ PreparedStepResult PrepareStepResult(const std::vector<gui::MLNode>& nodes,
     }
 
     // The steps before `node` (training-only nodes never are), in a run of
-    // their own.
+    // their own, with the graph's split (the Split is not in the run): the
+    // steps learn from its Train rows, and the supplied Validation / Test
+    // inputs run too, so the steps transform their rows (TOFIX178 S0-g4).
+    const auto policy = TrainingSplitPolicyOf(nodes, links);
+    std::set<int> run = slice;
+    if (policy && policy->Supplies() && slice.count(policy->training_input)) {
+        if (policy->validation_input >= 0) run.insert(policy->validation_input);
+        if (policy->test_input >= 0) run.insert(policy->test_input);
+    }
     std::vector<gui::MLNode> steps;
     std::vector<gui::NodeLink> step_links;
     for (const auto& n : nodes)
-        if (slice.count(n.id) && !IsTrainingOnlyNode(n.type)) steps.push_back(n);
+        if (run.count(n.id) && !IsTrainingOnlyNode(n.type)) steps.push_back(n);
     for (const auto& link : links)
         if (slice.count(link.from_node) && slice.count(link.to_node)) step_links.push_back(link);
     nlohmann::json pipeline_json;
     if (!PipelineJsonFromGraph(steps, step_links, pipeline_json, out.error)) return out;
+    pipeline_json.erase("training_split");
+    if (policy) pipeline_json["training_split"] = TrainingSplitPolicyJson(*policy);
 
     PipelineExecutor executor;
     executor.SetArtifactRoot(roots.artifacts);

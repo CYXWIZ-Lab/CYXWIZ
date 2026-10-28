@@ -307,8 +307,9 @@ private:
     std::mutex partitioned_mutex_;
     std::map<std::string, std::string> partitioned_sources_;  // source + policy -> partitioned name
     // `name` with its rows' partition when `input_node` is a Data Input and
-    // the graph has a split; `name` otherwise.
-    std::string PartitionedSource(int input_node, const std::string& name);
+    // the graph has a split, followed by the supplied Validation / Test
+    // inputs' rows when it is the training input; `name` otherwise.
+    std::string PartitionedSource(int input_node, const std::string& name, const ExecutionContext& ctx);
     std::string graph_path_;              // the graph file the run came from (lineage)
     // In-memory copies of disk inputs (AdmitInputTable), kept until the next run.
     std::vector<std::string> admitted_inputs_;

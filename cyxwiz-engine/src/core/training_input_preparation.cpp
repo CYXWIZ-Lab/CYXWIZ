@@ -26,9 +26,6 @@ std::optional<TrainingSplitPolicy> TrainingSplitPolicyOf(const std::vector<gui::
         if (node.type == gui::NodeType::DataLoader && !loader) loader = &node;
     }
     if (!split) return std::nullopt;
-    // Supplied Validation / Test inputs (pins 1, 2) change the shares: not yet.
-    for (const auto& link : links)
-        if (link.to_node == split->id && PinIndex(split->inputs, link.to_pin) > 0) return std::nullopt;
 
     const auto param = [](const gui::MLNode& node, const char* key) -> std::string {
         const auto it = node.parameters.find(key);
@@ -51,11 +48,31 @@ std::optional<TrainingSplitPolicy> TrainingSplitPolicyOf(const std::vector<gui::
     policy.stratified = stratified == "true" || stratified == "1";
     policy.shuffle = !loader || param(*loader, "shuffle").empty() || param(*loader, "shuffle") == "true";
     policy.label_column = param(*split, "label_column");
-    if (policy.label_column.empty()) {
-        const int feeder = TrainingInputFeeder(nodes, links);
-        for (const int id : Upstream(links, feeder))
-            if (const gui::MLNode* node = FindNode(nodes, id); node && IsSource(*node))
-                policy.label_column = param(*node, "label_column");
+    std::vector<const gui::MLNode*> training_sources;
+    for (const int id : Upstream(links, TrainingInputFeeder(nodes, links)))
+        if (const gui::MLNode* node = FindNode(nodes, id); node && IsSource(*node)) training_sources.push_back(node);
+    if (policy.label_column.empty())
+        for (const gui::MLNode* node : training_sources) policy.label_column = param(*node, "label_column");
+
+    // Supplied Validation / Test inputs: a Data Input straight on pin 1 / 2
+    // (the compiler refuses steps there).
+    for (const auto& link : links) {
+        if (link.to_node != split->id) continue;
+        const int pin = PinIndex(split->inputs, link.to_pin);
+        if (pin != 1 && pin != 2) continue;
+        const gui::MLNode* source = FindNode(nodes, link.from_node);
+        if (!source || !IsSource(*source)) return std::nullopt;
+        (pin == 1 ? policy.validation_input : policy.test_input) = source->id;
+        (pin == 1 ? policy.validation_label_column : policy.test_label_column) = param(*source, "label_column");
+    }
+    if (policy.Supplies()) {
+        if (training_sources.size() != 1) return std::nullopt;
+        policy.training_input = training_sources.front()->id;
+        // The compiler's shares: a supplied role takes no share of the training rows.
+        if (policy.validation_input >= 0) policy.val = 0.0f;
+        if (policy.test_input >= 0) policy.test = 0.0f;
+        policy.train = std::max(0.0f, 1.0f - policy.val - policy.test);
+        return policy;
     }
     if (!policy.stratified && !policy.shuffle) return std::nullopt;
     return policy;

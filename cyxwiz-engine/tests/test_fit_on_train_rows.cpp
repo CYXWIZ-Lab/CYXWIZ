@@ -23,6 +23,7 @@
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -288,12 +289,105 @@ void CheckExecutor() {
     in.close();
     fs::remove_all(dir, ec);
 }
+// Supplied Validation / Test inputs (S0-g4): their rows join the training
+// rows with partition 1 / 2; the scaler learns from the training rows only
+// and transforms them all.
+void CheckSuppliedInputs() {
+    // The helper: columns by name, the supplied label renamed, a cast, extra
+    // columns left out, a missing column refused.
+    {
+        arrow::DoubleBuilder a;
+        arrow::Int8Builder p;
+        arrow::StringBuilder y;
+        for (int i = 0; i < 2; ++i) (void)a.Append(i), (void)p.Append(0), (void)y.Append("u");
+        std::shared_ptr<arrow::Array> aa, pp, yy;
+        (void)a.Finish(&aa), (void)p.Finish(&pp), (void)y.Finish(&yy);
+        const auto marked = arrow::Table::Make(
+            arrow::schema({arrow::field("a", arrow::float64()), arrow::field("y", arrow::utf8()),
+                           arrow::field(kSplitPartitionColumn, arrow::int8())}),
+            {aa, yy, pp});
+        arrow::Int64Builder sa;
+        arrow::StringBuilder kind, extra;
+        (void)sa.Append(7), (void)kind.Append("v"), (void)extra.Append("x");
+        std::shared_ptr<arrow::Array> saa, kk, ee;
+        (void)sa.Finish(&saa), (void)kind.Finish(&kk), (void)extra.Finish(&ee);
+        const auto supplied = arrow::Table::Make(
+            arrow::schema({arrow::field("extra", arrow::utf8()), arrow::field("kind", arrow::utf8()),
+                           arrow::field("a", arrow::int64())}),
+            {ee, kk, saa});
+        auto joined = AppendSuppliedRows(marked, supplied, 1, "y", "kind", "Validation");
+        Check(joined.ok(), "supplied rows join: " + joined.status().ToString());
+        Check((*joined)->num_rows() == 3 && (*joined)->num_columns() == 3, "3 rows, the training input's columns");
+        Check(PartitionValues(*joined) == std::vector<int8_t>({0, 0, 1}), "the supplied row is partition 1");
+        Check(Column(*joined, "a").back() == 7.0, "the supplied int64 column is cast to the training input's double");
+        auto missing = AppendSuppliedRows(marked, supplied->RemoveColumn(2).ValueOrDie(), 2, "y", "kind", "Test");
+        Check(!missing.ok() && missing.status().message().find("Test input has no column 'a'") != std::string::npos,
+              "a missing column is refused naming the input: " + missing.status().ToString());
+    }
+
+    const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_supplied_inputs";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const auto write = [&](const std::string& name, const std::string& text) {
+        std::ofstream out(dir / name, std::ios::binary);
+        out << text;
+        return (dir / name).string();
+    };
+    // Training a = 1..10 (mean 5.5); Validation and Test values far away: a
+    // fit on every row would move the mean.
+    std::string train = "a,y\n";
+    for (int i = 1; i <= 10; ++i) train += std::to_string(i) + "," + (i % 2 ? "odd" : "even") + "\n";
+    const std::string train_csv = write("train.csv", train);
+    const std::string val_csv = write("val.csv", "note,a,kind\nx,100,odd\nx,200,even\n");
+    const std::string test_csv = write("test.csv", "a,y\n1000,odd\n");
+    const auto input = [](int id, const std::string& path, const std::string& label) {
+        return nlohmann::json{{"id", id}, {"type", "DataInput"}, {"name", "In" + std::to_string(id)},
+                              {"parameters", {{"source_type", "file"}, {"file_path", path}, {"type", "csv"},
+                                              {"has_header", "true"}, {"delimiter", ","},
+                                              {"label_column", label}, {"force_disk_backed", "false"}}}};
+    };
+    const auto pipeline = [&](const std::string& val_path) {
+        nlohmann::json j;
+        j["nodes"] = nlohmann::json::array(
+            {input(1, train_csv, "y"), input(3, val_path, "kind"), input(4, test_csv, "y"),
+             {{"id", 2}, {"type", "StandardScaler"}, {"name", "Scale"}, {"parameters", {{"columns", "a"}}}}});
+        j["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 2}}});
+        j["training_split"] = {{"label_column", "y"}, {"train", 1.0}, {"val", 0.0}, {"test", 0.0},
+                               {"seed", 42}, {"stratified", false}, {"shuffle", true},
+                               {"training_input", 1}, {"validation_input", 3}, {"test_input", 4},
+                               {"validation_label_column", "kind"}, {"test_label_column", "y"}};
+        return j.dump();
+    };
+    auto& registry = DataRegistry::Instance();
+    PipelineExecutor run;
+    Check(run.ExecutePipeline(pipeline(val_csv)), "a run with supplied inputs: " + run.GetLastError());
+    const auto out = registry.GetArrowDataset(run.NodeResults().at(2))->GetArrowTable();
+    Check(out->num_rows() == 13, "10 training + 2 Validation + 1 Test rows: " + std::to_string(out->num_rows()));
+    const auto parts = PartitionValues(out);
+    Check(std::count(parts.begin(), parts.end(), 0) == 10 && std::count(parts.begin(), parts.end(), 1) == 2 &&
+              std::count(parts.begin(), parts.end(), 2) == 1,
+          "partitions 10 / 2 / 1");
+    // Fitted on 1..10: mean 5.5, population std sqrt(8.25).
+    const double sd = std::sqrt(8.25);
+    const auto a = Column(out, "a");
+    Expect({a[0], a[10], a[11], a[12]}, {(1 - 5.5) / sd, (100 - 5.5) / sd, (200 - 5.5) / sd, (1000 - 5.5) / sd},
+           "the scaler learned from the training rows and transformed the supplied rows");
+
+    PipelineExecutor refused;
+    const std::string bad_val = write("bad_val.csv", "b,kind\n1,odd\n");
+    Check(!refused.ExecutePipeline(pipeline(bad_val)) &&
+              refused.GetLastError().find("Validation input has no column 'a'") != std::string::npos,
+          "a Validation input without the training columns fails the run: " + refused.GetLastError());
+    fs::remove_all(dir, ec);
+}
 }  // namespace
 
 int main() {
     CheckOperators();
     CheckExecutor();
+    CheckSuppliedInputs();
     std::cout << "fit on Train rows: scaler, target encoder, TF-IDF, count and tokenizer learn from the Train rows "
-                 "(scikit-learn values); the run marks rows with the shared split rule; exports leave the partition out. OK\n";
+                 "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";
     return 0;
 }

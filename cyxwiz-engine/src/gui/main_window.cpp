@@ -179,6 +179,7 @@
 #include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
+#include "../core/split_partitioning.h"
 #include "../core/model_converter.h"
 #include "../core/model_importer.h"
 #include "../core/node_metadata_registry.h"
@@ -5759,8 +5760,24 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         config = *active_model_info.evaluation_config;
         spdlog::info("StartTestingFromGraph: using the active model sequence preparation contract");
     }
-    const auto test_selection =
+    auto test_selection =
         cyxwiz::ResolveGraphTestDataset(config);
+    // A supplied Test input the pipeline run joined to the training rows
+    // (TOFIX178 S0-g4): its rows, transformed by the steps before the Data
+    // Split, are the model's prepared table's Test partition.
+    if (test_selection.scope == cyxwiz::TestDatasetScope::EntireProvidedDataset &&
+        !active_model_info.effective_dataset_name.empty()) {
+        if (const auto prepared = cyxwiz::DataRegistry::Instance().GetArrowDataset(
+                active_model_info.effective_dataset_name)) {
+            const auto parts = cyxwiz::PartitionValues(prepared->GetArrowTable());
+            if (std::find(parts.begin(), parts.end(), int8_t{2}) != parts.end()) {
+                test_selection.scope = cyxwiz::TestDatasetScope::ConfiguredTestSplit;
+                spdlog::info("StartTestingFromGraph: the supplied Test rows are in '{}', prepared with the "
+                             "training rows",
+                             active_model_info.effective_dataset_name);
+            }
+        }
+    }
     std::string dataset_name = test_selection.dataset_name;
     const int test_source_node_id = test_selection.source_node_id >= 0
         ? test_selection.source_node_id

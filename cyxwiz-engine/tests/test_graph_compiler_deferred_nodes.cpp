@@ -2636,7 +2636,8 @@ int main() {
           "Dataset-shaped nodes without a materializer owner must not hide "
           "the Data Split source contract");
 
-    // A supplied Test dataset gets no pipeline-run steps from training yet.
+    // A supplied Test input goes through the Training branch's steps; steps of
+    // its own are refused (TOFIX178 S0-g4).
     nodes = {role_train, role_test, run_step, role_split, role_loader,
              binary_dense, binary_loss, optimizer};
     config = compiler.Compile(nodes, {
@@ -2648,8 +2649,8 @@ int main() {
         Link(6, 2, 202, 14, 1401),
         Link(7, 63, 6303, 14, 1402),
         Link(8, 14, 1403, 5, 501)}, true);
-    Check(!config.is_valid && HasIssueText(config, "Test dataset steps such as SQL or Text Clean"),
-          "a pipeline-run step on the Test input is refused with its reason");
+    Check(!config.is_valid && HasIssueText(config, "Test input goes through the Training branch's steps"),
+          "a step on the Test input is refused with its reason");
 
     auto role_dev = Node(
         64,

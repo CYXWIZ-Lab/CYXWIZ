@@ -703,14 +703,17 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
             "' is not a registered Arrow or Parquet source";
         return result;
     }
-    if (partitions.dev.IsSupplied() &&
+    // A joined role is read from the Training table (its partition 1 / 2).
+    const bool external_dev = partitions.dev.IsSupplied() && !partitions.dev.joined_to_training;
+    const bool external_test = partitions.test.IsSupplied() && !partitions.test.joined_to_training;
+    if (external_dev &&
         !datasets.dev_arrow && !datasets.dev_parquet) {
         result.error_message = "Validation Dataset '" +
             partitions.dev.dataset_name +
             "' is not a registered Arrow or Parquet source";
         return result;
     }
-    if (partitions.test.IsSupplied() &&
+    if (external_test &&
         !datasets.test_arrow && !datasets.test_parquet) {
         result.error_message = "Test Dataset '" +
             partitions.test.dataset_name +
@@ -730,14 +733,12 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
     // and its concrete owner in one final assembly step.
     auto assembly_config = config;
     assembly_config.prefetch_factor = 0;
-    const bool external_dev = partitions.dev.IsSupplied();
-    const bool external_test = partitions.test.IsSupplied();
 
     // ArrowDatasetBatcher and ParquetArrowBatcher express derived slices as
     // Train, then Val, then Test. If Dev is supplied but Test is not, build the
     // remaining Train-derived holdout in the Val slot and move that owner to
     // Test before installing the external Dev owner below.
-    if (external_dev && !external_test) {
+    if (external_dev && !partitions.test.IsSupplied()) {
         assembly_config.val_ratio = partitions.policy.test_ratio;
         assembly_config.test_ratio = 0.0f;
     }
@@ -779,7 +780,7 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
               batch_size,
               vocabulary);
 
-    if (external_dev && !external_test) {
+    if (external_dev && !partitions.test.IsSupplied()) {
         result.batchers.arrow_test = std::move(result.batchers.arrow_val);
         result.batchers.parquet_test = std::move(result.batchers.parquet_val);
         result.batchers.val = nullptr;
@@ -806,23 +807,23 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
             static_cast<uint32_t>(config.dataloader_seed), vocabulary);
     };
 
-    if (datasets.dev_arrow) {
+    if (external_dev && datasets.dev_arrow) {
         result.batchers.parquet_val.reset();
         result.batchers.arrow_val = make_arrow_role(
             datasets.dev_arrow, partitions.dev.label_column);
         result.batchers.val = result.batchers.arrow_val.get();
-    } else if (datasets.dev_parquet) {
+    } else if (external_dev && datasets.dev_parquet) {
         result.batchers.arrow_val.reset();
         result.batchers.parquet_val = make_parquet_role(
             datasets.dev_parquet, partitions.dev.label_column);
         result.batchers.val = result.batchers.parquet_val.get();
     }
-    if (datasets.test_arrow) {
+    if (external_test && datasets.test_arrow) {
         result.batchers.parquet_test.reset();
         result.batchers.arrow_test = make_arrow_role(
             datasets.test_arrow, partitions.test.label_column);
         result.batchers.test = result.batchers.arrow_test.get();
-    } else if (datasets.test_parquet) {
+    } else if (external_test && datasets.test_parquet) {
         result.batchers.arrow_test.reset();
         result.batchers.parquet_test = make_parquet_role(
             datasets.test_parquet, partitions.test.label_column);

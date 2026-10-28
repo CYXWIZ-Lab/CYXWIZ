@@ -65,6 +65,10 @@ struct DatasetSourceRef {
     std::string label_column;
     int source_node_id = -1;
     bool externally_supplied = false;
+    // A supplied Validation / Test role whose rows the pipeline run joined to
+    // the Training table (partition 1 / 2, TOFIX178 S0-g4): the steps before
+    // the Data Split transformed them, and training reads them from there.
+    bool joined_to_training = false;
     DatasetStorageKind storage_kind = DatasetStorageKind::Unknown;
     DatasetModality modality = DatasetModality::Unknown;
     std::string source_fingerprint;

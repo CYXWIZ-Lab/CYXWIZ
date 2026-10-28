@@ -198,8 +198,36 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
     input.source_dataset_name = result.source_dataset_name;
     input.source_identity = "executor:" + result.source_dataset_name;
     // The steps learn from the Train rows of the graph's split (TOFIX178 S0-g2).
-    if (const auto policy = TrainingSplitPolicyOf(nodes, links))
-        input.source_identity += "|split:" + TrainingSplitPolicyJson(*policy).dump();
+    const auto policy = TrainingSplitPolicyOf(nodes, links);
+    if (policy) input.source_identity += "|split:" + TrainingSplitPolicyJson(*policy).dump();
+    // Supplied Validation / Test rows are in the entry (TOFIX178 S0-g4): their
+    // Data Inputs' settings and files are in the key.
+    if (policy && policy->Supplies()) {
+        for (const auto& [id, role] : {std::pair{policy->validation_input, "Validation"},
+                                       std::pair{policy->test_input, "Test"}}) {
+            const gui::MLNode* supplied = id >= 0 ? FindNode(nodes, id) : nullptr;
+            if (!supplied) continue;
+            input.nodes.push_back(*supplied);
+            std::string path;
+            for (const char* key : {"file_path", "source_path", "raw_source_path", "data_path", "path"}) {
+                path = Param(*supplied, key);
+                if (!path.empty()) break;
+            }
+            MaterializationCacheDependencyIdentity identity;
+            std::string error;
+            if (!path.empty() &&
+                ResolveMaterializationCacheDependencyIdentity(supplied->id, std::string("supplied:") + role,
+                                                              ResolveProjectDataPath(path, project_root), identity,
+                                                              &error))
+                result.dependencies.push_back(std::move(identity));
+            else
+                not_kept(std::string("the ") + role + " input has no file to identify it");
+        }
+        if (!keep_out.empty()) {
+            result.reason = keep_out;
+            return result;
+        }
+    }
     input.source_schema_fingerprint = result.source_schema_fingerprint;
     input.dependencies = result.dependencies;
     std::string source_path;

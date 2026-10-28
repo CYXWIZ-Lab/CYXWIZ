@@ -88,9 +88,13 @@ highlighted while shown); the node, link and selection counts.
   before the Data Split must make it (checked when they run)", and training
   uses it: "TabularLoader: Starting Arrow training: dataset=ds_sql_5, ...
   label=species".
-- Not yet: these steps on a supplied Validation or Test dataset ("Test
-  dataset steps such as SQL or Text Clean are not applied by training yet;
-  connect its Data Input directly").
+- A supplied Validation or Test input (a Data Input on the Split's
+  Validation / Test pin) goes through the Training branch's steps: they learn
+  from the Train rows and transform its rows too (see
+  [big_data.md](big_data.md)). A step between it and the Split is refused
+  ("Test input goes through the Training branch's steps (they learn from the
+  Train rows and transform its rows too); connect its Data Input to the Data
+  Split directly").
 - **Compile** opens the compile report (below); so does **Train** when it
   cannot start.
 - While a graph trains (from the moment its data is being prepared), tests,

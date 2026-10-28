@@ -126,9 +126,27 @@ A Data Input kept on disk can feed training:
   pick columns themselves skip them, Unpivot keeps them with each row, and
   exports (Data Output, Save Dataset, CSV / Parquet / JSON) leave them out.
   Not marked: a graph without a Data Split, a time series, a Split with
-  supplied Validation / Test inputs, a Split with neither Shuffle nor
-  Stratified (the rows keep their order), and a table kept on disk (a
-  warning says its steps learn from every row). Label and Ordinal Encoder
+  neither Shuffle nor Stratified and no supplied input (the rows keep their
+  order), and a table kept on disk (a warning says its steps learn from
+  every row).
+- **Supplied Validation / Test inputs** (a Data Input on the Split's
+  Validation or Test pin) go through the same steps. Their rows join the
+  training input's rows (Validation, then Test) before the first step, so
+  each step learns from the Train rows and transforms the supplied rows
+  with what it learned, then training reads them from the prepared table:
+  "the Validation input's 48 rows join 'ds_datainput_1'", "Training reads
+  the supplied Validation rows from 'ds_operator_StandardScaler_5'". The
+  supplied rows take the training input's columns by name; extra columns
+  are left out, a supplied label column with another name stands for the
+  training label, and numbers of different widths are widened alike. A
+  supplied input without one of the training input's columns stops the run
+  ("Validation input has no column 'a' (it needs the training input's
+  columns)"). A step between a supplied input and the Split is refused
+  (compile). Not yet: a supplied input kept on disk is read as it is,
+  without the steps (a warning says so), and so are the supplied inputs
+  when the Training branch has more than one Data Input (a Join). Its rows are prepared with the
+  training rows, so the check for rows shared between Train and the
+  supplied input does not run for it. Label and Ordinal Encoder
   number the categories of every row (no label is learned). Changing the
   Split's shares, seed, label or Stratified prepares the data again.
 - **Causal-LM token windows** (a `tokens` list column) on disk are read one

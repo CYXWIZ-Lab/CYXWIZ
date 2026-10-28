@@ -4600,13 +4600,32 @@ TrainingConfiguration GraphCompiler::Compile(
                 const auto* source = FindDatasetSourceConnectedToSplitInput(
                     nodes, links, *role_split, pin_name,
                     &has_connection, &has_multiple_sources, &needs_run);
-                if (needs_run) {
-                    // Training prepares only the Training Dataset input
-                    // (supplied Validation / Test steps: TOFIX178 S0-g).
+                // A supplied input goes through the Training branch's steps,
+                // fitted on the Train rows (TOFIX178 S0-g4); steps of its
+                // own would not run. The Quality Analyzer (it filters image
+                // files) may stay.
+                bool own_steps = needs_run;
+                if (const auto* pin = FindInputPinByName(*role_split, pin_name)) {
+                    int at = -1;
+                    for (const auto& link : links)
+                        if (link.to_node == role_split->id && link.to_pin == pin->id) at = link.from_node;
+                    std::unordered_set<int> seen;
+                    while (at >= 0 && seen.insert(at).second) {
+                        const gui::MLNode* node = FindNodeById(at, nodes);
+                        if (!node || IsDatasetSourceType(node->type)) break;
+                        if (node->type != gui::NodeType::QualityAnalyzer) own_steps = true;
+                        int next = -1;
+                        for (const auto& link : links)
+                            if (link.to_node == at) next = link.from_node;
+                        at = next;
+                    }
+                }
+                if (own_steps) {
                     AddIssue(config, IssueLevel::Error,
                              std::string(role_name) +
-                                 " dataset steps such as SQL or Text Clean are not applied "
-                                 "by training yet; connect its Data Input directly",
+                                 " input goes through the Training branch's steps (they learn from the "
+                                 "Train rows and transform its rows too); connect its Data Input to the "
+                                 "Data Split directly",
                              role_split->id, role_split->name,
                              errors::Compiler::InvalidConnectivity);
                     return;

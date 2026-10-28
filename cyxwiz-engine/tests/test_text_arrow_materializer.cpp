@@ -213,8 +213,11 @@ void TestPreparedStepCache(const fs::path& csv) {
     auto changed = nodes;
     changed[1] = MakeTokenizerNode(2, "5");
     const auto changed_run = cyxwiz::PrepareStepResult(changed, links, 2, registry, {}, config);
+    // Five token columns and the label; the Split's rows also carry their
+    // partition (TOFIX178 S0-g3).
     Check(changed_run.ok && changed_run.ran && !changed_run.from_disk &&
-              TableOf(changed_run.dataset)->num_columns() == 6,
+              TableOf(changed_run.dataset)->num_columns() == 7 &&
+              TableOf(changed_run.dataset)->schema()->GetFieldIndex("__partition__") >= 0,
           "a changed setting misses and runs: " + changed_run.error);
     registry.UnregisterTabularDataset(changed_run.dataset);
 

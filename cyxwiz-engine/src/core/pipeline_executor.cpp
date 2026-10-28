@@ -3995,6 +3995,17 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                     pending.push(output_id);
                 }
             }
+            // A supplied Validation / Test input joins the training input's
+            // rows (TOFIX178 S0-g4): it is connected through it.
+            if (split_policy_ && split_policy_->Supplies()) {
+                const auto& policy = *split_policy_;
+                std::vector<int> joined;
+                if (current == policy.training_input) joined = {policy.validation_input, policy.test_input};
+                else if (current == policy.validation_input || current == policy.test_input)
+                    joined = {policy.training_input};
+                for (const int id : joined)
+                    if (id >= 0 && visited.insert(id).second) pending.push(id);
+            }
         }
 
         if (visited.size() != nodes.size()) {
@@ -5682,8 +5693,11 @@ const std::string* PipelineExecutor::ResultForOutput(const ExecutionContext& ctx
     return &result->second;
 }
 
-std::string PipelineExecutor::PartitionedSource(int input_node, const std::string& name) {
+std::string PipelineExecutor::PartitionedSource(int input_node, const std::string& name, const ExecutionContext& ctx) {
     if (!split_policy_ || !source_node_ids_.count(input_node)) return name;
+    // A supplied Validation / Test input joins the training input's rows; it
+    // is not a source of its own.
+    if (input_node == split_policy_->validation_input || input_node == split_policy_->test_input) return name;
     auto& registry = DataRegistry::Instance();
     const auto dataset = registry.GetArrowDataset(name);
     if (!dataset || !dataset->GetArrowTable()) {
@@ -5712,8 +5726,36 @@ std::string PipelineExecutor::PartitionedSource(int input_node, const std::strin
                      partitioned.status().ToString());
         return name;
     }
+    std::shared_ptr<arrow::Table> rows = partitioned.ValueOrDie();
+    // The supplied Validation / Test rows (TOFIX178 S0-g4): the steps after
+    // the training input transform them as they transform its rows.
+    if (input_node == policy.training_input) {
+        for (const auto& [supplied_node, part, role, supplied_label] :
+             {std::tuple{policy.validation_input, int8_t{1}, std::string("Validation"), policy.validation_label_column},
+              std::tuple{policy.test_input, int8_t{2}, std::string("Test"), policy.test_label_column}}) {
+            if (supplied_node < 0) continue;
+            const std::string* supplied_name = ResultForOutput(ctx, supplied_node, std::nullopt);
+            const auto supplied = supplied_name ? registry.GetArrowDataset(*supplied_name) : nullptr;
+            if (!supplied || !supplied->GetArrowTable()) {
+                spdlog::warn("[Pipeline] the {} input is not in memory: training reads its rows without the steps "
+                             "before the Data Split",
+                             role);
+                continue;
+            }
+            auto joined = AppendSuppliedRows(rows, supplied->GetArrowTable(), part, policy.label_column,
+                                             supplied_label, role);
+            if (!joined.ok()) {
+                ReportError(joined.status().message());
+                return {};  // the step fails with the reason
+            }
+            spdlog::info("[Pipeline] the {} input's {} rows join '{}': the steps transform them as they transform "
+                         "its rows, with what they learned from its Train rows",
+                         role, supplied->GetArrowTable()->num_rows(), name);
+            rows = joined.ValueOrDie();
+        }
+    }
     const std::string partitioned_name = name + "__split";
-    if (!registry.RegisterArrowTable(partitioned.ValueOrDie(), partitioned_name)) return name;
+    if (!registry.RegisterArrowTable(rows, partitioned_name)) return name;
     partitioned_sources_[key] = partitioned_name;
     {
         std::lock_guard<std::mutex> owned(owned_mutex_);
@@ -6167,7 +6209,8 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
             return {};
         }
         // Steps that read files (SQL, streaming operators) are not admitted.
-        const std::string source = PartitionedSource(input_node_id, *name);
+        const std::string source = PartitionedSource(input_node_id, *name, ctx);
+        if (source.empty()) return {};
         const std::string admitted = StepReadsInputFiles(node) ? source : AdmitInputTable(node, source);
         if (admitted.empty()) return {};
         dataset_names.push_back(admitted);
@@ -6191,7 +6234,8 @@ std::string PipelineExecutor::GetInputDatasetForPin(
                         std::to_string(link.node_id));
             return {};
         }
-        const std::string source = PartitionedSource(link.node_id, *result);
+        const std::string source = PartitionedSource(link.node_id, *result, ctx);
+        if (source.empty()) return {};
         return StepReadsInputFiles(node) ? source : AdmitInputTable(node, source);
     }
     ReportError(node.type + ": required Data input pin " +
@@ -7554,6 +7598,13 @@ std::vector<int> PipelineExecutor::FindReadyNodes(
                 all_inputs_ready = false;
                 break;
             }
+        }
+        // A step reading the training input waits for the supplied
+        // Validation / Test inputs: their rows join its rows (TOFIX178 S0-g4).
+        if (all_inputs_ready && split_policy_ && split_policy_->Supplies() &&
+            std::find(node.inputs.begin(), node.inputs.end(), split_policy_->training_input) != node.inputs.end()) {
+            for (const int supplied : {split_policy_->validation_input, split_policy_->test_input})
+                if (supplied >= 0 && !completed.count(supplied)) all_inputs_ready = false;
         }
 
         if (all_inputs_ready) {
