@@ -5492,6 +5492,7 @@ add_executable(test_modality_batcher_drop_last
     tests/test_modality_batcher_drop_last.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/formats/audio_dataset.cpp
     src/core/image_utils.cpp
@@ -6810,6 +6811,7 @@ add_dependencies(test_image_quality copy_test_image_quality_fixture)
 add_executable(test_prepared_image_set
     tests/test_prepared_image_set.cpp
     src/core/prepared_image_set.cpp
+    src/core/image_dataset_batcher.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
 )

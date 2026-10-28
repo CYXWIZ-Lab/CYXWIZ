@@ -243,6 +243,9 @@ public:
      * Stop training (thread-safe, cooperative cancellation)
      */
     void Stop();
+    // True once Stop was asked for; long setup work (a batcher factory
+    // preparing images) checks it to stop early.
+    bool StopRequested() const { return stop_requested_.load(); }
     // Stop, first writing a resume checkpoint at the batch it stops on where
     // the loop supports mid-epoch resume (sequence batches); the other loops
     // keep their epoch-end checkpoint. Needs EnableResumeCheckpoints. Used

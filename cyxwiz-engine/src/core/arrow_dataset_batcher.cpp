@@ -4,6 +4,7 @@
 #include "split_partitioning.h"
 #include "class_balance.h"
 #include "data_budget.h"
+#include "device_data_budget.h"
 
 #include <arrayfire.h>
 #include <arrow/api.h>
@@ -25,17 +26,6 @@ namespace cyxwiz {
 namespace {
 
 constexpr size_t kBatchInspectionColumnPreviewLimit = 32;
-
-// What one batcher's resident features may take: a quarter of the active
-// device's memory (the model, its gradients and the optimizer keep the rest);
-// on the CPU backend a quarter of the data budget. Unknown memory: nothing.
-uint64_t ResidentFeatureBudgetBytes() {
-    if (af::getActiveBackend() == AF_BACKEND_CPU) return DataBudgetBytes() / 4;
-    const Device* device = Device::GetCurrentDevice();
-    if (!device) return 0;
-    const DeviceInfo info = device->GetInfo();
-    return info.memory_total_known && info.memory_total > 0 ? info.memory_total / 4 : 0;
-}
 
 bool IsTokenSlotColumnName(const std::string& name) {
     if (name.rfind("tok_", 0) != 0 || name.size() == 4) {
@@ -1039,7 +1029,7 @@ bool ArrowDatasetBatcher::PrepareResidentFeatures(const std::shared_ptr<arrow::T
     if (!device_resident_features_ || base_indices_.empty() || num_features_ == 0) return false;
     const size_t rows = base_indices_.size();
     const uint64_t bytes = static_cast<uint64_t>(rows) * num_features_ * sizeof(float);
-    const uint64_t budget = ResidentFeatureBudgetBytes();
+    const uint64_t budget = ResidentDataBudgetBytes();
     // Too large for the device: the converted rows can still stay in memory
     // (a quarter of the data budget, as on the CPU backend), so a batch is one
     // contiguous copy per row and an upload, not a gather over every column

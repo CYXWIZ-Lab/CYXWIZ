@@ -17,7 +17,8 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
   -> Horizontal Flip -> Color Jitter -> Normalize -> Conv2D -> ...
 ```
 
-- Resize comes first: every image is decoded at the Resize size.
+- Resize comes first: every image is decoded once at the Resize size and
+  mode (see [Decoded once](#decoded-once)).
 - Normalize comes last: the transforms work on pixels in `[0, 1]`.
 - The compiler refuses a transform before Resize or after Normalize, and
   names the node.
@@ -116,13 +117,38 @@ and rotate use nearest sampling and fill with 0.
 
 The **As compiled** card shows the input shape after the crops and Grayscale.
 
-## Speed
+## Decoded once
 
-The batcher reads and decodes the image files on the CPU and uploads each batch
-to the GPU once. The transforms and Normalize then run on the whole batch on
-the GPU, and the batch stays there for the model. Without a GPU the same code
-runs on ArrayFire's CPU backend. Each image's random settings (flip or not,
-crop position, angle, jitter factors) are a few numbers drawn on the CPU.
+When training starts, every image of the Data Input is decoded once, on all
+CPU cores, at the Resize size and mode, and kept as 8-bit RGB in one file in
+the project's `cache/images` folder. The Console says
+`Preparing images: 12500 of 25000 decoded` while it runs, and Stop stops it.
+The next Train with the same images, size and mode opens that file and starts
+at once (`Training reads the 25000 prepared images from ...`). Changing,
+adding or removing an image file, the labels CSV, the size or the mode
+prepares the images again. The folder keeps sets for 30 days and at most
+10 GB in all, oldest first.
+
+Resize modes:
+
+| Mode | What you get |
+| --- | --- |
+| exact | stretched to the width and height |
+| fit | scaled to fit inside, black bars on the short side |
+| fill | scaled to cover, the centre kept (the sides cropped) |
+| center | not scaled: the centre cut out (black around a smaller image) |
+
+Grey, RGBA and 16-bit files become RGB. A file that cannot be read is left
+out of training and named in the Console.
+
+Each batch then takes its images from that file: when the whole set fits a
+quarter of the GPU's memory it is uploaded once and a batch is picked on the
+GPU (`ImageDatasetBatcher: 25000 images (293.8 MB) on the device for the
+run`); otherwise each batch's images are copied and uploaded once. The
+transforms and Normalize run on the whole batch on the GPU, and the batch
+stays there for the model. Without a GPU the same code runs on ArrayFire's
+CPU backend. Each image's random settings (flip or not, crop position, angle,
+jitter factors) are a few numbers drawn on the CPU.
 
 ## Notes
 

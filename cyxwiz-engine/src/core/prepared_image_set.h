@@ -48,6 +48,12 @@ struct PreparedImageSpec {
     ResizeMode mode = ResizeMode::Exact;
 };
 
+// The compiled Resize node's size and mode (no mode: exact).
+inline PreparedImageSpec PreparedImageSpecFrom(const ImagePreprocessingConfig& config) {
+    return {config.target_width, config.target_height,
+            config.resize_mode == ResizeMode::None ? ResizeMode::Exact : config.resize_mode};
+}
+
 // One file decoded to uint8 RGB [height, width, 3] at `spec`, as training
 // sees it: exact stretches to the size; fit scales to fit inside and pads
 // with black; fill scales to cover and crops the centre; center crops (or

@@ -4,9 +4,14 @@
 // labels CSV) with grey, RGBA, 16-bit, JPEG and unreadable files; no
 // example dataset.
 
+#include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_utils.h"
 #include "../src/core/prepared_image_set.h"
 
+#include <arrayfire.h>
+#ifdef LoadImage
+#undef LoadImage  // windows.h (via ArrayFire) would rename ImageUtils::LoadImage
+#endif
 #include <opencv2/opencv.hpp>
 
 #include <algorithm>
@@ -16,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -146,6 +152,49 @@ void CheckSet(const DataRegistry::ImageDatasetEntry& entry, const std::string& n
     Check(other.set && !other.from_cache && other.set->Path() != single.set->Path(), name + ": fit is its own set");
 }
 
+// The batcher trains from the set (1.3b): every readable image once per
+// epoch as its row / 255 with its label, the unreadable one and excluded files
+// left out - on every ArrayFire backend this machine has.
+void CheckBatcher(const DataRegistry::ImageDatasetEntry& entry) {
+    const auto prepared = PrepareImageSet(entry, {24, 16, ResizeMode::Exact});
+    Check(prepared.set != nullptr, "prepared for the batcher");
+    const auto& set = *prepared.set;
+    const int available = af::getAvailableBackends();
+    for (const af::Backend backend : {AF_BACKEND_CPU, AF_BACKEND_CUDA, AF_BACKEND_OPENCL}) {
+        if (!(available & backend)) continue;
+        af::setBackend(backend);
+        const std::string name = backend == AF_BACKEND_CPU ? "cpu" : backend == AF_BACKEND_CUDA ? "cuda" : "opencl";
+        ImageDatasetBatcher batcher(prepared.set, 2, 1.0f, true, 5);
+        Check(batcher.GetNumSamples() == 5, name + ": the unreadable image is left out");
+        std::set<size_t> seen;
+        while (!batcher.IsEpochComplete()) {
+            const auto batch = batcher.GetNextBatch();
+            Check(batch.data.Shape() == std::vector<size_t>({batch.size, 16, 24, 3}), name + ": [n, 16, 24, 3]");
+            const float* pixels = batch.data.ReadData<float>();
+            const float* labels = batch.labels.ReadData<float>();
+            for (size_t b = 0; b < batch.size; ++b) {
+                bool found = false;
+                for (size_t i = 0; i < set.Count() && !found; ++i) {
+                    const uint8_t* row = set.Row(i);
+                    bool same = true;
+                    for (size_t k = 0; k < set.RowBytes() && same; ++k)
+                        // Within a float step: OpenCL may divide as a multiply.
+                        same = std::abs(pixels[b * set.RowBytes() + k] - row[k] / 255.0f) <= 1e-6f;
+                    if (same && labels[b] == static_cast<float>(set.Labels()[i])) {
+                        found = seen.insert(i).second;
+                    }
+                }
+                Check(found, name + ": each sample is a set row / 255 with its label, once");
+            }
+        }
+        Check(seen.size() == 5, name + ": the epoch covers every readable image");
+        batcher.ExcludeFiles({set.Files()[0]});
+        Check(batcher.GetNumSamples() == 4, name + ": an excluded file is left out too");
+        std::cout << name << ": batches match the set (" << (batcher.ImagesOnDevice() ? "on the device" : "gathered per batch")
+                  << ")\n";
+    }
+}
+
 void CheckChangesAndStops(const fs::path& folder, const DataRegistry::ImageDatasetEntry& entry) {
     const PreparedImageSpec spec{8, 8, ResizeMode::Exact};
     const std::string before = PreparedImageSetKey(entry, spec);
@@ -234,6 +283,7 @@ int main() {
     csv.layout = 1;
     CheckSet(csv, "labels CSV");
 
+    CheckBatcher(folders);
     CheckChangesAndStops(folder, folders);
 
     SetImageCacheProjectRoot("");

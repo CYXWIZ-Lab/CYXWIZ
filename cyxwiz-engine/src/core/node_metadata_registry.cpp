@@ -1634,9 +1634,10 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
     RegisterNode({NodeType::Resize, NodeCategory::Preprocessing, "Resize", ICON_FA_EXPAND,
         {"image", "resize", "width", "height", "aspect"}, 0, false,
         "The size every image is decoded to for training",
-        "The image batcher resizes each image to this width and height (mode: exact, fit, fill or "
-        "center) and the compiler takes the model's input shape [H, W, C] from it, so the "
-        "convolution layers after it know their sizes. Required for an image Data Input.",
+        "Every image is decoded once at this width and height when training starts (mode: exact "
+        "stretches, fit pads, fill crops, center cuts out the middle unscaled) and kept in the "
+        "project's cache/images; the compiler takes the model's input shape [H, W, C] from it, so "
+        "the convolution layers after it know their sizes. Required for an image Data Input.",
         "Data Input (images) -> Resize -> Conv2D -> ... -> Flatten -> Dense",
         {{"Input", PinType::Tensor, true, "Images from the Data Input"}},
         {{"Output", PinType::Tensor, true, "Images resized to [height, width, channels]"}},

@@ -208,14 +208,13 @@ void TestImageBatcher(const fs::path& root) {
     preprocessing.target_width = 2;
     preprocessing.target_height = 2;
 
-    cyxwiz::ImageDatasetBatcher batcher(
-        entry, preprocessing, 2, 0.75f, false, 0, 17);
+    const auto images = cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set;
+    Check(images != nullptr, "the images are prepared");
+    cyxwiz::ImageDatasetBatcher batcher(images, 2, 0.75f, false, 17);
     CheckTrainOnlyDropLast(batcher, "ImageDatasetBatcher");
 
-    cyxwiz::ImageDatasetBatcher first_seeded(
-        entry, preprocessing, 2, 0.75f, true, 0, 1701);
-    cyxwiz::ImageDatasetBatcher second_seeded(
-        entry, preprocessing, 2, 0.75f, true, 0, 1701);
+    cyxwiz::ImageDatasetBatcher first_seeded(images, 2, 0.75f, true, 1701);
+    cyxwiz::ImageDatasetBatcher second_seeded(images, 2, 0.75f, true, 1701);
     CheckMatchingPayloads(CollectEpochPayload(first_seeded),
                           CollectEpochPayload(second_seeded),
                           "ImageDatasetBatcher");
@@ -232,7 +231,7 @@ void TestImageBatcher(const fs::path& root) {
     two_tone.num_images = 2;
     two_tone.num_classes = 2;
     cyxwiz::ImageDatasetBatcher whole_images(
-        two_tone, preprocessing, 2, 1.0f, false, 0, 17);
+        cyxwiz::PrepareImageSet(two_tone, cyxwiz::PreparedImageSpecFrom(preprocessing)).set, 2, 1.0f, false, 17);
     const auto batch = whole_images.GetNextBatch();
     Check(batch.size == 2, "ImageDatasetBatcher should emit both two-tone images");
     const float* pixels = batch.data.ReadData<float>();
@@ -289,7 +288,8 @@ void TestGrayscaleImages(const fs::path& root) {
     preprocessing.resize_mode = cyxwiz::ResizeMode::Exact;
     preprocessing.target_width = 2;
     preprocessing.target_height = 2;
-    cyxwiz::ImageDatasetBatcher batcher(entry, preprocessing, 2, 1.0f, false, 0, 17);
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set, 2, 1.0f, false, 17);
     const auto batch = batcher.GetNextBatch();
     Check(batch.size == 2, "both grayscale images form a batch");
     const float* pixels = batch.data.ReadData<float>();

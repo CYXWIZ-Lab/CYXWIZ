@@ -999,6 +999,27 @@ void TrainingExecutor::Train(
             try {
                 external_batchers_ = external_batcher_factory_(config_, batch_size);
             } catch (const std::exception& e) {
+                if (stop_requested_.load()) {
+                    // Stopped while the data was being prepared: cancelled, not failed.
+                    spdlog::info("TrainingExecutor: stopped while preparing the data");
+                    UpdateMetrics([&](TrainingMetrics& m) {
+                        m.total_epochs = epochs;
+                        m.is_training = false;
+                        m.is_paused = false;
+                        m.is_complete = true;
+                        m.terminal_status = "cancelled";
+                        m.terminal_reason = "user_cancelled";
+                        m.status_message = "Training cancelled while preparing the data";
+                    });
+                    CrashRunRecorder::Instance().MarkCancelled();
+                    TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f,
+                                                                           0.0f);
+                    TrainingTraceCollector::Instance().FinishRun("cancelled");
+                    BackendDebugHooks::SetDebugEventCallback({});
+                    is_paused_.store(false);
+                    is_training_.store(false);
+                    return;
+                }
                 spdlog::error("TrainingExecutor: preparing the dataset batchers failed: {}", e.what());
                 fail_run(std::string("dataset_batcher_setup_failed: ") + e.what());
                 return;
