@@ -3,6 +3,7 @@
 
 #include "arrow_dataset.h"
 #include "data_budget.h"
+#include "label_column_resolver.h"
 #include "classification_decision.h"
 #include "prefetch_batcher.h"
 #include "split_partitioning.h"
@@ -191,15 +192,17 @@ void AttachTrainingBatcherPrefetchWrappers(
 
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
-    size_t num_columns) {
+    const std::shared_ptr<arrow::Schema>& schema,
+    const std::string& label_column) {
 
     if (config.is_time_series) {
         return {config.input_size, true, true};
     }
-    if (num_columns > 1) {
-        return {num_columns - 1, false, true};
+    const int label_index = ResolveLabelColumnIndex(schema, label_column);
+    if (label_index >= 0) {
+        return {CountNumericBatchFeatureColumns(schema, label_index), false, true};
     }
-    return {num_columns, false, false};
+    return {CountNumericBatchFeatureColumns(schema), false, false};
 }
 
 bool TryApplyBalancedClassWeightsFromArrowTable(

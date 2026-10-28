@@ -576,7 +576,7 @@ bool TrainingManager::StartTrainingArrow(
     // size (crash at first forward pass due to dimension mismatch with the
     // batch tensor, which correctly excludes both label AND __partition__).
     const auto input_resolution =
-        ResolveTabularTrainingInputSize(config, num_cols);
+        ResolveTabularTrainingInputSize(config, arrow_dataset->GetSchema(), label_column);
     config.input_size = input_resolution.input_size;
 
     if (input_resolution.used_compiled_override) {
@@ -584,10 +584,11 @@ bool TrainingManager::StartTrainingArrow(
                      "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
                      num_rows, num_cols, config.input_size);
     } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
-                     num_rows, num_cols, config.input_size);
+        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (label '{}')",
+                     num_rows, num_cols, config.input_size, label_column);
     } else {
-        spdlog::warn("TrainingManager: Arrow dataset has only {} column - no separate label column", num_cols);
+        spdlog::warn("TrainingManager: Arrow dataset has no label column '{}' ({} cols, input_size={})", label_column,
+                     num_cols, config.input_size);
     }
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
@@ -643,7 +644,7 @@ bool TrainingManager::StartTrainingParquet(
     size_t num_cols = parquet_dataset->GetNumColumns();
     size_t num_rows = parquet_dataset->GetNumRows();
     const auto input_resolution =
-        ResolveTabularTrainingInputSize(config, num_cols);
+        ResolveTabularTrainingInputSize(config, parquet_dataset->GetSchema(), label_column);
     config.input_size = input_resolution.input_size;
 
     if (input_resolution.used_compiled_override) {
@@ -651,10 +652,11 @@ bool TrainingManager::StartTrainingParquet(
                      "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
                      num_rows, num_cols, config.input_size);
     } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
-                     num_rows, num_cols, config.input_size);
+        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (label '{}')",
+                     num_rows, num_cols, config.input_size, label_column);
     } else {
-        spdlog::warn("TrainingManager: Parquet dataset has only {} column - no separate label column", num_cols);
+        spdlog::warn("TrainingManager: Parquet dataset has no label column '{}' ({} cols, input_size={})", label_column,
+                     num_cols, config.input_size);
     }
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");

@@ -12,6 +12,7 @@
 #include <utility>
 
 namespace arrow {
+class Schema;
 class Table;
 }
 
@@ -109,9 +110,13 @@ struct ResolvedTabularDatasets {
     std::shared_ptr<const SparseFeatureDataset> test_sparse;
 };
 
+// The model's input width: the numeric feature columns the batcher reads
+// (every numeric column but the label and the run's own "__" columns, such
+// as the rows' partition); a time series keeps the compiler's width.
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
-    size_t num_columns);
+    const std::shared_ptr<arrow::Schema>& schema,
+    const std::string& label_column);
 
 bool TryApplyBalancedClassWeightsFromArrowTable(
     TrainingConfiguration& config,

@@ -873,17 +873,27 @@ int main(int argc, char** argv) {
               cyxwiz::GetDefaultNumWorkers(),
           "oversized workers should clamp to platform default");
 
+    // Four numeric features, the label, a text column and the run's row
+    // partition (TOFIX178 S0-g2): the model reads the four features, as the
+    // batcher does (it was every column but one: 6, and a Linear layer of
+    // the wrong width).
+    const auto tabular_schema = arrow::schema(
+        {arrow::field("f0", arrow::float64()), arrow::field("f1", arrow::float32()),
+         arrow::field("f2", arrow::int64()), arrow::field("note", arrow::utf8()),
+         arrow::field("f3", arrow::int32()), arrow::field("label", arrow::int32()),
+         arrow::field(cyxwiz::kSplitPartitionColumn, arrow::int8())});
     auto tabular_resolution =
-        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), 5);
+        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), tabular_schema, "label");
     Check(tabular_resolution.input_size == 4,
-          "tabular input size should reserve one label column");
+          "tabular input size counts the numeric features, not the label, text or partition: " +
+              std::to_string(tabular_resolution.input_size));
     Check(!tabular_resolution.used_compiled_override,
           "tabular input size should not use compiled override");
     Check(tabular_resolution.has_separate_label_column,
           "tabular multi-column data should report a separate label column");
 
-    auto single_col_resolution =
-        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), 1);
+    auto single_col_resolution = cyxwiz::ResolveTabularTrainingInputSize(
+        MakeConfig(), arrow::schema({arrow::field("x", arrow::float64())}), "");
     Check(single_col_resolution.input_size == 1,
           "single-column input size should use the only column");
     Check(!single_col_resolution.has_separate_label_column,
@@ -893,7 +903,7 @@ int main(int argc, char** argv) {
     ts_config.is_time_series = true;
     ts_config.input_size = 12;
     auto ts_resolution =
-        cyxwiz::ResolveTabularTrainingInputSize(ts_config, 99);
+        cyxwiz::ResolveTabularTrainingInputSize(ts_config, tabular_schema, "label");
     Check(ts_resolution.input_size == 12,
           "time-series input size should preserve GraphCompiler override");
     Check(ts_resolution.used_compiled_override,
