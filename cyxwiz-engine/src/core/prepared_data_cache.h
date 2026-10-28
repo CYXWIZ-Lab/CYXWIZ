@@ -20,6 +20,7 @@ namespace cyxwiz {
 
 class ArrowDataset;
 class DataRegistry;
+class ParquetBackedDataset;
 class SparseFeatureDataset;
 
 struct PreparedDataKey {
@@ -79,5 +80,21 @@ bool SavePreparedSparseData(const MaterializationCacheConfig& config,
                             const PreparedDataKey& key,
                             const SparseFeatureDataset& dataset,
                             std::string* error = nullptr);
+
+// Keeps a table on disk (its Parquet file) as the entry for `key`: a hard
+// link to the file, or a copy on another drive. A hit opens it on disk.
+bool SavePreparedFile(const MaterializationCacheConfig& config,
+                      const PreparedDataKey& key,
+                      const ParquetBackedDataset& dataset,
+                      const std::string& name,
+                      std::string* error = nullptr);
+
+// The entry for `key` from the dataset registered as `name`, whichever kind
+// it is: sparse features, a table in memory or a table on disk.
+bool SavePreparedResult(const MaterializationCacheConfig& config,
+                        const PreparedDataKey& key,
+                        DataRegistry& registry,
+                        const std::string& name,
+                        std::string* error = nullptr);
 
 }  // namespace cyxwiz

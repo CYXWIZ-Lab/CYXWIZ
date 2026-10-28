@@ -4,6 +4,7 @@
 #include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/prepared_data_cache.h"
 
 #include <arrow/api.h>
@@ -574,6 +575,32 @@ int main() {
         auto rebuild = config;
         rebuild.mode = cyxwiz::MaterializationCacheMode::Rebuild;
         Check(!cyxwiz::ProbePreparedData(rebuild, base), "a requested rebuild ignores the entry");
+
+        // A table on disk is kept as its file (a link) and opened on disk
+        // again, after the step's own result file is gone (TOFIX178 0.5).
+        {
+            const auto disk_key = key_of(filter_edit);
+            const auto result_file = (work / "step_result.parquet").string();
+            Check(cyxwiz::ArrowDataset(table, "step_result").ExportParquet(result_file), "a step's result file");
+            auto disk = cyxwiz::ParquetBackedDataset::Open(result_file, "prepared_disk_result");
+            Check(disk != nullptr, "the result opens on disk");
+            registry.RegisterParquetBacked("prepared_disk_result", disk);
+            Check(cyxwiz::SavePreparedResult(config, disk_key, registry, "prepared_disk_result", &error),
+                  "a table on disk is kept: " + error);
+            registry.UnregisterTabularDataset("prepared_disk_result");
+            disk.reset();
+            std::error_code ignored;
+            std::filesystem::remove(result_file, ignored);
+            Check(cyxwiz::ProbePreparedData(config, disk_key), "the kept file is found");
+            Check(cyxwiz::LoadPreparedData(config, disk_key, registry, "prepared_disk_loaded", &error) ==
+                      "prepared_disk_loaded",
+                  "the kept file loads: " + error);
+            const auto reopened = registry.GetParquetBackedDataset("prepared_disk_loaded");
+            Check(reopened && !registry.GetArrowDataset("prepared_disk_loaded") &&
+                      reopened->GetNumRows() == table->num_rows(),
+                  "it is opened on disk (not read into memory) with every row");
+            registry.UnregisterTabularDataset("prepared_disk_loaded");
+        }
 
         // The source file changes: its size and time change the key.
         {

@@ -754,18 +754,13 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 if (prepared_dataset == canvas_dataset) {
                     spdlog::info("StartTrainingFromGraph: training reads '{}', prepared by the canvas run; "
                                  "the data steps do not run again", canvas_dataset);
-                    // Kept for the next session, once per prepared table.
-                    const auto dataset = registry.GetArrowDataset(canvas_dataset);
-                    const auto sparse = registry.GetSparseFeatureDataset(canvas_dataset);
-                    if (prepared_key.cacheable && (dataset || sparse) &&
-                        !cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
+                    // Kept for the next session, once per prepared table (in
+                    // memory, sparse or on disk).
+                    if (prepared_key.cacheable && !cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
                         task.ReportProgress(0.5f, "Keeping the prepared data for the next session...");
                         std::string error;
-                        const bool kept = sparse ? cyxwiz::SavePreparedSparseData(cache_config, prepared_key, *sparse,
-                                                                                  &error)
-                                                 : cyxwiz::SavePreparedData(cache_config, prepared_key,
-                                                                            dataset->GetArrowTable(), canvas_dataset,
-                                                                            &error);
+                        const bool kept = cyxwiz::SavePreparedResult(cache_config, prepared_key, registry,
+                                                                     canvas_dataset, &error);
                         if (kept) {
                             spdlog::info("StartTrainingFromGraph: '{}' is kept on disk for the next session",
                                          canvas_dataset);

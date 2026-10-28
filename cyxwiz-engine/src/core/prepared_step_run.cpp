@@ -155,11 +155,7 @@ PreparedStepResult PrepareStepResult(const std::vector<gui::MLNode>& nodes,
 
     if (key.cacheable) {
         std::string error;
-        bool kept = false;
-        if (const auto sparse = registry.GetSparseFeatureDataset(out.dataset))
-            kept = SavePreparedSparseData(cache_config, key, *sparse, &error);
-        else if (const auto table = registry.GetArrowDataset(out.dataset))
-            kept = SavePreparedData(cache_config, key, table->GetArrowTable(), out.dataset, &error);
+        const bool kept = SavePreparedResult(cache_config, key, registry, out.dataset, &error);
         if (kept) spdlog::info("'{}' is kept on disk for the next session", out.dataset);
         else spdlog::debug("'{}' not kept on disk: {}", out.dataset, error);
     }

@@ -186,9 +186,24 @@ Data Split, renaming a step, moving nodes on the canvas, training settings
 (epochs, batch size, learning rate).
 
 Not kept at all (each Train prepares again, and the Console says why):
-paths with a SQL step (a query can read any file) or a step that keeps
-fitted values (Standard Scaler and the other scalers, with "'Standard
-Scaler' keeps fitted state").
+paths with a SQL step (a query can read any file) or a scaler set to **Save
+fitted state** (an entry would skip writing the file: "'Standard Scaler'
+keeps fitted state"). A scaler that fits (the default) is kept: the key holds
+every row it learns from. With **Use saved values** the values file is in the
+key, by content.
+
+A table kept on disk (a result larger than memory allows) is kept as its
+file: the entry links to it, or copies it on another drive, and a later
+session opens it on disk again instead of streaming the steps over the data.
+
+Example (`s0g4.cyxgraph`: Blobs train -> Standard Scaler -> Data Split with
+supplied Validation and Test inputs): the first Train logs
+"'ds_operator_StandardScaler_5' is kept on disk for the next session" (key
+12cbbcf99101b971). After reopening the Engine, Train logs "the prepared data is
+on disk from an earlier session", "training reads 'prepared_12cbbcf99101b971',
+prepared in an earlier session; the data steps do not run", and the batchers
+read the kept marks: "partition '__partition__'=0 selected 384 / 480 rows",
+then 48 and 48.
 
 Example (`s0f.cyxgraph`, 3,000 reviews, TF-IDF with sparse output): the
 first Train after the 2026-10-28 format change logs a new key ("prepared

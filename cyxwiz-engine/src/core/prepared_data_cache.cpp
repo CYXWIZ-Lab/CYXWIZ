@@ -264,6 +264,14 @@ std::filesystem::path SparseCacheArtifactPath(const MaterializationCacheConfig& 
     return MaterializationCacheEntryDirectory(config, cache_key) / "data.csr.arrow";
 }
 
+// A table on disk kept as its Parquet file, opened on disk again (0.5).
+constexpr const char* kOnDiskCacheArtifactFormat = "parquet-on-disk";
+
+std::filesystem::path OnDiskCacheArtifactPath(const MaterializationCacheConfig& config,
+                                              const std::string& cache_key) {
+    return MaterializationCacheEntryDirectory(config, cache_key) / "data.on_disk.parquet";
+}
+
 bool ProbePreparedData(const MaterializationCacheConfig& config,
                        const PreparedDataKey& key,
                        MaterializationCacheManifest* manifest) {
@@ -275,8 +283,10 @@ bool ProbePreparedData(const MaterializationCacheConfig& config,
         return false;
     const auto validation =
         ValidateMaterializationCacheManifest(read, key.key, key.source_schema_fingerprint);
-    const std::string format = key.sparse ? kSparseCacheArtifactFormat : config.artifact_format;
-    if (!validation.usable || validation.manifest.artifact_format != format) return false;
+    const std::string& format = validation.manifest.artifact_format;
+    const bool readable = key.sparse ? format == kSparseCacheArtifactFormat
+                                     : format == config.artifact_format || format == kOnDiskCacheArtifactFormat;
+    if (!validation.usable || !readable) return false;
     if (manifest) *manifest = validation.manifest;
     return true;
 }
@@ -304,6 +314,14 @@ std::optional<std::string> LoadPreparedData(const MaterializationCacheConfig& co
             if (error) *error = "the prepared sparse features could not be registered";
             return std::nullopt;
         }
+    } else if (manifest.artifact_format == kOnDiskCacheArtifactFormat) {
+        const auto disk = ParquetBackedDataset::Open(manifest.artifact_path, name);
+        if (!disk) {
+            if (error) *error = "the prepared data file could not be opened: " + manifest.artifact_path;
+            return std::nullopt;
+        }
+        registry.UnregisterTabularDataset(name);
+        registry.RegisterParquetBacked(name, disk);
     } else {
         const auto dataset = LoadPreparedArtifact(manifest, name);
         if (!dataset || !dataset->GetArrowTable()) {
@@ -376,6 +394,50 @@ bool SavePreparedData(const MaterializationCacheConfig& config,
     if (!ExportPreparedArtifact(table, name, config, key.key, artifact_path, error)) return false;
     return FinishPreparedEntry(config, key, name, artifact_path, config.artifact_format, table->num_rows(),
                                table->num_columns(), error);
+}
+
+bool SavePreparedFile(const MaterializationCacheConfig& config,
+                      const PreparedDataKey& key,
+                      const ParquetBackedDataset& dataset,
+                      const std::string& name,
+                      std::string* error) {
+    if (!CanSave(config, key, error)) return false;
+    const auto artifact_path = OnDiskCacheArtifactPath(config, key.key);
+    std::error_code ec;
+    std::filesystem::create_directories(artifact_path.parent_path(), ec);
+    const auto temp_path = artifact_path.string() + ".tmp";
+    std::filesystem::remove(temp_path, ec);
+    // The step's result file is in the project's cache too: a link costs
+    // nothing and outlives the result file.
+    ec.clear();
+    std::filesystem::create_hard_link(dataset.GetFilePath(), temp_path, ec);
+    if (ec) {
+        ec.clear();
+        std::filesystem::copy_file(dataset.GetFilePath(), temp_path, ec);
+    }
+    if (ec) {
+        if (error) *error = "could not keep '" + dataset.GetFilePath() + "': " + ec.message();
+        std::filesystem::remove(temp_path, ec);
+        return false;
+    }
+    if (!ReplacePath(temp_path, artifact_path, error)) return false;
+    return FinishPreparedEntry(config, key, name, artifact_path, kOnDiskCacheArtifactFormat, dataset.GetNumRows(),
+                               dataset.GetSchema() ? dataset.GetSchema()->num_fields() : 0, error);
+}
+
+bool SavePreparedResult(const MaterializationCacheConfig& config,
+                        const PreparedDataKey& key,
+                        DataRegistry& registry,
+                        const std::string& name,
+                        std::string* error) {
+    if (const auto sparse = registry.GetSparseFeatureDataset(name))
+        return SavePreparedSparseData(config, key, *sparse, error);
+    if (const auto table = registry.GetArrowDataset(name))
+        return SavePreparedData(config, key, table->GetArrowTable(), name, error);
+    if (const auto disk = registry.GetParquetBackedDataset(name))
+        return SavePreparedFile(config, key, *disk, name, error);
+    if (error) *error = "'" + name + "' is not a table";
+    return false;
 }
 
 bool SavePreparedSparseData(const MaterializationCacheConfig& config,

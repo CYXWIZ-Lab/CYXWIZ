@@ -6317,6 +6317,26 @@ int main() {
                             gui::NodeType::ReLU, gui::NodeType::CrossEntropyLoss, gui::NodeType::Adam,
                             gui::NodeType::Output})
         Check(cyxwiz::IsTrainingOnlyNode(type), "a training node is left to training");
+    // A column transform's output is kept between runs unless it saves its
+    // fitted values; Use saved values puts the file in the key (TOFIX178 0.5).
+    {
+        auto& operators = cyxwiz::PipelineOperatorFactory::Instance();
+        std::string error;
+        auto fit = operators.Create(gui::NodeType::StandardScaler);
+        Check(fit && fit->Configure({{"columns", "a"}}, error) && fit->IsCacheable(),
+              "a scaler that fits is kept: " + error);
+        auto saving = operators.Create(gui::NodeType::StandardScaler);
+        Check(saving->Configure({{"columns", "a"}, {"save_state", "true"}, {"state_path", "s.cyxstate.json"}}, error) &&
+                  !saving->IsCacheable(),
+              "a scaler that saves its fitted values is not kept: " + error);
+        auto saved = operators.Create(gui::NodeType::StandardScaler);
+        std::vector<cyxwiz::PipelineOperatorCacheDependency> dependencies;
+        Check(saved->Configure({{"columns", "a"}, {"operation_mode", "transform_only"},
+                                {"state_path", "s.cyxstate.json"}}, error) &&
+                  saved->IsCacheable() && saved->CollectCacheDependencies(dependencies, error) &&
+                  dependencies.size() == 1 && dependencies[0].path == "s.cyxstate.json",
+              "Use saved values is kept with the values file in the key: " + error);
+    }
     // The compiler's every-row answer is the operators' own (TOFIX178 S0-g5).
     for (const auto type : cyxwiz::PipelineOperatorFactory::Instance().GetSupportedTypes()) {
         const auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
