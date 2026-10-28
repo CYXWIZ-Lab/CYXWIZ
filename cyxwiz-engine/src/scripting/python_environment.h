@@ -55,4 +55,9 @@ std::string InPlaceSwitchBlocker(const PythonEnvironment& from, const PythonEnvi
 std::vector<std::string> SwitchEnvironmentInPlace(const PythonEnvironment& from, const PythonEnvironment& to,
                                                   const std::string& old_scripts, const std::string& new_scripts);
 
+// Takes folders off sys.path and forgets the modules imported from them
+// (a closed project's root and scripts folder); a compiled module stays
+// loaded. Needs the GIL.
+void ForgetPythonFolders(const std::vector<std::string>& folders);
+
 } // namespace scripting

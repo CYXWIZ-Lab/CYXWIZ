@@ -270,6 +270,7 @@ private:
     mutable std::mutex init_error_mutex_;
     std::string last_init_error_;
     std::string deferred_logged_for_;  // project whose pending setup was logged once
+    std::string run_project_root_;  // project root the last script run put on sys.path
     std::string cached_python_version_;
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends

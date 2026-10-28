@@ -287,6 +287,17 @@ def switch(old_dirs, new_prefix, new_site, old_scripts, new_scripts):
     sys.path_importer_cache.clear()
     importlib.invalidate_caches()
     return []
+
+def forget(dirs):
+    roots = [r for r in (_norm(d) for d in dirs if d) if r]
+    for name, module in list(sys.modules.items()):
+        file = getattr(module, "__file__", None) or ""
+        places = [file] + list(getattr(module, "__path__", None) or [])
+        if any(_under(p, roots) for p in places) and not file.lower().endswith((".pyd", ".so")):
+            del sys.modules[name]
+    sys.path[:] = [p for p in sys.path if not _under(p, roots)]
+    sys.path_importer_cache.clear()
+    importlib.invalidate_caches()
 )PY";
 
 } // namespace
@@ -308,6 +319,12 @@ std::vector<std::string> SwitchEnvironmentInPlace(const PythonEnvironment& from,
     py::object result = scope["switch"](old_dirs, new_prefix.string(), to.site_packages.string(), old_scripts,
                                         new_scripts);
     return result.cast<std::vector<std::string>>();
+}
+
+void ForgetPythonFolders(const std::vector<std::string>& folders) {
+    py::dict scope;
+    py::exec(kSwitchCode, scope);
+    scope["forget"](folders);
 }
 
 #endif // CYXWIZ_HAS_PYTHON

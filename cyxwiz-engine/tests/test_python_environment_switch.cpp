@@ -148,6 +148,14 @@ int main() {
     Check(py::module_::import("json").attr("dumps")(1).cast<std::string>() == "1",
           "the standard library still imports");
 
+    std::cout << "a closed project's folder leaves sys.path\n";
+    WriteFile(scratch / "old_project" / "utilmod.py", "VALUE = 'old project'\n");
+    py::module_::import("sys").attr("path").attr("insert")(0, (scratch / "old_project").string());
+    Check(ImportValue("utilmod") == "old project", "the project's module loads");
+    scripting::ForgetPythonFolders({(scratch / "old_project").string()});
+    Check(!Loaded("utilmod") && !OnSysPath(scratch / "old_project"),
+          "its folder leaves sys.path and its modules are forgotten");
+
     std::cout << "a compiled module of the running environment stops the move\n";
     {
         py::module_ types = py::module_::import("types");

@@ -1,4 +1,5 @@
 #include "scripting_engine.h"
+#include "python_environment.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../data/data_table.h"
@@ -1655,7 +1656,19 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
             project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
             // Normalize path separators for Python (use forward slashes)
             std::replace(project_root.begin(), project_root.end(), '\\', '/');
-
+        }
+        // Another project since the last run: its folders leave sys.path and
+        // its modules are forgotten, so `import utils` finds this project's.
+        if (!run_project_root_.empty() && run_project_root_ != project_root) {
+            try {
+                ForgetPythonFolders({run_project_root_});  // its scripts folder is inside it
+                spdlog::info("Python forgot the previous project's folders: {}", run_project_root_);
+            } catch (const py::error_already_set& e) {
+                spdlog::warn("Could not take the previous project's folders off sys.path: {}", e.what());
+            }
+        }
+        run_project_root_ = project_root;
+        if (!project_root.empty()) {
             try {
                 // Change Python's working directory
                 os.attr("chdir")(project_root);
@@ -1897,10 +1910,26 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
         try {
             // Execute the user script
             if (callbacks.notebook_namespace.empty()) {
-                if (debugger)
-                    debugger.attr("run_script")(script, debug_run_file, py::module_::import("__main__").attr("__dict__"));
+                // A saved script runs as its file: __file__ and tracebacks
+                // name it, and pycyxwiz.nodes.bundle() finds its classes.
+                // Text that is not a file leaves no stale __file__ behind.
+                py::object main_dict = py::module_::import("__main__").attr("__dict__");
+                std::error_code file_error;
+                const bool as_file = !callbacks.script_filename.empty() &&
+                                     std::filesystem::is_regular_file(callbacks.script_filename, file_error);
+                if (as_file)
+                    main_dict["__file__"] = callbacks.script_filename;
                 else
+                    main_dict.attr("pop")("__file__", py::none());
+                if (debugger) {
+                    debugger.attr("run_script")(script, debug_run_file, main_dict);
+                } else if (as_file) {
+                    py::module_ builtins = py::module_::import("builtins");
+                    builtins.attr("exec")(builtins.attr("compile")(script, callbacks.script_filename, "exec"),
+                                          main_dict);
+                } else {
                     py::exec(script);
+                }
                 result.success = true;
             } else {
                 const std::string filename = cell_file;
