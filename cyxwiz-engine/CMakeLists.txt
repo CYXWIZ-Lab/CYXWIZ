@@ -348,7 +348,6 @@ set(ENGINE_SOURCES
     src/preprocessing/statistics_calculator.cpp
     src/preprocessing/normalization_transform.cpp
     src/preprocessing/scaling_transform.cpp
-    src/preprocessing/image_transform.cpp
     # OpenCV Transforms (Phase 1)
     src/preprocessing/morphology_transform.cpp
     src/preprocessing/blur_transform.cpp
@@ -1062,7 +1061,6 @@ set(ENGINE_HEADERS
     src/preprocessing/statistics_calculator.h
     src/preprocessing/normalization_transform.h
     src/preprocessing/scaling_transform.h
-    src/preprocessing/image_transform.h
     # OpenCV Transforms (Phase 1)
     src/preprocessing/morphology_transform.h
     src/preprocessing/blur_transform.h
@@ -5496,12 +5494,6 @@ add_executable(test_modality_batcher_drop_last
     src/core/datasets/image_csv_dataset.cpp
     src/core/formats/audio_dataset.cpp
     src/core/image_utils.cpp
-    src/preprocessing/image_transform.cpp
-    src/preprocessing/morphology_transform.cpp
-    src/preprocessing/blur_transform.cpp
-    src/preprocessing/perspective_transform.cpp
-    src/preprocessing/pyramid_transform.cpp
-    src/utils/image_enhancer.cpp
 )
 target_link_libraries(test_modality_batcher_drop_last PRIVATE cyxwiz-training-core)
 
@@ -6964,13 +6956,7 @@ add_executable(test_cnn_image_training_smoke
     src/core/image_quality_analysis.cpp
     src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
-    src/preprocessing/image_transform.cpp
     src/core/image_utils.cpp
-    src/preprocessing/blur_transform.cpp
-    src/preprocessing/morphology_transform.cpp
-    src/preprocessing/perspective_transform.cpp
-    src/preprocessing/pyramid_transform.cpp
-    src/utils/image_enhancer.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp

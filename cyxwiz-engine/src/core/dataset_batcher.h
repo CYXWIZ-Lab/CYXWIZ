@@ -388,7 +388,6 @@ private:
     std::unique_ptr<struct PreprocessingConfig> preprocessing_config_;
     std::vector<std::unique_ptr<class NormalizationTransform>> normalization_transforms_;
     std::vector<std::unique_ptr<class ScalingTransform>> scaling_transforms_;
-    std::vector<std::unique_ptr<class ImageTransform>> image_transforms_;
     bool preprocessing_enabled_ = false;
 
     // Augmentation pipeline (applied BEFORE preprocessing, only on training split)
