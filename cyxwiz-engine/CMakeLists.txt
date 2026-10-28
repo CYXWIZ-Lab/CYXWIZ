@@ -7501,15 +7501,19 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
     add_executable(test_python_node_training
         tests/test_python_node_training.cpp
         src/extension/python/python_node_factory.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/engine_plugin_context.cpp
+        src/plugin/plugin_loader.cpp
     )
-    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core pybind11::embed)
+    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui
+                          pybind11::embed)
     target_compile_definitions(test_python_node_training PRIVATE
         CYXWIZ_HAS_PYTHON
         CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
         CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
         CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_node_training>"
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
-    add_dependencies(test_python_node_training pycyxwiz)
+    add_dependencies(test_python_node_training pycyxwiz activation_nodes)
     add_test(NAME python_node_training COMMAND test_python_node_training)
 
     # The SDK's Python example layers trained from a Data Input (TOFIX125).
