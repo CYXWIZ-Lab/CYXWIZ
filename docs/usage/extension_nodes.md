@@ -6,6 +6,8 @@ node editor, connected like a built-in layer, saved in `.cyxgraph` files and
 trained. This page is how to use them in the Engine; how to write one is in
 [docs/extending](../extending/README.md).
 
+> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+
 ## Try the examples first
 
 Every installation carries ten built-in layers and four losses rewritten
@@ -43,33 +45,50 @@ Engine finds bundles, without starting Python, in:
 
 | Folder | Scope |
 |---|---|
-| `<project>/nodes/` | This project; wins over a bundle with the same id elsewhere |
+| `<project>/nodes/` | This project |
 | `%APPDATA%\cyxwiz\nodes\` (`~/.cyxwiz/nodes/` elsewhere) | Every project of this user |
 | `nodes/` inside a loaded plugin's folder | Delivered with that plugin |
 
-New, edited and removed bundles are noticed within two seconds.
+The Engine looks every 2 seconds: new, edited and removed bundles show
+within 2 seconds, without a restart.
 
 - **Approval.** A bundle's code runs only after you approve that exact code.
-  Until then its nodes can be placed and saved, and training says the code
-  is not approved yet. Approve from the Plugin Manager card or from the
-  node's Properties (Gradient check card). Editing `node.py` needs a new
-  approval; **Actions > Revoke approval** takes one back.
-- **Make one from a script.** In the Script Editor, open a project `.py`
+  Until then its nodes can be placed and saved, and training says "the code
+  of Python node bundle ... is not approved yet". Approve from the Plugin
+  Manager card or from the node's Properties (Gradient check card). An
+  approval belongs to the bundle's id and code hash, not to its folder:
+  changed code needs a new approval, and a copy of approved code elsewhere
+  is approved too. **Actions > Revoke approval** takes one back.
+- **Make one from a script.** In the Script Editor, open a saved `.py`
   file that defines nodes with `@nodes.activation`, `@nodes.node` or
   `@nodes.loss`, then
   **Run > Create node from script...**: check gradients, name the bundle,
-  **Create nodes**. It is written to `<project>/nodes/` and approved for you.
+  **Create nodes**. It is written to `<project>/nodes/` and approved for you,
+  each time you create it.
 - **Change a node.** A node is ordinary Python: open its code with **View
   code** (Plugin Manager card). To change it, edit the `.py` file you wrote
   it in (for the examples, `builtin_layers.py`) and make the bundle again
   (**Create node from script**, or `nodes.bundle(...)`): `node.json` and
   `node.py` are written together and the new code needs approval once.
-  Editing `node.py` inside the bundle by hand is refused with "node.py
-  changed since the bundle was written": the bundle's record no longer
-  matches its code.
-- **Python** starts by itself when the first approved Python node is built.
-  An error in a node's code stops training with the node's name and the
-  traceback.
+  Raise the node's version when you change its settings, pins or code.
+- **A bundle that cannot be read** is listed in the Plugin Manager with the
+  reason, and graphs show its nodes as **Not installed**. Editing `node.py`
+  inside the bundle by hand does this: "node.py changed since the bundle was
+  written", because the bundle's record no longer matches its code.
+- **One id, one bundle.** Two bundles with the same id do not both load; the
+  second says "another bundle with the id ... is already loaded". The
+  project's `nodes` folder wins over your user folder, which wins over a
+  plugin's. An id that a loaded C++ plugin uses is refused: "the id ... is
+  already used by a loaded plugin".
+- **Python** starts by itself when an open graph uses an approved Python
+  node, or when the first one is built; it needs an open project. Until it
+  runs, compiling says "Python is starting for the Python nodes (it needs an
+  open project); try again in a moment". A CyxWiz built without Python says
+  "Python is not available in this build of CyxWiz".
+- **Errors.** An error in a node's code stops training: the training status
+  says *Training failed:* with the node's name and the Python traceback, and
+  the Console (Logs) has the full text. How to find the cause:
+  [python-nodes.md](../extending/python-nodes.md) section 10.
 
 ## C++ plugins
 

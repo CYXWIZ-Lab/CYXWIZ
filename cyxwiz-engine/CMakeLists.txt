@@ -1320,6 +1320,17 @@ if(TARGET pycyxwiz)
         $<TARGET_FILE_DIR:cyxwiz-engine>/${_cyxwiz_pycyxwiz_name}
         COMMENT "Copying pycyxwiz Python module..."
     )
+    # The extension docs against the code (TOFIX125): the generated reference
+    # pages match pycyxwiz and the SDK headers, and the guides' samples run,
+    # their excerpts match, their version line is current and links resolve.
+    if(Python3_EXECUTABLE)
+        add_test(NAME extension_docs_reference
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/generate_extension_reference.py"
+                    $<TARGET_FILE_DIR:pycyxwiz> $<TARGET_FILE_DIR:cyxwiz-engine> --check)
+        add_test(NAME extension_docs_samples
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/check_extension_docs.py"
+                    $<TARGET_FILE_DIR:pycyxwiz> $<TARGET_FILE_DIR:cyxwiz-engine>)
+    endif()
 endif()
 
 # Release installs bundle Python 3.12 under <engine dir>/python and the Engine

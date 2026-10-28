@@ -36,7 +36,12 @@ _TYPES = {float: "float", int: "int", bool: "bool", str: "string"}
 
 
 class Param:
-    """A node setting: Param(float, default=1.0, min=0.01, description="...")."""
+    """A node setting: Param(float, default=1.0, min=0.01, description="...").
+
+    type is float, int, bool or str. Without a default the setting starts at
+    0, 0, False, "" or the first of its choices; the default itself must meet
+    min, max and choices. Read the value in the module as self.<name>.
+    """
 
     def __init__(self, type=float, default=None, min=None, max=None, choices=None, description=""):
         if type not in _TYPES:
@@ -89,6 +94,7 @@ class Param:
         return result
 
     def check(self, value, label):
+        """Raise ValueError (naming it as label) when value breaks min, max or choices."""
         if self.min is not None and value < self.min:
             raise ValueError("%s must be at least %s" % (label, self.min))
         if self.max is not None and value > self.max:
@@ -105,6 +111,7 @@ class Param:
         return "%s-%s" % ("" if self.min is None else self.min, "" if self.max is None else self.max)
 
     def describe(self):
+        """The setting's entry in node.json: name, type, default, validation, description, choices."""
         return {"name": self.name, "type": _TYPES[self.type], "default": _text(self.default),
                 "validation": self.validation(), "description": self.description,
                 "choices": [_text(c) for c in self.choices] if self.choices is not None else []}
@@ -213,10 +220,12 @@ def loss(id, name, version, target="categorical", category="Loss", description="
 
 
 def is_node(cls):
+    """True for a class marked with @nodes.node, @nodes.activation or @nodes.loss."""
     return isinstance(getattr(cls, "__cyxwiz_node__", None), dict)
 
 
 def is_loss(cls):
+    """True for a class marked with @nodes.loss."""
     return is_node(cls) and cls.__cyxwiz_node__["role"] == "loss"
 
 
