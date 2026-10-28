@@ -8,6 +8,8 @@
 #include "../src/core/graph_training_job.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/plugin_version_constraint.h"
+#include "../src/plugin/registries/plugin_panel_registry.h"
+#include "../src/plugin/registries/plugin_training_hook_manager.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -325,6 +327,76 @@ int main() {
               "it starts when its dependency does");
         manager.UnloadPlugin(dependent_id);
         manager.UnloadPlugin(kPluginId);
+    }
+
+    std::cout << "a loaded plugin's build output is not locked; a rebuild loads as a new copy\n";
+    {
+        const fs::path rebuild = work / "rebuild";
+        fs::create_directories(rebuild);
+        fs::copy(plugin_dir / "bin", rebuild / "bin", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        nlohmann::json manifest;
+        std::ifstream(plugin_dir / "plugin.json") >> manifest;
+        const std::string rebuild_id = "com.cyxwiz.test.rebuild";
+        manifest["id"] = rebuild_id;
+        std::ofstream(rebuild / "plugin.json") << manifest.dump(2);
+
+        std::string error;
+        Check(manager.LoadPlugin(rebuild, &error) && manager.InitializePlugin(rebuild_id),
+              "the plugin loads" + (error.empty() ? "" : ": " + error));
+        const auto* first = manager.GetLoadedPlugin(rebuild_id);
+        const fs::path built = first ? first->dll_path : fs::path();
+        const fs::path first_copy = first ? first->loaded_from : fs::path();
+        Check(!first_copy.empty() && first_copy != built && fs::is_regular_file(first_copy),
+              "it runs from a private copy: " + first_copy.string());
+        bool writable = false;
+        {
+            // A rebuild: the linker rewrites the file. Trailing bytes keep
+            // the library loadable and change its content.
+            std::ofstream out(built, std::ios::binary | std::ios::app);
+            out << "rebuilt";
+            writable = static_cast<bool>(out);
+        }
+        Check(writable, "the build output can be rewritten while the plugin is loaded");
+
+        manager.UnloadPlugin(rebuild_id);
+        error.clear();
+        Check(manager.LoadPlugin(rebuild, &error) && manager.InitializePlugin(rebuild_id),
+              "the rebuilt plugin loads again" + (error.empty() ? "" : ": " + error));
+        const auto* second = manager.GetLoadedPlugin(rebuild_id);
+        const fs::path second_copy = second ? second->loaded_from : fs::path();
+        Check(!second_copy.empty() && second_copy.parent_path() != first_copy.parent_path(),
+              "the rebuild runs from a new copy: " + second_copy.string());
+        manager.UnloadPlugin(rebuild_id);
+    }
+
+    std::cout << "a provider offered twice registers once\n";
+    {
+        // A plugin may offer the same object through QueryInterface and a
+        // context Register* call: one registration, no duplicate warnings.
+        struct Hook final : cyxwiz::plugin::ITrainingHook {};
+        struct Panels final : cyxwiz::plugin::IPanelProvider {
+            std::vector<cyxwiz::plugin::PluginPanelInfo> GetPanels() override {
+                cyxwiz::plugin::PluginPanelInfo info;
+                info.panel_id = "com.cyxwiz.test.twice.panel";
+                info.title = "Twice";
+                return {info};
+            }
+            void RenderPanel(const std::string&, bool*) override {}
+        };
+        Hook hook;
+        Panels panels;
+        auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+        auto& panel_registry = cyxwiz::plugin::PluginPanelRegistry::Instance();
+        const size_t hooks_before = hooks.GetHookCount();
+        hooks.RegisterHook("com.cyxwiz.test.twice", &hook);
+        hooks.RegisterHook("com.cyxwiz.test.twice", &hook);
+        Check(hooks.GetHookCount() == hooks_before + 1, "a training hook offered twice is called once");
+        panel_registry.Register("com.cyxwiz.test.twice", &panels);
+        panel_registry.RegisterDirect("com.cyxwiz.test.twice", "com.cyxwiz.test.twice.panel", "Twice", "", false,
+                                      &panels);
+        Check(panel_registry.CountForPlugin("com.cyxwiz.test.twice") == 1, "a panel offered twice is listed once");
+        hooks.RemoveByPlugin("com.cyxwiz.test.twice");
+        panel_registry.RemoveByPlugin("com.cyxwiz.test.twice");
     }
 
     std::cout << "a folder that cannot load says why\n";

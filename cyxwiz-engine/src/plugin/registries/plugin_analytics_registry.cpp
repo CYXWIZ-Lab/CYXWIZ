@@ -15,13 +15,17 @@ void PluginAnalyticsRegistry::Register(const std::string& plugin_id, IAnalyticsP
     std::lock_guard lock(mutex_);
 
     for (auto& info : analytics) {
-        if (analytics_.count(info.analytics_id)) {
-            spdlog::warn("PluginAnalyticsRegistry: Duplicate analytics {}, skipping", info.analytics_id);
+        if (const auto it = analytics_.find(info.analytics_id); it != analytics_.end()) {
+            if (it->second.plugin_id != plugin_id || it->second.provider != provider)
+                spdlog::warn("PluginAnalyticsRegistry: Duplicate analytics {}, skipping", info.analytics_id);
             continue;
         }
         spdlog::info("PluginAnalyticsRegistry: Registered analytics '{}' ({})",
                      info.name, info.analytics_id);
-        analytics_[info.analytics_id] = AnalyticsEntry{plugin_id, std::move(info), provider};
+        // The key first: the right side (which moves info) is evaluated
+        // before the subscript (C++17), which would read an empty id.
+        const std::string analytics_id = info.analytics_id;
+        analytics_[analytics_id] = AnalyticsEntry{plugin_id, std::move(info), provider};
     }
 }
 

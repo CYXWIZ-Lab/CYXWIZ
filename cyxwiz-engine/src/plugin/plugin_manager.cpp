@@ -191,6 +191,10 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir, std::str
 }
 
 void PluginManager::LoadAllFromSearchPaths() {
+    // Library copies left by earlier sessions go before this one loads any.
+    static std::once_flag pruned;
+    std::call_once(pruned, [] { PluginLoader::PruneLibraryCache(); });
+
     auto plugin_dirs = DiscoverPlugins();
 
     for (const auto& dir : plugin_dirs) {
@@ -326,8 +330,21 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     {
         auto* instance = plugin->instance;
 
+        // What a plugin offers through QueryInterface needs the same
+        // permission as the context's Register* call for it; without it the
+        // offer is not registered and the reason is reported.
+        const auto permitted = [&](PluginPermission permission, const char* what) {
+            if (ctx->CheckPermission(permission, what)) return true;
+            plugin->skipped_nodes.push_back(std::string(what) + ": GetRequiredPermissions() does not include the " +
+                                            ctx->PermissionLabel(permission) + " permission");
+            return false;
+        };
+        plugin->skipped_nodes.clear();
+
         // Register panels (with crash isolation)
-        if (auto* p = static_cast<IPanelProvider*>(instance->QueryInterface("IPanelProvider"))) {
+        auto* panel_provider = static_cast<IPanelProvider*>(instance->QueryInterface("IPanelProvider"));
+        if (panel_provider && !permitted(PluginPermission::UIModify, "IPanelProvider")) panel_provider = nullptr;
+        if (auto* p = panel_provider) {
             auto reg_result = security::SafeExecute(plugin_id, "RegisterPanels", [&]() {
                 auto dll_panels = p->GetPanels();
                 for (const auto& pi : dll_panels) {
@@ -348,7 +365,9 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
 
         // Register nodes (with crash isolation)
-        if (auto* p = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"))) {
+        auto* node_provider = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"));
+        if (node_provider && !permitted(PluginPermission::UIModify, "INodeProvider")) node_provider = nullptr;
+        if (auto* p = node_provider) {
             struct EnumState {
                 std::string plugin_id;
                 INodeProvider* provider;
@@ -394,6 +413,13 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 registration.descriptor = DescribeSignalNode(s->plugin_id, s->current);
                 registration.descriptor.source_path = s->source_path;
                 registration.signal_provider = s->provider;
+                // Already registered by this plugin through RegisterNodeProvider.
+                const auto existing = ExtensionNodeRegistry::Instance().Find(MakeExtensionTypeId(
+                    registration.descriptor.provider_id, registration.descriptor.type_name));
+                if (existing && existing->provider_id == s->plugin_id) {
+                    s->count++;
+                    return;
+                }
                 std::string error;
                 if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
                     s->count++;
@@ -414,7 +440,9 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
 
         // Register trainable nodes (TOFIX125, API 1.1), with crash isolation
-        if (auto* p = static_cast<ITensorNodeProvider*>(instance->QueryInterface("ITensorNodeProvider"))) {
+        auto* tensor_provider = static_cast<ITensorNodeProvider*>(instance->QueryInterface("ITensorNodeProvider"));
+        if (tensor_provider && !permitted(PluginPermission::Training, "ITensorNodeProvider")) tensor_provider = nullptr;
+        if (auto* p = tensor_provider) {
             struct TensorEnumState {
                 std::string plugin_id;
                 std::string source_path;
@@ -495,12 +523,14 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 plugin->error_message = reg_result.error_message;
                 return false;
             }
-            plugin->skipped_nodes = std::move(tstate.skipped);
+            plugin->skipped_nodes.insert(plugin->skipped_nodes.end(), tstate.skipped.begin(), tstate.skipped.end());
             spdlog::info("PluginManager: Registered {} trainable nodes for '{}'", tstate.count, plugin_id);
         }
 
         // Register training hook (with crash isolation)
-        if (auto* p = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"))) {
+        auto* hook = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"));
+        if (hook && !permitted(PluginPermission::Training, "ITrainingHook")) hook = nullptr;
+        if (auto* p = hook) {
             auto reg_result = security::SafeExecute(plugin_id, "RegisterTrainingHook", [&]() {
                 PluginTrainingHookManager::Instance().RegisterHook(plugin_id, p);
             });
@@ -510,13 +540,15 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
 
         // Register data provider
-        if (auto* p = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"))) {
-            PluginDataLoaderRegistry::Instance().Register(plugin_id, p);
+        auto* data_provider = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"));
+        if (data_provider && permitted(PluginPermission::DataRegistry, "IDataProvider")) {
+            PluginDataLoaderRegistry::Instance().Register(plugin_id, data_provider);
         }
 
         // Register analytics provider
-        if (auto* p = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"))) {
-            PluginAnalyticsRegistry::Instance().Register(plugin_id, p);
+        auto* analytics = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"));
+        if (analytics && permitted(PluginPermission::DataRegistry, "IAnalyticsProvider")) {
+            PluginAnalyticsRegistry::Instance().Register(plugin_id, analytics);
         }
     }
 

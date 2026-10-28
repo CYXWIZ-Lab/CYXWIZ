@@ -15,6 +15,7 @@ namespace cyxwiz::plugin {
 struct LoadedPlugin {
     void* dll_handle = nullptr;             // HMODULE on Windows, void* on Unix
     std::filesystem::path dll_path;         // Full path to DLL
+    std::filesystem::path loaded_from;      // The private copy of dll_path that is loaded
     std::filesystem::path plugin_dir;       // Plugin directory (contains plugin.json)
     IPlugin* instance = nullptr;            // Plugin instance (owned via destroy_func)
     CreatePluginFunc create_func = nullptr;
@@ -50,6 +51,10 @@ public:
 
     // Unload a plugin (destroy instance, free DLL)
     static void Unload(LoadedPlugin& plugin);
+
+    // Removes the per-user copies of plugin libraries that no Engine has
+    // loaded (call once at start-up, before plugins load).
+    static void PruneLibraryCache();
 
     // Parse plugin.json from directory (public for pre-load duplicate checks)
     static bool ParseManifest(
