@@ -429,6 +429,34 @@ void StudioDebuggerPanel::RenderSessionStatusStrip() {
     if (!run_status_message_.empty()) {
         ImGui::TextColored(DebuggerMuted(), "%s", run_status_message_.c_str());
     }
+    // Back to the canvas, its compile report, and Train after a pass on the
+    // graph as it is.
+    if (canvas_links_.show_canvas) {
+        const auto [headline, passed] =
+            canvas_links_.local_debug ? canvas_links_.local_debug() : std::pair<std::string, bool>{};
+        // The debugger floats over the canvas: going back hides it (F6 or
+        // View > Studio Debugger bring it back with this run).
+        if (ui::SecondaryButton(ICON_FA_ARROW_LEFT " Canvas##StudioDebuggerCanvas")) {
+            canvas_links_.show_canvas();
+            visible_ = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the graph on the CyxWiz Studio canvas");
+        ImGui::SameLine();
+        if (canvas_links_.show_compile_report && ui::SecondaryButton("Compile report##StudioDebuggerReport"))
+            canvas_links_.show_compile_report();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compile the graph and open its report (F7)");
+        if (passed && canvas_links_.train && !run_in_progress_) {
+            ImGui::SameLine();
+            if (ui::PrimaryButton(ICON_FA_PLAY " Train##StudioDebuggerTrain", true, nullptr, ui::ButtonSize::Small))
+                canvas_links_.train();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Train (F5): Local Debug passed on the graph as it is");
+        }
+        if (!headline.empty()) {
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
+            ImGui::TextColored(passed ? DebuggerSuccess() : DebuggerMuted(), "Local Debug: %s", headline.c_str());
+        }
+    }
     if (rebuild_prepared_data_next_run_ && !run_in_progress_) {
         ImGui::TextColored(DebuggerWarning(), ICON_FA_ROTATE " The next run rebuilds the prepared data (no cache).");
     }

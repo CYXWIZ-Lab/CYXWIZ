@@ -16,25 +16,6 @@ The bar at the top of the CyxWiz Studio canvas, one row in groups.
     file changes only when you save.
 - **Save** is also on the bar.
 
-## A narrow canvas
-
-Nothing hides behind a "more" menu; the bar folds by width, in this order,
-and comes back as it widens: the labels go first (Code / Pipeline /
-Training, the mode's actions as icons, Compile as a check mark and Local
-Debug as "Debug" with short results such as "Changed"); then Edit and View
-become one-level menus (**Edit**, **View · 100%**); then the mode becomes a
-menu (**Pipeline**); last, Compile and Local Debug become coloured dots
-(their result on hover, their menu on click) and the graph shows its file
-name without the extension. The graph, Save, the Compile and Debug results,
-Train and a running pipeline's progress always stay.
-
-## The canvas footer
-
-Along the canvas bottom: the node and link counts, the selection ("2
-selected"), and what the canvas is doing: "Graph replacement locked:
-training is running" while a load or clear would be refused, else the mode
-("Data Pipeline mode · training nodes run in Train").
-
 A starter opened from the start page, a pattern template and an imported
 model open as *Untitled graph*: Save asks for a name, so the example files
 next to the Engine are never overwritten.
@@ -147,14 +128,25 @@ here instead, with the sim time, its speed or the RL episode and reward.
   File > New Project, Open Project, Open Recent and Close Project show
   *Cannot ... the project* with the reason. Stop the run, or wait for it,
   then try again.
-- Graphs with simulation or RL nodes add **Run Sim** / **Stop Sim** (with the
-  simulated time and speed), **Train RL** / **Stop RL** and **Export ONNX**.
 
 ## A narrow canvas
 
-When the canvas is too narrow for everything, the edit, code and view tools
-(then Local Debug and the simulation / RL tools) move into the **...** menu.
-The graph, Save, zoom, Compile and Train always stay on the bar.
+Nothing hides behind a "more" menu; the bar folds by width, in this order,
+and comes back as it widens: the labels go first (Code / Pipeline /
+Training, the mode's actions as icons, Compile as a check mark and Local
+Debug as "Debug" with short results such as "Changed"); then Edit and View
+become one-level menus (**Edit**, **View · 100%**); then the mode becomes a
+menu (**Pipeline**); last, Compile and Local Debug become coloured dots
+(their result on hover, their menu on click) and the graph shows its file
+name without the extension. The graph, Save, the Compile and Debug results,
+Train and a running pipeline's progress always stay.
+
+## The canvas footer
+
+Along the canvas bottom: the node and link counts, the selection ("2
+selected"), and what the canvas is doing: "Graph replacement locked:
+training is running" while a load or clear would be refused, else the mode
+("Data Pipeline mode · training nodes run in Train").
 
 ## The compile report
 
@@ -172,6 +164,11 @@ Compile (F7) shows what the graph compiles to, in a window titled
   Studio** for the note that suggests checking the data (Explore, Validate)
   before a long training. A finding's code shows only when it has its own
   (for example CW-C-0201, data not loaded).
+- **Local Debug**, above the buttons: the last Local Debug run on the graph
+  as it is ("Local Debug: Passed at 18:40; the graph changed since", "Local
+  Debug: Compile gate failed."), with **Open the Studio Debugger**; and
+  **Run Local Debug (F6)** next to Close / Train. Shown in the Compile and
+  the Cannot-start-training reports.
 - **Where each layer runs**: one sentence ("All 6 layers run on the GPU"),
   counts for GPU, CPU, mixed, at risk, unsupported and unknown, and a row per
   layer in plain words. Layers that need attention come first, with what to
@@ -194,3 +191,11 @@ Other failures without a panel of their own (Run Test refusals, loading a
 checkpoint, an empty report) show their own title, the message, **Copy** and
 **Close**.
 
+
+## The Studio Debugger and the canvas
+
+Under the debugger's status line: **Canvas** (back to the graph; the
+debugger hides, F6 or View > Studio Debugger brings it back with its run),
+**Compile report** (F7), and, once Local Debug passed on the graph as it is
+now, **Train** (F5), with the result: "Local Debug: Passed at 16:52, graph
+unchanged".

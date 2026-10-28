@@ -314,6 +314,7 @@ private:
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
     cyxwiz::compile_report::Report compile_report_;
+    cyxwiz::compile_report::Mode compile_report_mode_ = cyxwiz::compile_report::Mode::Compile;
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.

@@ -1071,6 +1071,22 @@ MainWindow::MainWindow()
                                  local_debug_graph_hash_);
                 }
             });
+        cyxwiz::StudioDebuggerPanel::CanvasLinks links;
+        links.show_canvas = [this]() {
+            if (node_editor_) node_editor_->Show();
+            ImGui::SetWindowFocus("CyxWiz Studio");
+        };
+        links.show_compile_report = [this]() { CompileGraphAndReport(); };
+        links.train = [this]() {
+            if (!node_editor_) return;
+            StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+            if (training_plot_panel_) training_plot_panel_->SetVisible(true);
+        };
+        links.local_debug = [this]() {
+            return std::make_pair(cyxwiz::studio_toolbar::LocalDebugChip(local_debug_).headline,
+                                  cyxwiz::studio_toolbar::LocalDebugCurrent(local_debug_));
+        };
+        studio_debugger_panel_->SetCanvasLinks(std::move(links));
         studio_debugger_panel_->SetGraphDomainCallback([this]() -> std::string {
             if (!node_editor_) {
                 return {};
