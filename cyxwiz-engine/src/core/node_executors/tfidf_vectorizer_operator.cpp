@@ -1,4 +1,5 @@
 #include "tfidf_vectorizer_operator.h"
+#include "../split_partitioning.h"
 #include "text_column_utils.h"
 #include "text_vectorizer_contract.h"
 
@@ -368,6 +369,12 @@ TFIDFVectorizerOperator::ApplyConfigured(
         return arrow::Status::Invalid(
             "TFIDFVectorizer: empty corpus");
     }
+    // The vocabulary and the IDF come from the Train rows when the pipeline
+    // run marked them (TOFIX178 S0-g3), like scikit-learn's fit on the
+    // training split; every row is transformed.
+    const std::vector<bool> fit_row = TrainRowMask(input);
+    const size_t fit_n = fit_row.empty()
+        ? n : static_cast<size_t>(std::count(fit_row.begin(), fit_row.end(), true));
     const uint64_t initial_memory_estimate =
         preflight_estimate.estimated_peak_bytes;
     report_progress(
@@ -407,7 +414,7 @@ TFIDFVectorizerOperator::ApplyConfigured(
                 counts[token]++;
             }
 
-            if (!state_options_.IsTransformOnly()) {
+            if (!state_options_.IsTransformOnly() && (fit_row.empty() || fit_row[row])) {
                 for (const auto& pair : counts) {
                     auto& stats = term_stats_by_name[pair.first];
                     stats.term = pair.first;
@@ -467,8 +474,8 @@ TFIDFVectorizerOperator::ApplyConfigured(
                     ? static_cast<double>(stats.doc_freq + 1)
                     : static_cast<double>(stats.doc_freq);
                 const double total = smooth_idf_
-                    ? static_cast<double>(n + 1)
-                    : static_cast<double>(n);
+                    ? static_cast<double>(fit_n + 1)
+                    : static_cast<double>(fit_n);
                 stats.idf = std::log(total / df) + 1.0;
             } else {
                 stats.idf = 1.0;
@@ -712,6 +719,7 @@ TFIDFVectorizerOperator::ApplyConfigured(
         ARROW_ASSIGN_OR_RAISE(
             output.dense_table,
             BuildDenseTextFeatureTable(feature_matrix, "tfidf_"));
+        ARROW_ASSIGN_OR_RAISE(output.dense_table, CarryPartition(input, output.dense_table));
     }
 
     if (!state_options_.IsTransformOnly() && state_options_.save_state) {
@@ -725,7 +733,7 @@ TFIDFVectorizerOperator::ApplyConfigured(
         std::string state_error;
         if (!SaveFittedTextVectorizerState(
                 state_options_.state_path, GetName(),
-                static_cast<int64_t>(n), schema_fingerprint,
+                static_cast<int64_t>(fit_n), schema_fingerprint,
                 fitted_configuration, state_features,
                 state_options_.state_overwrite, state_error)) {
             return arrow::Status::IOError(

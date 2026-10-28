@@ -6,6 +6,7 @@
 #include "parquet_backed_dataset.h"
 #include "pipeline_runtime_capabilities.h"
 #include "project_data_path.h"
+#include "training_input_preparation.h"
 #include "sparse_feature_dataset.h"
 #include "sparse_feature_dataset_cache.h"
 
@@ -196,6 +197,9 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
     // "executor:" keeps these entries apart from the materializer's.
     input.source_dataset_name = result.source_dataset_name;
     input.source_identity = "executor:" + result.source_dataset_name;
+    // The steps learn from the Train rows of the graph's split (TOFIX178 S0-g2).
+    if (const auto policy = TrainingSplitPolicyOf(nodes, links))
+        input.source_identity += "|split:" + TrainingSplitPolicyJson(*policy).dump();
     input.source_schema_fingerprint = result.source_schema_fingerprint;
     input.dependencies = result.dependencies;
     std::string source_path;

@@ -4677,6 +4677,8 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
                 {"start_pin_index", link.value("from_pin_index", 0)},
                 {"end_pin_index", link.value("to_pin_index", 0)}});
         }
+        if (const auto policy = cyxwiz::TrainingSplitPolicyOf(nodes_, links_))
+            pipeline_json["training_split"] = cyxwiz::TrainingSplitPolicyJson(*policy);
         return true;
     }
 

@@ -234,6 +234,9 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
 
     std::shared_ptr<arrow::Table> effective_table = table;
     std::string effective_partition = partition_column;
+    if (effective_partition.empty() && table && table->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0) {
+        effective_partition = kSplitPartitionColumn;  // marked by the pipeline run
+    }
     if (effective_partition.empty() && UsesSharedSplitRule(config)) {
         auto partitioned = AddSplitPartitionColumn(
             table,
@@ -391,10 +394,14 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                  config.is_time_series, num_workers, config.prefetch_factor,
                  config.dataloader_seed);
 
-    std::string partition_col = config.is_time_series
+    // A table the pipeline run marked (TOFIX178 S0-g2) keeps its partition:
+    // the steps learned from those Train rows.
+    const bool marked = dataset && dataset->GetArrowTable() &&
+        dataset->GetArrowTable()->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0;
+    std::string partition_col = config.is_time_series || marked
         ? kSplitPartitionColumn : "";
     auto effective_dataset = dataset;
-    if (UsesSharedSplitRule(config)) {
+    if (!marked && UsesSharedSplitRule(config)) {
         auto partitioned = AddSplitPartitionColumn(
             dataset ? dataset->GetArrowTable() : nullptr,
             SplitPartitionOptions{

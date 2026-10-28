@@ -16,6 +16,51 @@ namespace cyxwiz {
 
 using namespace training_input;
 
+std::optional<TrainingSplitPolicy> TrainingSplitPolicyOf(const std::vector<gui::MLNode>& nodes,
+                                                         const std::vector<gui::NodeLink>& links) {
+    const gui::MLNode* split = nullptr;
+    const gui::MLNode* loader = nullptr;
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::TimeSeriesWindow || node.type == gui::NodeType::TimeSeriesSplit) return std::nullopt;
+        if (node.type == gui::NodeType::DataSplit && !split) split = &node;
+        if (node.type == gui::NodeType::DataLoader && !loader) loader = &node;
+    }
+    if (!split) return std::nullopt;
+    // Supplied Validation / Test inputs (pins 1, 2) change the shares: not yet.
+    for (const auto& link : links)
+        if (link.to_node == split->id && PinIndex(split->inputs, link.to_pin) > 0) return std::nullopt;
+
+    const auto param = [](const gui::MLNode& node, const char* key) -> std::string {
+        const auto it = node.parameters.find(key);
+        return it == node.parameters.end() ? std::string() : it->second;
+    };
+    const auto number = [&param](const gui::MLNode& node, const char* key, float fallback) {
+        try {
+            const std::string value = param(node, key);
+            return value.empty() ? fallback : std::stof(value);
+        } catch (...) {
+            return fallback;
+        }
+    };
+    TrainingSplitPolicy policy;
+    policy.train = number(*split, "train_ratio", policy.train);
+    policy.val = number(*split, "val_ratio", policy.val);
+    policy.test = number(*split, "test_ratio", policy.test);
+    policy.seed = static_cast<uint32_t>(std::max(0.0f, number(*split, "seed", 42.0f)));
+    const std::string stratified = param(*split, "stratified");
+    policy.stratified = stratified == "true" || stratified == "1";
+    policy.shuffle = !loader || param(*loader, "shuffle").empty() || param(*loader, "shuffle") == "true";
+    policy.label_column = param(*split, "label_column");
+    if (policy.label_column.empty()) {
+        const int feeder = TrainingInputFeeder(nodes, links);
+        for (const int id : Upstream(links, feeder))
+            if (const gui::MLNode* node = FindNode(nodes, id); node && IsSource(*node))
+                policy.label_column = param(*node, "label_column");
+    }
+    if (!policy.stratified && !policy.shuffle) return std::nullopt;
+    return policy;
+}
+
 int TrainingInputFeeder(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links) {
     const auto entry_of = [&](gui::NodeType type) -> int {
         for (const auto& node : nodes) {

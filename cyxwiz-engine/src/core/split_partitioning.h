@@ -2,6 +2,7 @@
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
+#include <arrow/compute/api.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace cyxwiz {
@@ -249,6 +251,36 @@ inline std::vector<int8_t> AssignSplitPartitions(size_t rows, const std::vector<
     return partitions;
 }
 
+// Each row's class, numbered from 0 in order of first appearance: numbers
+// by value, text by string (a label not yet encoded, TOFIX178 S0-g2). The
+// same classes give the same ids whichever way the label is stored.
+inline arrow::Result<std::vector<uint32_t>> ClassIdsOfColumn(const std::shared_ptr<arrow::Table>& table,
+                                                            const std::string& label_column) {
+    if (label_column.empty()) return arrow::Status::Invalid("stratified split requires an explicit label column");
+    auto column = table->GetColumnByName(label_column);
+    if (!column) return arrow::Status::Invalid("stratified split label column '" + label_column + "' was not found");
+    std::vector<uint32_t> ids;
+    ids.reserve(static_cast<size_t>(table->num_rows()));
+    const auto type = column->type()->id();
+    if (type == arrow::Type::STRING || type == arrow::Type::LARGE_STRING) {
+        std::unordered_map<std::string, uint32_t> seen;
+        for (const auto& chunk : column->chunks()) {
+            for (int64_t i = 0; i < chunk->length(); ++i) {
+                if (chunk->IsNull(i)) return arrow::Status::Invalid("stratified split requires non-null labels");
+                const std::string value = type == arrow::Type::STRING
+                    ? std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(i)
+                    : std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetString(i);
+                ids.push_back(seen.emplace(value, static_cast<uint32_t>(seen.size())).first->second);
+            }
+        }
+        return ids;
+    }
+    ARROW_ASSIGN_OR_RAISE(auto labels, split_partition_detail::ReadLabels(table, label_column));
+    std::map<int64_t, uint32_t> seen;
+    for (const int64_t label : labels) ids.push_back(seen.emplace(label, static_cast<uint32_t>(seen.size())).first->second);
+    return ids;
+}
+
 inline arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
     const std::shared_ptr<arrow::Table>& table,
     const SplitPartitionOptions& options) {
@@ -261,19 +293,10 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
     const size_t total = static_cast<size_t>(table->num_rows());
     std::vector<uint32_t> class_of_row;
     if (options.stratified) {
-        ARROW_ASSIGN_OR_RAISE(
-            auto labels,
-            split_partition_detail::ReadLabels(table, options.label_column));
-        if (labels.size() != total) {
+        ARROW_ASSIGN_OR_RAISE(class_of_row, ClassIdsOfColumn(table, options.label_column));
+        if (class_of_row.size() != total) {
             return arrow::Status::Invalid(
                 "stratified split label count does not match row count");
-        }
-        std::map<int64_t, uint32_t> ids;
-        class_of_row.reserve(total);
-        for (const int64_t label : labels) {
-            const auto [it, added] = ids.emplace(label, static_cast<uint32_t>(ids.size()));
-            (void)added;
-            class_of_row.push_back(it->second);
         }
     }
     const auto partitions = AssignSplitPartitions(total, class_of_row, options.train_split, options.val_split,
@@ -283,6 +306,63 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
     spdlog::info("{}: {}split assigned {} train / {} val / {} test rows", options.log_context,
                  options.stratified ? "stratified " : "", counts[0], counts[1], counts[2]);
     return split_partition_detail::AppendPartitionColumn(table, partitions);
+}
+
+// The rows a step learns from (TOFIX178 S0-g3): the Train rows (partition
+// 0) of a table the pipeline run marked with "__partition__", like
+// scikit-learn's fit on the training split; the whole table when unmarked.
+// The step then transforms every row.
+inline arrow::Result<std::shared_ptr<arrow::Table>> TrainRowsOf(const std::shared_ptr<arrow::Table>& table) {
+    if (!table) return table;
+    const auto column = table->GetColumnByName(kSplitPartitionColumn);
+    if (!column) return table;
+    arrow::BooleanBuilder keep;
+    ARROW_RETURN_NOT_OK(keep.Reserve(table->num_rows()));
+    for (const auto& chunk : column->chunks()) {
+        if (chunk->type_id() != arrow::Type::INT8)
+            return arrow::Status::Invalid(std::string(kSplitPartitionColumn) + " must be int8");
+        const auto values = std::static_pointer_cast<arrow::Int8Array>(chunk);
+        for (int64_t i = 0; i < values->length(); ++i) keep.UnsafeAppend(!values->IsNull(i) && values->Value(i) == 0);
+    }
+    std::shared_ptr<arrow::Array> mask;
+    ARROW_RETURN_NOT_OK(keep.Finish(&mask));
+    ARROW_ASSIGN_OR_RAISE(auto filtered, arrow::compute::Filter(table, mask));
+    return filtered.table();
+}
+
+// `output` with `input`'s row partition, for a step that builds a new table
+// with one row per input row (vectorizers, the tokenizer): training then
+// reads the partition the step learned from.
+inline arrow::Result<std::shared_ptr<arrow::Table>> CarryPartition(const std::shared_ptr<arrow::Table>& input,
+                                                                   const std::shared_ptr<arrow::Table>& output) {
+    const auto column = input ? input->GetColumnByName(kSplitPartitionColumn) : nullptr;
+    if (!column || !output || output->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0) return output;
+    if (output->num_rows() != input->num_rows())
+        return arrow::Status::Invalid(std::string(kSplitPartitionColumn) + ": the output has another row count");
+    return output->AddColumn(output->num_columns(), arrow::field(kSplitPartitionColumn, arrow::int8()), column);
+}
+
+// Which rows are Train rows, for a step that reads its rows itself; empty
+// when the table is not marked (every row learns).
+inline std::vector<bool> TrainRowMask(const std::shared_ptr<arrow::Table>& table) {
+    std::vector<bool> mask;
+    const auto column = table ? table->GetColumnByName(kSplitPartitionColumn) : nullptr;
+    if (!column) return mask;
+    mask.reserve(static_cast<size_t>(table->num_rows()));
+    for (const auto& chunk : column->chunks()) {
+        if (chunk->type_id() != arrow::Type::INT8) return {};
+        const auto values = std::static_pointer_cast<arrow::Int8Array>(chunk);
+        for (int64_t i = 0; i < values->length(); ++i) mask.push_back(!values->IsNull(i) && values->Value(i) == 0);
+    }
+    return mask;
+}
+
+inline arrow::Result<std::shared_ptr<arrow::RecordBatch>> TrainRowsOf(const std::shared_ptr<arrow::RecordBatch>& batch) {
+    if (!batch || batch->schema()->GetFieldIndex(kSplitPartitionColumn) < 0) return batch;
+    ARROW_ASSIGN_OR_RAISE(auto table, arrow::Table::FromRecordBatches({batch}));
+    ARROW_ASSIGN_OR_RAISE(auto rows, TrainRowsOf(table));
+    ARROW_ASSIGN_OR_RAISE(auto combined, rows->CombineChunksToBatch());
+    return combined;
 }
 
 inline arrow::Result<std::vector<int64_t>> ReadNumericLabelColumn(

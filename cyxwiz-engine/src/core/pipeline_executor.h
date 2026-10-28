@@ -16,6 +16,7 @@
 
 #include "operator_figures.h"
 #include "process_memory_snapshot.h"
+#include "training_split_policy.h"
 #include "pipeline_node_run_facts.h"
 
 namespace gui {
@@ -297,6 +298,17 @@ private:
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
     std::function<ProcessMemorySnapshot()> process_memory_probe_;
+    // The training graph's split (TOFIX178 S0-g2, "training_split" in the
+    // JSON): a step reading a Data Input reads its rows with their partition
+    // ("__partition__") so the steps that learn fit on the Train rows only.
+    std::optional<TrainingSplitPolicy> split_policy_;
+    std::string split_policy_key_;            // in each step's change hash
+    std::set<int> source_node_ids_;           // the run's Data Inputs
+    std::mutex partitioned_mutex_;
+    std::map<std::string, std::string> partitioned_sources_;  // source + policy -> partitioned name
+    // `name` with its rows' partition when `input_node` is a Data Input and
+    // the graph has a split; `name` otherwise.
+    std::string PartitionedSource(int input_node, const std::string& name);
     std::string graph_path_;              // the graph file the run came from (lineage)
     // In-memory copies of disk inputs (AdmitInputTable), kept until the next run.
     std::vector<std::string> admitted_inputs_;

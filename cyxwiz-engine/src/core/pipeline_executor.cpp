@@ -12,6 +12,7 @@
 #include "error_codes.h"
 #include "data_registry.h"
 #include "sparse_feature_dataset.h"
+#include "split_partitioning.h"
 #include "test_evaluation_tables.h"
 #include "test_predictions_metrics.h"
 #include "data_budget.h"
@@ -3240,6 +3241,10 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         return false;
     }
 
+    source_node_ids_.clear();
+    for (const auto& node : nodes)
+        if (node.type == "DataInput" || node.type == "DatasetInput" || node.type == "FileInput") source_node_ids_.insert(node.id);
+
     if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
         ReportError(Error().empty()
                         ? "Failed to resolve preprocessing artifact paths"
@@ -3445,6 +3450,8 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
         std::map<int, std::vector<PendingInputLink>> pending_inputs;
 
         graph_path_ = j.value("graph", std::string());
+        split_policy_ = TrainingSplitPolicyFromJson(j);
+        split_policy_key_ = split_policy_ ? TrainingSplitPolicyJson(*split_policy_).dump() : std::string();
         for (const auto& node_json : j["nodes"]) {
             Node node;
             node.id = node_json["id"];
@@ -5011,7 +5018,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             ParameterOrDefault(node.parameters, "columns", ""));
         if (selected_columns.empty()) {
             for (const auto& field : input_table->schema()->fields()) {
-                if (field->name() != label_col) {
+                if (field->name() != label_col && field->name().rfind("__", 0) != 0) {
                     selected_columns.push_back(field->name());
                 }
             }
@@ -5147,6 +5154,9 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                                      quoted;
                 }
                 aggregate_sql += " FROM " + temp_table;
+                // Fitted on the Train rows when the run marked them (TOFIX178 S0-g3).
+                if (input_table->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0)
+                    aggregate_sql += " WHERE " + QuoteSqlIdentifier(kSplitPartitionColumn) + " = 0";
                 auto fitted_table = FetchStepSql({{temp_table, input_dataset_name}}, aggregate_sql,
                                                  "FillMissing: ");
                 if (!fitted_table || fitted_table->num_rows() != 1) {
@@ -5672,6 +5682,46 @@ const std::string* PipelineExecutor::ResultForOutput(const ExecutionContext& ctx
     return &result->second;
 }
 
+std::string PipelineExecutor::PartitionedSource(int input_node, const std::string& name) {
+    if (!split_policy_ || !source_node_ids_.count(input_node)) return name;
+    auto& registry = DataRegistry::Instance();
+    const auto dataset = registry.GetArrowDataset(name);
+    if (!dataset || !dataset->GetArrowTable()) {
+        // A table kept on disk is not partitioned yet: its steps fit on every row.
+        spdlog::warn("[Pipeline] '{}' is on disk: the steps after it learn from every row, not the Train rows only",
+                     name);
+        return name;
+    }
+    const std::string key = name + "|" + split_policy_key_;
+    std::lock_guard<std::mutex> lock(partitioned_mutex_);
+    if (const auto it = partitioned_sources_.find(key);
+        it != partitioned_sources_.end() && registry.GetArrowDataset(it->second))
+        return it->second;
+    const auto& policy = *split_policy_;
+    const bool stratify =
+        policy.stratified && dataset->GetArrowTable()->schema()->GetFieldIndex(policy.label_column) >= 0;
+    if (policy.stratified && !stratify)
+        spdlog::warn("[Pipeline] the label '{}' is not in '{}': its partition is not stratified", policy.label_column,
+                     name);
+    auto partitioned = AddSplitPartitionColumn(
+        dataset->GetArrowTable(),
+        SplitPartitionOptions{policy.label_column, policy.train, policy.val, policy.test, policy.shuffle, policy.seed,
+                              stratify, "[Pipeline] Train rows of '" + name + "'"});
+    if (!partitioned.ok()) {
+        spdlog::warn("[Pipeline] '{}' could not be partitioned ({}): its steps learn from every row", name,
+                     partitioned.status().ToString());
+        return name;
+    }
+    const std::string partitioned_name = name + "__split";
+    if (!registry.RegisterArrowTable(partitioned.ValueOrDie(), partitioned_name)) return name;
+    partitioned_sources_[key] = partitioned_name;
+    {
+        std::lock_guard<std::mutex> owned(owned_mutex_);
+        owned_names_[input_node].insert(partitioned_name);  // released with its Data Input
+    }
+    return partitioned_name;
+}
+
 std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionContext& ctx) {
     const auto input_dataset_names = GetInputDatasetNames(node, ctx, 1);
     if (input_dataset_names.empty()) {
@@ -5988,7 +6038,10 @@ bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator&
             if (cancel_requested_) return fail("cancelled");
             const auto batch = batch_at(index);
             if (!batch) return fail("could not read rows of '" + input_dataset + "'");
-            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+            // Learns from the Train rows only (TOFIX178 S0-g3); every row is transformed.
+            auto train_rows = TrainRowsOf(batch);
+            if (!train_rows.ok()) return fail(train_rows.status().ToString());
+            if (auto status = op.FitBatch(train_rows.ValueOrDie()); !status.ok()) return fail(status.ToString());
         }
         if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
     }
@@ -6114,7 +6167,8 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
             return {};
         }
         // Steps that read files (SQL, streaming operators) are not admitted.
-        const std::string admitted = StepReadsInputFiles(node) ? *name : AdmitInputTable(node, *name);
+        const std::string source = PartitionedSource(input_node_id, *name);
+        const std::string admitted = StepReadsInputFiles(node) ? source : AdmitInputTable(node, source);
         if (admitted.empty()) return {};
         dataset_names.push_back(admitted);
     }
@@ -6137,7 +6191,8 @@ std::string PipelineExecutor::GetInputDatasetForPin(
                         std::to_string(link.node_id));
             return {};
         }
-        return StepReadsInputFiles(node) ? *result : AdmitInputTable(node, *result);
+        const std::string source = PartitionedSource(link.node_id, *result);
+        return StepReadsInputFiles(node) ? source : AdmitInputTable(node, source);
     }
     ReportError(node.type + ": required Data input pin " +
                 std::to_string(target_pin_index) + " is not connected");
@@ -7359,6 +7414,9 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         hash ^= 0xffULL;
         hash *= prime;
     };
+    // A step after a Data Input reads its rows' partition: another split
+    // (seed, shares, label) is another input.
+    if (!node.inputs.empty() && !split_policy_key_.empty()) mix(split_policy_key_);
     mix(node.recipe);
     for (size_t i = 0; i < node.inputs.size(); ++i) {
         const auto pin = i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
@@ -7953,7 +8011,7 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
         return status.ok();
     };
     bool ok = write("[\n", error) &&
-              DataRegistry::Instance().VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+              DataRegistry::Instance().VisitExportedPieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
                   std::vector<std::string> names;
                   for (const auto& field : piece->schema()->fields()) names.push_back(QuoteJsonString(field->name()) + ": ");
                   std::string text;
@@ -8104,7 +8162,7 @@ bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& 
         for (int i = 0; i < input_table->num_columns(); ++i) {
             const auto field = input_table->schema()->field(i);
             const std::string quoted_column = QuoteSqlIdentifier(field->name());
-            if (field && IsNumericArrowType(field->type())) {
+            if (field && IsNumericArrowType(field->type()) && field->name().rfind("__", 0) != 0) {
                 std::string converted_expression;
                 std::string conversion_error;
                 if (!BuildUnitConverterExpression(
@@ -10751,7 +10809,10 @@ bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
         std::vector<std::string> value_columns;
         for (int i = 0; i < input_table->num_columns(); ++i) {
             const std::string field_name = input_table->schema()->field(i)->name();
-            if (id_column_names.find(field_name) == id_column_names.end()) {
+            if (field_name.rfind("__", 0) == 0) {
+                // The run's own columns (the rows' partition) stay with each row.
+                if (id_column_names.insert(field_name).second) id_columns.push_back(field_name);
+            } else if (id_column_names.find(field_name) == id_column_names.end()) {
                 value_columns.push_back(field_name);
             }
         }

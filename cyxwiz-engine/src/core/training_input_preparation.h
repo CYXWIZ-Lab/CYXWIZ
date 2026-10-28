@@ -9,11 +9,13 @@
 #include "graph_model.h"
 #include "materialization_cache.h"
 #include "materialization_memory_types.h"
+#include "training_split_policy.h"
 #include "node_executors/pipeline_operator.h"
 
 #include <nlohmann/json.hpp>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,6 +27,10 @@ class PipelineExecutor;
 // The node wired into the Data Split's Training Dataset input (the Data
 // Loader's input without a Split) from its main result (output 0); -1 if none.
 int TrainingInputFeeder(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links);
+
+// The graph's policy (see training_split_policy.h).
+std::optional<TrainingSplitPolicy> TrainingSplitPolicyOf(const std::vector<gui::MLNode>& nodes,
+                                                         const std::vector<gui::NodeLink>& links);
 
 // The graph as the PipelineExecutor reads it: nodes (type names, parameters)
 // and links with pin indices. Plot and Dashboard nodes are left out (they

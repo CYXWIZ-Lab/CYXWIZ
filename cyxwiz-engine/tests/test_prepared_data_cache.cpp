@@ -358,13 +358,15 @@ void TestKeyCoversTheSteps(cyxwiz::DataRegistry& registry) {
         return cyxwiz::ComputePreparedDataKey(g, graph_links, 2, registry, "").key;
     };
     const std::string with_model = key_of(graph);
-    Check(with_model == base.key, "the model and the Split after the feeder are not in the key");
+    // The steps learn from the Split's Train rows (TOFIX178 S0-g3): the
+    // Split's rows are in the key, the model is not.
+    Check(with_model != base.key, "the Split's Train rows are in the key");
     auto model_edit = graph;
     model_edit[3].parameters["units"] = "128";
     Check(key_of(model_edit) == with_model, "a model layer edit keeps the prepared data's key");
     auto split_edit = graph;
     split_edit[2].parameters["train_ratio"] = "0.7";
-    Check(key_of(split_edit) == with_model, "a Data Split edit keeps the prepared data's key");
+    Check(key_of(split_edit) != with_model, "another Train share changes the prepared data's key");
     auto renamed = graph;
     renamed[1].name = "Tokenizer renamed";
     Check(key_of(renamed) == with_model, "a renamed step keeps the key");

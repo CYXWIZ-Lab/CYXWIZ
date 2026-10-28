@@ -111,6 +111,26 @@ A Data Input kept on disk can feed training:
   list of rows kept. Oversample to 560 rows of a 240-row class serves each
   row twice and a different 80 of them a third time each epoch. Not with a
   time-series split (a warning says so).
+- **Steps learn from the Train rows.** In a training graph with a Data
+  Split, the pipeline run marks each Data Input row Train, Validation or
+  Test by the same rule (a hidden `__partition__` column), before the first
+  step. The steps that learn from the data learn from the Train rows only and
+  then change every row, like scikit-learn's `fit(X_train).transform(X)`:
+  the scalers and the Quantile / Power transforms, Fill Missing (mean,
+  median, most frequent), Target Encoder (the Validation and Test labels
+  never reach the encoding; a category with no Train row gets the Train
+  mean), TF-IDF and Count (a word seen only in Validation or Test rows is
+  not a feature; the IDF counts Train documents) and the Text Tokenizer's
+  vocabulary. Training then reads the same marks, so the rows a step learned
+  from are the rows the model trains on. The marks are not data: steps that
+  pick columns themselves skip them, Unpivot keeps them with each row, and
+  exports (Data Output, Save Dataset, CSV / Parquet / JSON) leave them out.
+  Not marked: a graph without a Data Split, a time series, a Split with
+  supplied Validation / Test inputs, a Split with neither Shuffle nor
+  Stratified (the rows keep their order), and a table kept on disk (a
+  warning says its steps learn from every row). Label and Ordinal Encoder
+  number the categories of every row (no label is learned). Changing the
+  Split's shares, seed, label or Stratified prepares the data again.
 - **Causal-LM token windows** (a `tokens` list column) on disk are read one
   row group at a time while training: memory holds one row group's windows.
   The row-group order is shuffled every epoch, and the windows within each

@@ -152,8 +152,10 @@ steps): after training on it, the Console says "'ds_filter_50' is kept on
 disk for the next session". In a later session, Train with nothing changed
 before the Data Split loads it and runs no data step: "training reads
 'prepared_4ba1042cc5fa4c2b', prepared in an earlier session; the data steps
-do not run". Editing a step before the Split, or the source file, makes a
-new entry; editing the model does not. Not kept: paths with a SQL step (a
+do not run". Editing a step before the Split, the Split's shares, seed,
+label or Stratified (the steps learn from its Train rows, see
+[big_data.md](big_data.md)), or the source file, makes a new entry; editing
+the model does not. Not kept: paths with a SQL step (a
 query can read any file) or a step that keeps fitted values (Standard
 Scaler and the other scalers).
 

@@ -7,6 +7,7 @@
 #include "data_budget.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
+#include "split_partitioning.h"
 #include <arrow/csv/writer.h>
 #include <arrow/io/buffered.h>
 #include <arrow/io/file.h>
@@ -2098,6 +2099,28 @@ bool DataRegistry::VisitTablePieces(const std::string& name,
     return true;
 }
 
+bool DataRegistry::VisitExportedPieces(const std::string& name,
+                                       const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
+                                       std::shared_ptr<arrow::Schema>* schema, std::string& error) {
+    const bool ok = VisitTablePieces(name, [&visit](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+        const int index = piece->schema()->GetFieldIndex(kSplitPartitionColumn);
+        if (index < 0) return visit(piece, why);
+        auto without = piece->RemoveColumn(index);
+        if (!without.ok()) {
+            why = without.status().ToString();
+            return false;
+        }
+        return visit(*without, why);
+    }, schema, error);
+    if (schema && *schema) {
+        const int index = (*schema)->GetFieldIndex(kSplitPartitionColumn);
+        if (index >= 0) {
+            if (auto without = (*schema)->RemoveField(index); without.ok()) *schema = *without;
+        }
+    }
+    return ok;
+}
+
 namespace {
 
 // An export's file, buffered and hashed as it is written.
@@ -2126,7 +2149,7 @@ bool DataRegistry::ExportTableCSV(const std::string& name, const std::string& ou
     ExportFile file = *opened;
     std::shared_ptr<arrow::ipc::RecordBatchWriter> writer;
     TabularExport facts;
-    const bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+    const bool ok = VisitExportedPieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
         if (!writer) {
             auto options = arrow::csv::WriteOptions::Defaults();
             options.delimiter = ',';
@@ -2186,7 +2209,7 @@ bool DataRegistry::ExportTableParquet(const std::string& name, const std::string
         writer = std::move(*made);
         return true;
     };
-    bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+    bool ok = VisitExportedPieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
         if (!writer && !open_writer(piece->schema(), why)) return false;
         if (auto status = writer->WriteTable(*piece, 1024 * 1024); !status.ok()) {
             why = status.ToString();

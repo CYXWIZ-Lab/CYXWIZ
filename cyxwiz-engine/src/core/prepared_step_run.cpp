@@ -58,6 +58,8 @@ bool PipelineJsonFromGraph(const std::vector<gui::MLNode>& nodes,
                                           {"start_pin_index", from_pin},
                                           {"end_pin_index", to_pin}});
     }
+    if (const auto policy = TrainingSplitPolicyOf(nodes, links))
+        pipeline_json["training_split"] = TrainingSplitPolicyJson(*policy);
     return true;
 }
 

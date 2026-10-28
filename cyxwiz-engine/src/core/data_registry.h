@@ -621,6 +621,11 @@ public:
     bool VisitTablePieces(const std::string& name,
                           const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
                           std::shared_ptr<arrow::Schema>* schema, std::string& error);
+    // VisitTablePieces for a file the user gets: without the pipeline run's
+    // own row partition ("__partition__", TOFIX178 S0-g2), which is not data.
+    bool VisitExportedPieces(const std::string& name,
+                             const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
+                             std::shared_ptr<arrow::Schema>* schema, std::string& error);
     // Writes the table under `name` (in memory or on disk) a piece at a time:
     // CSV with a header and commas; Parquet with Snappy and row groups of up
     // to 1,048,576 rows. `written` gets what was written.
