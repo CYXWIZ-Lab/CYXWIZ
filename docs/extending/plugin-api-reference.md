@@ -160,7 +160,7 @@ return, inside the crash guard. Unloading removes all of it.
 | `"ITensorNodeProvider"` | `ITensorNodeProvider` | Lists, compiles and trains your nodes (section 7) |
 | `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
-| `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's start and end, and asks `ShouldStopEarly` (section 8) |
+| `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the loaders; the Engine does not load datasets through them yet |
 | `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics; nothing in the Engine runs them yet |
 | `"IAssistantProvider"` | `IAssistantProvider` | Runs assistant commands (the CyxWiz assistant plugin) |
@@ -274,7 +274,7 @@ All members have empty defaults; override what you need. The
 | `OnTrainingStart`, `OnTrainingEnd` | Yes |
 | `OnEpochStart`, `OnEpochEnd` | Yes |
 | `bool ShouldStopEarly(const TrainingContext&)` | Yes, after each epoch; `true` stops training |
-| `OnBatchStart`, `OnBatchEnd` | Not called yet |
+| `OnBatchStart`, `OnBatchEnd` | Yes, around every training batch (not validation): `current_batch` counts 1 to `total_batches` in each epoch; `OnBatchEnd` has the batch's `train_loss` and the running `train_accuracy`. They run on the training thread for every batch, so keep them fast |
 
 ## 9. Other interfaces
 

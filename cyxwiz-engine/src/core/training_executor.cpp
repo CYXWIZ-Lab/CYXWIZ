@@ -1101,6 +1101,7 @@ void TrainingExecutor::Train(
     spdlog::debug("TrainingExecutor: Step 1 - Notifying plugin hooks");
     // Notify plugin hooks: training start
     {
+        hook_total_epochs_ = epochs;
         cyxwiz::plugin::TrainingContext ctx;
         ctx.total_epochs = epochs;
         ctx.learning_rate = optimizer_
@@ -2486,6 +2487,25 @@ TrainingMetrics TrainingExecutor::GetMetrics() const {
     return metrics_;
 }
 
+void TrainingExecutor::NotifyPluginBatch(bool start, int epoch, int batch, int total_batches,
+                                         float loss, float accuracy) {
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    if (hooks.GetHookCount() == 0) return;
+    cyxwiz::plugin::TrainingContext ctx;
+    ctx.current_epoch = epoch;
+    ctx.total_epochs = hook_total_epochs_;
+    ctx.current_batch = batch;
+    ctx.total_batches = total_batches;
+    ctx.train_loss = loss;
+    ctx.train_accuracy = accuracy;
+    ctx.learning_rate = optimizer_ ? static_cast<float>(optimizer_->GetLearningRate()) : config_.learning_rate;
+    if (start) {
+        hooks.NotifyBatchStart(ctx);
+    } else {
+        hooks.NotifyBatchEnd(ctx);
+    }
+}
+
 void TrainingExecutor::UpdateMetrics(const std::function<void(TrainingMetrics&)>& updater) {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     updater(metrics_);
@@ -2592,6 +2612,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
         ++batch_num;
         sample_count += batch.size;
+        NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::Forward, epoch, batch_num,
@@ -2729,6 +2750,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
                              ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm) : std::string());
         }
 
+        NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         if (batch_cb) {
             CrashRunRecorder::Instance().MarkStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
@@ -2968,6 +2990,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         batch_num++;
         fetch_total_ms += fetch_ms;
         fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
+        NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
 
         // Forward pass through model
         CrashRunRecorder::Instance().MarkStage(
@@ -3205,6 +3228,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
             }
         }
 
+        NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         // Batch callback
         if (batch_cb) {
             CrashRunRecorder::Instance().MarkStage(
