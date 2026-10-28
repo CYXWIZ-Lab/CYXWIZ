@@ -3944,20 +3944,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                     return false;
                 }
             }
-            if (source_roles.empty() ||
-                source_roles.find("unspecified") != source_roles.end()) {
-                spdlog::warn(
-                    "[Preprocessing] Node '{}' will Fit + Transform, but its "
-                    "upstream Dataset role is unspecified. Set the Data Input "
-                    "role to Train so leakage protection can verify intent.",
-                    node.name);
-            }
+            // Roles come from the graph's Data Split (the steps learn from
+            // its Train rows); a Data Input has no role of its own.
             if (!save_state) {
-                spdlog::warn(
-                    "[Preprocessing] Node '{}' will fit statistics without "
-                    "saving them. Validation/test data cannot reproduce this "
+                spdlog::debug(
+                    "[Preprocessing] Node '{}' does not save its fitted "
+                    "statistics: data outside this graph cannot reproduce the "
                     "transform until Save fitted state and a state path are "
-                    "configured.",
+                    "set.",
                     node.name);
             }
         } else {
