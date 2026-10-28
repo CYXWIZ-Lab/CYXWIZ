@@ -11,6 +11,8 @@
 #include "data_registry.h"
 #include "../preprocessing/preprocessing_config.h"
 
+#include <cyxwiz/image_augmentation.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -71,9 +73,10 @@ public:
     size_t Count() const { return labels_.size(); }
     size_t Height() const { return height_; }
     size_t Width() const { return width_; }
-    size_t Channels() const { return 3; }
-    size_t RowBytes() const { return height_ * width_ * 3; }
-    // Image i's pixels, [H, W, 3] row-major; valid while the set lives.
+    // 3 (RGB) as decoded; 1 after a Grayscale done at prepare time.
+    size_t Channels() const { return channels_; }
+    size_t RowBytes() const { return height_ * width_ * channels_; }
+    // Image i's pixels, [H, W, C] row-major; valid while the set lives.
     const uint8_t* Row(size_t i) const { return pixels_ + i * RowBytes(); }
     const std::vector<int>& Labels() const { return labels_; }
     const std::vector<std::string>& Files() const { return files_; }
@@ -94,6 +97,7 @@ private:
     std::string key_;
     size_t height_ = 0;
     size_t width_ = 0;
+    size_t channels_ = 3;
     std::vector<int> labels_;
     std::vector<std::string> files_;
     std::vector<std::string> class_names_;
@@ -123,6 +127,28 @@ struct PreparedImageResult {
 // opened. The cache folder keeps sets for 30 days and at most 10 GB.
 PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
                                     const PreparedImageSpec& spec,
+                                    int threads = 0,
+                                    const PreparedImageProgress& progress = {});
+
+// The run's image transforms split for the prepared set (TOFIX178 1.3c): the
+// leading ones that give every image the same result in every epoch and
+// split (Center Crop, Grayscale, Gaussian Blur, Morphology before the first
+// random transform) are done once on the set; the rest, the batch mix and
+// Normalize run on each batch as before.
+struct ImageTransformSplit {
+    std::vector<image::ImageOp> fixed;
+    image::ImageAugmentation per_batch;
+};
+ImageTransformSplit SplitFixedImageTransforms(const image::ImageAugmentation& compiled);
+
+// The set of `entry` at `spec` with `fixed` done once: the decoded set, then
+// the transforms on the ArrayFire device in chunks (the same code the batches
+// use), rounded to uint8 again (exact for crops and morphology; within half a
+// step for Grayscale and Gaussian Blur, as torchvision on uint8 images). Kept
+// in cache/images beside the decoded set; `fixed` empty: the decoded set.
+PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
+                                    const PreparedImageSpec& spec,
+                                    const std::vector<image::ImageOp>& fixed,
                                     int threads = 0,
                                     const PreparedImageProgress& progress = {});
 

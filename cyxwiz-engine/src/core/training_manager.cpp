@@ -729,9 +729,12 @@ bool TrainingManager::StartTrainingImage(
     auto stop_requested = std::make_shared<std::function<bool()>>();
     ExternalBatcherFactory factory = [image_entry, stop_requested](const TrainingConfiguration& run,
                                                                    int run_batch_size) {
+        // The leading transforms that are the same every epoch are done once
+        // with the images (1.3c); the rest run on each batch.
+        const auto transforms = SplitFixedImageTransforms(run.image_augmentation);
         size_t reported = 0;
         const auto prepared = PrepareImageSet(
-            image_entry, PreparedImageSpecFrom(run.image_preprocessing), 0,
+            image_entry, PreparedImageSpecFrom(run.image_preprocessing), transforms.fixed, 0,
             [&](size_t done, size_t total) {
                 if (done * 10 / total != reported * 10 / total || done == total) {
                     reported = done;
@@ -748,15 +751,15 @@ bool TrainingManager::StartTrainingImage(
             prepared.set, run_batch_size, run.train_ratio, run.shuffle,
             static_cast<uint32_t>(run.dataloader_seed));
         batcher->SetDropLast(run.drop_last);
-        batcher->SetImageTransforms(run.image_augmentation);
+        batcher->SetImageTransforms(transforms.per_batch);
         batcher->ExcludeFiles(run.image_excluded_files);
         if (batcher->GetNumSamples() == 0) throw std::runtime_error("the image dataset has no images to train on");
 
         // The compiler set input_shape [H, W, C] from the same Resize size and
         // transforms (ApplyImageInputShape), so the model and the batches agree.
-        spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms, seed={}",
-                     batcher->GetNumSamples(), run.input_size, run.image_augmentation.ops.size(),
-                     run.dataloader_seed);
+        spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms ({} done "
+                     "once), seed={}", batcher->GetNumSamples(), run.input_size, run.image_augmentation.ops.size(),
+                     transforms.fixed.size(), run.dataloader_seed);
         if (run.preprocessing.has_normalization) {
             batcher->SetNormalization(run.preprocessing.norm_mean, run.preprocessing.norm_std);
         }

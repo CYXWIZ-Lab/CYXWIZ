@@ -141,6 +141,17 @@ Resize modes:
 Grey, RGBA and 16-bit files become RGB. A file that cannot be read is left
 out of training and named in the Console.
 
+Transforms that give every image the same result in every epoch and split
+(**Center Crop**, **Grayscale**, **Image Gaussian Blur**, **Morphology
+Transform**), when they come before the first random transform, are done once
+too: right after decoding, on the GPU, with the same code the batches use, and
+kept as a second set beside the decoded one (`Prepared images: 2 fixed
+transforms done once on the device (72x72x3 -> 64x64x3)`). The rest run on each
+batch. The done-once pixels are 8-bit again: exact for crops and morphology,
+within half a step for Grayscale and blur, as torchvision gives on 8-bit
+images. Put random transforms after them to keep this: a Center Crop after a
+Random Flip runs on every batch.
+
 Each batch then takes its images from that file: when the whole set fits a
 quarter of the GPU's memory it is uploaded once and a batch is picked on the
 GPU (`ImageDatasetBatcher: 25000 images (293.8 MB) on the device for the

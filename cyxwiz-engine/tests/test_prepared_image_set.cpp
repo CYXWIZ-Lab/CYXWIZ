@@ -195,6 +195,84 @@ void CheckBatcher(const DataRegistry::ImageDatasetEntry& entry) {
     }
 }
 
+// Fixed transforms done once (1.3c): the leading ones that draw nothing,
+// applied on the device to the decoded set; each row within half a step of
+// the per-batch float path, on every backend; the batcher reads C = 1.
+void CheckFixedTransforms(const DataRegistry::ImageDatasetEntry& entry) {
+    using image::ImageOp;
+    using image::ImageOpKind;
+    ImageOp crop;
+    crop.kind = ImageOpKind::CenterCrop;
+    crop.height = 8;
+    crop.width = 12;
+    ImageOp grey;
+    grey.kind = ImageOpKind::Grayscale;
+    ImageOp erode;
+    erode.kind = ImageOpKind::Morphology;
+    erode.morphology = image::MorphologyOp::Erode;
+    erode.kernel_size = 3;
+    ImageOp blur;
+    blur.kind = ImageOpKind::GaussianBlur;
+    blur.kernel_size = 3;
+    blur.sigma = 0.8f;
+    ImageOp flip;
+    flip.kind = ImageOpKind::HorizontalFlip;
+
+    image::ImageAugmentation compiled;
+    compiled.ops = {crop, grey, erode, flip, blur};
+    compiled.normalize = true;
+    const auto split = SplitFixedImageTransforms(compiled);
+    Check(split.fixed.size() == 3 && split.per_batch.ops.size() == 2 && split.per_batch.normalize,
+          "fixed: the transforms before the first random one; the rest and Normalize per batch");
+
+    const PreparedImageSpec spec{24, 16, ResizeMode::Exact};
+    const std::vector<ImageOp> fixed = {crop, grey, erode, blur};
+    auto base = PrepareImageSet(entry, spec);
+    Check(base.set != nullptr, "the decoded set for the fixed transforms");
+    auto derived = PrepareImageSet(entry, spec, fixed);
+    Check(derived.set && !derived.from_cache, "the fixed transforms are done once: " + derived.error);
+    const auto& set = *derived.set;
+    Check(set.Count() == base.set->Count() && set.Height() == 8 && set.Width() == 12 && set.Channels() == 1,
+          "the done-once set is [N, 8, 12, 1]");
+    Check(set.Labels() == base.set->Labels() && set.Unreadable() == base.set->Unreadable(),
+          "labels and unreadable files carried over");
+
+    image::ImageAugmentation steps;
+    steps.ops = fixed;
+    const image::ImageShape input{16, 24, 3};
+    const int available = af::getAvailableBackends();
+    for (const af::Backend backend : {AF_BACKEND_CPU, AF_BACKEND_CUDA, AF_BACKEND_OPENCL}) {
+        if (!(available & backend)) continue;
+        af::setBackend(backend);
+        std::vector<float> rows(base.set->Count() * input.Size());
+        for (size_t k = 0; k < rows.size(); ++k) rows[k] = base.set->Row(0)[k] / 255.0f;
+        std::mt19937 rng(0);
+        const Tensor expected = steps.Apply(Tensor({base.set->Count(), input.Size()}, rows.data()), input, false, rng);
+        const float* values = expected.ReadData<float>();
+        double worst = 0.0;
+        for (size_t k = 0; k < set.Count() * set.RowBytes(); ++k)
+            worst = std::max(worst, std::abs(set.Row(0)[k] / 255.0 - std::clamp(values[k], 0.0f, 1.0f)));
+        Check(worst <= 0.5 / 255.0 + 1e-5, "within half a step of the per-batch path (worst " +
+                                               std::to_string(worst * 255.0) + " steps)");
+    }
+
+    // Opened from the cache without decoding again (the decoded set is gone).
+    const fs::path base_path = base.set->Path();
+    const fs::path derived_path = set.Path();
+    base = {};
+    derived = {};
+    std::error_code ec;
+    fs::remove(base_path, ec);
+    auto again = PrepareImageSet(entry, spec, fixed);
+    Check(again.set && again.from_cache && again.set->Path() == derived_path, "the done-once set is reused");
+    Check(!fs::exists(base_path), "reusing it does not decode the images again");
+
+    ImageDatasetBatcher batcher(again.set, 3, 1.0f, false, 1);
+    batcher.SetImageTransforms(split.per_batch);
+    const auto batch = batcher.GetNextBatch();
+    Check(batch.data.Shape() == std::vector<size_t>({batch.size, 8, 12, 1}), "the batcher reads one channel");
+}
+
 void CheckChangesAndStops(const fs::path& folder, const DataRegistry::ImageDatasetEntry& entry) {
     const PreparedImageSpec spec{8, 8, ResizeMode::Exact};
     const std::string before = PreparedImageSetKey(entry, spec);
@@ -284,6 +362,7 @@ int main() {
     CheckSet(csv, "labels CSV");
 
     CheckBatcher(folders);
+    CheckFixedTransforms(folders);
     CheckChangesAndStops(folder, folders);
 
     SetImageCacheProjectRoot("");

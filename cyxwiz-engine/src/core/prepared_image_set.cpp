@@ -15,11 +15,11 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
-#include <map>
 #include <mutex>
 #include <set>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -294,6 +294,7 @@ std::shared_ptr<const PreparedImageSet> PreparedImageSet::Open(const fs::path& p
         set->key_ = header.value("key", "");
         set->height_ = header.value("height", size_t{0});
         set->width_ = header.value("width", size_t{0});
+        set->channels_ = header.value("channels", size_t{3});
         set->labels_ = header.value("labels", std::vector<int>{});
         set->files_ = header.value("files", std::vector<std::string>{});
         set->class_names_ = header.value("class_names", std::vector<std::string>{});
@@ -329,41 +330,49 @@ fs::path PreparedImageSetPath(const std::string& key) {
     return ImageCacheDir("images") / (key + kExtension);
 }
 
-PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
-                                    const PreparedImageSpec& spec,
-                                    int threads,
-                                    const PreparedImageProgress& progress) {
-    PreparedImageResult result;
-    if (spec.width <= 0 || spec.height <= 0) {
-        result.error = "the image size must be positive";
-        return result;
-    }
-    const std::string key = PreparedImageSetKey(entry, spec);
-    const fs::path path = PreparedImageSetPath(key);
-    std::error_code ec;
-    if (fs::exists(path, ec)) {
-        std::string why;
-        if (auto set = PreparedImageSet::Open(path, &why); set && set->Key() == key) {
-            fs::last_write_time(path, fs::file_time_type::clock::now(), ec);  // recently used
-            result.set = std::move(set);
-            result.from_cache = true;
-            return result;
-        }
-        spdlog::warn("Prepared images: {}; decoding again", why.empty() ? "the set's key differs" : why);
-    }
+namespace {
 
-    const auto started = std::chrono::steady_clock::now();
-    const ImageSetListing listing = ListImageSet(entry);
-    const size_t count = listing.files.size();
-    if (count == 0) {
-        result.error = "the image Data Input has no images";
-        return result;
+// What a set file says about its images besides the pixels.
+struct SetHeader {
+    std::string key;
+    size_t height = 0, width = 0, channels = 3;
+    std::string mode;
+    std::vector<int> labels;
+    std::vector<std::string> files;
+    std::vector<std::string> class_names;
+    std::vector<std::string> unreadable;
+    json fixed = json::array();  // transforms done at prepare time
+};
+
+// Fills rows [begin, end) at `out`; false to give up with `error`.
+using ProduceRows = std::function<bool(size_t begin, size_t end, uint8_t* out, std::string& error)>;
+
+// The opened set at `path`, if it is there and has `key`; it counts as
+// recently used.
+std::shared_ptr<const PreparedImageSet> OpenCached(const fs::path& path, const std::string& key) {
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return nullptr;
+    std::string why;
+    auto set = PreparedImageSet::Open(path, &why);
+    if (set && set->Key() == key) {
+        fs::last_write_time(path, fs::file_time_type::clock::now(), ec);
+        return set;
     }
-    const size_t row_bytes = static_cast<size_t>(spec.width) * static_cast<size_t>(spec.height) * 3;
+    spdlog::warn("Prepared images: {}; preparing again", why.empty() ? "the set's key differs" : why);
+    return nullptr;
+}
+
+// Writes the set to a temp file beside `path` (rows by `produce` in chunks on
+// `workers` threads, then the header from `finish`), renames it and opens it.
+PreparedImageResult WriteImageSet(const fs::path& path, size_t count, size_t row_bytes, size_t chunk,
+                                  size_t workers, const ProduceRows& produce,
+                                  const std::function<SetHeader()>& finish, const PreparedImageProgress& progress) {
+    PreparedImageResult result;
+    const auto started = std::chrono::steady_clock::now();
+    std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
     const fs::path temp = path.string() + ".tmp." + std::to_string(
         std::chrono::steady_clock::now().time_since_epoch().count());
-
     std::fstream out(temp, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
     if (!out) {
         result.error = "cannot write " + temp.string();
@@ -375,39 +384,33 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     preamble.pixel_bytes = static_cast<uint64_t>(count) * row_bytes;
     out.write(reinterpret_cast<const char*>(&preamble), sizeof(preamble));  // complete only at the end
 
-    const size_t workers = std::max<size_t>(1, std::min<size_t>(
-        count / kChunk + 1, threads > 0 ? static_cast<size_t>(threads)
-                                        : std::max(1u, std::thread::hardware_concurrency())));
     std::atomic<size_t> next_chunk{0}, done{0};
     std::atomic<bool> stop{false}, write_failed{false};
-    std::mutex write_mutex, unreadable_mutex;
-    std::vector<std::pair<size_t, std::string>> unreadable;
+    std::mutex write_mutex;
+    std::string produce_error;
     const auto work = [&] {
-        std::vector<uint8_t> buffer(kChunk * row_bytes);
+        std::vector<uint8_t> buffer(chunk * row_bytes);
         while (!stop) {
-            const size_t begin = next_chunk.fetch_add(1) * kChunk;
+            const size_t begin = next_chunk.fetch_add(1) * chunk;
             if (begin >= count) return;
-            const size_t end = std::min(count, begin + kChunk);
-            for (size_t i = begin; i < end; ++i) {
-                uint8_t* row = buffer.data() + (i - begin) * row_bytes;
-                if (!DecodePreparedImage(listing.files[i], spec, row)) {
-                    std::memset(row, 0, row_bytes);
-                    std::lock_guard<std::mutex> lock(unreadable_mutex);
-                    unreadable.emplace_back(i, listing.files[i]);
-                }
-            }
-            {
+            const size_t end = std::min(count, begin + chunk);
+            std::string why;
+            if (!produce(begin, end, buffer.data(), why)) {
                 std::lock_guard<std::mutex> lock(write_mutex);
-                out.seekp(static_cast<std::streamoff>(kPixelOffset + begin * row_bytes));
-                out.write(reinterpret_cast<const char*>(buffer.data()),
-                          static_cast<std::streamsize>((end - begin) * row_bytes));
-                if (!out) {
-                    write_failed = true;
-                    stop = true;
-                }
-                const size_t now = done.fetch_add(end - begin) + (end - begin);
-                if (progress && !progress(now, count)) stop = true;
+                produce_error = why;
+                stop = true;
+                return;
             }
+            std::lock_guard<std::mutex> lock(write_mutex);
+            out.seekp(static_cast<std::streamoff>(kPixelOffset + begin * row_bytes));
+            out.write(reinterpret_cast<const char*>(buffer.data()),
+                      static_cast<std::streamsize>((end - begin) * row_bytes));
+            if (!out) {
+                write_failed = true;
+                stop = true;
+            }
+            const size_t now = done.fetch_add(end - begin) + (end - begin);
+            if (progress && !progress(now, count)) stop = true;
         }
     };
     std::vector<std::thread> pool;
@@ -422,23 +425,23 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
         return result;
     };
     if (write_failed) return give_up("cannot write " + temp.string() + " (disk full?)");
+    if (!produce_error.empty()) return give_up(produce_error);
     if (stop || done < count) return give_up("stopped");
 
-    std::sort(unreadable.begin(), unreadable.end());
+    const SetHeader meta = finish();
     json header;
     header["format"] = kFormat;
-    header["key"] = key;
+    header["key"] = meta.key;
     header["count"] = count;
-    header["height"] = spec.height;
-    header["width"] = spec.width;
-    header["channels"] = 3;
-    header["mode"] = ModeName(spec.mode);
-    header["labels"] = listing.labels;
-    header["files"] = listing.files;
-    header["class_names"] = listing.class_names;
-    std::vector<std::string> unreadable_files;
-    for (const auto& item : unreadable) unreadable_files.push_back(item.second);
-    header["unreadable"] = unreadable_files;
+    header["height"] = meta.height;
+    header["width"] = meta.width;
+    header["channels"] = meta.channels;
+    header["mode"] = meta.mode;
+    header["fixed_transforms"] = meta.fixed;
+    header["labels"] = meta.labels;
+    header["files"] = meta.files;
+    header["class_names"] = meta.class_names;
+    header["unreadable"] = meta.unreadable;
     const std::string text = header.dump();
     preamble.header_offset = kPixelOffset + preamble.pixel_bytes;
     preamble.header_bytes = text.size();
@@ -450,9 +453,7 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     if (!out) return give_up("cannot write " + temp.string() + " (disk full?)");
 
     fs::rename(temp, path, ec);
-    if (ec) {
-        fs::remove(temp, ec);  // another run wrote the same set meanwhile; theirs is used
-    }
+    if (ec) fs::remove(temp, ec);  // another run wrote the same set meanwhile; theirs is used
     std::string why;
     result.set = PreparedImageSet::Open(path, &why);
     if (!result.set) {
@@ -460,11 +461,174 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
         return result;
     }
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    spdlog::info("Prepared images: {} images at {}x{} ({}) in {:.1f} s on {} threads, {} unreadable -> {}", count,
-                 spec.width, spec.height, ModeName(spec.mode), result.seconds, workers, unreadable_files.size(),
-                 path.string());
     PruneImageCache();
     return result;
+}
+
+// Every field the deterministic transforms read, so another setting is another set.
+json TransformIdentity(const std::vector<image::ImageOp>& ops) {
+    json list = json::array();
+    for (const auto& op : ops) {
+        char sigma[32];
+        std::snprintf(sigma, sizeof(sigma), "%.9g", op.sigma);
+        list.push_back({{"kind", static_cast<int>(op.kind)}, {"height", op.height}, {"width", op.width},
+                        {"kernel_size", op.kernel_size}, {"sigma", sigma},
+                        {"morphology", static_cast<int>(op.morphology)}});
+    }
+    return list;
+}
+
+}  // namespace
+
+PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
+                                    const PreparedImageSpec& spec,
+                                    int threads,
+                                    const PreparedImageProgress& progress) {
+    PreparedImageResult result;
+    if (spec.width <= 0 || spec.height <= 0) {
+        result.error = "the image size must be positive";
+        return result;
+    }
+    const std::string key = PreparedImageSetKey(entry, spec);
+    const fs::path path = PreparedImageSetPath(key);
+    if (auto set = OpenCached(path, key)) {
+        result.set = std::move(set);
+        result.from_cache = true;
+        return result;
+    }
+
+    const ImageSetListing listing = ListImageSet(entry);
+    const size_t count = listing.files.size();
+    if (count == 0) {
+        result.error = "the image Data Input has no images";
+        return result;
+    }
+    const size_t row_bytes = static_cast<size_t>(spec.width) * static_cast<size_t>(spec.height) * 3;
+    const size_t workers = std::max<size_t>(1, std::min<size_t>(
+        count / kChunk + 1, threads > 0 ? static_cast<size_t>(threads)
+                                        : std::max(1u, std::thread::hardware_concurrency())));
+    std::mutex unreadable_mutex;
+    std::vector<std::pair<size_t, std::string>> unreadable;
+    const ProduceRows decode = [&](size_t begin, size_t end, uint8_t* out, std::string&) {
+        for (size_t i = begin; i < end; ++i) {
+            uint8_t* row = out + (i - begin) * row_bytes;
+            if (!DecodePreparedImage(listing.files[i], spec, row)) {
+                std::memset(row, 0, row_bytes);
+                std::lock_guard<std::mutex> lock(unreadable_mutex);
+                unreadable.emplace_back(i, listing.files[i]);
+            }
+        }
+        return true;
+    };
+    const auto finish = [&] {
+        SetHeader meta;
+        meta.key = key;
+        meta.height = static_cast<size_t>(spec.height);
+        meta.width = static_cast<size_t>(spec.width);
+        meta.mode = ModeName(spec.mode);
+        meta.labels = listing.labels;
+        meta.files = listing.files;
+        meta.class_names = listing.class_names;
+        std::sort(unreadable.begin(), unreadable.end());
+        for (const auto& item : unreadable) meta.unreadable.push_back(item.second);
+        return meta;
+    };
+    result = WriteImageSet(path, count, row_bytes, kChunk, workers, decode, finish, progress);
+    if (result.set)
+        spdlog::info("Prepared images: {} images at {}x{} ({}) in {:.1f} s on {} threads, {} unreadable -> {}",
+                     count, spec.width, spec.height, ModeName(spec.mode), result.seconds, workers,
+                     result.set->Unreadable().size(), path.string());
+    return result;
+}
+
+ImageTransformSplit SplitFixedImageTransforms(const image::ImageAugmentation& compiled) {
+    ImageTransformSplit split;
+    split.per_batch = compiled;
+    split.per_batch.ops.clear();
+    bool fixed = true;
+    for (const auto& op : compiled.ops) {
+        fixed = fixed && !image::IsRandomImageOp(op.kind);
+        (fixed ? split.fixed : split.per_batch.ops).push_back(op);
+    }
+    return split;
+}
+
+PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
+                                    const PreparedImageSpec& spec,
+                                    const std::vector<image::ImageOp>& fixed,
+                                    int threads,
+                                    const PreparedImageProgress& progress) {
+    if (fixed.empty()) return PrepareImageSet(entry, spec, threads, progress);
+    // Keyed on the decoded set's key: opened from the cache without decoding.
+    const json identity = TransformIdentity(fixed);
+    const std::string key =
+        Hex(Fnv(Fnv(1469598103934665603ull, PreparedImageSetKey(entry, spec)), identity.dump()));
+    const fs::path path = PreparedImageSetPath(key);
+    if (auto set = OpenCached(path, key)) {
+        PreparedImageResult cached;
+        cached.set = std::move(set);
+        cached.from_cache = true;
+        return cached;
+    }
+    PreparedImageResult decoded = PrepareImageSet(entry, spec, threads, progress);
+    if (!decoded.set) return decoded;
+    const auto& base = *decoded.set;
+
+    const image::ImageShape input{base.Height(), base.Width(), base.Channels()};
+    image::ImageAugmentation steps;
+    steps.ops = fixed;
+    const image::ImageShape output = steps.ShapeAfter(input);
+    for (const auto& op : fixed) {
+        if (const std::string why = image::ValidateImageOp(op, input); !why.empty()) {
+            decoded.set = nullptr;
+            decoded.error = why;
+            return decoded;
+        }
+    }
+    const size_t in_bytes = input.Size(), out_bytes = output.Size();
+    // Chunks on the device, one at a time (the device runs one chunk at a time anyway).
+    const ProduceRows apply = [&](size_t begin, size_t end, uint8_t* out, std::string& error) {
+        const size_t n = end - begin;
+        std::vector<float> rows(n * in_bytes);
+        const uint8_t* source = base.Row(begin);
+        for (size_t k = 0; k < rows.size(); ++k) rows[k] = source[k] / 255.0f;
+        try {
+            std::mt19937 unused(0);  // fixed transforms draw nothing
+            const Tensor result = steps.Apply(Tensor({n, in_bytes}, rows.data()), input, false, unused);
+            const float* values = result.ReadData<float>();
+            for (size_t k = 0; k < n * out_bytes; ++k)
+                out[k] = static_cast<uint8_t>(std::lround(std::clamp(values[k], 0.0f, 1.0f) * 255.0f));
+            return true;
+        } catch (const std::exception& e) {
+            error = std::string("the fixed image transforms failed: ") + e.what();
+            return false;
+        }
+    };
+    const auto finish = [&] {
+        SetHeader meta;
+        meta.key = key;
+        meta.height = output.height;
+        meta.width = output.width;
+        meta.channels = output.channels;
+        meta.mode = ModeName(spec.mode);
+        meta.labels = base.Labels();
+        meta.files = base.Files();
+        meta.class_names = base.ClassNames();
+        meta.unreadable = base.Unreadable();
+        meta.fixed = identity;
+        return meta;
+    };
+    const auto started = std::chrono::steady_clock::now();
+    PreparedImageResult derived = WriteImageSet(path, base.Count(), out_bytes, 256, 1, apply, finish, progress);
+    if (derived.set) {
+        derived.seconds += decoded.seconds;
+        spdlog::info("Prepared images: {} fixed transform{} done once on the device ({}x{}x{} -> {}x{}x{}) in "
+                     "{:.1f} s -> {}", fixed.size(), fixed.size() == 1 ? "" : "s", input.height, input.width,
+                     input.channels, output.height, output.width, output.channels,
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
+                     path.string());
+    }
+    return derived;
 }
 
 }  // namespace cyxwiz
