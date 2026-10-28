@@ -2,6 +2,7 @@
 #include "../core/session_query_service.h"
 #include "../core/pipeline_type_names.h"
 #include "../core/image_quality_analysis.h"
+#include "../core/prepared_image_set.h"
 #include "../core/training_export_metadata.h"
 #include "separate_windows.h"
 // Windows header order fix - must come first to prevent winsock conflicts
@@ -6103,7 +6104,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     if (console_) console_->SetProjectRoot(project_root);
     // Saved query results (dashboards) live in the project.
     cyxwiz::SessionQueryService::Instance().SetProjectRoot(project_root);
-    cyxwiz::SetImageQualityProjectRoot(project_root);
+    cyxwiz::SetImageCacheProjectRoot(project_root);
     // DuckDB spills sorts, joins and group-bys into the project (TOFIX154).
     cyxwiz::SetDataSpillDirectory((std::filesystem::path(project_root) / "cache" / "duckdb_tmp").string());
     // The project's prepared-data caches: older than 30 days, then the oldest
@@ -6139,7 +6140,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
     cyxwiz::SessionQueryService::Instance().SetProjectRoot("");
-    cyxwiz::SetImageQualityProjectRoot("");
+    cyxwiz::SetImageCacheProjectRoot("");
     cyxwiz::SetDataSpillDirectory("");
 
     // A pipeline run writes into the closed project's artifact/export paths;

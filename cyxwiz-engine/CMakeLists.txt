@@ -202,6 +202,7 @@ set(ENGINE_SOURCES
     src/core/sparse_feature_dataset_cache.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/prepared_image_set.cpp
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
@@ -6804,6 +6805,34 @@ add_custom_target(copy_test_image_quality_fixture
     VERBATIM
 )
 add_dependencies(test_image_quality copy_test_image_quality_fixture)
+
+# ===== Test: prepared image set (TOFIX178 1.3a): images decoded once =====
+add_executable(test_prepared_image_set
+    tests/test_prepared_image_set.cpp
+    src/core/prepared_image_set.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+)
+target_include_directories(test_prepared_image_set PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_prepared_image_set PRIVATE
+    cyxwiz-training-core
+    ${OpenCV_LIBS}
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_prepared_image_set PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_prepared_image_set PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 add_test(NAME image_quality_opencv_parity COMMAND test_image_quality)
 
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
@@ -6931,6 +6960,7 @@ add_executable(test_cnn_image_training_smoke
     tests/test_cnn_image_training_smoke.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/preprocessing/image_transform.cpp
     src/core/image_utils.cpp
@@ -6983,6 +7013,7 @@ add_executable(test_image_transform_graph
     tests/test_image_transform_graph.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
     src/core/data_registry_core.cpp
