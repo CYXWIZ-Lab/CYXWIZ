@@ -177,6 +177,37 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
     return nullptr;
 }
 
+// A step before the Data Split that learns from every row (PCA here, behind
+// another step) is warned with CW-C-0206 (TOFIX178 S0-g5). Its own function:
+// main's frame is near the stack limit.
+void CheckEveryRowStepWarned(const gui::MLNode& source, const gui::MLNode& run_step,
+                             const std::vector<gui::MLNode>& split_to_model) {
+    auto every_row = Node(
+        68,
+        gui::NodeType::PCANode,
+        "Reduce",
+        {Pin(6801, gui::PinType::Dataset, "Data", true)},
+        {Pin(6802, gui::PinType::Dataset, "Reduced", false)});
+    std::vector<gui::MLNode> nodes = {source, run_step, every_row};
+    nodes.insert(nodes.end(), split_to_model.begin(), split_to_model.end());
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(nodes, {
+        Link(1, 60, 6001, 66, 6601),
+        Link(2, 66, 6602, 68, 6801),
+        Link(3, 68, 6802, 62, 6201),
+        Link(4, 62, 6204, 63, 6301),
+        Link(5, 63, 6302, 2, 201),
+        Link(6, 2, 202, 14, 1401),
+        Link(7, 63, 6303, 14, 1402),
+        Link(8, 14, 1403, 5, 501)}, true);
+    bool warned = false;
+    for (const auto& issue : config.issues)
+        warned |= issue.level == cyxwiz::IssueLevel::Warning && issue.node_id == every_row.id &&
+                  issue.error_code == std::string(cyxwiz::errors::Compiler::LearnsFromEveryRow) &&
+                  issue.message.find("'Reduce' learns from every row before the Data Split") != std::string::npos;
+    Check(warned, "PCA behind another step before the Data Split is warned (CW-C-0206)");
+}
+
 // A label the steps make (a SQL / Rename before the Split): not in the
 // source, so it is a warning checked when they run (TOFIX178 S0-e). Its own
 // function: main's frame is near the stack limit.
@@ -2587,6 +2618,8 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "Dataset-preserving preprocessing before Data Split should compile");
+    Check(!HasIssueCode(config, cyxwiz::errors::Compiler::LearnsFromEveryRow),
+          "a scaler learns from the Train rows: no every-row warning");
     Check(config.dataset_roles.train.dataset_name == "role_train_dataset" &&
               config.dataset_roles.train.source_node_id == role_train.id,
           "Data Split should resolve Data Input through a Dataset transform");
@@ -2651,6 +2684,8 @@ int main() {
         Link(8, 14, 1403, 5, 501)}, true);
     Check(!config.is_valid && HasIssueText(config, "Test input goes through the Training branch's steps"),
           "a step on the Test input is refused with its reason");
+    CheckEveryRowStepWarned(role_train, run_step,
+                            {role_split, role_loader, binary_dense, binary_loss, optimizer});
 
     auto role_dev = Node(
         64,

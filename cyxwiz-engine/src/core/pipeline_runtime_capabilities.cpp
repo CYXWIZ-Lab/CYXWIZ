@@ -1794,6 +1794,31 @@ ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name) {
     return &*it;
 }
 
+bool PipelineStepLearnsFromEveryRow(gui::NodeType type) {
+    using gui::NodeType;
+    switch (type) {
+        case NodeType::PCANode:
+        case NodeType::KMeansCluster:
+        case NodeType::DBSCANCluster:
+        case NodeType::HierarchicalCluster:
+        case NodeType::GMMCluster:
+        case NodeType::OutlierDetector:
+        case NodeType::LinearRegressionNode:
+        case NodeType::PolynomialRegressionNode:
+        case NodeType::DecisionTreeClassifier:
+        case NodeType::RandomForestClassifier:
+        case NodeType::GradientBoostingClassifier:
+        case NodeType::NaiveBayesClassifier:
+        case NodeType::KNNClassifier:
+        case NodeType::LogisticRegressionNode:
+        case NodeType::SVMClassifier:
+        case NodeType::SVMRegressor:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name) {
     const auto& capabilities = GetPipelineSourceRuntimeCapabilities();
     auto it = std::find_if(capabilities.begin(), capabilities.end(),

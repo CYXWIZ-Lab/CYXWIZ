@@ -4656,6 +4656,32 @@ TrainingConfiguration GraphCompiler::Compile(
                 "Validation Dataset", "Validation", config.dataset_roles.dev);
             resolve_optional_role(
                 "Test Dataset", "Test", config.dataset_roles.test);
+
+            // The Training branch's steps learn from its Train rows; one that
+            // learns from every row also learns from the Validation and Test
+            // rows (TOFIX178 S0-g5).
+            if (const auto* pin = FindInputPinByName(*role_split, "Training Dataset")) {
+                std::vector<int> pending;
+                for (const auto& link : links)
+                    if (link.to_node == role_split->id && link.to_pin == pin->id) pending.push_back(link.from_node);
+                std::unordered_set<int> seen;
+                while (!pending.empty()) {
+                    const int at = pending.back();
+                    pending.pop_back();
+                    if (!seen.insert(at).second) continue;
+                    const gui::MLNode* node = FindNodeById(at, nodes);
+                    if (!node || IsDatasetSourceType(node->type)) continue;
+                    if (PipelineStepLearnsFromEveryRow(node->type)) {
+                        AddIssue(config, IssueLevel::Warning,
+                                 "'" + node->name + "' learns from every row before the Data Split, the "
+                                 "Validation and Test rows too (it cannot learn from the Train rows only yet), "
+                                 "so their scores read better than new data would",
+                                 node->id, node->name, errors::Compiler::LearnsFromEveryRow);
+                    }
+                    for (const auto& link : links)
+                        if (link.to_node == at) pending.push_back(link.from_node);
+                }
+            }
         }
 
         for (const auto& node : nodes) {

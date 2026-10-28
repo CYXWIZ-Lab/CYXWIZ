@@ -6317,6 +6317,12 @@ int main() {
                             gui::NodeType::ReLU, gui::NodeType::CrossEntropyLoss, gui::NodeType::Adam,
                             gui::NodeType::Output})
         Check(cyxwiz::IsTrainingOnlyNode(type), "a training node is left to training");
+    // The compiler's every-row answer is the operators' own (TOFIX178 S0-g5).
+    for (const auto type : cyxwiz::PipelineOperatorFactory::Instance().GetSupportedTypes()) {
+        const auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op && op->LearnsFromEveryRow() == cyxwiz::PipelineStepLearnsFromEveryRow(type),
+              "PipelineStepLearnsFromEveryRow disagrees with operator " + (op ? op->GetName() : std::string("?")));
+    }
     std::cout << "Pipeline operator metadata drift guard passed\n";
     return 0;
 }

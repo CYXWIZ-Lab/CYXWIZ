@@ -129,6 +129,15 @@ A Data Input kept on disk can feed training:
   neither Shuffle nor Stratified and no supplied input (the rows keep their
   order), and a table kept on disk (a warning says its steps learn from
   every row).
+- **Steps that still learn from every row.** PCA, the clustering steps
+  (K-Means, DBSCAN, Hierarchical, GMM), the Outlier Detector and the classic
+  models (regression, trees, Naive Bayes, KNN, Logistic Regression, SVM)
+  cannot learn from the Train rows only yet. Placed before a Data Split,
+  they learn from the Validation and Test rows too, and Compile warns:
+  "'PCA (4 components)' learns from every row before the Data Split, the
+  Validation and Test rows too (it cannot learn from the Train rows only
+  yet), so their scores read better than new data would" (*CW-C-0206*).
+  Training still runs; the Validation and Test scores are then optimistic.
 - **Supplied Validation / Test inputs** (a Data Input on the Split's
   Validation or Test pin) go through the same steps. Their rows join the
   training input's rows (Validation, then Test) before the first step, so

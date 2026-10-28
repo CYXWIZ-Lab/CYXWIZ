@@ -304,6 +304,11 @@ ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name);
 
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name);
 
+// The steps that learn from every row they are given (their operators'
+// LearnsFromEveryRow, TOFIX178 S0-g5): before a Data Split they learn from
+// the Validation and Test rows too.
+bool PipelineStepLearnsFromEveryRow(gui::NodeType type);
+
 std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_type_name);
 
 std::vector<const char*>
