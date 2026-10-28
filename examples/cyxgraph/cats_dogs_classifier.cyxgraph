@@ -34,7 +34,7 @@
     "nodes": [
       {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {"file_category": "image"}},
       {"id": "data_split", "type": "DataSplit", "name": "Train/Val Split", "pos": [250, 300], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1"}},
-      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [500, 300], "params": {"batch_size": "$batch_size", "shuffle": "true"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [500, 300], "params": {"batch_size": "$batch_size", "shuffle": "true", "epochs": "$epochs"}},
       {"id": "resize", "type": "Resize", "name": "Resize 64x64", "pos": [750, 300], "params": {"width": "64", "height": "64"}},
       {"id": "normalize", "type": "Normalize", "name": "Normalize", "pos": [1000, 300], "params": {"mean": "0.5", "std": "0.5"}},
 
@@ -47,7 +47,7 @@
       {"id": "fc3", "type": "Dense", "name": "Dense 2", "pos": [2750, 300], "params": {"units": "2"}},
 
       {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [3000, 300]},
-      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300], "params": {"learning_rate": "$learning_rate", "epochs": "$epochs"}},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300], "params": {"learning_rate": "$learning_rate"}},
       {"id": "output", "type": "Output", "name": "Output", "pos": [3500, 300], "params": {"num_classes": "2"}}
     ],
     "links": [
