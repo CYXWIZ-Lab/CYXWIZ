@@ -2272,9 +2272,6 @@ const char* MissingRequiredParameter(
         if (source_type == "file") {
             return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
         }
-        if (source_type == "folder") {
-            return HasNonEmptyParameter(parameters, "folder_path") ? nullptr : "folder_path";
-        }
         return nullptr;
     }
 
@@ -2614,17 +2611,6 @@ bool HasSupportedParameterValues(
             !IsIntegerAtLeast(sheet_idx_it->second, 0)) {
             error = "DataInput sheet_idx must be a non-negative integer";
             return false;
-        }
-        if (source_type == "folder") {
-            const auto category_it = parameters.find("file_category");
-            const std::string file_category =
-                (category_it != parameters.end() && !category_it->second.empty())
-                    ? ToLowerAscii(TrimString(category_it->second))
-                    : "image";
-            if (file_category != "image") {
-                error = "DataInput folder source only supports image category in PipelineExecutor";
-                return false;
-            }
         }
     }
 
@@ -4430,19 +4416,6 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                             "' is not supported by PipelineExecutor");
                 return false;
             }
-
-        } else if (source_type == "folder") {
-            // Image folder mode
-            auto path_it = node.parameters.find("folder_path");
-            if (path_it == node.parameters.end() || path_it->second.empty()) {
-                ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "folder_path"));
-                return false;
-            }
-            const std::string& folder_path = path_it->second;
-            spdlog::info("[Pipeline] DataInput loading folder: {}", folder_path);
-
-            // For image folders, create a table with file paths and labels
-            arrow_dataset = registry.LoadImageFolderToArrow(folder_path, dataset_name);
 
         } else {
             ReportError("DataInput: Unknown source type: " + source_type);

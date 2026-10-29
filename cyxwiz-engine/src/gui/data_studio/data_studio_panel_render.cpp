@@ -34,6 +34,7 @@ ImVec4 ToneColour(studio::Tone tone) {
 const char* KindIcon(studio::RailItem::Kind kind) {
     switch (kind) {
         case studio::RailItem::Kind::DataInput: return ICON_FA_RIGHT_TO_BRACKET;
+        case studio::RailItem::Kind::ImageIndex: return ICON_FA_TABLE;
         case studio::RailItem::Kind::NodeResult: return ICON_FA_TABLE;
         case studio::RailItem::Kind::Published: return ICON_FA_FILE_EXPORT;
         default: return ICON_FA_DATABASE;
@@ -159,10 +160,13 @@ void DataStudioPanel::RenderRail(float height, float max_height) {
         for (const auto& item : section.items) {
             ImGui::PushID(item.node_id >= 0 ? item.node_id : static_cast<int>(std::hash<std::string>{}(item.dataset)));
             const bool chosen = !item.dataset.empty() && item.dataset == active_dataset_;
-            const ImVec2 pos = ImGui::GetCursorScreenPos();
-            const float w = ImGui::GetContentRegionAvail().x;
+            // An image input's index sits under it, indented.
+            const float indent = item.kind == studio::RailItem::Kind::ImageIndex ? 14.0f : 0.0f;
+            const ImVec2 row = ImGui::GetCursorScreenPos();
+            const ImVec2 pos(row.x + indent, row.y);
+            const float w = ImGui::GetContentRegionAvail().x - indent;
             ui::PushListRowColours();
-            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w, 0.0f))) {
+            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w + indent, 0.0f))) {
                 if (!item.dataset.empty()) SetActiveDataset(item.dataset);
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item.node_id >= 0) ShowOnCanvas({item.node_id});
             }

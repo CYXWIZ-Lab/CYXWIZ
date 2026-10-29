@@ -3657,9 +3657,8 @@ int main() {
         const std::vector<std::string> source_type_values(
             source_type_axis->allowed_values.begin(),
             source_type_axis->allowed_values.end());
-        Check(ContainsString(source_type_values, "file") &&
-                  ContainsString(source_type_values, "folder"),
-              "DataInput source_type should allow file and folder");
+        Check(source_type_values == std::vector<std::string>({"file"}),
+              "DataInput source_type should allow file only (image folders train from the image registry)");
         Check(!ContainsString(source_type_values, "ml_dataset"),
               "DataInput source_type should not advertise ml_dataset without a runtime owner");
     }

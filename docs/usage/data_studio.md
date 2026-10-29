@@ -52,6 +52,35 @@ node's dialog on the canvas; **Explore** opens a loaded one in Explore >
 Profile. Where the five columns do not fit, each Data Input is listed as a
 block with the same facts and links.
 
+An image Data Input shows its folder, where its labels come from (*image
+folder, labels from cat_dog.csv* or *image folder, class folders*) and the
+image count (*25,000 images*).
+
+### The image index
+
+Loading an image dataset also builds its **index table**, one row per image,
+named after the dataset with `_index` (`cat_dog_index`). It reads only each
+file's header (JPEG, PNG and 16/24-bit BMP; other formats are decoded once),
+on a background task, so the Data Input is loaded before the index is
+ready; the 25,000 cats vs dogs images take under a second. The rail lists it
+under its Data Input (*indexing* while it builds). Its columns:
+
+| Column | What |
+| --- | --- |
+| path | the image file |
+| file | its file name |
+| label | the class index (classes in sorted order, numbers as numbers) |
+| label_name | the class name |
+| width, height | the original size in pixels (empty when unreadable) |
+| channels | what a decode gives: 1 grey, 3 colour, 4 with alpha |
+| bytes | the file size |
+| readable | false when the file cannot be read as an image |
+
+It is an ordinary table: Query (`SELECT label_name, COUNT(*) FROM
+"cat_dog_index" GROUP BY label_name`), the Explore views and the Table Viewer
+all work on it. It is dropped when the images are unloaded and rebuilt when
+they are loaded again.
+
 ## Explore
 
 Explore has nine views: **Query**, **Profile**, **Missing**, **Outliers**,

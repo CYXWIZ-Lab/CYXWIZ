@@ -4449,10 +4449,10 @@ int main(int argc, char** argv) {
     cyxwiz::PipelineExecutor unsupported_folder_category_executor;
     Check(!unsupported_folder_category_executor.ExecutePipeline(
               unsupported_folder_category_json),
-          "DataInput audio folder should fail validation on PipelineExecutor");
+          "DataInput folder source should fail validation on PipelineExecutor");
     Check(unsupported_folder_category_executor.GetLastError().find(
-              "folder source only supports image category") != std::string::npos,
-          "DataInput folder category validation should be specific: " +
+              "DataInput source_type 'folder' is not supported") != std::string::npos,
+          "DataInput folder source error should be specific: " +
               unsupported_folder_category_executor.GetLastError());
 
     const std::string bad_skip_rows_json =

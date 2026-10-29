@@ -355,7 +355,26 @@ View Build(const Input& in) {
             item.tone = Tone::Warn;
             item.tip += (item.tip.empty() ? "" : "\n") + std::string("Open its dialog and Apply, or run the graph, to load it.");
         }
+        const Dataset* images = DatasetOfInput(in, n);
         sources.items.push_back(std::move(item));
+        if (!images || !images->images) continue;
+        // Its index table, one row per image, so the table tools work on images.
+        RailItem index;
+        index.kind = RailItem::Kind::ImageIndex;
+        index.label = images->name + "_index";
+        index.tip = "One row per image: path, label, size, bytes (and quality once measured).";
+        if (const Dataset* table = DatasetNamed(in, index.label)) {
+            index.dataset = table->name;
+            index.meta = Thousands(static_cast<int64_t>(table->rows)) + " \xC3\x97 " + std::to_string(table->columns);
+            shown.insert(table->name);
+        } else if (const auto p = in.image_index_progress.find(images->name); p != in.image_index_progress.end()) {
+            index.meta = "indexing";
+            index.tone = Tone::Warn;
+            index.tip += "\nIndexing: " + p->second + " files read.";
+        } else {
+            continue;
+        }
+        sources.items.push_back(std::move(index));
     }
     RailSection results{"Node results", {}};
     for (const auto& n : in.nodes) {

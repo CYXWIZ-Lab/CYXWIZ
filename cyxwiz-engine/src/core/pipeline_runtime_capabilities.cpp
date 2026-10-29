@@ -905,7 +905,7 @@ const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
 GetPipelineAllowedParameterValuesRuntimeCapabilities() {
     static const std::vector<PipelineAllowedParameterValuesRuntimeCapability> capabilities = {
         {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
-        {"DataInput", "source_type", "file", {"file", "folder"}},
+        {"DataInput", "source_type", "file", {"file"}},
         {"DataInput", "dataset_role", "train", {"train", "dev", "validation", "test", "inference", "unspecified"}},
         {"DataInput", "type", "auto", data_input::AllowedNames()},
         {"DataInput", "file_type", "auto", data_input::AllowedNames()},

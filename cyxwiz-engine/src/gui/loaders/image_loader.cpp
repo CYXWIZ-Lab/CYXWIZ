@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_audit.h"
+#include "../../core/image_index_service.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
 #include "../node_editor.h"  // gui::MLNode for RestoreFromRegistry
@@ -117,6 +118,8 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 // is a display label like "cat_dog (CSV)", which is not
                 // the actual key stored in DataRegistry::datasets_.
                 reg.RegisterImageDataset(canonical_name, img_entry);
+                // The index table follows on a task of its own: Loaded does not wait.
+                cyxwiz::BuildImageIndexInBackground(canonical_name, img_entry);
 
                 state->success      = true;
                 state->backend      = 3;

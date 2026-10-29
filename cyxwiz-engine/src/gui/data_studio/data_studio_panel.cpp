@@ -13,6 +13,7 @@
 #include "../../core/dataset_catalog.h"
 #include "../../core/sql_editing.h"
 #include "../../core/dataset_picker_presentation.h"
+#include "../../core/image_index_service.h"
 #include "../node_editor.h"
 
 #include <algorithm>
@@ -299,6 +300,11 @@ void DataStudioPanel::RefreshView() {
         d.columns = entry.columns;
         d.tabular = IsTabularDataset(entry);
         d.images = entry.modality == DatasetModality::Image && !d.tabular;
+        if (d.images) {
+            const ImageIndexStatus index = GetImageIndexStatus(d.name);
+            if (index.state == ImageIndexStatus::State::Building)
+                in.image_index_progress[d.name] = studio::Thousands(static_cast<int64_t>(index.done)) + " of " + studio::Thousands(static_cast<int64_t>(index.total));
+        }
         in.datasets.push_back(std::move(d));
     }
     // What feeds each check, in the graph as it runs (recipes lowered): read

@@ -503,6 +503,13 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
         removed_any = true;
     }
 
+    const std::string index = ImageIndexName(name);
+    if (arrow_datasets_.erase(index) > 0) {
+        InvalidateTabularPublicationUnlocked(index);
+        last_access_times_.erase(index);
+        removed_any = true;
+    }
+
     if (removed_any) {
         spdlog::debug("UnregisterImageDataset '{}'", name);
     }

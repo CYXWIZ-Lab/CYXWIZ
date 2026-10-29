@@ -203,6 +203,8 @@ set(ENGINE_SOURCES
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
     src/core/prepared_image_set.cpp
+    src/core/image_index.cpp
+    src/core/image_index_service.cpp
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
@@ -6828,6 +6830,36 @@ set_target_properties(test_prepared_image_set PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME image_quality_opencv_parity COMMAND test_image_quality)
+
+# ===== Test: the image index table (TOFIX178 1.3e) =====
+add_executable(test_image_index
+    tests/test_image_index.cpp
+    src/core/image_index.cpp
+    src/core/prepared_image_set.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+)
+target_include_directories(test_image_index PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_image_index PRIVATE
+    cyxwiz-training-core
+    ${OpenCV_LIBS}
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_image_index PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_index PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_index COMMAND test_image_index)
 
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE

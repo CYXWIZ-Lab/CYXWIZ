@@ -55,6 +55,8 @@ struct Input {
     std::string graph_name;    // the graph file's stem
     std::vector<GraphNode> nodes;
     std::vector<Dataset> datasets;
+    // An image dataset whose index table is still being built: "12,480 of 25,000".
+    std::map<std::string, std::string> image_index_progress;
     // What Results can show besides evaluation nodes: training runs that wrote
     // generation previews, and the latest test run's rows (test_predictions).
     size_t preview_runs = 0;
@@ -64,7 +66,7 @@ struct Input {
 enum class Tone { Plain, Ok, Warn, Error };
 
 struct RailItem {
-    enum class Kind { DataInput, NodeResult, Published, Other };
+    enum class Kind { DataInput, ImageIndex, NodeResult, Published, Other };  // ImageIndex: under its Data Input
     Kind kind = Kind::Other;
     std::string label;
     std::string meta;          // rows, "pass", "not loaded"
