@@ -261,11 +261,11 @@ cyxwiz-plugin-check: all plugins pass
 | `FAIL the plugin did not load: ...` | The reason: API version, build fingerprint, a missing library file, or the operating system's error for the library |
 | `permission X: granted for this check only (the Engine asks the user)` | `plugin.json` declares a permission the user must approve in the Engine; the check grants it for this run only and saves nothing |
 | `FAIL the plugin did not initialise: ...` | `OnLoad` or `OnInitialize` returned `false`, threw or crashed |
-| `FAIL node not added: ...` | The Engine refused one of your nodes; the reason says why ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
+| `FAIL not added: ...` | The Engine refused one of your nodes (or dataset formats or analytics); the reason says why ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
 | `node ...: refuses a [4, 5] input with its default settings: ...` | `InferOutputShape` refused one of the two sample shapes the gradient check uses (`[3]` and `[4, 5]`); the node is checked with the other |
 | `FAIL node ...: refuses every input shape the check uses` | `InferOutputShape` refused both `[3]` and `[4, 5]`, so nothing could be checked |
 | `ok   node ...: Passed ...`, `FAIL node ...: Failed ...` | The gradient check ([developer guide](plugin-developer-guide.md#8-the-gradient-check)) |
-| `FAIL the plugin registered no nodes` | The check expects at least one node |
+| `FAIL the plugin registered no nodes, dataset formats or analytics` | The check expects at least one of them |
 
 The exit code is 0 when every folder passes, 1 otherwise, 2 without a
 folder.

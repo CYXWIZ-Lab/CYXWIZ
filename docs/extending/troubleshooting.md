@@ -57,7 +57,7 @@ list gives each reason:
 - *node type '...' is already registered by '...'*: another plugin or a
   Python node bundle already uses this type id.
 
-`cyxwiz-plugin-check` reports the same reasons as *FAIL node not added*.
+`cyxwiz-plugin-check` reports the same reasons as *FAIL not added*.
 
 ### *The plugin was built with ...; this Engine with ...*
 

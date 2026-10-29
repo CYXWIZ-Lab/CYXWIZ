@@ -239,7 +239,7 @@ that contains a comma is split into two, and an empty choice is dropped.
 The Engine checks each node when the plugin initialises and leaves out the
 ones it refuses. The rest of the plugin loads. **Install...** then shows
 *Plugin installed, but N of its nodes were not added:* with one reason per
-node; `cyxwiz-plugin-check` prints *FAIL node not added: &lt;reason&gt;*.
+node; `cyxwiz-plugin-check` prints *FAIL not added: &lt;reason&gt;*.
 
 | Reason | Cause |
 |---|---|

@@ -93,6 +93,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/plugin_types.h
     plugin/plugin_context.h
     plugin/plugin_fingerprint.h
+    plugin/interfaces/arrow_c_stream.h
     plugin/interfaces/i_analytics_provider.h
     plugin/interfaces/i_assistant_provider.h
     plugin/interfaces/i_data_provider.h
@@ -137,6 +138,7 @@ target_include_directories(cyxwiz-plugin-host PUBLIC
     $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(cyxwiz-plugin-host PUBLIC
     cyxwiz-training-hooks
+    Arrow::arrow_shared
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     imgui::imgui
@@ -3070,6 +3072,24 @@ if(WIN32)
 endif()
 set_target_properties(test_plugin_unload_registrations PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: plugin dataset formats and analytics (TOFIX181) =====
+add_executable(test_plugin_data_providers
+    tests/test_plugin_data_providers.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_include_directories(test_plugin_data_providers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_data_providers PRIVATE cyxwiz-plugin-host cyxwiz-backend Arrow::arrow_shared
+                      imgui::imgui spdlog::spdlog)
+if(WIN32)
+    target_compile_definitions(test_plugin_data_providers PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_plugin_data_providers PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_dependencies(test_plugin_data_providers data_formats)
+add_test(NAME plugin_data_providers COMMAND test_plugin_data_providers WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
 # The PipelineExecutor and every operator it runs, without the GUI: the routing
 # test and the out-of-core benchmark (TOFIX154) build from this one list.

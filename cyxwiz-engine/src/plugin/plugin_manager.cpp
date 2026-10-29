@@ -283,7 +283,8 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
 
     // Create PluginContext for this plugin
     auto ctx = std::make_unique<EnginePluginContext>(plugin_id, plugin->manifest.version.ToString(),
-                                                     plugin->instance, plugin->plugin_dir);
+                                                     plugin->manifest.api_version, plugin->instance,
+                                                     plugin->plugin_dir);
 
     // Share engine's ImGui context with the DLL so plugin UI rendering works
     plugin->instance->SetImGuiContext(ImGui::GetCurrentContext());
@@ -539,16 +540,32 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             }
         }
 
-        // Register data provider
+        // Data and analytics providers: only in a plugin built for their
+        // current shape (an older one would be called with another layout).
+        const auto data_interfaces = [&](const char* what) {
+            if (ctx->CheckDataInterfaces(what)) return true;
+            plugin->skipped_nodes.push_back(std::string(what) + ": built for plugin API " +
+                                            plugin->manifest.api_version.ToString() + "; it needs " +
+                                            kDataInterfacesApi.ToString() + " or newer (rebuild the plugin)");
+            return false;
+        };
+
+        // Register data provider (with crash isolation: GetLoaders runs plugin code)
         auto* data_provider = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"));
-        if (data_provider && permitted(PluginPermission::DataRegistry, "IDataProvider")) {
-            PluginDataLoaderRegistry::Instance().Register(plugin_id, data_provider);
+        if (data_provider && permitted(PluginPermission::DataRegistry, "IDataProvider") &&
+            data_interfaces("IDataProvider")) {
+            security::SafeExecute(plugin_id, "RegisterDataProvider", [&]() {
+                PluginDataLoaderRegistry::Instance().Register(plugin_id, data_provider);
+            });
         }
 
-        // Register analytics provider
+        // Register analytics provider (with crash isolation)
         auto* analytics = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"));
-        if (analytics && permitted(PluginPermission::DataRegistry, "IAnalyticsProvider")) {
-            PluginAnalyticsRegistry::Instance().Register(plugin_id, analytics);
+        if (analytics && permitted(PluginPermission::DataRegistry, "IAnalyticsProvider") &&
+            data_interfaces("IAnalyticsProvider")) {
+            security::SafeExecute(plugin_id, "RegisterAnalyticsProvider", [&]() {
+                PluginAnalyticsRegistry::Instance().Register(plugin_id, analytics);
+            });
         }
     }
 

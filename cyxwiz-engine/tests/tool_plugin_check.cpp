@@ -9,12 +9,15 @@
 // for this run, initialise the plugin, list the
 // nodes it registers, and for each trainable node check its output shape and
 // its gradients with the node's default settings, as the Plugin Manager's
-// "Check gradient" does. Exit code 0 when every folder loads and every node
+// "Check gradient" does; list its dataset formats and analytics (TOFIX181).
+// Exit code 0 when every folder loads, registers something, and every node
 // passes.
 #include <cyxwiz/gradient_check.h>
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/plugin_loader.h"
 #include "../src/plugin/plugin_manager.h"
+#include "../src/plugin/registries/plugin_analytics_registry.h"
+#include "../src/plugin/registries/plugin_data_loader_registry.h"
 #include "../src/plugin/security/permission_store.h"
 
 #include <cstdlib>
@@ -119,14 +122,29 @@ bool CheckFolder(const fs::path& folder) {
                   << cyxwiz::DescribeGradientCheck(result) << "\n";
         ok = ok && result.passed;
     }
+    size_t formats = 0;
+    for (const auto& loader : cyxwiz::plugin::PluginDataLoaderRegistry::Instance().Loaders()) {
+        if (loader.plugin_id != manifest.id) continue;
+        ++formats;
+        std::string extensions;
+        for (const auto& extension : loader.info.extensions) extensions += (extensions.empty() ? "." : ", .") + extension;
+        std::cout << "  ok   dataset format " << loader.info.format_name << " (" << extensions << ")\n";
+    }
+    size_t analytics = 0;
+    for (const auto& analytic : cyxwiz::plugin::PluginAnalyticsRegistry::Instance().Analytics()) {
+        if (analytic.plugin_id != manifest.id) continue;
+        ++analytics;
+        std::cout << "  ok   analytic " << analytic.info.name
+                  << (analytic.info.category.empty() ? std::string() : " (" + analytic.info.category + ")") << "\n";
+    }
     if (const auto* loaded = manager.GetLoadedPlugin(manifest.id)) {
         for (const auto& reason : loaded->skipped_nodes) {
-            std::cout << "  FAIL node not added: " << reason << "\n";
+            std::cout << "  FAIL not added: " << reason << "\n";
             ok = false;
         }
     }
-    if (nodes == 0) {
-        std::cout << "  FAIL the plugin registered no nodes\n";
+    if (nodes + formats + analytics == 0) {
+        std::cout << "  FAIL the plugin registered no nodes, dataset formats or analytics\n";
         ok = false;
     }
     manager.UnloadPlugin(manifest.id);

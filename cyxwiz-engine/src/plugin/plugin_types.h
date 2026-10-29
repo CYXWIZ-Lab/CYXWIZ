@@ -65,6 +65,10 @@ struct PluginVersion {
     bool operator!=(const PluginVersion& o) const { return !(*this == o); }
 };
 
+// IDataProvider and IAnalyticsProvider took their current shape in plugin API
+// 1.3: the Engine calls them only in a plugin built for 1.3 or newer.
+inline constexpr PluginVersion kDataInterfacesApi{1, 3, 0};
+
 // ============================================================================
 // Plugin Permissions (bitmask)
 // ============================================================================
