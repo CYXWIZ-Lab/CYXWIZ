@@ -7359,7 +7359,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     // Simple hash combining node type and parameters
     // Using FNV-1a hash algorithm for fast hashing
     uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
-    const uint64_t prime = 1099511628211ULL;  // FNV prime
+    constexpr uint64_t prime = 1099511628211ULL;  // FNV prime
 
     // Hash node type
     for (char c : node.type) {
@@ -7384,7 +7384,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     }
 
     // The wiring: which node and output pin feeds each input.
-    auto mix = [&hash, prime](const std::string& text) {
+    auto mix = [&hash](const std::string& text) {
         for (char c : text) {
             hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
             hash *= prime;

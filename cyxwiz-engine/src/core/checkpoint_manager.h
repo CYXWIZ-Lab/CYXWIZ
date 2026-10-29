@@ -277,7 +277,7 @@ private:
  * epochs stay fresh. Names, shapes and dtypes must match exactly. When
  * expected_tokenizer_sha256 is set (language-model runs) the checkpoint's
  * tokenizer must match it: from metadata.json, or for checkpoints written
- * before TOFIX143 from the same run's generation_previews/*.json.
+ * before TOFIX143 from the same run's generation_previews JSON files.
  */
 template <typename Model>
 std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(

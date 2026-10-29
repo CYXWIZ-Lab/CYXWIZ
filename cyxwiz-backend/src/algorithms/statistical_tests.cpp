@@ -48,8 +48,8 @@ double BetaFraction(double a, double b, double x) {
     return h;
 }
 
-// I_x(a, b) (lower) and 1 - I_x(a, b) (upper), each from the side that does
-// not subtract from 1 when it is small.
+// I_x(a, b), from the side that does not subtract from 1 when it is small.
+// The tails below pass the transformed argument, so they need no upper form.
 double BetaFront(double a, double b, double x) {
     return std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) + a * std::log(x) + b * std::log1p(-x));
 }
@@ -58,12 +58,6 @@ double IncBetaLower(double a, double b, double x) {
     if (x >= 1.0) return 1.0;
     if (x < (a + 1.0) / (a + b + 2.0)) return BetaFront(a, b, x) * BetaFraction(a, b, x) / a;
     return 1.0 - BetaFront(b, a, 1.0 - x) * BetaFraction(b, a, 1.0 - x) / b;
-}
-double IncBetaUpper(double a, double b, double x) {
-    if (x <= 0.0) return 1.0;
-    if (x >= 1.0) return 0.0;
-    if (x < (a + 1.0) / (a + b + 2.0)) return 1.0 - BetaFront(a, b, x) * BetaFraction(a, b, x) / a;
-    return BetaFront(b, a, 1.0 - x) * BetaFraction(b, a, 1.0 - x) / b;
 }
 
 // Regularized upper incomplete gamma Q(a, z), direct in both regions.
