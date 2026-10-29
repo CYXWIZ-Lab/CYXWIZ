@@ -9,6 +9,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/image_index_service.h"
+#include "../../core/image_pipeline_preview.h"
 #include "../../core/live_graph_compile.h"
 
 #include <arrow/api.h>
@@ -102,13 +103,7 @@ void ImageProfileView::SetDataset(const std::string& dataset) {
 std::string ImageProfileView::GraphIdentity() const {
     const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
     if (!config) return "no graph";
-    const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
-    std::string id = std::to_string(spec.width) + "x" + std::to_string(spec.height) + ModeName(spec.mode);
-    for (const auto& op : SplitFixedImageTransforms(config->image_augmentation).fixed)
-        id += "|" + std::to_string(static_cast<int>(op.kind)) + "," + std::to_string(op.width) + "," + std::to_string(op.height) +
-              "," + std::to_string(op.kernel_size) + "," + std::to_string(op.sigma) + "," +
-              std::to_string(static_cast<int>(op.morphology));
-    return id;
+    return ImageStepsKey(PreparedImageSpecFrom(config->image_preprocessing), config->image_augmentation);
 }
 
 void ImageProfileView::Refresh() {

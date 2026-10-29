@@ -153,6 +153,10 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
 // split (Center Crop, Grayscale, Gaussian Blur, Morphology before the first
 // random transform) are done once on the set; the rest, the batch mix and
 // Normalize run on each batch as before.
+// What an op is, in words: "Center Crop 64 x 64", "Gaussian Blur 5 x 5, sigma 1",
+// "Horizontal Flip (p 0.5)", "Rotate up to 15 degrees".
+std::string ImageOpText(const image::ImageOp& op);
+
 struct ImageTransformSplit {
     std::vector<image::ImageOp> fixed;
     image::ImageAugmentation per_batch;

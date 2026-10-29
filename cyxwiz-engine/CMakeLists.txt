@@ -207,6 +207,7 @@ set(ENGINE_SOURCES
     src/core/image_index_service.cpp
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
+    src/core/image_pipeline_preview.cpp
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
@@ -6865,6 +6866,36 @@ set_target_properties(test_image_index PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME image_index COMMAND test_image_index)
+
+# ===== Test: an image through the graph's image steps (TOFIX178 1.3e) =====
+add_executable(test_image_pipeline_preview
+    tests/test_image_pipeline_preview.cpp
+    src/core/image_pipeline_preview.cpp
+    src/core/prepared_image_set.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+)
+target_include_directories(test_image_pipeline_preview PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_image_pipeline_preview PRIVATE
+    cyxwiz-training-core
+    ${OpenCV_LIBS}
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_image_pipeline_preview PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_pipeline_preview PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_pipeline_preview COMMAND test_image_pipeline_preview)
 
 # ===== Test: the image Profile's presentation (TOFIX178 1.3e) =====
 add_executable(test_image_profile_presentation

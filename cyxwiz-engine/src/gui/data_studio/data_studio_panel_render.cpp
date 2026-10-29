@@ -428,7 +428,12 @@ void DataStudioPanel::RenderExplore() {
                 profile_->Render();
             }
             break;
-        case ExploreTab::Images: if (gallery_) gallery_->Render(); break;
+        case ExploreTab::Images:
+            if (gallery_) {
+                if (node_editor_) gallery_->SetLiveCompile(node_editor_->GetLiveCompile());
+                gallery_->Render();
+            }
+            break;
         case ExploreTab::Missing: if (missing_) missing_->Render(MakeExploreContext()); break;
         case ExploreTab::Outliers: if (outliers_) outliers_->Render(MakeExploreContext()); break;
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;

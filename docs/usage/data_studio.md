@@ -260,6 +260,15 @@ colour, size on disk and path, and the links **Show in folder** and **Open
 the index table** (Query on `<dataset>_index`). Thumbnails are read on two
 background threads, the ones on screen first.
 
+**What the model sees**, under the grid, runs the picked image through this
+graph's image steps with the code training runs, on the ArrayFire device:
+the Resize (*Resize 72 x 72, exact, once*), each transform done once with the
+images (*Center Crop 64 x 64*, *Gaussian Blur 3 x 3, sigma 0.8*), then four
+draws of the random transforms done per batch, each saying what it drew
+(*flipped, rotated 7.5 degrees*). A graph without random transforms says every
+epoch sees the same images. Normalize is left out so the pictures stay
+viewable. It runs again when the graph's image steps change.
+
 ## Missing
 
 Where the picked table has no value. It counts as Profile does: empty cells,

@@ -642,6 +642,40 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     return derived;
 }
 
+namespace {
+
+std::string Number(float v) {
+    char out[32];
+    std::snprintf(out, sizeof(out), "%g", v);
+    return out;
+}
+
+}  // namespace
+
+std::string ImageOpText(const image::ImageOp& op) {
+    using K = image::ImageOpKind;
+    static const char* kMorphology[] = {"Erode", "Dilate", "Open", "Close", "Gradient", "Top hat", "Black hat"};
+    const std::string size = std::to_string(op.width) + " \xC3\x97 " + std::to_string(op.height);
+    const std::string kernel = std::to_string(op.kernel_size) + " \xC3\x97 " + std::to_string(op.kernel_size);
+    switch (op.kind) {
+        case K::CenterCrop: return "Center Crop " + size;
+        case K::RandomCrop: return "Random Crop " + size;
+        case K::HorizontalFlip: return "Horizontal Flip (p " + Number(op.probability) + ")";
+        case K::VerticalFlip: return "Vertical Flip (p " + Number(op.probability) + ")";
+        case K::Rotate: return "Rotate up to " + Number(op.max_angle) + " degrees";
+        case K::ColorJitter: return "Color Jitter";
+        case K::GaussianBlur: return "Gaussian Blur " + kernel + ", sigma " + Number(op.sigma);
+        case K::Grayscale: return "Grayscale";
+        case K::Morphology: {
+            const int m = static_cast<int>(op.morphology);
+            return std::string(m >= 0 && m < 7 ? kMorphology[m] : "Morphology") + " " + kernel;
+        }
+        case K::Erase: return op.erase_method == image::EraseMethod::Cutout ? "Cutout" : "Random Erasing";
+        case K::RandAugment: return "RandAugment (" + std::to_string(op.num_ops) + " ops, magnitude " + std::to_string(op.magnitude) + ")";
+    }
+    return "transform";
+}
+
 std::string PreparedImageSetKeyFor(const DataRegistry::ImageDatasetEntry& entry, const PreparedImageSpec& spec,
                                    const std::vector<image::ImageOp>& fixed) {
     const std::string decoded = PreparedImageSetKey(entry, spec);
@@ -651,27 +685,16 @@ std::string PreparedImageSetKeyFor(const DataRegistry::ImageDatasetEntry& entry,
 
 namespace {
 
-// "Center Crop 64 x 64", "Gaussian Blur 5 x 5, sigma 1" from a header's fixed_transforms entry.
-std::string FixedTransformText(const json& op) {
-    static const char* kMorphology[] = {"Erode", "Dilate", "Open", "Close", "Gradient", "Top hat", "Black hat"};
-    const auto kind = static_cast<image::ImageOpKind>(op.value("kind", -1));
-    const int k = op.value("kernel_size", 0);
-    const std::string size = std::to_string(op.value("width", 0)) + " \xC3\x97 " + std::to_string(op.value("height", 0));
-    const std::string kernel = std::to_string(k) + " \xC3\x97 " + std::to_string(k);
-    switch (kind) {
-        case image::ImageOpKind::CenterCrop: return "Center Crop " + size;
-        case image::ImageOpKind::Grayscale: return "Grayscale";
-        case image::ImageOpKind::GaussianBlur: {
-            char sigma[32];
-            std::snprintf(sigma, sizeof(sigma), "%g", std::atof(op.value("sigma", std::string("0")).c_str()));
-            return "Gaussian Blur " + kernel + ", sigma " + sigma;
-        }
-        case image::ImageOpKind::Morphology: {
-            const int m = op.value("morphology", 0);
-            return std::string(m >= 0 && m < 7 ? kMorphology[m] : "Morphology") + " " + kernel;
-        }
-        default: return "transform";
-    }
+// A header's fixed_transforms entry (TransformIdentity) in words.
+std::string FixedTransformText(const json& entry) {
+    image::ImageOp op;
+    op.kind = static_cast<image::ImageOpKind>(entry.value("kind", 0));
+    op.height = entry.value("height", 0);
+    op.width = entry.value("width", 0);
+    op.kernel_size = entry.value("kernel_size", 0);
+    op.sigma = static_cast<float>(std::atof(entry.value("sigma", std::string("0")).c_str()));
+    op.morphology = static_cast<image::MorphologyOp>(entry.value("morphology", 0));
+    return ImageOpText(op);
 }
 
 bool SameFile(const std::string& a, const std::string& b) {

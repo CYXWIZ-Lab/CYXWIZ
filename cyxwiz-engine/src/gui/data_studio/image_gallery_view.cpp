@@ -4,13 +4,18 @@
 #include "../ui_buttons.h"
 #include "../ui_platform.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/arrow_dataset.h"
+#include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/live_graph_compile.h"
+#include "../../core/texture_manager.h"
 
 #include <arrow/api.h>
 #include <imgui.h>
 
 #include <algorithm>
+#include <functional>
 
 namespace cyxwiz {
 
@@ -66,6 +71,113 @@ bool Tile(gui::ImageThumbnails& thumbs, const ig::Row& row, const std::string& t
 ImageGalleryView::ImageGalleryView()
     : tiles_(static_cast<int>(kTile), gui::ImageThumbnails::Shape::Square, 240),
       preview_(256, gui::ImageThumbnails::Shape::Fit, 24) {}
+
+ImageGalleryView::~ImageGalleryView() {
+    if (pipeline_task_) AsyncTaskManager::Instance().Cancel(pipeline_task_);
+    ReleasePipeline();
+}
+
+void ImageGalleryView::ReleasePipeline() {
+    for (uint32_t id : pipeline_textures_)
+        if (id) TextureManager::Instance().DeleteTexture(id);
+    pipeline_textures_.clear();
+}
+
+// The picked image through the graph's Resize and image steps (training's own
+// code, on a task), shown below the grid.
+void ImageGalleryView::RenderPipeline(const ig::Row& row) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+    ui::BeginCard("model_sees");
+    ImGui::TextUnformatted("What the model sees");
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "\xC2\xB7 %s", row.file.c_str());
+    if (!config) {
+        ImGui::TextColored(t.text_dim, "The graph is compiling; its image steps show here once it has.");
+        ui::EndCard();
+        return;
+    }
+    const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
+    const image::ImageAugmentation steps = config->image_augmentation;
+    const std::string key = row.path + "|" + ImageStepsKey(spec, steps);
+    if (key != pipeline_key_ && !pipeline_task_) {
+        pipeline_key_ = key;
+        auto result = std::make_shared<ImagePipelinePreview>();
+        const std::string path = row.path;
+        const uint32_t seed = static_cast<uint32_t>(std::hash<std::string>{}(path));
+        std::weak_ptr<int> alive = alive_;
+        pipeline_task_ = AsyncTaskManager::Instance().RunAsync(
+            "What the model sees: " + row.file,
+            [path, spec, steps, seed, result](LambdaTask&) { *result = PreviewImagePipeline(path, spec, steps, 4, seed); },
+            nullptr,
+            [this, alive, result](bool, const std::string&) {
+                if (alive.expired()) return;
+                pipeline_task_ = 0;
+                ReleasePipeline();
+                pipeline_ = std::move(*result);
+                auto& textures = TextureManager::Instance();
+                const auto upload = [&](const PreviewPicture& p) {
+                    pipeline_textures_.push_back(p.rgba.empty() ? 0u : textures.CreateTextureFromUint8Data(p.rgba.data(), p.width, p.height, 4));
+                };
+                upload(pipeline_.decoded);
+                for (const auto& p : pipeline_.fixed) upload(p);
+                for (const auto& p : pipeline_.draws) upload(p);
+            },
+            alive_);
+    }
+    if (pipeline_task_ || (pipeline_textures_.empty() && pipeline_.error.empty())) {
+        ImGui::TextColored(t.running, ICON_FA_SPINNER " Running the graph's image steps on this image");
+        ui::EndCard();
+        return;
+    }
+    if (!pipeline_.error.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.caution, "%s", pipeline_.error.c_str());
+        ImGui::PopTextWrapPos();
+        ui::EndCard();
+        return;
+    }
+    // A picture, 2x (at most 160 px), its title and what was done.
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    bool first = true;
+    const auto picture = [&](const PreviewPicture& p, uint32_t texture) {
+        const float scale = std::min(2.0f, 160.0f / static_cast<float>(std::max(p.width, p.height)));
+        const ImVec2 size(p.width * scale, p.height * scale);
+        const float w = std::max(size.x, std::max(ImGui::CalcTextSize(p.title.c_str()).x, ImGui::CalcTextSize(p.detail.c_str()).x));
+        if (!first) {
+            ImGui::SameLine(0.0f, 16.0f);
+            if (ImGui::GetCursorScreenPos().x + std::min(w, 220.0f) > right_edge) ImGui::NewLine();
+        }
+        first = false;
+        ImGui::BeginGroup();
+        if (texture) ImGui::Image(static_cast<ImTextureID>(texture), size);
+        ImGui::TextUnformatted(p.title.c_str());
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(size.x, 160.0f));
+        ImGui::TextColored(t.text_dim, "%s", p.detail.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+    };
+    size_t k = 0;
+    picture(pipeline_.decoded, pipeline_textures_[k++]);
+    for (const auto& p : pipeline_.fixed) picture(p, pipeline_textures_[k++]);
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "Random steps \xC2\xB7 per batch");
+    if (pipeline_.draws.empty()) {
+        ImGui::TextColored(t.text_dim, "None in this graph: every epoch sees the same images.");
+    } else {
+        std::string ops;
+        for (const auto& op : pipeline_.random_ops) ops += (ops.empty() ? "" : ", ") + op;
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_faint, "(%s)", ops.c_str());
+        first = true;
+        for (const auto& p : pipeline_.draws) picture(p, pipeline_textures_[k++]);
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Run with the code training runs, on the ArrayFire device; Normalize is left out "
+                                     "so the pictures stay viewable.");
+    ImGui::PopTextWrapPos();
+    ui::EndCard();
+}
 
 void ImageGalleryView::SetDataset(const std::string& dataset) {
     if (dataset == dataset_) return;
@@ -220,6 +332,10 @@ void ImageGalleryView::Render() {
         }
     }
     ImGui::EndGroup();
+    if (view.selected >= 0) {
+        ImGui::Spacing();
+        RenderPipeline(input_.rows[static_cast<size_t>(view.selected)]);
+    }
 }
 
 void ImageGalleryView::RenderStrip(size_t count) {
