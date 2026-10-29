@@ -322,7 +322,11 @@ std::string PreparedImageSetKey(const DataRegistry::ImageDatasetEntry& entry, co
                              std::to_string(static_cast<long long>(
                                  fs::last_write_time(entry.labels_csv, ec).time_since_epoch().count())));
     }
-    for (const auto& row : ImageFileIdentityRows(ListImageSet(entry))) hash = Fnv(hash, row + '\n');
+    const auto listing = ListImageSet(entry);
+    // The class names in index order: a new class order (or a renamed class)
+    // makes a new set, since the set stores label indices.
+    for (const auto& name : listing.class_names) hash = Fnv(hash, "class|" + name + '\n');
+    for (const auto& row : ImageFileIdentityRows(listing)) hash = Fnv(hash, row + '\n');
     return Hex(hash);
 }
 

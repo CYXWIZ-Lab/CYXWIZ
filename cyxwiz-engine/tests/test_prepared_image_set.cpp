@@ -306,6 +306,54 @@ void CheckChangesAndStops(const fs::path& folder, const DataRegistry::ImageDatas
     Check(PreparedImageSet::Open(truncated, &why) == nullptr && !why.empty(), "a truncated file is refused: " + why);
 }
 
+// Class index = position in the sorted class names (numbers as numbers);
+// files in name order. Neither CSV row order nor directory order decides.
+void CheckClassOrder(const fs::path& root) {
+    const fs::path flat = root / "order_flat";
+    {
+        std::ofstream csv(root / "order.csv");
+        csv << "image,label\n";
+        const char* rows[][2] = {{"q0.png", "10"}, {"q1.png", "2"}, {"q2.png", "1"}, {"q3.png", "2"}};
+        for (const auto& row : rows) {
+            csv << row[0] << ',' << row[1] << '\n';
+            Write(flat / row[0], Gradient(12, 10, CV_8UC3, 20));
+        }
+    }
+    DataRegistry::ImageDatasetEntry csv;
+    csv.folder_path = flat.string();
+    csv.labels_csv = (root / "order.csv").string();
+    csv.layout = 1;
+    const auto listed = ListImageSet(csv);
+    Check(listed.class_names == std::vector<std::string>({"1", "2", "10"}), "CSV classes sort as numbers");
+    std::vector<std::string> named;
+    for (size_t i = 0; i < listed.files.size(); ++i)
+        named.push_back(listed.class_names[listed.labels[i]] + "@" + fs::path(listed.files[i]).filename().string());
+    std::sort(named.begin(), named.end());
+    Check(named == std::vector<std::string>({"10@q0.png", "1@q2.png", "2@q1.png", "2@q3.png"}),
+          "each CSV file keeps its own label");
+
+    for (const char* name : {"dog", "cat"}) {
+        const fs::path dir = root / "order_folders" / name;
+        Write(dir / "z.png", Gradient(12, 10, CV_8UC3, 21));
+        Write(dir / "a.png", Gradient(12, 10, CV_8UC3, 22));
+    }
+    DataRegistry::ImageDatasetEntry folders;
+    folders.folder_path = (root / "order_folders").string();
+    folders.layout = 0;
+    const auto in_folders = ListImageSet(folders);
+    Check(in_folders.class_names == std::vector<std::string>({"cat", "dog"}), "class folders sort by name");
+    Check(in_folders.labels == std::vector<int>({0, 0, 1, 1}), "cat is 0, dog is 1");
+    Check(fs::path(in_folders.files[0]).filename() == "a.png" && fs::path(in_folders.files[1]).filename() == "z.png",
+          "files within a class in name order");
+
+    for (const char* name : {"10", "9"}) Write(root / "order_numbers" / name / "x.png", Gradient(12, 10, CV_8UC3, 23));
+    DataRegistry::ImageDatasetEntry numbers;
+    numbers.folder_path = (root / "order_numbers").string();
+    numbers.layout = 0;
+    Check(ListImageSet(numbers).class_names == std::vector<std::string>({"9", "10"}),
+          "numbered class folders sort as numbers");
+}
+
 }  // namespace
 
 int main() {
@@ -361,6 +409,7 @@ int main() {
     csv.layout = 1;
     CheckSet(csv, "labels CSV");
 
+    CheckClassOrder(root);
     CheckBatcher(folders);
     CheckFixedTransforms(folders);
     CheckChangesAndStops(folder, folders);

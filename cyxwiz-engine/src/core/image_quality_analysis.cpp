@@ -44,11 +44,13 @@ std::string Hex(uint64_t value) {
 }
 
 std::string ComputeKey(const DataRegistry::ImageDatasetEntry& entry, int width, int height) {
-    const auto rows = ImageFileIdentityRows(ListImageSet(entry));
+    const auto listing = ListImageSet(entry);
     uint64_t hash = 1469598103934665603ull;
     hash = Fnv(hash, "v" + std::to_string(image::kImageQualityVersion) + "|" + std::to_string(width) + "x" +
                          std::to_string(height) + "|" + entry.labels_csv);
-    for (const auto& row : rows) hash = Fnv(hash, row + '\n');
+    // The analysis stores label indices, so the class order is part of the key.
+    for (const auto& name : listing.class_names) hash = Fnv(hash, "class|" + name + '\n');
+    for (const auto& row : ImageFileIdentityRows(listing)) hash = Fnv(hash, row + '\n');
     return Hex(hash);
 }
 

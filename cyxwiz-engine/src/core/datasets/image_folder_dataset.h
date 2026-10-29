@@ -4,6 +4,7 @@
 #include "../data_registry.h"
 #include "../image_utils.h"
 #include "image_csv_dataset.h"  // For LRUCache template
+#include "class_order.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <algorithm>
@@ -92,8 +93,8 @@ private:
             return;
         }
 
-        // Sort class names for consistent label assignment
-        std::sort(class_dirs.begin(), class_dirs.end());
+        // Class index = position in the sorted class names
+        SortClassNames(class_dirs);
         class_names_ = class_dirs;
 
         // Build class name to label mapping
@@ -109,6 +110,8 @@ private:
             fs::path class_path = fs::path(path_) / class_name;
             int label = class_to_label[class_name];
 
+            // Files in name order, not the directory listing order
+            std::vector<std::string> files;
             for (const auto& entry : fs::directory_iterator(class_path)) {
                 if (!entry.is_regular_file()) continue;
 
@@ -116,9 +119,13 @@ private:
                 std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
                 if (std::find(valid_extensions.begin(), valid_extensions.end(), ext) != valid_extensions.end()) {
-                    image_paths_.push_back(entry.path().string());
-                    labels_.push_back(label);
+                    files.push_back(entry.path().string());
                 }
+            }
+            std::sort(files.begin(), files.end());
+            for (auto& file : files) {
+                image_paths_.push_back(std::move(file));
+                labels_.push_back(label);
             }
         }
 
