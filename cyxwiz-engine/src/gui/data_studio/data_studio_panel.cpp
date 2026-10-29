@@ -29,6 +29,8 @@ DataStudioPanel::DataStudioPanel() {
     profile_->on_outliers = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Outliers, column); };
     profile_->on_distribution = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Distribution, column); };
     profile_->on_correlation = [this] { ShowExplore(active_dataset_, ExploreTab::Correlation); };
+    gallery_ = std::make_unique<ImageGalleryView>();
+    gallery_->on_open_index = [this](const std::string& index) { ShowExplore(index, ExploreTab::Query); };
     missing_ = std::make_unique<MissingView>();
     missing_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_open_profile = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Profile, column); };
@@ -216,6 +218,7 @@ void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     if (query_editor_) query_editor_->SetActiveDataset(dataset_name);
     if (profile_) profile_->SetActiveDataset(dataset_name);
+    if (gallery_) gallery_->SetDataset(dataset_name);
     if (visualizer_) visualizer_->SetActiveDataset(dataset_name);
 }
 

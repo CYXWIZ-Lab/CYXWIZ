@@ -14,6 +14,7 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "data_studio/image_gallery_view.h"
 #include "data_studio/profile_view.h"
 #include "node_editor.h"
 #include "ui_tokens.h"

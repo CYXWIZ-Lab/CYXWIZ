@@ -84,7 +84,8 @@ they are loaded again.
 ## Explore
 
 Explore has nine views: **Query**, **Profile**, **Missing**, **Outliers**,
-**Correlation**, **Distribution**, **Tests**, **Regression** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Correlation**, **Distribution**, **Tests**, **Regression** and **Visualize**,
+and a tenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -244,6 +245,19 @@ looks like one, the panel suggests it. Spotify's artist_genres has `N/A` in
 
 The strongest correlations between number columns (Pearson) are listed
 under the details (Spotify: artist_popularity and artist_followers +0.64).
+
+## Images
+
+For an image dataset (its Data Input in the rail), **Images** shows its
+thumbnails, a page at a time, in the order of its index table. The chips
+filter by class (*All*, *Class 0*, *Class 1*, or the class names) and show
+the unreadable files when there are any; **Sort** puts them in dataset
+order, smallest first or largest first (by pixel count, unreadable files
+last). Each tile has its class at the bottom left; hovering shows the file
+name. Clicking a tile shows it larger with its row, label, original size and
+colour, size on disk and path, and the links **Show in folder** and **Open
+the index table** (Query on `<dataset>_index`). Thumbnails are read on two
+background threads, the ones on screen first.
 
 ## Missing
 

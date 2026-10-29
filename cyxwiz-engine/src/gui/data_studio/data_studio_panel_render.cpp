@@ -4,6 +4,8 @@
 
 #include "data_studio_panel.h"
 
+#include "../../core/dataset_catalog.h"
+
 #include "../node_editor.h"
 #include "../editor_fonts.h"
 #include "../icons.h"
@@ -400,12 +402,18 @@ void DataStudioPanel::RenderBringIn() {
 
 void DataStudioPanel::RenderExplore() {
     static const std::pair<const char*, ExploreTab> kTabs[] = {
-        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Missing", ExploreTab::Missing},
+        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Images", ExploreTab::Images}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
         {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression}, {"Visualize", ExploreTab::Visualize}};
+    const auto picked = DatasetCatalog::Instance().Resolve(active_dataset_);
+    const bool images = picked && picked->modality == DatasetModality::Image &&
+                        picked->storage != DatasetStorageKind::InMemoryArrow &&
+                        picked->storage != DatasetStorageKind::DiskBackedParquet;
+    if (explore_tab_ == ExploreTab::Images && !images) explore_tab_ = ExploreTab::Profile;
     const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     bool first = true;
     for (const auto& [label, tab] : kTabs) {
+        if (tab == ExploreTab::Images && !images) continue;
         // Wraps in a narrow dock.
         if (!first) SameLineOrWrap(ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 4.0f, right_edge);
         first = false;
@@ -420,6 +428,7 @@ void DataStudioPanel::RenderExplore() {
                 profile_->Render();
             }
             break;
+        case ExploreTab::Images: if (gallery_) gallery_->Render(); break;
         case ExploreTab::Missing: if (missing_) missing_->Render(MakeExploreContext()); break;
         case ExploreTab::Outliers: if (outliers_) outliers_->Render(MakeExploreContext()); break;
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;

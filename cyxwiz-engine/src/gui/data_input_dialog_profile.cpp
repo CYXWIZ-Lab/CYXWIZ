@@ -3,6 +3,7 @@
 // Data Studio).
 
 #include "node_config_dialog.h"
+#include "data_studio/image_gallery_view.h"
 #include "data_studio/profile_view.h"
 #include "ui_tokens.h"
 

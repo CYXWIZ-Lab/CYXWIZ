@@ -94,7 +94,10 @@ strip keeps the earlier load and says the last Apply failed.
 The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
 (which columns to load, then the rows to skip and the row limit; not shown
 for an image or audio folder, which has no rows to read), **Memory** and
-**Audit**.
+**Audit**. For an image folder, **Preview** shows its first 24 images with
+their class once it is loaded (Explore > Images in Data Studio shows them
+all), and **Profile** shows the image profile (counts, classes, sizes,
+prepared sets; see Data Studio > Profile).
 
 ### Source: the file or folder, then how its rows are used
 

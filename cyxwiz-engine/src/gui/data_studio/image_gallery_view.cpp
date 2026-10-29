@@ -1,0 +1,249 @@
+#include "image_gallery_view.h"
+
+#include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_platform.h"
+#include "../ui_tokens.h"
+#include "../../core/arrow_dataset.h"
+#include "../../core/data_registry.h"
+
+#include <arrow/api.h>
+#include <imgui.h>
+
+#include <algorithm>
+
+namespace cyxwiz {
+
+namespace {
+
+namespace ig = image_gallery;
+
+constexpr float kTile = 96.0f;
+constexpr float kDetailWidth = 280.0f;
+constexpr int kTileRows = 4;
+
+std::shared_ptr<arrow::Array> Chunk(const std::shared_ptr<arrow::Table>& t, const char* name) {
+    const auto column = t->GetColumnByName(name);
+    return column && column->num_chunks() > 0 ? column->chunk(0) : nullptr;
+}
+
+// A tile: the thumbnail (or its placeholder), the class tag, hover and
+// selection washes. Returns true when clicked.
+bool Tile(gui::ImageThumbnails& thumbs, const ig::Row& row, const std::string& tag, bool selected) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton("##tile", ImVec2(kTile, kTile));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 end(at.x + kTile, at.y + kTile);
+    const auto thumb = thumbs.Get(row.path);
+    if (thumb.texture) {
+        dl->AddImageRounded(thumb.texture, at, end, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
+    } else {
+        dl->AddRectFilled(at, end, ui::ToU32(t.bg_raised), 4.0f);
+        if (thumb.failed || !row.readable) {
+            const ImVec2 icon = ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION);
+            dl->AddText(ImVec2(at.x + (kTile - icon.x) * 0.5f, at.y + (kTile - icon.y) * 0.5f), ui::ToU32(t.caution),
+                        ICON_FA_TRIANGLE_EXCLAMATION);
+        }
+    }
+    // The class, bottom left, on a wash of the window tone.
+    const ImVec2 size = ImGui::CalcTextSize(tag.c_str());
+    const ImVec2 tag_at(at.x + 4.0f, end.y - size.y - 6.0f);
+    ImVec4 wash = t.bg_window;
+    wash.w = 0.8f;
+    dl->AddRectFilled(ImVec2(tag_at.x - 3.0f, tag_at.y - 1.0f), ImVec2(tag_at.x + size.x + 3.0f, tag_at.y + size.y + 1.0f),
+                      ui::ToU32(wash), 3.0f);
+    dl->AddText(tag_at, ui::ToU32(t.text), tag.c_str());
+    if (selected) dl->AddRectFilled(at, end, ui::ToU32(t.selection), 4.0f);
+    else if (hovered) dl->AddRectFilled(at, end, ui::ToU32(t.hover), 4.0f);
+    if (hovered) ImGui::SetTooltip("%s", row.file.c_str());
+    return clicked;
+}
+
+}  // namespace
+
+ImageGalleryView::ImageGalleryView()
+    : tiles_(static_cast<int>(kTile), gui::ImageThumbnails::Shape::Square, 240),
+      preview_(256, gui::ImageThumbnails::Shape::Fit, 24) {}
+
+void ImageGalleryView::SetDataset(const std::string& dataset) {
+    if (dataset == dataset_) return;
+    dataset_ = dataset;
+    index_seen_ = nullptr;
+    input_ = {};
+}
+
+void ImageGalleryView::Refresh() {
+    auto& registry = DataRegistry::Instance();
+    const auto* entry = registry.GetImageDatasetEntry(dataset_);
+    const auto index = registry.GetArrowDataset(DataRegistry::ImageIndexName(dataset_));
+    const auto table = index ? index->GetArrowTable() : nullptr;
+    if (table.get() == index_seen_) return;
+    index_seen_ = table.get();
+    input_.class_names = entry ? entry->class_names : std::vector<std::string>{};
+    input_.rows.clear();
+    if (!table) return;
+    const auto combined = table->CombineChunks().ValueOrDie();
+    const auto path = std::static_pointer_cast<arrow::StringArray>(Chunk(combined, "path"));
+    const auto file = std::static_pointer_cast<arrow::StringArray>(Chunk(combined, "file"));
+    const auto label = std::static_pointer_cast<arrow::Int32Array>(Chunk(combined, "label"));
+    const auto width = std::static_pointer_cast<arrow::Int32Array>(Chunk(combined, "width"));
+    const auto height = std::static_pointer_cast<arrow::Int32Array>(Chunk(combined, "height"));
+    const auto channels = std::static_pointer_cast<arrow::Int32Array>(Chunk(combined, "channels"));
+    const auto bytes = std::static_pointer_cast<arrow::Int64Array>(Chunk(combined, "bytes"));
+    const auto readable = std::static_pointer_cast<arrow::BooleanArray>(Chunk(combined, "readable"));
+    if (!path || !file || !label || !width || !height || !channels || !bytes || !readable) return;
+    input_.rows.reserve(static_cast<size_t>(path->length()));
+    for (int64_t i = 0; i < path->length(); ++i) {
+        ig::Row row;
+        row.path = path->GetString(i);
+        row.file = file->GetString(i);
+        row.label = label->IsNull(i) ? -1 : label->Value(i);
+        row.width = width->IsNull(i) ? -1 : width->Value(i);
+        row.height = height->IsNull(i) ? -1 : height->Value(i);
+        row.channels = channels->IsNull(i) ? -1 : channels->Value(i);
+        row.bytes = bytes->Value(i);
+        row.readable = readable->Value(i);
+        input_.rows.push_back(std::move(row));
+    }
+}
+
+void ImageGalleryView::Render() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    tiles_.Pump();
+    preview_.Pump();
+    if (dataset_.empty()) return;
+    Refresh();
+    if (!index_seen_) {
+        ImGui::TextColored(t.text_dim, "The images show once their index is built (Bring in lists it under the Data Input).");
+        return;
+    }
+
+    const bool side = ImGui::GetContentRegionAvail().x >= 760.0f;
+    const float grid_w = side ? ImGui::GetContentRegionAvail().x - kDetailWidth - ImGui::GetStyle().ItemSpacing.x * 2.0f
+                              : ImGui::GetContentRegionAvail().x;
+    const float step = kTile + ImGui::GetStyle().ItemSpacing.x;
+    const int columns = std::max(1, static_cast<int>((grid_w + ImGui::GetStyle().ItemSpacing.x) / step));
+    input_.per_page = static_cast<size_t>(columns * kTileRows);
+    ig::View view = ig::Build(input_);
+    input_.filter = "all";
+    for (const auto& chip : view.chips)
+        if (chip.on) input_.filter = chip.key;
+    input_.page = view.page;
+
+    // Filters, sort, pages.
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    bool first = true;
+    for (const auto& chip : view.chips) {
+        const std::string& count = chip.count_text;
+        if (!first) {
+            ImGui::SameLine();
+            if (ImGui::GetCursorScreenPos().x + ui::FilterChipWidth(chip.label.c_str(), count.c_str()) > right_edge) ImGui::NewLine();
+        }
+        first = false;
+        if (ui::FilterChip(chip.key.c_str(), chip.label.c_str(), count.c_str(), chip.on)) {
+            input_.filter = chip.key;
+            input_.page = 0;
+        }
+    }
+    static const char* kSorts[] = {"Dataset order", "Smallest", "Largest"};
+    int sort = static_cast<int>(input_.sort);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Sort");
+    ImGui::SameLine();
+    if (ui::SegmentedControl("##gallery_sort", kSorts, 3, &sort)) {
+        input_.sort = static_cast<ig::Sort>(sort);
+        input_.page = 0;
+    }
+    ImGui::SameLine(0.0f, 16.0f);
+    if (ui::SecondaryButton(ICON_FA_CHEVRON_LEFT "##previous", view.has_previous, "This is the first page",
+                            ui::ButtonSize::Small))
+        input_.page = view.page - 1;
+    ImGui::SameLine();
+    if (ui::SecondaryButton(ICON_FA_CHEVRON_RIGHT "##next", view.has_next, "This is the last page", ui::ButtonSize::Small))
+        input_.page = view.page + 1;
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "%s", view.showing.c_str());
+    ImGui::Spacing();
+
+    // The grid.
+    ImGui::BeginGroup();
+    for (size_t k = 0; k < view.shown.size(); ++k) {
+        const size_t i = view.shown[k];
+        if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(i));
+        if (Tile(tiles_, input_.rows[i], view.tags[k], static_cast<long long>(i) == view.selected))
+            input_.selected = static_cast<long long>(i);
+        ImGui::PopID();
+    }
+    if (view.shown.empty()) ImGui::Dummy(ImVec2(grid_w, kTile));
+    ImGui::EndGroup();
+
+    // The picked image.
+    if (side) ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    ImGui::BeginGroup();
+    view = ig::Build(input_);  // a click this frame
+    if (view.selected < 0) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kDetailWidth);
+        ImGui::TextColored(t.text_dim, "Click an image for its details.");
+        ImGui::PopTextWrapPos();
+    } else {
+        const ig::Row& row = input_.rows[static_cast<size_t>(view.selected)];
+        const auto big = preview_.Get(row.path);
+        if (big.texture) {
+            const float scale = std::min(1.0f, kDetailWidth / static_cast<float>(std::max(big.width, big.height)));
+            ImGui::Image(big.texture, ImVec2(big.width * scale, big.height * scale));
+        } else {
+            ImGui::Dummy(ImVec2(kDetailWidth, kDetailWidth * 0.6f));
+        }
+        ImGui::TextUnformatted(view.detail_title.c_str());
+        if (ImGui::BeginTable("##image_detail", 2, ImGuiTableFlags_SizingStretchProp, ImVec2(kDetailWidth, 0.0f))) {
+            ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Original").x + 8.0f);
+            ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+            for (const auto& [what, value] : view.detail) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(t.text_dim, "%s", what.c_str());
+                ImGui::TableNextColumn();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(value.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::EndTable();
+        }
+        if (ui::LinkButton("Show in folder")) ui::ShowInFileManager(row.path);
+        if (on_open_index) {
+            ImGui::SameLine(0.0f, 12.0f);
+            if (ui::LinkButton("Open the index table")) on_open_index(DataRegistry::ImageIndexName(dataset_));
+        }
+    }
+    ImGui::EndGroup();
+}
+
+void ImageGalleryView::RenderStrip(size_t count) {
+    tiles_.Pump();
+    if (dataset_.empty()) return;
+    Refresh();
+    if (!index_seen_) {
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Indexing the images...");
+        return;
+    }
+    const float step = kTile + ImGui::GetStyle().ItemSpacing.x;
+    const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + ImGui::GetStyle().ItemSpacing.x) / step));
+    ig::Input first = input_;
+    first.filter = "all";
+    first.sort = ig::Sort::DatasetOrder;
+    first.page = 0;
+    first.per_page = count;
+    const ig::View view = ig::Build(first);
+    for (size_t k = 0; k < view.shown.size(); ++k) {
+        if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(view.shown[k]));
+        Tile(tiles_, input_.rows[view.shown[k]], view.tags[k], false);
+        ImGui::PopID();
+    }
+}
+
+}  // namespace cyxwiz
