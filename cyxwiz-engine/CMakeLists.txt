@@ -3196,6 +3196,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/csv_records.cpp
     tests/support/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
+    src/plugin/security/safe_execute.cpp
 )
 
 # ===== Test: Legacy PipelineExecutor operator routing =====
