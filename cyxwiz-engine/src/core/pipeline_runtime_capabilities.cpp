@@ -1646,6 +1646,8 @@ const char* PipelineMaterializerStorageSupportName(
         return "none";
     case PipelineMaterializerStorageSupport::ArrowTableOnly:
         return "arrow_table_only";
+    case PipelineMaterializerStorageSupport::StreamingOperatorsOnly:
+        return "streaming_operators_only";
     }
     return "unknown";
 }
