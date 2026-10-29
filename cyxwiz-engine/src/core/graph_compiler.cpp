@@ -136,7 +136,8 @@ void CollectDatasetSourceOrigins(
     int output_pin_id,
     std::unordered_set<int>& active_path,
     std::unordered_set<int>& origins,
-    bool& invalid_path) {
+    bool& invalid_path,
+    bool& needs_pipeline_run) {
     const auto* node = FindNodeById(nodes, node_id);
     const auto* output_pin = node
         ? FindPinById(node->outputs, output_pin_id)
@@ -160,10 +161,14 @@ void CollectDatasetSourceOrigins(
         runtime_support.implementation_owner ==
             PipelineRuntimeImplementationOwner::PipelineOperatorFactory &&
         runtime_support.materializer_arrow_table_supported;
-    if (!training_filter && !table_operator) {
+    // SQL, Text Clean, Filter Rows ... run in the pipeline run only: training
+    // trains on that run's result (TOFIX178 S0-e).
+    const bool run_step = IsPipelineRunTrainingStep(node->type);
+    if (!training_filter && !table_operator && !run_step) {
         invalid_path = true;
         return;
     }
+    if (run_step) needs_pipeline_run = true;
 
     if (!active_path.insert(node->id).second) {
         invalid_path = true;
@@ -177,7 +182,7 @@ void CollectDatasetSourceOrigins(
         if (!input_pin || input_pin->type != gui::PinType::Dataset) continue;
         found_dataset_input = true;
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, needs_pipeline_run);
     }
     if (!found_dataset_input) invalid_path = true;
     active_path.erase(node->id);
@@ -189,9 +194,11 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     const gui::MLNode& split_node,
     const std::string& pin_name,
     bool* has_connection = nullptr,
-    bool* has_multiple_sources = nullptr) {
+    bool* has_multiple_sources = nullptr,
+    bool* needs_pipeline_run = nullptr) {
     if (has_connection) *has_connection = false;
     if (has_multiple_sources) *has_multiple_sources = false;
+    if (needs_pipeline_run) *needs_pipeline_run = false;
 
     const auto* input_pin = FindInputPinByName(split_node, pin_name);
     if (!input_pin) return nullptr;
@@ -199,6 +206,7 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     std::unordered_set<int> origins;
     std::unordered_set<int> active_path;
     bool invalid_path = false;
+    bool run_steps = false;
     for (const auto& link : links) {
         if (link.to_node != split_node.id || link.to_pin != input_pin->id) {
             continue;
@@ -206,8 +214,9 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
         if (has_connection) *has_connection = true;
 
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, run_steps);
     }
+    if (needs_pipeline_run) *needs_pipeline_run = run_steps;
     if (origins.size() > 1) {
         if (has_multiple_sources) *has_multiple_sources = true;
         return nullptr;
@@ -731,6 +740,25 @@ void ValidateSparseFeatureTrainingContract(
                      "training path emits sparse features",
                  role.source_node_id, role.dataset_name,
                  errors::Compiler::UnsupportedTrainingNode);
+    }
+}
+
+// TextVocabulary and TextPadding linked from a tokenizer are legacy: their
+// settings belong on the Text Tokenizer (ReportLegacyTextConfigNodes).
+void ReportLegacyTextConfigNodes(TrainingConfiguration& config,
+                                 const std::vector<gui::MLNode>& nodes,
+                                 const std::vector<gui::NodeLink>& links) {
+    for (const auto& link : links) {
+        const auto* from = FindNodeById(nodes, link.from_node);
+        const auto* to = FindNodeById(nodes, link.to_node);
+        if (!from || !to || from->type != gui::NodeType::TextTokenizer) continue;
+        if (to->type != gui::NodeType::TextVocabulary && to->type != gui::NodeType::TextPadding) continue;
+        AddIssue(config, IssueLevel::Warning,
+                 "'" + to->name + "' is a legacy node and its settings are not applied; set " +
+                     (to->type == gui::NodeType::TextVocabulary ? "Min Word Freq and Max Vocab Size"
+                                                                : "Max Length and Pad Value") +
+                     " on '" + from->name + "' instead",
+                 to->id, to->name);
     }
 }
 
@@ -4540,7 +4568,8 @@ TrainingConfiguration GraphCompiler::Compile(
             bool train_has_multiple_sources = false;
             const auto* topology_train = FindDatasetSourceConnectedToSplitInput(
                 nodes, links, *role_split, "Training Dataset",
-                &train_has_connection, &train_has_multiple_sources);
+                &train_has_connection, &train_has_multiple_sources,
+                &config.training_data_needs_pipeline_run);
             if (train_has_multiple_sources) {
                 AddIssue(config, IssueLevel::Error,
                          "Data Split 'Training Dataset' accepts exactly one "
@@ -4567,9 +4596,40 @@ TrainingConfiguration GraphCompiler::Compile(
                 DatasetSourceRef& output) {
                 bool has_connection = false;
                 bool has_multiple_sources = false;
+                bool needs_run = false;
                 const auto* source = FindDatasetSourceConnectedToSplitInput(
                     nodes, links, *role_split, pin_name,
-                    &has_connection, &has_multiple_sources);
+                    &has_connection, &has_multiple_sources, &needs_run);
+                // A supplied input goes through the Training branch's steps,
+                // fitted on the Train rows (TOFIX178 S0-g4); steps of its
+                // own would not run. The Quality Analyzer (it filters image
+                // files) may stay.
+                bool own_steps = needs_run;
+                if (const auto* pin = FindInputPinByName(*role_split, pin_name)) {
+                    int at = -1;
+                    for (const auto& link : links)
+                        if (link.to_node == role_split->id && link.to_pin == pin->id) at = link.from_node;
+                    std::unordered_set<int> seen;
+                    while (at >= 0 && seen.insert(at).second) {
+                        const gui::MLNode* node = FindNodeById(at, nodes);
+                        if (!node || IsDatasetSourceType(node->type)) break;
+                        if (node->type != gui::NodeType::QualityAnalyzer) own_steps = true;
+                        int next = -1;
+                        for (const auto& link : links)
+                            if (link.to_node == at) next = link.from_node;
+                        at = next;
+                    }
+                }
+                if (own_steps) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string(role_name) +
+                                 " input goes through the Training branch's steps (they learn from the "
+                                 "Train rows and transform its rows too); connect its Data Input to the "
+                                 "Data Split directly",
+                             role_split->id, role_split->name,
+                             errors::Compiler::InvalidConnectivity);
+                    return;
+                }
                 if (has_multiple_sources) {
                     AddIssue(config, IssueLevel::Error,
                              std::string("Data Split '") + pin_name +
@@ -4596,6 +4656,32 @@ TrainingConfiguration GraphCompiler::Compile(
                 "Validation Dataset", "Validation", config.dataset_roles.dev);
             resolve_optional_role(
                 "Test Dataset", "Test", config.dataset_roles.test);
+
+            // The Training branch's steps learn from its Train rows; one that
+            // learns from every row also learns from the Validation and Test
+            // rows (TOFIX178 S0-g5).
+            if (const auto* pin = FindInputPinByName(*role_split, "Training Dataset")) {
+                std::vector<int> pending;
+                for (const auto& link : links)
+                    if (link.to_node == role_split->id && link.to_pin == pin->id) pending.push_back(link.from_node);
+                std::unordered_set<int> seen;
+                while (!pending.empty()) {
+                    const int at = pending.back();
+                    pending.pop_back();
+                    if (!seen.insert(at).second) continue;
+                    const gui::MLNode* node = FindNodeById(at, nodes);
+                    if (!node || IsDatasetSourceType(node->type)) continue;
+                    if (PipelineStepLearnsFromEveryRow(node->type)) {
+                        AddIssue(config, IssueLevel::Warning,
+                                 "'" + node->name + "' learns from every row before the Data Split, the "
+                                 "Validation and Test rows too (it cannot learn from the Train rows only yet), "
+                                 "so their scores read better than new data would",
+                                 node->id, node->name, errors::Compiler::LearnsFromEveryRow);
+                    }
+                    for (const auto& link : links)
+                        if (link.to_node == at) pending.push_back(link.from_node);
+                }
+            }
         }
 
         for (const auto& node : nodes) {
@@ -4692,9 +4778,17 @@ TrainingConfiguration GraphCompiler::Compile(
             ? cat_it_lbl->second : std::string();
         const bool labels_from_structure = GraphCategoryLabelsFromStructure(cat_str);
 
-        const std::string requested_label_col = dataset_node->parameters.count("label_column")
+        std::string requested_label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
+        // The Data Split's Label column wins (TOFIX178 S0-e): steps before the
+        // Split can make or rename the label.
+        if (const gui::MLNode* label_split =
+                FindFirstReachableNodeOfType(nodes, dataset_reachable, gui::NodeType::DataSplit)) {
+            const auto split_label = label_split->parameters.find("label_column");
+            if (split_label != label_split->parameters.end() && !TrimAscii(split_label->second).empty())
+                requested_label_col = TrimAscii(split_label->second);
+        }
 
         std::shared_ptr<arrow::Schema> tabular_schema;
         if (auto arrow_dataset = GraphArrowDataset(config.dataset_name)) {
@@ -4726,6 +4820,22 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         if (!requested_label_col.empty() && tabular_schema &&
+            resolved_label_index < 0 && !labels_from_structure &&
+            config.training_data_needs_pipeline_run &&
+            !config.target.IsGeneratedByGraph()) {
+            // A SQL / Rename / Math Formula step before the Split can make the
+            // label column (TOFIX178 S0-e): training checks it on their result.
+            config.dataset_roles.train.label_column = requested_label_col;
+            config.target.origin = TargetOrigin::DatasetColumn;
+            config.target.producer_node_id = dataset_node->id;
+            config.target.producer_node_name = dataset_node->name;
+            config.target.primary_column = requested_label_col;
+            config.target.width = 1;
+            AddIssue(config, IssueLevel::Warning,
+                     "Label column '" + requested_label_col + "' is not in '" + config.dataset_name +
+                         "'; the steps before the Data Split must make it (checked when they run)",
+                     dataset_node->id, dataset_node->name);
+        } else if (!requested_label_col.empty() && tabular_schema &&
             resolved_label_index < 0 && !labels_from_structure) {
             if (config.target.IsGeneratedByGraph()) {
                 AddIssue(config, IssueLevel::Warning,
@@ -5160,6 +5270,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
+    ReportLegacyTextConfigNodes(config, nodes, links);
     ValidateSparseFeatureTrainingContract(
         config, nodes, links, training_path_ids, sorted_ids);
     const auto sequence_fusion =
@@ -7146,8 +7257,8 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
                  config.audio_preprocessing.pitch_shift);
 }
 
-// --- Text preprocessing (Arrow materializer path) ---
-// TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
+// --- Text preprocessing ---
+// TextTokenizer is applied by the pipeline run before training. The compiler
 // still extracts its shape contract so recurrent preflight uses the graph's
 // current max_length.
 static void ExtractTextTokenizerShape(
@@ -7176,8 +7287,6 @@ static void ExtractTextVectorizerShape(
         config.text_preprocessing.max_length);
 }
 
-// TextVocabulary and TextPadding fold into the reachable tokenizer in
-// PipelineMaterializer; they do not own a separate training shape.
 
 // --- TimeSeries extractors (Phase 4 — deferred) ---
 

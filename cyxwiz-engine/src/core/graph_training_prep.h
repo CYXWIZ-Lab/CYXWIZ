@@ -43,6 +43,10 @@ void ReconcileRuntimeTabularFeatureWidth(const std::string& dataset_name, const 
 
 // Supplied Dev/Test roles: schema compatibility and bounded leakage checks
 // (tabular), or required sequence columns (sequence graphs). False = refuse.
+// Marks the supplied Validation / Test roles whose rows are in the Training
+// table (its partition holds 1 / 2, TOFIX178 S0-g4); ValidateSuppliedRolePreflight
+// calls it first.
+void MarkJoinedSuppliedRoles(ResolvedDatasetRoles& roles);
 bool ValidateSuppliedRolePreflight(ResolvedDatasetRoles& roles, const TrainingConfiguration& config,
                                    LaunchBlock& launch_result);
 bool ValidateSequenceLaunchColumns(const std::string& dataset_name, const TrainingConfiguration& config,

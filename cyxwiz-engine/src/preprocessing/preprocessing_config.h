@@ -62,61 +62,11 @@ enum class EdgeDetectorType {
  * Image preprocessing configuration
  */
 struct ImagePreprocessingConfig {
+    // The Resize node's size and mode: training decodes every image once at
+    // it (PrepareImageSet, TOFIX178 1.3).
     ResizeMode resize_mode = ResizeMode::None;
     int target_width = 0;
     int target_height = 0;
-    bool convert_to_grayscale = false;
-    bool convert_to_rgb = false;  // For grayscale→RGB conversion
-
-    // Image enhancement (applied before normalization/scaling)
-    bool enable_clahe = false;
-    float clahe_clip_limit = 2.0f;
-    int clahe_tile_size = 8;
-
-    bool enable_denoise = false;
-    float denoise_strength = 10.0f;
-
-    bool enable_sharpen = false;
-    float sharpen_amount = 1.0f;
-
-    bool enable_edge_detection = false;
-    EdgeDetectorType edge_detector_type = EdgeDetectorType::Canny;
-    float edge_threshold1 = 50.0f;   // Canny: low threshold, Sobel/Scharr: not used
-    float edge_threshold2 = 150.0f;  // Canny: high threshold, Sobel/Scharr: not used
-    int edge_kernel_size = 3;        // Sobel/Laplacian/Scharr kernel size (3, 5, 7)
-
-    // OpenCV Transform Configs (Phase 1)
-    MorphologyConfig morphology_config;
-    BlurConfig blur_config;
-    PerspectiveConfig perspective_config;
-    PyramidConfig pyramid_config;
-
-    nlohmann::json ToJson() const;
-    static ImagePreprocessingConfig FromJson(const nlohmann::json& j);
-
-    bool operator==(const ImagePreprocessingConfig& other) const {
-        return resize_mode == other.resize_mode &&
-               target_width == other.target_width &&
-               target_height == other.target_height &&
-               convert_to_grayscale == other.convert_to_grayscale &&
-               convert_to_rgb == other.convert_to_rgb &&
-               enable_clahe == other.enable_clahe &&
-               clahe_clip_limit == other.clahe_clip_limit &&
-               clahe_tile_size == other.clahe_tile_size &&
-               enable_denoise == other.enable_denoise &&
-               denoise_strength == other.denoise_strength &&
-               enable_sharpen == other.enable_sharpen &&
-               sharpen_amount == other.sharpen_amount &&
-               enable_edge_detection == other.enable_edge_detection &&
-               edge_detector_type == other.edge_detector_type &&
-               edge_threshold1 == other.edge_threshold1 &&
-               edge_threshold2 == other.edge_threshold2 &&
-               edge_kernel_size == other.edge_kernel_size &&
-               morphology_config == other.morphology_config &&
-               blur_config == other.blur_config &&
-               perspective_config == other.perspective_config &&
-               pyramid_config == other.pyramid_config;
-    }
 };
 
 /**
@@ -167,11 +117,10 @@ struct ScalingConfig {
 
 /**
  * Complete preprocessing configuration
- * Applied in order: Image → Normalization → Scaling
+ * Applied in order: Normalization → Scaling
  */
 struct PreprocessingConfig {
     // Execution order (applied in this sequence):
-    ImagePreprocessingConfig image_config;
     NormalizationConfig normalization_config;
     ScalingConfig scaling_config;
 
@@ -182,8 +131,7 @@ struct PreprocessingConfig {
     static PreprocessingConfig FromJson(const nlohmann::json& j);
 
     bool operator==(const PreprocessingConfig& other) const {
-        return image_config == other.image_config &&
-               normalization_config == other.normalization_config &&
+        return normalization_config == other.normalization_config &&
                scaling_config == other.scaling_config &&
                enabled == other.enabled &&
                dataset_id == other.dataset_id;
@@ -197,10 +145,6 @@ NormalizationStrategy StringToNormalizationStrategy(const std::string& str);
 std::string ScalingStrategyToString(ScalingStrategy strategy);
 ScalingStrategy StringToScalingStrategy(const std::string& str);
 
-std::string ResizeModeToString(ResizeMode mode);
-ResizeMode StringToResizeMode(const std::string& str);
 
-std::string EdgeDetectorTypeToString(EdgeDetectorType type);
-EdgeDetectorType StringToEdgeDetectorType(const std::string& str);
 
 } // namespace cyxwiz

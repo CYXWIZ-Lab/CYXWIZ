@@ -8,6 +8,7 @@
 #include <cstdint>
 #include "crash_run_recorder.h"
 #include "image_dataset_batcher.h"
+#include <stdexcept>
 #include "audio_dataset_batcher.h"
 #include <cyxwiz/error_codes.h>
 #include "training_batcher_setup.h"
@@ -576,7 +577,7 @@ bool TrainingManager::StartTrainingArrow(
     // size (crash at first forward pass due to dimension mismatch with the
     // batch tensor, which correctly excludes both label AND __partition__).
     const auto input_resolution =
-        ResolveTabularTrainingInputSize(config, num_cols);
+        ResolveTabularTrainingInputSize(config, arrow_dataset->GetSchema(), label_column);
     config.input_size = input_resolution.input_size;
 
     if (input_resolution.used_compiled_override) {
@@ -584,10 +585,11 @@ bool TrainingManager::StartTrainingArrow(
                      "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
                      num_rows, num_cols, config.input_size);
     } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
-                     num_rows, num_cols, config.input_size);
+        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (label '{}')",
+                     num_rows, num_cols, config.input_size, label_column);
     } else {
-        spdlog::warn("TrainingManager: Arrow dataset has only {} column - no separate label column", num_cols);
+        spdlog::warn("TrainingManager: Arrow dataset has no label column '{}' ({} cols, input_size={})", label_column,
+                     num_cols, config.input_size);
     }
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
@@ -643,7 +645,7 @@ bool TrainingManager::StartTrainingParquet(
     size_t num_cols = parquet_dataset->GetNumColumns();
     size_t num_rows = parquet_dataset->GetNumRows();
     const auto input_resolution =
-        ResolveTabularTrainingInputSize(config, num_cols);
+        ResolveTabularTrainingInputSize(config, parquet_dataset->GetSchema(), label_column);
     config.input_size = input_resolution.input_size;
 
     if (input_resolution.used_compiled_override) {
@@ -651,10 +653,11 @@ bool TrainingManager::StartTrainingParquet(
                      "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
                      num_rows, num_cols, config.input_size);
     } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
-                     num_rows, num_cols, config.input_size);
+        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (label '{}')",
+                     num_rows, num_cols, config.input_size, label_column);
     } else {
-        spdlog::warn("TrainingManager: Parquet dataset has only {} column - no separate label column", num_cols);
+        spdlog::warn("TrainingManager: Parquet dataset has no label column '{}' ({} cols, input_size={})", label_column,
+                     num_cols, config.input_size);
     }
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
@@ -719,41 +722,59 @@ bool TrainingManager::StartTrainingImage(
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
 
-    // Build the ImageDatasetBatcher from the graph's Resize size and its
-    // image transforms (run on the device, then Normalize).
-    auto batcher = std::make_unique<ImageDatasetBatcher>(
-        image_entry, config.image_preprocessing,
-        batch_size, config.train_ratio, config.shuffle, config.num_workers,
-        static_cast<uint32_t>(config.dataloader_seed));
-    batcher->SetDropLast(config.drop_last);
-    batcher->SetImageTransforms(config.image_augmentation);
-    batcher->ExcludeFiles(config.image_excluded_files);
+    // On the training thread: the images decoded once at the graph's Resize
+    // size and mode (from the project's cache/images when they were before;
+    // TOFIX178 1.3b), then the batcher gathers from them and runs the image
+    // transforms and Normalize on the device. A Stop stops the decoding.
+    auto stop_requested = std::make_shared<std::function<bool()>>();
+    ExternalBatcherFactory factory = [image_entry, stop_requested](const TrainingConfiguration& run,
+                                                                   int run_batch_size) {
+        // The leading transforms that are the same every epoch are done once
+        // with the images (1.3c); the rest run on each batch.
+        const auto transforms = SplitFixedImageTransforms(run.image_augmentation);
+        size_t reported = 0;
+        const auto prepared = PrepareImageSet(
+            image_entry, PreparedImageSpecFrom(run.image_preprocessing), transforms.fixed, 0,
+            [&](size_t done, size_t total) {
+                if (done * 10 / total != reported * 10 / total || done == total) {
+                    reported = done;
+                    spdlog::info("Preparing images: {} of {} decoded", done, total);
+                }
+                return !(*stop_requested && (*stop_requested)());
+            });
+        if (!prepared.set) throw std::runtime_error("the images could not be prepared: " + prepared.error);
+        if (prepared.from_cache)
+            spdlog::info("Training reads the {} prepared images from {}", prepared.set->Count(),
+                         prepared.set->Path().string());
 
-    if (batcher->GetNumSamples() == 0) {
-        spdlog::error("TrainingManager: Image dataset has 0 samples");
-        return false;
-    }
+        auto batcher = std::make_shared<ImageDatasetBatcher>(
+            prepared.set, run_batch_size, run.train_ratio, run.shuffle,
+            static_cast<uint32_t>(run.dataloader_seed));
+        batcher->SetDropLast(run.drop_last);
+        batcher->SetImageTransforms(transforms.per_batch);
+        batcher->ExcludeFiles(run.image_excluded_files);
+        if (batcher->GetNumSamples() == 0) throw std::runtime_error("the image dataset has no images to train on");
 
-    // The compiler set input_shape [H, W, C] from the same Resize size and
-    // transforms (ApplyImageInputShape), so the model and the batches agree.
-    spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms, "
-                 "num_workers={}, seed={}",
-                 batcher->GetNumSamples(), config.input_size, config.image_augmentation.ops.size(),
-                 config.num_workers, config.dataloader_seed);
+        // The compiler set input_shape [H, W, C] from the same Resize size and
+        // transforms (ApplyImageInputShape), so the model and the batches agree.
+        spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms ({} done "
+                     "once), seed={}", batcher->GetNumSamples(), run.input_size, run.image_augmentation.ops.size(),
+                     transforms.fixed.size(), run.dataloader_seed);
+        if (run.preprocessing.has_normalization) {
+            batcher->SetNormalization(run.preprocessing.norm_mean, run.preprocessing.norm_std);
+        }
+        if (UsesScalarBinaryTargets(run.loss_type)) {
+            batcher->SetScalarLabelMode(true);
+        } else if (run.preprocessing.has_onehot && run.preprocessing.num_classes > 0) {
+            batcher->SetOneHotEncoding(run.preprocessing.num_classes);
+        }
+        ResolvedExternalBatchers batchers;
+        batchers.train = std::move(batcher);
+        return batchers;
+    };
 
-    // Set up normalization / one-hot from the compiled graph config
-    if (config.preprocessing.has_normalization) {
-        batcher->SetNormalization(config.preprocessing.norm_mean,
-                                  config.preprocessing.norm_std);
-    }
-    if (UsesScalarBinaryTargets(config.loss_type)) {
-        batcher->SetScalarLabelMode(true);
-    } else if (config.preprocessing.has_onehot &&
-               config.preprocessing.num_classes > 0) {
-        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
-    }
-
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(factory));
+    *stop_requested = [run = executor.get()] { return run->StopRequested(); };
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),

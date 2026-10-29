@@ -11,7 +11,7 @@ Count Checks** after them.
 
 | DuckDB type of a result column | Comes back as | Accepted by an SQL step |
 |---|---|---|
-| BOOLEAN, integers, FLOAT, DOUBLE, VARCHAR | the same | yes |
+| BOOLEAN, integers (at their own width: a UTINYINT pixel stays uint8), FLOAT, DOUBLE, VARCHAR | the same | yes |
 | DATE, TIMESTAMP | a date, a timestamp (microseconds) | yes |
 | DECIMAL up to 15 digits (`0.5`, `round(x, 2)` of a decimal) | a number (double), exactly | yes |
 | DECIMAL past 15 digits, HUGEINT, TIMESTAMP WITH TIME ZONE, BLOB, lists, structs | text | no: CAST them in the query (for example to VARCHAR, BIGINT or DOUBLE) |
@@ -19,7 +19,9 @@ Count Checks** after them.
 Inputs keep their types too: a date, a timestamp or a decimal column going
 into a step is a DATE, a TIMESTAMP or a number there, so `d + 1`, `year(t)`
 and arithmetic work on them. Data Studio's Query tab shows the text column
-types instead of refusing them.
+types instead of refusing them. A table in memory goes to DuckDB in one
+pass of its Arrow scan (no copy on disk); a table on disk is read from its
+own file.
 
 ## In Properties
 

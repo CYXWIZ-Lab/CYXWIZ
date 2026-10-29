@@ -11,6 +11,7 @@
 #include "label_column_resolver.h"
 #include "parquet_backed_dataset.h"
 #include "sparse_feature_dataset.h"
+#include "split_partitioning.h"
 
 #include <spdlog/spdlog.h>
 
@@ -752,10 +753,30 @@ bool ValidateSequenceLaunchColumns(
     const std::string& dataset_name,
     const cyxwiz::TrainingConfiguration& config, std::string& error_message);
 
+void MarkJoinedSuppliedRoles(cyxwiz::ResolvedDatasetRoles& roles) {
+    std::vector<int8_t> parts;
+    if (auto arrow_ds = GraphArrowDataset(roles.train.dataset_name)) {
+        parts = cyxwiz::PartitionValues(arrow_ds->GetArrowTable());
+    } else if (auto sparse_ds = GraphSparseDataset(roles.train.dataset_name)) {
+        parts = sparse_ds->GetPartition();
+    }
+    const auto has = [&parts](int8_t part) { return std::find(parts.begin(), parts.end(), part) != parts.end(); };
+    roles.dev.joined_to_training = roles.dev.IsSupplied() && has(1);
+    roles.test.joined_to_training = roles.test.IsSupplied() && has(2);
+    for (const auto* role : {&roles.dev, &roles.test}) {
+        if (role->joined_to_training) {
+            spdlog::info("Training reads the supplied {} rows from '{}': the steps before the Data Split "
+                         "transformed them",
+                         role == &roles.dev ? "Validation" : "Test", roles.train.dataset_name);
+        }
+    }
+}
+
 bool ValidateSuppliedRolePreflight(
     cyxwiz::ResolvedDatasetRoles& roles,
     const cyxwiz::TrainingConfiguration& config,
     LaunchBlock& launch_result) {
+    MarkJoinedSuppliedRoles(roles);
     auto& manifest = roles.manifest;
     if (config.sequence_batch.enabled) {
         // Sequence inputs own token/tag/POS contracts, not numeric feature/label
@@ -780,28 +801,46 @@ bool ValidateSuppliedRolePreflight(
             "Sequence schema columns checked; full role validation is owned by sequence batch construction";
         return true;
     }
-    if (!ValidateSuppliedRoleSchema(
-            roles.train, roles.dev, "Dev", launch_result)) {
-        manifest.dev_compatibility =
-            cyxwiz::PartitionCompatibility::Incompatible;
-        manifest.dev_status_reason = launch_result.error_message;
-        return false;
+    // A joined role is in the Training table: the pipeline run gave it the
+    // training input's columns; its rows are its own partition.
+    const auto joined = [](const cyxwiz::DatasetSourceRef& role, cyxwiz::PartitionCompatibility& compatibility,
+                           cyxwiz::PartitionLeakageStatus& leakage, std::string& reason) {
+        if (!role.joined_to_training) return false;
+        compatibility = cyxwiz::PartitionCompatibility::Compatible;
+        leakage = cyxwiz::PartitionLeakageStatus::NotChecked;
+        reason = "prepared with the training rows (the steps before the Data Split transformed them)";
+        return true;
+    };
+    const bool dev_joined =
+        joined(roles.dev, manifest.dev_compatibility, manifest.dev_leakage, manifest.dev_status_reason);
+    const bool test_joined =
+        joined(roles.test, manifest.test_compatibility, manifest.test_leakage, manifest.test_status_reason);
+    if (!dev_joined) {
+        if (!ValidateSuppliedRoleSchema(
+                roles.train, roles.dev, "Dev", launch_result)) {
+            manifest.dev_compatibility =
+                cyxwiz::PartitionCompatibility::Incompatible;
+            manifest.dev_status_reason = launch_result.error_message;
+            return false;
+        }
+        manifest.dev_compatibility = cyxwiz::PartitionCompatibility::Compatible;
     }
-    manifest.dev_compatibility = cyxwiz::PartitionCompatibility::Compatible;
-    if (!ValidateSuppliedRoleSchema(
-            roles.train, roles.test, "Test", launch_result)) {
-        manifest.test_compatibility =
-            cyxwiz::PartitionCompatibility::Incompatible;
-        manifest.test_status_reason = launch_result.error_message;
-        return false;
+    if (!test_joined) {
+        if (!ValidateSuppliedRoleSchema(
+                roles.train, roles.test, "Test", launch_result)) {
+            manifest.test_compatibility =
+                cyxwiz::PartitionCompatibility::Incompatible;
+            manifest.test_status_reason = launch_result.error_message;
+            return false;
+        }
+        manifest.test_compatibility = cyxwiz::PartitionCompatibility::Compatible;
     }
-    manifest.test_compatibility = cyxwiz::PartitionCompatibility::Compatible;
-    if (!ValidateSuppliedRoleLeakage(
+    if (!dev_joined && !ValidateSuppliedRoleLeakage(
             roles.train, roles.dev, "Dev", launch_result,
             manifest.dev_leakage, manifest.dev_status_reason)) {
         return false;
     }
-    return ValidateSuppliedRoleLeakage(
+    return test_joined || ValidateSuppliedRoleLeakage(
         roles.train, roles.test, "Test", launch_result,
         manifest.test_leakage, manifest.test_status_reason);
 }

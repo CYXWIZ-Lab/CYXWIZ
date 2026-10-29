@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../core/graph_compiler.h"
-#include "../core/pipeline_materializer.h"
+#include "../core/materialization_memory_types.h"
+#include "../core/node_executors/pipeline_operator.h"
+#include "../core/prepared_data_cache.h"
 #include "../core/execution_device_preferences.h"
 
 #include <functional>
@@ -24,12 +26,6 @@ struct GraphTrainingLaunchResult {
     std::string error_message;
     std::string effective_dataset_name;
     std::string label_column;
-    int operators_applied = 0;
-    cyxwiz::PipelineMaterializerSourceKind materializer_source_kind =
-        cyxwiz::PipelineMaterializerSourceKind::Unknown;
-    bool materializer_skipped_unsupported_source = false;
-    std::string materializer_unsupported_source_reason;
-    std::string materializer_diagnostic_message;
     bool materialization_cache_enabled = false;
     cyxwiz::MaterializationCacheMode materialization_cache_mode =
         cyxwiz::MaterializationCacheMode::Disabled;
@@ -40,8 +36,6 @@ struct GraphTrainingLaunchResult {
 
 struct GraphMaterializationPreflightResult {
     bool checked = false;
-    // Prepared data for this graph is already cached: no estimate needed.
-    bool cache_hit = false;
     bool estimate_available = false;
     bool blocked = false;
     bool requires_confirmation = false;
@@ -68,7 +62,7 @@ cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig(
 // Synchronous, allocation-light pre-start check. It executes the existing
 // operator-owned estimator and stops at its first memory decision; it does not
 // publish a dataset or approximate unknown downstream shapes.
-// A cached prepared dataset for the graph skips the estimate (cache_hit).
+// Train skips it when the prepared data is current or on disk.
 GraphMaterializationPreflightResult PreflightGraphMaterialization(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,
@@ -115,7 +109,14 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     cyxwiz::MaterializationMemoryPolicy materialization_memory_policy = {},
     std::optional<cyxwiz::PipelineOperatorProgress>
         materialization_preflight_evidence = std::nullopt,
-    std::filesystem::path project_root = {});
+    std::filesystem::path project_root = {},
+    // The table the canvas runs already prepared for training (TOFIX178 S0-d);
+    // empty prepares the data from the Data Input.
+    std::string canvas_prepared_dataset = {},
+    // The disk key of that table (TOFIX178 S0-e2): training loads it from the
+    // prepared data cache when the canvas has none, and keeps a canvas table
+    // there for the next session.
+    cyxwiz::PreparedDataKey prepared_data_key = {});
 
 // True while a graph's training data is being prepared (before the run
 // starts).

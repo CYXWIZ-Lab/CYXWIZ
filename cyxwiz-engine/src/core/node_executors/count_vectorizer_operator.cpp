@@ -1,4 +1,5 @@
 #include "count_vectorizer_operator.h"
+#include "../split_partitioning.h"
 #include "text_column_utils.h"
 #include "text_vectorizer_contract.h"
 
@@ -347,6 +348,11 @@ CountVectorizerOperator::ApplyConfigured(
     // follows its own text-feature contract: stop-word mode, n-gram range,
     // vocabulary capping, and optional l1/l2 row normalization.
     const size_t n = texts.size();
+    // The vocabulary comes from the Train rows when the pipeline run marked
+    // them (TOFIX178 S0-g3); every row is counted against it.
+    const std::vector<bool> fit_row = TrainRowMask(input);
+    const size_t fit_n = fit_row.empty()
+        ? n : static_cast<size_t>(std::count(fit_row.begin(), fit_row.end(), true));
     std::vector<std::unordered_map<std::string, int>> doc_counts;
     std::unordered_map<std::string, CountTermStats> term_stats_by_name;
     doc_counts.reserve(n);
@@ -372,7 +378,7 @@ CountVectorizerOperator::ApplyConfigured(
         for (const auto& token : tokens) {
             counts[token]++;
         }
-        if (!state_options_.IsTransformOnly()) {
+        if (!state_options_.IsTransformOnly() && (fit_row.empty() || fit_row[row])) {
             for (const auto& pair : counts) {
                 auto& stats = term_stats_by_name[pair.first];
                 stats.term = pair.first;
@@ -612,6 +618,7 @@ CountVectorizerOperator::ApplyConfigured(
 
     TextVectorizerMaterialization output;
     if (sparse_output) {
+        feature_matrix.partition = PartitionValues(input);
         ARROW_ASSIGN_OR_RAISE(
             output.sparse_dataset,
             BuildSparseTextFeatureDataset(
@@ -620,6 +627,7 @@ CountVectorizerOperator::ApplyConfigured(
         ARROW_ASSIGN_OR_RAISE(
             output.dense_table,
             BuildDenseTextFeatureTable(feature_matrix, "count_"));
+        ARROW_ASSIGN_OR_RAISE(output.dense_table, CarryPartition(input, output.dense_table));
     }
 
     if (!state_options_.IsTransformOnly() && state_options_.save_state) {
@@ -633,7 +641,7 @@ CountVectorizerOperator::ApplyConfigured(
         std::string state_error;
         if (!SaveFittedTextVectorizerState(
                 state_options_.state_path, GetName(),
-                static_cast<int64_t>(n), schema_fingerprint,
+                static_cast<int64_t>(fit_n), schema_fingerprint,
                 fitted_configuration, state_features,
                 state_options_.state_overwrite, state_error)) {
             return arrow::Status::IOError(

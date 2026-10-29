@@ -18,7 +18,7 @@ void Visualizer::SetActiveDataset(const std::string& dataset_name) {
 
 void Visualizer::Render() {
     if (current_dataset_.empty()) {
-        ImGui::TextDisabled("Pick a dataset above to plot it.");
+        ImGui::TextDisabled("Pick a dataset in the list on the left to plot it.");
         return;
     }
     auto& view = plots_[current_dataset_];

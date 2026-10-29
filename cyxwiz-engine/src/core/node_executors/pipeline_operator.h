@@ -186,6 +186,11 @@ public:
     // A check: it reads every batch (FitBatch) and its output is its input,
     // so the stream writes nothing.
     virtual bool PassesInputThrough() const { return false; }
+    // It learns from every row it is given and cannot learn from the Train
+    // rows only yet (PCA, clustering, outlier limits, classic models): the
+    // compiler warns when one runs before a Data Split (TOFIX178 S0-g5).
+    // PipelineStepLearnsFromEveryRow answers the same for a node type.
+    virtual bool LearnsFromEveryRow() const { return false; }
     // A check that needs every row at once can judge a table on disk from
     // one SQL query over it instead (TOFIX154): the query, its input named
     // `input`; empty when it has none. JudgeSql decides from the result as

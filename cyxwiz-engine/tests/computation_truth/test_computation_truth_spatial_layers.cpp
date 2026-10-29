@@ -97,6 +97,12 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json&
     if (layer == "InstanceNorm")
         return std::make_unique<InstanceNorm2DModule>(static_cast<int>(channels_in), g.at("eps").get<float>(),
                                                       g.at("affine").get<bool>());
+    if (layer == "BatchNorm2D") {
+        auto module = std::make_unique<BatchNorm2DModule>(static_cast<int>(channels_in), g.at("eps").get<float>(),
+                                                          g.at("momentum").get<float>());
+        module->SetTraining(g.at("training").get<bool>());
+        return module;
+    }
     if (layer == "Upsample")
         return std::make_unique<Upsample2DModule>(
             g.at("scale_factor").get<int>(),
@@ -155,10 +161,22 @@ int main(int, char** argv) {
         auto module = MakeModule(layer, c.at("geometry"), channels_in);
         std::map<std::string, cyxwiz::Tensor> parameters;
         for (const auto& [key, value] : c.at("parameters").items()) parameters[key] = ReadTensor(value);
-        if (!parameters.empty()) module->SetParameters(parameters);
+        // Non-learned state (BatchNorm's running statistics) set with the weights.
+        std::map<std::string, cyxwiz::Tensor> with_state = parameters;
+        if (c.contains("state"))
+            for (const auto& [key, value] : c.at("state").items()) with_state[key] = ReadTensor(value);
+        if (!with_state.empty()) module->SetParameters(with_state);
 
         const cyxwiz::Tensor output = module->Forward(input);
         CheckTensor(output, c.at("output"), tol, name + " forward");
+        if (c.contains("state_after")) {
+            const auto state = module->GetParameters();
+            for (const auto& [key, expected] : c.at("state_after").items()) {
+                const auto it = state.find(key);
+                Check(it != state.end(), name + ": no state " + key);
+                CheckTensor(it->second, expected, tol, name + " state " + key);
+            }
+        }
 
         const cyxwiz::Tensor grad_input = module->Backward(ReadTensor(c.at("grad_output")));
         CheckTensor(grad_input, c.at("grad_input"), tol, name + " grad_input");

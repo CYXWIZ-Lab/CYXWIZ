@@ -3,6 +3,7 @@
 // Data Studio).
 
 #include "node_config_dialog.h"
+#include "data_studio/image_gallery_view.h"
 #include "data_studio/profile_view.h"
 #include "ui_tokens.h"
 
@@ -34,6 +35,7 @@ void DataInputDialog::RenderDataProfilingTab() {
         profile_dataset_ = dataset;
         profile_view_->SetActiveDataset(profile_dataset_);
     }
+    if (node_editor_) profile_view_->SetLiveCompile(node_editor_->GetLiveCompile());
     profile_view_->Render();
 }
 

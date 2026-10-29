@@ -4450,10 +4450,10 @@ int main(int argc, char** argv) {
     cyxwiz::PipelineExecutor unsupported_folder_category_executor;
     Check(!unsupported_folder_category_executor.ExecutePipeline(
               unsupported_folder_category_json),
-          "DataInput audio folder should fail validation on PipelineExecutor");
+          "DataInput folder source should fail validation on PipelineExecutor");
     Check(unsupported_folder_category_executor.GetLastError().find(
-              "folder source only supports image category") != std::string::npos,
-          "DataInput folder category validation should be specific: " +
+              "DataInput source_type 'folder' is not supported") != std::string::npos,
+          "DataInput folder source error should be specific: " +
               unsupported_folder_category_executor.GetLastError());
 
     const std::string bad_skip_rows_json =
@@ -9166,16 +9166,16 @@ int main(int argc, char** argv) {
         R"("text_col":"phrase","output_format":"sparse"}})"
         R"(],"links":[{"start_node":221,"end_node":224}]})";
 
+    // Sparse output runs in the pipeline run (TOFIX178 S0-f): the node's
+    // result is a CSR feature dataset.
     cyxwiz::PipelineExecutor count_vectorizer_sparse_executor;
-    Check(!count_vectorizer_sparse_executor.ExecutePipeline(
+    Check(count_vectorizer_sparse_executor.ExecutePipeline(
               count_vectorizer_sparse_json),
-          "CountVectorizer sparse output must fail on the Arrow-only pipeline path");
-    Check(count_vectorizer_sparse_executor.GetLastError().find(
-              "CountVectorizer: sparse output requires typed materializer "
-              "publication; the Arrow table path remains fail-closed") !=
-              std::string::npos,
-          "CountVectorizer sparse output validation should be specific: " +
+          "CountVectorizer sparse output runs in the pipeline run: " +
               count_vectorizer_sparse_executor.GetLastError());
+    Check(cyxwiz::DataRegistry::Instance().IsSparseFeatureDataset("ds_operator_CountVectorizer_224"),
+          "CountVectorizer sparse output is registered as sparse features");
+    count_vectorizer_sparse_executor.ReleaseAll();
     Check(!cyxwiz::DataRegistry::Instance().GetArrowDataset(
               "ds_operator_CountVectorizer_224"),
           "rejected sparse output must not publish an Arrow dataset");

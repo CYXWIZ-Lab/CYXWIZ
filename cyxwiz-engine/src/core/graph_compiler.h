@@ -166,7 +166,7 @@ struct AudioPreprocessingConfig {
 /**
  * Text shape contract the compiler reads from the graph: the reachable Text
  * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
- * Tokenizing itself runs in PipelineMaterializer.
+ * Tokenizing itself runs in the pipeline run before training.
  */
 struct TextPreprocessingConfig {
     int max_length = 512;
@@ -435,6 +435,9 @@ struct TrainingConfiguration {
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    // A step only the pipeline run applies (SQL, Text Clean ...) is on the
+    // Training Dataset path: training trains on that run's result.
+    bool training_data_needs_pipeline_run = false;
     TargetContract target;              // Objective target provenance
     RegressionTargetTransform regression_target_transform;
 
@@ -500,7 +503,7 @@ struct TrainingConfiguration {
     AudioPreprocessingConfig audio_preprocessing;
 
     // Preprocessing - text-specific legacy override bundle. Graph text
-    // nodes now route through PipelineMaterializer instead of this config.
+    // nodes now run in the pipeline run instead of this config.
     TextPreprocessingConfig text_preprocessing;
 
     // Structured sequence tagging / NER contract. Populated when the selected

@@ -7,6 +7,7 @@
 #include "data_budget.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
+#include "split_partitioning.h"
 #include <arrow/csv/writer.h>
 #include <arrow/io/buffered.h>
 #include <arrow/io/file.h>
@@ -1966,87 +1967,6 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadExcelToArrow(
     }
 }
 
-std::shared_ptr<ArrowDataset> DataRegistry::LoadImageFolderToArrow(
-    const std::string& path, const std::string& name) {
-
-    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
-
-    try {
-        // Build a table with file paths and labels from directory structure
-        // Format: image_path | label_name | label_id
-        std::vector<std::string> image_paths;
-        std::vector<std::string> label_names;
-        std::vector<int32_t> label_ids;
-        std::map<std::string, int32_t> label_map;
-        int32_t next_label = 0;
-
-        for (const auto& entry : fs::recursive_directory_iterator(path)) {
-            if (!entry.is_regular_file()) continue;
-
-            auto ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-            if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".gif") {
-                image_paths.push_back(entry.path().string());
-
-                // Use parent directory name as label
-                std::string label = entry.path().parent_path().filename().string();
-                label_names.push_back(label);
-
-                if (label_map.find(label) == label_map.end()) {
-                    label_map[label] = next_label++;
-                }
-                label_ids.push_back(label_map[label]);
-            }
-        }
-
-        if (image_paths.empty()) {
-            spdlog::warn("LoadImageFolderToArrow: No images found in {}", path);
-            return nullptr;
-        }
-
-        // Build Arrow table
-        arrow::StringBuilder path_builder;
-        arrow::StringBuilder label_builder;
-        arrow::Int32Builder id_builder;
-
-        for (size_t i = 0; i < image_paths.size(); i++) {
-            (void)path_builder.Append(image_paths[i]);
-            (void)label_builder.Append(label_names[i]);
-            (void)id_builder.Append(label_ids[i]);
-        }
-
-        std::shared_ptr<arrow::Array> path_array, label_array, id_array;
-        (void)path_builder.Finish(&path_array);
-        (void)label_builder.Finish(&label_array);
-        (void)id_builder.Finish(&id_array);
-
-        auto schema = arrow::schema({
-            arrow::field("image_path", arrow::utf8()),
-            arrow::field("label_name", arrow::utf8()),
-            arrow::field("label_id", arrow::int32())
-        });
-
-        auto table = arrow::Table::Make(schema, {path_array, label_array, id_array});
-        auto dataset = std::make_shared<ArrowDataset>(table, unique_name);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        InvalidateTabularPublicationUnlocked(unique_name);
-        arrow_datasets_[unique_name] = dataset;
-        parquet_backed_datasets_.erase(unique_name);
-        sparse_feature_datasets_.erase(unique_name);
-        ForgetTabularSourcePathUnlocked(unique_name);
-
-        spdlog::info("LoadImageFolderToArrow: Loaded {} images with {} classes from '{}'",
-                    image_paths.size(), label_map.size(), path);
-        return dataset;
-
-    } catch (const std::exception& e) {
-        spdlog::error("LoadImageFolderToArrow exception: {}", e.what());
-        return nullptr;
-    }
-}
-
 std::shared_ptr<ArrowDataset> DataRegistry::LoadMLDatasetToArrow(
     const std::string& ml_type, const std::string& name) {
 
@@ -2098,6 +2018,28 @@ bool DataRegistry::VisitTablePieces(const std::string& name,
     return true;
 }
 
+bool DataRegistry::VisitExportedPieces(const std::string& name,
+                                       const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
+                                       std::shared_ptr<arrow::Schema>* schema, std::string& error) {
+    const bool ok = VisitTablePieces(name, [&visit](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+        const int index = piece->schema()->GetFieldIndex(kSplitPartitionColumn);
+        if (index < 0) return visit(piece, why);
+        auto without = piece->RemoveColumn(index);
+        if (!without.ok()) {
+            why = without.status().ToString();
+            return false;
+        }
+        return visit(*without, why);
+    }, schema, error);
+    if (schema && *schema) {
+        const int index = (*schema)->GetFieldIndex(kSplitPartitionColumn);
+        if (index >= 0) {
+            if (auto without = (*schema)->RemoveField(index); without.ok()) *schema = *without;
+        }
+    }
+    return ok;
+}
+
 namespace {
 
 // An export's file, buffered and hashed as it is written.
@@ -2126,7 +2068,7 @@ bool DataRegistry::ExportTableCSV(const std::string& name, const std::string& ou
     ExportFile file = *opened;
     std::shared_ptr<arrow::ipc::RecordBatchWriter> writer;
     TabularExport facts;
-    const bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+    const bool ok = VisitExportedPieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
         if (!writer) {
             auto options = arrow::csv::WriteOptions::Defaults();
             options.delimiter = ',';
@@ -2186,7 +2128,7 @@ bool DataRegistry::ExportTableParquet(const std::string& name, const std::string
         writer = std::move(*made);
         return true;
     };
-    bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+    bool ok = VisitExportedPieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
         if (!writer && !open_writer(piece->schema(), why)) return false;
         if (auto status = writer->WriteTable(*piece, 1024 * 1024); !status.ok()) {
             why = status.ToString();

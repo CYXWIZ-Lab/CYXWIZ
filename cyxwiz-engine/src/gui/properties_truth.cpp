@@ -61,6 +61,13 @@ bool LooksLikeTextDataInput(const MLNode& node) {
     return type && (*type == "txt" || *type == "text" || *type == "text_corpus");
 }
 
+// Images are labelled by their class folders or labels CSV, not a column.
+bool LooksLikeImageDataInput(const MLNode& node, const DatasetTruthFact* fact) {
+    if (fact && fact->found) return fact->backing_store == "ImageDataset";
+    const std::string* category = FindParameter(node, "file_category");
+    return category && *category == "image";
+}
+
 int ParsePositiveInt(const std::string* value) {
     if (!value || value->empty()) {
         return 0;
@@ -2967,6 +2974,9 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         const DatasetTruthFact* fact = FindDatasetFact(node, context);
         if (fact) report.properties.push_back(BuildDatasetClassesTruth(*fact));
         AddSequenceDataInputTruth(report, node, fact);
+    } else if (node.type == NodeType::DataInput && LooksLikeImageDataInput(node, FindDatasetFact(node, context))) {
+        if (const DatasetTruthFact* fact = FindDatasetFact(node, context))
+            report.properties.push_back(BuildDatasetClassesTruth(*fact));
     } else if (node.type == NodeType::DataInput) {
         const bool text_input = LooksLikeTextDataInput(node);
         const std::string canonical = text_input ? "text_label_column"

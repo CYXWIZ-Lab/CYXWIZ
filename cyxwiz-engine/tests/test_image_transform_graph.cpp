@@ -336,7 +336,8 @@ void CheckBatcher() {
     crop.kind = cyxwiz::image::ImageOpKind::RandomCrop;
     crop.height = 2;
     crop.width = 2;
-    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 2, 0.5f, false, 0, 11);
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, 0.5f, false, 11);
     cyxwiz::image::ImageAugmentation flip_crop;
     flip_crop.ops = {flip, crop};
     batcher.SetImageTransforms(flip_crop);
@@ -363,7 +364,8 @@ void CheckBatcher() {
     cyxwiz::image::ImageAugmentation mixup;
     mixup.mix = cyxwiz::image::BatchMix::MixUp;
     mixup.mix_probability = 1.0f;
-    cyxwiz::ImageDatasetBatcher mixing(entry, resize, 2, 0.5f, false, 0, 11);
+    cyxwiz::ImageDatasetBatcher mixing(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, 0.5f, false, 11);
     mixing.SetOneHotEncoding(2);
     mixing.SetImageTransforms(mixup);
     mixing.SetPhase(cyxwiz::BatcherPhase::Val);
@@ -510,7 +512,8 @@ void CheckQualityAnalyzer() {
     resize.resize_mode = cyxwiz::ResizeMode::Exact;
     resize.target_width = side;
     resize.target_height = side;
-    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 8, 0.5f, false, 0, 7);
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 8, 0.5f, false, 7);
     Check(batcher.GetNumSamples() + batcher.GetNumValSamples() == 8, "8 images before the filter");
     batcher.ExcludeFiles(config.image_excluded_files);
     Check(batcher.GetNumSamples() == 3 && batcher.GetNumValSamples() == 3, "6 images after it, split 3 + 3");

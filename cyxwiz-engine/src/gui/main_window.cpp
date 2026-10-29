@@ -2,6 +2,7 @@
 #include "../core/session_query_service.h"
 #include "../core/pipeline_type_names.h"
 #include "../core/image_quality_analysis.h"
+#include "../core/prepared_image_set.h"
 #include "../core/training_export_metadata.h"
 #include "separate_windows.h"
 // Windows header order fix - must come first to prevent winsock conflicts
@@ -20,12 +21,14 @@
 #include "appearance_settings.h"
 #include "panel_memory.h"
 #include "../core/live_graph_compile.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "loaders/data_loader.h"
 #include "node_config_dialog.h"
 #include "../core/graph_topology_utils.h"
 #include "graph_training_launcher.h"
+#include "../core/training_input_preparation.h"
 #include "engine_graph_training_dispatch.h"
 #include "node_editor.h"
 #include "console.h"
@@ -172,6 +175,7 @@
 #include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
+#include "../core/split_partitioning.h"
 #include "../core/model_converter.h"
 #include "../core/model_importer.h"
 #include "../core/node_metadata_registry.h"
@@ -188,6 +192,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <ctime>
 #include <iterator>
 #include <stdexcept>
 #include <sstream>
@@ -986,6 +991,9 @@ MainWindow::MainWindow()
     node_editor_->SetDebugCallback([this]() {
         this->LocalDebugGraphAndReport();
     });
+    node_editor_->SetOpenDebuggerCallback([this]() {
+        if (studio_debugger_panel_) studio_debugger_panel_->Show();
+    });
 
     if (studio_debugger_panel_) {
         // One run path for the panel's Run, F6 and Explain Node: the graph is
@@ -1020,15 +1028,54 @@ MainWindow::MainWindow()
         });
         studio_debugger_panel_->SetRunCompletedCallback(
             [this](const cyxwiz::StudioDebuggerSnapshot& session) {
-                // Staleness cache for the Train gate: only a successful Local
-                // Debug of this exact graph counts.
-                if (session.has_debug_result && session.debug_result.success) {
-                    last_debug_graph_hash_ = session.graph_hash;
-                    have_last_debug_result_ = true;
-                    spdlog::info("Studio Debugger: cached debug hash {:#018x}",
-                                 last_debug_graph_hash_);
+                // The last run, pass or failure, of this exact graph: the
+                // canvas bar shows it and the Train gate reads it.
+                // A Local Debug run that stopped at its compile gate has no
+                // debug result but did fail; a stopped run says nothing.
+                const bool local_debug_run = session.mode == cyxwiz::StudioDebuggerRunMode::LocalDebug ||
+                                             session.has_debug_result;
+                if (local_debug_run && session.outcome != cyxwiz::StudioDebuggerOutcome::Stopped &&
+                    session.outcome != cyxwiz::StudioDebuggerOutcome::NotStarted) {
+                    using cyxwiz::studio_toolbar::DebugOutcome;
+                    const bool passed = session.has_debug_result ? session.debug_result.success : session.success;
+                    local_debug_.outcome = passed ? DebugOutcome::Passed : DebugOutcome::Failed;
+                    local_debug_.failure = passed ? std::string()
+                                           : !session.debug_result.failure_summary.empty()
+                                               ? session.debug_result.failure_summary
+                                               : session.failure_summary;
+                    const std::time_t now = std::time(nullptr);
+                    std::tm local{};
+#if defined(_WIN32)
+                    localtime_s(&local, &now);
+#else
+                    localtime_r(&now, &local);
+#endif
+                    char at[8];
+                    std::strftime(at, sizeof(at), "%H:%M", &local);
+                    local_debug_.at = at;
+                    local_debug_.graph_changed = false;
+                    local_debug_graph_hash_ = session.graph_hash;
+                    spdlog::info("Studio Debugger: Local Debug {} at {} (graph {:#018x})",
+                                 passed ? "passed" : "failed", local_debug_.at,
+                                 local_debug_graph_hash_);
                 }
             });
+        cyxwiz::StudioDebuggerPanel::CanvasLinks links;
+        links.show_canvas = [this]() {
+            if (node_editor_) node_editor_->Show();
+            ImGui::SetWindowFocus("CyxWiz Studio");
+        };
+        links.show_compile_report = [this]() { CompileGraphAndReport(); };
+        links.train = [this]() {
+            if (!node_editor_) return;
+            StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+            if (training_plot_panel_) training_plot_panel_->SetVisible(true);
+        };
+        links.local_debug = [this]() {
+            return std::make_pair(cyxwiz::studio_toolbar::LocalDebugChip(local_debug_).headline,
+                                  cyxwiz::studio_toolbar::LocalDebugCurrent(local_debug_));
+        };
+        studio_debugger_panel_->SetCanvasLinks(std::move(links));
         studio_debugger_panel_->SetGraphDomainCallback([this]() -> std::string {
             if (!node_editor_) {
                 return {};
@@ -2926,6 +2973,7 @@ void MainWindow::Render() {
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
     PollDataInputLoads();
+    PollTrainingPipelineRun();
     // Dataset labels for the catalog: each Data Input node's name for its
     // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1,
     // and each node's name for the table a pipeline run made from it.
@@ -2982,6 +3030,7 @@ void MainWindow::Render() {
     }
     UpdatePythonNodes();
     UpdateLiveCompile();
+    UpdateLocalDebugStatus();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
     if (plugin_manager.GetPluginCount() > 0) {
@@ -3224,6 +3273,19 @@ void MainWindow::UpdatePythonNodes() {
         python_start_error_logged_ = error;
         spdlog::warn("Python nodes need Python, which did not start: {}", error);
     }
+}
+
+void MainWindow::UpdateLocalDebugStatus() {
+    if (!node_editor_) return;
+    const double now = ImGui::GetTime();
+    if (local_debug_.outcome != cyxwiz::studio_toolbar::DebugOutcome::NotRun &&
+        now - local_debug_checked_at_ >= 0.5) {
+        local_debug_checked_at_ = now;
+        local_debug_.graph_changed =
+            HashGraphStructure(node_editor_->GetNodes(), node_editor_->GetLinks()) != local_debug_graph_hash_;
+    }
+    local_debug_.running = studio_debugger_panel_ && studio_debugger_panel_->IsRunning();
+    node_editor_->SetLocalDebugStatus(local_debug_, cyxwiz::core::EngineConfig::Instance().RequireDebugBeforeTrain());
 }
 
 void MainWindow::UpdateLiveCompile() {
@@ -3621,6 +3683,67 @@ bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std
     return true;
 }
 
+// Runs the graph's data steps through the Training Dataset input's feeder on
+// the canvas executor (one run, one cache, the canvas shows it); training
+// starts when it ends (PollTrainingPipelineRun).
+bool MainWindow::StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (!node_editor_) return false;
+    if (node_editor_->IsDataPipelineRunning()) {
+        spdlog::warn("Train: the data pipeline is running; train when it ends");
+        return false;
+    }
+    const int feeder = cyxwiz::TrainingInputFeeder(nodes, links);
+    if (feeder < 0 || !node_editor_->ExecuteDataPipelineThrough(feeder, /*with_checks=*/false)) return false;
+    training_pipeline_run_ = TrainingPipelineRun{node_editor_->GetDataPipelineTaskId(), feeder,
+                                                 cyxwiz::ProjectManager::Instance().GetProjectRoot()};
+    spdlog::info("Train: running the data steps before the Data Split first; training starts when they end");
+    if (training_plot_panel_) {
+        training_plot_panel_->SetPreparationState(true, "Running the data steps before training...", 0.01f);
+        training_plot_panel_->SetVisible(true);
+    }
+    return true;
+}
+
+// The run Train started: when it ends, train on its result, or say why not.
+void MainWindow::PollTrainingPipelineRun() {
+    if (!training_pipeline_run_) return;
+    if (!node_editor_) {
+        training_pipeline_run_.reset();
+        return;
+    }
+    const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(training_pipeline_run_->task_id);
+    std::optional<cyxwiz::TaskInfo> info;
+    if (task) info = task->GetInfo();
+    if (info && (info->state == cyxwiz::TaskState::Pending || info->state == cyxwiz::TaskState::Running)) return;
+    const TrainingPipelineRun run = *training_pipeline_run_;
+    training_pipeline_run_.reset();
+    if (cyxwiz::ProjectManager::Instance().GetProjectRoot() != run.project) {
+        spdlog::info("Train: the project changed while the data steps ran; not training");
+        EndFoldsLaunch("Not started: the project changed while the data steps ran.");
+        return;
+    }
+    std::optional<std::string> result;
+    if (info && info->state == cyxwiz::TaskState::Completed) result = node_editor_->LastRunResult(run.feeder);
+    if (!result) {
+        std::string why = "the run left no table";
+        if (info && !info->error_message.empty()) why = info->error_message;
+        else if (info && info->state == cyxwiz::TaskState::Cancelled) why = "the run was cancelled";
+        spdlog::error("Train: the data steps before the Data Split failed: {}", why);
+        compile_result_success_ = false;
+        compile_result_issues_.clear();
+        compile_result_issues_.push_back({cyxwiz::IssueLevel::Error, run.feeder, "",
+                                          "The data steps before the Data Split failed: " + why,
+                                          cyxwiz::errors::Training::InvalidTrainingSetup});
+        ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps failed");
+        if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("The data steps failed: " + why);
+        EndFoldsLaunch("Not started: the data steps before the Data Split failed.");
+        return;
+    }
+    spdlog::info("Train: the data steps ended; training reads '{}'", *result);
+    training_pipeline_result_ = *result;
+    StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+}
+
 // The loads Train started: when all have ended, train, or say which data
 // could not be loaded and why.
 void MainWindow::PollDataInputLoads() {
@@ -3789,6 +3912,27 @@ std::string MainWindow::FoldsBlocker() const {
     };
 }
 
+namespace {
+
+// The data the canvas runs already prepared for training (TOFIX178 S0-d): the
+// feeder's result (a table, or sparse features, S0-f) when it and every step
+// before it are unchanged since. Empty when the data must be prepared: no such
+// result or a requested rebuild.
+std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<MLNode>& nodes,
+                                        const std::vector<NodeLink>& links) {
+    if (!editor || IsGraphMaterializationRebuildRequested()) return {};
+    const int feeder = cyxwiz::TrainingInputFeeder(nodes, links);
+    if (feeder < 0) {
+        spdlog::debug("StartTrainingFromGraph: no step feeds the Training Dataset input from its main output");
+        return {};
+    }
+    std::string result = editor->CurrentRunResult(feeder).value_or(std::string());
+    spdlog::debug("StartTrainingFromGraph: canvas result of node {}: '{}'", feeder, result);
+    return result;
+}
+
+}  // namespace
+
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
     // A launch Results > Cross-validation / Learning curve marked: Train's own
     // checks and preparation, then its own dispatch. A stop on the way ends it
@@ -3853,18 +3997,20 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         //   - prior debug on same graph      => silent
         // Under EngineConfig::RequireDebugBeforeTrain() the warning becomes
         // an Error-level issue and training refuses to start.
+        using cyxwiz::studio_toolbar::DebugOutcome;
         const uint64_t current_graph_hash = HashGraphStructure(nodes, links);
         const bool same_as_last_debug =
-            have_last_debug_result_ &&
-            current_graph_hash == last_debug_graph_hash_;
+            local_debug_.outcome == DebugOutcome::Passed &&
+            current_graph_hash == local_debug_graph_hash_;
         if (!same_as_last_debug) {
             const bool strict = cyxwiz::core::EngineConfig::Instance()
                                     .RequireDebugBeforeTrain();
-            const std::string msg = have_last_debug_result_
-                ? "Graph changed since last successful Local Debug run. "
-                  "Consider F6 before F5."
-                : "No Local Debug (F6) run on this graph yet. "
-                  "Consider running one before Train.";
+            const std::string msg =
+                local_debug_.outcome == DebugOutcome::NotRun
+                    ? "No Local Debug (F6) run on this graph yet. Consider running one before Train."
+                : current_graph_hash != local_debug_graph_hash_
+                    ? "Graph changed since the last Local Debug run. Consider F6 before F5."
+                    : "The last Local Debug (F6) failed on this graph. Consider fixing it before Train.";
             const cyxwiz::IssueLevel lvl = strict
                 ? cyxwiz::IssueLevel::Error
                 : cyxwiz::IssueLevel::Warning;
@@ -3914,17 +4060,35 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
         materialization_memory_policy.hard_limit_bytes = cyxwiz::DataBudgetBytes();
 
+        // The canvas already prepared this data: training reads that table and
+        // prepares nothing, so it needs no memory plan for a preparation either.
+        // A Train that just ran the steps itself reads that run's result.
+        std::string canvas_dataset = std::exchange(training_pipeline_result_, std::string());
+        if (canvas_dataset.empty()) canvas_dataset = CanvasPreparedTrainingInput(node_editor_.get(), nodes, links);
+        // The same table kept on disk by an earlier session (TOFIX178 S0-e2):
+        // training loads it and nothing runs.
+        const std::string project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+        cyxwiz::PreparedDataKey prepared_key;
+        if (const int feeder = cyxwiz::TrainingInputFeeder(nodes, links); feeder >= 0) {
+            prepared_key = cyxwiz::ComputePreparedDataKey(nodes, links, feeder, registry, project_root);
+            spdlog::debug("StartTrainingFromGraph: prepared data key {}", prepared_key.cacheable
+                              ? prepared_key.key.substr(0, 16)
+                              : "none (" + prepared_key.reason + ")");
+        }
+        const bool prepared_on_disk = canvas_dataset.empty() && !IsGraphMaterializationRebuildRequested() &&
+            cyxwiz::ProbePreparedData(GraphMaterializationCacheConfig(project_root), prepared_key);
+        if (prepared_on_disk) spdlog::info("StartTrainingFromGraph: the prepared data is on disk from an earlier session");
         cyxwiz::MaterializationMemoryContext preflight_memory_context;
         preflight_memory_context.policy = materialization_memory_policy;
-        spdlog::info(
-            "StartTrainingFromGraph: preparing materialization memory plan");
-        const auto memory_preflight = PreflightGraphMaterialization(
-            nodes, links, config, registry,
-            std::move(preflight_memory_context),
-            cyxwiz::ProjectManager::Instance().GetProjectRoot());
-        if (memory_preflight.cache_hit) {
-            spdlog::info("StartTrainingFromGraph: {}",
-                         memory_preflight.status_detail);
+        GraphMaterializationPreflightResult memory_preflight;
+        if (canvas_dataset.empty() && !prepared_on_disk) {
+            spdlog::info("StartTrainingFromGraph: preparing materialization memory plan");
+            memory_preflight = PreflightGraphMaterialization(
+                nodes, links, config, registry,
+                std::move(preflight_memory_context),
+                cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        } else if (!canvas_dataset.empty()) {
+            spdlog::info("StartTrainingFromGraph: the canvas run already prepared '{}'", canvas_dataset);
         }
         if (memory_preflight.blocked) {
             compile_result_success_ = false;
@@ -3989,6 +4153,27 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 memory_preflight.evidence.node_name);
         }
 
+        // After the memory estimate: the data steps before the Split run once, in the pipeline run, the
+        // canvas's own engine (TOFIX178 S0-e): run it through the Split's
+        // input, then train on its result (a table or sparse features).
+        // Non-table paths (images) are still prepared by training itself.
+        const bool run_steps = config.training_data_needs_pipeline_run ||
+                               (prepared_key.table_path && prepared_key.steps > 0);
+        if (canvas_dataset.empty() && !prepared_on_disk && run_steps) {
+            if (StartTrainingPipelineRun(nodes, links)) {
+                folds_waiting = true;
+                return;
+            }
+            compile_result_success_ = false;
+            compile_result_issues_.clear();
+            compile_result_issues_.push_back({cyxwiz::IssueLevel::Error, -1, "",
+                                              "The data steps before the Data Split could not be started "
+                                              "(a data pipeline run is in progress, or nothing feeds the Split).",
+                                              cyxwiz::errors::Training::InvalidTrainingSetup});
+            ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps could not run");
+            return;
+        }
+
         // Set up node editor callback to update training animation and pin state.
         // When training ends, flip all nodes' pin state to Trained so pins go
         // solid green - the user's at-a-glance signal that the graph has been run.
@@ -4016,7 +4201,9 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             memory_preflight.estimate_available
                 ? std::make_optional(memory_preflight.evidence)
                 : std::nullopt,
-            cyxwiz::ProjectManager::Instance().GetProjectRoot());
+            cyxwiz::ProjectManager::Instance().GetProjectRoot(),
+            canvas_dataset,
+            prepared_key);
 
         if (launch_result.started && folds) {
             folds_launch_.reset();  // the preparation runs; its task reports into the view
@@ -4788,6 +4975,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::SmokeRunOptions smoke_options;
         smoke_options.cache_config = GraphMaterializationCacheConfig(
             inputs ? inputs->project_root : std::filesystem::path{});
+        {
+            auto& project = cyxwiz::ProjectManager::Instance();
+            smoke_options.roots = {inputs ? inputs->project_root.string() : project.GetProjectRoot(),
+                                   project.GetArtifactsPath(), project.GetExportsPath(),
+                                   project.GetIngestionCachePath()};
+        }
         if (inputs && inputs->rebuild_prepared_data) {
             smoke_options.cache_config.mode = cyxwiz::MaterializationCacheMode::Rebuild;
         }
@@ -5581,8 +5774,24 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         config = *active_model_info.evaluation_config;
         spdlog::info("StartTestingFromGraph: using the active model sequence preparation contract");
     }
-    const auto test_selection =
+    auto test_selection =
         cyxwiz::ResolveGraphTestDataset(config);
+    // A supplied Test input the pipeline run joined to the training rows
+    // (TOFIX178 S0-g4): its rows, transformed by the steps before the Data
+    // Split, are the model's prepared table's Test partition.
+    if (test_selection.scope == cyxwiz::TestDatasetScope::EntireProvidedDataset &&
+        !active_model_info.effective_dataset_name.empty()) {
+        if (const auto prepared = cyxwiz::DataRegistry::Instance().GetArrowDataset(
+                active_model_info.effective_dataset_name)) {
+            const auto parts = cyxwiz::PartitionValues(prepared->GetArrowTable());
+            if (std::find(parts.begin(), parts.end(), int8_t{2}) != parts.end()) {
+                test_selection.scope = cyxwiz::TestDatasetScope::ConfiguredTestSplit;
+                spdlog::info("StartTestingFromGraph: the supplied Test rows are in '{}', prepared with the "
+                             "training rows",
+                             active_model_info.effective_dataset_name);
+            }
+        }
+    }
     std::string dataset_name = test_selection.dataset_name;
     const int test_source_node_id = test_selection.source_node_id >= 0
         ? test_selection.source_node_id
@@ -5848,7 +6057,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     if (console_) console_->SetProjectRoot(project_root);
     // Saved query results (dashboards) live in the project.
     cyxwiz::SessionQueryService::Instance().SetProjectRoot(project_root);
-    cyxwiz::SetImageQualityProjectRoot(project_root);
+    cyxwiz::SetImageCacheProjectRoot(project_root);
     // DuckDB spills sorts, joins and group-bys into the project (TOFIX154).
     cyxwiz::SetDataSpillDirectory((std::filesystem::path(project_root) / "cache" / "duckdb_tmp").string());
     // The project's prepared-data caches: older than 30 days, then the oldest
@@ -5879,7 +6088,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
     cyxwiz::SessionQueryService::Instance().SetProjectRoot("");
-    cyxwiz::SetImageQualityProjectRoot("");
+    cyxwiz::SetImageCacheProjectRoot("");
     cyxwiz::SetDataSpillDirectory("");
 
     // A pipeline run writes into the closed project's artifact/export paths;
@@ -6139,8 +6348,8 @@ void MainWindow::LoadCheckpointForTesting() {
     fingerprint << std::hex << HashGraphStructure(nodes, links);
     const std::string graph_fingerprint = fingerprint.str();
     const std::string selected_path = *selected;
-    const std::string materialization_project_root =
-        project.GetProjectRoot();
+    const cyxwiz::StepRunRoots step_roots{project.GetProjectRoot(), project.GetArtifactsPath(),
+                                          project.GetExportsPath(), project.GetIngestionCachePath()};
     auto load_result =
         std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
     std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
@@ -6150,7 +6359,7 @@ void MainWindow::LoadCheckpointForTesting() {
         "Load checkpoint for testing",
         [config = std::move(config), nodes, links, selected_path,
          graph_fingerprint, load_result,
-         materialization_project_root](cyxwiz::LambdaTask& task) {
+         step_roots](cyxwiz::LambdaTask& task) {
             auto evaluation_config = config;
             task.ReportProgress(0.05f,
                                 "Preparing evaluation dataset...");
@@ -6166,39 +6375,20 @@ void MainWindow::LoadCheckpointForTesting() {
                     "source dataset. Apply the Data Input node first.");
             }
 
-            auto& registry = cyxwiz::DataRegistry::Instance();
-            cyxwiz::PipelineOperatorExecutionContext materialization_context;
-            materialization_context.cancellation_requested =
-                [&task]() { return task.ShouldStop(); };
-            const auto materialized =
-                cyxwiz::PipelineMaterializer::Materialize(
-                    nodes, links, registry, effective_dataset_name,
-                    GraphMaterializationCacheConfig(
-                        materialization_project_root),
-                    [&task](
-                        const cyxwiz::PipelineOperatorProgress& event) {
-                        const float progress =
-                            0.05f + 0.55f *
-                                std::clamp(event.progress, 0.0f, 1.0f);
-                        task.ReportProgress(
-                            progress,
-                            event.message.empty()
-                                ? event.stage
-                                : event.message);
-                    },
-                    std::move(materialization_context));
-            if (materialized.failure_kind ==
-                cyxwiz::MaterializationFailureKind::Cancelled) {
-                return;
-            }
-            if (!materialized.success) {
-                throw std::runtime_error(
-                    "Checkpoint evaluation preprocessing failed: " +
-                    materialized.error_message);
-            }
-            if (!materialized.effective_dataset_name.empty()) {
-                effective_dataset_name =
-                    materialized.effective_dataset_name;
+            // The data steps before the Data Split, as training ran them:
+            // the table kept on disk, else a run of those steps (TOFIX178 S0-f2).
+            if (const int feeder = cyxwiz::TrainingInputFeeder(nodes, links); feeder >= 0) {
+                const auto prepared = cyxwiz::PrepareStepResult(
+                    nodes, links, feeder, cyxwiz::DataRegistry::Instance(), step_roots,
+                    GraphMaterializationCacheConfig(step_roots.project),
+                    [&task]() { return task.ShouldStop(); },
+                    [&task](float progress, const std::string& message) {
+                        task.ReportProgress(0.05f + 0.55f * std::clamp(progress, 0.0f, 1.0f), message);
+                    });
+                if (prepared.cancelled) return;
+                if (!prepared.ok)
+                    throw std::runtime_error("Checkpoint evaluation preprocessing failed: " + prepared.error);
+                effective_dataset_name = prepared.dataset;
             }
             std::string effective_label =
                 evaluation_config.dataset_roles.train.label_column.empty()

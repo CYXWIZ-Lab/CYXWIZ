@@ -289,11 +289,17 @@ CYXWIZ_API NeuralOpStatus ExecuteNeuralOpOnDevice(
 // set in production code.
 CYXWIZ_API void SetNeuralProvidersDisabledForTesting(bool disabled);
 
+// The run-time interface of a provider module (cyxwiz-nvidia-provider,
+// TOFIX178 1.0(c)): it exports cyxwiz_<name>_abi() returning this number and
+// cyxwiz_<name>_register(NeuralProviderRegistry*). A module with another
+// number is not loaded. Raise it when the provider interface changes.
+#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 1
+
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
 // Test-only: synchronizes the device and reports free/total device memory
-// so repeated-run leak checks (tofix68 validation gate) can run from a
-// test binary that does not link the CUDA runtime. Never used by
-// placement or execution logic.
+// (through the NVIDIA provider module when it is loaded) so repeated-run
+// leak checks (tofix68 validation gate) can run from a test binary that
+// does not link the CUDA runtime. Never used by placement or execution logic.
 CYXWIZ_API bool NvidiaProviderDeviceMemoryForTesting(size_t& free_bytes,
                                                      size_t& total_bytes);
 #endif

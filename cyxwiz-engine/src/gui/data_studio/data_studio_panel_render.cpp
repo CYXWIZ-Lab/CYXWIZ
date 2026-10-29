@@ -4,6 +4,8 @@
 
 #include "data_studio_panel.h"
 
+#include "../../core/dataset_catalog.h"
+
 #include "../node_editor.h"
 #include "../editor_fonts.h"
 #include "../icons.h"
@@ -34,6 +36,7 @@ ImVec4 ToneColour(studio::Tone tone) {
 const char* KindIcon(studio::RailItem::Kind kind) {
     switch (kind) {
         case studio::RailItem::Kind::DataInput: return ICON_FA_RIGHT_TO_BRACKET;
+        case studio::RailItem::Kind::ImageIndex: return ICON_FA_TABLE;
         case studio::RailItem::Kind::NodeResult: return ICON_FA_TABLE;
         case studio::RailItem::Kind::Published: return ICON_FA_FILE_EXPORT;
         default: return ICON_FA_DATABASE;
@@ -159,10 +162,13 @@ void DataStudioPanel::RenderRail(float height, float max_height) {
         for (const auto& item : section.items) {
             ImGui::PushID(item.node_id >= 0 ? item.node_id : static_cast<int>(std::hash<std::string>{}(item.dataset)));
             const bool chosen = !item.dataset.empty() && item.dataset == active_dataset_;
-            const ImVec2 pos = ImGui::GetCursorScreenPos();
-            const float w = ImGui::GetContentRegionAvail().x;
+            // An image input's index sits under it, indented.
+            const float indent = item.kind == studio::RailItem::Kind::ImageIndex ? 14.0f : 0.0f;
+            const ImVec2 row = ImGui::GetCursorScreenPos();
+            const ImVec2 pos(row.x + indent, row.y);
+            const float w = ImGui::GetContentRegionAvail().x - indent;
             ui::PushListRowColours();
-            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w, 0.0f))) {
+            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w + indent, 0.0f))) {
                 if (!item.dataset.empty()) SetActiveDataset(item.dataset);
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item.node_id >= 0) ShowOnCanvas({item.node_id});
             }
@@ -321,6 +327,7 @@ void DataStudioPanel::RenderBringIn() {
             ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
             ImGui::PopTextWrapPos();
             if (mono) ImGui::PopFont();
+            if (!row.source_note.empty()) ImGui::TextColored(t.text_dim, "%s", row.source_note.c_str());
             ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
             ImGui::SameLine(0.0f, 12.0f);
             ImGui::TextColored(ToneColour(row.tone), ICON_FA_CIRCLE " %s", row.state.c_str());
@@ -363,6 +370,7 @@ void DataStudioPanel::RenderBringIn() {
             ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
             ImGui::PopTextWrapPos();
             if (mono) ImGui::PopFont();
+            if (!row.source_note.empty()) ImGui::TextColored(t.text_dim, "%s", row.source_note.c_str());
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
             ImGui::TableNextColumn();
@@ -394,13 +402,19 @@ void DataStudioPanel::RenderBringIn() {
 
 void DataStudioPanel::RenderExplore() {
     static const std::pair<const char*, ExploreTab> kTabs[] = {
-        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Missing", ExploreTab::Missing},
+        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Images", ExploreTab::Images}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
         {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression},
         {"Groups", ExploreTab::Groups}, {"Projection", ExploreTab::Projection}, {"Visualize", ExploreTab::Visualize}};
+    const auto picked = DatasetCatalog::Instance().Resolve(active_dataset_);
+    const bool images = picked && picked->modality == DatasetModality::Image &&
+                        picked->storage != DatasetStorageKind::InMemoryArrow &&
+                        picked->storage != DatasetStorageKind::DiskBackedParquet;
+    if (explore_tab_ == ExploreTab::Images && !images) explore_tab_ = ExploreTab::Profile;
     const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     bool first = true;
     for (const auto& [label, tab] : kTabs) {
+        if (tab == ExploreTab::Images && !images) continue;
         // Wraps in a narrow dock.
         if (!first) SameLineOrWrap(ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 4.0f, right_edge);
         first = false;
@@ -409,7 +423,18 @@ void DataStudioPanel::RenderExplore() {
     ImGui::Spacing();
     switch (explore_tab_) {
         case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
-        case ExploreTab::Profile: if (profile_) profile_->Render(); break;
+        case ExploreTab::Profile:
+            if (profile_) {
+                if (node_editor_) profile_->SetLiveCompile(node_editor_->GetLiveCompile());
+                profile_->Render();
+            }
+            break;
+        case ExploreTab::Images:
+            if (gallery_) {
+                if (node_editor_) gallery_->SetLiveCompile(node_editor_->GetLiveCompile());
+                gallery_->Render();
+            }
+            break;
         case ExploreTab::Missing: if (missing_) missing_->Render(MakeExploreContext()); break;
         case ExploreTab::Outliers: if (outliers_) outliers_->Render(MakeExploreContext()); break;
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;

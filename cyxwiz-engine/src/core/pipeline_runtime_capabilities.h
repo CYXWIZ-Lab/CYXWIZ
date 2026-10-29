@@ -139,16 +139,6 @@ struct PipelineTrainingBackendSupport {
         PipelineBackendPrimitiveEvidence::NotApplicable;
 };
 
-enum class PipelineStorageBackend {
-    Unknown,
-    ArrowTable,
-    ParquetBacked,
-    ImageDataset,
-    AudioDataset,
-    TextDataset,
-    SparseFeatureDataset,
-};
-
 enum class PipelineRuntimeSupportMode {
     Unknown,
     LegacyExecutor,
@@ -175,14 +165,6 @@ enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
     StreamingOperatorsOnly,  // a table on disk: operators that stream (TOFIX154)
-};
-
-struct PipelineMaterializerStorageBackendCapability {
-    PipelineStorageBackend backend = PipelineStorageBackend::Unknown;
-    PipelineMaterializerStorageSupport storage_support =
-        PipelineMaterializerStorageSupport::None;
-    bool materializer_supported = false;
-    const char* reason = nullptr;
 };
 
 struct PipelineRuntimeSupport {
@@ -277,14 +259,9 @@ GetPipelineSupportedTrainingBackendCapabilities();
 const std::vector<PipelineSupportedTrainingRoleCapability>&
 GetPipelineSupportedTrainingRoleCapabilities();
 
-const std::vector<PipelineMaterializerStorageBackendCapability>&
-GetPipelineMaterializerStorageBackendCapabilities();
-
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type);
-
-const char* PipelineStorageBackendName(PipelineStorageBackend backend);
 
 const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode);
 
@@ -307,9 +284,6 @@ const char* PipelineBackendPrimitiveEvidenceName(
 
 const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role);
 
-PipelineMaterializerStorageBackendCapability
-ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend);
-
 std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name);
 
@@ -330,6 +304,11 @@ const PipelineLegacyAliasDecisionCapability*
 ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name);
 
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name);
+
+// The steps that learn from every row they are given (their operators'
+// LearnsFromEveryRow, TOFIX178 S0-g5): before a Data Split they learn from
+// the Validation and Test rows too.
+bool PipelineStepLearnsFromEveryRow(gui::NodeType type);
 
 std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_type_name);
 
@@ -364,6 +343,15 @@ bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type);
 
 bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type);
+
+// A node only training runs (Data Split, Data Loader, model layers, losses,
+// optimizers, Output): a data pipeline run leaves it out.
+bool IsTrainingOnlyNode(gui::NodeType node_type);
+
+// A table step only the pipeline run applies (SQL, Text Clean, Fill Missing,
+// Filter / Select / Sort / Join ...): on the path into a Data Split, training
+// trains on the run's result (TOFIX178 S0-e).
+bool IsPipelineRunTrainingStep(gui::NodeType node_type);
 
 PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);

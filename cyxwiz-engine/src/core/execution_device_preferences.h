@@ -493,8 +493,16 @@ inline RequestedRouteTrainingReadiness PreviewRequestedRouteTrainingReadiness() 
     return readiness;
 }
 
+// `route_unsupported` (optional): why the run's model cannot execute on a
+// route ("" when it can), asked of the requested route before it is
+// activated. A reason counts as a failed preflight: Strict refuses with it,
+// Compatibility recovers to the qualified ArrayFire CPU route (TOFIX178
+// 1.0(d): Conv2D on CUDA without the NVIDIA provider).
+using RouteUnsupportedReason = std::function<std::string(DeviceType type, int device_id)>;
+
 inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
-    ExecutionPolicy execution_policy) {
+    ExecutionPolicy execution_policy,
+    const RouteUnsupportedReason& route_unsupported = {}) {
     const auto pending = GetPendingExecutionDeviceSelection();
     const auto inventory = Device::GetAvailableDevices();
     DeviceType requested_type = DeviceType::CPU;
@@ -523,6 +531,12 @@ inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
     if (!route_resolution_error.empty()) {
         requested_activation = MakeRouteQualificationFailure(
             requested_type, requested_device_id, route_resolution_error);
+        requested_activation.stage = DeviceActivationStage::DeviceSelection;
+    } else if (const std::string unsupported =
+                   route_unsupported ? route_unsupported(requested_type, requested_device_id) : std::string();
+               !unsupported.empty()) {
+        requested_activation = MakeRouteQualificationFailure(
+            requested_type, requested_device_id, unsupported);
         requested_activation.stage = DeviceActivationStage::DeviceSelection;
     } else if (const DeviceInfo* requested_route =
                    find_route(requested_type, requested_device_id)) {

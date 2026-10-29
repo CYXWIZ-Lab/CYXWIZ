@@ -4,7 +4,8 @@
 AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
 bilinear), PixelShuffle, global average pooling ([H,W,C,N] -> [N,C] rows) -
 Conv1d on [L,C,N] sequences, global max pooling, adaptive average pooling,
-depthwise Conv2d (groups = C) - and the activations PReLU and SELU on [N, F] rows.
+depthwise Conv2d (groups = C), BatchNorm2d (training and eval, TOFIX178) - and the
+activations PReLU and SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -353,6 +354,30 @@ def build() -> list[dict[str, Any]]:
         "groupnorm_g3_c6_16x16", "GroupNorm", {"num_groups": 3, "eps": 1e-5, "affine": True},
         x, lambda t: functional.group_norm(t, 3, gamma, beta, eps=1e-5),
         {"gamma": gamma, "beta": beta}, {"gamma": plain, "beta": plain}, tolerance=(2e-4, 2e-4)))
+
+    # TOFIX178 1.1 BatchNorm2D (torch BatchNorm2d): training uses the batch
+    # statistics and updates the running ones (unbiased variance); eval uses
+    # the running statistics, forward and backward (fine-tuning with frozen
+    # statistics). "state" is the running statistics before, "state_after"
+    # after the forward. Appended so earlier cases keep their random draws.
+    for name, shape, training in (("batchnorm2d_train_c4", (3, 4, 5, 6), True),
+                                  ("batchnorm2d_train_c8_16x16", (2, 8, 16, 16), True),
+                                  ("batchnorm2d_eval_c4", (3, 4, 5, 6), False)):
+        x = torch.randn(*shape) * 2.0 + 0.5
+        channels = shape[1]
+        gamma = torch.randn(channels) * 0.5 + 1.0
+        beta = torch.randn(channels) * 0.2
+        running_mean = torch.randn(channels) * 0.3
+        running_var = torch.rand(channels) + 0.5
+        before = {"running_mean": plain(running_mean), "running_var": plain(running_var)}
+        built = case(
+            name, "BatchNorm2D", {"eps": 1e-5, "momentum": 0.1, "training": training}, x,
+            lambda t, g=gamma, b=beta, rm=running_mean, rv=running_var, tr=training: functional.batch_norm(
+                t, rm, rv, g, b, training=tr, momentum=0.1, eps=1e-5),
+            {"gamma": gamma, "beta": beta}, {"gamma": plain, "beta": plain}, tolerance=(2e-4, 2e-4))
+        built["state"] = before
+        built["state_after"] = {"running_mean": plain(running_mean), "running_var": plain(running_var)}
+        cases.append(built)
     return cases
 
 

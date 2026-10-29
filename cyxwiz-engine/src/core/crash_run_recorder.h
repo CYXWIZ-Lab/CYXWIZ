@@ -99,6 +99,15 @@ private:
     CrashRunRecorder() = default;
 
     void WriteLocked();
+    // The per-batch marks (a stage, a panel or backend event, the sample
+    // count): the file at most every kRoutineWriteInterval, so a batch does
+    // not wait for several atomic file replaces (TOFIX178 0.6: 4 per batch
+    // took 7 of an epoch's 9 s). The run's start, end, failure and
+    // checkpoints write at once, with the latest state. After a native
+    // crash the last stage can be that much older.
+    void WriteRoutineLocked();
+    static constexpr std::chrono::milliseconds kRoutineWriteInterval{200};
+    std::chrono::steady_clock::time_point last_write_{};
     static std::string NowIso8601();
     static std::string ThreadIdString();
     static std::string DomainName(PreprocessingDomain domain);

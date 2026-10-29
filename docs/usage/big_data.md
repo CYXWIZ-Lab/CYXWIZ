@@ -54,7 +54,7 @@ The budget decides:
 
 | Steps | How | Memory |
 | --- | --- | --- |
-| SQL step, Filter Rows, Select Columns, Sort, Join, Group By, Remove Duplicates, Fill Missing, Value Counts, Binning, Text Clean, Polynomial Features, Rule Engine, Unit Converter, Unpivot, Row Appender, Cell Extractor / Updater, String Manipulation, Math Formula, Calculator | DuckDB reads the input file in place and writes a large result to a file | within the budget |
+| SQL step, Filter Rows, Select Columns, Sort, Join, Group By, Remove Duplicates, Fill Missing, Value Counts, Binning, Text Clean, Polynomial Features, Rule Engine, Unit Converter, Unpivot, Row Appender, Cell Extractor / Updater, String Manipulation, Math Formula, Calculator | DuckDB reads the input in place (a table in memory through its Arrow scan, a table on disk from its file) and writes a large result to a file | within the budget |
 | Standard, Min-Max and Max-Abs Scaler, Log Transform | one row group at a time (a scaler fits on all rows first, then scales) | one row group |
 | Checks (row count, allowed values, not empty, range) | one row group at a time; the rows pass through uncopied | one row group |
 | The `unique` check | one DuckDB query (group by the columns) over the file; the rows pass through uncopied | within the budget |
@@ -75,11 +75,10 @@ A Data Input kept on disk can feed training:
 - **Steps before the Data Loader** (Standard and Min-Max Scaler, Log
   Transform, Text Tokenizer, checks) run one row group at a time: each fitting
   step reads the file once to fit, then one last pass writes the prepared
-  table to a Parquet file (`cache/materialized/streamed` in the project) that
-  training reads. It is prepared again on each run (not cached), and the
-  previous file is removed.
-- **Text classification on disk**: the Text Tokenizer (with Text Vocabulary
-  and Text Padding) counts its vocabulary a row group at a time, then writes
+  table to a Parquet file the pipeline run keeps while a dataset uses it;
+  training reads that file.
+- **Text classification on disk**: the Text Tokenizer (its vocabulary and
+  padding settings) counts its vocabulary a row group at a time, then writes
   each row group's `tok_0 ... tok_n` and `y`. The result is the table it makes
   in memory: the same vocabulary, the same token ids, the classes numbered in
   file order (their names kept for Run Test). This works with a Word,
@@ -96,10 +95,14 @@ A Data Input kept on disk can feed training:
   > raise the data budget (Preferences > Data) to load it in memory.
 
 - **A table on disk** trains a row group at a time, with the Data Split
-  made row by row as in memory: without stratification Train is the first
-  rows of the file, then Validation, then Test; with **Stratified** each
-  class gets its share (in file order, or drawn by the split seed when
-  shuffling). The split takes one byte of memory per row (100 MB for 100
+  made row by row by the same rule as in memory, so the same rows land in
+  Train, Validation and Test either way: when the Data Loader shuffles, each
+  row's share is drawn by the Split's seed (each class's shares with
+  **Stratified**, the whole table's without), like scikit-learn's
+  `train_test_split`; without shuffling each class (or the table) fills
+  Train, then Validation, then Test in file order. Without a Data Split,
+  Train is the first rows and Validation the rest. The draw is the same on
+  Windows, Linux and macOS. The split takes one byte of memory per row (100 MB for 100
   million rows). **Class balancing** in the Data Loader works on disk with
   the same modes and targets as in memory (oversample, undersample, weighted
   sampler; min, median, a number or the largest class): one pass over the
@@ -108,6 +111,53 @@ A Data Input kept on disk can feed training:
   list of rows kept. Oversample to 560 rows of a 240-row class serves each
   row twice and a different 80 of them a third time each epoch. Not with a
   time-series split (a warning says so).
+- **Steps learn from the Train rows.** In a training graph with a Data
+  Split, the pipeline run marks each Data Input row Train, Validation or
+  Test by the same rule (a hidden `__partition__` column), before the first
+  step. The steps that learn from the data learn from the Train rows only and
+  then change every row, like scikit-learn's `fit(X_train).transform(X)`:
+  the scalers and the Quantile / Power transforms, Fill Missing (mean,
+  median, most frequent), Target Encoder (the Validation and Test labels
+  never reach the encoding; a category with no Train row gets the Train
+  mean), TF-IDF and Count (a word seen only in Validation or Test rows is
+  not a feature; the IDF counts Train documents) and the Text Tokenizer's
+  vocabulary. Training then reads the same marks, so the rows a step learned
+  from are the rows the model trains on. The marks are not data: steps that
+  pick columns themselves skip them, Unpivot keeps them with each row, and
+  exports (Data Output, Save Dataset, CSV / Parquet / JSON) leave them out.
+  Not marked: a graph without a Data Split, a time series, a Split with
+  neither Shuffle nor Stratified and no supplied input (the rows keep their
+  order), and a table kept on disk (a warning says its steps learn from
+  every row).
+- **Steps that still learn from every row.** PCA, the clustering steps
+  (K-Means, DBSCAN, Hierarchical, GMM), the Outlier Detector and the classic
+  models (regression, trees, Naive Bayes, KNN, Logistic Regression, SVM)
+  cannot learn from the Train rows only yet. Placed before a Data Split,
+  they learn from the Validation and Test rows too, and Compile warns:
+  "'PCA (4 components)' learns from every row before the Data Split, the
+  Validation and Test rows too (it cannot learn from the Train rows only
+  yet), so their scores read better than new data would" (*CW-C-0206*).
+  Training still runs; the Validation and Test scores are then optimistic.
+- **Supplied Validation / Test inputs** (a Data Input on the Split's
+  Validation or Test pin) go through the same steps. Their rows join the
+  training input's rows (Validation, then Test) before the first step, so
+  each step learns from the Train rows and transforms the supplied rows
+  with what it learned, then training reads them from the prepared table:
+  "the Validation input's 48 rows join 'ds_datainput_1'", "Training reads
+  the supplied Validation rows from 'ds_operator_StandardScaler_5'". The
+  supplied rows take the training input's columns by name; extra columns
+  are left out, a supplied label column with another name stands for the
+  training label, and numbers of different widths are widened alike. A
+  supplied input without one of the training input's columns stops the run
+  ("Validation input has no column 'a' (it needs the training input's
+  columns)"). A step between a supplied input and the Split is refused
+  (compile). Not yet: a supplied input kept on disk is read as it is,
+  without the steps (a warning says so), and so are the supplied inputs
+  when the Training branch has more than one Data Input (a Join). Its rows are prepared with the
+  training rows, so the check for rows shared between Train and the
+  supplied input does not run for it. Label and Ordinal Encoder
+  number the categories of every row (no label is learned). Changing the
+  Split's shares, seed, label or Stratified prepares the data again.
 - **Causal-LM token windows** (a `tokens` list column) on disk are read one
   row group at a time while training: memory holds one row group's windows.
   The row-group order is shuffled every epoch, and the windows within each

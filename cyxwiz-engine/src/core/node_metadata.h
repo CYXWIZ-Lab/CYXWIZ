@@ -97,6 +97,7 @@ struct ParameterDefinition {
     std::string name;
     std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory",
                                 // "fixed" (set by the engine, read-only in Properties, must equal default_value)
+                                // "column" (a column of the data reaching the node, picked from a list)
     std::string default_value;
     std::string description;
     std::vector<std::string> enum_values;  // For enum type

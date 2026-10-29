@@ -3,8 +3,12 @@
 #include "core/data_analyzer.h"
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
-#include "core/pipeline_materializer.h"
+#include "core/data_budget.h"
+#include "core/node_executors/pipeline_operator_factory.h"
+#include "core/process_memory_snapshot.h"
+#include "core/training_input_preparation.h"
 #include "core/parquet_backed_dataset.h"
+#include "core/sparse_feature_dataset.h"
 #include "core/node_executors/preprocessing_operators.h"
 #include "core/node_executors/regression_model_artifact.h"
 #include "core/node_executors/regression_model_predictor_operator.h"
@@ -181,32 +185,56 @@ std::string ParamsJson(
 
 void AssertTableContractEqual(
     const std::shared_ptr<arrow::Table>& executor_table,
-    const std::shared_ptr<arrow::Table>& materialized_table,
+    const std::shared_ptr<arrow::Table>& reference_table,
     const std::string& label) {
     Check(executor_table != nullptr, label + " executor table exists");
-    Check(materialized_table != nullptr, label + " materializer table exists");
-    Check(executor_table->num_rows() == materialized_table->num_rows(),
+    Check(reference_table != nullptr, label + " operator table exists");
+    Check(executor_table->num_rows() == reference_table->num_rows(),
           label + " row counts match");
-    Check(executor_table->num_columns() == materialized_table->num_columns(),
+    Check(executor_table->num_columns() == reference_table->num_columns(),
           label + " column counts match");
     for (int i = 0; i < executor_table->num_columns(); ++i) {
         Check(executor_table->schema()->field(i)->name() ==
-                  materialized_table->schema()->field(i)->name(),
+                  reference_table->schema()->field(i)->name(),
               label + " schema field names match");
     }
 }
 
 void AssertNumericColumnClose(
     const std::shared_ptr<arrow::Table>& executor_table,
-    const std::shared_ptr<arrow::Table>& materialized_table,
+    const std::shared_ptr<arrow::Table>& reference_table,
     const std::string& column,
     const std::string& label) {
     for (int64_t row = 0; row < executor_table->num_rows(); ++row) {
         const double left = ReadNumericValue(executor_table, column, row);
-        const double right = ReadNumericValue(materialized_table, column, row);
+        const double right = ReadNumericValue(reference_table, column, row);
         Check(std::fabs(left - right) < 0.0001,
               label + " values match for " + column);
     }
+}
+
+// The operator itself, configured and applied on `input`: the reference the
+// pipeline run's result must equal.
+std::unique_ptr<cyxwiz::IPipelineOperator> ConfiguredOperator(
+    gui::NodeType node_type,
+    const std::string& type_name,
+    const std::map<std::string, std::string>& parameters) {
+    auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(node_type);
+    Check(op != nullptr, type_name + " has a factory operator");
+    std::string error;
+    Check(op->Configure(parameters, error), type_name + " operator configures: " + error);
+    return op;
+}
+
+std::shared_ptr<arrow::Table> ApplyOperatorDirectly(
+    gui::NodeType node_type,
+    const std::string& type_name,
+    const std::map<std::string, std::string>& parameters,
+    const std::shared_ptr<arrow::Table>& input) {
+    auto op = ConfiguredOperator(node_type, type_name, parameters);
+    auto result = op->Apply(input);
+    Check(result.ok(), type_name + " operator applies: " + result.status().ToString());
+    return result.ValueOrDie();
 }
 
 void RunParityCase(
@@ -252,39 +280,68 @@ void RunParityCase(
     Check(executor_dataset != nullptr,
           type_name + " executor output dataset exists");
     auto executor_table = executor_dataset->GetArrowTable();
-
-    const std::string source_name =
-        "parity_source_" + type_name + "_" + std::to_string(operator_id);
-    std::vector<gui::MLNode> nodes = {
-        MakeDataInputNode(input_id, source_name),
-        MakeOperatorNode(operator_id, node_type, type_name, parameters),
-    };
-    std::vector<gui::NodeLink> links = {
-        {1, input_id, 0, operator_id, 0, gui::LinkType::TensorFlow},
-    };
-
-    auto materialized = cyxwiz::PipelineMaterializer::MaterializeTable(
-        nodes, links, source_table, source_name);
-    Check(materialized.success,
-          type_name + " materializer path succeeds: " +
-              materialized.error_message);
-    Check(materialized.operators_applied == 1,
-          type_name + " materializer applies one operator");
-
-    AssertTableContractEqual(executor_table, materialized.table, type_name);
+    // The reference: the same operator applied to the run's source table.
+    const auto reference = ApplyOperatorDirectly(node_type, type_name, parameters, source_table);
+    AssertTableContractEqual(executor_table, reference, type_name);
     if (numeric_columns.empty()) {
         for (int i = 0; i < executor_table->num_columns(); ++i) {
             AssertNumericColumnClose(executor_table,
-                                     materialized.table,
+                                     reference,
                                      executor_table->schema()->field(i)->name(),
                                      type_name);
         }
     } else {
         for (const auto& column : numeric_columns) {
-            AssertNumericColumnClose(executor_table, materialized.table, column,
+            AssertNumericColumnClose(executor_table, reference, column,
                                      type_name);
         }
     }
+}
+
+// Sparse output (TOFIX178 S0-f): the pipeline run's CSR features equal the
+// operator's own ApplySparse, value for value, with the same labels.
+void RunSparseParityCase(
+    const std::filesystem::path& csv_path,
+    const std::string& type_name,
+    gui::NodeType node_type,
+    int input_id,
+    int operator_id,
+    const std::map<std::string, std::string>& parameters) {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const std::string output_name = "ds_operator_" + type_name + "_" + std::to_string(operator_id);
+    registry.UnregisterTabularDataset(output_name);
+    const std::string pipeline_json =
+        R"({"nodes":[{"id":)" + std::to_string(input_id) +
+        R"(,"type":"DataInput","name":"ParityInput","parameters":{"source_type":"file","file_path":")" +
+        JsonEscapePath(csv_path.string()) + R"(","type":"csv","has_header":"true"}},{"id":)" +
+        std::to_string(operator_id) + R"(,"type":")" + type_name + R"(","name":"ParityOperator","parameters":{)" +
+        ParamsJson(parameters) + R"(}}],"links":[{"start_node":)" + std::to_string(input_id) +
+        R"(,"end_node":)" + std::to_string(operator_id) + R"(}]})";
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(pipeline_json), type_name + " sparse executor run: " + executor.GetLastError());
+    const auto ran = registry.GetSparseFeatureDataset(output_name);
+    Check(ran != nullptr, type_name + " the pipeline run registers sparse features");
+
+    const auto source_table =
+        registry.GetArrowDataset("ds_datainput_" + std::to_string(input_id))->GetArrowTable();
+    auto op = ConfiguredOperator(node_type, type_name, parameters);
+    auto direct = op->ApplySparse(source_table, output_name);
+    Check(direct.ok() && direct.ValueOrDie(),
+          type_name + " the operator's own sparse output: " + direct.status().ToString());
+    const auto& made = *direct.ValueOrDie();
+    Check(ran->GetNumRows() == made.GetNumRows() && ran->GetNumFeatures() == made.GetNumFeatures(),
+          type_name + " sparse shapes match");
+    Check(ran->GetRowOffsets() == made.GetRowOffsets() && ran->GetColumnIndices() == made.GetColumnIndices(),
+          type_name + " sparse structure matches");
+    Check(ran->GetValues().size() == made.GetValues().size(), type_name + " sparse value counts match");
+    for (size_t i = 0; i < made.GetValues().size(); ++i)
+        Check(std::fabs(ran->GetValues()[i] - made.GetValues()[i]) < 1e-6f, type_name + " sparse values match");
+    Check(ran->GetFeatureNames() == made.GetFeatureNames(), type_name + " feature names match");
+    Check(ran->GetLabelName() == made.GetLabelName() && ran->GetClassNames() == made.GetClassNames(),
+          type_name + " labels match");
+    Check(ran->GetLabels() && made.GetLabels() && ran->GetLabels()->Equals(*made.GetLabels()),
+          type_name + " label values match");
+    registry.UnregisterTabularDataset(output_name);
 }
 
 void TestStandardScalerEmitsMemoryPreflight() {
@@ -329,11 +386,13 @@ void TestStandardScalerEmitsMemoryPreflight() {
           "StandardScaler preflight test should preserve row count");
 }
 
-void TestMaterializerPreflightStopsBeforeApply() {
-    constexpr const char* kSourceName = "preflight_only_source";
+// The first step's own memory estimate before training starts
+// (EstimateFirstStepMemory, the GUI pre-start check): it stops at the first
+// decision, applies nothing and identifies the step.
+void TestFirstStepMemoryEstimate() {
     const auto source_table = MakePreprocessingTable();
     const std::vector<gui::MLNode> nodes = {
-        MakeDataInputNode(471, kSourceName),
+        MakeDataInputNode(471, "preflight_only_source"),
         MakeOperatorNode(
             472,
             gui::NodeType::StandardScaler,
@@ -346,51 +405,62 @@ void TestMaterializerPreflightStopsBeforeApply() {
         {1, 471, 0, 472, 0, gui::LinkType::TensorFlow},
     };
 
-    auto safe = cyxwiz::PipelineMaterializer::PreflightTable(
-        nodes, links, source_table, kSourceName);
-    Check(safe.success, "preflight-only materializer should complete cleanly");
-    Check(safe.memory_preflight_observed,
-          "preflight-only materializer should capture operator evidence");
-    Check(safe.memory_preflight.memory_risk_level == "safe",
-          "small deterministic preflight should be safe");
-    Check(safe.memory_preflight.node_id == 472 &&
-              safe.memory_preflight.node_name == "Preflight StandardScaler",
-          "preflight evidence should identify the responsible node");
-    Check(safe.operators_applied == 0,
-          "preflight-only materializer must stop before Apply completes");
-    Check(safe.table == source_table,
-          "preflight-only materializer must preserve the source table");
+    const auto safe = cyxwiz::EstimateFirstStepMemory(nodes, links, 472, source_table, {});
+    Check(safe.available && safe.error.empty(),
+          "the first step publishes its memory estimate: " + safe.error);
+    Check(safe.evidence.memory_risk_level == "safe",
+          "small deterministic estimate should be safe");
+    Check(safe.evidence.node_id == 472 &&
+              safe.evidence.node_name == "Preflight StandardScaler",
+          "the estimate should identify the responsible node");
+    Check(safe.evidence.available_memory_bytes > 0 && safe.evidence.safe_memory_budget_bytes > 0,
+          "the estimate carries the memory it was judged against");
+    Check(source_table->Equals(*MakePreprocessingTable()),
+          "the estimate must leave the source table untouched");
 
+    const uint64_t estimated_peak = safe.evidence.estimated_memory_bytes;
+    Check(estimated_peak > 0, "the estimate contains the estimated peak");
     cyxwiz::MaterializationMemoryContext warning_context;
-    const uint64_t estimated_peak =
-        safe.memory_preflight.estimated_memory_bytes;
-    Check(estimated_peak > 0,
-          "preflight evidence should contain the estimated peak");
     warning_context.snapshot_override =
         cyxwiz::MaterializationMemorySnapshot{
             estimated_peak * 2ULL, estimated_peak * 2ULL, true};
-    auto warning = cyxwiz::PipelineMaterializer::PreflightTable(
-        nodes, links, source_table, kSourceName, warning_context);
-    Check(warning.success && warning.memory_preflight_observed,
-          "warning preflight should remain an allocation-free decision");
-    Check(warning.memory_preflight.memory_risk_level == "warning",
+    const auto warning = cyxwiz::EstimateFirstStepMemory(nodes, links, 472, source_table, warning_context);
+    Check(warning.available && warning.evidence.memory_risk_level == "warning",
           "deterministic 50 percent estimate should require warning handling");
-    Check(warning.operators_applied == 0 && warning.table == source_table,
-          "warning preflight must stop before materialization");
+    Check(warning.evidence.available_memory_bytes == estimated_peak * 2ULL,
+          "the estimate is judged against the given memory");
 
     cyxwiz::MaterializationMemoryContext blocked_context;
     blocked_context.policy.hard_limit_bytes = 1;
     blocked_context.snapshot_override =
         cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
-    auto blocked = cyxwiz::PipelineMaterializer::PreflightTable(
-        nodes, links, source_table, kSourceName, blocked_context);
-    Check(blocked.success && blocked.memory_preflight_observed,
-          "blocked preflight should return its decision without allocating");
-    Check(blocked.memory_preflight.status == "blocked" &&
-              blocked.memory_preflight.memory_risk_level == "blocked",
-          "blocked preflight should preserve the operator decision");
-    Check(blocked.operators_applied == 0 && blocked.table == source_table,
-          "blocked preflight must leave the source table untouched");
+    const auto blocked = cyxwiz::EstimateFirstStepMemory(nodes, links, 472, source_table, blocked_context);
+    Check(blocked.available && blocked.evidence.status == "blocked" &&
+              blocked.evidence.memory_risk_level == "blocked",
+          "a blocked estimate returns the operator's decision without applying it");
+
+    // Invalid settings are an error, not an estimate.
+    auto invalid = nodes;
+    invalid[1].parameters["operation_mode"] = "bogus";
+    const auto refused = cyxwiz::EstimateFirstStepMemory(invalid, links, 472, source_table, {});
+    Check(!refused.available && refused.error.find("Preflight StandardScaler") != std::string::npos,
+          "invalid settings name the step: " + refused.error);
+
+    // Transform Only with a fitted-state file that is not there: the estimate
+    // must not crash the pre-start check (was the materializer's preflight).
+    auto missing_state = nodes;
+    missing_state[1].parameters["operation_mode"] = "transform_only";
+    missing_state[1].parameters["state_path"] =
+        (std::filesystem::temp_directory_path() / "cyxwiz_absent_parent" / "fitted.cyxstate.json").string();
+    try {
+        const auto missing = cyxwiz::EstimateFirstStepMemory(missing_state, links, 472, source_table, {});
+        // The step fails before it estimates: no estimate, and its reason
+        // (the missing state file) instead of "no estimate required".
+        Check(!missing.available && !missing.error.empty(),
+              "a step that cannot load its fitted state says why: " + missing.error);
+    } catch (const std::exception& e) {
+        Check(false, std::string("a missing fitted state must not throw out of the estimate: ") + e.what());
+    }
 }
 
 void TestStandardScalerExcludesMultipleTargetColumns() {
@@ -715,200 +785,117 @@ void TestRemainingRowTransformMemoryPreflight() {
           "blocked LogTransform should stop before reading its numeric column");
 }
 
-void TestMaterializerStructuredFailures() {
-    constexpr const char* kSourceName = "materializer_failure_source";
+// The pipeline nodes as the canvas has them: one input and one output pin.
+gui::MLNode WithPins(gui::MLNode node) {
+    node.inputs = {{0, gui::PinType::Tensor, "in", true}};
+    node.outputs = {{0, gui::PinType::Tensor, "out", false}};
+    return node;
+}
+
+std::string RunJson(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links) {
+    nlohmann::json pipeline;
+    std::string error;
+    Check(cyxwiz::PipelineJsonFromGraph(nodes, links, pipeline, error), "pipeline JSON: " + error);
+    return pipeline.dump();
+}
+
+// A pipeline run stops cleanly: a cancel before or during a long step, and
+// the runtime memory guard, publish no result for the step.
+void TestPipelineRunStructuredFailures() {
+    namespace fs = std::filesystem;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const fs::path csv_path = fs::temp_directory_path() / "cyxwiz_pipeline_run_failures.csv";
+    {
+        std::ofstream csv(csv_path);
+        csv << "x,y\n1,10\n2,20\n3,30\n4,40\n";
+    }
+    auto input = WithPins(MakeDataInputNode(901, "pipeline_failure_source"));
+    input.parameters = {{"source_type", "file"}, {"file_path", csv_path.string()},
+                        {"type", "csv"}, {"has_header", "true"}};
     const std::vector<gui::MLNode> nodes = {
-        MakeDataInputNode(901, kSourceName),
-        MakeOperatorNode(
-            902,
-            gui::NodeType::LogTransform,
-            "Failure LogTransform",
-            {{"columns", "y"}}),
+        input,
+        WithPins(MakeOperatorNode(902, gui::NodeType::LogTransform, "Failure LogTransform", {{"columns", "y"}})),
     };
-    const std::vector<gui::NodeLink> links = {
-        {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
-    };
-    const auto input = MakePreprocessingTable();
+    const std::vector<gui::NodeLink> links = {{1, 901, 0, 902, 0, gui::LinkType::TensorFlow}};
+    const std::string log_output = "ds_operator_LogTransform_902";
 
-    cyxwiz::PipelineOperatorExecutionContext cancelled_context;
-    cancelled_context.cancellation_requested = []() { return true; };
-    const auto cancelled = cyxwiz::PipelineMaterializer::MaterializeTable(
-        nodes, links, input, kSourceName, {}, cancelled_context);
-    Check(!cancelled.success &&
-              cancelled.failure_kind ==
-                  cyxwiz::MaterializationFailureKind::Cancelled,
-          "materializer should expose cancellation as a typed failure");
-    Check(cancelled.operators_applied == 0,
-          "cancelled materializer should not publish an applied operator");
+    // Cancelled before the steps finish: no result, the cancel is reported.
+    const auto roots = cyxwiz::StepRunRoots{};
+    const auto cancelled = cyxwiz::PrepareStepResult(nodes, links, 902, registry, roots, {}, [] { return true; });
+    Check(!cancelled.ok && cancelled.cancelled && cancelled.ran && cancelled.dataset.empty(),
+          "a cancelled preparation is a cancel, not a result");
+    Check(registry.GetArrowDataset(log_output) == nullptr, "a cancelled preparation publishes no result");
 
-    bool cancel_during_sentiment = false;
-    cyxwiz::PipelineOperatorExecutionContext cooperative_context;
-    cooperative_context.cancellation_requested =
-        [&cancel_during_sentiment]() { return cancel_during_sentiment; };
-    const auto text_input = arrow::Table::Make(
-        arrow::schema({arrow::field("text", arrow::utf8())}),
-        {FinishStringArray({
-            "good bright day", "bad dull day",
-            "good calm night", "bad storm night"})});
-    const std::vector<gui::MLNode> sentiment_nodes = {
-        MakeDataInputNode(903, kSourceName),
-        MakeOperatorNode(
-            904,
-            gui::NodeType::SentimentAnalyzer,
-            "Cancellable Sentiment",
-            {{"text_col", "text"}, {"method", "simple"}}),
-    };
-    const std::vector<gui::NodeLink> sentiment_links = {
-        {2, 903, 0, 904, 0, gui::LinkType::TensorFlow},
-    };
-    const auto cooperative_cancel =
-        cyxwiz::PipelineMaterializer::MaterializeTable(
-            sentiment_nodes,
-            sentiment_links,
-            text_input,
-            kSourceName,
-            [&cancel_during_sentiment](
-                const cyxwiz::PipelineOperatorProgress& event) {
-                if (event.stage == "analyze") {
-                    cancel_during_sentiment = true;
-                }
-            },
-            cooperative_context);
-    Check(!cooperative_cancel.success &&
-              cooperative_cancel.failure_kind ==
-                  cyxwiz::MaterializationFailureKind::Cancelled,
-          "long row operator should cooperatively return typed cancellation");
-    Check(cooperative_cancel.failed_node_id == 904 &&
-              cooperative_cancel.operators_applied == 0,
-          "cooperative cancellation should identify the node and publish no result");
+    // Cancelled while a long row operator runs: it stops cooperatively.
+    {
+        auto text = input;
+        text.id = 903;
+        const fs::path text_csv = fs::temp_directory_path() / "cyxwiz_pipeline_run_cancel_text.csv";
+        {
+            std::ofstream csv(text_csv);
+            csv << "text\ngood bright day\nbad dull day\ngood calm night\nbad storm night\n";
+        }
+        text.parameters["file_path"] = text_csv.string();
+        const std::vector<gui::MLNode> sentiment_nodes = {
+            text,
+            WithPins(MakeOperatorNode(904, gui::NodeType::SentimentAnalyzer, "Cancellable Sentiment",
+                                      {{"text_col", "text"}, {"method", "simple"}})),
+        };
+        const std::vector<gui::NodeLink> sentiment_links = {{2, 903, 0, 904, 0, gui::LinkType::TensorFlow}};
+        cyxwiz::PipelineExecutor executor;
+        bool cancel_sent = false;
+        executor.SetProgressCallback([&executor, &cancel_sent](float, const std::string& message) {
+            if (!cancel_sent && message.find("Cancellable Sentiment") != std::string::npos) {
+                cancel_sent = true;
+                executor.RequestCancel();
+            }
+        });
+        const bool ran = executor.ExecutePipeline(RunJson(sentiment_nodes, sentiment_links));
+        Check(cancel_sent, "the sentiment step reports progress while it runs");
+        Check(!ran && registry.GetArrowDataset("ds_operator_SentimentAnalyzer_904") == nullptr,
+              "a cancel during a long row operator stops it and publishes no result: " + executor.GetLastError());
+        executor.ReleaseAll();
+        fs::remove(text_csv);
+    }
 
-    cyxwiz::PipelineOperatorExecutionContext capacity_context;
-    capacity_context.memory.policy.hard_limit_bytes = 1;
-    capacity_context.memory.snapshot_override =
-        cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
-    const auto capacity = cyxwiz::PipelineMaterializer::MaterializeTable(
-        nodes, links, input, kSourceName, {}, capacity_context);
-    Check(!capacity.success &&
-              capacity.failure_kind ==
-                  cyxwiz::MaterializationFailureKind::Capacity,
-          "materializer should preserve operator CapacityError structurally");
-    Check(capacity.failed_node_id == 902 &&
-              capacity.failed_node_name == "Failure LogTransform",
-          "capacity failure should identify the responsible node");
-    Check(capacity.operators_applied == 0,
-          "capacity failure should not publish a partial operator result");
-
-    auto runtime_sample = std::make_shared<int>(0);
-    cyxwiz::PipelineOperatorExecutionContext runtime_capacity_context;
-    runtime_capacity_context.memory.policy.hard_limit_bytes = 1024;
-    runtime_capacity_context.memory.snapshot_override =
-        cyxwiz::MaterializationMemorySnapshot{16384, 16384, true};
-    runtime_capacity_context.process_memory_snapshot =
-        [runtime_sample]() {
+    // The runtime memory guard: the process grows past the safe budget while
+    // the step runs; the step stops, named, with the numbers.
+    {
+        cyxwiz::PipelineExecutor executor;
+        auto samples = std::make_shared<int>(0);
+        executor.SetProcessMemoryProbe([samples]() {
             cyxwiz::ProcessMemorySnapshot snapshot;
             snapshot.detected = true;
-            snapshot.resident_bytes = (*runtime_sample)++ == 0 ? 100 : 2200;
+            snapshot.resident_bytes = (*samples)++ == 0 ? 100 : 100 + (1ULL << 62);
             snapshot.private_bytes = snapshot.resident_bytes;
-            snapshot.private_metric_name = "test private";
             snapshot.source = "deterministic test";
             return snapshot;
-        };
-    const auto runtime_capacity =
-        cyxwiz::PipelineMaterializer::MaterializeTable(
-            nodes,
-            links,
-            input,
-            kSourceName,
-            {},
-            runtime_capacity_context);
-    Check(!runtime_capacity.success &&
-              runtime_capacity.failure_kind ==
-                  cyxwiz::MaterializationFailureKind::Capacity,
-          "actual process growth should trip the typed runtime capacity guard");
-    Check(runtime_capacity.failed_node_id == 902 &&
-              runtime_capacity.operators_applied == 0,
-          "runtime capacity guard should identify the node and publish no result");
+        });
+        const bool ran = executor.ExecutePipeline(RunJson(nodes, links));
+        Check(!ran && executor.GetLastError().find("the memory guard stopped 'Failure LogTransform'") !=
+                          std::string::npos,
+              "actual process growth trips the runtime memory guard: " + executor.GetLastError());
+        Check(registry.GetArrowDataset(log_output) == nullptr,
+              "the guarded step publishes no partial result");
+        executor.ReleaseAll();
+    }
 
-    std::vector<cyxwiz::PipelineOperatorProgress> evidence_events;
-    cyxwiz::PipelineOperatorExecutionContext evidence_context;
-    evidence_context.memory.snapshot_override =
-        cyxwiz::MaterializationMemorySnapshot{4096, 4096, true};
-    evidence_context.process_memory_snapshot = []() {
-        cyxwiz::ProcessMemorySnapshot snapshot;
-        snapshot.detected = true;
-        snapshot.resident_bytes = 512;
-        snapshot.private_bytes = 384;
-        snapshot.private_metric_name = "test private";
-        snapshot.source = "deterministic test";
-        return snapshot;
-    };
-    const auto evidence = cyxwiz::PipelineMaterializer::MaterializeTable(
-        nodes,
-        links,
-        input,
-        kSourceName,
-        [&evidence_events](const cyxwiz::PipelineOperatorProgress& event) {
-            evidence_events.push_back(event);
-        },
-        evidence_context);
-    Check(evidence.success && !evidence_events.empty(),
-          "safe materialization should emit memory evidence");
-    Check(evidence_events.front().available_memory_bytes == 4096 &&
-              evidence_events.front().safe_memory_budget_bytes > 0 &&
-              evidence_events.front().process_memory_detected &&
-              evidence_events.front().process_resident_memory_bytes == 512 &&
-              evidence_events.front().process_private_memory_bytes == 384 &&
-              evidence_events.front().process_memory_source ==
-                  "deterministic test",
-          "materialization evidence should carry budget and process snapshot truth");
-
-    const auto allocation_failure =
-        cyxwiz::PipelineMaterializer::MaterializeTable(
-            nodes,
-            links,
-            input,
-            kSourceName,
-            [](const cyxwiz::PipelineOperatorProgress&) {
-                throw std::bad_alloc();
-            });
-    Check(!allocation_failure.success &&
-              allocation_failure.failure_kind ==
-                  cyxwiz::MaterializationFailureKind::Capacity,
-          "materializer should translate bad_alloc into a capacity failure");
-    Check(allocation_failure.failed_node_id == 902,
-          "translated bad_alloc should identify the active node");
-
-    auto& registry = cyxwiz::DataRegistry::Instance();
-    registry.UnloadDataset(kSourceName);
-    registry.UnloadDataset(
-        std::string(kSourceName) +
-        cyxwiz::PipelineMaterializer::kMaterializedSuffix);
-    Check(registry.RegisterArrowTable(input, kSourceName) != nullptr,
-          "structured failure source should register");
-    const auto registry_capacity = cyxwiz::PipelineMaterializer::Materialize(
-        nodes,
-        links,
-        registry,
-        kSourceName,
-        {},
-        capacity_context);
-    Check(!registry_capacity.success &&
-              registry_capacity.failure_kind ==
-                  cyxwiz::MaterializationFailureKind::Capacity,
-          "registry materializer should propagate typed capacity failure");
-    Check(registry.GetArrowDataset(
-              std::string(kSourceName) +
-              cyxwiz::PipelineMaterializer::kMaterializedSuffix) == nullptr,
-          "failed materialization should not register a partial dataset");
-    registry.UnloadDataset(kSourceName);
+    // A clean run gives the result.
+    const auto done = cyxwiz::PrepareStepResult(nodes, links, 902, registry, roots, {});
+    Check(done.ok && done.ran && !done.from_disk && done.dataset == log_output && registry.GetArrowDataset(log_output),
+          "an uncancelled preparation gives the step's result: " + done.error);
+    registry.UnregisterTabularDataset(log_output);
+    registry.UnregisterTabularDataset("ds_datainput_901");
+    fs::remove(csv_path);
 }
 
 } // namespace
 
-// A training set kept on disk streams through the operators, a row group at
-// a time (TOFIX154 step 6b): the prepared file holds what the in-memory path
-// computes, and an operator that needs every row stops with the reason.
-void TestStreamedMaterializerMatchesMemory() {
+// A training set kept on disk streams through the pipeline run's steps, a
+// row group at a time (TOFIX154 step 6b): the result on disk holds what the
+// operators compute in memory, and a step that needs every row stops with
+// the reason when the table cannot be read whole.
+void TestStreamedRunMatchesMemory() {
     constexpr int kRows = 10000;
     std::vector<double> x, y;
     for (int i = 0; i < kRows; ++i) {
@@ -919,7 +906,7 @@ void TestStreamedMaterializerMatchesMemory() {
         arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64())}),
         {FinishDoubleArray(x), FinishDoubleArray(y)});
 
-    const auto path = std::filesystem::temp_directory_path() / "cyxwiz_streamed_materializer.parquet";
+    const auto path = std::filesystem::temp_directory_path() / "cyxwiz_streamed_pipeline_run.parquet";
     {
         auto file = arrow::io::FileOutputStream::Open(path.string());
         Check(file.ok(), "streamed fixture file opens");
@@ -927,23 +914,20 @@ void TestStreamedMaterializerMatchesMemory() {
         Check(status.ok(), status.ToString());
         Check((*file)->Close().ok(), "streamed fixture closes");
     }
-    auto disk = cyxwiz::ParquetBackedDataset::Open(path.string(), "streamed_source");
-    Check(disk && disk->GetNumRowGroups() > 1, "streamed fixture has several row groups");
+    const auto cache_root = std::filesystem::temp_directory_path() / "cyxwiz_streamed_pipeline_run_cache";
+    std::filesystem::remove_all(cache_root);
 
-    auto& registry = cyxwiz::DataRegistry::Instance();
-    const std::string name = "streamed_source";
-    const std::string prepared_name = name + cyxwiz::PipelineMaterializer::kMaterializedSuffix;
-    registry.UnregisterTabularDataset(name);
-    registry.UnregisterTabularDataset(prepared_name);
-    registry.RegisterParquetBacked(name, disk);
-
+    const std::map<std::string, std::string> scale = {{"columns", "x"}, {"with_mean", "true"}, {"with_std", "true"}};
+    const std::map<std::string, std::string> range = {{"columns", "y"}, {"min", "0"}, {"max", "1"}};
+    const std::map<std::string, std::string> log = {{"columns", "y"}};
+    auto input = WithPins(MakeDataInputNode(901, "streamed_source"));
+    input.parameters = {{"source_type", "file"}, {"file_path", path.string()},
+                        {"type", "parquet"}, {"force_disk_backed", "true"}};
     std::vector<gui::MLNode> nodes = {
-        MakeDataInputNode(901, name),
-        MakeOperatorNode(902, gui::NodeType::StandardScaler, "Scale x",
-                         {{"columns", "x"}, {"with_mean", "true"}, {"with_std", "true"}}),
-        MakeOperatorNode(903, gui::NodeType::MinMaxScaler, "Range y",
-                         {{"columns", "y"}, {"min", "0"}, {"max", "1"}}),
-        MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", {{"columns", "y"}}),
+        input,
+        WithPins(MakeOperatorNode(902, gui::NodeType::StandardScaler, "Scale x", scale)),
+        WithPins(MakeOperatorNode(903, gui::NodeType::MinMaxScaler, "Range y", range)),
+        WithPins(MakeOperatorNode(904, gui::NodeType::LogTransform, "Log y", log)),
     };
     std::vector<gui::NodeLink> links = {
         {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
@@ -951,70 +935,77 @@ void TestStreamedMaterializerMatchesMemory() {
         {3, 903, 0, 904, 0, gui::LinkType::TensorFlow},
     };
 
-    auto memory = cyxwiz::PipelineMaterializer::MaterializeTable(nodes, links, table, name);
-    Check(memory.success, "in-memory path succeeds: " + memory.error_message);
+    // The reference: the three operators applied in memory, one after another.
+    auto memory = ApplyOperatorDirectly(gui::NodeType::StandardScaler, "StandardScaler", scale, table);
+    memory = ApplyOperatorDirectly(gui::NodeType::MinMaxScaler, "MinMaxScaler", range, memory);
+    memory = ApplyOperatorDirectly(gui::NodeType::LogTransform, "LogTransform", log, memory);
 
-    auto streamed = cyxwiz::PipelineMaterializer::Materialize(nodes, links, registry, name);
-    Check(streamed.success, "disk path succeeds: " + streamed.error_message);
-    Check(streamed.operators_applied == 3, "disk path applies three operators");
-    Check(streamed.effective_dataset_name == prepared_name, "disk path registers the prepared name");
-    Check(streamed.effective_kind == cyxwiz::PipelineMaterializerSourceKind::ParquetBacked,
-          "the prepared data stays on disk");
-    auto prepared = registry.GetParquetBackedDataset(prepared_name);
-    Check(prepared != nullptr, "prepared data is registered on disk");
-    const std::string prepared_path = prepared->GetFilePath();
-    std::vector<int> groups;
-    for (int i = 0; i < prepared->GetNumRowGroups(); ++i) groups.push_back(i);
-    auto prepared_table = prepared->ReadRowGroups(groups);
-    AssertTableContractEqual(memory.table, prepared_table, "streamed");
-    for (const char* column : {"x", "y"}) {
-        for (int64_t row = 0; row < kRows; ++row) {
-            const double left = ReadNumericValue(memory.table, column, row);
-            const double right = ReadNumericValue(prepared_table, column, row);
-            Check(std::fabs(left - right) < 1e-9 * std::max(1.0, std::fabs(left)),
-                  std::string("streamed values match for ") + column + " row " + std::to_string(row));
+    // Under a 1-byte data budget nothing is read whole: each step streams and
+    // its result stays on disk. (The memory guard is out of the way: its
+    // limit is the budget.)
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    cyxwiz::SetDataBudgetBytes(1);
+    const auto no_probe = [] { return cyxwiz::ProcessMemorySnapshot{}; };
+    {
+        cyxwiz::PipelineExecutor executor;
+        executor.SetIngestionCacheRoot(cache_root.string());
+        executor.SetProcessMemoryProbe(no_probe);
+        Check(executor.ExecutePipeline(RunJson(nodes, links)), "the disk run succeeds: " + executor.GetLastError());
+        Check(registry.IsParquetBackedDataset("ds_datainput_901") && !registry.GetArrowDataset("ds_datainput_901_in_memory"),
+              "the input stays on disk (not read whole)");
+        auto prepared = registry.GetParquetBackedDataset("ds_operator_LogTransform_904");
+        Check(prepared != nullptr, "the last step's result is kept on disk");
+        std::vector<int> groups;
+        for (int i = 0; i < prepared->GetNumRowGroups(); ++i) groups.push_back(i);
+        auto prepared_table = prepared->ReadRowGroups(groups);
+        AssertTableContractEqual(memory, prepared_table, "streamed");
+        for (const char* column : {"x", "y"}) {
+            for (int64_t row = 0; row < kRows; ++row) {
+                const double left = ReadNumericValue(memory, column, row);
+                const double right = ReadNumericValue(prepared_table, column, row);
+                Check(std::fabs(left - right) < 1e-9 * std::max(1.0, std::fabs(left)),
+                      std::string("streamed values match for ") + column + " row " + std::to_string(row));
+            }
         }
+        prepared.reset();
+        executor.ReleaseAll();
     }
 
-    // A second run replaces the previous prepared file (closed here first).
-    prepared.reset();
-    auto again = cyxwiz::PipelineMaterializer::Materialize(nodes, links, registry, name);
-    Check(again.success, "second disk run succeeds: " + again.error_message);
-    Check(!std::filesystem::exists(prepared_path), "the previous prepared file is removed");
-
-    // RobustScaler needs medians over every row: it stops and says why.
-    std::vector<gui::MLNode> robust = {
-        MakeDataInputNode(901, name),
-        MakeOperatorNode(902, gui::NodeType::RobustScaler, "Robust x",
-                         {{"columns", "x"}, {"with_centering", "true"}, {"with_scaling", "true"}}),
-    };
-    auto refused = cyxwiz::PipelineMaterializer::Materialize(robust, {links[0]}, registry, name);
-    Check(!refused.success && refused.error_message.find("needs every row at once") != std::string::npos,
-          "a whole-table operator on disk stops with the reason: " + refused.error_message);
-    Check(refused.failure_kind == cyxwiz::MaterializationFailureKind::Capacity,
-          "the refusal is a capacity failure");
-
-    if (auto last = registry.GetParquetBackedDataset(prepared_name)) {
-        const std::string last_path = last->GetFilePath();
-        registry.UnregisterTabularDataset(prepared_name);
-        last.reset();
-        std::filesystem::remove(last_path);
+    // RobustScaler needs medians over every row: on disk under the budget it
+    // stops before loading, and says why.
+    {
+        std::vector<gui::MLNode> robust = {
+            input,
+            WithPins(MakeOperatorNode(902, gui::NodeType::RobustScaler, "Robust x",
+                                      {{"columns", "x"}, {"with_centering", "true"}, {"with_scaling", "true"}})),
+        };
+        cyxwiz::PipelineExecutor executor;
+        executor.SetIngestionCacheRoot(cache_root.string());
+        executor.SetProcessMemoryProbe(no_probe);
+        Check(!executor.ExecutePipeline(RunJson(robust, {links[0]})) &&
+                  executor.GetLastError().find("over the data budget") != std::string::npos,
+              "a whole-table step on disk stops with the reason: " + executor.GetLastError());
+        Check(registry.GetArrowDataset("ds_operator_RobustScaler_902") == nullptr,
+              "the refused step publishes nothing");
+        executor.ReleaseAll();
     }
-    registry.UnregisterTabularDataset(name);
-    disk.reset();
-    std::filesystem::remove(path);
+    cyxwiz::SetDataBudgetBytes(0);
+
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove_all(cache_root, error);
 }
 
 int main() {
-    TestStreamedMaterializerMatchesMemory();
+    TestStreamedRunMatchesMemory();
     TestStandardScalerEmitsMemoryPreflight();
-    TestMaterializerPreflightStopsBeforeApply();
+    TestFirstStepMemoryEstimate();
     TestStandardScalerExcludesMultipleTargetColumns();
     TestRegressionMemoryPreflight();
     TestRegressionMetricDefinitions();
     TestRegressionFittedModelArtifact();
     TestRemainingRowTransformMemoryPreflight();
-    TestMaterializerStructuredFailures();
+    TestPipelineRunStructuredFailures();
 
     const auto csv_path = std::filesystem::temp_directory_path() /
         "cyxwiz_operator_materializer_parity.csv";
@@ -1111,6 +1102,14 @@ int main() {
                    {"norm", "none"}, {"ngram_range", "1,1"},
                    {"stop_words", "none"}, {"output_format", "dense"}},
                   {});
+    RunSparseParityCase(text_csv_path, "TFIDFVectorizer", gui::NodeType::TFIDFVectorizer, 711, 712,
+                        {{"text_col", "text"}, {"label_col", "label"}, {"max_features", "4"}, {"min_df", "1"},
+                         {"use_idf", "true"}, {"smooth_idf", "true"}, {"norm", "l2"}, {"ngram_range", "1,1"},
+                         {"stop_words", "none"}, {"output_format", "sparse"}});
+    RunSparseParityCase(text_csv_path, "CountVectorizer", gui::NodeType::CountVectorizer, 713, 714,
+                        {{"text_col", "text"}, {"label_col", "label"}, {"max_features", "4"}, {"min_df", "1"},
+                         {"binary", "false"}, {"ngram_range", "1,1"}, {"stop_words", "none"},
+                         {"output_format", "sparse"}});
     RunParityCase(text_csv_path, "SentimentAnalyzer",
                   gui::NodeType::SentimentAnalyzer, 707, 708,
                   {{"text_col", "text"}, {"label_col", "label"},

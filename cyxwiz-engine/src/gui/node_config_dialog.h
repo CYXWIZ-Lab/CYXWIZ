@@ -38,6 +38,7 @@
 
 namespace cyxwiz {
 class ProfileView;
+class ImageGalleryView;
 }
 
 namespace gui {
@@ -226,7 +227,7 @@ private:
 class DataInputDialog : public NodeConfigDialog {
 public:
     DataInputDialog(MLNode* node);
-    ~DataInputDialog() override;  // profile_view_ is complete in data_input_dialog_profile.cpp
+    ~DataInputDialog() override;  // profile_view_ and image_preview_ are complete in data_input_dialog_profile.cpp
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
@@ -277,6 +278,7 @@ private:
     void RenderLabelColumn();
     void RenderTextColumns();
     void RenderImageLabels();
+    void RenderImageClassNames();
     void RenderAudioLoading();
     void RenderDatasetRoleNote();
     char source_buf_[512] = {};
@@ -369,6 +371,12 @@ private:
     // STATE: Image options
     ImageLayout image_layout_ = ImageLayout::ClassSubdirs;
     char labels_csv_[512] = {};
+    // An image folder's class names by class index ("" keeps the label), saved
+    // as the node's class_names; renaming does not reload the images.
+    std::vector<std::string> class_names_edit_;
+    std::vector<std::string> class_name_suggestions_;
+    const void* class_suggestions_from_ = nullptr;  // the index table they were read from
+    bool class_names_changed_ = false;
 
     // STATE: Audio options
     int sample_rate_ = 16000;
@@ -462,8 +470,7 @@ private:
     // STATE: Preview
     std::vector<std::string> preview_columns_;
     std::vector<std::vector<std::string>> preview_data_;
-    std::vector<ImTextureID> preview_image_textures_;
-    std::vector<std::string> preview_image_labels_;
+    std::unique_ptr<cyxwiz::ImageGalleryView> image_preview_;  // an image folder's first images
     int64_t preview_total_rows_ = 0;
     int64_t preview_next_offset_ = 0;
     bool preview_has_next_ = false;

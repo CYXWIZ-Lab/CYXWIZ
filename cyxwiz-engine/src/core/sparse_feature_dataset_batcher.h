@@ -26,6 +26,16 @@ MaterializationMemoryEstimate EstimateSparseBatchDensificationMemory(
  * Batches an immutable SparseFeatureDataset into the existing dense Batch
  * contract without ever allocating a full rows-by-features dataset matrix.
  */
+// The split (TOFIX178 S0-g1): the shared rule (split_partitioning.h) with
+// the Data Split's shuffle and seed, the same for every phase's batcher. A
+// stratified split always uses it; `shared` uses it unstratified too.
+struct SparseSplitRule {
+    bool shared = false;
+    bool shuffle = true;
+    uint32_t seed = 42;
+    float test_split = 0.0f;  // 0: the rest after train and validation
+};
+
 class SparseFeatureDatasetBatcher final : public IBatcher {
 public:
     SparseFeatureDatasetBatcher(
@@ -44,7 +54,8 @@ public:
         MaterializationMemoryContext memory_context = {},
         bool stratified = false,
         bool full_dataset = false,
-        bool sparse_feature_output = false);
+        bool sparse_feature_output = false,
+        SparseSplitRule split_rule = {});
 
     Batch GetNextBatch() override;
     void Reset() override;

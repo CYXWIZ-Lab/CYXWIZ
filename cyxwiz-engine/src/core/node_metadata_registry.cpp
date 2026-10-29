@@ -1284,7 +1284,8 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"val_ratio", "float", "0.1", "Validation fraction", {}, "0-1", "", "Split", false, false},
          {"test_ratio", "float", "0.1", "Held-out test fraction", {}, "0-1", "", "Split", false, false},
          {"stratified", "bool", "true", "Preserve class proportions when labels allow it", {}, "", "", "Split", false, false},
-         {"seed", "int", "42", "Deterministic split seed", {}, "0-2147483647", "", "Split", false, false}},
+         {"seed", "int", "42", "Deterministic split seed", {}, "0-2147483647", "", "Split", false, false},
+         {"label_column", "column", "", "Label column of the data reaching the Training Dataset input; empty uses the Data Input's label. Set it when a step before the Split makes or renames the label", {}, "", "", "Split", false, false}},
         NodeImplementationStatus::Implemented, 0});
     RegisterNode({NodeType::DeployToNodeEditorNode, NodeCategory::DataSources, "Deploy to Node Editor", ICON_FA_FILE_EXPORT,
         {"deploy", "node", "editor", "handoff", "dataset"}, 0, false,
@@ -1632,9 +1633,10 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
     RegisterNode({NodeType::Resize, NodeCategory::Preprocessing, "Resize", ICON_FA_EXPAND,
         {"image", "resize", "width", "height", "aspect"}, 0, false,
         "The size every image is decoded to for training",
-        "The image batcher resizes each image to this width and height (mode: exact, fit, fill or "
-        "center) and the compiler takes the model's input shape [H, W, C] from it, so the "
-        "convolution layers after it know their sizes. Required for an image Data Input.",
+        "Every image is decoded once at this width and height when training starts (mode: exact "
+        "stretches, fit pads, fill crops, center cuts out the middle unscaled) and kept in the "
+        "project's cache/images; the compiler takes the model's input shape [H, W, C] from it, so "
+        "the convolution layers after it know their sizes. Required for an image Data Input.",
         "Data Input (images) -> Resize -> Conv2D -> ... -> Flatten -> Dense",
         {{"Input", PinType::Tensor, true, "Images from the Data Input"}},
         {{"Output", PinType::Tensor, true, "Images resized to [height, width, channels]"}},
@@ -2654,11 +2656,14 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::BatchNorm, NodeCategory::Normalization, "BatchNorm", ICON_FA_SCALE_BALANCED,
         {"batchnorm", "normalization"}, 0, false,
-        "Normalize rank-2 features with batch statistics and running estimates",
-        "The Engine BatchNorm node is BatchNorm1D for Float32 [batch, features] input. "
-        "Training updates running mean and variance; evaluation reuses those estimates.", "",
-        {{"Input", PinType::Tensor, true, "Float32 feature activations [batch, features]."}},
-        {{"Output", PinType::Tensor, true, "Normalized Float32 [batch, features]."}},
+        "Normalize activations with batch statistics and running estimates",
+        "Before Flatten or a global pool (after Conv2D, in [H, W, C] images) it is BatchNorm2D: one mean and "
+        "variance per channel over the batch and every pixel (torch BatchNorm2d). After Flatten it is "
+        "BatchNorm1D: one per feature of [batch, features]. Training updates the running mean and variance; "
+        "evaluation and testing reuse those estimates.", "",
+        {{"Input", PinType::Tensor, true,
+          "Float32 activations: [H, W, C] images per sample before Flatten, [batch, features] after."}},
+        {{"Output", PinType::Tensor, true, "The same shape, normalized and scaled per channel or feature."}},
         {{"eps", "float", "1e-5", "Positive numerical stability term", {}, "0.000000001-3.402823e38",
           "Epsilon", "Normalization", true, false},
          {"momentum", "float", "0.1", "Running-statistics update momentum", {}, "0.0-1.0",

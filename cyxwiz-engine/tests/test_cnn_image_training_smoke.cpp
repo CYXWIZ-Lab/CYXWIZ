@@ -222,12 +222,19 @@ int main(int argc, char** argv) {
     config.epochs = epochs;
     config.batch_size = 32;
 
-    // What TrainingManager::StartTrainingImage builds.
+    // What TrainingManager::StartTrainingImage builds: the images decoded
+    // once (or opened from the cache), then the batcher on them.
+    const auto transforms = cyxwiz::SplitFixedImageTransforms(config.image_augmentation);
+    const auto prepared = cyxwiz::PrepareImageSet(
+        entry, cyxwiz::PreparedImageSpecFrom(config.image_preprocessing), transforms.fixed);
+    Check(prepared.set != nullptr, "the images are prepared: " + prepared.error);
+    std::cout << "prepared " << prepared.set->Count() << " images "
+              << (prepared.from_cache ? "from the cache" : "in " + std::to_string(prepared.seconds) + " s") << "\n";
     auto batcher = std::make_unique<cyxwiz::ImageDatasetBatcher>(
-        entry, config.image_preprocessing, config.batch_size, config.train_ratio, config.shuffle,
-        config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
+        prepared.set, config.batch_size, config.train_ratio, config.shuffle,
+        static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
-    batcher->SetImageTransforms(config.image_augmentation);
+    batcher->SetImageTransforms(transforms.per_batch);
     batcher->ExcludeFiles(config.image_excluded_files);
     if (quality) {
         Check(!config.image_excluded_files.empty(), "the compile hands the rejected files to the batcher");

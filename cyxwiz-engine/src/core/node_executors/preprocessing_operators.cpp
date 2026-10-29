@@ -1,4 +1,5 @@
 #include "preprocessing_operators.h"
+#include "../split_partitioning.h"
 #include "../materialization_memory_guard.h"
 #include "../preprocessing_state.h"
 #include "../profiler_trace.h"
@@ -543,9 +544,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> ColumnTransformOperator::Apply(cons
     const uint64_t estimated_bytes = preflight.estimated_peak_bytes;
     ReportProgress(progress_callback_, Describe(), Describe() + " of " + std::to_string(resolved_.size()) + " columns",
                    0.20, 0, static_cast<uint64_t>(resolved_.size()), estimated_bytes);
-    // The whole table is one batch of the stream.
+    // The whole table is one batch of the stream; it learns from the Train
+    // rows when the pipeline run marked them (TOFIX178 S0-g3).
     if (NeedsFitPass()) {
-        ARROW_RETURN_NOT_OK(FitBatch(input));
+        ARROW_ASSIGN_OR_RAISE(auto train_rows, TrainRowsOf(input));
+        ARROW_RETURN_NOT_OK(FitBatch(train_rows));
         ARROW_RETURN_NOT_OK(EndFit());
     }
     ARROW_ASSIGN_OR_RAISE(auto out, ApplyBatch(input));
@@ -1243,7 +1246,19 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<double> target;
     int target_idx = -1;
     ARROW_RETURN_NOT_OK(ReadNumericDouble(input, target_col_, GetName(), target, target_idx));
-    const double global_mean = stats::Mean(target);
+    // The category means come from the Train rows when the pipeline run
+    // marked them (TOFIX178 S0-g3): the validation and test labels never
+    // reach the encoding. Every row is encoded.
+    const std::vector<bool> fit_row = TrainRowMask(input);
+    const auto fits = [&fit_row](size_t row) { return fit_row.empty() || (row < fit_row.size() && fit_row[row]); };
+    double global_mean = 0.0;
+    {
+        double total = 0.0;
+        size_t rows = 0;
+        for (size_t i = 0; i < target.size(); ++i)
+            if (fits(i)) total += target[i], ++rows;
+        global_mean = rows ? total / static_cast<double>(rows) : 0.0;
+    }
 
     auto out = input;
     int transformed = 0;
@@ -1276,7 +1291,7 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<double> sum(categories.size(), 0.0);
         std::vector<int> count(categories.size(), 0);
         for (size_t i = 0; i < codes.size(); ++i) {
-            if (codes[i] < 0) continue;  // null category
+            if (codes[i] < 0 || !fits(i)) continue;  // null category, or not a Train row
             sum[codes[i]] += target[i];
             count[codes[i]]++;
         }

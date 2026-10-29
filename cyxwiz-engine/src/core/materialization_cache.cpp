@@ -296,8 +296,6 @@ const char* MaterializationCacheModeName(MaterializationCacheMode mode) {
         return "auto";
     case MaterializationCacheMode::Rebuild:
         return "rebuild";
-    case MaterializationCacheMode::RequireHit:
-        return "require_hit";
     }
     return "unknown";
 }
@@ -563,23 +561,6 @@ MaterializationCacheValidationResult ValidateMaterializationCacheManifest(
     result.usable = true;
     result.message = "cached prepared dataset is valid";
     return result;
-}
-
-std::string MaterializationArtifactIdentity(
-    const MaterializationCacheManifest& manifest) {
-    std::error_code ec;
-    const auto path = std::filesystem::weakly_canonical(manifest.artifact_path, ec);
-    if (ec || !std::filesystem::is_regular_file(path, ec) || ec) return {};
-    const auto size = std::filesystem::file_size(path, ec);
-    if (ec) return {};
-    const auto modified = std::filesystem::last_write_time(path, ec);
-    if (ec) return {};
-    return manifest.cache_key + "\n" + manifest.artifact_format + "\n" +
-           path.string() + "\n" + std::to_string(size) + "\n" +
-           std::to_string(static_cast<long long>(modified.time_since_epoch().count())) + "\n" +
-           std::to_string(manifest.row_count) + ":" +
-           std::to_string(manifest.column_count) + ":" +
-           std::to_string(manifest.operators_applied);
 }
 
 namespace {
