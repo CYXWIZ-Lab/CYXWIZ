@@ -864,8 +864,12 @@ void CyxWizApp::Render() {
         // sink. The Commands transcript is reserved for interactive output.
         spdlog::debug("Console panel initialized; runtime logs available");
 
-        // Restore saved auth session
+        // Sign in where the config says (servers.cyxwiz, else auth.api_url).
+        // The Engine used to sign in at the built-in 127.0.0.1:3002 whatever
+        // the config named (TOFIX168).
         auto& auth = cyxwiz::auth::AuthClient::Instance();
+        auth.SetApiBaseUrl(cyxwiz::core::EngineConfig::Instance().GetAuthApiUrl());
+        // Restore saved auth session
         if (auth.LoadSavedSession()) {
             spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
         }
