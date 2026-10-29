@@ -308,13 +308,20 @@ View Build(const Input& in) {
         row.node_id = n.id;
         row.name = n.name;
         row.file = n.file_path;
+        if (row.file.empty() && !n.folder_path.empty()) {
+            row.file = n.folder_path;
+            if (!n.labels_csv.empty())
+                row.source_note = "image folder, labels from " + FileName(n.labels_csv);
+        }
         if (!n.error.empty()) {
             row.state = "failed";
             row.detail = n.error;
             row.tone = Tone::Error;
         } else if (const Dataset* d = DatasetOfInput(in, n)) {
             row.state = "loaded";
-            row.size = Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            row.size = d->images ? Thousands(static_cast<int64_t>(d->rows)) + " images"
+                                 : Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            if (d->images && row.source_note.empty() && !n.folder_path.empty()) row.source_note = "image folder, class folders";
             row.dataset = d->name;
             row.tone = Tone::Ok;
         } else {

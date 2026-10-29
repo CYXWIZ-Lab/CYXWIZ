@@ -72,6 +72,29 @@ int main() {
               "Bring in: a Data Input not loaded");
     }
 
+    // An image folder with a labels CSV (cats vs dogs, 2026-10-29): the folder
+    // and where the labels come from, and the image count, not "N x 0".
+    {
+        Input images;
+        GraphNode cats = Node(1, NodeType::DataInput, "Cats_Dogs Data");
+        cats.folder_path = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog";
+        cats.labels_csv = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv";
+        cats.dataset_name = "cat_dog";
+        images.nodes = {cats};
+        const View before = Build(images);
+        Check(before.sources[0].file == cats.folder_path && before.sources[0].state == "not loaded" &&
+                  before.sources[0].source_note == "image folder, labels from cat_dog.csv",
+              "Bring in: an image folder before loading");
+        Dataset loaded{"cat_dog", "", 25000, 0, false};
+        loaded.images = true;
+        images.datasets = {loaded};
+        const View after = Build(images);
+        Check(after.sources[0].size == "25,000 images" && after.sources[0].state == "loaded",
+              "Bring in: an image folder counts images: " + after.sources[0].size);
+        images.nodes[0].labels_csv.clear();
+        Check(Build(images).sources[0].source_note == "image folder, class folders", "Bring in: class folders");
+    }
+
     // After the run (the Engine's numbers, 2026-10-14).
     in.nodes = {
         Ran(input, 7, 6, 0.7, "12:39:01", "ds_datainput_157"),

@@ -321,6 +321,7 @@ void DataStudioPanel::RenderBringIn() {
             ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
             ImGui::PopTextWrapPos();
             if (mono) ImGui::PopFont();
+            if (!row.source_note.empty()) ImGui::TextColored(t.text_dim, "%s", row.source_note.c_str());
             ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
             ImGui::SameLine(0.0f, 12.0f);
             ImGui::TextColored(ToneColour(row.tone), ICON_FA_CIRCLE " %s", row.state.c_str());
@@ -363,6 +364,7 @@ void DataStudioPanel::RenderBringIn() {
             ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
             ImGui::PopTextWrapPos();
             if (mono) ImGui::PopFont();
+            if (!row.source_note.empty()) ImGui::TextColored(t.text_dim, "%s", row.source_note.c_str());
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
             ImGui::TableNextColumn();

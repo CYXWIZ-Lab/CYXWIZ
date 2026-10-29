@@ -241,6 +241,10 @@ void DataStudioPanel::RefreshView() {
                     n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
+                if (type == ::gui::NodeType::DataInput) {
+                    if (const auto f = parameters->find("folder_path"); f != parameters->end()) n.folder_path = f->second;
+                    if (const auto c = parameters->find("labels_csv"); c != parameters->end()) n.labels_csv = c->second;
+                }
                 const auto registry = parameters->find("dataset_name");
                 if (type == ::gui::NodeType::DataInput && registry != parameters->end()) n.dataset_name = registry->second;
                 const auto mode = parameters->find("balance_mode");
@@ -294,6 +298,7 @@ void DataStudioPanel::RefreshView() {
         d.rows = entry.rows;
         d.columns = entry.columns;
         d.tabular = IsTabularDataset(entry);
+        d.images = entry.modality == DatasetModality::Image && !d.tabular;
         in.datasets.push_back(std::move(d));
     }
     // What feeds each check, in the graph as it runs (recipes lowered): read
