@@ -168,7 +168,7 @@ return, inside the crash guard. Unloading removes all of it.
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
-| `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio does not run them yet |
+| `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio's Explore > Plugins tab runs them |
 | `"IAssistantProvider"` | `IAssistantProvider` | Runs assistant commands (the CyxWiz assistant plugin) |
 
 <!-- excerpt: plugins/template/my_nodes_plugin.cpp -->
@@ -351,11 +351,12 @@ returns different data for the same file.
 | Member | Contract |
 |---|---|
 | `std::vector<PluginAnalyticsInfo> GetAnalytics()` | One entry per analytic: `analytics_id` (unique across plugins), `name`, `description`, `category` (groups analytics, e.g. *Distribution*), `columns` (`AnalyticsColumns::Any`, `Numeric` or `Text`: the columns the user may pick), `min_columns` (at least 1), `max_columns` (0: no limit) |
-| `AnalyticsResult Compute(analytics_id, ArrowArrayStream* data)` | On a worker thread. `data` streams the columns the user picked, every row. The Engine owns the stream and releases it after `Compute` returns: read it during the call, do not keep it |
+| `AnalyticsResult Compute(analytics_id, ArrowArrayStream* data)` | On a worker thread, when the user presses Run in Explore > Plugins. `data` streams the columns the user picked, in the order picked, every row: in batches, a table kept on disk one row group at a time. The Engine owns the stream and releases it after `Compute` returns: read it during the call, do not keep it. If the user cancels, `get_next` fails and the answer is dropped. A crash or exception inside `Compute` is caught: the user sees its message and the Engine keeps running |
 
-`AnalyticsResult`: a number (`scalar_value` with `has_scalar`), labelled
-values (`vector_value` with `vector_labels`, shown as bars), and `text_value`;
-any combination. On failure set `success = false` and `error_message`. An
+`AnalyticsResult`: a number (`scalar_value` with `has_scalar`, shown large),
+labelled values (`vector_value` with `vector_labels`, shown as bars and as a
+table the user can copy or export as CSV), and `text_value` (shown as a note
+under them); any combination. On failure set `success = false` and `error_message`. An
 empty `name` or `category` is filled from the analytic's info.
 
 Unloading a plugin waits until its streams are read and its analytics have

@@ -227,6 +227,8 @@ set(ENGINE_SOURCES
     src/core/stats_presentation.cpp
     src/core/groups_explore.cpp
     src/core/groups_presentation.cpp
+    src/core/explore_plugins_presentation.cpp
+    src/core/dataset_column_stream.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -757,6 +759,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/tests_view.cpp
     src/gui/data_studio/regression_view.cpp
     src/gui/data_studio/groups_view.cpp
+    src/gui/data_studio/plugins_view.cpp
     src/gui/data_studio/projection_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
@@ -3215,6 +3218,27 @@ endif()
 set_target_properties(test_plugin_data_formats_input PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_dependencies(test_plugin_data_formats_input data_formats)
 add_test(NAME plugin_data_formats_input COMMAND test_plugin_data_formats_input WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+# ===== Test: Explore > Plugins, its model, the column stream and the example analytic (TOFIX181) =====
+add_executable(test_explore_plugins
+    tests/test_explore_plugins.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/explore_plugins_presentation.cpp
+    src/core/dataset_column_stream.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_include_directories(test_explore_plugins PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_explore_plugins PRIVATE cyxwiz-training-core cyxwiz-plugin-host cyxwiz-backend
+    Arrow::arrow_shared Parquet::parquet_shared duckdb nlohmann_json::nlohmann_json ${OpenCV_LIBS}
+    imgui::imgui spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_explore_plugins PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_explore_plugins PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_dependencies(test_explore_plugins data_formats)
+add_test(NAME explore_plugins COMMAND test_explore_plugins WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp
@@ -7207,13 +7231,13 @@ set_target_properties(test_large_text_file PROPERTIES
 )
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
-        test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input
+        test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins
         test_pipeline_operator_materializer_parity test_column_transform_operators cyxwiz-bench-out-of-core test_pipeline_run_release)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
 if(HighFive_FOUND)
     foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input test_pipeline_run_release
-            test_pipeline_executor_operator_routing test_plugin_data_formats_input test_pipeline_operator_materializer_parity test_column_transform_operators
+            test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators
             cyxwiz-bench-out-of-core)
         target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
     endforeach()
@@ -7271,7 +7295,7 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_pipeline_operator_materializer_parity test_column_transform_operators
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators
         cyxwiz-bench-out-of-core)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
     target_link_libraries(${archive_input_target} PRIVATE LibArchive::LibArchive)
@@ -7280,7 +7304,7 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_pipeline_operator_materializer_parity test_column_transform_operators
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators
         cyxwiz-bench-out-of-core)
     cyxwiz_target_html_parser(${html_target})
 endforeach()

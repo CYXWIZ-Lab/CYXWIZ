@@ -565,7 +565,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         if (analytics && permitted(PluginPermission::DataRegistry, "IAnalyticsProvider") &&
             data_interfaces("IAnalyticsProvider")) {
             security::SafeExecute(plugin_id, "RegisterAnalyticsProvider", [&]() {
-                PluginAnalyticsRegistry::Instance().Register(plugin_id, analytics);
+                PluginAnalyticsRegistry::Instance().Register(plugin_id, plugin->manifest.version.ToString(), analytics);
             });
         }
     }

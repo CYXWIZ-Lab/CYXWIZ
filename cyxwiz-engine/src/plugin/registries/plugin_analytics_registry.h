@@ -24,17 +24,19 @@ public:
     PluginAnalyticsRegistry(const PluginAnalyticsRegistry&) = delete;
     PluginAnalyticsRegistry& operator=(const PluginAnalyticsRegistry&) = delete;
 
-    void Register(const std::string& plugin_id, IAnalyticsProvider* provider);
+    void Register(const std::string& plugin_id, const std::string& plugin_version, IAnalyticsProvider* provider);
     // Waits until no analytic of the plugin is computing any more.
     void RemoveByPlugin(const std::string& plugin_id);
 
     struct Analytic {
         std::string plugin_id;
+        std::string plugin_version;  // the plugin's version, named with every answer
         PluginAnalyticsInfo info;
     };
     std::vector<Analytic> Analytics() const;  // ordered by category, then name
 
     // Runs the analytic on `data` (the chosen columns), on the caller's thread.
+    // A crash or exception in the plugin comes back as a failed result.
     AnalyticsResult Compute(const std::string& analytics_id,
                             std::shared_ptr<arrow::RecordBatchReader> data) const;
 

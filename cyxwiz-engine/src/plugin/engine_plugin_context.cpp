@@ -122,7 +122,7 @@ bool EnginePluginContext::RegisterTrainingHook(ITrainingHook* hook) {
 bool EnginePluginContext::RegisterAnalyticsProvider(IAnalyticsProvider* provider) {
     if (!CheckPermission(PluginPermission::DataRegistry, "RegisterAnalyticsProvider")) return false;
     if (!CheckDataInterfaces("IAnalyticsProvider")) return false;
-    PluginAnalyticsRegistry::Instance().Register(plugin_id_, provider);
+    PluginAnalyticsRegistry::Instance().Register(plugin_id_, plugin_version_, provider);
     return true;
 }
 

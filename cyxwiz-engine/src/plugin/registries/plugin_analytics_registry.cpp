@@ -1,5 +1,7 @@
 #include "plugin_analytics_registry.h"
 
+#include "../security/safe_execute.h"
+
 #include <arrow/c/bridge.h>
 #include <spdlog/spdlog.h>
 
@@ -25,7 +27,8 @@ PluginAnalyticsRegistry& PluginAnalyticsRegistry::Instance() {
     return instance;
 }
 
-void PluginAnalyticsRegistry::Register(const std::string& plugin_id, IAnalyticsProvider* provider) {
+void PluginAnalyticsRegistry::Register(const std::string& plugin_id, const std::string& plugin_version,
+                                       IAnalyticsProvider* provider) {
     if (!provider) return;
 
     auto analytics = provider->GetAnalytics();
@@ -49,7 +52,7 @@ void PluginAnalyticsRegistry::Register(const std::string& plugin_id, IAnalyticsP
         // The key first: the right side (which moves info) is evaluated
         // before the subscript (C++17), which would read an empty id.
         const std::string analytics_id = info.analytics_id;
-        analytics_[analytics_id] = Entry{Analytic{plugin_id, std::move(info)}, provider};
+        analytics_[analytics_id] = Entry{Analytic{plugin_id, plugin_version, std::move(info)}, provider};
         ++generation_;
     }
 }
@@ -105,11 +108,16 @@ AnalyticsResult PluginAnalyticsRegistry::Compute(const std::string& analytics_id
     if (!exported.ok()) return Failure(analytics_id, "Cannot hand the data over: " + exported.message());
 
     AnalyticsResult result;
-    try {
-        result = provider->Compute(analytics_id, &stream);
-    } catch (const std::exception& e) {
-        result = Failure(analytics_id, std::string("The plugin threw: ") + e.what());
-    }
+    const auto run = security::SafeExecute(analytic.plugin_id, "Compute", [&] {
+        try {
+            result = provider->Compute(analytics_id, &stream);
+        } catch (const std::exception& e) {
+            result = Failure(analytics_id, std::string("The plugin threw: ") + e.what());
+        } catch (...) {
+            result = Failure(analytics_id, "The plugin threw an unknown exception");
+        }
+    });
+    if (!run.success) result = Failure(analytics_id, run.error_message + "; the Engine kept running");
     if (stream.release) stream.release(&stream);
     if (result.name.empty()) result.name = analytic.info.name;
     if (result.category.empty()) result.category = analytic.info.category;

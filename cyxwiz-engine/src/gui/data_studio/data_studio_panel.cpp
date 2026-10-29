@@ -44,6 +44,7 @@ DataStudioPanel::DataStudioPanel() {
     regression_ = std::make_unique<RegressionView>();
     groups_ = std::make_unique<GroupsView>();
     projection_ = std::make_unique<ProjectionView>();
+    plugins_ = std::make_unique<PluginsView>();
     projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
     // Groups and projections go into the graph as their nodes (TOFIX129 D5): in the
     // data path (a step: the rest of the graph gets the new columns) or as a branch.
