@@ -186,13 +186,10 @@ bool ImageEnhancer::ApplySharpen(
 
         // Apply threshold if specified
         if (threshold > 0.0f) {
+            // One mask value per pixel and channel (the comparison keeps the
+            // image's channels), 255 where the detail is above the threshold.
             cv::Mat diff = cv::abs(img - blurred);
             cv::Mat mask = diff > threshold;
-            if (channels == 3) {
-                // Convert single-channel mask to 3-channel
-                std::vector<cv::Mat> mask_channels = {mask, mask, mask};
-                cv::merge(mask_channels, mask);
-            }
             mask.convertTo(mask, CV_32FC(channels), 1.0 / 255.0);
             sharpened = img.mul(1.0 - mask) + sharpened.mul(mask);
         }
