@@ -72,7 +72,8 @@ std::string DrawText(const image::ImageOp& op, const image::ImageOpDraws& d) {
 
 }  // namespace
 
-std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation) {
+std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation,
+                          const std::vector<CvImageStep>& cv_steps) {
     std::string key = std::to_string(spec.width) + "x" + std::to_string(spec.height) + ModeName(spec.mode);
     for (const auto& op : augmentation.ops) {
         key += "|" + std::to_string(static_cast<int>(op.kind));
@@ -84,11 +85,14 @@ std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugme
                         op.value, static_cast<float>(op.num_ops), static_cast<float>(op.magnitude)})
             key += "," + Number(v);
     }
+    for (const auto& step : cv_steps)
+        key += "|cv" + std::to_string(step.position) + CvImageStepIdentity(step).dump();
     return key;
 }
 
 ImagePipelinePreview PreviewImagePipeline(const std::string& path, const PreparedImageSpec& spec,
-                                          const image::ImageAugmentation& augmentation, int draws, uint32_t seed) {
+                                          const image::ImageAugmentation& augmentation,
+                                          const std::vector<CvImageStep>& cv_steps, int draws, uint32_t seed) {
     ImagePipelinePreview out;
     if (spec.width <= 0 || spec.height <= 0) {
         out.error = "The graph has no Resize node.";
@@ -108,20 +112,43 @@ ImagePipelinePreview PreviewImagePipeline(const std::string& path, const Prepare
         out.decoded.title = "Resize " + std::to_string(spec.width) + kTimes + std::to_string(spec.height);
         out.decoded.detail = std::string(ModeName(spec.mode)) + ", once";
 
-        const ImageTransformSplit split = SplitFixedImageTransforms(augmentation);
+        const ImageTransformSplit split = SplitFixedImageTransforms(augmentation, cv_steps);
         std::mt19937 rng(seed);
-        for (const auto& op : split.fixed) {
-            const std::string why = image::ValidateImageOp(op, shape);
+        for (const auto& step : split.fixed) {
+            const auto* cv_step = std::get_if<CvImageStep>(&step);
+            const std::string why = cv_step ? ValidateCvImageStep(*cv_step, shape)
+                                            : image::ValidateImageOp(std::get<image::ImageOp>(step), shape);
             if (!why.empty()) {
-                out.error = ImageOpText(op) + ": " + why;
+                out.error = FixedImageStepText(step) + ": " + why;
                 return out;
             }
-            const auto none = image::DrawImageOp(op, shape, 1, false, rng);
-            x = image::ApplyImageOp(op, none, shape, x);
-            shape = image::ImageShapeAfter(op, shape);
+            if (cv_step) {
+                // On uint8, as the prepared set stores it.
+                const float* values = x.ReadData<float>();
+                std::vector<uint8_t> in(shape.Size());
+                for (size_t i = 0; i < in.size(); ++i)
+                    in[i] = static_cast<uint8_t>(std::lround(std::clamp(values[i], 0.0f, 1.0f) * 255.0f));
+                const image::ImageShape after = CvImageShapeAfter(*cv_step, shape);
+                std::vector<uint8_t> result(after.Size());
+                std::string failed;
+                if (!ApplyCvImageStep(*cv_step, shape, in.data(), result.data(), &failed)) {
+                    out.error = failed;
+                    return out;
+                }
+                std::vector<float> pixels(result.size());
+                for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = result[i] / 255.0f;
+                x = Tensor({1, after.Size()}, pixels.data());
+                shape = after;
+            } else {
+                const auto& op = std::get<image::ImageOp>(step);
+                const auto none = image::DrawImageOp(op, shape, 1, false, rng);
+                x = image::ApplyImageOp(op, none, shape, x);
+                shape = image::ImageShapeAfter(op, shape);
+            }
             PreviewPicture p = Picture(x, shape);
-            p.title = ImageOpText(op);
-            p.detail = std::to_string(shape.width) + kTimes + std::to_string(shape.height) + ", once";
+            p.title = FixedImageStepText(step);
+            p.detail = std::to_string(shape.width) + kTimes + std::to_string(shape.height) +
+                       (cv_step ? ", once on the CPU" : ", once");
             out.fixed.push_back(std::move(p));
         }
         for (const auto& op : split.per_batch.ops) out.random_ops.push_back(ImageOpText(op));

@@ -1766,6 +1766,114 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"kernel_size", "int", "3", "Odd width of the square kernel", {}, ">0", "Kernel size"}},
         NodeImplementationStatus::Implemented, 0});
 
+    // ===== OpenCV image steps (TOFIX178 1.3f): done once with the images =====
+    RegisterNode({NodeType::ImageContrast, NodeCategory::Preprocessing, "Image Contrast (CLAHE)", ICON_FA_IMAGE,
+        {"image", "contrast", "clahe", "histogram", "equalize", "opencv", "once"}, 0, false,
+        "Even out contrast in every image, tile by tile",
+        "Contrast Limited Adaptive Histogram Equalization (OpenCV createCLAHE) on each tile of the image; "
+        "colour images change only their lightness (Lab L), so colours stay, unless colour is each_channel. "
+        "Clip limit caps how far contrast is raised. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Contrast (CLAHE) -> Normalize -> Conv2D. Put it before the first random step "
+        "(flips, crops, Rotate, Color Jitter).",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"clip_limit", "float", "2.0", "How far contrast may be raised; 1 is almost none", {}, ">0", "Clip limit"},
+         {"tile_grid", "int", "8", "Tiles per side; each tile gets its own histogram", {}, ">0", "Tile grid (tiles per side)"},
+         {"colour", "enum", "lightness", "lightness: Lab L only, colours stay; each_channel: R, G and B alone",
+          {"lightness", "each_channel"}, "", "Colour images"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageDenoise, NodeCategory::Preprocessing, "Image Denoise", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"image", "denoise", "noise", "grain", "nlmeans", "opencv", "once"}, 0, false,
+        "Remove grain from every image while keeping edges",
+        "Non-local means (OpenCV fastNlMeansDenoisingColored; fastNlMeansDenoising for grey images). "
+        "Slow: about 45 ms an image at 64 x 64, so it is worth doing once. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Denoise -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"strength", "float", "10", "Filter strength for lightness; higher removes more noise and detail", {}, ">0", "Strength"},
+         {"colour_strength", "float", "10", "Filter strength for colour", {}, ">=0", "Colour strength"},
+         {"patch_size", "int", "7", "Odd patch width compared between pixels", {}, ">0", "Patch size"},
+         {"search_size", "int", "21", "Odd width of the window searched for similar patches", {}, ">0", "Search size"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageSharpen, NodeCategory::Preprocessing, "Image Sharpen", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"image", "sharpen", "unsharp", "detail", "opencv", "once"}, 0, false,
+        "Sharpen every image with an unsharp mask",
+        "Adds back the detail a Gaussian blur of the given radius removes: image + amount x (image - blur). "
+        "With a threshold, only pixels whose detail is above it change. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Sharpen -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"amount", "float", "1.0", "How much detail is added back", {}, ">=0", "Amount"},
+         {"radius", "float", "1.0", "Sigma of the blur, in pixels", {}, ">0", "Radius"},
+         {"threshold", "float", "0", "Detail below this (0 to 1) is left alone", {}, "0-1", "Threshold"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageEdges, NodeCategory::Preprocessing, "Image Edges", ICON_FA_DRAW_POLYGON,
+        {"image", "edges", "canny", "sobel", "laplacian", "scharr", "opencv", "once"}, 0, false,
+        "Turn every image into an edge map",
+        "Canny gives white edges on black; Sobel, Laplacian and Scharr give the edge strength. Colour images "
+        "are made grey first, so the output has one channel and the model's input becomes [H, W, 1]. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Edges -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Edge maps [H, W, 1]"}},
+        {{"method", "enum", "canny", "Edge detector", {"canny", "sobel", "laplacian", "scharr"}, "", "Method"},
+         {"threshold1", "float", "50", "Canny: weak edge threshold (0 to 255 scale)", {}, ">=0", "Low threshold"},
+         {"threshold2", "float", "150", "Canny: strong edge threshold, at least the low one", {}, ">=0", "High threshold"},
+         {"kernel_size", "int", "3", "Sobel: 1, 3, 5 or 7; Laplacian: odd up to 31; not used by Canny and Scharr", {}, ">0", "Kernel size"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageSmooth, NodeCategory::Preprocessing, "Image Smooth", ICON_FA_BRUSH,
+        {"image", "smooth", "blur", "box", "median", "bilateral", "opencv", "once"}, 0, false,
+        "Smooth every image: box, median or bilateral",
+        "Box averages the window; median takes its middle value (removes specks, keeps edges); bilateral "
+        "averages only similar colours (keeps edges). For a Gaussian blur use Image Gaussian Blur, which runs on "
+        "the GPU. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Smooth (median) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"method", "enum", "median", "Smoothing", {"box", "median", "bilateral"}, "", "Method"},
+         {"kernel_size", "int", "5", "Odd window width; bilateral: the neighbourhood's diameter", {}, ">0", "Kernel size"},
+         {"sigma_color", "float", "75", "Bilateral: how different colours may be and still mix (0 to 255 scale)", {}, ">0", "Colour sigma"},
+         {"sigma_space", "float", "75", "Bilateral: how far pixels may be and still mix", {}, ">0", "Space sigma"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageWarp, NodeCategory::Preprocessing, "Image Warp", ICON_FA_EXPAND,
+        {"image", "warp", "perspective", "affine", "polar", "log-polar", "opencv", "once"}, 0, false,
+        "Warp every image the same way: corners, points or polar",
+        "four_corners maps four source points onto four target points (warpPerspective); three_points maps "
+        "three (warpAffine); log_polar and linear_polar unroll the image around a centre (warpPolar), so a "
+        "rotation becomes a shift. Points are x, y fractions of the image, top-left first, clockwise. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Warp (four corners) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images; width and height when typed"}},
+        {{"method", "enum", "four_corners", "Warp", {"four_corners", "three_points", "log_polar", "linear_polar"}, "", "Method"},
+         {"source_points", "string", "0,0, 1,0, 1,1, 0,1", "x, y of each point in the input (fractions 0 to 1)", {}, "", "Source points"},
+         {"target_points", "string", "0,0, 1,0, 1,1, 0,1", "Where each source point goes (fractions 0 to 1)", {}, "", "Target points"},
+         {"interpolation", "enum", "linear", "Corners and points: how pixels between are read",
+          {"nearest", "linear", "cubic", "lanczos"}, "", "Interpolation"},
+         {"center_x", "float", "0.5", "Polar: centre x (fraction)", {}, "0-1", "Centre x"},
+         {"center_y", "float", "0.5", "Polar: centre y (fraction)", {}, "0-1", "Centre y"},
+         {"max_radius", "float", "0.5", "Polar: radius as a fraction of the shorter side", {}, ">0", "Radius"},
+         {"inverse", "bool", "false", "Polar: from polar back to the image", {}, "", "Inverse"},
+         {"width", "int", "0", "Corners and points: output width, 0 = the input's", {}, ">=0", "Output width"},
+         {"height", "int", "0", "Corners and points: output height, 0 = the input's", {}, ">=0", "Output height"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImagePyramid, NodeCategory::Preprocessing, "Image Pyramid", ICON_FA_LAYER_GROUP,
+        {"image", "pyramid", "pyrdown", "pyrup", "laplacian", "downsample", "opencv", "once"}, 0, false,
+        "Halve or double every image, or keep one level of detail",
+        "down: Gaussian smoothing then half the size, per level (pyrDown); up: double the size, per level "
+        "(pyrUp); detail: the Laplacian level (the image minus its smoothed copy) at level - 1 halvings, "
+        "stored around mid-grey (128 = no detail). " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Pyramid (down) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images; down halves and up doubles each side per level"}},
+        {{"operation", "enum", "down", "Pyramid step", {"down", "up", "detail"}, "", "Operation"},
+         {"levels", "int", "1", "How many times; detail: which level (1 = the finest)", {}, ">0", "Levels"}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", ICON_FA_WAND_MAGIC_SPARKLES,
         {"image", "augmentation", "preset", "recipe", "cifar", "randaugment"}, 0, false,
         "A standard training augmentation recipe in one node",

@@ -181,7 +181,10 @@ View Build(const Input& in) {
         v.sets.push_back(std::move(row));
     }
     // Channel statistics.
-    const std::string set_size = std::to_string(in.resize_width) + kTimes + std::to_string(in.resize_height);
+    // The measured set's size: the fixed steps (crops, pyramids) can change the Resize size.
+    const std::string set_size = in.stats_width > 0
+                                     ? std::to_string(in.stats_width) + kTimes + std::to_string(in.stats_height)
+                                     : std::to_string(in.resize_width) + kTimes + std::to_string(in.resize_height);
     v.stats_title = "Channel statistics";
     v.can_measure = in.resize_width > 0 && in.stats_step == Input::StatsStep::Idle;
     const size_t c = in.channel_mean.size();
@@ -198,8 +201,8 @@ View Build(const Input& in) {
     } else if (in.stats_step == Input::StatsStep::Measuring) {
         v.stats_note = "Measuring" + (in.stats_device.empty() ? std::string() : " on " + in.stats_device) + "...";
     } else if (c == 0) {
-        v.stats_note = "Mean and spread of each channel over every pixel of the prepared " + set_size +
-                       " set (after the fixed transforms), as Normalize receives them. Measure prepares the set first "
+        v.stats_note = "Mean and spread of each channel over every pixel of the prepared set (Resize " + set_size +
+                       ", then the fixed transforms), as Normalize receives them. Measure prepares the set first "
                        "when training has not; training then reuses it.";
     } else {
         v.stats_title += std::string(kDot) + set_size + ", " + Thousands(in.stats_images) + " images" +

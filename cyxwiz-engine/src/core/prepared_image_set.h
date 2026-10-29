@@ -9,6 +9,7 @@
 // No ImGui.
 
 #include "data_registry.h"
+#include "image_cv_steps.h"
 #include "../preprocessing/preprocessing_config.h"
 
 #include <cyxwiz/image_augmentation.h>
@@ -69,10 +70,10 @@ struct PreparedImageSetInfo {
 // The sets in the cache made from this entry's folder and labels, largest
 // first. Sets written before their header named the folder are not listed.
 std::vector<PreparedImageSetInfo> ListPreparedImageSets(const DataRegistry::ImageDatasetEntry& entry);
-// The key PrepareImageSet gives the set for entry, spec and fixed transforms
+// The key PrepareImageSet gives the set for entry, spec and fixed steps
 // (lists every file, like PrepareImageSet).
 std::string PreparedImageSetKeyFor(const DataRegistry::ImageDatasetEntry& entry, const PreparedImageSpec& spec,
-                                   const std::vector<image::ImageOp>& fixed);
+                                   const std::vector<FixedImageStep>& fixed);
 
 // One file decoded to uint8 RGB [height, width, 3] at `spec`, as training
 // sees it: exact stretches to the size; fit scales to fit inside and pads
@@ -148,29 +149,32 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
                                     int threads = 0,
                                     const PreparedImageProgress& progress = {});
 
-// The run's image transforms split for the prepared set (TOFIX178 1.3c): the
-// leading ones that give every image the same result in every epoch and
-// split (Center Crop, Grayscale, Gaussian Blur, Morphology before the first
-// random transform) are done once on the set; the rest, the batch mix and
-// Normalize run on each batch as before.
-// What an op is, in words: "Center Crop 64 x 64", "Gaussian Blur 5 x 5, sigma 1",
-// "Horizontal Flip (p 0.5)", "Rotate up to 15 degrees".
-std::string ImageOpText(const image::ImageOp& op);
+// The run's image steps split for the prepared set (TOFIX178 1.3c, 1.3f):
+// the leading ones that give every image the same result in every epoch
+// (Center Crop, Grayscale, Gaussian Blur, Morphology and the OpenCV steps
+// before the first random transform) are done once on the set; the rest,
+// the batch mix and Normalize run on each batch as before.
+// The steps' words are ImageOpText and FixedImageStepText (image_cv_steps.h).
 
 struct ImageTransformSplit {
-    std::vector<image::ImageOp> fixed;
+    std::vector<FixedImageStep> fixed;
     image::ImageAugmentation per_batch;
 };
-ImageTransformSplit SplitFixedImageTransforms(const image::ImageAugmentation& compiled);
+// Throws std::invalid_argument for an OpenCV step after a random transform
+// (the compiler refuses that graph first).
+ImageTransformSplit SplitFixedImageTransforms(const image::ImageAugmentation& compiled,
+                                              const std::vector<CvImageStep>& cv_steps);
 
 // The set of `entry` at `spec` with `fixed` done once: the decoded set, then
-// the transforms on the ArrayFire device in chunks (the same code the batches
-// use), rounded to uint8 again (exact for crops and morphology; within half a
-// step for Grayscale and Gaussian Blur, as torchvision on uint8 images). Kept
-// in cache/images beside the decoded set; `fixed` empty: the decoded set.
+// the steps in order, in chunks: runs of device transforms on the ArrayFire
+// device (the same code the batches use), each OpenCV step on every CPU
+// core, rounded to uint8 after each (exact for crops and morphology; within
+// half a step for Grayscale and Gaussian Blur, as torchvision on uint8
+// images). Kept in cache/images beside the decoded set; `fixed` empty: the
+// decoded set.
 PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
                                     const PreparedImageSpec& spec,
-                                    const std::vector<image::ImageOp>& fixed,
+                                    const std::vector<FixedImageStep>& fixed,
                                     int threads = 0,
                                     const PreparedImageProgress& progress = {});
 

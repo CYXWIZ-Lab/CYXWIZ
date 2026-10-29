@@ -19,8 +19,10 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <utility>
+#include <variant>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -473,10 +475,15 @@ PreparedImageResult WriteImageSet(const fs::path& path, size_t count, size_t row
     return result;
 }
 
-// Every field the deterministic transforms read, so another setting is another set.
-json TransformIdentity(const std::vector<image::ImageOp>& ops) {
+// Every field the deterministic steps read, so another setting is another set.
+json TransformIdentity(const std::vector<FixedImageStep>& steps) {
     json list = json::array();
-    for (const auto& op : ops) {
+    for (const auto& step : steps) {
+        if (const auto* cv_step = std::get_if<CvImageStep>(&step)) {
+            list.push_back(CvImageStepIdentity(*cv_step));
+            continue;
+        }
+        const auto& op = std::get<image::ImageOp>(step);
         char sigma[32];
         std::snprintf(sigma, sizeof(sigma), "%.9g", op.sigma);
         list.push_back({{"kind", static_cast<int>(op.kind)}, {"height", op.height}, {"width", op.width},
@@ -551,21 +558,32 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     return result;
 }
 
-ImageTransformSplit SplitFixedImageTransforms(const image::ImageAugmentation& compiled) {
+ImageTransformSplit SplitFixedImageTransforms(const image::ImageAugmentation& compiled,
+                                              const std::vector<CvImageStep>& cv_steps) {
     ImageTransformSplit split;
     split.per_batch = compiled;
     split.per_batch.ops.clear();
     bool fixed = true;
-    for (const auto& op : compiled.ops) {
+    for (auto& step : MergeImageSteps(compiled, cv_steps)) {
+        if (const auto* cv_step = std::get_if<CvImageStep>(&step)) {
+            if (!fixed)
+                throw std::invalid_argument(CvImageStepText(*cv_step) +
+                                            " is done once with the images: it must come before the first "
+                                            "random transform");
+            split.fixed.push_back(std::move(step));
+            continue;
+        }
+        const auto& op = std::get<image::ImageOp>(step);
         fixed = fixed && !image::IsRandomImageOp(op.kind);
-        (fixed ? split.fixed : split.per_batch.ops).push_back(op);
+        if (fixed) split.fixed.push_back(op);
+        else split.per_batch.ops.push_back(op);
     }
     return split;
 }
 
 PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry,
                                     const PreparedImageSpec& spec,
-                                    const std::vector<image::ImageOp>& fixed,
+                                    const std::vector<FixedImageStep>& fixed,
                                     int threads,
                                     const PreparedImageProgress& progress) {
     if (fixed.empty()) return PrepareImageSet(entry, spec, threads, progress);
@@ -583,35 +601,84 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     if (!decoded.set) return decoded;
     const auto& base = *decoded.set;
 
-    const image::ImageShape input{base.Height(), base.Width(), base.Channels()};
-    image::ImageAugmentation steps;
-    steps.ops = fixed;
-    const image::ImageShape output = steps.ShapeAfter(input);
-    for (const auto& op : fixed) {
-        if (const std::string why = image::ValidateImageOp(op, input); !why.empty()) {
+    // The steps as segments: a run of device transforms, or one OpenCV step,
+    // each with the shape it receives (checked against that shape).
+    struct Segment {
+        image::ImageAugmentation device;
+        const CvImageStep* cv = nullptr;
+        image::ImageShape in, out;
+    };
+    std::vector<Segment> segments;
+    image::ImageShape shape{base.Height(), base.Width(), base.Channels()};
+    const image::ImageShape input = shape;
+    size_t on_device = 0, on_cpu = 0;
+    for (const auto& step : fixed) {
+        const auto* cv_step = std::get_if<CvImageStep>(&step);
+        const std::string why = cv_step ? ValidateCvImageStep(*cv_step, shape)
+                                        : image::ValidateImageOp(std::get<image::ImageOp>(step), shape);
+        if (!why.empty()) {
             decoded.set = nullptr;
-            decoded.error = why;
+            decoded.error = FixedImageStepText(step) + ": " + why;
             return decoded;
         }
+        if (cv_step || segments.empty() || segments.back().cv) segments.push_back({{}, cv_step, shape, shape});
+        Segment& segment = segments.back();
+        if (cv_step) {
+            ++on_cpu;
+            shape = CvImageShapeAfter(*cv_step, shape);
+        } else {
+            ++on_device;
+            segment.device.ops.push_back(std::get<image::ImageOp>(step));
+            shape = image::ImageShapeAfter(segment.device.ops.back(), shape);
+        }
+        segment.out = shape;
     }
-    const size_t in_bytes = input.Size(), out_bytes = output.Size();
-    // Chunks on the device, one at a time (the device runs one chunk at a time anyway).
+    const image::ImageShape output = shape;
+    const size_t out_bytes = output.Size();
+    // Chunks one at a time: device runs on the device, each OpenCV step on
+    // every core across the chunk's images.
     const ProduceRows apply = [&](size_t begin, size_t end, uint8_t* out, std::string& error) {
         const size_t n = end - begin;
-        std::vector<float> rows(n * in_bytes);
-        const uint8_t* source = base.Row(begin);
-        for (size_t k = 0; k < rows.size(); ++k) rows[k] = source[k] / 255.0f;
-        try {
-            std::mt19937 unused(0);  // fixed transforms draw nothing
-            const Tensor result = steps.Apply(Tensor({n, in_bytes}, rows.data()), input, false, unused);
-            const float* values = result.ReadData<float>();
-            for (size_t k = 0; k < n * out_bytes; ++k)
-                out[k] = static_cast<uint8_t>(std::lround(std::clamp(values[k], 0.0f, 1.0f) * 255.0f));
-            return true;
-        } catch (const std::exception& e) {
-            error = std::string("the fixed image transforms failed: ") + e.what();
-            return false;
+        std::vector<uint8_t> current(base.Row(begin), base.Row(begin) + n * input.Size()), next;
+        for (const auto& segment : segments) {
+            const size_t in_bytes = segment.in.Size(), seg_bytes = segment.out.Size();
+            next.resize(n * seg_bytes);
+            if (segment.cv) {
+                std::mutex error_mutex;
+                std::string failed;
+                cv::parallel_for_(cv::Range(0, static_cast<int>(n)), [&](const cv::Range& range) {
+                    for (int i = range.start; i < range.end; ++i) {
+                        std::string why;
+                        if (!ApplyCvImageStep(*segment.cv, segment.in, current.data() + i * in_bytes,
+                                              next.data() + i * seg_bytes, &why)) {
+                            std::lock_guard<std::mutex> lock(error_mutex);
+                            if (failed.empty()) failed = base.Files()[begin + i] + ": " + why;
+                        }
+                    }
+                });
+                if (!failed.empty()) {
+                    error = failed;
+                    return false;
+                }
+            } else {
+                std::vector<float> rows(n * in_bytes);
+                for (size_t k = 0; k < rows.size(); ++k) rows[k] = current[k] / 255.0f;
+                try {
+                    std::mt19937 unused(0);  // fixed transforms draw nothing
+                    const Tensor result =
+                        segment.device.Apply(Tensor({n, in_bytes}, rows.data()), segment.in, false, unused);
+                    const float* values = result.ReadData<float>();
+                    for (size_t k = 0; k < n * seg_bytes; ++k)
+                        next[k] = static_cast<uint8_t>(std::lround(std::clamp(values[k], 0.0f, 1.0f) * 255.0f));
+                } catch (const std::exception& e) {
+                    error = std::string("the fixed image transforms failed: ") + e.what();
+                    return false;
+                }
+            }
+            current.swap(next);
         }
+        std::memcpy(out, current.data(), n * out_bytes);
+        return true;
     };
     const auto finish = [&] {
         SetHeader meta;
@@ -633,8 +700,9 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     PreparedImageResult derived = WriteImageSet(path, base.Count(), out_bytes, 256, 1, apply, finish, progress);
     if (derived.set) {
         derived.seconds += decoded.seconds;
-        spdlog::info("Prepared images: {} fixed transform{} done once on the device ({}x{}x{} -> {}x{}x{}) in "
-                     "{:.1f} s -> {}", fixed.size(), fixed.size() == 1 ? "" : "s", input.height, input.width,
+        spdlog::info("Prepared images: {} fixed step{} done once ({} on the device, {} OpenCV on the CPU; "
+                     "{}x{}x{} -> {}x{}x{}) in {:.1f} s -> {}", fixed.size(), fixed.size() == 1 ? "" : "s",
+                     on_device, on_cpu, input.height, input.width,
                      input.channels, output.height, output.width, output.channels,
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
                      path.string());
@@ -642,42 +710,8 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     return derived;
 }
 
-namespace {
-
-std::string Number(float v) {
-    char out[32];
-    std::snprintf(out, sizeof(out), "%g", v);
-    return out;
-}
-
-}  // namespace
-
-std::string ImageOpText(const image::ImageOp& op) {
-    using K = image::ImageOpKind;
-    static const char* kMorphology[] = {"Erode", "Dilate", "Open", "Close", "Gradient", "Top hat", "Black hat"};
-    const std::string size = std::to_string(op.width) + " \xC3\x97 " + std::to_string(op.height);
-    const std::string kernel = std::to_string(op.kernel_size) + " \xC3\x97 " + std::to_string(op.kernel_size);
-    switch (op.kind) {
-        case K::CenterCrop: return "Center Crop " + size;
-        case K::RandomCrop: return "Random Crop " + size;
-        case K::HorizontalFlip: return "Horizontal Flip (p " + Number(op.probability) + ")";
-        case K::VerticalFlip: return "Vertical Flip (p " + Number(op.probability) + ")";
-        case K::Rotate: return "Rotate up to " + Number(op.max_angle) + " degrees";
-        case K::ColorJitter: return "Color Jitter";
-        case K::GaussianBlur: return "Gaussian Blur " + kernel + ", sigma " + Number(op.sigma);
-        case K::Grayscale: return "Grayscale";
-        case K::Morphology: {
-            const int m = static_cast<int>(op.morphology);
-            return std::string(m >= 0 && m < 7 ? kMorphology[m] : "Morphology") + " " + kernel;
-        }
-        case K::Erase: return op.erase_method == image::EraseMethod::Cutout ? "Cutout" : "Random Erasing";
-        case K::RandAugment: return "RandAugment (" + std::to_string(op.num_ops) + " ops, magnitude " + std::to_string(op.magnitude) + ")";
-    }
-    return "transform";
-}
-
 std::string PreparedImageSetKeyFor(const DataRegistry::ImageDatasetEntry& entry, const PreparedImageSpec& spec,
-                                   const std::vector<image::ImageOp>& fixed) {
+                                   const std::vector<FixedImageStep>& fixed) {
     const std::string decoded = PreparedImageSetKey(entry, spec);
     if (fixed.empty()) return decoded;
     return Hex(Fnv(Fnv(1469598103934665603ull, decoded), TransformIdentity(fixed).dump()));
@@ -687,6 +721,7 @@ namespace {
 
 // A header's fixed_transforms entry (TransformIdentity) in words.
 std::string FixedTransformText(const json& entry) {
+    if (entry.contains("cv")) return entry.value("text", std::string("OpenCV step"));
     image::ImageOp op;
     op.kind = static_cast<image::ImageOpKind>(entry.value("kind", 0));
     op.height = entry.value("height", 0);

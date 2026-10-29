@@ -36,6 +36,7 @@ struct Input {
     // Channel statistics of the set this graph trains from.
     std::vector<double> channel_mean, channel_std;  // empty until measured
     size_t stats_images = 0;
+    int stats_width = 0, stats_height = 0;  // the measured set's size (after the fixed steps)
     std::string stats_device;        // "CUDA - GeForce GTX 1050 Ti"
     // While measuring: preparing (done of total images), then measuring.
     enum class StatsStep { Idle, Preparing, Measuring } stats_step = StatsStep::Idle;

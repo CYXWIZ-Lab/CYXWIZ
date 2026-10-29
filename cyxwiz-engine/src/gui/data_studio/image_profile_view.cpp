@@ -125,7 +125,8 @@ void ImageProfileView::SetDataset(const std::string& dataset) {
 std::string ImageProfileView::GraphIdentity() const {
     const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
     if (!config) return "no graph";
-    return ImageStepsKey(PreparedImageSpecFrom(config->image_preprocessing), config->image_augmentation);
+    return ImageStepsKey(PreparedImageSpecFrom(config->image_preprocessing), config->image_augmentation,
+                         config->image_cv_steps);
 }
 
 void ImageProfileView::Refresh() {
@@ -174,8 +175,9 @@ void ImageProfileView::ListSets() {
     const DataRegistry::ImageDatasetEntry entry = *found;
     const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
     const PreparedImageSpec spec = config ? PreparedImageSpecFrom(config->image_preprocessing) : PreparedImageSpec{};
-    const std::vector<image::ImageOp> fixed =
-        config ? SplitFixedImageTransforms(config->image_augmentation).fixed : std::vector<image::ImageOp>{};
+    const std::vector<FixedImageStep> fixed =
+        config ? SplitFixedImageTransforms(config->image_augmentation, config->image_cv_steps).fixed
+               : std::vector<FixedImageStep>{};
     if (sets_task_) AsyncTaskManager::Instance().Cancel(sets_task_);
     input_.sets_listed = false;
     view_ = ip::Build(input_);
@@ -217,7 +219,8 @@ void ImageProfileView::MeasureStats() {
     if (!found || !config) return;
     const DataRegistry::ImageDatasetEntry entry = *found;
     const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
-    const std::vector<image::ImageOp> fixed = SplitFixedImageTransforms(config->image_augmentation).fixed;
+    const std::vector<FixedImageStep> fixed =
+        SplitFixedImageTransforms(config->image_augmentation, config->image_cv_steps).fixed;
     stats_for_ = GraphIdentity();
     input_.channel_mean.clear();
     input_.channel_std.clear();
@@ -233,10 +236,11 @@ void ImageProfileView::MeasureStats() {
     auto result = std::make_shared<ImageChannelStats>();
     auto error = std::make_shared<std::string>();
     auto device = std::make_shared<std::string>();
+    auto size = std::make_shared<std::pair<int, int>>();
     std::weak_ptr<int> alive = alive_;
     stats_task_ = AsyncTaskManager::Instance().RunAsync(
         "Channel statistics " + dataset_,
-        [progress, entry, spec, fixed, result, error, device](LambdaTask& task) {
+        [progress, entry, spec, fixed, result, error, device, size](LambdaTask& task) {
             const PreparedImageResult prepared = PrepareImageSet(entry, spec, fixed, 0, [&](size_t done, size_t total) {
                 std::lock_guard<std::mutex> lock(progress->mutex);
                 progress->done = done;
@@ -255,9 +259,10 @@ void ImageProfileView::MeasureStats() {
             }
             std::atomic<bool> stop{false};
             *result = MeasureImageChannelStats(*prepared.set, [&](size_t, size_t) { stop = task.ShouldStop(); }, &stop);
+            *size = {static_cast<int>(prepared.set->Width()), static_cast<int>(prepared.set->Height())};
         },
         nullptr,
-        [this, alive, result, error, device](bool success, const std::string& message) {
+        [this, alive, result, error, device, size](bool success, const std::string& message) {
             if (alive.expired()) return;
             stats_task_ = 0;
             {
@@ -269,6 +274,8 @@ void ImageProfileView::MeasureStats() {
             input_.channel_std = result->std_dev;
             input_.stats_images = result->images;
             input_.stats_device = *device;
+            input_.stats_width = size->first;
+            input_.stats_height = size->second;
             input_.sets_listed = false;  // the set is in cache/images now
             graph_seen_.clear();
             view_ = ip::Build(input_);

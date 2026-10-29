@@ -107,7 +107,8 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
     }
     const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
     const image::ImageAugmentation steps = config->image_augmentation;
-    const std::string key = row.path + "|" + ImageStepsKey(spec, steps);
+    const std::vector<CvImageStep> cv_steps = config->image_cv_steps;
+    const std::string key = row.path + "|" + ImageStepsKey(spec, steps, cv_steps);
     if (key != pipeline_key_ && !pipeline_task_) {
         pipeline_key_ = key;
         auto result = std::make_shared<ImagePipelinePreview>();
@@ -116,7 +117,9 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
         std::weak_ptr<int> alive = alive_;
         pipeline_task_ = AsyncTaskManager::Instance().RunAsync(
             "What the model sees: " + row.file,
-            [path, spec, steps, seed, result](LambdaTask&) { *result = PreviewImagePipeline(path, spec, steps, 4, seed); },
+            [path, spec, steps, cv_steps, seed, result](LambdaTask&) {
+                *result = PreviewImagePipeline(path, spec, steps, cv_steps, 4, seed);
+            },
             nullptr,
             [this, alive, result](bool, const std::string&) {
                 if (alive.expired()) return;

@@ -7,6 +7,12 @@ Ten nodes change images on their way from the Data Input to the model:
 follows `kornia.morphology`): each one gives the same pixels as the reference
 function with the same settings.
 
+Seven more run OpenCV once, when the images are prepared:
+**Image Contrast (CLAHE)**, **Image Denoise**, **Image Sharpen**,
+**Image Edges**, **Image Smooth**, **Image Warp** and **Image Pyramid** (see
+[OpenCV steps done once](#opencv-steps-done-once)). Node search marks them
+`once`.
+
 ## Where they go
 
 Put them between **Resize** and **Normalize**, in the order you want them
@@ -35,6 +41,7 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
 | Image Gaussian Blur | blurred | blurred |
 | Grayscale | one channel | one channel |
 | Morphology Transform | applied | applied |
+| The seven OpenCV steps | applied (done once) | applied (done once) |
 | Advanced Augment (cutout, random_erasing) | patch erased with `probability` | unchanged |
 | Advanced Augment (mixup, cutmix) | batch and labels mixed with `probability` | unchanged |
 | Advanced Augment (randaugment) | `num_ops` random ops per image with `probability` | unchanged |
@@ -161,12 +168,61 @@ stays there for the model. Without a GPU the same code runs on ArrayFire's
 CPU backend. Each image's random settings (flip or not, crop position, angle,
 jitter factors) are a few numbers drawn on the CPU.
 
+## OpenCV steps done once
+
+These seven nodes call the Engine's OpenCV classes. Each one gives every image
+the same result in every epoch, so it runs once, when the images are
+prepared, on every CPU core, in canvas order with the GPU steps that are done
+once. Every epoch, and every later run with the same settings, reads the
+result from `cache/images`.
+
+```
+Data Input (images) -> Resize 64 -> Image Contrast (CLAHE) -> Center Crop 56
+  -> Horizontal Flip -> Normalize -> Conv2D -> ...
+```
+
+Here Resize and CLAHE run on the CPU and Center Crop on the GPU, all once;
+Horizontal Flip and Normalize run on each batch.
+
+| Node | Settings (default) | What it does | Shape |
+| --- | --- | --- | --- |
+| Image Contrast (CLAHE) | `clip_limit` (2.0), `tile_grid` (8), `colour` (lightness / each_channel) | Contrast Limited Adaptive Histogram Equalization on each tile. `lightness` changes only Lab L, so colours stay; `each_channel` equalizes R, G and B alone. | same |
+| Image Denoise | `strength` (10), `colour_strength` (10), `patch_size` (7, odd), `search_size` (21, odd) | Non-local means (`fastNlMeansDenoisingColored`; `fastNlMeansDenoising` for grey). Slow: about 45 ms an image at 64 x 64, so the compiler shows the time; it is spent once. | same |
+| Image Sharpen | `amount` (1.0), `radius` (1.0), `threshold` (0, from 0 to 1) | Unsharp mask: image + amount x (image - Gaussian blur of sigma `radius`). With a threshold, only pixels whose detail is above it change. | same |
+| Image Edges | `method` (canny / sobel / laplacian / scharr), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian odd up to 31) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. | one channel: `[H, W, 1]` |
+| Image Smooth | `method` (box / median / bilateral), `kernel_size` (5, odd), `sigma_color` / `sigma_space` (75 / 75, bilateral) | Box averages, median takes the middle value (removes specks, keeps edges), bilateral mixes only similar colours. A Gaussian blur is Image Gaussian Blur, on the GPU. | same |
+| Image Warp | `method` (four_corners / three_points / log_polar / linear_polar), `source_points`, `target_points` (`0,0, 1,0, 1,1, 0,1`), `interpolation` (linear), `width` / `height` (0), `center_x` / `center_y` (0.5), `max_radius` (0.5), `inverse` | The same warp for every image. Points are `x, y` fractions of the image, top-left first, clockwise: four for four_corners, three for three_points. Polar warps unroll the image around the centre, so a rotation becomes a shift; they keep the size. | same, or `width` x `height` |
+| Image Pyramid | `operation` (down / up / detail), `levels` (1) | down: Gaussian smoothing then half the size, per level; up: double the size, per level; detail: the Laplacian level `levels - 1` halvings down (the image minus its smoothed copy). | down halves each side per level (rounding up); detail at level 1 keeps it |
+
+- The prepared images are 8-bit, so each step's result is stored as 0 to 255:
+  edge strength as its magnitude, pyramid detail around mid-grey (128 = no
+  detail).
+- They must come before the first random transform (flips, Random Crop, Image
+  Rotate, Color Jitter, Advanced Augment, Augmentation Preset). After one, the
+  graph does not compile: `Runs once on the prepared images, so it must come
+  before the first random step: move it before Horizontal Flip (p 0.5)`.
+- The compiler checks each step on the size it receives: `4 levels down from
+  56 x 56 gives 4 x 4: at most 3 levels here`, `Corner 3 of the source is
+  outside the image: points are fractions from 0 to 1`, a tile grid larger
+  than the image, even kernels. Image Denoise adds a warning with its time;
+  Image Edges says the images become one channel.
+- The set's key includes every step and setting: changing one prepares a new
+  set, and the old one stays in Data Studio > Explore > Profile's cached sets
+  (`64 x 64 · CLAHE 2.0 / 8, Center Crop 56 x 56`) until it is pruned. The
+  Console line names both kinds: `Prepared images: 2 fixed steps done once
+  (1 on the device, 1 OpenCV on the CPU; 64x64x3 -> 56x56x3)`.
+- Data Studio > Explore > Images > What the model sees shows each step on the
+  picked image, an OpenCV step as `56 x 56, once on the CPU`. The Properties
+  panel's AS COMPILED card shows the step's input and output shapes.
+- Same result in training, validation and test.
+
 ## Notes
 
 - To leave blurry, dark, flat or duplicate images out of training, see
   [Quality Analyzer](quality_analyzer.md).
 - Code export (PyTorch / TensorFlow / Keras / PyCyxWiz) does not include image
-  transforms yet and says so; train these graphs in Studio.
+  transforms yet, the OpenCV steps included, and says so; train these graphs
+  in Studio.
 - They work on image Data Inputs (folders of image files). Tabular pixel rows
   do not go through them.
 - Checked against torchvision: `image_transforms_torchvision_parity` compares
@@ -180,3 +236,8 @@ jitter factors) are a few numbers drawn on the CPU.
   one channels, and the magnitude table matches torchvision's exactly.
   `image_transform_graph_contract` checks the compiled shapes, the refusals, and
   that random nodes change training batches only.
+- The OpenCV steps are checked against OpenCV called directly
+  (`image_cv_steps`: CLAHE, non-local means, Canny, Sobel, median, warps and
+  pyramids on 8-bit images, exact or within one step), in a prepared set
+  between GPU steps (`test_prepared_image_set`), in What the model sees
+  (`image_pipeline_preview`) and in the compiler (`image_transform_graph_contract`).

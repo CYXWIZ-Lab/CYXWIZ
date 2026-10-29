@@ -2110,7 +2110,8 @@ void ApplyImageInputShape(TrainingConfiguration& config) {
     if (config.preprocessing_domain != PreprocessingDomain::Image) {
         return;
     }
-    const auto shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    const auto shape =
+        cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
     config.input_shape = {shape.height, shape.width, shape.channels};
     config.input_size = shape.Size();
 }
@@ -6239,8 +6240,9 @@ TrainingConfiguration GraphCompiler::Compile(
             // Estimate total model memory (weights + gradients + optimizer)
             // and warn if it's likely to exceed reasonable GPU memory.
             if (has_resize && config.image_preprocessing.target_width > 0) {
-                // The model's input after the image transforms (crops, Grayscale).
-                const auto image_shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+                // The model's input after the image steps (crops, Grayscale, OpenCV steps).
+                const auto image_shape = cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps,
+                                                                    DecodedImageShape(config));
                 size_t img_features = image_shape.Size();
                 size_t total_params = 0;
                 size_t prev_size = img_features;
@@ -6915,7 +6917,7 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
 // --- Image extractors (Phase 1) ---
 
 static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& config) {
-    if (!config.image_augmentation.ops.empty()) {
+    if (!config.image_augmentation.ops.empty() || !config.image_cv_steps.empty()) {
         AddIssue(config, IssueLevel::Error,
                  "Resize must come before the image transforms: the batcher decodes every image at "
                  "the Resize size first",
@@ -6953,10 +6955,10 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
 // --- Image transforms (TOFIX140): appended in graph order, run by the image
 // batcher on the device after Resize and before Normalize. ---
 
-// The [H, W, C] image the next transform receives: the Resize size with three
-// channels, after the transforms already compiled.
+// The [H, W, C] image the next step receives: the Resize size with three
+// channels, after the transforms and OpenCV steps already compiled.
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
-    return config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    return cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
 
 void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
@@ -7182,6 +7184,184 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
     AppendImageOp(node, op, error, config);
 }
 
+// --- OpenCV image steps (TOFIX178 1.3f): done once when the images are
+// prepared, in canvas order with the device transforms done once. ---
+
+template <typename T>
+bool ParseChoiceParam(const std::map<std::string, std::string>& params, const std::string& key,
+                      const std::string& fallback, const std::vector<std::pair<std::string, T>>& choices, T& out,
+                      std::string& error) {
+    const auto it = params.find(key);
+    const std::string value = it == params.end() || it->second.empty() ? fallback : it->second;
+    std::string names;
+    for (const auto& [name, choice] : choices) {
+        if (name == value) {
+            out = choice;
+            return true;
+        }
+        names += (names.empty() ? "" : choices.back().first == name ? " or " : ", ") + name;
+    }
+    error = key + " must be " + names;
+    return false;
+}
+
+// "0,0, 1,0, 1,1, 0,1": x and y of each point, as fractions of the image.
+bool ParsePointsParam(const std::map<std::string, std::string>& params, const std::string& key, int count,
+                      std::array<float, 8>& out, std::string& error) {
+    const auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) return true;
+    std::string text = it->second;
+    std::replace(text.begin(), text.end(), ',', ' ');
+    std::istringstream in(text);
+    std::vector<float> values;
+    for (float v; in >> v;) values.push_back(v);
+    if (!in.eof() || values.size() != static_cast<size_t>(2 * count)) {
+        error = key + " must be " + std::to_string(2 * count) + " numbers: x, y of each of the " +
+                std::to_string(count) + " points";
+        return false;
+    }
+    for (size_t i = 0; i < values.size(); ++i) out[i] = values[i];
+    return true;
+}
+
+static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::CvImageStepKind;
+    cyxwiz::CvImageStep s;
+    s.node_id = node.id;
+    s.node_name = node.name;
+    s.position = config.image_augmentation.ops.size();
+    std::string error;
+    const auto& p = node.parameters;
+    switch (node.type) {
+        case gui::NodeType::ImageContrast:
+            s.kind = CvImageStepKind::Contrast;
+            (void)(ParseFloatParam(p, "clip_limit", 2.0f, s.clip_limit, error) &&
+                ParseIntParam(p, "tile_grid", 8, s.tile_grid, error) &&
+                ParseChoiceParam<cyxwiz::CvContrastColour>(
+                    p, "colour", "lightness",
+                    {{"lightness", cyxwiz::CvContrastColour::Lightness},
+                     {"each_channel", cyxwiz::CvContrastColour::EachChannel}},
+                    s.colour, error));
+            break;
+        case gui::NodeType::ImageDenoise:
+            s.kind = CvImageStepKind::Denoise;
+            (void)(ParseFloatParam(p, "strength", 10.0f, s.strength, error) &&
+                ParseFloatParam(p, "colour_strength", 10.0f, s.colour_strength, error) &&
+                ParseIntParam(p, "patch_size", 7, s.patch_size, error) &&
+                ParseIntParam(p, "search_size", 21, s.search_size, error));
+            break;
+        case gui::NodeType::ImageSharpen:
+            s.kind = CvImageStepKind::Sharpen;
+            (void)(ParseFloatParam(p, "amount", 1.0f, s.amount, error) && ParseFloatParam(p, "radius", 1.0f, s.radius, error) &&
+                ParseFloatParam(p, "threshold", 0.0f, s.threshold, error));
+            break;
+        case gui::NodeType::ImageEdges:
+            s.kind = CvImageStepKind::Edges;
+            (void)(ParseChoiceParam<cyxwiz::CvEdgeMethod>(p, "method", "canny",
+                                                   {{"canny", cyxwiz::CvEdgeMethod::Canny},
+                                                    {"sobel", cyxwiz::CvEdgeMethod::Sobel},
+                                                    {"laplacian", cyxwiz::CvEdgeMethod::Laplacian},
+                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr}},
+                                                   s.edge_method, error) &&
+                ParseFloatParam(p, "threshold1", 50.0f, s.threshold1, error) &&
+                ParseFloatParam(p, "threshold2", 150.0f, s.threshold2, error) &&
+                ParseIntParam(p, "kernel_size", 3, s.edge_kernel, error));
+            break;
+        case gui::NodeType::ImageSmooth:
+            s.kind = CvImageStepKind::Smooth;
+            (void)(ParseChoiceParam<cyxwiz::CvSmoothMethod>(p, "method", "median",
+                                                     {{"box", cyxwiz::CvSmoothMethod::Box},
+                                                      {"median", cyxwiz::CvSmoothMethod::Median},
+                                                      {"bilateral", cyxwiz::CvSmoothMethod::Bilateral}},
+                                                     s.smooth_method, error) &&
+                ParseIntParam(p, "kernel_size", 5, s.kernel_size, error) &&
+                ParseFloatParam(p, "sigma_color", 75.0f, s.sigma_color, error) &&
+                ParseFloatParam(p, "sigma_space", 75.0f, s.sigma_space, error));
+            break;
+        case gui::NodeType::ImageWarp: {
+            s.kind = CvImageStepKind::Warp;
+            const int count = ParseChoiceParam<cyxwiz::CvWarpMethod>(
+                                  p, "method", "four_corners",
+                                  {{"four_corners", cyxwiz::CvWarpMethod::FourCorners},
+                                   {"three_points", cyxwiz::CvWarpMethod::ThreePoints},
+                                   {"log_polar", cyxwiz::CvWarpMethod::LogPolar},
+                                   {"linear_polar", cyxwiz::CvWarpMethod::LinearPolar}},
+                                  s.warp_method, error)
+                                  ? (s.warp_method == cyxwiz::CvWarpMethod::ThreePoints ? 3 : 4)
+                                  : 0;
+            if (count == 3) s.source_points[6] = s.source_points[7] = s.target_points[6] = s.target_points[7] = 0.0f;
+            const bool polar = s.warp_method == cyxwiz::CvWarpMethod::LogPolar ||
+                               s.warp_method == cyxwiz::CvWarpMethod::LinearPolar;
+            if (count > 0 && !polar) {
+                (void)(ParsePointsParam(p, "source_points", count, s.source_points, error) &&
+                    ParsePointsParam(p, "target_points", count, s.target_points, error));
+            }
+            if (error.empty()) {
+                (void)(ParseChoiceParam<cyxwiz::CvWarpInterpolation>(
+                    p, "interpolation", "linear",
+                    {{"nearest", cyxwiz::CvWarpInterpolation::Nearest},
+                     {"linear", cyxwiz::CvWarpInterpolation::Linear},
+                     {"cubic", cyxwiz::CvWarpInterpolation::Cubic},
+                     {"lanczos", cyxwiz::CvWarpInterpolation::Lanczos}},
+                    s.interpolation, error) &&
+                    ParseFloatParam(p, "center_x", 0.5f, s.center_x, error) &&
+                    ParseFloatParam(p, "center_y", 0.5f, s.center_y, error) &&
+                    ParseFloatParam(p, "max_radius", 0.5f, s.max_radius, error) &&
+                    ParseIntParam(p, "width", 0, s.out_width, error) &&
+                    ParseIntParam(p, "height", 0, s.out_height, error));
+                s.inverse = ParseBoolParam(p, "inverse");
+            }
+            break;
+        }
+        case gui::NodeType::ImagePyramid:
+            s.kind = CvImageStepKind::Pyramid;
+            (void)(ParseChoiceParam<cyxwiz::CvPyramidOperation>(p, "operation", "down",
+                                                         {{"down", cyxwiz::CvPyramidOperation::Down},
+                                                          {"up", cyxwiz::CvPyramidOperation::Up},
+                                                          {"detail", cyxwiz::CvPyramidOperation::Detail}},
+                                                         s.pyramid, error) &&
+                ParseIntParam(p, "levels", 1, s.levels, error));
+            break;
+        default:
+            return;
+    }
+    const auto issue = [&](IssueLevel level, const std::string& message) {
+        AddIssue(config, level, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    if (!error.empty()) return issue(IssueLevel::Error, error);
+    if (config.preprocessing.has_normalization)
+        return issue(IssueLevel::Error,
+                     "Image steps work on [0, 1] pixels: put this node between Resize and Normalize");
+    for (const auto& op : config.image_augmentation.ops) {
+        if (cyxwiz::image::IsRandomImageOp(op.kind))
+            return issue(IssueLevel::Error, "Runs once on the prepared images, so it must come before the first "
+                                            "random step: move it before " + cyxwiz::ImageOpText(op));
+    }
+    const auto shape = CurrentImageShape(config);
+    if (const std::string why = cyxwiz::ValidateCvImageStep(s, shape); !why.empty())
+        return issue(IssueLevel::Error, why);
+    const auto after = cyxwiz::CvImageShapeAfter(s, shape);
+    if (s.kind == CvImageStepKind::Denoise) {
+        // Measured on this PC's cats vs dogs at 64 x 64 x 3, patch 7, search 21
+        // (TOFIX178 1.3f): 44.5 ms an image on one core; it grows with the area
+        // and the search window.
+        const double ms = 44.5 * static_cast<double>(shape.height * shape.width) / (64.0 * 64.0) *
+                          (static_cast<double>(s.search_size) * s.search_size) / (21.0 * 21.0) *
+                          (shape.channels == 1 ? 0.5 : 1.0);
+        const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+        char text[256];
+        std::snprintf(text, sizeof(text),
+                      "About %.0f ms an image at %zu Ã %zu: preparing 10,000 images takes about %.0f s on "
+                      "%u cores, once. Later runs read the prepared images.",
+                      ms, shape.width, shape.height, ms * 10000.0 / 1000.0 / cores, cores);
+        issue(IssueLevel::Warning, text);
+    }
+    if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
+        issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
+                                    " Ã " + std::to_string(after.height) + " Ã 1 here");
+    config.image_cv_steps.push_back(std::move(s));
+}
+
 // --- Audio extractors (Phase 2.1) ---
 //
 // Each extractor sets has_feature_node=true (except AudioAugmentation,
@@ -7319,6 +7499,14 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::QualityAnalyzer,    PreprocessingDomain::Image,       ExtractImageQuality},
+    // OpenCV steps done once with the images (TOFIX178 1.3f)
+    {gui::NodeType::ImageContrast,      PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageDenoise,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageSharpen,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageEdges,         PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageSmooth,        PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},

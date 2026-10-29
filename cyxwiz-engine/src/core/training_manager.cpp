@@ -729,9 +729,10 @@ bool TrainingManager::StartTrainingImage(
     auto stop_requested = std::make_shared<std::function<bool()>>();
     ExternalBatcherFactory factory = [image_entry, stop_requested](const TrainingConfiguration& run,
                                                                    int run_batch_size) {
-        // The leading transforms that are the same every epoch are done once
-        // with the images (1.3c); the rest run on each batch.
-        const auto transforms = SplitFixedImageTransforms(run.image_augmentation);
+        // The leading transforms that are the same every epoch and the OpenCV
+        // steps are done once with the images (1.3c, 1.3f); the rest run on
+        // each batch.
+        const auto transforms = SplitFixedImageTransforms(run.image_augmentation, run.image_cv_steps);
         size_t reported = 0;
         const auto prepared = PrepareImageSet(
             image_entry, PreparedImageSpecFrom(run.image_preprocessing), transforms.fixed, 0,
@@ -757,9 +758,10 @@ bool TrainingManager::StartTrainingImage(
 
         // The compiler set input_shape [H, W, C] from the same Resize size and
         // transforms (ApplyImageInputShape), so the model and the batches agree.
-        spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms ({} done "
-                     "once), seed={}", batcher->GetNumSamples(), run.input_size, run.image_augmentation.ops.size(),
-                     transforms.fixed.size(), run.dataloader_seed);
+        spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image steps ({} done "
+                     "once), seed={}", batcher->GetNumSamples(), run.input_size,
+                     run.image_augmentation.ops.size() + run.image_cv_steps.size(), transforms.fixed.size(),
+                     run.dataloader_seed);
         if (run.preprocessing.has_normalization) {
             batcher->SetNormalization(run.preprocessing.norm_mean, run.preprocessing.norm_std);
         }

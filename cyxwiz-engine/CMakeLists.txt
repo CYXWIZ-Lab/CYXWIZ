@@ -359,11 +359,8 @@ set(ENGINE_SOURCES
     src/preprocessing/scaling_transform.cpp
     # OpenCV Transforms (Phase 1)
     src/preprocessing/morphology_transform.cpp
-    src/preprocessing/blur_transform.cpp
-    src/preprocessing/perspective_transform.cpp
-    src/preprocessing/pyramid_transform.cpp
+    # (blur, perspective, pyramid and image_enhancer: in cyxwiz-image-cv)
     # Image utilities
-    src/utils/image_enhancer.cpp
     src/utils/dataset_analyzer.cpp
     src/utils/image_deduplicator.cpp
     src/utils/hdf5_browser.cpp
@@ -1087,12 +1084,26 @@ if(GIT_FOUND)
     endif()
 endif()
 
+# ===== OpenCV image steps (TOFIX178 1.3f): ApplyCvImageStep and the classes it
+# calls, for the Engine and the tests that prepare image sets =====
+add_library(cyxwiz-image-cv STATIC
+    src/core/image_cv_steps_apply.cpp
+    src/utils/image_enhancer.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
+)
+target_include_directories(cyxwiz-image-cv PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(cyxwiz-image-cv PUBLIC
+    cyxwiz-training-core ${OpenCV_LIBS} spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+set_target_properties(cyxwiz-image-cv PROPERTIES CXX_STANDARD 20)
+
 add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
 target_link_libraries(cyxwiz-engine PRIVATE
-    cyxwiz-implot3d cyxwiz-runtime-bootstrap)
+    cyxwiz-implot3d cyxwiz-runtime-bootstrap cyxwiz-image-cv)
 target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )
@@ -5517,6 +5528,7 @@ add_executable(test_modality_batcher_drop_last
     src/core/formats/audio_dataset.cpp
     src/core/image_utils.cpp
 )
+target_link_libraries(test_modality_batcher_drop_last PRIVATE cyxwiz-image-cv)
 target_link_libraries(test_modality_batcher_drop_last PRIVATE cyxwiz-training-core)
 
 target_include_directories(test_modality_batcher_drop_last PRIVATE
@@ -6821,6 +6833,15 @@ add_custom_target(copy_test_image_quality_fixture
 )
 add_dependencies(test_image_quality copy_test_image_quality_fixture)
 
+# ===== Test: the OpenCV image steps (TOFIX178 1.3f) =====
+add_executable(test_image_cv_steps tests/test_image_cv_steps.cpp)
+target_link_libraries(test_image_cv_steps PRIVATE cyxwiz-image-cv)
+if(WIN32)
+    target_compile_definitions(test_image_cv_steps PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_cv_steps PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME image_cv_steps COMMAND test_image_cv_steps)
+
 # ===== Test: prepared image set (TOFIX178 1.3a): images decoded once =====
 add_executable(test_prepared_image_set
     tests/test_prepared_image_set.cpp
@@ -6830,6 +6851,7 @@ add_executable(test_prepared_image_set
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
 )
+target_link_libraries(test_prepared_image_set PRIVATE cyxwiz-image-cv)
 target_include_directories(test_prepared_image_set PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OpenCV_INCLUDE_DIRS}
@@ -6860,6 +6882,7 @@ add_executable(test_image_index
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
 )
+target_link_libraries(test_image_index PRIVATE cyxwiz-image-cv)
 target_include_directories(test_image_index PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OpenCV_INCLUDE_DIRS}
@@ -6890,6 +6913,7 @@ add_executable(test_image_pipeline_preview
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
 )
+target_link_libraries(test_image_pipeline_preview PRIVATE cyxwiz-image-cv)
 target_include_directories(test_image_pipeline_preview PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OpenCV_INCLUDE_DIRS}
@@ -7069,6 +7093,7 @@ add_executable(test_cnn_image_training_smoke
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
 )
+target_link_libraries(test_cnn_image_training_smoke PRIVATE cyxwiz-image-cv)
 target_link_libraries(test_cnn_image_training_smoke PRIVATE cyxwiz-training-core)
 
 target_include_directories(test_cnn_image_training_smoke PRIVATE
@@ -7116,6 +7141,7 @@ add_executable(test_image_transform_graph
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
 )
+target_link_libraries(test_image_transform_graph PRIVATE cyxwiz-image-cv)
 target_link_libraries(test_image_transform_graph PRIVATE
     cyxwiz-training-core
     OpenSSL::Crypto
