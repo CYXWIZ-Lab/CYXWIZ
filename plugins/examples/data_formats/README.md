@@ -33,8 +33,11 @@ Copy this folder out of the installation, then:
 ```
 cmake -S . -B build -DCMAKE_PREFIX_PATH=<CyxWiz SDK folder> -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-<CyxWiz installation>/cyxwiz-cli plugin-check build/data_formats
+<CyxWiz installation>/cyxwiz-cli plugin-check --open weather.arff build/data_formats
 ```
+
+`--open` reads `weather.arff` through the plugin as Data Input's Apply does
+and runs the analytic on it: `temperature 0.0893, humidity 0.1260`.
 
 Use the compiler the Engine was built with (the SDK names it in
 `lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake`, line `# Built with:`).

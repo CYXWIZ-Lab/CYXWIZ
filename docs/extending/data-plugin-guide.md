@@ -105,8 +105,29 @@ D:\work\data_formats\build\data_formats
 cyxwiz-plugin-check: all plugins pass
 ```
 
-It does not open a file with your format; Apply in the Engine does
-([section 7](#7-test-and-debug)).
+Add `--open <file>` to read a file through your format the way Apply does,
+and run your analytics on it, without starting the Engine:
+
+PowerShell:
+
+```powershell
+& "$cyxwiz\cyxwiz-cli.exe" plugin-check --open data_formats\weather.arff data_formats\build\data_formats
+```
+
+Linux and macOS:
+
+```bash
+"$cyxwiz/cyxwiz-cli" plugin-check --open data_formats/weather.arff data_formats/build/data_formats
+```
+
+```
+  ok   open weather.arff as ARFF (Weka): 14 rows, 5 columns in 1 batch
+         columns: outlook (string), temperature (double), humidity (double), windy (string), play (string)
+  ok   analytic Coefficient of variation on weather.arff (temperature, humidity): temperature 0.0893, humidity 0.1260
+```
+
+[Section 7](#7-test-and-debug) lists what `--open` checks and what its
+failures mean.
 
 The build file is the template's, with the example's names:
 
@@ -629,9 +650,27 @@ to your own build.
 
 - **The check** (`cyxwiz-cli plugin-check <folder>`) proves the plugin
   loads and its formats and analytics register (`ok   dataset format ...`,
-  `ok   analytic ...`, or `FAIL not added: ...` with the reason). It does
-  not read a file.
-- **Apply** in a Data Input reads one. The Engine's log
+  `ok   analytic ...`, or `FAIL not added: ...` with the reason).
+- **The check with files** (`plugin-check --open <file> <folder>`, as many
+  `--open` as you like) reads each file as Apply does: the format its
+  extension and your `CanLoad` pick, every batch, then the whole table
+  validated against the Arrow layout (offsets, buffer sizes, null counts).
+  Then each analytic runs on the columns it reads (up to its maximum), as
+  Explore > Plugins does with its default columns. The answers to fix:
+
+  | Line | Meaning |
+  |---|---|
+  | `ok   open <file> as <format>: R rows, C columns in B batches`, then the column types | The file reads; check the types are the ones you meant |
+  | `FAIL open <file>: no dataset format of this plugin reads .<ext> files` | No loader of yours lists that extension |
+  | `FAIL open <file>: <format> does not take the file (its CanLoad returned false)` | Your `CanLoad` refused it |
+  | `FAIL open <file>: <format> could not open <file>: <error>` | `OpenDataset` returned false with that error |
+  | `FAIL open <file>: batch N: <message>` | `get_next` failed on that batch; the message is your `get_last_error` |
+  | `FAIL open <file>: the data is not valid Arrow: ...` | A batch's buffers do not match its schema: a wrong offset, length or null count |
+  | `ok   analytic <name> on <file> (<columns>): <values>` or `FAIL analytic ...: <error>` | Your `Compute` answer, or its `error_message` |
+  | `Plugin '<id>' crashed during <call>` in a FAIL line | Your code crashed there |
+
+  A file that fails makes the exit code 1, like a node that fails.
+- **Apply** in a Data Input reads it in the Engine. The Engine's log
   (`engine_log.txt` in the base folder, or the Console panel) has a line per
   load: *LoadTabularExternal: '&lt;file&gt;' (&lt;format&gt;) streamed 14 rows into
   &lt;cache file&gt;*, or the error.
@@ -664,4 +703,4 @@ CyxWiz repository.
 | Table formats: rows and typed columns | Images, audio or text-document formats from a plugin |
 | Files on disk, any size (streamed in batches) | Databases or network sources (Data Studio's SQL Workbench covers databases) |
 | Analytics answering with a number, labelled values and a note | Analytics that draw their own charts, or add columns to the table |
-| One plugin, several formats and analytics | `cyxwiz-plugin-check` reading a sample file through your format: test with Apply |
+| One plugin, several formats and analytics | Choosing the analytic's columns with `--open` (it uses the default columns) |

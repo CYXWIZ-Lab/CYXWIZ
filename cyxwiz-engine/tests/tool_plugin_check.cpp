@@ -1,7 +1,7 @@
 // cyxwiz-plugin-check: load C++ plugin folders the way the Engine does and
 // check their trainable nodes (TOFIX125 P5 step 5.3, Part D8).
 //
-//   cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
+//   cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]
 //
 // For each folder: read plugin.json, load the library (the build fingerprint
 // is checked before the plugin is created; the library's static
@@ -10,8 +10,12 @@
 // nodes it registers, and for each trainable node check its output shape and
 // its gradients with the node's default settings, as the Plugin Manager's
 // "Check gradient" does; list its dataset formats and analytics (TOFIX181).
-// Exit code 0 when every folder loads, registers something, and every node
-// passes.
+// With --open, read each file through the plugin's dataset format as Data
+// Input's Apply does (the format its extension and CanLoad pick, every batch,
+// the data validated), and run each of its analytics on the columns that
+// analytic reads, as Explore > Plugins does.
+// Exit code 0 when every folder loads, registers something, every node
+// passes, and every file opens and every analytic answers.
 #include <cyxwiz/gradient_check.h>
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/plugin_loader.h"
@@ -20,10 +24,16 @@
 #include "../src/plugin/registries/plugin_data_loader_registry.h"
 #include "../src/plugin/security/permission_store.h"
 
+#include <arrow/api.h>
+
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -37,7 +47,153 @@ std::string ShapeText(const std::vector<size_t>& shape) {
     return "[" + text + "]";
 }
 
-bool CheckFolder(const fs::path& folder) {
+std::string Number(double value) {
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(4) << value;
+    return text.str();
+}
+
+bool Reads(cyxwiz::plugin::AnalyticsColumns columns, const arrow::DataType& type) {
+    switch (columns) {
+        case cyxwiz::plugin::AnalyticsColumns::Numeric:
+            return arrow::is_integer(type.id()) || arrow::is_floating(type.id());
+        case cyxwiz::plugin::AnalyticsColumns::Text:
+            return arrow::is_string(type.id());
+        case cyxwiz::plugin::AnalyticsColumns::Any:
+            break;
+    }
+    return true;
+}
+
+// Each analytic of the plugin on the columns of `table` it reads (up to its
+// maximum), as Explore > Plugins runs it with its default columns.
+bool RunAnalytics(const std::string& plugin_id, const std::string& file_name,
+                  const std::shared_ptr<arrow::Table>& table) {
+    auto& analytics = cyxwiz::plugin::PluginAnalyticsRegistry::Instance();
+    bool ok = true;
+    for (const auto& analytic : analytics.Analytics()) {
+        if (analytic.plugin_id != plugin_id) continue;
+        const auto& info = analytic.info;
+        std::vector<int> columns;
+        std::string names;
+        for (int i = 0; i < table->num_columns(); ++i) {
+            if (info.max_columns > 0 && static_cast<int>(columns.size()) >= info.max_columns) break;
+            if (!Reads(info.columns, *table->field(i)->type())) continue;
+            columns.push_back(i);
+            names += (names.empty() ? "" : ", ") + table->field(i)->name();
+        }
+        const int needed = std::max(1, info.min_columns);
+        if (static_cast<int>(columns.size()) < needed) {
+            std::cout << "  analytic " << info.name << " on " << file_name << ": not run, the file has "
+                      << columns.size() << " column(s) it reads and it needs " << needed << "\n";
+            continue;
+        }
+        auto chosen = table->SelectColumns(columns);
+        if (!chosen.ok()) {
+            std::cout << "  FAIL analytic " << info.name << " on " << file_name << ": " << chosen.status().message()
+                      << "\n";
+            ok = false;
+            continue;
+        }
+        const auto result =
+            analytics.Compute(info.analytics_id, std::make_shared<arrow::TableBatchReader>(*chosen));
+        if (!result.success) {
+            std::cout << "  FAIL analytic " << info.name << " on " << file_name << " (" << names
+                      << "): " << result.error_message << "\n";
+            ok = false;
+            continue;
+        }
+        std::string answer;
+        if (result.has_scalar) answer = Number(result.scalar_value);
+        for (size_t i = 0; i < result.vector_value.size(); ++i) {
+            const std::string label = i < result.vector_labels.size() ? result.vector_labels[i] : std::to_string(i + 1);
+            answer += (answer.empty() ? "" : ", ") + label + " " + Number(result.vector_value[i]);
+        }
+        if (answer.empty()) answer = result.text_value.empty() ? "(no values)" : result.text_value;
+        std::cout << "  ok   analytic " << info.name << " on " << file_name << " (" << names << "): " << answer
+                  << "\n";
+    }
+    return ok;
+}
+
+// Reads `file` through the plugin's dataset format as Data Input's Apply
+// does, then runs the plugin's analytics on it.
+bool OpenThrough(const std::string& plugin_id, const fs::path& file) {
+    auto& loaders = cyxwiz::plugin::PluginDataLoaderRegistry::Instance();
+    std::vector<cyxwiz::plugin::PluginDataLoaderRegistry::Loader> own;
+    for (const auto& loader : loaders.Loaders())
+        if (loader.plugin_id == plugin_id) own.push_back(loader);
+    const std::string file_name = file.filename().string();
+    if (own.empty()) {
+        std::cout << "  open " << file_name << ": the plugin adds no dataset format\n";
+        return true;
+    }
+    if (!fs::is_regular_file(file)) {
+        std::cout << "  FAIL open " << file_name << ": no such file (" << file.string() << ")\n";
+        return false;
+    }
+    std::string extension = file.extension().string();
+    if (!extension.empty()) extension.erase(0, 1);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const auto by_extension = std::find_if(own.begin(), own.end(), [&](const auto& loader) {
+        return std::find(loader.info.extensions.begin(), loader.info.extensions.end(), extension) !=
+               loader.info.extensions.end();
+    });
+    if (by_extension == own.end()) {
+        std::cout << "  FAIL open " << file_name << ": no dataset format of this plugin reads ." << extension
+                  << " files\n";
+        return false;
+    }
+    const std::string loader_id = loaders.LoaderForFile(file.string());
+    const auto chosen = std::find_if(own.begin(), own.end(),
+                                     [&](const auto& loader) { return loader.info.loader_id == loader_id; });
+    if (chosen == own.end()) {
+        std::cout << "  FAIL open " << file_name << ": " << by_extension->info.format_name
+                  << " does not take the file (its CanLoad returned false)\n";
+        return false;
+    }
+
+    auto opened = loaders.Open(loader_id, file.string());
+    if (!opened.ok()) {
+        std::cout << "  FAIL open " << file_name << ": " << opened.status().message() << "\n";
+        return false;
+    }
+    std::shared_ptr<arrow::RecordBatchReader> reader = std::move(opened).ValueUnsafe();
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    while (true) {
+        std::shared_ptr<arrow::RecordBatch> batch;
+        const auto status = reader->ReadNext(&batch);
+        if (!status.ok()) {
+            std::cout << "  FAIL open " << file_name << ": batch " << batches.size() + 1 << ": " << status.message()
+                      << "\n";
+            return false;
+        }
+        if (!batch) break;
+        batches.push_back(std::move(batch));
+    }
+    const auto schema = reader->schema();
+    reader.reset();  // releases the plugin's stream, as Apply does before using the data
+    auto table = arrow::Table::FromRecordBatches(schema, batches);
+    if (!table.ok()) {
+        std::cout << "  FAIL open " << file_name << ": " << table.status().message() << "\n";
+        return false;
+    }
+    if (const auto valid = (*table)->ValidateFull(); !valid.ok()) {
+        std::cout << "  FAIL open " << file_name << ": the data is not valid Arrow: " << valid.message() << "\n";
+        return false;
+    }
+    std::string columns;
+    for (const auto& field : schema->fields())
+        columns += (columns.empty() ? "" : ", ") + field->name() + " (" + field->type()->ToString() + ")";
+    std::cout << "  ok   open " << file_name << " as " << chosen->info.format_name << ": " << (*table)->num_rows()
+              << " rows, " << (*table)->num_columns() << " columns in " << batches.size()
+              << (batches.size() == 1 ? " batch" : " batches") << "\n";
+    std::cout << "         columns: " << columns << "\n";
+    return RunAnalytics(plugin_id, file_name, *table);
+}
+
+bool CheckFolder(const fs::path& folder, const std::vector<fs::path>& files) {
     std::cout << folder.string() << "\n";
     cyxwiz::plugin::PluginManifest manifest;
     std::string error;
@@ -147,6 +303,7 @@ bool CheckFolder(const fs::path& folder) {
         std::cout << "  FAIL the plugin registered no nodes, dataset formats or analytics\n";
         ok = false;
     }
+    for (const auto& file : files) ok = OpenThrough(manifest.id, file) && ok;
     manager.UnloadPlugin(manifest.id);
     return ok;
 }
@@ -154,12 +311,26 @@ bool CheckFolder(const fs::path& folder) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cout << "usage: cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]\n";
+    std::vector<fs::path> folders;
+    std::vector<fs::path> files;
+    for (int i = 1; i < argc; ++i) {
+        const std::string argument = argv[i];
+        if (argument == "--open" && i + 1 < argc) {
+            files.push_back(fs::absolute(argv[++i]));
+        } else if (argument.rfind("--", 0) == 0) {
+            folders.clear();
+            break;
+        } else {
+            folders.push_back(fs::absolute(argument));
+        }
+    }
+    if (folders.empty()) {
+        std::cout << "usage: cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]\n"
+                     "  --open <file>  read the file through the plugin's dataset format and run its analytics\n";
         return 2;
     }
     bool ok = true;
-    for (int i = 1; i < argc; ++i) ok = CheckFolder(fs::absolute(argv[i])) && ok;
+    for (const auto& folder : folders) ok = CheckFolder(folder, files) && ok;
     std::cout << (ok ? "cyxwiz-plugin-check: all plugins pass\n" : "cyxwiz-plugin-check: FAILED\n");
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -7509,6 +7509,13 @@ add_test(NAME plugin_check_permissions
                  -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/activation_nodes
                  -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_permissions
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_permissions.cmake)
+# --open reads files through the data plugin example and runs its analytic
+# (TOFIX181; needs the data_formats example built, as the ALL build does).
+add_test(NAME plugin_check_open
+         COMMAND ${CMAKE_COMMAND} -DCHECK=$<TARGET_FILE:cyxwiz-plugin-check>
+                 -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/data_formats
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_open
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_open.cmake)
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)

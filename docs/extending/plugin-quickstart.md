@@ -269,7 +269,9 @@ cyxwiz-plugin-check: all plugins pass
 | `FAIL the plugin registered no nodes, dataset formats or analytics` | The check expects at least one of them |
 
 The exit code is 0 when every folder passes, 1 otherwise, 2 without a
-folder.
+folder. For a plugin with dataset formats, `--open <file>` before the
+folder also reads that file through the format and runs the plugin's
+analytics on it ([data plugin guide](data-plugin-guide.md#7-test-and-debug)).
 
 ## 4. Load it in the Engine
 

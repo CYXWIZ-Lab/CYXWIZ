@@ -422,7 +422,7 @@ plugin_sdk --prefix <folder>` installs the SDK.
 ## 12. `cyxwiz-plugin-check`
 
 ```
-cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
+cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]
 ```
 
 The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). Start it
@@ -454,8 +454,16 @@ For each folder it:
    ...*, *ok analytic ...*), prints *FAIL not added: &lt;reason&gt;* for each
    node, format or analytic the Engine refused, and *FAIL the plugin
    registered no nodes, dataset formats or analytics* when there is none;
-7. unloads the plugin.
+7. for each `--open <file>`, when the plugin adds a dataset format: picks
+   the format as Data Input does (extension, then `CanLoad`), reads every
+   batch, validates the table, prints *ok open &lt;file&gt; as &lt;format&gt;:
+   &lt;rows&gt; rows, &lt;columns&gt; columns in &lt;n&gt; batches* and the column
+   types, then runs each analytic on the columns it reads and prints its
+   answer (*ok analytic &lt;name&gt; on &lt;file&gt; (&lt;columns&gt;): ...*), or a
+   *FAIL open ...* / *FAIL analytic ...* line with the reason
+   ([data plugin guide](data-plugin-guide.md#7-test-and-debug));
+8. unloads the plugin.
 
 The last line is *cyxwiz-plugin-check: all plugins pass* or
-*cyxwiz-plugin-check: FAILED*. Exit code 0 when every folder passes, 1
-otherwise, 2 for no arguments. The Engine's log lines are printed too.
+*cyxwiz-plugin-check: FAILED*. Exit code 0 when every folder and file
+passes, 1 otherwise, 2 for no folder or an unknown option. The Engine's log lines are printed too.
