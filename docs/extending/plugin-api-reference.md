@@ -366,7 +366,7 @@ returned, then frees its library. Data already read stays readable.
 | Type | Members |
 |---|---|
 | `PluginVersion` | `major`, `minor`, `patch`; `Parse("1.2.0")`, `ToString()`, `IsCompatibleWith(engine_api)`, comparisons |
-| `PLUGIN_API_VERSION_MAJOR`, `_MINOR`, `_PATCH` | 1, 2, 0 |
+| `PLUGIN_API_VERSION_MAJOR`, `_MINOR`, `_PATCH` | 1, 3, 0 |
 | `PluginPermission`, `PluginPermissionFlags` | The permission bits; `HasPermission(flags, p)`, `ParsePermissions`, `PermissionsToStrings` |
 | `PluginCapability`, `PluginCapabilityFlags` | The capability bits |
 | `PluginState` | `Unloaded`, `Loaded`, `Initialized`, `Active`, `Failed`, `Disabled`; `PluginStateToString` |
