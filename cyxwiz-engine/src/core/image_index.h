@@ -7,7 +7,8 @@
 // (DataRegistry::ImageIndexName).
 //
 // Columns: path, file, label (class index), label_name, width, height,
-// channels, bytes, readable.
+// channels, bytes, readable. AddImageQualityColumns appends blur,
+// brightness, contrast, verdict and duplicate_of from a measured analysis.
 
 #include "data_registry.h"
 #include "prepared_image_set.h"
@@ -24,6 +25,9 @@ class Table;
 }
 
 namespace cyxwiz {
+
+struct ImageQualityAnalysis;
+struct ImageQualityVerdict;
 
 // What an image file's header says, as the Engine's decode (OpenCV
 // IMREAD_UNCHANGED) sees the file: the stored size (EXIF orientation is not
@@ -53,5 +57,12 @@ std::shared_ptr<arrow::Table> BuildImageIndex(const ImageSetListing& listing,
                                               const std::vector<std::string>& label_names,
                                               const std::function<void(size_t, size_t)>& progress = {},
                                               const std::atomic<bool>* cancel = nullptr, int threads = 0);
+
+// The index with the quality columns, matched by path; rows the analysis
+// does not hold get nulls. verdict is "" for an image that passes, else its
+// reasons ("blurry, low contrast"); duplicate_of the kept image's file name.
+std::shared_ptr<arrow::Table> AddImageQualityColumns(const std::shared_ptr<arrow::Table>& index,
+                                                     const ImageQualityAnalysis& analysis,
+                                                     const ImageQualityVerdict& verdict);
 
 }  // namespace cyxwiz

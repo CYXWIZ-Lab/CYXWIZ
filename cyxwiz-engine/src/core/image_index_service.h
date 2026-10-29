@@ -5,6 +5,7 @@
 // (TOFIX178 1.3e). Training never waits for it.
 
 #include "data_registry.h"
+#include "image_quality_analysis.h"
 
 #include <cstddef>
 #include <string>
@@ -26,6 +27,11 @@ void BuildImageIndexInBackground(const std::string& dataset, const DataRegistry:
                                  const std::vector<std::string>& label_names = {});
 
 ImageIndexStatus GetImageIndexStatus(const std::string& dataset);
+
+// A measured quality analysis for `dataset`: its index gets the quality
+// columns now and after every rebuild (renamed classes).
+void AttachImageQuality(const std::string& dataset, std::shared_ptr<const ImageQualityAnalysis> analysis,
+                        const ImageQualityVerdict& verdict);
 
 // New class names for a loaded image dataset: the registry entry takes them
 // and the index is rebuilt with them (label_name). False when not loaded.

@@ -143,6 +143,51 @@ int main() {
     stats.stats_error = "The images could not be prepared: disk full";
     Check(Build(stats).stats_note == "The images could not be prepared: disk full", "an error shows");
 
+    // Quality: looking, not measured, measuring, then the cats vs dogs figures
+    // (the Engine's formulas at 64 x 64 with the default checks, 2026-10-29).
+    Input q;
+    q.class_names = {"cat", "dog"};
+    q.labels.assign(25000, 0);
+    q.widths.assign(25000, 400);
+    q.heights.assign(25000, 400);
+    q.channels.assign(25000, 3);
+    q.bytes.assign(25000, 20000);
+    q.resize_width = q.resize_height = 64;
+    View qv = Build(q);
+    Check(qv.quality_note == "Looking for an earlier measurement..." && !qv.can_measure_quality, "looking");
+    q.quality_step = Input::QualityStep::NotMeasured;
+    qv = Build(q);
+    Check(qv.can_measure_quality && qv.quality_button == "Measure quality" && qv.quality_note.rfind("Not measured yet.", 0) == 0,
+          "not measured");
+    q.quality_step = Input::QualityStep::Measuring;
+    q.quality_done = 9216;
+    q.quality_total = 25000;
+    qv = Build(q);
+    Check(!qv.can_measure_quality && qv.quality_note == "Measuring: 9,216 of 25,000 images", "measuring: " + qv.quality_note);
+    q.quality_step = Input::QualityStep::Measured;
+    q.quality_device = "CUDA - GeForce GTX 1050 Ti";
+    q.rejected = 2340;
+    q.blurry = 1691;
+    q.low_contrast = 843;
+    q.dark = 156;
+    q.bright = 30;
+    q.duplicates = 47;
+    q.multiple = 402;
+    q.class_total = {12500, 12500};
+    q.class_rejected = {1403, 937};
+    qv = Build(q);
+    Check(qv.quality_title == "Quality \xC2\xB7 measured at 64 \xC3\x97 64 on CUDA - GeForce GTX 1050 Ti, default checks",
+          "quality title: " + qv.quality_title);
+    Check(qv.quality_summary == "2,340 images fail a check (9.4%); 402 fail more than one.", "summary: " + qv.quality_summary);
+    Check(qv.quality.size() == 5 && qv.quality[0].reason == "blurry" && qv.quality[0].text == "1,691 \xC2\xB7 6.8%" &&
+              qv.quality[4].reason == "duplicate" && qv.quality[4].count == 47,
+          "reason rows: " + qv.quality[0].text);
+    Check(qv.quality_note.rfind("By class: cat \xC2\xB7 1,403 of 12,500, dog \xC2\xB7 937 of 12,500. Checks:", 0) == 0,
+          "by class: " + qv.quality_note);
+    Check(qv.can_measure_quality && qv.quality_button == "Measure again", "measure again");
+    q.quality_error = "The images could not be measured: no device";
+    Check(Build(q).quality_note == "The images could not be measured: no device", "a quality error shows");
+
     // Histogram bins stay round and few.
     const Histogram big = MakeHistogram({42, 447, 1050});
     Check(big.edges.size() == 12 && big.edges[1] == 100 && big.counts[10] == 1, "bins of 100 up to 1100");

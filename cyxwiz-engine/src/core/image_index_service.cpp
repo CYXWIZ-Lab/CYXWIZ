@@ -1,5 +1,6 @@
 #include "image_index_service.h"
 
+#include "arrow_dataset.h"
 #include "async_task_manager.h"
 #include "image_index.h"
 #include "prepared_image_set.h"
@@ -26,6 +27,24 @@ struct Build {
 std::mutex g_mutex;
 std::map<std::string, Build> g_builds;
 uint64_t g_generation = 0;
+
+struct Quality {
+    std::shared_ptr<const ImageQualityAnalysis> analysis;
+    ImageQualityVerdict verdict;
+};
+std::map<std::string, Quality> g_quality;  // by dataset
+
+// The index with the dataset's measured quality, when there is one.
+std::shared_ptr<arrow::Table> WithQuality(const std::string& dataset, std::shared_ptr<arrow::Table> table) {
+    Quality quality;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const auto it = g_quality.find(dataset);
+        if (it == g_quality.end()) return table;
+        quality = it->second;
+    }
+    return AddImageQualityColumns(table, *quality.analysis, quality.verdict);
+}
 
 // Updates the status when this build is still the current one.
 template <typename F>
@@ -78,6 +97,7 @@ void BuildImageIndexInBackground(const std::string& dataset, const DataRegistry:
             }
             // Register only while this build is current and the images are still loaded.
             if (!Current(dataset, generation) || !DataRegistry::Instance().GetImageDatasetEntry(dataset)) return;
+            table = WithQuality(dataset, table);
             DataRegistry::Instance().RegisterArrowTable(table, DataRegistry::ImageIndexName(dataset));
             Update(dataset, generation, [](ImageIndexStatus& s) { s.state = ImageIndexStatus::State::Ready; });
             const double seconds =
@@ -94,6 +114,20 @@ void BuildImageIndexInBackground(const std::string& dataset, const DataRegistry:
                 s.error = error;
             });
         });
+}
+
+void AttachImageQuality(const std::string& dataset, std::shared_ptr<const ImageQualityAnalysis> analysis,
+                        const ImageQualityVerdict& verdict) {
+    if (!analysis) return;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_quality[dataset] = {std::move(analysis), verdict};
+    }
+    auto& registry = DataRegistry::Instance();
+    const std::string name = DataRegistry::ImageIndexName(dataset);
+    const auto index = registry.GetArrowDataset(name);
+    if (!index) return;  // the build in progress adds them
+    registry.RegisterArrowTable(WithQuality(dataset, index->GetArrowTable()), name);
 }
 
 bool RenameImageClasses(const std::string& dataset, const std::vector<std::string>& display_names) {

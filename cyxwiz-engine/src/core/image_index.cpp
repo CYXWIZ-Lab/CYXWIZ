@@ -1,5 +1,7 @@
 #include "image_index.h"
 
+#include "image_quality_analysis.h"
+
 #include <arrow/api.h>
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
@@ -8,6 +10,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -97,6 +100,28 @@ ImageHeader HeaderByDecoding(const std::string& path) {
     h.height = image.rows;
     h.channels = image.channels();
     return h;
+}
+
+const char* ReasonText(uint32_t bit) {
+    switch (bit) {
+        case image::kQualityBlurry: return "blurry";
+        case image::kQualityDark: return "dark";
+        case image::kQualityBright: return "bright";
+        case image::kQualityLowContrast: return "low contrast";
+        case image::kQualityDuplicate: return "duplicate";
+        default: return "";
+    }
+}
+
+std::string VerdictText(uint32_t reasons) {
+    std::string out;
+    for (uint32_t bit : {image::kQualityBlurry, image::kQualityLowContrast, image::kQualityDark, image::kQualityBright,
+                         image::kQualityDuplicate}) {
+        if (!(reasons & bit)) continue;
+        if (!out.empty()) out += ", ";
+        out += ReasonText(bit);
+    }
+    return out;
 }
 
 template <typename Builder, typename Value>
@@ -240,6 +265,58 @@ std::shared_ptr<arrow::Table> BuildImageIndex(const ImageSetListing& listing,
                                  arrow::field("channels", arrow::int32()), arrow::field("bytes", arrow::int64()),
                                  arrow::field("readable", arrow::boolean())});
     return arrow::Table::Make(schema, columns);
+}
+
+std::shared_ptr<arrow::Table> AddImageQualityColumns(const std::shared_ptr<arrow::Table>& index,
+                                                     const ImageQualityAnalysis& analysis,
+                                                     const ImageQualityVerdict& verdict) {
+    if (!index) return nullptr;
+    std::map<std::string, size_t> measured;
+    for (size_t i = 0; i < analysis.files.size(); ++i) measured.emplace(analysis.files[i], i);
+
+    const auto combined = index->CombineChunks().ValueOrDie();
+    const auto path_column = combined->GetColumnByName("path");
+    if (!path_column) return nullptr;
+    const auto paths = path_column->num_chunks() > 0
+                           ? std::static_pointer_cast<arrow::StringArray>(path_column->chunk(0))
+                           : nullptr;
+    arrow::FloatBuilder blur_b, bright_b, contrast_b;
+    arrow::StringBuilder verdict_b, dup_b;
+    for (int64_t r = 0; paths && r < paths->length(); ++r) {
+        const auto it = measured.find(paths->GetString(r));
+        const bool has = it != measured.end() && it->second < analysis.metrics.size();
+        const size_t i = has ? it->second : 0;
+        AppendOrNull(blur_b, has, has ? analysis.metrics[i].blur : 0.0f);
+        AppendOrNull(bright_b, has, has ? analysis.metrics[i].brightness : 0.0f);
+        AppendOrNull(contrast_b, has, has ? analysis.metrics[i].contrast : 0.0f);
+        const bool judged = has && i < verdict.reasons.size();
+        AppendOrNull(verdict_b, judged, judged ? VerdictText(verdict.reasons[i]) : std::string());
+        const bool dup = judged && i < verdict.duplicate_of.size() && verdict.duplicate_of[i] >= 0 &&
+                         static_cast<size_t>(verdict.duplicate_of[i]) < analysis.files.size();
+        AppendOrNull(dup_b, dup, dup ? fs::path(analysis.files[verdict.duplicate_of[i]]).filename().string() : std::string());
+    }
+    std::shared_ptr<arrow::Array> blur, bright, contrast, verdict_a, dup_a;
+    (void)blur_b.Finish(&blur);
+    (void)bright_b.Finish(&bright);
+    (void)contrast_b.Finish(&contrast);
+    (void)verdict_b.Finish(&verdict_a);
+    (void)dup_b.Finish(&dup_a);
+
+    auto table = index;
+    for (const char* name : {"blur", "brightness", "contrast", "verdict", "duplicate_of"}) {
+        const int at = table->schema()->GetFieldIndex(name);
+        if (at >= 0) table = table->RemoveColumn(at).ValueOrDie();
+    }
+    const auto add = [&](const char* name, const std::shared_ptr<arrow::DataType>& type, const std::shared_ptr<arrow::Array>& a) {
+        table = table->AddColumn(table->num_columns(), arrow::field(name, type), std::make_shared<arrow::ChunkedArray>(a))
+                    .ValueOrDie();
+    };
+    add("blur", arrow::float32(), blur);
+    add("brightness", arrow::float32(), bright);
+    add("contrast", arrow::float32(), contrast);
+    add("verdict", arrow::utf8(), verdict_a);
+    add("duplicate_of", arrow::utf8(), dup_a);
+    return table;
 }
 
 }  // namespace cyxwiz

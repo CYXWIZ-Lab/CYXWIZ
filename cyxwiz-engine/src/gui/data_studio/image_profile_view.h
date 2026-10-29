@@ -32,6 +32,9 @@ private:
     void Refresh();       // the index rows, when the index changed
     void ListSets();      // the prepared sets, on a task
     void MeasureStats();  // prepares the set when needed, then its channel statistics, on a task
+    void MeasureQuality();  // the Quality Analyzer's measurements at the Resize size, on a task
+    void ShowQuality(const std::shared_ptr<const struct ImageQualityAnalysis>& analysis,
+                     const struct ImageQualityVerdict& verdict);
     std::string GraphIdentity() const;
 
     std::string dataset_;
@@ -52,6 +55,12 @@ private:
         std::string device;
     };
     std::shared_ptr<Progress> stats_progress_ = std::make_shared<Progress>();
+    uint64_t quality_task_ = 0;
+    struct QualityProgress {
+        std::mutex mutex;
+        size_t done = 0, total = 0;
+    };
+    std::shared_ptr<QualityProgress> quality_progress_ = std::make_shared<QualityProgress>();
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

@@ -1,7 +1,8 @@
 // The image index table (TOFIX178 1.3e): header reads agree with a decode,
-// rows follow the dataset, display names, cancel.
+// rows follow the dataset, display names, cancel, quality columns.
 
 #include "../src/core/image_index.h"
+#include "../src/core/image_quality_analysis.h"
 #include "../src/core/prepared_image_set.h"
 
 #include <arrow/api.h>
@@ -152,6 +153,27 @@ int main() {
           "no suggestion when two classes share the prefix");
     Check(SuggestClassNames({"001.png"}, {0}, {"0", "1"}) == std::vector<std::string>({"", ""}),
           "no prefix, no images: no suggestion");
+
+    // Quality columns from a measured analysis (d0 and c0 measured, c1 a duplicate of c0).
+    ImageQualityAnalysis analysis;
+    analysis.files = {listing.files[0], listing.files[1], listing.files[3]};
+    analysis.metrics.resize(3);
+    analysis.metrics[0] = {812.5f, 120.0f, 0.2f, 1};
+    analysis.metrics[1] = {300.0f, 40.0f, 0.05f, 1};
+    analysis.metrics[2] = {950.0f, 128.0f, 0.3f, 7};
+    ImageQualityVerdict verdict;
+    verdict.reasons = {0u, image::kQualityBlurry | image::kQualityDark | image::kQualityLowContrast | image::kQualityDuplicate, 0u};
+    verdict.duplicate_of = {-1, 0, -1};
+    const auto with_quality = AddImageQualityColumns(index, analysis, verdict);
+    Check(with_quality->num_columns() == 14, "five quality columns added");
+    Check(Strings(with_quality, "verdict") == std::vector<std::string>({"", "blurry, low contrast, dark, duplicate", "<null>", ""}),
+          "verdict per image; null when not measured");
+    Check(Strings(with_quality, "duplicate_of") == std::vector<std::string>({"<null>", "c0.jpg", "<null>", "<null>"}),
+          "duplicate_of names the kept image");
+    const auto q = with_quality->CombineChunks().ValueOrDie();
+    const auto blur = std::static_pointer_cast<arrow::FloatArray>(q->GetColumnByName("blur")->chunk(0));
+    Check(blur->Value(0) == 812.5f && blur->Value(1) == 300.0f && blur->IsNull(2) && blur->Value(3) == 950.0f, "blur per image");
+    Check(AddImageQualityColumns(with_quality, analysis, verdict)->num_columns() == 14, "measuring again replaces the columns");
 
     fs::remove_all(root, ec);
     std::cout << "test_image_index: all checks passed\n";

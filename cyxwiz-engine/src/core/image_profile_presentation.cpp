@@ -230,6 +230,53 @@ View Build(const Input& in) {
         }
     }
 
+    // Quality.
+    using QS = Input::QualityStep;
+    v.quality_title = "Quality";
+    v.can_measure_quality = in.resize_width > 0 && (in.quality_step == QS::NotMeasured || in.quality_step == QS::Measured);
+    v.quality_button = in.quality_step == QS::Measured ? "Measure again" : "Measure quality";
+    if (in.resize_width <= 0) {
+        v.quality_note = "Needs the graph's Resize: quality is measured on the images as training reads them.";
+    } else if (!in.quality_error.empty()) {
+        v.quality_note = in.quality_error;
+    } else if (in.quality_step == QS::Looking) {
+        v.quality_note = "Looking for an earlier measurement...";
+    } else if (in.quality_step == QS::NotMeasured) {
+        v.quality_note = "Not measured yet. Measures blur, brightness, contrast and near duplicates of every image at " +
+                         set_size + ", as the Quality Analyzer does. Training is not changed: only a Quality node on the "
+                         "canvas leaves images out.";
+    } else if (in.quality_step == QS::Measuring) {
+        v.quality_note = in.quality_total ? "Measuring: " + Thousands(in.quality_done) + " of " + Thousands(in.quality_total) + " images"
+                                          : "Measuring...";
+    } else {
+        v.quality_title += std::string(kDot) + "measured at " + set_size +
+                           (in.quality_device.empty() ? std::string() : " on " + in.quality_device) + ", default checks";
+        char pct[32];
+        std::snprintf(pct, sizeof(pct), "%.1f%%", total ? 100.0 * static_cast<double>(in.rejected) / static_cast<double>(total) : 0.0);
+        v.quality_summary = Thousands(in.rejected) + (in.rejected == 1 ? " image fails" : " images fail") + " a check (" + pct +
+                            ")" + (in.multiple ? "; " + Thousands(in.multiple) + " fail more than one." : ".");
+        const std::pair<const char*, size_t> reasons[] = {{"blurry", in.blurry}, {"low contrast", in.low_contrast},
+                                                          {"dark", in.dark}, {"bright", in.bright},
+                                                          {"duplicate", in.duplicates}};
+        for (const auto& [reason, count] : reasons) {
+            QualityRow row;
+            row.reason = reason;
+            row.count = count;
+            std::snprintf(pct, sizeof(pct), "%.1f%%", total ? 100.0 * static_cast<double>(count) / static_cast<double>(total) : 0.0);
+            row.text = Thousands(count) + kDot + pct;
+            row.of_rejected = in.rejected ? static_cast<float>(count) / static_cast<float>(in.rejected) : 0.0f;
+            v.quality.push_back(std::move(row));
+        }
+        std::string by_class;
+        for (size_t k = 0; k < in.class_rejected.size() && k < in.class_names.size(); ++k) {
+            by_class += (by_class.empty() ? "By class: " : ", ") + in.class_names[k] + kDot + Thousands(in.class_rejected[k]);
+            if (k < in.class_total.size()) by_class += " of " + Thousands(in.class_total[k]);
+        }
+        v.quality_note = (by_class.empty() ? std::string() : by_class + ". ") +
+                         "Checks: blur at least 700, brightness 50 to 220, contrast at least 0.12, duplicates within 4 bits. "
+                         "Training leaves images out only through a Quality node on the canvas.";
+    }
+
     if (!in.sets_listed) v.sets_note = "Reading cache/images...";
     else if (in.sets.empty()) v.sets_note = "None yet: training decodes the images once at the Resize size and keeps them here.";
     else v.sets_note = "Kept 30 days, at most 10 GB in all. A new Resize size or fixed transform makes a new set the first time training starts.";

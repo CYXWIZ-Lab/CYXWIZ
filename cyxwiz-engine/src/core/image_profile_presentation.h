@@ -43,6 +43,14 @@ struct Input {
     std::string stats_error;
     bool normalize = false;          // the graph has a Normalize node
     float norm_mean = 0.0f, norm_std = 1.0f;
+    // Quality: the Quality Analyzer's measurements at the Resize size, judged
+    // with the default checks.
+    enum class QualityStep { Looking, NotMeasured, Measuring, Measured } quality_step = QualityStep::Looking;
+    size_t quality_done = 0, quality_total = 0;
+    std::string quality_device;      // where it was measured
+    std::string quality_error;
+    size_t rejected = 0, blurry = 0, dark = 0, bright = 0, low_contrast = 0, duplicates = 0, multiple = 0;
+    std::vector<size_t> class_total, class_rejected;  // by class index
 };
 
 struct Tile {
@@ -73,6 +81,13 @@ struct StatsRow {
     std::vector<std::string> values; // per channel
 };
 
+struct QualityRow {
+    std::string reason;              // "blurry", "low contrast", ...
+    size_t count = 0;
+    std::string text;                // "1,691 \xC2\xB7 6.8%"
+    float of_rejected = 0.0f;        // the bar: share of the images that fail
+};
+
 struct View {
     std::vector<Tile> tiles;
     std::string classes_title;       // "Classes · from cat_dog.csv"
@@ -88,6 +103,13 @@ struct View {
     std::vector<StatsRow> stats;     // empty until measured
     std::string stats_note;          // what Normalize makes of them, or what Measure does
     bool can_measure = false;        // the graph has a Resize and nothing runs
+    // Quality.
+    std::string quality_title;       // "Quality", then where and with what it was measured
+    std::string quality_summary;     // "2,340 images fail a check (9.4%); 402 fail more than one."
+    std::vector<QualityRow> quality;
+    std::string quality_note;        // by class and the checks, or what Measure does
+    bool can_measure_quality = false;
+    std::string quality_button;      // "Measure quality" / "Measure again"
 };
 
 View Build(const Input& in);

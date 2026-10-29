@@ -34,7 +34,7 @@ std::shared_ptr<arrow::Array> Chunk(const std::shared_ptr<arrow::Table>& t, cons
 
 // A tile: the thumbnail (or its placeholder), the class tag, hover and
 // selection washes. Returns true when clicked.
-bool Tile(gui::ImageThumbnails& thumbs, const ig::Row& row, const std::string& tag, bool selected) {
+bool Tile(gui::ImageThumbnails& thumbs, const ig::Row& row, const std::string& tag, const std::string& flag, bool selected) {
     const ui::Tokens& t = ui::CurrentTokens();
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton("##tile", ImVec2(kTile, kTile));
@@ -60,6 +60,14 @@ bool Tile(gui::ImageThumbnails& thumbs, const ig::Row& row, const std::string& t
     dl->AddRectFilled(ImVec2(tag_at.x - 3.0f, tag_at.y - 1.0f), ImVec2(tag_at.x + size.x + 3.0f, tag_at.y + size.y + 1.0f),
                       ui::ToU32(wash), 3.0f);
     dl->AddText(tag_at, ui::ToU32(t.text), tag.c_str());
+    // A failed check, top right.
+    if (!flag.empty()) {
+        const ImVec2 fsize = ImGui::CalcTextSize(flag.c_str());
+        const ImVec2 flag_at(end.x - fsize.x - 7.0f, at.y + 5.0f);
+        dl->AddRectFilled(ImVec2(flag_at.x - 3.0f, flag_at.y - 1.0f), ImVec2(flag_at.x + fsize.x + 3.0f, flag_at.y + fsize.y + 1.0f),
+                          ui::ToU32(wash), 3.0f);
+        dl->AddText(flag_at, ui::ToU32(t.caution), flag.c_str());
+    }
     if (selected) dl->AddRectFilled(at, end, ui::ToU32(t.selection), 4.0f);
     else if (hovered) dl->AddRectFilled(at, end, ui::ToU32(t.hover), 4.0f);
     if (hovered) ImGui::SetTooltip("%s", row.file.c_str());
@@ -206,6 +214,13 @@ void ImageGalleryView::Refresh() {
     const auto bytes = std::static_pointer_cast<arrow::Int64Array>(Chunk(combined, "bytes"));
     const auto readable = std::static_pointer_cast<arrow::BooleanArray>(Chunk(combined, "readable"));
     if (!path || !file || !label || !width || !height || !channels || !bytes || !readable) return;
+    // Quality columns, when measured.
+    const auto blur = std::static_pointer_cast<arrow::FloatArray>(Chunk(combined, "blur"));
+    const auto brightness = std::static_pointer_cast<arrow::FloatArray>(Chunk(combined, "brightness"));
+    const auto contrast = std::static_pointer_cast<arrow::FloatArray>(Chunk(combined, "contrast"));
+    const auto verdict = std::static_pointer_cast<arrow::StringArray>(Chunk(combined, "verdict"));
+    const auto duplicate_of = std::static_pointer_cast<arrow::StringArray>(Chunk(combined, "duplicate_of"));
+    const bool quality = blur && brightness && contrast && verdict && duplicate_of;
     input_.rows.reserve(static_cast<size_t>(path->length()));
     for (int64_t i = 0; i < path->length(); ++i) {
         ig::Row row;
@@ -217,6 +232,14 @@ void ImageGalleryView::Refresh() {
         row.channels = channels->IsNull(i) ? -1 : channels->Value(i);
         row.bytes = bytes->Value(i);
         row.readable = readable->Value(i);
+        if (quality && !verdict->IsNull(i)) {
+            row.measured = true;
+            row.blur = blur->Value(i);
+            row.brightness = brightness->Value(i);
+            row.contrast = contrast->Value(i);
+            row.verdict = verdict->GetString(i);
+            if (!duplicate_of->IsNull(i)) row.duplicate_of = duplicate_of->GetString(i);
+        }
         input_.rows.push_back(std::move(row));
     }
 }
@@ -259,12 +282,13 @@ void ImageGalleryView::Render() {
             input_.page = 0;
         }
     }
-    static const char* kSorts[] = {"Dataset order", "Smallest", "Largest"};
+    static const char* kSorts[] = {"Dataset order", "Smallest", "Largest", "Blurriest"};
+    if (!view.quality && input_.sort == ig::Sort::Blurriest) input_.sort = ig::Sort::DatasetOrder;
     int sort = static_cast<int>(input_.sort);
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Sort");
     ImGui::SameLine();
-    if (ui::SegmentedControl("##gallery_sort", kSorts, 3, &sort)) {
+    if (ui::SegmentedControl("##gallery_sort", kSorts, view.quality ? 4 : 3, &sort)) {
         input_.sort = static_cast<ig::Sort>(sort);
         input_.page = 0;
     }
@@ -286,7 +310,7 @@ void ImageGalleryView::Render() {
         const size_t i = view.shown[k];
         if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine();
         ImGui::PushID(static_cast<int>(i));
-        if (Tile(tiles_, input_.rows[i], view.tags[k], static_cast<long long>(i) == view.selected))
+        if (Tile(tiles_, input_.rows[i], view.tags[k], view.flags[k], static_cast<long long>(i) == view.selected))
             input_.selected = static_cast<long long>(i);
         ImGui::PopID();
     }
@@ -312,7 +336,9 @@ void ImageGalleryView::Render() {
         }
         ImGui::TextUnformatted(view.detail_title.c_str());
         if (ImGui::BeginTable("##image_detail", 2, ImGuiTableFlags_SizingStretchProp, ImVec2(kDetailWidth, 0.0f))) {
-            ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Original").x + 8.0f);
+            float label_w = 0.0f;  // the longest label ("Brightness")
+            for (const auto& item : view.detail) label_w = std::max(label_w, ImGui::CalcTextSize(item.first.c_str()).x);
+            ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthFixed, label_w + 8.0f);
             ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
             for (const auto& [what, value] : view.detail) {
                 ImGui::TableNextRow();
@@ -357,7 +383,7 @@ void ImageGalleryView::RenderStrip(size_t count) {
     for (size_t k = 0; k < view.shown.size(); ++k) {
         if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine();
         ImGui::PushID(static_cast<int>(view.shown[k]));
-        Tile(tiles_, input_.rows[view.shown[k]], view.tags[k], false);
+        Tile(tiles_, input_.rows[view.shown[k]], view.tags[k], view.flags[k], false);
         ImGui::PopID();
     }
 }

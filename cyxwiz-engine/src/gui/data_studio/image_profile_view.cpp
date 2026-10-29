@@ -93,6 +93,24 @@ ImageProfileView::ImageProfileView() = default;
 ImageProfileView::~ImageProfileView() {
     if (sets_task_) AsyncTaskManager::Instance().Cancel(sets_task_);
     if (stats_task_) AsyncTaskManager::Instance().Cancel(stats_task_);
+    if (quality_task_) AsyncTaskManager::Instance().Cancel(quality_task_);
+}
+
+// The verdict's counts into the model, and the quality columns onto the index.
+void ImageProfileView::ShowQuality(const std::shared_ptr<const ImageQualityAnalysis>& analysis,
+                                   const ImageQualityVerdict& verdict) {
+    input_.quality_step = ip::Input::QualityStep::Measured;
+    input_.quality_device = analysis->device;
+    input_.rejected = verdict.rejected;
+    input_.blurry = verdict.blurry;
+    input_.dark = verdict.dark;
+    input_.bright = verdict.bright;
+    input_.low_contrast = verdict.low_contrast;
+    input_.duplicates = verdict.duplicates;
+    input_.multiple = verdict.multiple;
+    input_.class_total = verdict.class_total;
+    input_.class_rejected = verdict.class_rejected;
+    AttachImageQuality(dataset_, analysis, verdict);
 }
 
 void ImageProfileView::SetDataset(const std::string& dataset) {
@@ -162,22 +180,32 @@ void ImageProfileView::ListSets() {
     input_.sets_listed = false;
     view_ = ip::Build(input_);
     auto sets = std::make_shared<std::vector<ip::PreparedSet>>();
+    auto quality = std::make_shared<std::shared_ptr<const ImageQualityAnalysis>>();
+    auto verdict = std::make_shared<ImageQualityVerdict>();
     std::weak_ptr<int> alive = alive_;
     const std::string dataset = dataset_;
+    if (input_.quality_step != ip::Input::QualityStep::Measuring) input_.quality_step = ip::Input::QualityStep::Looking;
     sets_task_ = AsyncTaskManager::Instance().RunAsync(
         "Prepared image sets " + dataset,
-        [entry, spec, fixed, sets](LambdaTask&) {
+        [entry, spec, fixed, sets, quality, verdict](LambdaTask&) {
             const std::string in_use = spec.width > 0 ? PreparedImageSetKeyFor(entry, spec, fixed) : std::string();
             for (const auto& s : ListPreparedImageSets(entry))
                 sets->push_back({s.width, s.height, s.channels, s.mode, s.fixed, s.bytes, s.key == in_use});
+            if (spec.width <= 0) return;
+            *quality = LoadImageQualityAnalysis(ImageQualityKey(entry, spec.width, spec.height));
+            if (*quality) *verdict = JudgeImageQualityAnalysis(**quality, image::ImageQualityChecks{});
         },
         nullptr,
-        [this, alive, sets, dataset](bool success, const std::string&) {
+        [this, alive, sets, quality, verdict, dataset](bool success, const std::string&) {
             if (alive.expired() || dataset != dataset_) return;
             sets_task_ = 0;
             if (!success) return;
             input_.sets = *sets;
             input_.sets_listed = true;
+            if (input_.quality_step == ip::Input::QualityStep::Looking) {
+                if (*quality) ShowQuality(*quality, *verdict);
+                else input_.quality_step = ip::Input::QualityStep::NotMeasured;
+            }
             view_ = ip::Build(input_);
         },
         alive_);
@@ -248,6 +276,53 @@ void ImageProfileView::MeasureStats() {
         alive_);
 }
 
+void ImageProfileView::MeasureQuality() {
+    const DataRegistry::ImageDatasetEntry* found = DataRegistry::Instance().GetImageDatasetEntry(dataset_);
+    const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+    if (!found || !config) return;
+    const DataRegistry::ImageDatasetEntry entry = *found;
+    const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
+    auto progress = quality_progress_;
+    {
+        std::lock_guard<std::mutex> lock(progress->mutex);
+        progress->done = progress->total = 0;
+    }
+    input_.quality_step = ip::Input::QualityStep::Measuring;
+    input_.quality_error.clear();
+    view_ = ip::Build(input_);
+    auto analysis = std::make_shared<std::shared_ptr<const ImageQualityAnalysis>>();
+    auto verdict = std::make_shared<ImageQualityVerdict>();
+    auto error = std::make_shared<std::string>();
+    std::weak_ptr<int> alive = alive_;
+    quality_task_ = AsyncTaskManager::Instance().RunAsync(
+        "Image quality " + dataset_,
+        [entry, spec, progress, analysis, verdict, error](LambdaTask& task) {
+            std::atomic<bool> cancel{false};
+            auto measured = AnalyzeImageQuality(entry, spec.width, spec.height, [&](size_t done, size_t total) {
+                cancel = task.ShouldStop();
+                std::lock_guard<std::mutex> lock(progress->mutex);
+                progress->done = done;
+                progress->total = total;
+            }, &cancel);
+            if (!measured) return;  // cancelled
+            std::string why;
+            if (!SaveImageQualityAnalysis(*measured, &why)) *error = "Measured, but not saved: " + why;
+            *analysis = std::make_shared<const ImageQualityAnalysis>(std::move(*measured));
+            *verdict = JudgeImageQualityAnalysis(**analysis, image::ImageQualityChecks{});
+        },
+        nullptr,
+        [this, alive, analysis, verdict, error](bool success, const std::string& message) {
+            if (alive.expired()) return;
+            quality_task_ = 0;
+            if (*analysis) ShowQuality(*analysis, *verdict);
+            else input_.quality_step = ip::Input::QualityStep::NotMeasured;
+            if (!error->empty()) input_.quality_error = *error;
+            else if (!success) input_.quality_error = "The images could not be measured: " + message;
+            view_ = ip::Build(input_);
+        },
+        alive_);
+}
+
 void ImageProfileView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (dataset_.empty()) return;
@@ -264,6 +339,14 @@ void ImageProfileView::Render() {
         view_ = ip::Build(input_);
     }
     if (GraphIdentity() != graph_seen_ && !sets_task_) ListSets();
+    if (quality_task_) {
+        std::lock_guard<std::mutex> lock(quality_progress_->mutex);
+        if (quality_progress_->done != input_.quality_done || quality_progress_->total != input_.quality_total) {
+            input_.quality_done = quality_progress_->done;
+            input_.quality_total = quality_progress_->total;
+            view_ = ip::Build(input_);
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(stats_progress_->mutex);
         const Progress& p = *stats_progress_;
@@ -400,6 +483,35 @@ void ImageProfileView::Render() {
         ui::SecondaryButton(view_.stats.empty() ? "Measure" : "Measure again", view_.can_measure,
                             "The graph needs a Resize node"))
         MeasureStats();
+    ui::EndCard();
+
+    // Quality.
+    ui::BeginCard("image_quality");
+    ImGui::TextUnformatted(view_.quality_title.c_str());
+    if (!view_.quality_summary.empty()) ImGui::TextUnformatted(view_.quality_summary.c_str());
+    if (!view_.quality.empty() && ImGui::BeginTable("##quality", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("reason", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("low contrast").x + 12.0f);
+        ImGui::TableSetupColumn("bar", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("count", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("000,000 \xC2\xB7 100.0%").x);
+        for (const auto& row : view_.quality) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(row.reason.c_str());
+            ImGui::TableNextColumn();
+            ShareBar(row.of_rejected, ImGui::GetContentRegionAvail().x);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%s", row.text.c_str());
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    const bool quality_running = input_.quality_step == ip::Input::QualityStep::Measuring;
+    ImGui::TextColored(quality_running ? t.running : t.text_dim, "%s", view_.quality_note.c_str());
+    ImGui::PopTextWrapPos();
+    if (input_.quality_step == ip::Input::QualityStep::NotMeasured || input_.quality_step == ip::Input::QualityStep::Measured) {
+        if (ui::SecondaryButton(view_.quality_button.c_str(), view_.can_measure_quality, "The graph needs a Resize node"))
+            MeasureQuality();
+    }
     ui::EndCard();
 
     // Prepared sets.

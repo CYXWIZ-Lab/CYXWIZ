@@ -84,6 +84,45 @@ int main() {
     in.filter = "class:7";
     Check(Build(in).chips[0].on, "an unknown filter falls back to All");
 
+    // Quality measured: chips per reason that occurs, flags, Blurriest, details.
+    in.filter = "all";
+    in.selected = -1;
+    in.sort = Sort::DatasetOrder;
+    in.rows.pop_back();  // the unreadable one
+    const float blur[] = {812.5f, 300.0f, 950.0f, 650.0f, 1200.0f, 720.0f};
+    const char* verdicts[] = {"", "blurry, low contrast, duplicate", "", "blurry", "", "dark"};
+    for (size_t i = 0; i < in.rows.size(); ++i) {
+        in.rows[i].measured = true;
+        in.rows[i].blur = blur[i];
+        in.rows[i].brightness = 120.0f;
+        in.rows[i].contrast = 0.2f;
+        in.rows[i].verdict = verdicts[i];
+    }
+    in.rows[1].duplicate_of = "dog.11289.jpg";
+    v = Build(in);
+    Check(v.quality, "quality is measured");
+    std::vector<std::string> keys;
+    for (const auto& chip : v.chips) keys.push_back(chip.key + "=" + chip.count_text);
+    Check(keys == std::vector<std::string>({"all=6", "class:0=3", "class:1=3", "fails=3", "reason:blurry=2",
+                                            "reason:low contrast=1", "reason:dark=1", "reason:duplicate=1"}),
+          "quality chips");
+    Check(v.flags == std::vector<std::string>({"", "blurry +2", "", "blurry", "", "dark"}), "flags");
+    in.filter = "reason:blurry";
+    Check(Build(in).shown == std::vector<size_t>({1, 3}), "the blurry ones");
+    in.filter = "fails";
+    in.sort = Sort::Blurriest;
+    Check(Build(in).shown == std::vector<size_t>({1, 3, 5}), "failing ones, blurriest first");
+    in.selected = 1;
+    v = Build(in);
+    Check(v.detail.size() == 10 && v.detail[4].first == "Blur" && v.detail[4].second == "300" &&
+              v.detail[6].second == "0.20" && v.detail[7].second == "blurry, low contrast, duplicate" &&
+              v.detail[8].first == "Same as" && v.detail[8].second == "dog.11289.jpg" &&
+              v.detail[9].first == "Path",
+          "quality details");
+    in.filter = "all";
+    in.selected = 0;
+    Check(Build(in).detail[7].second == "passes the checks", "a passing image");
+
     in.rows.clear();
     v = Build(in);
     Check(v.shown.empty() && v.showing == "No image matches." && v.pages == 0, "no images");

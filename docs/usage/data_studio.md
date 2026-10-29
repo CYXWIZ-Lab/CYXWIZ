@@ -77,6 +77,11 @@ under its Data Input (*indexing* while it builds). Its columns:
 | bytes | the file size |
 | readable | false when the file cannot be read as an image |
 
+Once quality is measured (Profile > Quality) the index has five more columns:
+blur, brightness, contrast, verdict (empty when the image passes, else its
+reasons, *blurry, low contrast*) and duplicate_of (the file it repeats). They
+stay when the index is rebuilt (renamed classes).
+
 It is an ordinary table: Query (`SELECT label_name, COUNT(*) FROM
 "cat_dog_index" GROUP BY label_name`), the Explore views and the Table Viewer
 all work on it. It is dropped when the images are unloaded and rebuilt when
@@ -208,6 +213,16 @@ same. Nothing is decoded for it.
   spread 0.51, 0.50, 0.50*). **Measure** prepares the set first when training
   has not (17 s for the 25,000 cats vs dogs images); training then reuses it.
   The figures clear when the graph's image steps change.
+- **Quality**: the Quality Analyzer's measurements of every image at the Resize
+  size (blur, brightness, contrast, near duplicates), judged with the default
+  checks (blur at least 700, brightness 50 to 220, contrast at least 0.12,
+  duplicates within 4 bits): how many fail, a bar per reason, and the count per
+  class. **Measure quality** runs it on the ArrayFire device (40 s for the 25,000
+  cats vs dogs images here: 2,369 fail, 1,700 blurry, 864 low contrast, 157 dark,
+  30 bright, 48 duplicates) and saves it, so it is found again next time.
+  Nothing is left out of training: only a Quality node on the canvas does that.
+  Once measured, the index gets the quality columns and Images its quality
+  filters.
 - **Prepared sets**: the sets in cache/images made from this folder (size,
   resize mode, the transforms done once, size on disk), with the one this
   graph trains from marked *used by this graph*. Sets made before
@@ -260,11 +275,15 @@ under the details (Spotify: artist_popularity and artist_followers +0.64).
 For an image dataset (its Data Input in the rail), **Images** shows its
 thumbnails, a page at a time, in the order of its index table. The chips
 filter by class (*All*, *Class 0*, *Class 1*, or the class names) and show
-the unreadable files when there are any; **Sort** puts them in dataset
-order, smallest first or largest first (by pixel count, unreadable files
-last). Each tile has its class at the bottom left; hovering shows the file
+the unreadable files when there are any; once quality is measured, also
+*Fails a check* and one chip per reason (*blurry*, *low contrast*, *dark*,
+*bright*, *duplicate*), and tiles that fail carry their first reason at the
+top right (*blurry +1*). **Sort** puts them in dataset order, smallest first,
+largest first (by pixel count, unreadable files last) or, once measured,
+blurriest first. Each tile has its class at the bottom left; hovering shows the file
 name. Clicking a tile shows it larger with its row, label, original size and
-colour, size on disk and path, and the links **Show in folder** and **Open
+colour, size on disk and path (and, when measured, its blur, brightness,
+contrast, verdict and the image it duplicates), and the links **Show in folder** and **Open
 the index table** (Query on `<dataset>_index`). Thumbnails are read on two
 background threads, the ones on screen first.
 
