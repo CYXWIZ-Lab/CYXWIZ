@@ -1926,6 +1926,16 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularExternal(
                                             cache_directory);
     if (backend == TabularLoadBackend::Failed && load_status && load_status->empty())
         *load_status = "The converted file could not be read; check the selected columns";
+    if (backend != TabularLoadBackend::Failed) {
+        // The table came from `path`, not from its cache copy: Preview and
+        // the dialogs find it by the file the user chose.
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (const auto it = tabular_dataset_by_source_path_.find(NormalizeTabularSourcePath(cache_path));
+            it != tabular_dataset_by_source_path_.end()) {
+            const std::string loaded = it->second;
+            RememberTabularSourcePathUnlocked(loaded, path);
+        }
+    }
     return backend;
 }
 

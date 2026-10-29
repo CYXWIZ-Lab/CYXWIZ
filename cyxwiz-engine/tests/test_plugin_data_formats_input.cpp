@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -120,6 +121,8 @@ int main() {
         arff.string(), std::string("format=") + kFormat + "@" + kPluginId + "@1.0.0", cache);
     Check(fs::exists(cache_file), "the file was streamed into the Parquet cache at " + cache_file);
     const auto cached_at = fs::last_write_time(cache_file);
+    Check(registry.FindTabularDatasetBySourcePath(arff.string()) == std::optional<std::string>("iris"),
+          "the dataset is found by the file the user chose, not by its cache copy (Preview needs it)");
 
     backend = registry.LoadTabularExternal(kFormat, arff.string(), "iris_disk", true, {}, &status, cache);
     Check(backend == DataRegistry::TabularLoadBackend::DiskBacked, "force disk-backed keeps it on disk: " + status);
