@@ -3418,6 +3418,12 @@ add_executable(test_graph_compiler_deferred_nodes
     src/core/dataset_catalog_registry.cpp
 )
 target_link_libraries(test_graph_compiler_deferred_nodes PRIVATE cyxwiz-training-core)
+# main() keeps about 750 KB of compile results on the stack, and the node
+# registry is built inside the first Compile (two registration functions use
+# about 250 KB each): more than Windows' 1 MB default (0xC00000FD).
+if(MSVC)
+    target_link_options(test_graph_compiler_deferred_nodes PRIVATE /STACK:4194304)
+endif()
 
 target_include_directories(test_graph_compiler_deferred_nodes PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
