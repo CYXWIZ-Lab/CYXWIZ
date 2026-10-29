@@ -1613,14 +1613,34 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"degree", "int", "2", "Maximum polynomial degree", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::Normalize, NodeCategory::Preprocessing, "Normalize", ICON_FA_SCALE_BALANCED,
-        {"normalize", "scale", "mean", "standard deviation"}, 0, false,
-        "Normalize a batched feature tensor with fixed configured statistics", "", "",
-        {{"Input", PinType::Tensor, true, "Batched feature tensor to normalize"}},
-        {{"Output", PinType::Tensor, true, "Tensor centered by mean and scaled by standard deviation"}},
-        {{"mean", "float", "0.0", "Mean subtracted from each feature", {}, ""},
-         {"std", "float", "1.0", "Positive standard deviation used to scale each feature", {}, ">0"}},
-        NodeImplementationStatus::Implemented, 0});
+    {
+        // Statistics (TOFIX178 1.4): one pair for every value, or one per image channel.
+        ParameterDefinition statistics{"statistics", "enum", "same",
+                                       "same: one mean and std for every value (tables, audio, images); per_channel: "
+                                       "one per image channel; imagenet: torchvision's ImageNet values",
+                                       {"same", "per_channel", "imagenet"}, "", "Statistics"};
+        statistics.enum_labels = {"Same for every channel", "Per channel", "ImageNet"};
+        RegisterNode({NodeType::Normalize, NodeCategory::Preprocessing, "Normalize", ICON_FA_SCALE_BALANCED,
+            {"normalize", "scale", "mean", "standard deviation", "per channel", "imagenet"}, 0, false,
+            "Centre and scale the inputs with a fixed mean and standard deviation",
+            "Each value becomes (x - mean) / std. Statistics: same for every channel (one mean and std: tables, "
+            "audio, images), per channel (one for each image channel, often measured in Data Studio), or ImageNet "
+            "(0.485, 0.456, 0.406 / 0.229, 0.224, 0.225, for models pretrained on ImageNet). Same result in "
+            "training, validation and test.",
+            "Resize -> image steps -> Normalize -> Conv2D. Data Studio > Explore > Profile > Channel statistics > "
+            "Use in Normalize fills it from the set this graph trains from.",
+            {{"Input", PinType::Tensor, true, "Batched feature tensor to normalize"}},
+            {{"Output", PinType::Tensor, true, "Tensor centered by mean and scaled by standard deviation"}},
+            {statistics,
+             {"mean", "float", "0.0", "Mean subtracted from each feature", {}, "", "Mean"},
+             {"std", "float", "1.0", "Positive standard deviation used to scale each feature", {}, ">0", "Std"},
+             {"channel_mean", "channels", "", "Per channel: the mean of each image channel", {}, "", "Channel means"},
+             {"channel_std", "channels", "", "Per channel: the std of each image channel, each above 0", {}, ">0", "Channel stds"},
+             {"statistics_source", "string", "",
+              "Per channel: where the values came from (Data Studio's Use in Normalize writes it)", {}, "",
+              "Statistics source"}},
+            NodeImplementationStatus::Implemented, 0});
+    }
 
     RegisterNode({NodeType::OneHotEncode, NodeCategory::Preprocessing, "One-Hot Encode", ICON_FA_TH,
         {"onehot", "encode", "categorical", "labels"}, 0, false,

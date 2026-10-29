@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "normalize_statistics.h"
 #include "classification_decision.h"
 #include "sequence_fusion_presentation.h"
 #include "quiet_build_log.h"
@@ -6942,14 +6943,76 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
                  static_cast<int>(config.image_preprocessing.resize_mode));
 }
 
+cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config);
+
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
-    // Every batcher takes these through SetNormalization; the image batcher
-    // applies them on the device after the image transforms.
-    config.preprocessing.has_normalization = true;
-    if (node.parameters.count("mean"))
-        config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
-    if (node.parameters.count("std"))
-        config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
+    // Every batcher takes mean / std through SetNormalization; the image
+    // batcher applies them, or one pair per channel (TOFIX178 1.4), on the
+    // device after the image steps.
+    auto& pre = config.preprocessing;
+    pre.has_normalization = true;
+    pre.norm_node_id = node.id;
+    const auto issue = [&](IssueLevel level, const std::string& message) {
+        AddIssue(config, level, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    std::string error;
+    (void)(ParseFloatParam(node.parameters, "mean", 0.0f, pre.norm_mean, error) &&
+           ParseFloatParam(node.parameters, "std", 1.0f, pre.norm_std, error));
+    if (!error.empty()) return issue(IssueLevel::Error, error);
+    const auto it = node.parameters.find("statistics");
+    pre.norm_statistics = it == node.parameters.end() || it->second.empty() ? "same" : it->second;
+    if (pre.norm_statistics == "same") return;
+    if (pre.norm_statistics != "per_channel" && pre.norm_statistics != "imagenet")
+        return issue(IssueLevel::Error, "statistics must be same, per_channel or imagenet");
+    if (config.preprocessing_domain != PreprocessingDomain::Image) {
+        const char* data = config.preprocessing_domain == PreprocessingDomain::Tabular ? "a table"
+                           : config.preprocessing_domain == PreprocessingDomain::Audio ? "audio"
+                           : config.preprocessing_domain == PreprocessingDomain::Text  ? "text"
+                                                                                        : "not images";
+        return issue(IssueLevel::Error, std::string("Per channel needs images: this graph's data is ") + data +
+                                            ". Use Same for every channel.");
+    }
+    const size_t channels = CurrentImageShape(config).channels;
+    pre.norm_channels = channels;
+    if (pre.norm_statistics == "imagenet") {
+        if (channels != 3)
+            return issue(IssueLevel::Error, "ImageNet statistics are for RGB images: the images have " +
+                                                std::to_string(channels) + " channel" + (channels == 1 ? "" : "s") +
+                                                " here.");
+        pre.norm_channel_mean = cyxwiz::ImageNetChannelMean();
+        pre.norm_channel_std = cyxwiz::ImageNetChannelStd();
+        issue(IssueLevel::Info, "ImageNet statistics: right for a model pretrained on ImageNet; for training from "
+                                "scratch, this data's own (Data Studio > Profile > Use in "
+                                "Normalize) centre it better.");
+        return;
+    }
+    std::vector<float> mean, std_dev;
+    const auto text = [&](const char* key) {
+        const auto found = node.parameters.find(key);
+        return found == node.parameters.end() ? std::string() : found->second;
+    };
+    if (!cyxwiz::ParseChannelValues(text("channel_mean"), mean) || !cyxwiz::ParseChannelValues(text("channel_std"), std_dev))
+        return issue(IssueLevel::Error, "Per channel needs a mean and a std for each channel, as numbers "
+                                        "(Data Studio > Profile > Use in Normalize fills them)");
+    if (mean.size() != channels || std_dev.size() != channels) {
+        const size_t given = mean.size() != channels ? mean.size() : std_dev.size();
+        const char* what = mean.size() != channels ? " mean" : " std";
+        return issue(IssueLevel::Error,
+                     std::to_string(given) + what + (given == 1 ? "" : "s") + " for " + std::to_string(channels) +
+                         " channel" + (channels == 1 ? "" : "s") + ": the images have " + std::to_string(channels) +
+                         " here" + (channels == 1 ? " (Grayscale or Image Edges before Normalize)" : "") +
+                         ". Give one mean and one std per channel (Use in Normalize does).");
+    }
+    for (size_t c = 0; c < channels; ++c) {
+        if (!(std_dev[c] > 0.0f)) {
+            char value[32];
+            std::snprintf(value, sizeof(value), "%g", std_dev[c]);
+            return issue(IssueLevel::Error, "Std " + cyxwiz::ChannelName(c, channels) + " is " + value +
+                                                ": every std must be greater than 0.");
+        }
+    }
+    pre.norm_channel_mean = std::move(mean);
+    pre.norm_channel_std = std::move(std_dev);
 }
 
 // --- Image transforms (TOFIX140): appended in graph order, run by the image
@@ -7351,14 +7414,14 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
         const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
         char text[256];
         std::snprintf(text, sizeof(text),
-                      "About %.0f ms an image at %zu Ã %zu: preparing 10,000 images takes about %.0f s on "
+                      "About %.0f ms an image at %zu × %zu: preparing 10,000 images takes about %.0f s on "
                       "%u cores, once. Later runs read the prepared images.",
                       ms, shape.width, shape.height, ms * 10000.0 / 1000.0 / cores, cores);
         issue(IssueLevel::Warning, text);
     }
     if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
         issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
-                                    " Ã " + std::to_string(after.height) + " Ã 1 here");
+                                    " × " + std::to_string(after.height) + " × 1 here");
     config.image_cv_steps.push_back(std::move(s));
 }
 

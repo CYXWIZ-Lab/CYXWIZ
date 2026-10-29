@@ -34,6 +34,12 @@ public:
     // The canvas graph's compile: an image dataset's profile shows how its Resize
     // treats the images and which prepared set it trains from.
     void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+    // Passed to the image profile: writes a node's settings with an undo point
+    // (Use in Normalize). Unset where the view is embedded.
+    using NodeWriter = std::function<bool(int node_id, const std::map<std::string, std::string>& values)>;
+    void SetNodeWriter(NodeWriter writer) { node_writer_ = std::move(writer); }
+    // Passed to the image profile: selects a node on the canvas.
+    void SetShowNode(std::function<void(int node_id)> show) { show_node_ = std::move(show); }
     void Reprofile();
     bool IsRunning() const { return task_id_ != 0; }
     float Progress() const { return progress_; }
@@ -85,6 +91,8 @@ private:
     std::unique_ptr<ImageProfileView> image_;
     bool images_ = false;
     const LiveGraphCompile* live_compile_ = nullptr;
+    NodeWriter node_writer_;
+    std::function<void(int)> show_node_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

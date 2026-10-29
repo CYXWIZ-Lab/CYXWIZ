@@ -275,10 +275,13 @@ void NodeEditor::Render() {
     // and prevent crashes from stale node references
     if (pending_context_reset_) {
         spdlog::info("Resetting ImNodes editor context");
+        const ImVec2 panning = ImNodes::EditorContextGetPanning();
         ImNodes::EditorContextFree(editor_context_);
         editor_context_ = ImNodes::EditorContextCreate();
         ImNodes::EditorContextSet(editor_context_);
+        if (pending_context_keep_view_) ImNodes::EditorContextResetPanning(panning);
         pending_context_reset_ = false;
+        pending_context_keep_view_ = false;
     }
 
     ::gui::NextWindowMayLeave("CyxWiz Studio");
@@ -2099,7 +2102,12 @@ void NodeEditor::RenderNodes() {
             case NodeType::Normalize: {
                 auto mean_it = node.parameters.find("mean");
                 auto std_it = node.parameters.find("std");
-                if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
+                auto stat_it = node.parameters.find("statistics");
+                if (stat_it != node.parameters.end() && stat_it->second == "imagenet") {
+                    ImGui::TextColored(t.accent_text, "ImageNet");
+                } else if (stat_it != node.parameters.end() && stat_it->second == "per_channel") {
+                    ImGui::TextColored(t.accent_text, "Per channel");
+                } else if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
                     ImGui::TextColored(t.accent_text, "Mean: %s", mean_it->second.c_str());
                     ImGui::TextColored(t.accent_text, "Std: %s", std_it->second.c_str());
                 }

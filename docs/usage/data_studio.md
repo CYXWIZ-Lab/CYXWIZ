@@ -215,7 +215,11 @@ same. Nothing is decoded for it.
   0.5: the model's inputs centre at -0.02 (R), -0.09 (G), -0.17 (B) with
   spread 0.51, 0.50, 0.50*). **Measure** prepares the set first when training
   has not (17 s for the 25,000 cats vs dogs images); training then reuses it.
-  The figures clear when the graph's image steps change.
+  The figures clear when the graph's image steps change. **Use in Normalize**
+  sets the graph's Normalize to Per channel with these numbers (Undo takes it
+  back); the line then reads *Normalize uses these statistics: the model's
+  inputs centre at 0.00 (R, G, B) with spread 1.00*. See
+  [Normalize per channel](image_transforms.md#normalize-per-channel).
 - **Quality**: the Quality Analyzer's measurements of every image at the Resize
   size (blur, brightness, contrast, near duplicates), judged with the default
   checks (blur at least 700, brightness 50 to 220, contrast at least 0.12,

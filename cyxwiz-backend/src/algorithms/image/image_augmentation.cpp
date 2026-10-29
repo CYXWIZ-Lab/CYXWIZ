@@ -983,7 +983,17 @@ Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, boo
             *labels = Tensor::FromArrayRowMajor2D(MixLabels(draw, labels->GetArrayRowMajor2D()));
         }
     }
-    if (normalize) {
+    if (normalize && !channel_mean.empty()) {
+        // images are [H, W, C, N]: one mean and std per channel, tiled over the rest.
+        const unsigned channels = static_cast<unsigned>(images.dims(2));
+        if (channel_mean.size() != static_cast<size_t>(channels) || channel_std.size() != channel_mean.size())
+            throw std::invalid_argument("Normalize has " + std::to_string(channel_mean.size()) +
+                                        " channel means for images with " + std::to_string(channels) + " channels");
+        const af::dim4 tiles(images.dims(0), images.dims(1), 1, images.dims(3));
+        const af::array m = af::tile(af::array(1, 1, channels, 1, channel_mean.data()), tiles);
+        const af::array s = af::tile(af::array(1, 1, channels, 1, channel_std.data()), tiles);
+        images = (images - m) / s;
+    } else if (normalize) {
         images = (images - mean) / std_dev;
     }
     return Tensor::FromArrayRowMajor2D(ImagesToRows(images));

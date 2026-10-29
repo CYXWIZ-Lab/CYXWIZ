@@ -155,6 +155,7 @@ set(ENGINE_SOURCES
     src/core/project_manager.cpp
     src/core/engine_config.cpp
     src/core/python_detector.cpp
+    src/core/child_process.cpp
     src/core/python_package_smoke.cpp
     src/core/window_manager.cpp
     src/core/arrayfire_backend_discovery_isolation.cpp
@@ -1385,6 +1386,7 @@ install(DIRECTORY resources/
 add_executable(test_python_requirements
     tests/test_python_requirements.cpp
     src/core/python_detector.cpp
+    src/core/child_process.cpp
 )
 
 target_include_directories(test_python_requirements PRIVATE
@@ -1399,6 +1401,17 @@ target_link_libraries(test_python_requirements PRIVATE
 set_target_properties(test_python_requirements PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Child processes without a console window =====
+add_executable(test_child_process
+    tests/test_child_process.cpp
+    src/core/child_process.cpp
+)
+
+set_target_properties(test_child_process PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_child_process COMMAND test_child_process)
 
 # ===== Test: Sandbox Timeout =====
 if(CYXWIZ_HAS_PYTHON)
@@ -3405,6 +3418,12 @@ add_executable(test_graph_compiler_deferred_nodes
     src/core/dataset_catalog_registry.cpp
 )
 target_link_libraries(test_graph_compiler_deferred_nodes PRIVATE cyxwiz-training-core)
+# main() keeps about 750 KB of compile results on the stack, and the node
+# registry is built inside the first Compile (two registration functions use
+# about 250 KB each): more than Windows' 1 MB default (0xC00000FD).
+if(MSVC)
+    target_link_options(test_graph_compiler_deferred_nodes PRIVATE /STACK:4194304)
+endif()
 
 target_include_directories(test_graph_compiler_deferred_nodes PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

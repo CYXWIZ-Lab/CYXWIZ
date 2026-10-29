@@ -1685,16 +1685,18 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::Normalize] = {
         "Normalize",
-        "Normalizes tensor values using mean and standard deviation. "
-        "Common preprocessing step for neural networks.",
-        "output = (input - mean) / std.",
+        "Centres and scales the inputs: output = (input - mean) / std.",
+        "Statistics: same for every channel (one mean and std: tables, audio, images), per channel (one for each "
+        "image channel, applied each batch on the GPU after the image steps) or ImageNet (torchvision's values). "
+        "Same result in training, validation and test.",
         {
-            {"mean", "Mean values per channel"},
-            {"std", "Standard deviation per channel"}
+            {"statistics", "same, per_channel or imagenet"},
+            {"mean, std", "Same for every channel: the one mean and std"},
+            {"channel_mean, channel_std", "Per channel: one value for each image channel (R, G, B, or grey)"}
         },
         {
-            "ImageNet mean/std for pre-trained models",
-            "Compute on training set for custom data"
+            "ImageNet statistics for models pretrained on ImageNet",
+            "Your data's own: Data Studio > Explore > Profile > Channel statistics > Use in Normalize"
         },
         "Data Pipeline"
     };

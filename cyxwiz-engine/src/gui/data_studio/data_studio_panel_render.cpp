@@ -425,7 +425,13 @@ void DataStudioPanel::RenderExplore() {
         case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
         case ExploreTab::Profile:
             if (profile_) {
-                if (node_editor_) profile_->SetLiveCompile(node_editor_->GetLiveCompile());
+                if (node_editor_) {
+                    profile_->SetLiveCompile(node_editor_->GetLiveCompile());
+                    profile_->SetNodeWriter([editor = node_editor_](int id, const std::map<std::string, std::string>& values) {
+                        return editor->SetStepParameters(id, values);
+                    });
+                    profile_->SetShowNode([this](int id) { ShowOnCanvas({id}); });
+                }
                 profile_->Render();
             }
             break;

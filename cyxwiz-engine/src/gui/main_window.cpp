@@ -956,6 +956,9 @@ MainWindow::MainWindow()
     properties_->SetNodeEditor(node_editor_.get());
     // A step's input or output opens in the Table Viewer (TOFIX146). The
     // viewer holds rows in memory, so a very large output opens its first rows.
+    properties_->SetOpenProfileCallback([this](const std::string& dataset_name) {
+        if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset_name);
+    });
     properties_->SetOpenTableCallback([this](const std::string& dataset_name, const std::string& title) {
         if (!table_viewer_) return;
         auto dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(dataset_name);
@@ -5656,6 +5659,9 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         facts.normalize = config.preprocessing.has_normalization;
         facts.norm_mean = config.preprocessing.norm_mean;
         facts.norm_std = config.preprocessing.norm_std;
+        facts.norm_channel_mean = config.preprocessing.norm_channel_mean;
+        facts.norm_channel_std = config.preprocessing.norm_channel_std;
+        facts.norm_imagenet = config.preprocessing.norm_statistics == "imagenet";
         facts.one_hot = config.preprocessing.has_onehot;
         facts.num_classes = static_cast<int>(config.preprocessing.num_classes);
 

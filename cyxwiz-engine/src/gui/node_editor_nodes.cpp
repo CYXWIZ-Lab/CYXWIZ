@@ -257,6 +257,7 @@ void NodeEditor::ClearGraph() {
     // Request a full ImNodes context reset - this fully clears ImNodes' internal state
     // which prevents crashes from stale node references
     pending_context_reset_ = true;
+    pending_context_keep_view_ = false;
 
     // Clear any pending positions
     pending_positions_.clear();
