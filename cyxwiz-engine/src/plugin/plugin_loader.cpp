@@ -80,7 +80,8 @@ std::string LibraryContentKey(const std::vector<std::filesystem::path>& files) {
     for (size_t i = 1; i < files.size(); ++i) {
         mix(files[i].filename().string());
         mix(std::to_string(std::filesystem::file_size(files[i], ec)));
-        mix(std::to_string(std::filesystem::last_write_time(files[i], ec).time_since_epoch().count()));
+        mix(std::to_string(static_cast<long long>(
+            std::filesystem::last_write_time(files[i], ec).time_since_epoch().count())));
     }
     if (files.size() > 1) key += "-" + security::PluginSignature::ToHex(
                                        reinterpret_cast<const uint8_t*>(&others), sizeof(others));
