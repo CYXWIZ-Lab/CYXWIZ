@@ -59,7 +59,7 @@ std::string KindWord(Backend backend) {
 std::string Holding(const StripInput& in) {
     switch (in.backend) {
         case Backend::ParquetDisk: return "kept on disk (Parquet, " + FormatSize(in.bytes) + "), read a row group at a time";
-        case Backend::ImageFolder: return "decoded per batch at the Resize size; nothing is held";
+        case Backend::ImageFolder: return "decoded once at the Resize size into cache/images when training starts";
         case Backend::AudioFolder: return "decoded per batch by the feature node; nothing is held";
         default:
             if (in.bytes == 0) return {};

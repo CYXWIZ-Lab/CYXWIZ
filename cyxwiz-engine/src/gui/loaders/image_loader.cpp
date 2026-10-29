@@ -123,7 +123,7 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 state->dataset_name = canonical_name;  // may have been uniquified
                 state->rows         = static_cast<int64_t>(info.num_samples);
                 state->cols         = 1;
-                // Decoded per batch at the graph's Resize size: nothing is held.
+                // Nothing in memory: training decodes once into cache/images (PrepareImageSet).
                 state->bytes        = 0;
                 state->num_classes  = info.num_classes;
                 state->message      = "Loaded " +

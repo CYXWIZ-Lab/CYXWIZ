@@ -77,8 +77,8 @@ mono. Under **Preprocessing (done by nodes)** the dialog names the Resize
 feature node, with **Show on canvas** (and **Open it** for nodes with a
 dialog); when one is missing it offers **Add a Resize**, **Add Normalize**
 (after the Resize) or **Add Mel Spectrogram / Spectrogram / MFCC**. An image
-folder holds nothing in memory: images are decoded per batch at the Resize
-size.
+folder holds nothing in memory: when training starts the images are decoded
+once at the Resize size into cache/images (see image_transforms.md).
 
 ### The data strip and the tabs
 
@@ -87,8 +87,8 @@ on every tab: the file or folder, its state (*Not loaded*, *Loading: ...*
 with the seconds so far, *Loaded in 1.79 s as sentiment_mental_health
 (text)*, or a red *Not loaded* with the reason and what to do), the counts
 (*52,681 samples, 7 classes, 30.0 MB on disk*) and how the data is held
-(*30.4 MB in memory*, *kept on disk (Parquet ...)*, *decoded per batch at
-the Resize size*). When an Apply fails while an earlier load stays, the
+(*30.4 MB in memory*, *kept on disk (Parquet ...)*, *decoded once at
+the Resize size into cache/images when training starts*). When an Apply fails while an earlier load stays, the
 strip keeps the earlier load and says the last Apply failed.
 
 The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
