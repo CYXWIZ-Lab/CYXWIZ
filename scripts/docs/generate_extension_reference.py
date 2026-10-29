@@ -284,7 +284,7 @@ def sdk_contents(api_version):
     out = [NOTICE, "# What the plugin SDK contains\n",
            "Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the "
            "header and the types it declares. Plugin API {}. The SDK also installs `cyxwiz-backend`'s import "
-           "library, the CMake package `CyxWizSDK`, the template plugin and the Python example nodes; see "
+           "library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see "
            "[plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog "
            "headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) "
            "builds only inside the CyxWiz source tree.\n".format(api_version)]

@@ -4,7 +4,8 @@ How to write a C++ plugin whose nodes train inside CyxWiz. Build and load the
 template first with the [quickstart](plugin-quickstart.md). Every type,
 `plugin.json` field and CMake name is listed in the
 [API reference](plugin-api-reference.md); the rules every node keeps are in
-the [node contract](node-contract.md).
+the [node contract](node-contract.md). For dataset formats and analytics
+instead of nodes, see [Data plugins](data-plugin-guide.md).
 
 > Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 

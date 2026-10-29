@@ -316,7 +316,9 @@ Arrow specification): a stream of record batches with one schema. The SDK
 ships no Arrow library and needs none. Fill or read the structs by hand, or
 with any Arrow library of any version (Arrow C++ `arrow::ExportRecordBatchReader`
 / `ImportRecordBatchReader`, nanoarrow, arrow-rs).
-`plugins/examples/data_formats` does both by hand, with no Arrow library.
+`plugins/examples/data_formats` (in the SDK `examples/plugins/data-formats`)
+does both by hand, with no Arrow library; [Data plugins](data-plugin-guide.md)
+walks through it.
 
 Both interfaces took this shape in plugin API 1.3. The Engine calls them
 only in a plugin whose `plugin.json` declares `api_version` 1.3 or newer. An

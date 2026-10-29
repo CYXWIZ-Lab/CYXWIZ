@@ -538,7 +538,9 @@ def install_plugin_sdk(paths: PackagePaths, destination: Path) -> None:
     if result.returncode != 0:
         raise PackageError(f"Installing the plugin SDK failed:\n{result.stdout}")
     for required in ("LICENSE", "NOTICE", "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake",
-                     "include/plugin/plugin_types.h", "template/plugin.json"):
+                     "include/plugin/plugin_types.h", "template/plugin.json",
+                     "examples/plugins/data-formats/data_formats_plugin.cpp",
+                     "examples/plugins/data-formats/built/plugin.json"):
         require_file(destination / required, f"plugin SDK {required}")
     # The library plugins link (CyxWizSDKConfig finds it by this name); a
     # symlink would have been dropped from the package (1.0.7 Linux/macOS).
@@ -547,6 +549,11 @@ def install_plugin_sdk(paths: PackagePaths, destination: Path) -> None:
     library = require_file(destination / "lib" / linker_library, "plugin SDK backend library")
     if library.is_symlink():
         raise PackageError(f"plugin SDK {linker_library} is a symlink; the SDK needs the real library")
+    # The data plugin example ships built, ready to Install (TOFIX181).
+    example_library = {"win32": "data_formats.dll", "darwin": "libdata_formats.dylib"}.get(
+        sys.platform, "libdata_formats.so")
+    require_file(destination / "examples/plugins/data-formats/built/bin" / example_library,
+                 "plugin SDK built data plugin example")
 
 
 def arrayfire_library_dir(root: Path) -> Path:

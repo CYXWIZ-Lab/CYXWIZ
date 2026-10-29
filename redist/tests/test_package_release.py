@@ -20,6 +20,9 @@ sys.modules[SPEC.name] = package_release
 SPEC.loader.exec_module(package_release)
 # setUp stands in a fake for it; the tests of the real one call this.
 REAL_INSTALL_PLUGIN_SDK = package_release.install_plugin_sdk
+# The built data plugin example the SDK carries (TOFIX181).
+EXAMPLE_LIBRARY = "examples/plugins/data-formats/built/bin/" + {
+    "win32": "data_formats.dll", "darwin": "libdata_formats.dylib"}.get(sys.platform, "libdata_formats.so")
 
 SIGN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sign_pack_manifest.py"
 SIGN_SPEC = importlib.util.spec_from_file_location("sign_pack_manifest", SIGN_SCRIPT)
@@ -99,7 +102,9 @@ class PackageReleaseTests(unittest.TestCase):
         # of a real build; here a minimal SDK stands in for it.
         def fake_sdk(_paths, destination: Path) -> None:
             for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
-                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
+                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json",
+                             "examples/plugins/data-formats/data_formats_plugin.cpp",
+                             "examples/plugins/data-formats/built/plugin.json", EXAMPLE_LIBRARY):
                 (destination / relative).parent.mkdir(parents=True, exist_ok=True)
                 (destination / relative).write_text(relative, encoding="ascii")
         patcher = mock.patch.object(package_release, "install_plugin_sdk", fake_sdk)
@@ -592,7 +597,9 @@ class PackageReleaseTests(unittest.TestCase):
             def fake_run(command, **_kwargs):
                 calls.append(command)
                 files = ["LICENSE", "NOTICE", "include/plugin/plugin_types.h",
-                         "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"]
+                         "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json",
+                         "examples/plugins/data-formats/data_formats_plugin.cpp",
+                         "examples/plugins/data-formats/built/plugin.json", EXAMPLE_LIBRARY]
                 if with_library:
                     files.append("lib/" + backend_library)
                 for relative in files:

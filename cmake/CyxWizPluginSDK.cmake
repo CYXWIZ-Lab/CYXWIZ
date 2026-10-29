@@ -12,6 +12,8 @@
 # <folder>/lib/cmake/CyxWizSDK  find_package(CyxWizSDK) -> CyxWiz::PluginSDK
 # <folder>/template         the template plugin (plugins/template)
 # <folder>/examples/python-nodes  ten built-in layers as Python nodes (examples/python_nodes)
+# <folder>/examples/plugins/data-formats  a dataset format and analytic (plugins/examples/data_formats),
+#                                         source and built/ (ready to install)
 # <folder>/LICENSE, NOTICE  Apache-2.0 for every file in the SDK
 
 include(CMakePackageConfigHelpers)
@@ -85,6 +87,22 @@ install(FILES
 install(DIRECTORY "${_cyxwiz_sdk_python_example}/nodes/builtin-layers.cyxnode"
         DESTINATION examples/python-nodes/builtin-layers/nodes COMPONENT plugin_sdk EXCLUDE_FROM_ALL
         PATTERN "__pycache__" EXCLUDE)
+# The data plugin example (TOFIX181): its source to build against the SDK,
+# and built/, the same plugin built here, ready for Plugin Manager > Install.
+# The library is installed as a file (as the backend above), so the target
+# plugins/examples/data_formats defines later needs no install rule there.
+set(_cyxwiz_sdk_data_example "${CMAKE_SOURCE_DIR}/plugins/examples/data_formats")
+install(FILES
+            "${_cyxwiz_sdk_data_example}/CMakeLists.txt"
+            "${_cyxwiz_sdk_data_example}/plugin.json"
+            "${_cyxwiz_sdk_data_example}/data_formats_plugin.cpp"
+            "${_cyxwiz_sdk_data_example}/README.md"
+            "${_cyxwiz_sdk_data_example}/weather.arff"
+        DESTINATION examples/plugins/data-formats COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+install(FILES "${_cyxwiz_sdk_data_example}/plugin.json"
+        DESTINATION examples/plugins/data-formats/built COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+install(FILES "$<TARGET_FILE:data_formats>"
+        DESTINATION examples/plugins/data-formats/built/bin COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
 # Apache-2.0 (owner 2026-10-17, the plugin-SDK part of TOFIX142).
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/sdk/LICENSE" "${CMAKE_SOURCE_DIR}/cmake/sdk/NOTICE"
         DESTINATION . COMPONENT plugin_sdk EXCLUDE_FROM_ALL)

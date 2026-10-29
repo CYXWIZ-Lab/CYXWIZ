@@ -1,6 +1,10 @@
-// Example plugin with a dataset format and a dataset analytic (TOFIX181,
-// plugin API 1.3), using only the SDK's Arrow C stream header: no Arrow
-// library.
+// SPDX-License-Identifier: Apache-2.0
+// From the CyxWiz plugin SDK (examples/plugins/data-formats): replace this
+// licence with your own when you make it yours.
+//
+// Example plugin with a dataset format and a dataset analytic (plugin API
+// 1.3), using only the SDK's Arrow C stream header: no Arrow library.
+// docs/extending/data-plugin-guide.md walks through this file.
 //
 //   ARFF (Weka's attribute-relation file format, .arff): IDataProvider.
 //     Numeric attributes become float64 columns, nominal, string and date
@@ -10,6 +14,19 @@
 //   Coefficient of variation (standard deviation / |mean| of each numeric
 //     column): IAnalyticsProvider. It reads float64, float32, int64 and int32
 //     columns of the stream the Engine hands it.
+//
+// The order the Engine calls this file in:
+//   1. Loading: CYXWIZ_PLUGIN_ENTRY creates DataFormatsPlugin; OnLoad,
+//      OnInitialize; QueryInterface("IDataProvider") and
+//      QueryInterface("IAnalyticsProvider"); GetLoaders and GetAnalytics,
+//      once each.
+//   2. Data Input: CanLoad when a .arff file is chosen with Format "auto";
+//      on Apply, OpenDataset on a worker thread, then the stream's
+//      get_schema, get_next until it returns no batch, and release.
+//   3. Explore > Plugins: on Run, Compute on a worker thread with the chosen
+//      columns as a stream the Engine owns.
+//   4. Unloading: OnShutdown, OnUnload, after open streams and running
+//      Compute calls have finished.
 
 #include "plugin/plugin_types.h"
 #include "plugin/plugin_context.h"
