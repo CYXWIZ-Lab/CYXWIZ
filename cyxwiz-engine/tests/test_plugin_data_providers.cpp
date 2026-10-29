@@ -7,12 +7,15 @@
 //   - the analytic computes on the Engine's data and refuses a text column;
 //   - a plugin.json declaring plugin API 1.2 gets neither registered;
 //   - unloading removes both; data already read stays readable (the Engine
-//     copies each batch, so it never points into a freed library).
+//     copies each batch, so it never points into a freed library);
+//   - a plugin that crashes in CanLoad, OpenDataset, get_next or Compute
+//     fails that call with its reason, and the Engine keeps running.
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_analytics_registry.h"
 #include "../src/plugin/registries/plugin_data_loader_registry.h"
 
 #include <arrow/api.h>
+#include <arrow/c/bridge.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -72,6 +75,53 @@ std::shared_ptr<arrow::Table> ReadAll(const std::string& path, std::string* erro
 std::shared_ptr<arrow::RecordBatchReader> ReaderOf(const std::shared_ptr<arrow::Table>& table) {
     return std::make_shared<arrow::TableBatchReader>(table);
 }
+
+// A hardware fault, as a plugin with a bug would raise.
+void Crash() {
+    volatile int* nowhere = nullptr;
+    *nowhere = 1;
+}
+
+int CrashingGetNext(ArrowArrayStream*, ArrowArray*) {
+    Crash();
+    return 0;
+}
+
+// A data plugin that crashes where it is told to (registered straight into
+// the registries, as PluginManager does after QueryInterface).
+class CrashingProvider final : public cyxwiz::plugin::IDataProvider, public cyxwiz::plugin::IAnalyticsProvider {
+public:
+    enum class Where { CanLoad, OpenDataset, GetNext };
+    Where where = Where::CanLoad;
+
+    std::vector<cyxwiz::plugin::PluginDataLoaderInfo> GetLoaders() override {
+        return {{"test.crashing.loader", "Crashing", {"crashy"}, ""}};
+    }
+    bool CanLoad(const std::string&, const std::string&) override {
+        if (where == Where::CanLoad) Crash();
+        return true;
+    }
+    bool OpenDataset(const std::string&, const std::string&, ArrowArrayStream* out, std::string&) override {
+        if (where == Where::OpenDataset) Crash();
+        arrow::DoubleBuilder builder;
+        (void)builder.Append(1.0);
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::float64())}),
+                                        {builder.Finish().ValueOrDie()});
+        if (!arrow::ExportRecordBatchReader(ReaderOf(table), out).ok()) return false;
+        out->get_next = CrashingGetNext;  // a valid schema, then a crash on the first batch
+        return true;
+    }
+    std::vector<cyxwiz::plugin::PluginAnalyticsInfo> GetAnalytics() override {
+        cyxwiz::plugin::PluginAnalyticsInfo info;
+        info.analytics_id = "test.crashing.analytic";
+        info.name = "Crashing";
+        return {info};
+    }
+    cyxwiz::plugin::AnalyticsResult Compute(const std::string&, ArrowArrayStream*) override {
+        Crash();
+        return {};
+    }
+};
 
 }  // namespace
 
@@ -215,6 +265,40 @@ int main() {
         if (skipped.find("IDataProvider: built for plugin API 1.2.0; it needs 1.3.0") != std::string::npos) reason = true;
     Check(reason, "the skipped reason names the plugin API");
     manager.UnloadPlugin(kPluginId);
+
+    // --- A plugin that crashes ---
+    CrashingProvider crashing;
+    loaders.Register("test.crashing", "1.0.0", &crashing);
+    analytics.Register("test.crashing", "1.0.0", &crashing);
+    const auto crashy = (work / "data.crashy").string();
+    Write(crashy, "x\n1\n");
+
+    Check(loaders.LoaderForFile(crashy).empty(), "a loader that crashes in CanLoad does not take the file");
+
+    crashing.where = CrashingProvider::Where::OpenDataset;
+    const auto failed_open = loaders.Open("test.crashing.loader", crashy);
+    Check(!failed_open.ok() && failed_open.status().message().find("crashed during OpenDataset") != std::string::npos &&
+              failed_open.status().message().find("the Engine kept running") != std::string::npos,
+          "a crash in OpenDataset fails the open, got: " + failed_open.status().ToString());
+
+    crashing.where = CrashingProvider::Where::GetNext;
+    {
+        auto opened = loaders.Open("test.crashing.loader", crashy);
+        Check(opened.ok(), "the crashing stream opens (its schema is valid): " + opened.status().ToString());
+        std::shared_ptr<arrow::RecordBatch> batch;
+        const auto read = (*opened)->ReadNext(&batch);
+        Check(!read.ok() && !batch && read.message().find("crashed during get_next") != std::string::npos,
+              "a crash in get_next fails the read, got: " + read.ToString());
+        Check(!(*opened)->ReadNext(&batch).ok(), "a stream that crashed stays failed");
+    }  // the reader releases the stream here, in the guard
+
+    const auto crashed = analytics.Compute("test.crashing.analytic", ReaderOf(numbers));
+    Check(!crashed.success && crashed.error_message.find("crashed during Compute") != std::string::npos,
+          "a crash in Compute fails the analytic, got: " + crashed.error_message);
+
+    loaders.RemoveByPlugin("test.crashing");
+    analytics.RemoveByPlugin("test.crashing");
+    Check(loaders.Loaders().empty() && analytics.Analytics().empty(), "the crashing provider is removed");
 
     fs::remove_all(work);
     std::cout << "test_plugin_data_providers: all checks passed\n";

@@ -1,5 +1,7 @@
 #include "plugin_data_loader_registry.h"
 
+#include "../security/safe_execute.h"
+
 #include <arrow/c/bridge.h>
 #include <arrow/device.h>
 #include <spdlog/spdlog.h>
@@ -22,29 +24,55 @@ std::string NormalizeExtension(std::string extension) {
 // The plugin's reader, holding the plugin's use until it is destroyed: the
 // stream's callbacks live in the plugin's library. Each batch is copied into
 // the Engine's memory and the plugin's released at once, so data read from
-// a plugin outlives the plugin (unloading it frees its library).
+// a plugin outlives the plugin (unloading it frees its library). Every call
+// into the plugin (get_next, the batch's and the stream's release) runs in
+// the crash guard: a reader that crashes fails the read, not the Engine.
 class PluginStreamReader final : public arrow::RecordBatchReader {
 public:
-    PluginStreamReader(std::shared_ptr<arrow::RecordBatchReader> inner, std::shared_ptr<void> use)
-        : inner_(std::move(inner)), use_(std::move(use)) {}
-    ~PluginStreamReader() override { inner_.reset(); }
+    PluginStreamReader(std::shared_ptr<arrow::RecordBatchReader> inner, std::shared_ptr<void> use,
+                       std::string plugin_id)
+        : inner_(std::move(inner)), use_(std::move(use)), plugin_id_(std::move(plugin_id)) {}
+    ~PluginStreamReader() override {
+        security::SafeExecute(plugin_id_, "release", [&] { inner_.reset(); });
+    }
 
     std::shared_ptr<arrow::Schema> schema() const override { return inner_->schema(); }
     arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override {
-        std::shared_ptr<arrow::RecordBatch> plugin_batch;
-        ARROW_RETURN_NOT_OK(inner_->ReadNext(&plugin_batch));
-        if (!plugin_batch) {
-            batch->reset();
-            return arrow::Status::OK();
+        batch->reset();
+        if (crashed_) return arrow::Status::IOError(crash_message_);
+        arrow::Status status;
+        std::shared_ptr<arrow::RecordBatch> copy;
+        const auto run = security::SafeExecute(plugin_id_, "get_next", [&] {
+            std::shared_ptr<arrow::RecordBatch> plugin_batch;
+            status = inner_->ReadNext(&plugin_batch);
+            if (!status.ok() || !plugin_batch) return;
+            auto copied = plugin_batch->CopyTo(arrow::default_cpu_memory_manager());
+            plugin_batch.reset();  // the plugin's release, inside the guard
+            if (copied.ok()) copy = std::move(copied).ValueUnsafe();
+            else status = copied.status();
+        });
+        if (!run.success) {
+            crashed_ = true;
+            crash_message_ = run.error_message + "; the Engine kept running";
+            return arrow::Status::IOError(crash_message_);
         }
-        ARROW_ASSIGN_OR_RAISE(*batch, plugin_batch->CopyTo(arrow::default_cpu_memory_manager()));
+        ARROW_RETURN_NOT_OK(status);
+        *batch = std::move(copy);
         return arrow::Status::OK();
     }
-    arrow::Status Close() override { return inner_->Close(); }
+    arrow::Status Close() override {
+        arrow::Status status;
+        const auto run = security::SafeExecute(plugin_id_, "Close", [&] { status = inner_->Close(); });
+        if (!run.success) crashed_ = true;
+        return run.success ? status : arrow::Status::IOError(run.error_message);
+    }
 
 private:
     std::shared_ptr<arrow::RecordBatchReader> inner_;
     std::shared_ptr<void> use_;  // released after inner_ (declared after it)
+    std::string plugin_id_;
+    bool crashed_ = false;
+    std::string crash_message_;
 };
 
 }  // namespace
@@ -127,6 +155,7 @@ std::string PluginDataLoaderRegistry::LoaderForFile(const std::string& file_path
 
     struct Candidate {
         std::string loader_id;
+        std::string plugin_id;
         IDataProvider* provider;
         std::shared_ptr<void> use;
     };
@@ -136,17 +165,20 @@ std::string PluginDataLoaderRegistry::LoaderForFile(const std::string& file_path
         for (const auto& [id, entry] : loaders_) {
             const auto& extensions = entry.loader.info.extensions;
             if (std::find(extensions.begin(), extensions.end(), extension) != extensions.end())
-                candidates.push_back({id, entry.provider, uses_.Acquire(entry.loader.plugin_id)});
+                candidates.push_back({id, entry.loader.plugin_id, entry.provider, uses_.Acquire(entry.loader.plugin_id)});
         }
     }
-    // CanLoad may read the file: outside the lock.
+    // CanLoad may read the file: outside the lock, in the crash guard (a
+    // loader that throws or crashes does not take the file).
     for (const auto& candidate : candidates) {
-        try {
-            if (candidate.provider->CanLoad(candidate.loader_id, file_path)) return candidate.loader_id;
-        } catch (const std::exception& e) {
-            spdlog::warn("PluginDataLoaderRegistry: {} CanLoad({}) threw: {}",
-                         candidate.loader_id, file_path, e.what());
-        }
+        bool accepts = false;
+        const auto run = security::SafeExecute(candidate.plugin_id, "CanLoad", [&] {
+            accepts = candidate.provider->CanLoad(candidate.loader_id, file_path);
+        });
+        if (run.success && accepts) return candidate.loader_id;
+        if (!run.success)
+            spdlog::warn("PluginDataLoaderRegistry: {} CanLoad({}): {}", candidate.loader_id, file_path,
+                         run.error_message);
     }
     return {};
 }
@@ -155,6 +187,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatchReader>> PluginDataLoaderRegistr
     const std::string& loader_id, const std::string& file_path) const {
     IDataProvider* provider = nullptr;
     std::string format_name;
+    std::string plugin_id;
     std::shared_ptr<void> use;
     {
         std::lock_guard lock(mutex_);
@@ -163,28 +196,43 @@ arrow::Result<std::shared_ptr<arrow::RecordBatchReader>> PluginDataLoaderRegistr
             return arrow::Status::Invalid("The format '", loader_id, "' is not installed (its plugin is not loaded)");
         provider = it->second.provider;
         format_name = it->second.loader.info.format_name;
+        plugin_id = it->second.loader.plugin_id;
         use = uses_.Acquire(it->second.loader.plugin_id);
     }
 
+    // OpenDataset and the stream's get_schema (read by the import) run in the
+    // crash guard; after a crash the stream is not released (its state is
+    // unknown) and the Engine keeps running.
     ArrowArrayStream stream{};
     std::string error;
     bool opened = false;
-    try {
-        opened = provider->OpenDataset(loader_id, file_path, &stream, error);
-    } catch (const std::exception& e) {
-        error = std::string("the plugin threw: ") + e.what();
-    }
-    if (!opened || !stream.release) {
-        if (stream.release) stream.release(&stream);
+    bool imported = false;
+    arrow::Result<std::shared_ptr<arrow::RecordBatchReader>> reader = arrow::Status::UnknownError("not opened");
+    const auto run = security::SafeExecute(plugin_id, "OpenDataset", [&] {
+        try {
+            opened = provider->OpenDataset(loader_id, file_path, &stream, error);
+        } catch (const std::exception& e) {
+            error = std::string("the plugin threw: ") + e.what();
+        }
+        if (!opened || !stream.release) {
+            if (stream.release) stream.release(&stream);
+            return;
+        }
+        imported = true;
+        reader = arrow::ImportRecordBatchReader(&stream);
+    });
+    if (!run.success)
+        return arrow::Status::IOError(format_name, " could not open ", file_path, ": ", run.error_message,
+                                      "; the Engine kept running");
+    if (!imported) {
         if (error.empty()) error = opened ? "the plugin returned an empty stream" : "the plugin gave no reason";
         return arrow::Status::IOError(format_name, " could not open ", file_path, ": ", error);
     }
-    auto reader = arrow::ImportRecordBatchReader(&stream);
     if (!reader.ok())
         return arrow::Status::IOError(format_name, " gave data the Engine cannot read: ",
                                       reader.status().message());
     return std::shared_ptr<arrow::RecordBatchReader>(
-        std::make_shared<PluginStreamReader>(std::move(reader).ValueUnsafe(), std::move(use)));
+        std::make_shared<PluginStreamReader>(std::move(reader).ValueUnsafe(), std::move(use), plugin_id));
 }
 
 }  // namespace cyxwiz::plugin
