@@ -236,10 +236,11 @@ void ImageProfileView::MeasureStats() {
     auto result = std::make_shared<ImageChannelStats>();
     auto error = std::make_shared<std::string>();
     auto device = std::make_shared<std::string>();
+    auto size = std::make_shared<std::pair<int, int>>();
     std::weak_ptr<int> alive = alive_;
     stats_task_ = AsyncTaskManager::Instance().RunAsync(
         "Channel statistics " + dataset_,
-        [progress, entry, spec, fixed, result, error, device](LambdaTask& task) {
+        [progress, entry, spec, fixed, result, error, device, size](LambdaTask& task) {
             const PreparedImageResult prepared = PrepareImageSet(entry, spec, fixed, 0, [&](size_t done, size_t total) {
                 std::lock_guard<std::mutex> lock(progress->mutex);
                 progress->done = done;
@@ -258,9 +259,10 @@ void ImageProfileView::MeasureStats() {
             }
             std::atomic<bool> stop{false};
             *result = MeasureImageChannelStats(*prepared.set, [&](size_t, size_t) { stop = task.ShouldStop(); }, &stop);
+            *size = {static_cast<int>(prepared.set->Width()), static_cast<int>(prepared.set->Height())};
         },
         nullptr,
-        [this, alive, result, error, device](bool success, const std::string& message) {
+        [this, alive, result, error, device, size](bool success, const std::string& message) {
             if (alive.expired()) return;
             stats_task_ = 0;
             {
@@ -272,6 +274,8 @@ void ImageProfileView::MeasureStats() {
             input_.channel_std = result->std_dev;
             input_.stats_images = result->images;
             input_.stats_device = *device;
+            input_.stats_width = size->first;
+            input_.stats_height = size->second;
             input_.sets_listed = false;  // the set is in cache/images now
             graph_seen_.clear();
             view_ = ip::Build(input_);

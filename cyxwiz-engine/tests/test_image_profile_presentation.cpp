@@ -125,6 +125,8 @@ int main() {
     stats.channel_std = {0.2548, 0.2481, 0.2508};
     stats.stats_images = 25000;
     stats.stats_device = "CUDA - GeForce GTX 1050 Ti";
+    stats.stats_width = stats.stats_height = 64;  // a Center Crop 64 after Resize 72
+    stats.resize_width = stats.resize_height = 72;
     stats.normalize = true;
     stats.norm_mean = 0.5f;
     stats.norm_std = 0.5f;
