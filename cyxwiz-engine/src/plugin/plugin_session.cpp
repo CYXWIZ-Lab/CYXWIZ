@@ -1,6 +1,8 @@
 #include "plugin_session.h"
 
 #include "plugin_manager.h"
+#include "registries/plugin_analytics_registry.h"
+#include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "../core/extension_node_registry.h"
 
@@ -117,6 +119,10 @@ PluginContribution DescribeContribution(const std::string& plugin_id) {
             c.node_categories.push_back(d.menu_category);
         }
     }
+    for (const auto& loader : PluginDataLoaderRegistry::Instance().Loaders())
+        if (loader.plugin_id == plugin_id) ++c.dataset_formats;
+    for (const auto& analytic : PluginAnalyticsRegistry::Instance().Analytics())
+        if (analytic.plugin_id == plugin_id) ++c.analytics;
     return c;
 }
 

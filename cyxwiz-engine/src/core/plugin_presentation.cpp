@@ -89,9 +89,22 @@ std::vector<PluginStartupEntry> PluginsToLoadAtStartup(const PluginStartupList& 
     return result;
 }
 
-std::string PluginStartupNote(bool on) {
-    return on ? "Graphs that use its nodes open ready after a restart."
-              : "After a restart its nodes show as not installed until you load it here.";
+std::string PluginStartupNote(bool on, const PluginContribution& c) {
+    if (c.trainable_nodes + c.simulation_nodes > 0) {
+        return on ? "Graphs that use its nodes open ready after a restart."
+                  : "After a restart its nodes show as not installed until you load it here.";
+    }
+    std::vector<std::string> what;
+    if (c.dataset_formats > 0) what.push_back("dataset formats");
+    if (c.analytics > 0) what.push_back("analytics");
+    if (c.windows > 0) what.push_back("windows");
+    if (what.empty()) {
+        return on ? "It loads again after a restart." : "After a restart it stays unloaded until you load it here.";
+    }
+    std::string list = what[0];
+    for (size_t i = 1; i < what.size(); ++i) list += (i + 1 == what.size() ? " and " : ", ") + what[i];
+    return on ? "Its " + list + " are there after a restart."
+              : "After a restart its " + list + " are missing until you load it here.";
 }
 
 std::string PluginAddsLine(const PluginContribution& c) {
@@ -99,19 +112,21 @@ std::string PluginAddsLine(const PluginContribution& c) {
     if (c.windows > 0) parts.push_back(Count(c.windows, "window", "windows"));
     if (c.trainable_nodes > 0) parts.push_back(Count(c.trainable_nodes, "trainable node", "trainable nodes"));
     if (c.simulation_nodes > 0) parts.push_back(Count(c.simulation_nodes, "simulation node", "simulation nodes"));
+    if (!parts.empty() && !c.node_categories.empty()) {  // the categories follow the nodes
+        std::string categories = " (";
+        for (size_t i = 0; i < c.node_categories.size(); ++i) {
+            if (i > 0) categories += ", ";
+            categories += c.node_categories[i];
+        }
+        parts.back() += categories + ")";
+    }
+    if (c.dataset_formats > 0) parts.push_back(Count(c.dataset_formats, "dataset format", "dataset formats"));
+    if (c.analytics > 0) parts.push_back(Count(c.analytics, "analytic", "analytics"));
     if (parts.empty()) return {};
     std::string text = "Adds: ";
     for (size_t i = 0; i < parts.size(); ++i) {
         if (i > 0) text += ", ";
         text += parts[i];
-    }
-    if (!c.node_categories.empty()) {
-        text += " (";
-        for (size_t i = 0; i < c.node_categories.size(); ++i) {
-            if (i > 0) text += ", ";
-            text += c.node_categories[i];
-        }
-        text += ")";
     }
     return text;
 }
@@ -121,6 +136,8 @@ std::string PluginMenuDetail(const PluginContribution& c) {
     std::string text;
     if (c.windows > 0) text = Count(c.windows, "window", "windows");
     if (nodes > 0) text += (text.empty() ? "" : ", ") + Count(nodes, "node", "nodes");
+    if (c.dataset_formats > 0) text += (text.empty() ? "" : ", ") + Count(c.dataset_formats, "format", "formats");
+    if (c.analytics > 0) text += (text.empty() ? "" : ", ") + Count(c.analytics, "analytic", "analytics");
     return text;
 }
 
