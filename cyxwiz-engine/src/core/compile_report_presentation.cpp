@@ -1,6 +1,7 @@
 #include "compile_report_presentation.h"
 
 #include "compiled_node_presentation.h"
+#include "normalize_statistics.h"
 
 #include <cyxwiz/error_codes.h>
 
@@ -184,8 +185,12 @@ void AddConfig(Report& r, const ConfigFacts& c) {
     ConfigGroup learning{"Learning", {}};
     learning.rows.emplace_back("Loss", c.loss);
     learning.rows.emplace_back("Optimizer", c.optimizer + ", learning rate " + Short(c.learning_rate));
-    if (c.normalize)
+    if (c.normalize && !c.norm_channel_mean.empty()) {
+        learning.rows.emplace_back("Normalize", ChannelSummary(c.norm_imagenet ? "ImageNet" : "per channel",
+                                                               c.norm_channel_mean, c.norm_channel_std));
+    } else if (c.normalize) {
         learning.rows.emplace_back("Normalize", "mean " + Short(c.norm_mean) + ", std " + Short(c.norm_std));
+    }
     if (c.one_hot) learning.rows.emplace_back("Labels", "one-hot, " + Count(static_cast<size_t>(c.num_classes), "class", "classes"));
     r.config.push_back(std::move(learning));
 }

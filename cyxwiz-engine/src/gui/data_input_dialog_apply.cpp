@@ -3,9 +3,11 @@
 #include "node_config_dialog.h"
 #include "loaders/data_loader.h"
 #include "../core/data_registry.h"
+#include "../core/image_index_service.h"
 #include "../core/project_data_path.h"
 #include "../core/project_manager.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -31,6 +33,18 @@ void DataInputDialog::Apply() {
         apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
         apply_success_ = false;
         return;
+    }
+
+    // An image folder's class names: saved with the node; a loaded dataset
+    // takes them at once (its index is rebuilt) without loading the images again.
+    if (file_category_ == FileCategory::Image) {
+        const bool named = std::any_of(class_names_edit_.begin(), class_names_edit_.end(),
+                                       [](const std::string& n) { return !n.empty(); });
+        if (named) node_->parameters["class_names"] = nlohmann::json(class_names_edit_).dump();
+        else node_->parameters.erase("class_names");
+        if (class_names_changed_ && !loaded_dataset_name_.empty())
+            cyxwiz::RenameImageClasses(loaded_dataset_name_, class_names_edit_);
+        class_names_changed_ = false;
     }
 
     // Apply also acts as confirmation. Reuse a valid registration when no
@@ -623,6 +637,7 @@ void DataInputDialog::Apply() {
         ctx.previous_dataset_name = previous_dataset_name;
         ctx.image_labels_csv      = labels_csv_;
         ctx.image_layout          = static_cast<int>(image_layout_);
+        ctx.image_class_names     = class_names_edit_;
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {

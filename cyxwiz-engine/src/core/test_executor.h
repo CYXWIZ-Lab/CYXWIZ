@@ -141,6 +141,25 @@ struct TestingMetrics {
 // view shows the same numbers.
 void FinishClassifierMetrics(TestingMetrics& m);
 
+// One class against the rest (TOFIX129 D4: the positive class of Results >
+// Test's curves and threshold): its ROC and precision-recall curves and how
+// many test samples are of it. Two classes: class 1's are the run's own
+// curves, class 0's are worked out on the device from P(class 0). More
+// classes: the run's one-vs-rest curves. False with `error` when the run
+// kept no class scores or the class has no curve (no sample of it).
+struct ClassCurves {
+    ROCCurveData roc;
+    PRCurveData pr;
+    int positives = 0;
+    int negatives = 0;
+};
+bool CurvesForClass(const TestingMetrics& m, int positive, ClassCurves& out, std::string& error);
+
+// A regression test's R-squared: 1 - SSE / SST per target over the kept rows,
+// averaged over the targets (scikit-learn's r2_score); NaN when no rows were
+// kept or a target is constant.
+double RegressionRSquared(const TestingMetrics& m);
+
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 

@@ -14,7 +14,7 @@ and are selected per run by the device the run targets:
 | Executor | Role | Selected when |
 | --- | --- | --- |
 | ArrayFire | general tensor execution, transformer blocks, dense/conv/norm | default for every layer it can run |
-| `cyxwiz.nvidia-cublas-cell` | recurrent training (RNN/LSTM/GRU, stacked, bidirectional) on CUDA | run targets a CUDA device |
+| `cyxwiz.nvidia-cublas-cell` | recurrent training (RNN/LSTM/GRU, stacked, bidirectional) and Conv2D forward / backward on CUDA | run targets a CUDA device |
 | `cyxwiz.opencl-cell` | the same recurrent contract on OpenCL GPUs | run targets an OpenCL device and hidden >= 16 |
 | CPU reference | small deterministic tests, portable fallback | strict mode off and nothing else can run |
 
@@ -31,6 +31,47 @@ elsewhere, not execution of CyxWiz graphs, and it is off unless the build
 finds LibTorch. It shares the `CYXWIZ_ENABLE_PYTORCH` option with the
 oracle test; split the option when the server node loader is next touched
 so a developer can enable the oracle without building the loader.
+
+## The NVIDIA provider (`cyxwiz.nvidia-cublas-cell`)
+
+CyxWiz's own provider for NVIDIA GPUs (tofix68), not cuDNN: our CUDA kernels,
+compiled at run time with NVRTC (fused RNN / LSTM / GRU cells, im2col for 2D
+convolution), with NVIDIA cuBLAS for the matrix multiplies.
+
+- **Recurrent layers**: ArrayFire's JIT cannot run recurrent training at
+  useful sizes on any backend (it flattens the expression tree into one
+  kernel); the provider runs the cells.
+- **Conv2D** (TOFIX140 A1b): ArrayFire 3.10's CUDA backend cannot compile its
+  own convolution kernel (unwrap / moddims) for real image sizes
+  (`NVRTC_ERROR_COMPILATION`); ArrayFire's OpenCL and CPU backends run Conv2D
+  fine. The provider runs the convolution device-resident: on ArrayFire's CUDA
+  stream, on ArrayFire's device buffers, with no host copies (the v2
+  `device_resident` boundary; the recurrent ops still use the v1 boundary
+  with explicit host copies). The Console says "Conv2D: convolution via
+  cyxwiz.nvidia-cublas-cell".
+- **Built** with `CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON` and the CUDA Toolkit
+  (CUDA runtime, cuBLAS, NVRTC, driver API) as a module of its own,
+  `cyxwiz-nvidia-provider` (`.dll` / `.so`), beside the backend in `bin`
+  (TOFIX178 1.0(c), option 1, 2026-10-28). `cyxwiz-backend` links no CUDA
+  library, so the base runs on every machine. The release workflow
+  (`cpu-base-native.yml`) builds the module against pinned CUDA 12.6
+  redistributable archives, and `package_release.py` ships it only in the
+  CUDA GPU pack (`runtime/`, beside afcuda); a CUDA pack without it fails to
+  package.
+- **Loaded** by the provider registry when it starts: by name (the pack's
+  `runtime/` is on the Engine's PATH), then from beside `cyxwiz-backend`. The
+  module exports `cyxwiz_nvidia_provider_abi` (must equal
+  `CYXWIZ_NEURAL_PROVIDER_MODULE_ABI`, `neural_provider.h`),
+  `cyxwiz_nvidia_provider_register` and
+  `cyxwiz_nvidia_provider_device_memory`. A missing module, or one that
+  cannot load (no NVIDIA driver: `nvcuda.dll`), counts as not installed
+  (a Debug log line); a loaded one logs "NVIDIA neural provider module
+  loaded: <path>".
+- **Without it**, a CUDA run of a model with Conv2D does not start on CUDA:
+  under the Compatibility policy it moves to ArrayFire CPU and says why;
+  under Strict it refuses with the reason (TOFIX178 1.0(d)).
+- `CYXWIZ_DISABLE_NEURAL_PROVIDERS=1` hides every provider for a process (the
+  portable path everywhere), for diagnosis and tests.
 
 ## Why not LibTorch as an additional backend
 

@@ -550,13 +550,18 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Sub("train.test", "Test", "Test a trained model.",
                         {Action(f, "train.run_test", "Run Test", "Tests the trained model on the test split."),
                          Action(f, "train.quick_test", "Run Quick Test", "Tests the first 10 batches of the test split and marks the result as partial."),
-                         Action(f, "train.view_test_results", "View Test Results", "Opens the Test Results panel."),
-                         Action(f, "train.compare_test_results", "Compare Test Results...", "Shows the latest test run beside the previous one."),
+                         Action(f, "train.view_test_results", "View Test Results", "Opens Data Studio > Results > Test."),
+                         Action(f, "train.compare_test_results", "Compare Test Results...", "Opens Results > Test on Comparison: the latest test beside the one before."),
                          Action(f, "train.export_test_report", "Export Test Report...",
                                 "Saves the latest test results as a JSON report."),
                          Sep(),
                          Action(f, "train.load_checkpoint", "Load Checkpoint for Testing...",
                                 "Loads saved weights to test them.")}));
+        i.push_back(Sub("train.evaluate", "Evaluate", "Train the graph again on folds of its data.",
+                        {Action(f, "train.cross_validate", "Cross-validate",
+                                "Trains the graph once per fold and scores each fold once (Data Studio > Results > Cross-validation)."),
+                         Action(f, "train.learning_curve", "Learning Curve",
+                                "Trains the graph on shares of its rows: does more data help? (Data Studio > Results > Learning curve).")}));
         i.push_back(Sep());
         i.push_back(Action(f, "train.dashboard", "Training Dashboard", "Opens the Training panel."));
         i.push_back(Action(f, "train.optimizer_settings", "Optimizer Settings...", "Shows the graph's optimizer node in Properties."));
@@ -577,12 +582,17 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Action(f, "data.missing_values", "Missing Value Analysis", "Opens Data Studio's Missing tab: incomplete rows and the columns that go missing together."),
                          Action(f, "data.outliers", "Outlier Detection", "Opens Data Studio's Outliers tab: values far from the rest, by IQR, Z-score or Modified Z."),
                          Action(f, "data.correlation", "Correlation Matrix", "Opens Data Studio's Correlation tab: how the number columns move together.")}));
-        i.push_back(Sub("data.transform", "Transform", "Rescale or reshape columns.",
-                        {Tool(f, "data.normalization", "Normalization (Min-Max)"),
-                         Tool(f, "data.standardization", "Standardization (Z-Score)"),
-                         Tool(f, "data.log_transform", "Log Transform"),
-                         Tool(f, "data.boxcox", "Box-Cox Transform"),
-                         Tool(f, "data.feature_scaling", "Feature Scaling (All Methods)")}));
+        i.push_back(Sub("data.transform", "Transform", "Rescale or reshape columns: each adds a step in Data Studio's Prepare.",
+                        {Action(f, "data.normalization", "Normalization (Min-Max)",
+                                "Adds a Min-Max Scaler step in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.standardization", "Standardization (Z-Score)",
+                                "Adds a Z-score (Standard Scaler) step in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.log_transform", "Log Transform",
+                                "Adds a Log Transform step in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.boxcox", "Box-Cox Transform",
+                                "Adds a Power Transform step (Box-Cox) in Data Studio's Prepare, after the data in use."),
+                         Action(f, "data.feature_scaling", "Feature Scaling (All Methods)",
+                                "Adds a scaling step in Data Studio's Prepare and compares every method on it.")}));
         i.push_back(Tool(f, "tools.tokenization", "Tokenization"));
         i.push_back(Planned(f, "data.augment", "Augment", "Data augmentation."));
         model.menus.push_back(std::move(m));
@@ -606,24 +616,29 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Sep(),
                          Tool(f, "tools.dnn_inference", "DNN Inference")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
-                        {Tool(f, "tools.cross_validation", "Cross-Validation"),
-                         Tool(f, "tools.confusion_matrix", "Confusion Matrix"),
-                         Tool(f, "tools.roc_auc", "ROC Curve / AUC"),
-                         Tool(f, "tools.pr_curve", "Precision-Recall Curve"),
-                         Tool(f, "tools.learning_curves", "Learning Curves"),
+                        {Action(f, "tools.cross_validation", "Cross-Validation",
+                                "Opens Data Studio > Results > Cross-validation: the graph trained once per fold, each fold scored once."),
+                         Action(f, "tools.confusion_matrix", "Confusion Matrix",
+                                "Opens Data Studio > Results > Test: the latest test, a kept test or any table of predictions."),
+                         Action(f, "tools.roc_auc", "ROC Curve / AUC",
+                                "Opens Results > Test: Curves and Threshold, the positive class picked by name."),
+                         Action(f, "tools.pr_curve", "Precision-Recall Curve",
+                                "Opens Results > Test: Curves and Threshold, the positive class picked by name."),
+                         Action(f, "tools.learning_curves", "Learning Curves",
+                                "Opens Results > Learning curve: the graph trained on shares of its rows, training against validation."),
                          Tool(f, "tools.feature_importance", "Feature Importance")}));
         i.push_back(Sub("tools.clustering", "Clustering and Projection", "Group rows and reduce dimensions.",
-                        {Tool(f, "tools.kmeans", "K-Means Clustering"),
-                         Tool(f, "tools.dbscan", "DBSCAN"),
-                         Tool(f, "tools.hierarchical", "Hierarchical Clustering"),
-                         Tool(f, "tools.gmm", "Gaussian Mixture Models"),
-                         Tool(f, "tools.cluster_eval", "Cluster Evaluation"),
+                        {Action(f, "tools.kmeans", "K-Means Clustering", "Opens Data Studio's Groups tab on K-Means: groups, scores, what each group is, how many groups."),
+                         Action(f, "tools.dbscan", "DBSCAN", "Opens the Groups tab on DBSCAN: dense groups and noise; the k-distance knee suggests eps."),
+                         Action(f, "tools.hierarchical", "Hierarchical Clustering", "Opens the Groups tab on Hierarchical: the dendrogram and its cut."),
+                         Action(f, "tools.gmm", "Gaussian Mixture Models", "Opens the Groups tab on Gaussian mixture: soft groups, BIC and AIC."),
+                         Action(f, "tools.cluster_eval", "Cluster Evaluation", "Opens the Groups tab: silhouette, Davies-Bouldin and Calinski-Harabasz are on every answer."),
                          Sep(),
-                         Tool(f, "tools.dim_reduction", "PCA / t-SNE / UMAP")}));
+                         Action(f, "tools.dim_reduction", "PCA / t-SNE / UMAP", "Opens Data Studio's Projection tab: the rows in two dimensions, coloured by a column or the groups.")}));
         i.push_back(Sub("tools.statistics", "Statistics", "Describe and test data.",
                         {Action(f, "tools.descriptive_stats", "Summary Statistics", "Opens Data Studio's Distribution tab: a column's figures, percentiles and box plot."),
-                         Tool(f, "tools.hypothesis_test", "Hypothesis Testing"),
-                         Tool(f, "tools.regression", "Linear / Polynomial Regression"),
+                         Action(f, "tools.hypothesis_test", "Hypothesis Testing", "Opens Data Studio's Tests tab: two groups, paired columns, several groups, one value, two categories."),
+                         Action(f, "tools.regression", "Linear / Polynomial Regression", "Opens Data Studio's Regression tab: predict a number column from others, or a curve in one."),
                          Action(f, "tools.distribution_fitter", "Distribution Fitter", "Opens Data Studio's Distribution tab: Normal, Uniform, Exponential and Log-Normal fits.")}));
         i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrix tools.",
                         {Tool(f, "tools.matrix_calculator", "Matrix Calculator"),

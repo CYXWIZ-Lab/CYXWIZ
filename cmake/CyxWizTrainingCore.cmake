@@ -41,6 +41,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/executable_model.cpp
     ${_cyxwiz_engine_src}/core/graph_executable_model.cpp
     ${_cyxwiz_engine_src}/core/parquet_backed_dataset.cpp
+    ${_cyxwiz_engine_src}/core/cache_prune.cpp
     ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/dataset_base.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp
@@ -132,6 +133,7 @@ endif()
 add_library(cyxwiz-training-core STATIC
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
     ${_cyxwiz_engine_src}/core/graph_compiler.cpp
+    ${_cyxwiz_engine_src}/core/image_cv_steps.cpp
     ${_cyxwiz_engine_src}/core/sequence_fusion_presentation.cpp
     ${_cyxwiz_engine_src}/core/graph_compiler_dataset_hooks.cpp
     ${_cyxwiz_engine_src}/core/graph_node_factory.cpp

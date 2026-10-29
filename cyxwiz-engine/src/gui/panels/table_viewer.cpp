@@ -32,6 +32,23 @@ namespace cyxwiz {
 TableViewerPanel::TableViewerPanel()
     : Panel("Table Viewer", false)  // Start hidden
 {
+    // A removed dataset leaves its tabs as frozen copies of the rows they
+    // show; they let go of its Arrow buffers so its memory is freed.
+    catalog_subscription_ = DatasetCatalog::Instance().Subscribe(alive_, [this](const DatasetChange& change) {
+        if (change.kind == DatasetChange::Kind::Added) return;
+        const bool removed = change.kind == DatasetChange::Kind::Removed;
+        for (auto& tab : tabs_) {
+            if (tab->origin != change.name) continue;
+            // Removed after a replace says removed; a second replace changes nothing.
+            if (tab->frozen == TableTab::Frozen::Removed || (!removed && tab->frozen == TableTab::Frozen::Replaced))
+                continue;
+            tab->frozen = removed ? TableTab::Frozen::Removed : TableTab::Frozen::Replaced;
+            tab->source.reset();
+            tab->dataset.clear();
+            spdlog::info("Table Viewer: '{}' was {}; tab '{}' keeps a frozen copy of its {} rows", change.name,
+                         removed ? "removed" : "loaded again", tab->filename, tab->GetRowCount());
+        }
+    });
 }
 
 void TableViewerPanel::Render() {
@@ -77,6 +94,7 @@ void TableViewerPanel::Render() {
         // Tab bar at top, the live-value line (Data Viewer), the toolbar.
         RenderTabBar();
         RenderLiveHeader(GetActiveTab());
+        RenderRemovedHeader(GetActiveTab());
         RenderToolbar();
         RenderOpening();
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
@@ -125,6 +143,18 @@ void TableViewerPanel::Render() {
 
     // Render modal dialogs (must be outside main window)
     RenderFindDialog();
+}
+
+void TableViewerPanel::RenderRemovedHeader(TableTab* tab) {
+    if (!tab || tab->frozen == TableTab::Frozen::No) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const std::string rows = std::to_string(tab->GetRowCount());
+    const std::string text = tab->frozen == TableTab::Frozen::Removed
+        ? "'" + tab->origin + "' was removed (its Data Input or graph is gone). This tab is a frozen copy of the " +
+              rows + " rows it shows."
+        : "'" + tab->origin + "' was loaded again with new data. This tab is a frozen copy of the " + rows +
+              " rows it showed before; open the dataset again for the new rows.";
+    ui::NoticeLine(text, t.warning);
 }
 
 void TableViewerPanel::RenderLiveHeader(TableTab* tab) {
@@ -539,6 +569,7 @@ void TableViewerPanel::StartOpen(const std::string& name, const std::string& dat
                                      std::to_string(slice.total_rows) + " rows");
             status_note_.clear();
             TableTab* tab = AddTab(slice.table, std::move(result->kinds), slice.source);
+            if (tab) tab->origin = dataset;
             if (tab && static_cast<int64_t>(shown) == slice.total_rows) tab->dataset = dataset;
             visible_ = true;
         },

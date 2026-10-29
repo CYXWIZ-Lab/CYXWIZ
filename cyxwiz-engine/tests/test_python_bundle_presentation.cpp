@@ -115,7 +115,7 @@ int main() {
     Check(view.busy && !view.primary_enabled && view.title == "Create nodes from my_acts.py", "inspecting");
     in.stage = cyxwiz::CreateNodeStage::NoNodes;
     view = cyxwiz::BuildCreateNodeView(in);
-    Check(view.lead.find("mark a class with @nodes.node or @nodes.activation") != std::string::npos &&
+    Check(view.lead.find("mark a class with @nodes.node, @nodes.activation or @nodes.loss") != std::string::npos &&
               view.primary_label == "Close",
           "no nodes found");
     in.stage = cyxwiz::CreateNodeStage::Found;

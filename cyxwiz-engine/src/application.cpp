@@ -133,11 +133,11 @@ static bool load_window_icon(GLFWwindow* window) {
     spdlog::debug("macOS uses the application bundle icon for regular windows");
     return true;
 #else
-    // Try both possible locations
-    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
+    // Try both possible locations. The icon is the mark alone (no wordmark).
+    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz_icon.png";
 
     if (!std::filesystem::exists(icon_path)) {
-        icon_path = "resources/cyxwiz.png";
+        icon_path = "resources/cyxwiz_icon.png";
         if (!std::filesystem::exists(icon_path)) {
             spdlog::warn("Window icon not found at either location");
             return false;
@@ -258,7 +258,6 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
     if (pm.OpenProject(startup_project_path_)) {
         if (startup_project_from_command_line_)
             spdlog::debug("Opened project from the command line: {}", startup_project_path_);
-        UpdateWindowTitle();  // Update window title with project name
     } else {
         spdlog::error("Failed to open project {}", startup_project_path_);
     }
@@ -299,6 +298,8 @@ void CyxWizApp::UpdateWindowTitle() {
         title = "CyxWiz Engine - " + project_name;
     }
 
+    if (title == window_title_) return;
+    window_title_ = title;
     glfwSetWindowTitle(window_, title.c_str());
     spdlog::debug("Window title updated to: {}", title);
 }
@@ -713,13 +714,36 @@ void CyxWizApp::Update(float delta_time) {
     // Process async task completion callbacks
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
     // Dataset changes (loaded, replaced, removed) to their subscribers, on this thread.
-    // Each change is logged once (one subscriber for the app's lifetime).
-    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe({}, [](const cyxwiz::DatasetChange& c) {
-        const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added ? "added" : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced" : "removed";
-        spdlog::debug("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
-    });
+    // Each change is logged once (one subscriber for the app's lifetime), with
+    // its bytes and what loaded data holds after the batch (one report a batch).
+    static std::vector<cyxwiz::DatasetChange> catalog_changes;
+    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe(
+        {}, [](const cyxwiz::DatasetChange& c) { catalog_changes.push_back(c); });
     (void)catalog_log;
     cyxwiz::DatasetCatalog::Instance().Pump();
+    if (!catalog_changes.empty()) {
+        const cyxwiz::LoadedDataReport loaded = cyxwiz::DataRegistry::Instance().LoadedData();
+        const cyxwiz::MemoryStats fmt;
+        for (const auto& c : catalog_changes) {
+            const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added      ? "added"
+                               : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced"
+                                                                                 : "removed";
+            const auto it = std::find_if(loaded.entries.begin(), loaded.entries.end(),
+                                         [&c](const cyxwiz::LoadedDataEntry& e) { return e.name == c.name; });
+            std::string bytes;
+            if (it != loaded.entries.end())
+                bytes = ", " + fmt.FormatBytes(it->memory_bytes) + " in memory" +
+                        (it->shared_bytes ? " (" + fmt.FormatBytes(it->shared_bytes) + " shared)" : "") +
+                        (it->disk_bytes ? ", " + fmt.FormatBytes(it->disk_bytes) + " on disk" : "");
+            spdlog::debug("Dataset catalog: {} '{}' ({}, {} rows{}, generation {})", what, c.name,
+                          cyxwiz::StorageText(c.entry.storage), c.entry.rows, bytes, c.generation);
+        }
+        spdlog::debug("Loaded data: {} dataset{}, {} in memory, {} on disk; Arrow holds {} (peak {})",
+                      loaded.entries.size(), loaded.entries.size() == 1 ? "" : "s", fmt.FormatBytes(loaded.memory_bytes), fmt.FormatBytes(loaded.disk_bytes),
+                      fmt.FormatBytes(static_cast<size_t>(loaded.arrow_pool_bytes)),
+                      fmt.FormatBytes(static_cast<size_t>(loaded.arrow_pool_peak_bytes)));
+        catalog_changes.clear();
+    }
 }
 
 void CyxWizApp::RenderPythonWait() {
@@ -817,11 +841,10 @@ void CyxWizApp::Render() {
         spdlog::debug("Creating main window with project: {}", startup_project_path_);
 
         main_window_ = std::make_unique<gui::MainWindow>();
-        OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
+        OpenStartupProjectIfRequested();
         OpenStartupGraphIfRequested();
         for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
         startup_scripts_.clear();
-        UpdateWindowTitle();  // Update window title regardless (shows project name or just "CyxWiz Engine")
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 
@@ -851,6 +874,7 @@ void CyxWizApp::Render() {
 
     // Render main window (with docking)
     if (main_window_) {
+        UpdateWindowTitle();
         ImGuiErrorRecoveryState before;
         ImGui::ErrorRecoveryStoreState(&before);
         std::string failure;

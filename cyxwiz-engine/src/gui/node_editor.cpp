@@ -13,6 +13,7 @@
 #include "patterns/pattern_library.h"
 #include "icons.h"
 #include "../core/data_registry.h"
+#include "../core/training_input_preparation.h"
 #include "../core/training_manager.h"
 #include "../core/training_trace_collector.h"
 #include "../core/async_task_manager.h"
@@ -234,6 +235,7 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         cyxwiz::TestManager::Instance().IsTestingActive(),
         graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
         training_data_loading_callback_ && training_data_loading_callback_(),
+        properties_panel_ && properties_panel_->IsDialogBusy(),
         is_simulating_.load(), pipeline_execution_active_,
         rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())}));
 }
@@ -273,10 +275,13 @@ void NodeEditor::Render() {
     // and prevent crashes from stale node references
     if (pending_context_reset_) {
         spdlog::info("Resetting ImNodes editor context");
+        const ImVec2 panning = ImNodes::EditorContextGetPanning();
         ImNodes::EditorContextFree(editor_context_);
         editor_context_ = ImNodes::EditorContextCreate();
         ImNodes::EditorContextSet(editor_context_);
+        if (pending_context_keep_view_) ImNodes::EditorContextResetPanning(panning);
         pending_context_reset_ = false;
+        pending_context_keep_view_ = false;
     }
 
     ::gui::NextWindowMayLeave("CyxWiz Studio");
@@ -284,10 +289,6 @@ void NodeEditor::Render() {
     ::gui::TabMenu("CyxWiz Studio", &show_window_);
     if (expanded) {
         ShowToolbar();
-        const auto replacement_block = GetGraphReplacementBlockReason();
-        if (!replacement_block.empty()) {
-            ImGui::TextWrapped("Graph replacement locked: %s. Wait for completion or stop the active operation before loading or clearing a graph.", replacement_block.c_str());
-        }
 
         // Check if mouse is over minimap (using stored bounds from previous frame)
         // This needs to be done before ImNodes::BeginNodeEditor to prevent canvas panning
@@ -313,6 +314,7 @@ void NodeEditor::Render() {
         ImNodes::EditorContextSetZoom(zoom_);
 
         canvas_size_ = ImGui::GetContentRegionAvail();
+        canvas_origin_ = ImGui::GetCursorScreenPos();
         ImNodes::BeginNodeEditor();
 
         // Moving the view while the left button is down (the second press of
@@ -648,7 +650,8 @@ void NodeEditor::Render() {
         ImNodes::PopStyleVar(5);
         ImGui::SetWindowFontScale(1.0f);
 
-        // Render minimap overlay in bottom-right corner
+        RenderCanvasFooter();
+        // Render minimap overlay in bottom-right corner, above the footer
         if (show_minimap_) {
             RenderMinimap();
         }
@@ -834,6 +837,14 @@ void NodeEditor::Render() {
                     properties_panel_->ClearSelection();
                 }
             }
+        }
+        // The Info panel follows the canvas selection, as it follows a click
+        // in the Nodes panel: once per newly selected node, any node type.
+        const int info_id = frame_selected_subgraph_id_ >= 0 ? frame_selected_subgraph_id_ : selected_node_id_;
+        if (info_id != info_node_id_) {
+            info_node_id_ = info_id;
+            if (const MLNode* node = info_id > 0 ? FindNodeById(info_id) : nullptr; node && node_selected_callback_)
+                node_selected_callback_(*node);
         }
     }
     ImGui::End();
@@ -1128,7 +1139,7 @@ void NodeEditor::RenderMinimap() {
     // Additional offset for the toolbar and separator rendered before the node canvas
     float toolbar_offset = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 10.0f;
     float content_top = parent_window_pos.y + content_min.y + toolbar_offset;
-    float content_bottom = parent_window_pos.y + content_max.y;
+    float content_bottom = parent_window_pos.y + content_max.y - kCanvasFooterHeight;
     float content_left = parent_window_pos.x + content_min.x;
     float content_right = parent_window_pos.x + content_max.x;
     // A window of its own: on a canvas smaller than the minimap it drew over
@@ -1676,8 +1687,10 @@ void NodeEditor::RenderNodes() {
         if (is_knime_style) {
             // Make ImNodes node completely invisible - we draw our own icon box
             ImU32 transparent = IM_COL32(0, 0, 0, 0);
-            // Push pin closer to node content (negative offset pulls it inward)
-            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 0.0f);
+            // Pins sit just outside the icon box: centred on its edge, the box
+            // covered half of each and the rest was too small to hover (its
+            // tooltip seemed missing). Radius as pushed above, plus a gap.
+            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 4.0f * zoom_ + 1.0f);
             // Remove node padding so pins sit flush with the icon box
             ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(0.0f, 0.0f));
             ImNodes::PushColorStyle(ImNodesCol_TitleBar, transparent);
@@ -2089,7 +2102,12 @@ void NodeEditor::RenderNodes() {
             case NodeType::Normalize: {
                 auto mean_it = node.parameters.find("mean");
                 auto std_it = node.parameters.find("std");
-                if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
+                auto stat_it = node.parameters.find("statistics");
+                if (stat_it != node.parameters.end() && stat_it->second == "imagenet") {
+                    ImGui::TextColored(t.accent_text, "ImageNet");
+                } else if (stat_it != node.parameters.end() && stat_it->second == "per_channel") {
+                    ImGui::TextColored(t.accent_text, "Per channel");
+                } else if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
                     ImGui::TextColored(t.accent_text, "Mean: %s", mean_it->second.c_str());
                     ImGui::TextColored(t.accent_text, "Std: %s", std_it->second.c_str());
                 }
@@ -4518,6 +4536,51 @@ bool NodeEditor::ExecuteDataPipeline() {
     return SubmitDataPipelineJson(std::move(pipeline_json));
 }
 
+std::optional<std::string> NodeEditor::CurrentRunResult(int node_id) {
+    if (!pipeline_executor_ || pipeline_executor_->IsExecuting()) return std::nullopt;
+    nlohmann::json pipeline_json;
+    std::map<int, std::vector<int>> recipe_steps;  // the editor's own map stays as the last run left it
+    std::string error;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_steps, error)) return std::nullopt;
+    return pipeline_executor_->CurrentNodeResult(pipeline_json.dump(), node_id);
+}
+
+std::vector<std::string> NodeEditor::InputColumns(int node_id) const {
+    const MLNode* node = FindNodeById(node_id);
+    if (!node || node->inputs.empty()) return {};
+    const MLNode* feeder = nullptr;
+    for (const auto& link : links_)
+        if (link.to_node == node_id && link.to_pin == node->inputs.front().id) feeder = FindNodeById(link.from_node);
+    if (!feeder) return {};
+    std::string dataset;
+    if (feeder->type == NodeType::DataInput || feeder->type == NodeType::DatasetInput) {
+        const auto name = feeder->parameters.find("dataset_name");
+        if (name != feeder->parameters.end()) dataset = name->second;
+    } else if (const auto result = LastRunResult(feeder->id)) {
+        dataset = *result;
+    }
+    std::shared_ptr<arrow::Schema> schema;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    if (const auto memory = registry.GetArrowDataset(dataset)) schema = memory->GetSchema();
+    else if (const auto disk = registry.GetParquetBackedDataset(dataset)) schema = disk->GetSchema();
+    std::vector<std::string> columns;
+    if (schema)
+        for (const auto& field : schema->fields()) columns.push_back(field->name());
+    return columns;
+}
+
+std::optional<std::string> NodeEditor::LastRunResult(int node_id) const {
+    if (!pipeline_executor_ || pipeline_executor_->IsExecuting()) return std::nullopt;
+    const auto& results = pipeline_executor_->NodeResults();
+    const auto it = results.find(node_id);
+    if (it == results.end() || it->second.empty()) return std::nullopt;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    if (!registry.GetArrowDataset(it->second) && !registry.GetParquetBackedDataset(it->second) &&
+        !registry.IsSparseFeatureDataset(it->second))
+        return std::nullopt;
+    return it->second;
+}
+
 bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step) {
     if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
         spdlog::warn("Data transformation pipeline is already running (task ID: {})",
@@ -4565,6 +4628,15 @@ bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bo
         if (keep.empty()) {
             ShowPipelineNotice("Nothing runs before this step.");
             return false;
+        }
+    }
+    // A training graph's supplied Validation / Test inputs run with its
+    // training input: their rows join it (TOFIX178 S0-g4).
+    if (const auto split = pipeline_json.find("training_split"); split != pipeline_json.end()) {
+        const auto policy = cyxwiz::TrainingSplitPolicyFromJson(pipeline_json);
+        if (policy && policy->Supplies() && keep.count(policy->training_input)) {
+            if (policy->validation_input >= 0) keep.insert(policy->validation_input);
+            if (policy->test_input >= 0) keep.insert(policy->test_input);
         }
     }
     if (with_checks && include_step) {
@@ -4640,59 +4712,12 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
                 {"start_pin_index", link.value("from_pin_index", 0)},
                 {"end_pin_index", link.value("to_pin_index", 0)}});
         }
+        if (const auto policy = cyxwiz::TrainingSplitPolicyOf(nodes_, links_))
+            pipeline_json["training_split"] = cyxwiz::TrainingSplitPolicyJson(*policy);
         return true;
     }
 
-    for (const auto& node : nodes_) {
-        // Plot and Dashboard nodes show data; they are not pipeline steps (TOFIX134 P2, P3).
-        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) continue;
-        nlohmann::json node_json;
-        node_json["id"] = node.id;
-        node_json["type"] = GetNodeTypeName(node.type);
-        node_json["name"] = node.name;
-
-        // Add parameters
-        node_json["parameters"] = nlohmann::json::object();
-        for (const auto& [key, value] : node.parameters) {
-            node_json["parameters"][key] = value;
-        }
-
-        pipeline_json["nodes"].push_back(node_json);
-    }
-
-    // PipelineExecutor treats this top-level list as the canonical graph
-    // connection contract. NodeLink already owns the resolved node IDs, so
-    // preserve them directly instead of deriving duplicate per-node edges.
-    pipeline_json["links"] = nlohmann::json::array();
-    for (const auto& link : links_) {
-        const MLNode* from_node = FindNodeById(link.from_node);
-        const MLNode* to_node = FindNodeById(link.to_node);
-        if (!from_node || !to_node) {
-            error = "Pipeline link " + std::to_string(link.id) + " references a missing node";
-            return false;
-        }
-        if (to_node->type == NodeType::Plot || to_node->type == NodeType::Dashboard) continue;
-        const auto from_pin = std::find_if(
-            from_node->outputs.begin(), from_node->outputs.end(),
-            [&link](const NodePin& pin) { return pin.id == link.from_pin; });
-        const auto to_pin = std::find_if(
-            to_node->inputs.begin(), to_node->inputs.end(),
-            [&link](const NodePin& pin) { return pin.id == link.to_pin; });
-        if (from_pin == from_node->outputs.end() ||
-            to_pin == to_node->inputs.end()) {
-            error = "Pipeline link " + std::to_string(link.id) + " references a missing pin";
-            return false;
-        }
-        pipeline_json["links"].push_back({
-            {"start_node", link.from_node},
-            {"end_node", link.to_node},
-            {"start_pin_index", static_cast<int>(
-                std::distance(from_node->outputs.begin(), from_pin))},
-            {"end_pin_index", static_cast<int>(
-                std::distance(to_node->inputs.begin(), to_pin))}
-        });
-    }
-    return true;
+    return cyxwiz::PipelineJsonFromGraph(nodes_, links_, pipeline_json, error);
 }
 
 std::vector<NodeEditor::DataLink> NodeEditor::GetDataPipelineLinks(std::string* error) const {
@@ -4765,11 +4790,40 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // executor is kept between runs (lazy evaluation, TOFIX154): it reuses an
     // unchanged node's result, and drops the earlier result of each node it
     // runs again, so a node the run fails at leaves nothing stale.
+    ApplyPendingRunRelease();
+    // A training graph's data steps run; its Data Split, Data Loader, model,
+    // loss and optimizer belong to training (the executor refused the whole
+    // graph: "Node 'Split' has unsupported node type 'Unknown'").
+    {
+        std::set<int> training_only;
+        nlohmann::json kept_nodes = nlohmann::json::array();
+        for (auto& node : pipeline_json.at("nodes")) {
+            const MLNode* editor_node = FindNodeById(node.at("id").get<int>());
+            if (editor_node && cyxwiz::IsTrainingOnlyNode(editor_node->type)) {
+                training_only.insert(editor_node->id);
+                continue;
+            }
+            kept_nodes.push_back(std::move(node));
+        }
+        pipeline_json["nodes"] = std::move(kept_nodes);
+        if (!training_only.empty()) {
+            nlohmann::json kept_links = nlohmann::json::array();
+            for (auto& link : pipeline_json.at("links")) {
+                if (training_only.count(link.at("start_node").get<int>()) ||
+                    training_only.count(link.at("end_node").get<int>()))
+                    continue;
+                kept_links.push_back(std::move(link));
+            }
+            pipeline_json["links"] = std::move(kept_links);
+            spdlog::info("Pipeline: the data steps run; {} training node(s) are left to training", training_only.size());
+        }
+    }
     for (const auto& node : pipeline_json.at("nodes")) node_run_facts_.erase(node.at("id").get<int>());
     std::string pipeline_str = pipeline_json.dump(2);
     // One line: Debug is recorded in every build, and the indented form was
     // about 140 lines per run.
     spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
+    if (pipeline_executor_ && pipeline_executor_->IsExecuting()) retired_executors_.push_back(pipeline_executor_);
     auto executor = pipeline_executor_ && !pipeline_executor_->IsExecuting()
         ? pipeline_executor_
         : std::make_shared<cyxwiz::PipelineExecutor>();
@@ -4815,6 +4869,7 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
 // ===== Unified Canvas Phase 6: Execution Visualization =====
 
 void NodeEditor::SyncPipelineExecutionVisualization() {
+    ApplyPendingRunRelease();  // releases asked for during a run
     if (pipeline_task_id_ == 0 || !pipeline_execution_tracker_) {
         pipeline_execution_active_ = false;
         return;

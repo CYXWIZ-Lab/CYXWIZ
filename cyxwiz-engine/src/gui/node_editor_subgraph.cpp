@@ -10,6 +10,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -602,6 +603,11 @@ void NodeEditor::ApplyStepAfterInsert() {
             deferred_focus_ = {};
         }
     }
+    if (!pending_replacements_.empty()) {
+        const auto replacements = std::move(pending_replacements_);
+        pending_replacements_.clear();
+        for (const auto& request : replacements) ReplaceStep(request);
+    }
     if (pending_steps_after_.empty()) return;
     // A recipe being expanded first (Data Studio): its steps join the canvas then.
     if (pending_subgraph_request_.subgraph_id >= 0) return;
@@ -666,6 +672,17 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
         step.initial_pos_x = at.x + 160.0f;
         step.initial_pos_y = at.y + height + 80.0f;
+        // Below any node already there (an earlier branch of the same step), not on top of it.
+        for (bool moved = true; moved;) {
+            moved = false;
+            for (const auto& other : nodes_) {
+                const ImVec2 p = place(other.id, other);
+                if (std::fabs(p.x - step.initial_pos_x) < 120.0f && std::fabs(p.y - step.initial_pos_y) < 90.0f) {
+                    step.initial_pos_y = p.y + 130.0f;
+                    moved = true;
+                }
+            }
+        }
         step.has_initial_position = true;
         if (step.inputs.empty()) {
             spdlog::error("A new {} node has no input pin; nothing added", kind);
@@ -681,6 +698,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         RebuildPinLookup();
         ClearValidationState();
         deferred_focus_ = {step_id, 2};
+        last_added_step_ = step_id;
         spdlog::info("Added {} node {} reading node {}", kind, step_id, after_id);
         return;
     }
@@ -768,8 +786,60 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     RebuildPinLookup();
     ClearValidationState();
     deferred_focus_ = {step_id, 2};
+    last_added_step_ = step_id;
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
     if (request.open_dialog) OpenNodeConfiguration(step_id);
+}
+
+void NodeEditor::ReplaceStep(const PendingReplacement& request) {
+    const MLNode* old = FindNodeById(request.step);
+    if (!old || old->inputs.empty() || old->outputs.empty()) return;
+    if (IsSubgraphMember(old->id)) {
+        spdlog::warn("Node {} is a step of a recipe; it is not replaced", old->id);
+        return;
+    }
+    const auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    const auto* meta = registry.GetMetadata(request.type);
+    const auto* old_meta = registry.GetMetadata(old->type);
+    const std::string kind = meta ? meta->name : GetNodeTypeName(request.type);
+    if (!CanReplaceGraph(("switch to " + kind).c_str())) return;
+
+    SaveUndoState();
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
+    const bool default_name = !old_meta || old->name == old_meta->name || old->name == GetNodeTypeName(old->type);
+    MLNode step = CreateNode(request.type, default_name ? kind : old->name);
+    for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
+    if (step.inputs.empty() || step.outputs.empty()) {
+        spdlog::error("A new {} node has no input or output pin; nothing replaced", kind);
+        return;
+    }
+    const auto cached = cached_node_positions_.find(old->id);
+    const ImVec2 position = cached != cached_node_positions_.end() ? cached->second : ImVec2(old->initial_pos_x, old->initial_pos_y);
+    step.initial_pos_x = position.x;
+    step.initial_pos_y = position.y;
+    step.has_initial_position = true;
+    // It takes over the old step's links.
+    const int old_id = old->id, old_in = old->inputs.front().id, old_out = old->outputs.front().id;
+    for (auto& link : links_) {
+        if (link.to_node == old_id && link.to_pin == old_in) {
+            link.to_node = step.id;
+            link.to_pin = step.inputs.front().id;
+        }
+        if (link.from_node == old_id && link.from_pin == old_out) {
+            link.from_node = step.id;
+            link.from_pin = step.outputs.front().id;
+        }
+    }
+    const int step_id = step.id;
+    nodes_.push_back(std::move(step));
+    DeleteNode(old_id);  // `old` is gone from here
+    replaced_by_[old_id] = step_id;
+    pending_positions_[step_id] = position;
+    pending_positions_frames_ = 3;
+    RebuildPinLookup();
+    ClearValidationState();
+    deferred_focus_ = {step_id, 2};
+    spdlog::info("Replaced node {} with {} node {}", old_id, kind, step_id);
 }
 
 void NodeEditor::AddModelInputStepAfter(int input_id, NodeType type) {

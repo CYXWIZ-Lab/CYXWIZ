@@ -1723,11 +1723,27 @@ public:
         epoch_end_val_losses.push_back(context.val_loss);
     }
 
+    void OnBatchStart(cyxwiz::plugin::TrainingContext& context) override {
+        batch_starts.push_back({context.current_epoch, context.current_batch});
+        batch_totals.push_back(context.total_batches);
+    }
+
+    void OnBatchEnd(cyxwiz::plugin::TrainingContext& context) override {
+        batch_ends.push_back({context.current_epoch, context.current_batch});
+        batch_end_losses.push_back(context.train_loss);
+        batch_total_epochs.push_back(context.total_epochs);
+    }
+
     int training_start_count = 0;
     int training_end_count = 0;
     std::vector<int> epoch_start_epochs;
     std::vector<int> epoch_end_epochs;
     std::vector<float> epoch_end_val_losses;
+    std::vector<std::pair<int, int>> batch_starts;  // (epoch, batch)
+    std::vector<std::pair<int, int>> batch_ends;
+    std::vector<int> batch_totals;
+    std::vector<float> batch_end_losses;
+    std::vector<int> batch_total_epochs;
 };
 
 void TestValidationEarlyStoppingLifecycle(
@@ -1804,6 +1820,22 @@ void TestValidationEarlyStoppingLifecycle(
               std::isfinite(hook.epoch_end_val_losses[0]) &&
               std::isfinite(hook.epoch_end_val_losses[1]),
           label + " should publish validation values to both epoch-end hooks");
+    // OnBatchStart / OnBatchEnd (TOFIX125 hardening): every training batch of
+    // both epochs, numbered 1..total in order, the end with its loss.
+    {
+        const int per_epoch = hook.batch_totals.empty() ? 0 : hook.batch_totals.front();
+        std::vector<std::pair<int, int>> expected;
+        for (int epoch = 1; epoch <= 2; ++epoch)
+            for (int batch = 1; batch <= per_epoch; ++batch) expected.push_back({epoch, batch});
+        Check(per_epoch > 0 && hook.batch_starts == expected && hook.batch_ends == expected,
+              label + " should call OnBatchStart and OnBatchEnd for every training batch, in order");
+        bool losses_finite = !hook.batch_end_losses.empty();
+        for (float loss : hook.batch_end_losses) losses_finite = losses_finite && std::isfinite(loss);
+        Check(losses_finite, label + " should give OnBatchEnd the batch loss");
+        bool totals = true;
+        for (int total : hook.batch_total_epochs) totals = totals && total == 5;
+        Check(totals, label + " should give batch hooks the run's epoch count");
+    }
 
     if (save_best_checkpoint) {
         Check(!final_metrics.checkpoint_used.empty(),
@@ -3622,6 +3654,47 @@ std::optional<cyxwiz::DeviceInfo> FirstDeviceOfType(
     return std::nullopt;
 }
 
+// A model the requested route cannot run (Conv2D on CUDA without the NVIDIA
+// provider, TOFIX178 1.0(d)): Strict refuses with the reason, Compatibility
+// recovers to ArrayFire CPU and keeps the reason.
+void TestRunPreflightRouteUnsupportedByModel() {
+    const auto inventory = cyxwiz::Device::GetAvailableDevices();
+    const auto accelerator = std::find_if(inventory.begin(), inventory.end(), [](const cyxwiz::DeviceInfo& device) {
+        return device.type == cyxwiz::DeviceType::CUDA || device.type == cyxwiz::DeviceType::OPENCL;
+    });
+    if (accelerator == inventory.end()) {
+        std::cout << "SKIP: an unsupported-route preflight needs an accelerator route\n";
+        return;
+    }
+    cyxwiz::test::InstallQualifiedRouteSnapshot(inventory);
+    const auto unsupported = [type = accelerator->type](cyxwiz::DeviceType requested, int) {
+        return requested == type ? std::string("Conv2D cannot run here in this test") : std::string();
+    };
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    bool strict_refused = false;
+    try {
+        (void)cyxwiz::PrepareExecutionDeviceForRun(cyxwiz::ExecutionPolicy::Strict, unsupported);
+    } catch (const std::runtime_error& error) {
+        strict_refused = std::string(error.what()).find("Conv2D cannot run here in this test") != std::string::npos;
+    }
+    Check(strict_refused, "strict preflight refuses a route the model cannot run, with the reason");
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    const auto recovered = cyxwiz::PrepareExecutionDeviceForRun(cyxwiz::ExecutionPolicy::Compatibility, unsupported);
+    Check(recovered.selection_fallback_applied && recovered.effective_backend == "arrayfire_cpu" &&
+              recovered.error.find("Conv2D cannot run here in this test") != std::string::npos,
+          "compatibility preflight recovers to ArrayFire CPU and says why: " + recovered.error);
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    const auto kept = cyxwiz::PrepareExecutionDeviceForRun(
+        cyxwiz::ExecutionPolicy::Compatibility, [](cyxwiz::DeviceType, int) { return std::string(); });
+    Check(!kept.selection_fallback_applied, "a route the model can run is kept");
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+}
+
 void TestRunPreflightEnforcesRouteQualification() {
     const auto inventory = cyxwiz::Device::GetAvailableDevices();
     const auto rejected = std::find_if(
@@ -4635,6 +4708,7 @@ int main(int argc, char** argv) {
     TestTrainingTracePersistenceCoalescing();
 
     TestRunPreflightEnforcesRouteQualification();
+    TestRunPreflightRouteUnsupportedByModel();
     TestWeightedSamplerEpochAndUpdateCount(work_dir);
 
     TestSequenceBatchContract();

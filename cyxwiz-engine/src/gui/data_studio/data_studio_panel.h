@@ -13,10 +13,15 @@
 #include "../../core/data_studio_presentation.h"
 #include "query_editor.h"
 #include "profile_view.h"
+#include "image_gallery_view.h"
 #include "missing_view.h"
 #include "outliers_view.h"
 #include "correlation_view.h"
 #include "distribution_view.h"
+#include "tests_view.h"
+#include "regression_view.h"
+#include "groups_view.h"
+#include "projection_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -39,7 +44,8 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Visualize };
+    // Images shows only for an image dataset.
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -66,18 +72,31 @@ public:
     // Opens an Explore tab on a dataset, at a column when given (Data >
     // Explore, Profile's missing counts).
     void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});
+    // Explore > Groups / Projection on a method, for the data in use (Tools > Clustering and Projection).
+    void ShowGroups(groups::Method method);
+    void ShowProjection(groups::ProjectionMethod method);
+
+    // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
+    // after the data in use (a Data Input or a node's result; the graph's
+    // only Data Input when none is picked), picked; `compare` opens Compare
+    // methods on it (Feature Scaling).
+    void AddTransformStep(::gui::NodeType type, std::map<std::string, std::string> parameters = {}, bool compare = false);
 
     // Opens Explore > Query on a dataset with this SQL in the editor (a
     // dashboard's "Open in Data Studio", the Asset Browser); it runs.
     void ShowQuery(const std::string& dataset_name, const std::string& sql);
 
-    // Results > Test run's "Open Test Results" and a kept test's "Open"
-    // (MainWindow shows the panel).
-    void SetOpenTestResultsCallback(std::function<void()> cb) {
-        if (results_) results_->on_open_test_results = std::move(cb);
-    }
-    void SetOpenKeptTestCallback(std::function<void(const std::string&)> cb) {
-        if (results_) results_->on_open_kept = std::move(cb);
+    // Opens Results on one of its views (a test finished, Train > Test >
+    // View / Compare test results, Tools > Evaluation).
+    void ShowResults(ResultsView::View view);
+    // Results > Test: MainWindow hands it each finished test and its "Run
+    // test again".
+    TestView* GetTestView() { return results_ ? &results_->Test() : nullptr; }
+    // Results > Cross-validation / Learning curve: MainWindow runs them and
+    // reports into them.
+    std::shared_ptr<FoldsView> GetFoldsView(ResultsView::View view) const {
+        if (!results_) return nullptr;
+        return view == ResultsView::View::LearningCurve ? results_->LearningCurve() : results_->CrossValidation();
     }
 
     // Query results open in the Table Viewer through this (MainWindow): the
@@ -89,10 +108,15 @@ public:
 private:
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
+    std::unique_ptr<ImageGalleryView> gallery_;
     std::unique_ptr<MissingView> missing_;
     std::unique_ptr<OutliersView> outliers_;
     std::unique_ptr<CorrelationView> correlation_;
     std::unique_ptr<DistributionView> distribution_;
+    std::unique_ptr<TestsView> tests_;
+    std::unique_ptr<RegressionView> regression_;
+    std::unique_ptr<GroupsView> groups_;
+    std::unique_ptr<ProjectionView> projection_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

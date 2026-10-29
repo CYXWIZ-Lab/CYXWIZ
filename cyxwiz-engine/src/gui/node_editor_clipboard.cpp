@@ -60,12 +60,16 @@ void NodeEditor::Undo() {
     undo_stack_.pop_back();
 
     if (properties_panel_) properties_panel_->ClearNodeReferences();
+    std::vector<MLNode> before = nodes_;
+    for (const auto& data : subgraphs_)
+        if (!data.expanded) before.insert(before.end(), data.internal_nodes.begin(), data.internal_nodes.end());
     nodes_ = previous.nodes;
     subgraphs_ = previous.subgraphs;
     cached_node_positions_ = previous.positions;
     pending_positions_ = previous.positions;
     pending_positions_frames_ = 3;
     pending_context_reset_ = true;
+    pending_context_keep_view_ = true;
     selected_node_ids_.clear();
     ClearValidationState();
     links_ = previous.links;
@@ -75,6 +79,7 @@ void NodeEditor::Undo() {
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
+    SyncDataAfterSwap(before);
 
     // Clear selection
     ImNodes::ClearNodeSelection();
@@ -109,12 +114,16 @@ void NodeEditor::Redo() {
     redo_stack_.pop_back();
 
     if (properties_panel_) properties_panel_->ClearNodeReferences();
+    std::vector<MLNode> before = nodes_;
+    for (const auto& data : subgraphs_)
+        if (!data.expanded) before.insert(before.end(), data.internal_nodes.begin(), data.internal_nodes.end());
     nodes_ = next.nodes;
     subgraphs_ = next.subgraphs;
     cached_node_positions_ = next.positions;
     pending_positions_ = next.positions;
     pending_positions_frames_ = 3;
     pending_context_reset_ = true;
+    pending_context_keep_view_ = true;
     selected_node_ids_.clear();
     ClearValidationState();
     links_ = next.links;
@@ -124,6 +133,7 @@ void NodeEditor::Redo() {
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
+    SyncDataAfterSwap(before);
 
     // Clear selection
     ImNodes::ClearNodeSelection();

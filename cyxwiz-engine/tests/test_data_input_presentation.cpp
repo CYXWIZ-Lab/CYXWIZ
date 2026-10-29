@@ -99,7 +99,7 @@ void CheckLoaded() {
     images.load_seconds = 1.9;
     s = BuildStrip(images);
     Check(s.title == "cat_dog" && s.facts[0].value == "25,000" && s.facts[0].label == "images" &&
-              s.note == "decoded per batch at the Resize size; nothing is held",
+              s.note == "decoded once at the Resize size into cache/images when training starts",
           "images: " + s.note);
 
     StripInput disk = SentimentCsv();

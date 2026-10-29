@@ -4,6 +4,7 @@
 
 #include <arrow/api.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -271,10 +272,44 @@ void TestMemoryAndFailurePropagation() {
 
 } // namespace
 
+// One split for every phase (TOFIX178 S0-g1): the train batcher shuffles
+// and the validation / test batchers do not, yet the split rule is the Data
+// Split's, so the three hold disjoint rows that cover the table. (Each phase
+// split with its own shuffle flag before, so they could overlap.) A row is
+// known by its feature sum: 1, 2, 0, 3, 4, 11.
+void TestOneSplitForEveryPhase() {
+    auto dataset = MakeDataset();
+    const cyxwiz::SparseSplitRule rule{true, true, 17, 0.3f};
+    const auto rows_of = [&](bool shuffle, bool training, cyxwiz::BatcherPhase phase) {
+        cyxwiz::SparseFeatureDatasetBatcher batcher(dataset, 1, shuffle, 0.5f, training, phase, 0.2f, 99, false,
+                                                    "none", "max", 42, {}, false, false, false, rule);
+        std::vector<int> sums;
+        while (!batcher.IsEpochComplete()) {
+            auto batch = batcher.GetNextBatch();
+            if (!batch.IsValid()) break;
+            const auto* data = batch.data.ReadData<float>();
+            float sum = 0.0f;
+            for (size_t i = 0; i < 4; ++i) sum += data[i];
+            sums.push_back(static_cast<int>(std::lround(sum)));
+        }
+        return sums;
+    };
+    auto train = rows_of(true, true, cyxwiz::BatcherPhase::Train);
+    const auto val = rows_of(false, false, cyxwiz::BatcherPhase::Val);
+    const auto test = rows_of(false, false, cyxwiz::BatcherPhase::Test);
+    Check(train.size() == 3 && val.size() == 1 && test.size() == 2, "the split shares are 3 / 1 / 2 rows");
+    std::vector<int> all = train;
+    all.insert(all.end(), val.begin(), val.end());
+    all.insert(all.end(), test.begin(), test.end());
+    std::sort(all.begin(), all.end());
+    Check(all == std::vector<int>({0, 1, 2, 3, 4, 11}), "train, validation and test are disjoint and cover every row");
+}
+
 int main() {
     TestDenseBatchAndLabelModes();
     TestSplitsDropLastShuffleAndBalancing();
     TestMemoryAndFailurePropagation();
+    TestOneSplitForEveryPhase();
     std::cout << "Sparse feature dataset batcher tests passed\n";
     return 0;
 }

@@ -13,6 +13,7 @@
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_quality_analysis.h"
+#include "../src/core/normalize_statistics.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <algorithm>
@@ -279,6 +280,85 @@ void CheckCompiler() {
                  "Hue 0.7", "hue must be between 0 and 0.5", "hue above 0.5");
     CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip x", {{"probability", "often"}}}},
                  "Flip x", "probability must be a float", "a probability that is not a number");
+
+    // OpenCV steps (TOFIX178 1.3f): placed among the transforms in canvas
+    // order, done once, so before the first random one.
+    const auto cv = Compile({kResize,
+                             {gui::NodeType::ImageContrast, "CLAHE", {{"clip_limit", "3"}, {"tile_grid", "4"}}},
+                             {gui::NodeType::CenterCrop, "Crop 6", {{"width", "6"}, {"height", "6"}}},
+                             {gui::NodeType::ImageEdges, "Edges", {{"method", "sobel"}}},
+                             {gui::NodeType::HorizontalFlip, "Flip", {}},
+                             kNormalize});
+    Check(cv.is_valid, "CLAHE, Crop, Edges, Flip compiles; errors:\n" + Errors(cv));
+    Check(cv.image_cv_steps.size() == 2 && cv.image_cv_steps[0].position == 0 && cv.image_cv_steps[1].position == 1 &&
+              cv.image_cv_steps[0].clip_limit == 3.0f && cv.image_cv_steps[0].tile_grid == 4 &&
+              cv.image_cv_steps[1].edge_method == cyxwiz::CvEdgeMethod::Sobel,
+          "two OpenCV steps with their settings and places");
+    Check(cv.input_shape == std::vector<size_t>({6, 6, 1}) && !cv.layers.empty() &&
+              cv.layers.front().input_shape == std::vector<size_t>({6, 6, 1}),
+          "Edges gives one channel: the Conv2D sees [6, 6, 1]");
+    bool told = false;
+    for (const auto& issue : cv.issues)
+        told = told || (issue.level == cyxwiz::IssueLevel::Info && issue.node_name == "Edges" &&
+                        issue.message.find("one channel") != std::string::npos);
+    Check(told, "Edges says it gives one channel");
+    const auto denoise = Compile({kResize, {gui::NodeType::ImageDenoise, "Denoise", {}}});
+    bool warned = false;
+    for (const auto& issue : denoise.issues)
+        warned = warned || (issue.level == cyxwiz::IssueLevel::Warning && issue.node_name == "Denoise" &&
+                            issue.message.find("ms an image") != std::string::npos);
+    Check(denoise.is_valid && warned, "Denoise compiles with a warning on its cost");
+    CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip", {}}, {gui::NodeType::ImageContrast, "Late CLAHE", {}}},
+                 "Late CLAHE", "move it before Horizontal Flip", "an OpenCV step after a random one");
+    CheckRefused({kResize, {gui::NodeType::ImagePyramid, "Pyramid", {{"levels", "2"}}}},
+                 "Pyramid", "under 5 pixels a side: use a larger Resize", "a pyramid too deep for 8 x 8");
+    CheckRefused({kResize, {gui::NodeType::ImageWarp, "Warp", {{"source_points", "0,0, 1,0, 1.5,1, 0,1"}}}},
+                 "Warp", "Corner 3 of the source is outside the image", "a corner outside the image");
+    CheckRefused({kResize, {gui::NodeType::ImageWarp, "Warp 3", {{"source_points", "0,0, 1,0"}}}},
+                 "Warp 3", "must be 8 numbers", "too few points");
+    CheckRefused({kResize, {gui::NodeType::ImageSmooth, "Smooth", {{"method", "gaussian"}}}},
+                 "Smooth", "method must be box, median or bilateral", "an unknown smoothing");
+    CheckRefused({kResize, kNormalize, {gui::NodeType::ImageSharpen, "Late sharpen", {}}},
+                 "Late sharpen", "between Resize and Normalize", "an OpenCV step after Normalize");
+    CheckRefused({kResize, {gui::NodeType::ImageSharpen, "Sharpen", {}},
+                  {gui::NodeType::Resize, "Second resize", {{"width", "4"}, {"height", "4"}}}},
+                 "Second resize", "Resize must come before the image transforms", "Resize after an OpenCV step");
+
+    // Normalize per channel (TOFIX178 1.4).
+    const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
+                                                {{"statistics", "per_channel"},
+                                                 {"channel_mean", "0.5282,0.4924,0.4528"},
+                                                 {"channel_std", "0.2346, 0.2270, 0.2304"}}}});
+    Check(cyxwiz::ChannelSummary("per channel", {0.5282f, 0.4924f, 0.4528f}, {0.2346f, 0.2270f, 0.2304f}) ==
+              "per channel, mean 0.528 / 0.492 / 0.453, std 0.235 / 0.227 / 0.230",
+          "the per-channel summary the compile report and the Data Input dialog show");
+    Check(per_channel.is_valid, "per channel compiles; errors:\n" + Errors(per_channel));
+    Check(per_channel.preprocessing.norm_channel_mean == std::vector<float>({0.5282f, 0.4924f, 0.4528f}) &&
+              per_channel.preprocessing.norm_channel_std == std::vector<float>({0.2346f, 0.2270f, 0.2304f}) &&
+              per_channel.preprocessing.norm_channels == 3 && per_channel.preprocessing.norm_node_id > 0,
+          "per channel: three means and stds for RGB");
+    const auto imagenet = Compile({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "imagenet"}}}});
+    bool noted = false;
+    for (const auto& issue : imagenet.issues)
+        noted = noted || (issue.level == cyxwiz::IssueLevel::Info && issue.message.find("pretrained on ImageNet") != std::string::npos);
+    Check(imagenet.is_valid && imagenet.preprocessing.norm_channel_mean == std::vector<float>({0.485f, 0.456f, 0.406f}) &&
+              imagenet.preprocessing.norm_channel_std == std::vector<float>({0.229f, 0.224f, 0.225f}) && noted,
+          "ImageNet: torchvision's values, with a note");
+    const auto same = Compile({kResize, kNormalize});
+    Check(same.is_valid && same.preprocessing.norm_channel_mean.empty() && same.preprocessing.norm_statistics == "same",
+          "same for every channel: one pair, as before");
+    CheckRefused({kResize, {gui::NodeType::Grayscale, "Gray", {}},
+                  {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"},
+                                                           {"channel_mean", "0.5,0.5,0.5"}, {"channel_std", "0.2,0.2,0.2"}}}},
+                 "Normalize", "3 means for 1 channel", "three means after Grayscale");
+    CheckRefused({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"},
+                                                                    {"channel_mean", "0.5,0.5,0.5"}, {"channel_std", "0.2,0,0.2"}}}},
+                 "Normalize", "Std G is 0", "a std of 0");
+    CheckRefused({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"}}}},
+                 "Normalize", "a mean and a std for each channel", "per channel without values");
+    CheckRefused({kResize, {gui::NodeType::Grayscale, "Gray", {}},
+                  {gui::NodeType::Normalize, "Normalize", {{"statistics", "imagenet"}}}},
+                 "Normalize", "ImageNet statistics are for RGB images", "ImageNet on one channel");
 }
 
 void WriteLe(std::ofstream& out, uint32_t value, int bytes) {
@@ -336,7 +416,8 @@ void CheckBatcher() {
     crop.kind = cyxwiz::image::ImageOpKind::RandomCrop;
     crop.height = 2;
     crop.width = 2;
-    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 2, 0.5f, false, 0, 11);
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, 0.5f, false, 11);
     cyxwiz::image::ImageAugmentation flip_crop;
     flip_crop.ops = {flip, crop};
     batcher.SetImageTransforms(flip_crop);
@@ -363,7 +444,8 @@ void CheckBatcher() {
     cyxwiz::image::ImageAugmentation mixup;
     mixup.mix = cyxwiz::image::BatchMix::MixUp;
     mixup.mix_probability = 1.0f;
-    cyxwiz::ImageDatasetBatcher mixing(entry, resize, 2, 0.5f, false, 0, 11);
+    cyxwiz::ImageDatasetBatcher mixing(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, 0.5f, false, 11);
     mixing.SetOneHotEncoding(2);
     mixing.SetImageTransforms(mixup);
     mixing.SetPhase(cyxwiz::BatcherPhase::Val);
@@ -376,6 +458,26 @@ void CheckBatcher() {
     mixing.Reset();
     const auto mixed = mixing.GetNextBatch();
     Check(mixed.labels.Shape() == std::vector<size_t>({2, 2}), "mixed labels keep [N, C]");
+
+    // Normalize per channel (TOFIX178 1.4): each channel its own mean and std.
+    cyxwiz::ImageDatasetBatcher normalized(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, 0.5f, false, 11);
+    normalized.SetNormalization(0.5f, 0.5f);
+    normalized.SetChannelNormalization({0.1f, 0.2f, 0.3f}, {0.5f, 0.25f, 0.125f});
+    normalized.SetPhase(cyxwiz::BatcherPhase::Val);
+    normalized.Reset();
+    const auto n_batch = normalized.GetNextBatch();
+    const float* nv = n_batch.data.ReadData<float>();
+    double worst = 0.0;
+    for (size_t s = 0; s < 2; ++s)
+        for (int row = 0; row < 4; ++row)
+            for (int column = 0; column < 4; ++column) {
+                const float* px = nv + s * 48 + (row * 4 + column) * 3;
+                const float rgb[3] = {Red(column), 40.0f * row / 255.0f, 200.0f / 255.0f};
+                const float mean[3] = {0.1f, 0.2f, 0.3f}, sd[3] = {0.5f, 0.25f, 0.125f};
+                for (int c = 0; c < 3; ++c) worst = std::max<double>(worst, std::fabs(px[c] - (rgb[c] - mean[c]) / sd[c]));
+            }
+    Check(worst < 1e-5, "per channel normalize on the device: (x - mean[c]) / std[c] (worst " + std::to_string(worst) + ")");
     const float* mixed_labels = mixed.labels.ReadData<float>();
     for (size_t s = 0; s < 2; ++s) {
         Check(std::fabs(mixed_labels[2 * s] + mixed_labels[2 * s + 1] - 1.0f) < 1e-5f,
@@ -510,7 +612,8 @@ void CheckQualityAnalyzer() {
     resize.resize_mode = cyxwiz::ResizeMode::Exact;
     resize.target_width = side;
     resize.target_height = side;
-    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 8, 0.5f, false, 0, 7);
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 8, 0.5f, false, 7);
     Check(batcher.GetNumSamples() + batcher.GetNumValSamples() == 8, "8 images before the filter");
     batcher.ExcludeFiles(config.image_excluded_files);
     Check(batcher.GetNumSamples() == 3 && batcher.GetNumValSamples() == 3, "6 images after it, split 3 + 3");

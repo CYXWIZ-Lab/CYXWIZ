@@ -6,7 +6,7 @@
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/pipeline_executor.h"
-#include "../../core/pipeline_materializer.h"
+#include "../../core/training_input_preparation.h"
 #include "../graph_training_launcher.h"
 #include "../../core/plot/plot_tree_model.h"
 #include "../../core/project_manager.h"
@@ -105,8 +105,31 @@ const PlotNodeLane::Status& PlotNodeLane::StatusOf(int plot_id) { return entries
 
 void PlotNodeLane::Forget(int plot_id) {
     Cancel(plot_id);
+    if (const auto it = entries_.find(plot_id); it != entries_.end()) ReleaseModelTable(it->second.model_table, plot_id);
     entries_.erase(plot_id);
 }
+
+void PlotNodeLane::ReleaseModelTable(const std::string& name, int plot_id) {
+    if (name.empty()) return;
+    for (const auto& [id, entry] : entries_)
+        if (id != plot_id && entry.model_table == name) return;
+    DataRegistry::Instance().UnregisterTabularDataset(name);
+}
+
+PipelineExecutor& PlotNodeLane::Owned() {
+    if (!owned_) owned_ = std::make_shared<PipelineExecutor>();
+    return *owned_;
+}
+
+void PlotNodeLane::ReleaseNodes(const std::set<int>& node_ids) {
+    if (owned_) owned_->ReleaseNodes(node_ids);
+}
+
+void PlotNodeLane::ReleaseAll() {
+    if (owned_) owned_->ReleaseAll();
+}
+
+std::set<std::string> PlotNodeLane::OwnedNames() { return owned_ ? owned_->OwnedNames() : std::set<std::string>{}; }
 
 void PlotNodeLane::Cancel(int plot_id) {
     auto it = entries_.find(plot_id);
@@ -122,12 +145,25 @@ void PlotNodeLane::Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& n
     s.needs_run = e.plan.state == NodeResultPlan::State::Run;
     s.run_node_count = e.plan.run_node_count;
     if (s.state == Status::State::Running) return;  // finishes first
+    // Nothing to show: the rows it read go (a deleted or unwired input's
+    // table stayed held here).
+    const auto drop_table = [&]() {
+        if (!s.table && !s.sparse && s.dataset_name.empty()) return;
+        s.table.reset();
+        s.sparse = false;
+        s.dataset_name.clear();
+        s.source_rows = 0;
+        e.result_fingerprint.clear();
+        ++s.data_version;
+    };
     switch (e.plan.state) {
         case NodeResultPlan::State::NotConnected:
             s.state = Status::State::NotConnected;
+            drop_table();
             break;
         case NodeResultPlan::State::Unavailable:
             s.state = Status::State::Unavailable;
+            drop_table();
             s.reason = e.plan.reason;
             s.alternative_id = e.plan.alternative_id;
             s.alternative_name = e.plan.alternative_name;
@@ -186,7 +222,7 @@ void PlotNodeLane::Start(int plot_id, Entry& e, const std::shared_ptr<const void
 void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
                                const std::shared_ptr<const void>& owner) {
     (void)owner;
-    // The closure as the materializer reads it (the graph's own node and link types).
+    // The steps above the vectorizer (the graph's own node and link types).
     std::vector<gui::MLNode> closure;
     for (const auto& n : nodes)
         if (std::find(e.plan.closure_ids.begin(), e.plan.closure_ids.end(), n.id) != e.plan.closure_ids.end()) closure.push_back(n);
@@ -197,47 +233,31 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
             closure_links.push_back(l);
     auto& pm = ProjectManager::Instance();
     auto result = std::make_shared<std::string>();
+    Owned();
     const std::string name = "Sparse features: " + (e.plan.feeder_name.empty() ? std::string("node") : e.plan.feeder_name);
     auto task = std::make_shared<LambdaTask>(
-        name, [plan = e.plan, closure = std::move(closure), closure_links = std::move(closure_links), result,
+        name, [plan = e.plan, closure = std::move(closure), closure_links = std::move(closure_links), result, owned = owned_,
                artifacts = pm.GetArtifactsPath(), exports = pm.GetExportsPath(), ingestion = pm.GetIngestionCachePath(),
                project = pm.GetProjectRoot(),
                // Training's prepared-data cache: the matrix is built once and read after
                // (by the Dashboard and by training) until the data or the vectorizer changes.
                cache = ::gui::GraphMaterializationCacheConfig(pm.GetProjectRoot())](LambdaTask& t) mutable {
-            // 1. The Data Input's table (as loaded, or read now).
-            std::string source = plan.dataset_name;
-            if (source.empty()) {
-                PipelineExecutor executor;
-                executor.SetArtifactRoot(artifacts);
-                executor.SetExportRoot(exports);
-                executor.SetIngestionCacheRoot(ingestion);
-                executor.SetProjectRoot(project);
-                t.ReportProgress(0.05f, "Reading the data");
-                if (!executor.ExecutePipeline(plan.input_pipeline_json))
-                    throw std::runtime_error(executor.GetLastError().empty() ? std::string("The Data Input could not be read.") : executor.GetLastError());
-                auto it = executor.NodeResults().find(plan.source_input_id);
-                if (it == executor.NodeResults().end()) throw std::runtime_error("The Data Input gave no table.");
-                source = it->second;
-            }
-            if (t.ShouldStop()) return;
-            // 2. The vectorizer through the materializer, as training runs it.
+            // The vectorizer's sparse features as training makes them: kept on
+            // disk, else a run of the steps above it (TOFIX178 S0-f2); the run's
+            // tables go with this lane's owner.
             for (auto& n : closure)
-                if (n.id == plan.source_input_id) n.parameters["dataset_name"] = source;
-            PipelineOperatorExecutionContext context;
-            context.cancellation_requested = [&t]() { return t.ShouldStop(); };
-            const MaterializeResult m = PipelineMaterializer::Materialize(
-                closure, closure_links, DataRegistry::Instance(), source, cache,
-                [&t](const PipelineOperatorProgress& event) {
-                    t.ReportProgress(0.1f + 0.9f * std::clamp(event.progress, 0.0f, 1.0f), event.message.empty() ? event.stage : event.message);
-                },
-                std::move(context));
-            if (t.ShouldStop()) return;
-            if (!m.success) throw std::runtime_error(m.error_message.empty() ? std::string("The features could not be made.") : m.error_message);
-            if (m.effective_kind != PipelineMaterializerSourceKind::SparseFeatureDataset)
+                if (n.id == plan.source_input_id && !plan.dataset_name.empty()) n.parameters["dataset_name"] = plan.dataset_name;
+            const auto prepared = PrepareStepResult(
+                closure, closure_links, plan.feeder_id, DataRegistry::Instance(), {project, artifacts, exports, ingestion},
+                cache, [&t]() { return t.ShouldStop(); },
+                [&t](float progress, const std::string& message) { t.ReportProgress(std::clamp(progress, 0.0f, 1.0f), message); },
+                owned.get());
+            if (t.ShouldStop() || prepared.cancelled) return;
+            if (!prepared.ok) throw std::runtime_error(prepared.error.empty() ? std::string("The features could not be made.") : prepared.error);
+            if (!DataRegistry::Instance().IsSparseFeatureDataset(prepared.dataset))
                 throw std::runtime_error(plan.feeder_name + " gave no sparse features.");
-            spdlog::info("Sparse features for the dashboard: {} ({})", m.effective_dataset_name, m.cache_message.empty() ? "built" : m.cache_message);
-            *result = m.effective_dataset_name;
+            spdlog::info("Sparse features for the dashboard: {} ({})", prepared.dataset, prepared.from_disk ? "read from disk" : "built");
+            *result = prepared.dataset;
             t.MarkCompleted("Sparse features ready");
         });
     e.task_id = AsyncTaskManager::Instance().Submit(task);
@@ -288,6 +308,11 @@ void PlotNodeLane::Finish(Entry& e) {
             auto table = it != models.end() ? TreeModelTable(it->second, &error) : nullptr;
             const std::string name = "ds_plot_model_" + std::to_string(e.plan.feeder_id);
             if (table && DataRegistry::Instance().RegisterArrowTable(table, name)) {
+                if (e.model_table != name) {
+                    const std::string previous = e.model_table;
+                    e.model_table = name;
+                    ReleaseModelTable(previous, -1);  // another feeder's model, no longer shown here
+                }
                 s.table = table;
                 s.source_rows = table->num_rows();
                 s.dataset_name = name;
@@ -331,6 +356,12 @@ void PlotNodeLane::Finish(Entry& e) {
         s.state = s.table ? Status::State::OutOfDate : Status::State::Idle;
     }
     e.task_id = 0;
+    // Its in-memory copies of disk inputs go now (the plot holds the rows it
+    // read); its other names stay owned here until their nodes leave.
+    if (e.executor) {
+        e.executor->ReleaseAdmittedInputs();
+        Owned().AdoptOwnership(*e.executor);
+    }
     e.executor.reset();
     e.sparse_result.reset();
 }
@@ -350,8 +381,10 @@ void PlotNodeLane::Poll(const std::vector<gui::MLNode>& nodes, const std::vector
         Plan(n.id, entries_[n.id], nodes, links);
     }
     for (auto it = entries_.begin(); it != entries_.end();) {
-        if (std::find(alive.begin(), alive.end(), it->first) == alive.end() && it->second.task_id == 0)
+        if (std::find(alive.begin(), alive.end(), it->first) == alive.end() && it->second.task_id == 0) {
+            ReleaseModelTable(it->second.model_table, it->first);
             it = entries_.erase(it);
+        }
         else
             ++it;
     }

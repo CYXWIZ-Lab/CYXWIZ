@@ -180,6 +180,13 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
         case NodeType::AugmentationPreset:
+        case NodeType::ImageContrast:
+        case NodeType::ImageDenoise:
+        case NodeType::ImageSharpen:
+        case NodeType::ImageEdges:
+        case NodeType::ImageSmooth:
+        case NodeType::ImageWarp:
+        case NodeType::ImagePyramid:
         case NodeType::QualityAnalyzer: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
@@ -831,7 +838,11 @@ MLNode CreateGraphNode(NodeType type,
             out.name = "Transformed";
             out.is_input = false;
             node.outputs.push_back(out);
-            node.parameters["value_col"] = "";
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
+            node.parameters["exclude_columns"] = "";
+            node.parameters["base"] = "natural";
+            node.parameters["use_log1p"] = "true";
             break;
         }
 
@@ -1440,45 +1451,9 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::TSNENode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Embedded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n_components"] = "2";
-            node.parameters["perplexity"] = "30";
-            node.parameters["learning_rate"] = "200";
-            break;
-        }
-
+        case NodeType::TSNENode:
         case NodeType::UMAPNode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Embedded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n_components"] = "2";
-            node.parameters["n_neighbors"] = "15";
-            node.parameters["min_dist"] = "0.1";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1523,40 +1498,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::LearningCurvesNode: {
-            NodePin model_in;
-            model_in.id = next_pin_id_++;
-            model_in.type = PinType::Parameters;
-            model_in.name = "Model";
-            model_in.is_input = true;
-            node.inputs.push_back(model_in);
-
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin curves_out;
-            curves_out.id = next_pin_id_++;
-            curves_out.type = PinType::Dataset;
-            curves_out.name = "Curves";
-            curves_out.is_input = false;
-            node.outputs.push_back(curves_out);
-
-            node.parameters["cv"] = "5";
-            node.parameters["train_sizes"] = "0.1,0.3,0.5,0.7,0.9";
-            break;
-        }
-
         case NodeType::FeatureImportanceNode: {
             NodePin model_in;
             model_in.id = next_pin_id_++;
@@ -1576,41 +1517,10 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::CrossValidationNode: {
-            NodePin model_in;
-            model_in.id = next_pin_id_++;
-            model_in.type = PinType::Parameters;
-            model_in.name = "Model";
-            model_in.is_input = true;
-            node.inputs.push_back(model_in);
-
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin scores_out;
-            scores_out.id = next_pin_id_++;
-            scores_out.type = PinType::Dataset;
-            scores_out.name = "Scores";
-            scores_out.is_input = false;
-            node.outputs.push_back(scores_out);
-
-            node.parameters["cv"] = "5";
-            node.parameters["scoring"] = "accuracy";
-            break;
-        }
-
         case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest:
+        case NodeType::CrossValidationNode:
+        case NodeType::LearningCurvesNode:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
@@ -1625,6 +1535,9 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::MinMaxScaler:
         case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler:
+        case NodeType::QuantileTransform:
+        case NodeType::PowerTransform:
         case NodeType::LabelEncoder:
         case NodeType::OrdinalEncoder:
         case NodeType::TargetEncoder: {

@@ -239,7 +239,7 @@ public:
     virtual void* QueryInterface(const char* /*interface_name*/) { return nullptr; }
 
     // Set the engine's ImGui context so DLL plugins share the same UI state.
-    // Called by engine before OnInitialize. Plugins must call ImGui::SetCurrentContext(ctx)
+    // Called by the engine before OnLoad. Plugins must call ImGui::SetCurrentContext(ctx)
     // in their implementation to ensure ImGui calls work across DLL boundaries.
     virtual void SetImGuiContext(void* /*ctx*/) {}
 };

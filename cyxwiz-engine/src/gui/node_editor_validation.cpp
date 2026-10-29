@@ -6,6 +6,7 @@
 
 #include "node_editor.h"
 #include "../core/pipeline_runtime_capabilities.h"
+#include "../core/extension_node_metadata.h"
 #include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <set>
@@ -166,7 +167,10 @@ bool NodeEditor::Expects2DInput(NodeType type) const {
 }
 
 bool NodeEditor::IsGraphValid() const {
-    return cyxwiz::HasTrainingGraphStructure(nodes_);
+    // Extension nodes count as the compiler counts them (TOFIX125): a
+    // trainable layer is a model layer, a loss node the loss. A graph built
+    // only from plugin or Python nodes can train.
+    return cyxwiz::HasTrainingGraphStructure(nodes_, cyxwiz::ExtensionTrainingRole);
 }
 
 void NodeEditor::ResolveDynamicPins(int node_id) {

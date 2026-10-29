@@ -6,7 +6,6 @@ namespace cyxwiz {
 
 namespace {
 
-constexpr const char* kMaterializedSuffix = "__materialized";
 
 bool EndsWith(const std::string& s, const std::string& suffix) {
     return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -64,7 +63,6 @@ std::vector<DatasetEntry> DatasetCatalog::Merge(const std::vector<DatasetCatalog
         else if (e.Has(kBackingAudio)) e.modality = DatasetModality::Audio;
         else if (e.Has(kBackingText)) e.modality = DatasetModality::Text;
         else if (e.backings & (kBackingArrow | kBackingParquet | kBackingSparse)) e.modality = DatasetModality::Tabular;
-        e.materialized = EndsWith(name, kMaterializedSuffix);
         e.generation = identity[name];  // the identity for now; List() puts the generation in
         out.push_back(std::move(e));
     }

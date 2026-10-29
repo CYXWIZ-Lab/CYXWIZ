@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -67,6 +68,14 @@ public:
     void Forget(int plot_id);
     const Status& StatusOf(int plot_id);
 
+    // What its runs registered (each node's copy of its data, results) stays
+    // owned here after the run, and goes when the nodes leave the graph or
+    // the graph is replaced (TOFIX160: a deleted Data Input's run copy stayed
+    // loaded). Not a running run's names: they are taken when it ends.
+    void ReleaseNodes(const std::set<int>& node_ids);
+    void ReleaseAll();
+    std::set<std::string> OwnedNames();
+
 private:
     struct Entry {
         Status status;
@@ -76,7 +85,11 @@ private:
         uint64_t task_id = 0;
         std::shared_ptr<PipelineExecutor> executor;
         std::shared_ptr<std::string> sparse_result;  // the sparse dataset's name, when its task finishes
+        std::string model_table;  // the ds_plot_model_<feeder> it registered (a trainer's model as a table)
     };
+    // Unregisters `name` unless another entry than `plot_id` still shows it
+    // (TOFIX160: the model table outlived its plot until project close).
+    void ReleaseModelTable(const std::string& name, int plot_id);
     void Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links);
     void ReadLoaded(Entry& e);
     void Finish(Entry& e);
@@ -85,7 +98,11 @@ private:
     void StartSparse(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
                      const std::shared_ptr<const void>& owner);
 
+    // Holds only the finished runs' names (no caches, so it pins no data).
+    PipelineExecutor& Owned();
+
     std::map<int, Entry> entries_;
+    std::shared_ptr<PipelineExecutor> owned_;
     double last_plan_time_ = -1.0;
 };
 

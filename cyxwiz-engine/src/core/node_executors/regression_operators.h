@@ -11,7 +11,7 @@ namespace cyxwiz {
  * LinearRegressionOperator — Cat-1 Band 1 pipeline operator.
  *
  * Fits a multiple linear regression on the input table via
- * `DataAnalyzer::MultipleLinearRegression` and appends two columns
+ * `cyxwiz::StatisticalTests::FitLinear` and appends two columns
  * to the output: `prediction` (float32) and `residual` (float32 =
  * target - prediction).
  *
@@ -33,6 +33,7 @@ class LinearRegressionOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "LinearRegression"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
     }
@@ -73,6 +74,7 @@ class PolynomialRegressionOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "PolynomialRegression"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
     }

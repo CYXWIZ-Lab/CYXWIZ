@@ -304,6 +304,8 @@ std::vector<std::string> ParseCatalogEnumValues(
 bool IsSupportedPropertiesParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",
+        "channels",
+        "column",
         "directory",
         "dropdown",
         "enum",
@@ -2464,7 +2466,8 @@ void CheckClusteringFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
         metadata.GetMetadata(gui::NodeType::HierarchicalCluster);
     const auto* gmm = metadata.GetMetadata(gui::NodeType::GMMCluster);
 
-    Check(kmeans->parameters.size() == 8 &&
+    Check(kmeans->parameters.size() == 9 &&
+              ParameterMatches(kmeans, "standardise", "bool", "false") &&
               ParameterMatches(kmeans, "n_clusters", "int", "8") &&
               ParameterMatches(kmeans, "max_iter", "int", "300") &&
               ParameterMatches(kmeans, "init", "enum", "kmeans++") &&
@@ -2474,19 +2477,23 @@ void CheckClusteringFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
               ParameterMatches(kmeans, "seed", "int", "0") &&
               !HasParameter(kmeans, "random_state"),
           "KMeans metadata should match every consumed operator field");
-    Check(dbscan->parameters.size() == 5 &&
+    Check(dbscan->parameters.size() == 6 &&
+              ParameterMatches(dbscan, "standardise", "bool", "false") &&
               ParameterMatches(dbscan, "eps", "float", "0.5") &&
               ParameterMatches(dbscan, "min_samples", "int", "5") &&
               ParameterMatches(dbscan, "metric", "enum", "euclidean") &&
               HasEnumValue(dbscan, "metric", "cosine"),
           "DBSCAN metadata should match every consumed operator field");
-    Check(hierarchical->parameters.size() == 5 &&
+    Check(hierarchical->parameters.size() == 6 &&
+              ParameterMatches(hierarchical, "standardise", "bool", "false") &&
               ParameterMatches(hierarchical, "n_clusters", "int", "3") &&
               ParameterMatches(hierarchical, "linkage", "enum", "ward") &&
               HasEnumValue(hierarchical, "linkage", "single") &&
               ParameterMatches(hierarchical, "metric", "enum", "euclidean"),
           "Hierarchical metadata should match every consumed operator field");
-    Check(gmm->parameters.size() == 8 &&
+    Check(gmm->parameters.size() == 10 &&
+              ParameterMatches(gmm, "standardise", "bool", "false") &&
+              ParameterMatches(gmm, "probabilities", "bool", "false") &&
               ParameterMatches(gmm, "n_components", "int", "3") &&
               ParameterMatches(gmm, "covariance_type", "enum", "full") &&
               HasEnumValue(gmm, "covariance_type", "spherical") &&
@@ -2509,7 +2516,8 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
               HasOutputType(pca, "Transformed", gui::PinType::Dataset) &&
               !HasOutputType(pca, "Components", gui::PinType::Dataset),
           "PCA should expose only the table its operator materializes");
-    Check(pca->parameters.size() == 5 &&
+    Check(pca->parameters.size() == 6 &&
+              ParameterMatches(pca, "keep_columns", "bool", "false") &&
               ParameterMatches(pca, "feature_cols", "string", "") &&
               ParameterMatches(pca, "label_col", "string", "") &&
               ParameterMatches(pca, "n_components", "int", "2") &&
@@ -2603,10 +2611,9 @@ void CheckClassicalRegressionFamilyContract(
               FindParameter(polynomial, "feature_col") != nullptr &&
               FindParameter(polynomial, "feature_col")->required &&
               ParameterMatches(polynomial, "degree", "int", "2") &&
-              FindParameter(polynomial, "degree")->validation ==
-                  "1-2147483647" &&
+              FindParameter(polynomial, "degree")->validation == "1-6" &&
               FindParameter(polynomial, "degree")->group == "Fit Options",
-          "PolynomialRegression metadata should match its unbounded positive degree contract");
+          "PolynomialRegression metadata should match its 1-6 degree contract (TOFIX129 D3)");
 
     const auto* predictor =
         metadata.GetMetadata(gui::NodeType::RegressionModelPredictor);
@@ -3056,7 +3063,9 @@ void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
 void CheckPreprocessingScalerEncoderFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const auto* minmax = metadata.GetMetadata(gui::NodeType::MinMaxScaler);
-    Check(minmax != nullptr && minmax->parameters.size() == 4,
+    // columns, label_col, exclude_columns, min, max + the four fitted-state
+    // parameters (TOFIX129 D2).
+    Check(minmax != nullptr && minmax->parameters.size() == 9,
           "MinMaxScaler should declare every operator parameter");
     Check(ParameterMatches(minmax, "columns", "string", "") &&
               ParameterMatches(minmax, "label_col", "string", "") &&
@@ -3065,7 +3074,7 @@ void CheckPreprocessingScalerEncoderFamilyContract(
           "MinMaxScaler metadata defaults should match its operator");
 
     const auto* robust = metadata.GetMetadata(gui::NodeType::RobustScaler);
-    Check(robust != nullptr && robust->parameters.size() == 6,
+    Check(robust != nullptr && robust->parameters.size() == 11,
           "RobustScaler should declare every operator parameter");
     Check(ParameterMatches(robust, "columns", "string", "") &&
               ParameterMatches(robust, "label_col", "string", "") &&
@@ -3074,6 +3083,26 @@ void CheckPreprocessingScalerEncoderFamilyContract(
               ParameterMatches(robust, "quantile_min", "float", "25") &&
               ParameterMatches(robust, "quantile_max", "float", "75"),
           "RobustScaler metadata defaults should match its operator");
+    for (const auto type : {gui::NodeType::MinMaxScaler, gui::NodeType::RobustScaler,
+                            gui::NodeType::MaxAbsScaler, gui::NodeType::QuantileTransform,
+                            gui::NodeType::PowerTransform}) {
+        const auto* fitted = metadata.GetMetadata(type);
+        Check(fitted != nullptr && ParameterMatches(fitted, "exclude_columns", "string", "") &&
+                  ParameterMatches(fitted, "operation_mode", "enum", "fit_transform") &&
+                  ParameterMatches(fitted, "save_state", "bool", "false") &&
+                  ParameterMatches(fitted, "state_path", "file", "") &&
+                  ParameterMatches(fitted, "state_overwrite", "bool", "false"),
+              "every fitted column transform should declare the fitted-state parameters");
+    }
+    const auto* quantile = metadata.GetMetadata(gui::NodeType::QuantileTransform);
+    Check(ParameterMatches(quantile, "output_distribution", "enum", "uniform") &&
+              ParameterMatches(quantile, "n_quantiles", "int", "1000"),
+          "QuantileTransform metadata defaults should match its operator");
+    const auto* power = metadata.GetMetadata(gui::NodeType::PowerTransform);
+    Check(ParameterMatches(power, "family", "enum", "yeo-johnson") &&
+              ParameterMatches(power, "lambda_mode", "enum", "auto") &&
+              ParameterMatches(power, "lambda", "float", "0"),
+          "PowerTransform metadata defaults should match its operator");
 
     const auto* label = metadata.GetMetadata(gui::NodeType::LabelEncoder);
     const auto* ordinal = metadata.GetMetadata(gui::NodeType::OrdinalEncoder);
@@ -3635,9 +3664,8 @@ int main() {
         const std::vector<std::string> source_type_values(
             source_type_axis->allowed_values.begin(),
             source_type_axis->allowed_values.end());
-        Check(ContainsString(source_type_values, "file") &&
-                  ContainsString(source_type_values, "folder"),
-              "DataInput source_type should allow file and folder");
+        Check(source_type_values == std::vector<std::string>({"file"}),
+              "DataInput source_type should allow file only (image folders train from the image registry)");
         Check(!ContainsString(source_type_values, "ml_dataset"),
               "DataInput source_type should not advertise ml_dataset without a runtime owner");
     }
@@ -3984,69 +4012,6 @@ int main() {
                   "supported training backend reason should be shared: " +
                       TypeId(capability.node_type));
         }
-
-        std::set<int> materializer_storage_backends;
-        int materializer_supported_backends = 0;
-        const std::set<std::string> expected_materializer_storage_backends = {
-            "ArrowTable",
-            "ParquetBacked",
-            "ImageDataset",
-            "AudioDataset",
-            "TextDataset",
-            "SparseFeatureDataset",
-        };
-        for (const auto& capability :
-             cyxwiz::GetPipelineMaterializerStorageBackendCapabilities()) {
-            const std::string backend_name =
-                cyxwiz::PipelineStorageBackendName(capability.backend);
-            const int key = static_cast<int>(capability.backend);
-            Check(materializer_storage_backends.insert(key).second,
-                  "duplicate materializer storage backend capability: " +
-                      backend_name);
-            Check(ContainsString(expected_materializer_storage_backends,
-                                 backend_name),
-                  "unexpected materializer storage backend capability: " +
-                      backend_name);
-            const auto resolved =
-                cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
-                    capability.backend);
-            Check(resolved.backend == capability.backend,
-                  "materializer storage backend capability does not resolve: " +
-                      backend_name);
-            Check(resolved.materializer_supported ==
-                      capability.materializer_supported,
-                  "materializer storage backend support mismatch: " +
-                      backend_name);
-            Check(resolved.storage_support == capability.storage_support,
-                  "materializer storage support scope mismatch: " +
-                      backend_name);
-            Check(capability.reason != nullptr &&
-                      std::string(capability.reason).size() > 16,
-                  "materializer storage backend reason is too weak: " +
-                      backend_name);
-            if (capability.materializer_supported) {
-                ++materializer_supported_backends;
-                // In memory every operator; a table on disk (TOFIX154) the
-                // operators that stream.
-                Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable ||
-                          capability.backend == cyxwiz::PipelineStorageBackend::ParquetBacked,
-                      "only ArrowTable and ParquetBacked should be materializer-supported today");
-                Check(capability.storage_support ==
-                          (capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable
-                               ? cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly
-                               : cyxwiz::PipelineMaterializerStorageSupport::StreamingOperatorsOnly),
-                      "materializer support scope per backend");
-            } else {
-                Check(capability.storage_support ==
-                          cyxwiz::PipelineMaterializerStorageSupport::None,
-                      "unsupported materializer backend should advertise no storage scope");
-            }
-        }
-        Check(materializer_supported_backends == 2,
-              "exactly two materializer storage backends should be supported today");
-        Check(materializer_storage_backends.size() ==
-                  expected_materializer_storage_backends.size(),
-              "materializer storage scope should pin Arrow plus five pass-through domains");
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
@@ -5175,10 +5140,7 @@ int main() {
               cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
           "SVMClassifier enum support should resolve to operator-backed");
     const gui::NodeType additional_fail_closed_enum_cases[] = {
-        gui::NodeType::UMAPNode,
-        gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
-        gui::NodeType::CrossValidationNode,
         gui::NodeType::Normalize,
         gui::NodeType::OneHotEncode,
         gui::NodeType::AudioInput,
@@ -5277,9 +5239,7 @@ int main() {
     }
 
     const gui::NodeType blocked_metadata_cases[] = {
-        gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
-        gui::NodeType::CrossValidationNode,
         gui::NodeType::ExportExcel,
         gui::NodeType::TableSplitter,
         gui::NodeType::IFFTNode,
@@ -6353,6 +6313,40 @@ int main() {
                   "DataConvert runtime/property catalog disagreement: " + key);
         }
         Check(found, "DataConvert runtime format constraint must exist: " + key);
+    }
+    // Execute Pipeline on a training graph runs the data steps and leaves
+    // the training nodes to training.
+    for (const auto type : {gui::NodeType::DataInput, gui::NodeType::StandardScaler, gui::NodeType::MinMaxScaler})
+        Check(!cyxwiz::IsTrainingOnlyNode(type), "a data step runs in the data pipeline");
+    for (const auto type : {gui::NodeType::DataSplit, gui::NodeType::DataLoader, gui::NodeType::Dense,
+                            gui::NodeType::ReLU, gui::NodeType::CrossEntropyLoss, gui::NodeType::Adam,
+                            gui::NodeType::Output})
+        Check(cyxwiz::IsTrainingOnlyNode(type), "a training node is left to training");
+    // A column transform's output is kept between runs unless it saves its
+    // fitted values; Use saved values puts the file in the key (TOFIX178 0.5).
+    {
+        auto& operators = cyxwiz::PipelineOperatorFactory::Instance();
+        std::string error;
+        auto fit = operators.Create(gui::NodeType::StandardScaler);
+        Check(fit && fit->Configure({{"columns", "a"}}, error) && fit->IsCacheable(),
+              "a scaler that fits is kept: " + error);
+        auto saving = operators.Create(gui::NodeType::StandardScaler);
+        Check(saving->Configure({{"columns", "a"}, {"save_state", "true"}, {"state_path", "s.cyxstate.json"}}, error) &&
+                  !saving->IsCacheable(),
+              "a scaler that saves its fitted values is not kept: " + error);
+        auto saved = operators.Create(gui::NodeType::StandardScaler);
+        std::vector<cyxwiz::PipelineOperatorCacheDependency> dependencies;
+        Check(saved->Configure({{"columns", "a"}, {"operation_mode", "transform_only"},
+                                {"state_path", "s.cyxstate.json"}}, error) &&
+                  saved->IsCacheable() && saved->CollectCacheDependencies(dependencies, error) &&
+                  dependencies.size() == 1 && dependencies[0].path == "s.cyxstate.json",
+              "Use saved values is kept with the values file in the key: " + error);
+    }
+    // The compiler's every-row answer is the operators' own (TOFIX178 S0-g5).
+    for (const auto type : cyxwiz::PipelineOperatorFactory::Instance().GetSupportedTypes()) {
+        const auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op && op->LearnsFromEveryRow() == cyxwiz::PipelineStepLearnsFromEveryRow(type),
+              "PipelineStepLearnsFromEveryRow disagrees with operator " + (op ? op->GetName() : std::string("?")));
     }
     std::cout << "Pipeline operator metadata drift guard passed\n";
     return 0;

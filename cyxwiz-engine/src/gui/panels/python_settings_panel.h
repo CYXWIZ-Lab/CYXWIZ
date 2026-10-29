@@ -72,6 +72,7 @@ private:
         bool has_pip;
     };
     std::vector<DetectedPython> detected_pythons_;
+    bool loaded_ = false;  // LoadSettings ran (on the first Render)
     bool detection_in_progress_ = false;
     bool show_detection_results_ = false;
 

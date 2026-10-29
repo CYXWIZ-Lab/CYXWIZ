@@ -1,4 +1,5 @@
 #include "table_viewer.h"
+#include "../../core/dataset_catalog.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/variables_presentation.h"
 #include <spdlog/spdlog.h>
@@ -46,6 +47,7 @@ std::unique_ptr<TableViewerPanel::TableTab> TableViewerPanel::MakeTab(std::share
 }
 
 TableViewerPanel::~TableViewerPanel() {
+    DatasetCatalog::Instance().Unsubscribe(catalog_subscription_);
     VariablesView::CancelReads(this);
     AsyncTaskManager::Instance().CancelOwnedBy(alive_);
 }

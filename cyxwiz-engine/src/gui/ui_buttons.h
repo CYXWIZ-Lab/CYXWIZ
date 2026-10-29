@@ -42,6 +42,18 @@ float ChipButtonWidth(const char* label);
 // Segmented choice (one of several options side by side). Returns true when
 // the selection changed; `selected` is updated.
 bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
+float SegmentedControlWidth(const char* const* labels, int count);
+
+// A step of a run group (Compile, Local Debug; TOFIX178 UI-1): the label
+// runs the step, the status chip after it (text tinted `tone` on a faint
+// fill of it) opens the step's menu. An empty `label` draws the chip alone;
+// an empty `status` draws a dot of `tone` instead of the text. Returns 1 when
+// the label is clicked, 2 when the chip is, else 0. The tooltips show on
+// hover of each part.
+enum class StepPart { None, Label, Status };
+StepPart StepButton(const char* id, const char* label, const char* status, const ImVec4& tone,
+                    const char* label_tooltip, const char* status_tooltip);
+float StepButtonWidth(const char* label, const char* status);
 
 // Rounded status pill with a coloured dot (a kernel or service state).
 // Returns true when clicked.

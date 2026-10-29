@@ -1531,6 +1531,23 @@ bool BuildSequential(
             }
 
             case gui::NodeType::BatchNorm: {
+                // Before Flatten / a global pool it normalises each channel of
+                // [H,W,C,N] (torch BatchNorm2d); after it, each feature (BatchNorm1d).
+                if (spatial_head && i < spatial_head->input_shapes.size()) {
+                    const auto& in_shape = spatial_head->input_shapes[i];
+                    if (in_shape.size() != 3) {
+                        throw std::runtime_error(
+                            "BatchNorm at index " + std::to_string(i) +
+                            " needs the model's input_shape [H,W,C] to know its channels");
+                    }
+                    const int channels = static_cast<int>(in_shape[2]);
+                    model.Add<BatchNorm2DModule>(channels, normalization_regularization_configuration.epsilon,
+                                                 normalization_regularization_configuration.momentum);
+                    CYXWIZ_BUILDER_INFO("  [{}] BatchNorm2D(channels={}, eps={}, momentum={})", i, channels,
+                                        normalization_regularization_configuration.epsilon,
+                                        normalization_regularization_configuration.momentum);
+                    break;
+                }
                 model.Add<BatchNormModule>(
                     current_input_size,
                     normalization_regularization_configuration.epsilon,
@@ -2001,6 +2018,32 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             return std::make_unique<StackedPairLoss>(
                 contrastive ? StackedPairLoss::Kind::Contrastive : StackedPairLoss::Kind::CosineEmbedding,
                 margin, config.metric_mining);
+        }
+        case gui::NodeType::PluginCustom: {
+            // An extension loss (TOFIX125 P7): its factory builds the loss,
+            // guarded so its result is checked and errors name the node.
+            auto& registry = ExtensionNodeRegistry::Instance();
+            const auto factory = registry.LossFactory(config.loss_extension_type_id);
+            const std::string label = "extension loss '" + config.loss_extension_name + "' (" +
+                                      config.loss_extension_type_id + ")";
+            if (!factory) {
+                throw std::runtime_error(label + " is not installed");
+            }
+            std::string error;
+            std::unique_ptr<Loss> loss;
+            try {
+                loss = factory->CreateLoss(config.loss_params, error);
+            } catch (const std::exception& e) {
+                error = e.what();
+            }
+            if (!loss) {
+                throw std::runtime_error(label + " could not create its loss" +
+                                         (error.empty() ? std::string() : ": " + error));
+            }
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using extension loss {}", config.loss_extension_type_id);
+            return std::make_unique<GuardedExtensionLoss>(
+                std::move(loss), config.loss_node_id, config.loss_extension_name,
+                config.loss_extension_type_id, registry.ProviderLease(config.loss_extension_type_id));
         }
         default:
             // Training another objective than the graph's would be silent

@@ -9,6 +9,9 @@ struct GraphReplacementActivity {
     bool testing = false;
     bool preparing_test = false;
     bool loading_training_data = false;  // Train loads the Data Inputs first
+    // A Data Input dialog's Apply is loading: a graph replaced now would leave
+    // the dataset it registers with no node (TOFIX160 P6).
+    bool loading_node_data = false;
     bool simulation = false;
     bool pipeline = false;
     bool reinforcement_learning = false;
@@ -18,6 +21,7 @@ inline std::string_view GraphReplacementBlockReason(const GraphReplacementActivi
     if (state.testing) return "testing is active";
     if (state.preparing_test) return "Run Test preparation is active";
     if (state.loading_training_data) return "the graph's data is loading before training";
+    if (state.loading_node_data) return "a Data Input is loading its data";
     if (state.simulation) return "simulation is active";
     if (state.pipeline) return "a data pipeline is active";
     if (state.reinforcement_learning) return "reinforcement learning is active";

@@ -88,6 +88,10 @@ except TypeError:
 check(abs((1.0 / cyx.Tensor.full([1], 4.0)).at(0) - 0.25) < 1e-6, "scalar / Tensor")
 mask = cyx.Tensor.full([2], 3.0) > 0.0  # a comparison gives a uint8 mask
 check(values(1.0 - mask) == [0.0, 0.0], "scalar - uint8 mask is 1 - 1 = 0 (was 256: the mask was negated as uint8)")
+first = values(cyx.Tensor.random([8], seed=7))
+check(first == values(cyx.Tensor.random([8], seed=7)), "Tensor.random with a seed repeats its values")
+check(first != values(cyx.Tensor.random([8], seed=8)), "another seed gives other values")
+check(all(0.0 <= v < 1.0 for v in first), "seeded values are in [0, 1)")
 
 # --- Sequential.add and training ---------------------------------------------
 def make_data():

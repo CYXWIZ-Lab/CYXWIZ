@@ -4,7 +4,6 @@
 #include "../preprocessing/statistics_calculator.h"
 #include "../preprocessing/normalization_transform.h"
 #include "../preprocessing/scaling_transform.h"
-#include "../preprocessing/image_transform.h"
 #include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -350,20 +349,11 @@ void DatasetBatcher::InitializePreprocessing(const DatasetStatistics& stats) {
     const auto& config = *preprocessing_config_;
 
     // Build preprocessing pipeline in order:
-    // 1. Image preprocessing (resize, format conversion)
-    // 2. Normalization (MNIST/CIFAR/ImageNet/Custom)
-    // 3. Scaling (MinMax/Standard/Robust/PCA)
+    // 1. Normalization (MNIST/CIFAR/ImageNet/Custom)
+    // 2. Scaling (MinMax/Standard/Robust/PCA)
+    // (Images train through ImageDatasetBatcher: TOFIX178 1.3.)
 
-    // 1. Image preprocessing
-    if (config.image_config.resize_mode != ResizeMode::None ||
-        config.image_config.convert_to_grayscale ||
-        config.image_config.convert_to_rgb) {
-
-        image_transforms_.push_back(std::make_unique<ImageTransform>(config.image_config));
-        spdlog::info("DatasetBatcher: Added ImageTransform to pipeline");
-    }
-
-    // 2. Normalization
+    // 1. Normalization
     if (config.normalization_config.strategy != NormalizationStrategy::None) {
         auto transform = std::make_unique<NormalizationTransform>(config.normalization_config);
         transform->Initialize(stats);
@@ -372,7 +362,7 @@ void DatasetBatcher::InitializePreprocessing(const DatasetStatistics& stats) {
                      static_cast<int>(config.normalization_config.strategy));
     }
 
-    // 3. Scaling
+    // 2. Scaling
     if (config.scaling_config.strategy != ScalingStrategy::None) {
         auto transform = std::make_unique<ScalingTransform>(config.scaling_config);
         transform->Initialize(stats);
@@ -381,18 +371,14 @@ void DatasetBatcher::InitializePreprocessing(const DatasetStatistics& stats) {
                      static_cast<int>(config.scaling_config.strategy));
     }
 
-    preprocessing_enabled_ = !image_transforms_.empty() ||
-                             !normalization_transforms_.empty() ||
+    preprocessing_enabled_ = !normalization_transforms_.empty() ||
                              !scaling_transforms_.empty();
 
     spdlog::info("DatasetBatcher: Preprocessing pipeline initialized with {} transforms",
-                 image_transforms_.size() + normalization_transforms_.size() + scaling_transforms_.size());
+                 normalization_transforms_.size() + scaling_transforms_.size());
 }
 
 void DatasetBatcher::ClearPreprocessing() {
-    // Clean up image transforms
-    image_transforms_.clear();
-
     // Clean up normalization transforms
     normalization_transforms_.clear();
 
@@ -411,17 +397,12 @@ void DatasetBatcher::ApplyPreprocessing(Tensor& batch) {
     }
 
     // Apply transforms in order:
-    // 1. Image preprocessing
-    for (const auto& transform : image_transforms_) {
-        batch = transform->Apply(batch);
-    }
-
-    // 2. Normalization
+    // 1. Normalization
     for (const auto& transform : normalization_transforms_) {
         batch = transform->Apply(batch);
     }
 
-    // 3. Scaling
+    // 2. Scaling
     for (const auto& transform : scaling_transforms_) {
         batch = transform->Apply(batch);
     }

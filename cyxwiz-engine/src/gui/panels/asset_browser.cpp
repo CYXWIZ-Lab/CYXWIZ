@@ -1873,9 +1873,20 @@ void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& s
         draw->AddText(ImVec2(p.x + (tile - icon_size.x) * 0.5f, p.y + (tile - icon_size.y) * 0.5f), ui::ToU32(colour), icon);
         ImGui::Dummy(ImVec2(tile, tile));
     }
-    ImGui::SameLine();
     const float hide_width = ImGui::CalcTextSize("Hide").x;
-    const float text_right = ImGui::GetContentRegionMax().x - hide_width - ImGui::GetStyle().ItemSpacing.x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float hide_x = ImGui::GetContentRegionMax().x - hide_width;
+    // The name goes beside the tile when it has room there (8 em); in a narrow
+    // panel it goes below, so it does not wrap a letter per line.
+    const float tile_right = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+    const bool below = hide_x - spacing - (tile_right + spacing) < ImGui::GetFontSize() * 8.0f;
+    if (below) {
+        ImGui::SameLine(std::max(hide_x, tile_right + spacing));
+        if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+    } else {
+        ImGui::SameLine();
+    }
+    const float text_right = below ? ImGui::GetContentRegionMax().x : hide_x - spacing;
     ImGui::BeginGroup();
     ImGui::PushTextWrapPos(text_right);
     {
@@ -1891,8 +1902,10 @@ void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& s
     ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
     ImGui::EndGroup();
-    ImGui::SameLine(ImGui::GetContentRegionMax().x - hide_width);
-    if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+    if (!below) {
+        ImGui::SameLine(hide_x);
+        if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+    }
 
     if (!preview_dataset_name_.empty()) {
         ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK " Loaded as '%s'", preview_dataset_name_.c_str());

@@ -47,8 +47,13 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::BinningNode: case NodeType::PolynomialFeaturesNode: case NodeType::CalculatorNode:
         case NodeType::UnitConverter: case NodeType::JSONPathExtractor: case NodeType::RegexTester:
         case NodeType::StandardScaler: case NodeType::MinMaxScaler: case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler: case NodeType::QuantileTransform: case NodeType::PowerTransform:
+        case NodeType::LogTransform:
         case NodeType::LabelEncoder: case NodeType::OrdinalEncoder: case NodeType::TargetEncoder:
         case NodeType::OutlierDetector:
+        // Groups and projections added as steps (Explore > Groups / Projection, TOFIX129 D5).
+        case NodeType::KMeansCluster: case NodeType::DBSCANCluster: case NodeType::HierarchicalCluster:
+        case NodeType::GMMCluster: case NodeType::PCANode: case NodeType::TSNENode: case NodeType::UMAPNode:
             job = Job::Prepare; return true;
         case NodeType::RowCountCheck: case NodeType::DataValidator:
             job = Job::Validate; return true;
@@ -58,7 +63,8 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::ExportExcel: case NodeType::ExportSQL:
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
-        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode: case NodeType::TestEvaluationNode:
+        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
         default:
@@ -305,13 +311,20 @@ View Build(const Input& in) {
         row.node_id = n.id;
         row.name = n.name;
         row.file = n.file_path;
+        if (row.file.empty() && !n.folder_path.empty()) {
+            row.file = n.folder_path;
+            if (!n.labels_csv.empty())
+                row.source_note = "image folder, labels from " + FileName(n.labels_csv);
+        }
         if (!n.error.empty()) {
             row.state = "failed";
             row.detail = n.error;
             row.tone = Tone::Error;
         } else if (const Dataset* d = DatasetOfInput(in, n)) {
             row.state = "loaded";
-            row.size = Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            row.size = d->images ? Thousands(static_cast<int64_t>(d->rows)) + " images"
+                                 : Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            if (d->images && row.source_note.empty() && !n.folder_path.empty()) row.source_note = "image folder, class folders";
             row.dataset = d->name;
             row.tone = Tone::Ok;
         } else {
@@ -345,7 +358,26 @@ View Build(const Input& in) {
             item.tone = Tone::Warn;
             item.tip += (item.tip.empty() ? "" : "\n") + std::string("Open its dialog and Apply, or run the graph, to load it.");
         }
+        const Dataset* images = DatasetOfInput(in, n);
         sources.items.push_back(std::move(item));
+        if (!images || !images->images) continue;
+        // Its index table, one row per image, so the table tools work on images.
+        RailItem index;
+        index.kind = RailItem::Kind::ImageIndex;
+        index.label = images->name + "_index";
+        index.tip = "One row per image: path, label, size, bytes (and quality once measured).";
+        if (const Dataset* table = DatasetNamed(in, index.label)) {
+            index.dataset = table->name;
+            index.meta = Thousands(static_cast<int64_t>(table->rows)) + " \xC3\x97 " + std::to_string(table->columns);
+            shown.insert(table->name);
+        } else if (const auto p = in.image_index_progress.find(images->name); p != in.image_index_progress.end()) {
+            index.meta = "indexing";
+            index.tone = Tone::Warn;
+            index.tip += "\nIndexing: " + p->second + " files read.";
+        } else {
+            continue;
+        }
+        sources.items.push_back(std::move(index));
     }
     RailSection results{"Node results", {}};
     for (const auto& n : in.nodes) {

@@ -56,7 +56,9 @@
         "name": "LogTransform",
         "pos": [200, 260],
         "params": {
-          "value_col": "Passengers"
+          "columns": "Passengers",
+          "base": "natural",
+          "use_log1p": "true"
         }
       },
       {

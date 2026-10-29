@@ -309,6 +309,88 @@ bool SegmentedControl(const char* id, const char* const* labels, int count, int*
     return changed;
 }
 
+float SegmentedControlWidth(const char* const* labels, int count) {
+    float total = 0.0f;
+    for (int i = 0; i < count; ++i) total += ImGui::CalcTextSize(labels[i], nullptr, true).x + 24.0f;
+    return total;
+}
+
+namespace {
+
+constexpr float kStepPadX = 9.0f;
+constexpr float kStepChipPadX = 7.0f;
+constexpr float kStepDot = 8.0f;
+
+float StepLabelWidth(const char* label) {
+    return label && *label ? ImGui::CalcTextSize(label, nullptr, true).x + kStepPadX * 2.0f : 0.0f;
+}
+
+float StepChipWidth(const char* status) {
+    return status && *status ? ImGui::CalcTextSize(status, nullptr, true).x + kStepChipPadX * 2.0f + 6.0f
+                             : kStepDot + 16.0f;
+}
+
+}  // namespace
+
+float StepButtonWidth(const char* label, const char* status) {
+    return StepLabelWidth(label) + StepChipWidth(status);
+}
+
+StepPart StepButton(const char* id, const char* label, const char* status, const ImVec4& tone,
+                    const char* label_tooltip, const char* status_tooltip) {
+    RefreshColors();
+    ImGui::PushID(id);
+    const float height = ButtonHeight(ButtonSize::Small);
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float label_w = StepLabelWidth(label);
+    const float chip_w = StepChipWidth(status);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    StepPart clicked = StepPart::None;
+
+    // One filled shape; the part under the pointer is lighter.
+    ImGui::SetCursorScreenPos(start);
+    const bool label_clicked = label_w > 0.0f && ImGui::InvisibleButton("##label", ImVec2(label_w, height));
+    const bool label_hovered = label_w > 0.0f && ImGui::IsItemHovered();
+    if (label_hovered && label_tooltip && *label_tooltip) ImGui::SetTooltip("%s", label_tooltip);
+    ImGui::SetCursorScreenPos(ImVec2(start.x + label_w, start.y));
+    const bool chip_clicked = ImGui::InvisibleButton("##status", ImVec2(chip_w, height));
+    const bool chip_hovered = ImGui::IsItemHovered();
+    if (chip_hovered && status_tooltip && *status_tooltip) ImGui::SetTooltip("%s", status_tooltip);
+    if (label_clicked) clicked = StepPart::Label;
+    if (chip_clicked) clicked = StepPart::Status;
+
+    const ImVec2 end(start.x + label_w + chip_w, start.y + height);
+    dl->AddRectFilled(start, end, ImGui::GetColorU32(kSecondary), kRounding);
+    if (label_hovered)
+        dl->AddRectFilled(start, ImVec2(start.x + label_w, end.y), ImGui::GetColorU32(kSecondaryHover), kRounding,
+                          ImDrawFlags_RoundCornersLeft);
+    if (chip_hovered)
+        dl->AddRectFilled(ImVec2(start.x + label_w, start.y), end, ImGui::GetColorU32(kSecondaryHover), kRounding,
+                          label_w > 0.0f ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersAll);
+    const float text_y = start.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+    if (label_w > 0.0f)
+        dl->AddText(ImVec2(start.x + kStepPadX, text_y), ImGui::GetColorU32(kText), label,
+                    ImGui::FindRenderedTextEnd(label));
+    const float chip_x = start.x + label_w;
+    if (status && *status) {
+        const ImVec2 text = ImGui::CalcTextSize(status, nullptr, true);
+        const ImVec2 pill_min(chip_x + 3.0f, start.y + (height - text.y) * 0.5f - 2.0f);
+        const ImVec2 pill_max(chip_x + chip_w - 3.0f, pill_min.y + text.y + 4.0f);
+        dl->AddRectFilled(pill_min, pill_max, ImGui::GetColorU32(ImVec4(tone.x, tone.y, tone.z, 0.18f)),
+                          (pill_max.y - pill_min.y) * 0.5f);
+        dl->AddText(ImVec2(pill_min.x + kStepChipPadX, text_y), ImGui::GetColorU32(tone), status,
+                    ImGui::FindRenderedTextEnd(status));
+    } else {
+        dl->AddCircleFilled(ImVec2(chip_x + chip_w * 0.5f, start.y + height * 0.5f), kStepDot * 0.5f,
+                            ImGui::GetColorU32(tone));
+    }
+    if (label_hovered || chip_hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    ImGui::SetCursorScreenPos(start);
+    ImGui::Dummy(ImVec2(end.x - start.x, height));
+    ImGui::PopID();
+    return clicked;
+}
+
 float ButtonWidth(const char* label, ButtonSize size) {
     return ImGui::CalcTextSize(label, nullptr, true).x + Padding(size).x * 2.0f + 2.0f;
 }

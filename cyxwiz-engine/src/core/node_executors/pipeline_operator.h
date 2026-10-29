@@ -109,8 +109,8 @@ struct PipelineOperatorExecutionContext {
  * IPipelineOperator — Category 1 base interface (pipeline operations).
  *
  * Real operations that transform Arrow table data flowing through a graph,
- * executed automatically during training. The opposite of Category 2
- * introspection executors (INodeExecutor) which are manual click-Run UI tools.
+ * executed automatically during training. Inspection (Category 2) lives in
+ * panels and Data Studio's Explore tabs, not in operators.
  *
  * Contract:
  *   - Input  → arrow::Table from upstream node
@@ -122,9 +122,6 @@ struct PipelineOperatorExecutionContext {
  * Subclasses implement a single operation per CLAUDE.md's
  * single-responsibility node rule. Multi-step transforms compose at the
  * graph level, not inside a single operator.
- *
- * NOT for Category 2 (introspection / KMeans-style click-Run tools) — use
- * INodeExecutor for those.
  */
 class IPipelineOperator {
 public:
@@ -189,6 +186,11 @@ public:
     // A check: it reads every batch (FitBatch) and its output is its input,
     // so the stream writes nothing.
     virtual bool PassesInputThrough() const { return false; }
+    // It learns from every row it is given and cannot learn from the Train
+    // rows only yet (PCA, clustering, outlier limits, classic models): the
+    // compiler warns when one runs before a Data Split (TOFIX178 S0-g5).
+    // PipelineStepLearnsFromEveryRow answers the same for a node type.
+    virtual bool LearnsFromEveryRow() const { return false; }
     // A check that needs every row at once can judge a table on disk from
     // one SQL query over it instead (TOFIX154): the query, its input named
     // `input`; empty when it has none. JudgeSql decides from the result as

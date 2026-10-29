@@ -5,6 +5,7 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "node_editor.h"
 #include "data_input_preview.h"
 #include "../core/async_task_manager.h"
 #include "../core/data_preview_service.h"
@@ -478,7 +479,18 @@ std::string DataInputDialog::FormatBytes(size_t bytes) {
 }
 
 std::string DataInputDialog::GenerateDatasetName() const {
-    return data_input::GenerateDatasetName(file_path_, folder_path_);
+    // Unique among the graph's other Data Inputs: two files with the same
+    // name in different folders gave one name, so the second Apply replaced
+    // the first and deleting either node removed both.
+    std::vector<std::string> taken;
+    if (node_editor_) {
+        for (const auto& other : node_editor_->GetNodes()) {
+            if (other.type != NodeType::DataInput || (node_ && other.id == node_->id)) continue;
+            const auto it = other.parameters.find("dataset_name");
+            if (it != other.parameters.end() && !it->second.empty()) taken.push_back(it->second);
+        }
+    }
+    return data_input::UniqueDatasetName(data_input::GenerateDatasetName(file_path_, folder_path_), taken);
 }
 
 } // namespace gui

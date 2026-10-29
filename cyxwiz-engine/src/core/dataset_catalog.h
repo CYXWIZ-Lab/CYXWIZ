@@ -60,7 +60,6 @@ struct DatasetEntry {
     DatasetModality modality = DatasetModality::Unknown;
     size_t rows = 0, columns = 0, classes = 0;
     std::string source_path;
-    bool materialized = false;  // a pipeline result ("..__materialized")
     // What people call it: the Data Input node's name ("Spotify"); empty
     // when no graph names it. Queries may name a table by either.
     std::string label;

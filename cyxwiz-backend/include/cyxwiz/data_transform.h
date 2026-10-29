@@ -182,15 +182,30 @@ public:
     static TransformResult QuantileTransform(const std::vector<std::vector<double>>& data,
                                              const std::string& output_distribution = "uniform",  // or "normal"
                                              int n_quantiles = 1000);
+    // QuantileTransform in two parts, so a fitted transform can be saved and
+    // re-applied (the Quantile Transform node, TOFIX129 D2): the column's
+    // min(n_quantiles, n) quantile references (non-decreasing), and the
+    // mapping of other values through them. QuantileTransform = fit + apply.
+    static bool QuantileFit(const std::vector<double>& data, int n_quantiles, std::vector<double>& quantiles,
+                            std::string& error);
+    static TransformResult QuantileApply(const std::vector<std::vector<double>>& data,
+                                         const std::vector<std::vector<double>>& quantiles,
+                                         const std::string& output_distribution = "uniform");
 
     // ========== Statistics ==========
     static ColumnStats ComputeColumnStats(const std::vector<double>& data);
+
+    // Counts in `bins` equal-width bins over [low, high], the last bin holding
+    // `high` (numpy.histogram); values outside are not counted. low == high:
+    // every value equal to it in the middle bin. Empty when bins < 1, high <
+    // low or the device fails (`error`, when given, says why).
+    static std::vector<int64_t> Histogram(const std::vector<double>& data, int bins, double low, double high,
+                                          std::string* error = nullptr);
 
     // D'Agostino-Pearson K^2 test (scipy.stats.normaltest), at least 20 values.
     static NormalityTestResult DAgostinoPearsonTest(const std::vector<double>& data);
 
     // ========== Input checks ==========
-    static bool CanApplyLogTransform(const std::vector<double>& data, bool use_log1p);
     static bool CanApplyBoxCox(const std::vector<double>& data);
 };
 

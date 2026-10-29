@@ -6,7 +6,6 @@
 #include "properties.h"
 #include "../core/label_vocabulary.h"
 #include "properties_contract.h"
-#include "properties_executor.h"
 #include "properties_node_editors.h"
 #include "properties_parameter_rules.h"
 #include "properties_rows.h"
@@ -18,7 +17,7 @@
 #include "../core/extension_node_metadata.h"
 #include "../core/file_dialogs.h"
 #include "../core/live_graph_compile.h"
-#include "../core/node_executors/node_executor_factory.h"
+#include "../core/normalize_statistics.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/dashboard/dashboard_model.h"
 #include "../core/plot/plot_model.h"
@@ -290,7 +289,6 @@ void Properties::RefreshView(MLNode& node) {
         if (fact.dataset_name == dataset_name) in.dataset = &fact;
     }
     in.has_dialog = ShouldShowOpenDialogButton(node.type);
-    in.has_executor = cyxwiz::NodeExecutorFactory::Instance().HasExecutor(node.type);
     in.custom_editor = properties_contract::IsCustomPropertiesNode(metadata);
     in.dialog_only = properties_contract::IsDialogOnlyPropertiesNode(metadata);
 
@@ -366,10 +364,6 @@ void Properties::RenderGenericSections(MLNode& node) {
     RenderCompiledCard(node);
     RenderFusionCard(node);
     RenderAdvanced(node);
-    if (view_.has_executor) {
-        ImGui::Spacing();
-        RenderExecutorSection(node);
-    }
 }
 
 void Properties::RenderEmpty() {
@@ -636,9 +630,79 @@ void Properties::RenderMetadataRows(MLNode& node) {
     }
 }
 
+size_t Properties::NormalizeChannels(const MLNode& node) const {
+    const cyxwiz::TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+    if (config && config->preprocessing.norm_node_id == node.id && config->preprocessing.norm_channels > 0)
+        return config->preprocessing.norm_channels;
+    std::vector<float> stored;
+    const auto it = node.parameters.find("channel_mean");
+    if (it != node.parameters.end() && cyxwiz::ParseChannelValues(it->second, stored)) return stored.size();
+    return 3;
+}
+
+// One typed row per image channel (Normalize per channel, TOFIX178 1.4): as
+// many as the images have where Normalize sits (from the compile), stored as
+// "0.5282,0.4924,0.4528". ImageNet shows its values, not editable.
+void Properties::RenderChannelRows(MLNode& node, const cyxwiz::properties_view::Setting& row) {
+    const cyxwiz::ParameterDefinition& param = *row.param;
+    const bool is_mean = param.name == "channel_mean";
+    const auto stat = node.parameters.find("statistics");
+    const bool imagenet = stat != node.parameters.end() && stat->second == "imagenet";
+    const size_t channels = imagenet ? 3 : NormalizeChannels(node);
+    std::vector<float> values;
+    if (imagenet) values = is_mean ? cyxwiz::ImageNetChannelMean() : cyxwiz::ImageNetChannelStd();
+    else cyxwiz::ParseChannelValues(row.value, values);
+    const float fill = values.empty() ? (is_mean ? 0.0f : 1.0f) : values.back();
+    values.resize(channels, fill);
+
+    bool changed = false;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    for (size_t c = 0; c < channels; ++c) {
+        ImGui::PushID(static_cast<int>(c));
+        const std::string label = std::string(is_mean ? "Mean " : "Std ") + cyxwiz::ChannelName(c, channels);
+        properties_rows::Label(label.c_str(), false,
+                               imagenet ? "torchvision's ImageNet value; pick Per channel to change it"
+                                        : param.description.c_str());
+        const float width = ImGui::GetContentRegionAvail().x;
+        const bool step_buttons = width >= 2.0f * (ImGui::GetFrameHeight() + style.ItemInnerSpacing.x) +
+                                               ImGui::CalcTextSize("0.0000").x + 2.0f * style.FramePadding.x;
+        ImGui::SetNextItemWidth(width);
+        if (ImGui::InputFloat("##value", &values[c], step_buttons && !imagenet ? 0.01f : 0.0f,
+                              step_buttons && !imagenet ? 0.1f : 0.0f, "%.4f",
+                              imagenet ? ImGuiInputTextFlags_ReadOnly : 0))
+            changed = true;
+        if (c == 0) properties_rows::Status(param.name.c_str());
+        ImGui::PopID();
+    }
+    if (imagenet && !is_mean)
+        properties_rows::Note("torchvision's values, for models pretrained on ImageNet. To change one, pick Per "
+                              "channel; the numbers carry over.");
+    if (changed && !imagenet) {
+        node.parameters[param.name] = cyxwiz::FormatChannelValues(values);
+        node.parameters["statistics_source"].clear();  // typed values: no longer the measured ones
+        NotifyEdited();
+    }
+    if (!row.validation_error.empty()) properties_rows::Note(row.validation_error.c_str());
+    // Where Use in Normalize took the values from, under the std rows.
+    const auto source = node.parameters.find("statistics_source");
+    if (!imagenet && !is_mean && source != node.parameters.end() && !source->second.empty()) {
+        properties_rows::Note(("From Data Studio: " + source->second).c_str());
+        const cyxwiz::TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+        if (open_profile_ && config && !config->dataset_name.empty() &&
+            cyxwiz::ui::LinkButton("Measure again in Data Studio"))
+            open_profile_(config->dataset_name);
+    }
+}
+
 void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::Setting& row) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     const cyxwiz::ParameterDefinition& param = *row.param;
+    if (param.type == "channels") {
+        ImGui::PushID(param.name.c_str());
+        RenderChannelRows(node, row);
+        ImGui::PopID();
+        return;
+    }
     ImGui::PushID(param.name.c_str());
 
     std::string tip = param.description;
@@ -724,15 +788,50 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
         for (size_t i = 0; i < param.enum_values.size(); ++i) {
             if (param.enum_values[i] == value) current = static_cast<int>(i);
         }
+        // The words for each value when the setting has them, else the value.
+        const auto shown = [&param](size_t i) {
+            return param.enum_labels.size() == param.enum_values.size() ? param.enum_labels[i].c_str()
+                                                                         : param.enum_values[i].c_str();
+        };
         ImGui::SetNextItemWidth(editor_width);
-        if (ImGui::BeginCombo("##value", param.enum_values[current].c_str())) {
+        if (ImGui::BeginCombo("##value", shown(static_cast<size_t>(current)))) {
             for (size_t i = 0; i < param.enum_values.size(); ++i) {
-                if (ImGui::Selectable(param.enum_values[i].c_str(), static_cast<int>(i) == current)) {
+                if (ImGui::Selectable(shown(i), static_cast<int>(i) == current)) {
                     value = param.enum_values[i];
                     changed = true;
                 }
             }
             ImGui::EndCombo();
+        }
+    } else if (param.type == "column") {
+        // A column of the data reaching the node (TOFIX178 S0-e); empty keeps
+        // the Data Input's label.
+        const auto columns = node_editor_ ? node_editor_->InputColumns(node.id) : std::vector<std::string>{};
+        constexpr const char* kSourceLabel = "(the Data Input's label)";
+        ImGui::SetNextItemWidth(editor_width);
+        if (!columns.empty()) {
+            if (ImGui::BeginCombo("##value", value.empty() ? kSourceLabel : value.c_str())) {
+                if (ImGui::Selectable(kSourceLabel, value.empty())) {
+                    value.clear();
+                    changed = true;
+                }
+                for (const auto& column : columns) {
+                    if (ImGui::Selectable(column.c_str(), column == value)) {
+                        value = column;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            char buf[256];
+            std::strncpy(buf, value.c_str(), sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputTextWithHint("##value", kSourceLabel, buf, sizeof(buf))) {
+                value = buf;
+                changed = true;
+            }
+            cyxwiz::ui::Tooltip("Execute Pipeline lists the columns the steps before this node make");
         }
     } else if (param.type == "file" || param.type == "directory" || param.type == "folder") {
         const bool folder = param.type != "file";
@@ -801,7 +900,28 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
     }
 
     if (changed) {
+        // Normalize to Per channel: the rows start from what it used (ImageNet's
+        // values, or its one mean / std for each channel).
+        if (node.type == NodeType::Normalize && param.name == "statistics" && value == "per_channel") {
+            const auto before = node.parameters.find("statistics");
+            const bool from_imagenet = before != node.parameters.end() && before->second == "imagenet";
+            const size_t channels = from_imagenet ? 3 : NormalizeChannels(node);
+            const auto number = [&node](const char* key, float fallback) {
+                const auto it = node.parameters.find(key);
+                double parsed = fallback;
+                if (it != node.parameters.end()) properties_rules::TryParseDoubleStrict(it->second, parsed);
+                return static_cast<float>(parsed);
+            };
+            std::vector<float> stored;
+            if (from_imagenet || !cyxwiz::ParseChannelValues(node.parameters["channel_mean"], stored)) {
+                node.parameters["channel_mean"] = cyxwiz::FormatChannelValues(
+                    from_imagenet ? cyxwiz::ImageNetChannelMean() : std::vector<float>(channels, number("mean", 0.0f)));
+                node.parameters["channel_std"] = cyxwiz::FormatChannelValues(
+                    from_imagenet ? cyxwiz::ImageNetChannelStd() : std::vector<float>(channels, number("std", 1.0f)));
+            }
+        }
         node.parameters[param.name] = value;
+        if (node.type == NodeType::Normalize && param.name == "statistics") node.parameters["statistics_source"].clear();
         // Architecture preset <-> block fields (TransformerDecoder, tofix112).
         cyxwiz::ApplyTransformerPresetEdit(node.type, node.parameters, param.name);
         NotifyEdited();
@@ -993,12 +1113,6 @@ void Properties::RenderAdvanced(MLNode& node) {
             NotifyEdited();
         }
     }
-}
-
-// ==================== Node Executor Integration ====================
-
-void Properties::RenderExecutorSection(MLNode& node) {
-    properties_executor::RenderExecutorSection(node_editor_, node);
 }
 
 } // namespace gui

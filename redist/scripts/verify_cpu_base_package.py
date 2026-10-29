@@ -158,6 +158,10 @@ def install(archive: Path, manifest: dict[str, Any], install_root: Path) -> Path
     if not finalizer.is_file():
         raise CpuBaseSmokeError("CPU base is missing its product-removal finalizer")
     shutil.copy2(finalizer, install_root / finalizer.name)
+    cli = base / f"cyxwiz-cli{suffix}"
+    if not cli.is_file():
+        raise CpuBaseSmokeError("CPU base is missing cyxwiz-cli")
+    shutil.copy2(cli, install_root / cli.name)
     state = {
         "schema_version": 1,
         "runtime_set_id": signed["runtime_set_id"],
@@ -449,6 +453,26 @@ def verify(
         60,
     )
     parse_engine_smoke(engine_output, declared_python_version(base))
+
+    # cyxwiz-cli reaches the base's plugin check tool with the runtime's
+    # library path: with no folder the tool starts (its libraries load) and
+    # prints its usage, exit 2.
+    cli_result = subprocess.run(
+        [str(install_root / f"cyxwiz-cli{suffix}"), "--runtime-root", str(install_root / "runtime"),
+         "plugin-check"],
+        cwd=install_root,
+        env=contaminated_environment(install_root),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        timeout=60,
+    )
+    if cli_result.returncode != 2 or "usage: cyxwiz-plugin-check" not in cli_result.stdout:
+        raise CpuBaseSmokeError(
+            f"cyxwiz-cli plugin-check did not reach the plugin check tool "
+            f"(exit {cli_result.returncode}): {cli_result.stdout.strip()}"
+        )
 
     probe = base / f"cyxwiz-route-probe{suffix}"
     if not probe.is_file():

@@ -55,9 +55,21 @@ std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node) {
         return name + ": the extension that provides it (" + node.extension_type_id +
                ") is not installed, so code export cannot include it";
     }
-    if (descriptor->kind == ExtensionNodeKind::TensorLayer) {
+    // A layer or a loss (P7): both run the extension's own code.
+    if (descriptor->kind != ExtensionNodeKind::Signal) {
         return name + ": code export cannot include an extension node's own code yet (" + node.extension_type_id +
                "); train it in Studio, or export a CyxWiz package";
+    }
+    return std::nullopt;
+}
+
+std::optional<PipelineTrainingSupportRole> ExtensionTrainingRole(const gui::MLNode& node) {
+    if (node.type != gui::NodeType::PluginCustom) return std::nullopt;
+    const auto descriptor = ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    if (!descriptor) return std::nullopt;
+    if (descriptor->kind == ExtensionNodeKind::Loss) return PipelineTrainingSupportRole::Loss;
+    if (descriptor->kind == ExtensionNodeKind::TensorLayer && descriptor->role == ExtensionLayerRole::Layer) {
+        return PipelineTrainingSupportRole::ModelLayer;
     }
     return std::nullopt;
 }

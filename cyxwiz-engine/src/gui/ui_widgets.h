@@ -105,8 +105,28 @@ void FieldLabel(const char* label);
 void BeginInsetList(const char* id, float height = 0.0f);
 void EndInsetList();
 
+// A number the user types (owner rule 2026-10-21: no drag or slider inputs,
+// they skip values). The field shows the value in use; typing edits a draft
+// that is applied on Enter or when the field is left, clamped to min .. max
+// (the range shows on hover). `step` > 0 adds styled - / + buttons. True when
+// the value changed.
+struct NumberFieldOptions {
+    double min = -1e300;
+    double max = 1e300;
+    double step = 0.0;            // 0: no - / + buttons
+    const char* format = "%.2f";
+    float width = 80.0f;          // the field, without the buttons
+    const char* hint = nullptr;   // hover text before the range
+};
+bool NumberField(const char* id, double* value, const NumberFieldOptions& options = {});
+bool NumberField(const char* id, float* value, const NumberFieldOptions& options = {});
+bool NumberField(const char* id, int* value, int min, int max, int step = 0, float width = 60.0f, const char* hint = nullptr);
+
 // Centred empty state: icon (may be empty), title, muted hint.
 void EmptyState(const char* icon, const char* title, const char* hint = nullptr);
+// A tinted line across the area with a dot in `tone` and wrapped text: a
+// notice about what is shown (a frozen copy of removed data).
+void NoticeLine(const std::string& text, const ImVec4& tone);
 
 struct DialogOptions {
     ImVec2 size = ImVec2(560.0f, 400.0f);      // first size, clamped to 92% of the work area

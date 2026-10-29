@@ -224,7 +224,7 @@ void CrashRunRecorder::UpdateSampleCount(size_t sample_count) {
         return;
     }
     sample_count_ = sample_count;
-    WriteLocked();
+    WriteRoutineLocked();
 }
 
 void CrashRunRecorder::MarkStage(TrainingTraceStage stage,
@@ -247,7 +247,7 @@ void CrashRunRecorder::MarkStage(TrainingTraceStage stage,
     loss_ = loss;
     accuracy_ = accuracy;
 
-    WriteLocked();
+    WriteRoutineLocked();
 }
 
 void CrashRunRecorder::MarkPanelEvent(const std::string& action,
@@ -270,7 +270,7 @@ void CrashRunRecorder::MarkPanelEvent(const std::string& action,
                             panel_events_.begin() + static_cast<std::ptrdiff_t>(
                                 panel_events_.size() - kMaxPanelEvents));
     }
-    WriteLocked();
+    WriteRoutineLocked();
 }
 
 void CrashRunRecorder::MarkBackendEvent(const std::string& source,
@@ -293,7 +293,7 @@ void CrashRunRecorder::MarkBackendEvent(const std::string& source,
                             panel_events_.begin() + static_cast<std::ptrdiff_t>(
                                 panel_events_.size() - kMaxPanelEvents));
     }
-    WriteLocked();
+    WriteRoutineLocked();
 }
 
 void CrashRunRecorder::UpdateLastExecutedEpoch(int epoch) {
@@ -441,7 +441,13 @@ std::optional<CrashRunSummary> CrashRunRecorder::LoadLastRun() {
     }
 }
 
+void CrashRunRecorder::WriteRoutineLocked() {
+    if (std::chrono::steady_clock::now() - last_write_ < kRoutineWriteInterval) return;
+    WriteLocked();
+}
+
 void CrashRunRecorder::WriteLocked() {
+    last_write_ = std::chrono::steady_clock::now();
     try {
         std::filesystem::create_directories(DebugRunDir());
 

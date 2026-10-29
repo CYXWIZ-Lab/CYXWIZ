@@ -4,7 +4,9 @@
 //   cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
 //
 // For each folder: read plugin.json, load the library (the build fingerprint
-// is checked before any plugin code runs), initialise the plugin, list the
+// is checked before the plugin is created; the library's static
+// initialisers have already run), grant the permissions plugin.json declares
+// for this run, initialise the plugin, list the
 // nodes it registers, and for each trainable node check its output shape and
 // its gradients with the node's default settings, as the Plugin Manager's
 // "Check gradient" does. Exit code 0 when every folder loads and every node
@@ -13,6 +15,7 @@
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/plugin_loader.h"
 #include "../src/plugin/plugin_manager.h"
+#include "../src/plugin/security/permission_store.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -25,8 +28,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// One sample of the shapes the gradient check uses, without the batch.
-constexpr size_t kCheckWidth = 3;
+std::string ShapeText(const std::vector<size_t>& shape) {
+    std::string text;
+    for (const size_t d : shape) text += (text.empty() ? "" : ", ") + std::to_string(d);
+    return "[" + text + "]";
+}
 
 bool CheckFolder(const fs::path& folder) {
     std::cout << folder.string() << "\n";
@@ -40,12 +46,27 @@ bool CheckFolder(const fs::path& folder) {
               << manifest.api_version.ToString() << ")\n";
 
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
-    if (!manager.LoadPlugin(folder)) {
-        std::cout << "  FAIL the plugin did not load (the reason is in the log above)\n";
+    std::string load_error;
+    if (!manager.LoadPlugin(folder, &load_error)) {
+        std::cout << "  FAIL the plugin did not load: " << load_error << "\n";
         return false;
     }
+    // The Engine asks the user before a plugin with a dangerous permission
+    // starts; a command line cannot, so the check grants what plugin.json
+    // declares for this run only (the store is never loaded or saved here).
+    auto& permissions = cyxwiz::plugin::security::PermissionStore::Instance();
+    const std::string version = manifest.version.ToString();
+    for (const auto permission : permissions.GetUndecidedDangerous(manifest.id, version, manifest.permissions)) {
+        permissions.SetDecision(manifest.id, version, permission,
+                                cyxwiz::plugin::security::PermissionDecision::Allowed);
+        for (const auto& name : cyxwiz::plugin::PermissionsToStrings(static_cast<uint32_t>(permission)))
+            std::cout << "  permission " << name << ": granted for this check only (the Engine asks the user)\n";
+    }
     if (!manager.InitializePlugin(manifest.id)) {
-        std::cout << "  FAIL the plugin did not initialise\n";
+        const auto* loaded = manager.GetLoadedPlugin(manifest.id);
+        std::cout << "  FAIL the plugin did not initialise"
+                  << (loaded && !loaded->error_message.empty() ? ": " + loaded->error_message : std::string())
+                  << "\n";
         manager.UnloadPlugin(manifest.id);
         return false;
     }
@@ -64,23 +85,45 @@ bool CheckFolder(const fs::path& folder) {
         std::map<std::string, std::string> settings;
         for (const auto& parameter : node.metadata.parameters) settings[parameter.name] = parameter.default_value;
 
-        const auto shape = factory->InferOutputShape({kCheckWidth}, settings);
-        if (!shape.ok) {
-            std::cout << "  FAIL node " << node.type_id << ": refuses a [" << kCheckWidth
-                      << "] input with its default settings: " << shape.error << "\n";
+        // The gradient check's batches (GradientCheckOptions::input_shapes);
+        // a node that refuses one of their sample shapes is checked with the
+        // others, and says which it refused and why.
+        cyxwiz::GradientCheckOptions options;
+        std::vector<std::vector<size_t>> accepted;
+        for (const auto& batch : options.input_shapes) {
+            const std::vector<size_t> sample(batch.begin() + 1, batch.end());
+            const auto shape = factory->InferOutputShape(sample, settings);
+            if (shape.ok) {
+                accepted.push_back(batch);
+            } else {
+                std::cout << "  node " << node.type_id << ": refuses a " << ShapeText(sample)
+                          << " input with its default settings: " << shape.error << "\n";
+            }
+        }
+        if (accepted.empty()) {
+            std::cout << "  FAIL node " << node.type_id << ": refuses every input shape the check uses\n";
             ok = false;
             continue;
         }
-        const auto result = cyxwiz::CheckModuleGradients([&](const std::vector<size_t>& input_shape) {
-            std::string create_error;
-            const std::vector<size_t> sample(input_shape.begin() + 1, input_shape.end());
-            auto module = factory->CreateModule(sample, settings, create_error);
-            if (!module && !create_error.empty()) std::cout << "  CreateModule: " << create_error << "\n";
-            return module;
-        });
+        options.input_shapes = accepted;
+        const auto result = cyxwiz::CheckModuleGradients(
+            [&](const std::vector<size_t>& input_shape) {
+                std::string create_error;
+                const std::vector<size_t> sample(input_shape.begin() + 1, input_shape.end());
+                auto module = factory->CreateModule(sample, settings, create_error);
+                if (!module && !create_error.empty()) std::cout << "  CreateModule: " << create_error << "\n";
+                return module;
+            },
+            options);
         std::cout << (result.passed ? "  ok   node " : "  FAIL node ") << node.type_id << ": "
                   << cyxwiz::DescribeGradientCheck(result) << "\n";
         ok = ok && result.passed;
+    }
+    if (const auto* loaded = manager.GetLoadedPlugin(manifest.id)) {
+        for (const auto& reason : loaded->skipped_nodes) {
+            std::cout << "  FAIL node not added: " << reason << "\n";
+            ok = false;
+        }
     }
     if (nodes == 0) {
         std::cout << "  FAIL the plugin registered no nodes\n";

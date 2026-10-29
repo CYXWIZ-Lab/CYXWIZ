@@ -202,7 +202,7 @@ std::string GenerationPreviewFolderStamp(const std::filesystem::path& folder) {
         bytes += f->file_size(inner);
     }
     return std::to_string(files) + ":" + std::to_string(bytes) + ":" +
-           std::to_string(newest.time_since_epoch().count());
+           std::to_string(static_cast<long long>(newest.time_since_epoch().count()));
 }
 
 bool ExportGenerationPreviewSamples(const std::vector<GenerationPreviewReport>& reports,

@@ -1,4 +1,5 @@
 #include "parquet_backed_dataset.h"
+#include "cache_prune.h"
 #include "data_budget.h"
 
 #include <parquet/arrow/reader.h>
@@ -375,115 +376,12 @@ std::string ParquetBackedDataset::UniqueTempPath(const std::string& path) {
 }
 
 void ParquetBackedDataset::PruneCache(size_t max_total_bytes, int max_age_days) {
-    // Loads on other threads prune too; one walk at a time.
-    static std::mutex prune_mutex;
-    std::lock_guard<std::mutex> prune_lock(prune_mutex);
-    fs::path cache_dir = GetCacheDir();
-    if (!fs::exists(cache_dir)) return;
-
-    // Collect every .parquet file with its size and mtime. We don't touch
-    // anything else in the directory — only files matching our suffix and
-    // naming pattern. Anything else stays.
-    struct CacheEntry {
-        fs::path path;
-        uintmax_t size = 0;
-        fs::file_time_type mtime{};
-    };
-    std::vector<CacheEntry> entries;
-
-    try {
-        for (const auto& dir_entry : fs::directory_iterator(cache_dir)) {
-            if (!dir_entry.is_regular_file()) continue;
-            const auto& p = dir_entry.path();
-            // A temp file (UniqueTempPath) a day old was left by a crash.
-            if (p.filename().string().find(".tmp.") != std::string::npos) {
-                std::error_code stale;
-                const auto written = fs::last_write_time(p, stale);
-                if (!stale && fs::file_time_type::clock::now() - written > std::chrono::hours(24))
-                    fs::remove(p, stale);
-                continue;
-            }
-            if (p.extension() != ".parquet") continue;
-            CacheEntry e;
-            e.path = p;
-            try { e.size = fs::file_size(p); } catch (...) { e.size = 0; }
-            try { e.mtime = fs::last_write_time(p); } catch (...) { continue; }
-            entries.push_back(std::move(e));
-        }
-    } catch (const std::exception& ex) {
-        spdlog::warn("ParquetBackedDataset::PruneCache: directory_iterator failed on {}: {}",
-                     cache_dir.string(), ex.what());
-        return;
-    }
-
-    if (entries.empty()) return;
-
-    // Helper: try to delete a file, swallow errors. Windows can't delete a
-    // file that another process (or our own mmap) has open — that's fine,
-    // the next prune will retry.
-    auto try_remove = [](const fs::path& p) -> bool {
-        try {
-            return fs::remove(p);
-        } catch (const std::exception& e) {
-            spdlog::debug("PruneCache: could not delete {}: {}", p.string(), e.what());
-            return false;
-        }
-    };
-
-    // Pass 1 — mtime expiry. Delete any cache file older than max_age_days.
-    // file_time_type uses an unspecified clock per spec, so we go via the
-    // system_clock cast available in C++20 (file_clock::to_sys) where
-    // available, falling back to a wall-clock approximation otherwise.
-    size_t expired_count = 0;
-    uintmax_t expired_bytes = 0;
-    {
-        const auto cutoff = std::chrono::hours(24) * max_age_days;
-        const auto now = fs::file_time_type::clock::now();
-        for (auto it = entries.begin(); it != entries.end(); ) {
-            if (now - it->mtime > cutoff) {
-                if (try_remove(it->path)) {
-                    expired_count++;
-                    expired_bytes += it->size;
-                }
-                it = entries.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-
-    // Pass 2 — size cap. If the surviving entries exceed max_total_bytes,
-    // delete oldest first (LRU by mtime) until we're under the cap.
-    uintmax_t total_size = 0;
-    for (const auto& e : entries) total_size += e.size;
-
-    size_t evicted_count = 0;
-    uintmax_t evicted_bytes = 0;
-    if (total_size > max_total_bytes) {
-        std::sort(entries.begin(), entries.end(),
-                  [](const CacheEntry& a, const CacheEntry& b) {
-                      return a.mtime < b.mtime;  // oldest first
-                  });
-        for (auto& e : entries) {
-            if (total_size <= max_total_bytes) break;
-            if (try_remove(e.path)) {
-                evicted_count++;
-                evicted_bytes += e.size;
-                total_size -= e.size;
-            }
-        }
-    }
-
-    if (expired_count > 0 || evicted_count > 0) {
-        spdlog::info("ParquetBackedDataset::PruneCache: expired {} files ({:.1f} MB), "
-                     "evicted {} files ({:.1f} MB), {:.1f} MB remaining",
-                     expired_count, expired_bytes / (1024.0 * 1024.0),
-                     evicted_count, evicted_bytes / (1024.0 * 1024.0),
-                     total_size / (1024.0 * 1024.0));
-    } else {
-        spdlog::debug("ParquetBackedDataset::PruneCache: nothing to prune ({} files, {:.1f} MB)",
-                      entries.size(), total_size / (1024.0 * 1024.0));
-    }
+    // The one rule for every prepared-data cache (core/cache_prune): older
+    // than the age, then the oldest until it fits. Windows keeps a file a
+    // dataset has mapped open, so a cache being trained on stays.
+    CacheFolder folder;
+    folder.path = GetCacheDir();
+    PruneCacheFolder(folder, max_total_bytes, max_age_days);
 }
 
 bool ParquetBackedDataset::IsCacheFresh(const std::string& csv_path,

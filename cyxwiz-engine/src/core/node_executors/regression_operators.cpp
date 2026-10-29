@@ -5,7 +5,7 @@
 #include "regression_model_artifact.h"
 #include "ts_column_utils.h"
 
-#include "../data_analyzer.h"
+#include <cyxwiz/statistical_tests.h>
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
@@ -20,6 +20,20 @@
 namespace cyxwiz {
 
 namespace {
+
+// The fit's facts a saved model artifact keeps (MSE = SSE / n, residual
+// variance = SSE / df).
+void FillFitFacts(const LinearFit& fit, RegressionModelArtifact& artifact) {
+    artifact.coefficients = fit.coef;
+    artifact.sample_count = static_cast<size_t>(fit.n);
+    artifact.r_squared = fit.r2;
+    artifact.adjusted_r_squared = fit.adj_r2;
+    artifact.mse = fit.rmse * fit.rmse;
+    artifact.rmse = fit.rmse;
+    artifact.mae = fit.mae;
+    artifact.residual_variance = fit.rse * fit.rse;
+    artifact.residual_standard_error = fit.rse;
+}
 
 void ReportProgress(const PipelineOperatorProgressCallback& callback,
                     std::string stage,
@@ -232,47 +246,16 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
     }
 
-    // Build X matrix [n x (p + intercept)], row-major.
-    const size_t n_cols = fit_intercept_ ? p + 1 : p;
-    std::vector<std::vector<double>> X(n, std::vector<double>(n_cols, 0.0));
-    std::vector<std::string> names;
-    names.reserve(n_cols);
-    if (fit_intercept_) names.push_back("intercept");
-    for (const auto& name : feature_cols_) names.push_back(name);
-
-    for (size_t i = 0; i < n; ++i) {
-        if ((i & 1023) == 0) {
-            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        }
-        size_t col = 0;
-        if (fit_intercept_) X[i][col++] = 1.0;
-        for (size_t f = 0; f < p; ++f) {
-            X[i][col++] = feature_cols[f][i];
-        }
-    }
-
-    if (n <= n_cols) {
-        return arrow::Status::Invalid(
-            "LinearRegression: n_samples (" + std::to_string(n) +
-            ") <= n_predictors+intercept (" + std::to_string(n_cols) +
-            ") — system is underdetermined");
-    }
-
     ReportProgress(progress_callback_, "fit", "Fitting linear regression model", 0.65, static_cast<uint64_t>(n), static_cast<uint64_t>(n), estimated_memory_bytes);
-    auto result = DataAnalyzer::MultipleLinearRegression(X, y, names);
+    // QR least squares on the device (cyxwiz::StatisticalTests, checked against statsmodels).
+    const LinearFit result = StatisticalTests::FitLinear(feature_cols, y, feature_cols_, fit_intercept_);
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-    if (result.predicted.size() != n || result.residuals.size() != n) {
-        return arrow::Status::ExecutionError(
-            "LinearRegression: backend returned empty predictions "
-            "(n_samples=" + std::to_string(n) +
-            ", predicted=" + std::to_string(result.predicted.size()) +
-            ") — likely singular X'X");
-    }
+    if (!result.ok) return arrow::Status::Invalid("LinearRegression: " + result.error);
 
     spdlog::info("LinearRegression: n={} predictors={} intercept={} "
                  "R^2={:.4f}, adj_R^2={:.4f}, RMSE={:.4f}",
                  n, p, fit_intercept_,
-                 result.r_squared, result.adjusted_r_squared, result.rmse);
+                 result.r2, result.adj_r2, result.rmse);
 
     if (!model_path_.empty()) {
         RegressionModelArtifact artifact;
@@ -281,15 +264,7 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         artifact.target_name = target_col_;
         artifact.fit_intercept = fit_intercept_;
         artifact.degree = 1;
-        artifact.coefficients = result.coefficients;
-        artifact.sample_count = result.n;
-        artifact.r_squared = result.r_squared;
-        artifact.adjusted_r_squared = result.adjusted_r_squared;
-        artifact.mse = result.mse;
-        artifact.rmse = result.rmse;
-        artifact.mae = result.mae;
-        artifact.residual_variance = result.residual_variance;
-        artifact.residual_standard_error = result.residual_standard_error;
+        FillFitFacts(result, artifact);
         std::string artifact_error;
         if (!SaveRegressionModelArtifact(
                 artifact, model_path_, &artifact_error)) {
@@ -302,7 +277,7 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     return AppendPredictionResidual(
-        input, result.predicted, result.residuals, GetCancellationQuery());
+        input, result.fitted, result.residuals, GetCancellationQuery());
 }
 
 // ============================================================================
@@ -340,8 +315,8 @@ bool PolynomialRegressionOperator::Configure(
             return false;
         }
     }
-    if (degree_ < 1) {
-        error = "PolynomialRegression: degree must be >= 1 (got " +
+    if (degree_ < 1 || degree_ > 6) {
+        error = "PolynomialRegression: degree must be 1 to 6 (got " +
                 std::to_string(degree_) + ")";
         return false;
     }
@@ -409,19 +384,15 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
     }
 
     ReportProgress(progress_callback_, "fit", "Fitting polynomial regression model", 0.60, static_cast<uint64_t>(x.size()), static_cast<uint64_t>(x.size()), estimated_memory_bytes);
-    auto result = DataAnalyzer::PolynomialRegression(x, y, degree_);
+    // Fitted on centred, scaled x for accuracy, reported in the original units.
+    const LinearFit result = StatisticalTests::FitPolynomial(x, y, degree_, feature_col_);
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-    if (result.predicted.size() != x.size() || result.residuals.size() != x.size()) {
-        return arrow::Status::ExecutionError(
-            "PolynomialRegression: backend returned empty predictions "
-            "(n=" + std::to_string(x.size()) +
-            ", predicted=" + std::to_string(result.predicted.size()) + ")");
-    }
+    if (!result.ok) return arrow::Status::Invalid("PolynomialRegression: " + result.error);
 
     spdlog::info("PolynomialRegression: n={} degree={} R^2={:.4f}, "
                  "adj_R^2={:.4f}, RMSE={:.4f}",
                  x.size(), degree_,
-                 result.r_squared, result.adjusted_r_squared, result.rmse);
+                 result.r2, result.adj_r2, result.rmse);
 
     if (!model_path_.empty()) {
         RegressionModelArtifact artifact;
@@ -430,15 +401,7 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
         artifact.target_name = target_col_;
         artifact.fit_intercept = true;
         artifact.degree = degree_;
-        artifact.coefficients = result.coefficients;
-        artifact.sample_count = result.n;
-        artifact.r_squared = result.r_squared;
-        artifact.adjusted_r_squared = result.adjusted_r_squared;
-        artifact.mse = result.mse;
-        artifact.rmse = result.rmse;
-        artifact.mae = result.mae;
-        artifact.residual_variance = result.residual_variance;
-        artifact.residual_standard_error = result.residual_standard_error;
+        FillFitFacts(result, artifact);
         std::string artifact_error;
         if (!SaveRegressionModelArtifact(
                 artifact, model_path_, &artifact_error)) {
@@ -451,7 +414,7 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
     }
 
     return AppendPredictionResidual(
-        input, result.predicted, result.residuals, GetCancellationQuery());
+        input, result.fitted, result.residuals, GetCancellationQuery());
 }
 
 } // namespace cyxwiz

@@ -3,6 +3,9 @@
 // data_studio_panel_render.cpp.
 
 #include "data_studio_panel.h"
+#include "../../core/node_executors/hypothesis_test_operator.h"
+#include "../../core/groups_presentation.h"
+#include "../../core/stats_presentation.h"
 #include "../separate_windows.h"
 
 #include "../../core/data_studio_publish.h"
@@ -11,6 +14,7 @@
 #include "../../core/dataset_catalog.h"
 #include "../../core/sql_editing.h"
 #include "../../core/dataset_picker_presentation.h"
+#include "../../core/image_index_service.h"
 #include "../node_editor.h"
 
 #include <algorithm>
@@ -26,6 +30,8 @@ DataStudioPanel::DataStudioPanel() {
     profile_->on_outliers = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Outliers, column); };
     profile_->on_distribution = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Distribution, column); };
     profile_->on_correlation = [this] { ShowExplore(active_dataset_, ExploreTab::Correlation); };
+    gallery_ = std::make_unique<ImageGalleryView>();
+    gallery_->on_open_index = [this](const std::string& index) { ShowExplore(index, ExploreTab::Query); };
     missing_ = std::make_unique<MissingView>();
     missing_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_open_profile = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Profile, column); };
@@ -37,6 +43,66 @@ DataStudioPanel::DataStudioPanel() {
     outliers_ = std::make_unique<OutliersView>();
     correlation_ = std::make_unique<CorrelationView>();
     distribution_ = std::make_unique<DistributionView>();
+    tests_ = std::make_unique<TestsView>();
+    regression_ = std::make_unique<RegressionView>();
+    groups_ = std::make_unique<GroupsView>();
+    projection_ = std::make_unique<ProjectionView>();
+    projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
+    // Groups and projections go into the graph as their nodes (TOFIX129 D5): in the
+    // data path (a step: the rest of the graph gets the new columns) or as a branch.
+    const auto add_node = [this](::gui::NodeType type, const std::string& name, std::map<std::string, std::string> params,
+                                 bool step) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        if (step) node_editor_->RequestStepAfter(from->id, type, name, std::move(params));
+        else node_editor_->RequestBranchAfter(from->id, type, std::move(params), name);
+        return std::string("Added the node \"") + name + "\" " + (step ? "after" : "reading") + " \"" + from->name +
+               "\" (Ctrl+Z on the canvas undoes it).";
+    };
+    groups_->add_to_graph = [add_node](const groups::GroupsRequest& r, bool step) {
+        ::gui::NodeType type = ::gui::NodeType::KMeansCluster;
+        switch (r.method) {
+            case groups::Method::KMeans: type = ::gui::NodeType::KMeansCluster; break;
+            case groups::Method::DBSCAN: type = ::gui::NodeType::DBSCANCluster; break;
+            case groups::Method::Hierarchical: type = ::gui::NodeType::HierarchicalCluster; break;
+            case groups::Method::Mixture: type = ::gui::NodeType::GMMCluster; break;
+        }
+        return add_node(type, std::string("Groups (") + groups_view::MethodLabel(r.method) + ")", groups::NodeParameters(r), step);
+    };
+    projection_->add_to_graph = [add_node](const groups::ProjectionRequest& r, bool step) {
+        ::gui::NodeType type = ::gui::NodeType::PCANode;
+        switch (r.method) {
+            case groups::ProjectionMethod::PCA: type = ::gui::NodeType::PCANode; break;
+            case groups::ProjectionMethod::TSNE: type = ::gui::NodeType::TSNENode; break;
+            case groups::ProjectionMethod::UMAP: type = ::gui::NodeType::UMAPNode; break;
+        }
+        return add_node(type, groups_view::ProjectionLabel(r.method), groups::NodeParameters(r), step);
+    };
+    // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
+    tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        const std::string name = stats_view::TestName(r) + " (" + (r.values.empty() ? r.groups : r.values) + ")";
+        node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::HypothesisTest, HypothesisTestOperator::ParametersFromRequest(r), name);
+        return "Added the Hypothesis Test node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+    };
+    regression_->add_to_graph = [this](const stats::RegressionRequest& r) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        const std::string name = "Predict " + r.response;
+        if (r.polynomial) {
+            node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::PolynomialRegressionNode,
+                                             {{"feature_col", r.predictors.front()}, {"target_col", r.response}, {"degree", std::to_string(r.degree)}},
+                                             name);
+        } else {
+            std::string features;
+            for (const auto& p : r.predictors) features += (features.empty() ? "" : ",") + p;
+            node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::LinearRegressionNode,
+                                             {{"feature_cols", features}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
+        }
+        return std::string("Added the ") + (r.polynomial ? "Polynomial" : "Linear") + " Regression node \"" + name + "\" reading \"" +
+               from->name + "\" (Ctrl+Z on the canvas undoes it).";
+    };
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);
@@ -100,6 +166,16 @@ void DataStudioPanel::ShowProfile(const std::string& dataset_name) {
     explore_tab_ = ExploreTab::Profile;
 }
 
+void DataStudioPanel::ShowResults(ResultsView::View view) {
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Results;
+    if (results_) {
+        results_->Activate();
+        results_->Show(view);
+    }
+}
+
 void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column) {
     SetActiveDataset(dataset_name);
     visible_ = true;
@@ -111,6 +187,18 @@ void DataStudioPanel::ShowExplore(const std::string& dataset_name, ExploreTab ta
     if (tab == ExploreTab::Missing && missing_) missing_->Select(column);
     if (tab == ExploreTab::Outliers && outliers_) outliers_->Select(column);
     if (tab == ExploreTab::Distribution && distribution_) distribution_->Select(column);
+    if (tab == ExploreTab::Tests && tests_) tests_->Select(column);
+    if (tab == ExploreTab::Regression && regression_) regression_->Select(column);
+}
+
+void DataStudioPanel::ShowGroups(groups::Method method) {
+    if (groups_) groups_->SelectMethod(method);
+    ShowExplore(active_dataset_, ExploreTab::Groups);
+}
+
+void DataStudioPanel::ShowProjection(groups::ProjectionMethod method) {
+    if (projection_) projection_->SelectMethod(method);
+    ShowExplore(active_dataset_, ExploreTab::Projection);
 }
 
 ExploreContext DataStudioPanel::MakeExploreContext() const {
@@ -146,10 +234,35 @@ std::string DataStudioPanel::AddKeepRowsStep(const std::string& column, const st
     return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it).";
 }
 
+void DataStudioPanel::AddTransformStep(::gui::NodeType type, std::map<std::string, std::string> parameters, bool compare) {
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Prepare;
+    if (!prepare_ || !node_editor_) return;
+    const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+    if (!from) {
+        std::vector<const studio::GraphNode*> inputs;
+        for (const auto& n : graph_nodes_)
+            if (n.type == ::gui::NodeType::DataInput) inputs.push_back(&n);
+        if (inputs.empty()) {
+            prepare_->Notice("Nothing to transform yet: bring in data first (a Data Input node).");
+            return;
+        }
+        if (inputs.size() > 1) {
+            prepare_->Notice("Pick the data to transform in the rail (a Data Input or a node's result), then choose "
+                             "Data > Transform again, or use Add a step.");
+            return;
+        }
+        from = inputs.front();
+    }
+    prepare_->AddAfter(from->id, type, std::move(parameters), compare);
+}
+
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     if (query_editor_) query_editor_->SetActiveDataset(dataset_name);
     if (profile_) profile_->SetActiveDataset(dataset_name);
+    if (gallery_) gallery_->SetDataset(dataset_name);
     if (visualizer_) visualizer_->SetActiveDataset(dataset_name);
 }
 
@@ -176,6 +289,10 @@ void DataStudioPanel::RefreshView() {
                     n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
+                if (type == ::gui::NodeType::DataInput) {
+                    if (const auto f = parameters->find("folder_path"); f != parameters->end()) n.folder_path = f->second;
+                    if (const auto c = parameters->find("labels_csv"); c != parameters->end()) n.labels_csv = c->second;
+                }
                 const auto registry = parameters->find("dataset_name");
                 if (type == ::gui::NodeType::DataInput && registry != parameters->end()) n.dataset_name = registry->second;
                 const auto mode = parameters->find("balance_mode");
@@ -229,6 +346,12 @@ void DataStudioPanel::RefreshView() {
         d.rows = entry.rows;
         d.columns = entry.columns;
         d.tabular = IsTabularDataset(entry);
+        d.images = entry.modality == DatasetModality::Image && !d.tabular;
+        if (d.images) {
+            const ImageIndexStatus index = GetImageIndexStatus(d.name);
+            if (index.state == ImageIndexStatus::State::Building)
+                in.image_index_progress[d.name] = studio::Thousands(static_cast<int64_t>(index.done)) + " of " + studio::Thousands(static_cast<int64_t>(index.total));
+        }
         in.datasets.push_back(std::move(d));
     }
     // What feeds each check, in the graph as it runs (recipes lowered): read
@@ -252,6 +375,7 @@ void DataStudioPanel::RefreshView() {
         in.preview_runs = results_->PreviewRunCount();
         in.test_rows = results_->TestRowCount();
         results_->graph_name = in.graph_name;
+        results_->graph_open = node_editor_ != nullptr;
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);

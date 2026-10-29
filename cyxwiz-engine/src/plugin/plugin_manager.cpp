@@ -1,4 +1,5 @@
 #include "plugin_manager.h"
+#include "plugin_version_constraint.h"
 #include "plugin_context.h"
 #include <imgui.h>
 #include "security/safe_execute.h"
@@ -148,7 +149,7 @@ std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
 // Loading
 // ============================================================================
 
-bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
+bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir, std::string* error_out) {
     // Pre-check: parse manifest to get ID before loading DLL.
     // Avoids loading (and then unloading) a DLL that's already in use,
     // which would FreeLibrary the active plugin's code and crash.
@@ -169,6 +170,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
 
     if (!loaded) {
         spdlog::error("PluginManager: Failed to load plugin from {}: {}", plugin_dir.string(), error);
+        if (error_out) *error_out = error;
         return false;
     }
 
@@ -179,6 +181,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
     // Double-check for duplicate (race condition guard)
     if (plugins_.count(id)) {
         spdlog::warn("PluginManager: Plugin {} already loaded, skipping", id);
+        if (error_out) *error_out = "a plugin with the id " + id + " is already loaded";
         return false;
     }
 
@@ -188,6 +191,10 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
 }
 
 void PluginManager::LoadAllFromSearchPaths() {
+    // Library copies left by earlier sessions go before this one loads any.
+    static std::once_flag pruned;
+    std::call_once(pruned, [] { PluginLoader::PruneLibraryCache(); });
+
     auto plugin_dirs = DiscoverPlugins();
 
     for (const auto& dir : plugin_dirs) {
@@ -225,6 +232,23 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         spdlog::error("PluginManager: Plugin {} has no instance", plugin_id);
         plugin->state = PluginState::Failed;
         return false;
+    }
+
+    // Its dependencies run first (plugin.json "dependencies"); one that has
+    // not started yet starts this plugin when it does.
+    {
+        bool wait = false;
+        const std::string problem = DependencyProblem(*plugin, wait);
+        if (!problem.empty()) {
+            plugin->error_message = problem;
+            if (wait) {
+                spdlog::info("PluginManager: Plugin {} {}", plugin_id, problem);
+            } else {
+                spdlog::error("PluginManager: Plugin {} cannot start: {}", plugin_id, problem);
+                plugin->state = PluginState::Failed;
+            }
+            return false;
+        }
     }
 
     // Check for undecided dangerous permissions
@@ -306,8 +330,21 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     {
         auto* instance = plugin->instance;
 
+        // What a plugin offers through QueryInterface needs the same
+        // permission as the context's Register* call for it; without it the
+        // offer is not registered and the reason is reported.
+        const auto permitted = [&](PluginPermission permission, const char* what) {
+            if (ctx->CheckPermission(permission, what)) return true;
+            plugin->skipped_nodes.push_back(std::string(what) + ": GetRequiredPermissions() does not include the " +
+                                            ctx->PermissionLabel(permission) + " permission");
+            return false;
+        };
+        plugin->skipped_nodes.clear();
+
         // Register panels (with crash isolation)
-        if (auto* p = static_cast<IPanelProvider*>(instance->QueryInterface("IPanelProvider"))) {
+        auto* panel_provider = static_cast<IPanelProvider*>(instance->QueryInterface("IPanelProvider"));
+        if (panel_provider && !permitted(PluginPermission::UIModify, "IPanelProvider")) panel_provider = nullptr;
+        if (auto* p = panel_provider) {
             auto reg_result = security::SafeExecute(plugin_id, "RegisterPanels", [&]() {
                 auto dll_panels = p->GetPanels();
                 for (const auto& pi : dll_panels) {
@@ -328,7 +365,9 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
 
         // Register nodes (with crash isolation)
-        if (auto* p = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"))) {
+        auto* node_provider = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"));
+        if (node_provider && !permitted(PluginPermission::UIModify, "INodeProvider")) node_provider = nullptr;
+        if (auto* p = node_provider) {
             struct EnumState {
                 std::string plugin_id;
                 INodeProvider* provider;
@@ -374,6 +413,13 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 registration.descriptor = DescribeSignalNode(s->plugin_id, s->current);
                 registration.descriptor.source_path = s->source_path;
                 registration.signal_provider = s->provider;
+                // Already registered by this plugin through RegisterNodeProvider.
+                const auto existing = ExtensionNodeRegistry::Instance().Find(MakeExtensionTypeId(
+                    registration.descriptor.provider_id, registration.descriptor.type_name));
+                if (existing && existing->provider_id == s->plugin_id) {
+                    s->count++;
+                    return;
+                }
                 std::string error;
                 if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
                     s->count++;
@@ -394,7 +440,9 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
 
         // Register trainable nodes (TOFIX125, API 1.1), with crash isolation
-        if (auto* p = static_cast<ITensorNodeProvider*>(instance->QueryInterface("ITensorNodeProvider"))) {
+        auto* tensor_provider = static_cast<ITensorNodeProvider*>(instance->QueryInterface("ITensorNodeProvider"));
+        if (tensor_provider && !permitted(PluginPermission::Training, "ITensorNodeProvider")) tensor_provider = nullptr;
+        if (auto* p = tensor_provider) {
             struct TensorEnumState {
                 std::string plugin_id;
                 std::string source_path;
@@ -402,6 +450,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 std::shared_ptr<void> lease;
                 ExtensionNodeDescriptor current;
                 size_t count = 0;
+                std::vector<std::string> skipped;
             };
             TensorEnumState tstate;
             tstate.plugin_id = plugin_id;
@@ -454,12 +503,14 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 std::string error;
                 if (registration.descriptor.metadata.inputs.size() != 1 ||
                     registration.descriptor.metadata.outputs.size() != 1) {
-                    spdlog::warn("PluginManager: trainable node {}:{} not registered: it needs exactly "
-                                 "one input and one output pin", s->plugin_id,
-                                 registration.descriptor.type_name);
+                    s->skipped.push_back(registration.descriptor.type_name +
+                                         ": it needs exactly one input and one output pin");
+                    spdlog::warn("PluginManager: trainable node {}:{} not registered: {}", s->plugin_id,
+                                 registration.descriptor.type_name, s->skipped.back());
                 } else if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
                     s->count++;
                 } else {
+                    s->skipped.push_back(error);
                     spdlog::warn("PluginManager: trainable node not registered: {}", error);
                 }
             };
@@ -472,11 +523,14 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 plugin->error_message = reg_result.error_message;
                 return false;
             }
+            plugin->skipped_nodes.insert(plugin->skipped_nodes.end(), tstate.skipped.begin(), tstate.skipped.end());
             spdlog::info("PluginManager: Registered {} trainable nodes for '{}'", tstate.count, plugin_id);
         }
 
         // Register training hook (with crash isolation)
-        if (auto* p = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"))) {
+        auto* hook = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"));
+        if (hook && !permitted(PluginPermission::Training, "ITrainingHook")) hook = nullptr;
+        if (auto* p = hook) {
             auto reg_result = security::SafeExecute(plugin_id, "RegisterTrainingHook", [&]() {
                 PluginTrainingHookManager::Instance().RegisterHook(plugin_id, p);
             });
@@ -486,21 +540,60 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
 
         // Register data provider
-        if (auto* p = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"))) {
-            PluginDataLoaderRegistry::Instance().Register(plugin_id, p);
+        auto* data_provider = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"));
+        if (data_provider && permitted(PluginPermission::DataRegistry, "IDataProvider")) {
+            PluginDataLoaderRegistry::Instance().Register(plugin_id, data_provider);
         }
 
         // Register analytics provider
-        if (auto* p = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"))) {
-            PluginAnalyticsRegistry::Instance().Register(plugin_id, p);
+        auto* analytics = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"));
+        if (analytics && permitted(PluginPermission::DataRegistry, "IAnalyticsProvider")) {
+            PluginAnalyticsRegistry::Instance().Register(plugin_id, analytics);
         }
     }
 
     plugin->state = PluginState::Initialized;
+    plugin->error_message.clear();
     contexts_[plugin_id] = std::move(ctx);
 
     spdlog::info("PluginManager: Plugin {} initialized successfully", plugin_id);
+
+    // Plugins that waited for this one.
+    std::vector<std::string> waiting;
+    for (const auto& [id, other] : plugins_) {
+        if (other->state != PluginState::Loaded) continue;
+        for (const auto& dep : other->manifest.dependencies) {
+            if (dep.plugin_id == plugin_id) waiting.push_back(id);
+        }
+    }
+    for (const auto& id : waiting) InitializePlugin(id);
     return true;
+}
+
+std::string PluginManager::DependencyProblem(const LoadedPlugin& plugin, bool& wait) const {
+    wait = false;
+    std::string waiting_for;
+    for (const auto& dep : plugin.manifest.dependencies) {
+        const std::string wanted = dep.plugin_id + (dep.version_constraint.empty() ? "" : " " + dep.version_constraint);
+        const auto it = plugins_.find(dep.plugin_id);
+        if (it == plugins_.end()) return "needs " + wanted + ", which is not installed";
+        const LoadedPlugin& other = *it->second;
+        std::string error;
+        if (!VersionMeetsConstraint(other.manifest.version, dep.version_constraint, &error)) {
+            if (!error.empty()) return "its dependency on " + dep.plugin_id + ": " + error;
+            return "needs " + wanted + "; version " + other.manifest.version.ToString() + " is installed";
+        }
+        if (other.state == PluginState::Initialized || other.state == PluginState::Active) continue;
+        if (other.state == PluginState::Loaded) {
+            if (waiting_for.empty()) waiting_for = dep.plugin_id;
+            continue;
+        }
+        return "needs " + dep.plugin_id + ", which did not start" +
+               (other.error_message.empty() ? std::string() : " (" + other.error_message + ")");
+    }
+    if (waiting_for.empty()) return {};
+    wait = true;
+    return "waits for " + waiting_for + ", which has not started yet";
 }
 
 void PluginManager::InitializeAll() {
@@ -789,11 +882,9 @@ std::vector<std::string> PluginManager::ResolveLoadOrder() const {
 
         for (const auto& dep : plugin->manifest.dependencies) {
             // Only add dependency edges for plugins that are actually loaded
+            // A missing one is reported when the plugin starts.
             if (plugins_.count(dep.plugin_id)) {
                 graph[id].push_back(dep.plugin_id);
-            } else {
-                spdlog::warn("PluginManager: Plugin {} depends on {} which is not loaded",
-                             id, dep.plugin_id);
             }
             if (graph.find(dep.plugin_id) == graph.end()) {
                 graph[dep.plugin_id] = {};

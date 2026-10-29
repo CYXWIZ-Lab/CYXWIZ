@@ -116,10 +116,11 @@ bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category) {
            file_category == FileCategory::TimeSeries;
 }
 
-const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_category) {
-    if (file_category == FileCategory::Image) {
-        return "Image preview is not wired yet. Apply can still scan supported image folders.";
-    }
+bool HasRowsAndColumns(cyxwiz::loaders::FileCategory file_category) {
+    return file_category != FileCategory::Image && file_category != FileCategory::Audio;
+}
+
+const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory) {
     return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
 }
 
@@ -230,6 +231,17 @@ std::string GenerateDatasetName(const std::string& file_path, const std::string&
         name = "dataset";
     }
     return name;
+}
+
+std::string UniqueDatasetName(const std::string& base, const std::vector<std::string>& taken) {
+    const auto used = [&taken](const std::string& name) {
+        return std::find(taken.begin(), taken.end(), name) != taken.end();
+    };
+    if (!used(base)) return base;
+    for (int n = 2;; ++n) {
+        const std::string candidate = base + "_" + std::to_string(n);
+        if (!used(candidate)) return candidate;
+    }
 }
 
 std::string FormatBytes(std::size_t bytes) {

@@ -44,7 +44,7 @@
       ],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 7.071697981355686e-05,
         "where": "input"
@@ -84,7 +84,7 @@
       ],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 0.0002661880767485467,
         "where": "input"
@@ -115,7 +115,7 @@
       "parameters": [],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 4.768373855769089e-07,
         "where": "input"
@@ -155,7 +155,7 @@
       ],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 4.768373855769089e-07,
         "where": "input"
@@ -195,7 +195,7 @@
       ],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 1.3902565050338515e-05,
         "where": "input"
@@ -226,7 +226,7 @@
       "parameters": [],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 1.6049626177927803e-05,
         "where": "input"
@@ -257,7 +257,7 @@
       "parameters": [],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 7.895852315438919e-05,
         "where": "input"
@@ -288,7 +288,7 @@
       "parameters": [],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 2.214243909725469e-05,
         "where": "input"
@@ -319,7 +319,7 @@
       "parameters": [],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 0.00022984859342045638,
         "where": "input"
@@ -350,10 +350,159 @@
       "parameters": [],
       "verification": {
         "status": "passed",
-        "checked_on": "2026-10-20",
+        "checked_on": "2026-10-21",
         "tolerance": 0.02,
         "max_relative_error": 9.547980795332478e-05,
         "where": "input"
+      }
+    },
+    {
+      "name": "CrossEntropy",
+      "version": "1.0.0",
+      "entry": "node.py:CrossEntropy",
+      "tier": "loss",
+      "display_name": "Cross Entropy (Python)",
+      "category": "Python examples",
+      "role": "loss",
+      "description": "Softmax over the last layer's outputs, then the mean of -log p(class)",
+      "target": "categorical",
+      "inputs": [
+        {
+          "name": "Predictions",
+          "type": "Tensor"
+        },
+        {
+          "name": "Targets",
+          "type": "Labels"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Loss",
+          "type": "Loss"
+        }
+      ],
+      "parameters": [],
+      "verification": {
+        "status": "passed",
+        "checked_on": "2026-10-21",
+        "tolerance": 0.02,
+        "max_relative_error": 0.0001621060073375702,
+        "where": "predictions"
+      }
+    },
+    {
+      "name": "MSE",
+      "version": "1.0.0",
+      "entry": "node.py:MSE",
+      "tier": "loss",
+      "display_name": "MSE (Python)",
+      "category": "Python examples",
+      "role": "loss",
+      "description": "mean((prediction - target)^2)",
+      "target": "continuous",
+      "inputs": [
+        {
+          "name": "Predictions",
+          "type": "Tensor"
+        },
+        {
+          "name": "Targets",
+          "type": "Labels"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Loss",
+          "type": "Loss"
+        }
+      ],
+      "parameters": [],
+      "verification": {
+        "status": "passed",
+        "checked_on": "2026-10-21",
+        "tolerance": 0.02,
+        "max_relative_error": 0.00024396926164627075,
+        "where": "predictions"
+      }
+    },
+    {
+      "name": "L1",
+      "version": "1.0.0",
+      "entry": "node.py:L1",
+      "tier": "loss",
+      "display_name": "L1 (Python)",
+      "category": "Python examples",
+      "role": "loss",
+      "description": "mean(|prediction - target|)",
+      "target": "continuous",
+      "inputs": [
+        {
+          "name": "Predictions",
+          "type": "Tensor"
+        },
+        {
+          "name": "Targets",
+          "type": "Labels"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Loss",
+          "type": "Loss"
+        }
+      ],
+      "parameters": [],
+      "verification": {
+        "status": "passed",
+        "checked_on": "2026-10-21",
+        "tolerance": 0.02,
+        "max_relative_error": 2.335702425997627e-05,
+        "where": "predictions"
+      }
+    },
+    {
+      "name": "Huber",
+      "version": "1.0.0",
+      "entry": "node.py:Huber",
+      "tier": "loss",
+      "display_name": "Huber (Python)",
+      "category": "Python examples",
+      "role": "loss",
+      "description": "Squared error below delta, linear above: less pull from outliers than MSE",
+      "target": "continuous",
+      "inputs": [
+        {
+          "name": "Predictions",
+          "type": "Tensor"
+        },
+        {
+          "name": "Targets",
+          "type": "Labels"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Loss",
+          "type": "Loss"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "delta",
+          "type": "float",
+          "default": "1.0",
+          "validation": "1e-06-",
+          "description": "Where the loss turns from squared to linear",
+          "choices": []
+        }
+      ],
+      "verification": {
+        "status": "passed",
+        "checked_on": "2026-10-21",
+        "tolerance": 0.02,
+        "max_relative_error": 0.00021617251548827155,
+        "where": "predictions"
       }
     }
   ],
@@ -361,5 +510,5 @@
     "pycyxwiz": ">=0.2.0",
     "python_packages": []
   },
-  "content_hash": "sha256:b4a6308fc0a1bd1c75b072f26a4e5dafcb3bd1544ade1aea684d17c9e4263097"
+  "content_hash": "sha256:86c5bfc29dcc9f3b2a229edbbc3412cd5a4d0b550bf5e5fdf63d64780f3808aa"
 }

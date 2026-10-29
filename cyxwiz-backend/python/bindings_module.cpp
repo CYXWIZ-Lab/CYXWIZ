@@ -23,6 +23,7 @@ namespace pycyxwiz_bindings {
 
 namespace {
 
+using cyxwiz::Loss;
 using cyxwiz::Module;
 using cyxwiz::Tensor;
 using TensorMap = std::map<std::string, Tensor>;
@@ -237,7 +238,126 @@ private:
     Module* target_;
 };
 
+// The loss trampoline (P7): forward and backward call the Python subclass,
+// with the lock taken in every call and Python errors turned into
+// std::runtime_error, as PythonModule does.
+class PythonLoss : public Loss {
+public:
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override {
+        return Call("forward", [&]() {
+            py::function forward = Override("forward");
+            if (!forward) {
+                throw std::runtime_error(ClassName() + " does not define forward(self, predictions, targets)");
+            }
+            return ToTensor(forward(predictions, targets), "forward");
+        });
+    }
+
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override {
+        return Call("backward", [&]() {
+            py::function backward = Override("backward");
+            if (!backward) {
+                throw std::runtime_error(ClassName() + " does not define backward(self, predictions, targets)");
+            }
+            return ToTensor(backward(predictions, targets), "backward");
+        });
+    }
+
+    std::string GetName() const override {
+        return Call("get_name", [&]() {
+            if (py::function f = Override("get_name")) return f().cast<std::string>();
+            return ClassName();
+        });
+    }
+
+private:
+    py::function Override(const char* name) const {
+        return py::get_override(static_cast<const Loss*>(this), name);
+    }
+
+    std::string ClassName() const {
+        if (py::function forward = Override("forward")) {
+            if (py::hasattr(forward, "__self__")) {
+                return py::str(forward.attr("__self__").attr("__class__").attr("__name__"));
+            }
+        }
+        return "Loss";
+    }
+
+    template <typename F>
+    auto Call(const char* what, F&& body) const -> decltype(body()) {
+        py::gil_scoped_acquire gil;
+        try {
+            return body();
+        } catch (py::error_already_set& error) {
+            throw std::runtime_error(ClassName() + "." + what + " raised " + error.what());
+        }
+    }
+
+    Tensor ToTensor(const py::object& value, const char* what) const {
+        if (!py::isinstance<Tensor>(value)) {
+            throw std::runtime_error(ClassName() + "." + what + " must return a Tensor, not " +
+                                     std::string(py::str(py::type::handle_of(value).attr("__name__"))));
+        }
+        return value.cast<Tensor>();
+    }
+};
+
+// A loss that Python also holds, owned by C++ (the gradient checker here):
+// keeps the Python object alive and forwards every call.
+class PythonHeldLoss final : public Loss {
+public:
+    PythonHeldLoss(py::object owner, Loss* target)
+        : Loss(target->GetReduction()), owner_(std::move(owner)), target_(target) {}
+
+    ~PythonHeldLoss() override {
+        if (Py_IsInitialized()) {
+            py::gil_scoped_acquire gil;
+            owner_ = py::object();
+        } else {
+            owner_.release();
+        }
+    }
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override {
+        return target_->Forward(predictions, targets);
+    }
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override {
+        return target_->Backward(predictions, targets);
+    }
+    std::string GetName() const override { return target_->GetName(); }
+    const Tensor* GetLastMeanReductionDenominator() const override {
+        return target_->GetLastMeanReductionDenominator();
+    }
+
+private:
+    py::object owner_;
+    Loss* target_;
+};
+
 }  // namespace
+
+void BindLossBase(py::module_& m) {
+    py::class_<Loss, PythonLoss>(m, "Loss",
+        "Base class of every loss. Subclass it in Python to write your own: define "
+        "forward(self, predictions, targets) returning one value (a Tensor of one element) "
+        "and backward(self, predictions, targets) returning dLoss/dpredictions with the "
+        "predictions' shape, the mean scaling included. Call super().__init__() first.")
+        .def(py::init<>(), "Create a loss (for Python subclasses)")
+        .def("forward", &Loss::Forward, py::arg("predictions"), py::arg("targets"), "Compute loss value")
+        .def("backward", &Loss::Backward, py::arg("predictions"), py::arg("targets"),
+             "Compute loss gradients")
+        .def("get_name", &Loss::GetName, "Get loss name");
+
+    // The C++ loss behind a Python loss object, for the Engine (as
+    // _module_address). The caller keeps the object alive.
+    m.def("_loss_address", [](py::object loss) {
+        if (!py::isinstance<Loss>(loss)) {
+            throw py::type_error("_loss_address expects a pycyxwiz.Loss");
+        }
+        return reinterpret_cast<std::uintptr_t>(loss.cast<Loss*>());
+    }, py::arg("loss"));
+}
 
 void BindModuleBase(py::module_& m) {
     py::class_<Module, PythonModule>(m, "Module",
@@ -333,6 +453,46 @@ void BindGradientCheck(py::module_& m) {
         "and every parameter. make(input_shape) returns a fresh module; input_shape includes the "
         "batch. Default shapes [2, 3] and [3, 4, 5]. The same checker as the Engine's "
         "Check gradient.");
+}
+
+void BindLossGradientCheck(py::module_& m) {
+    m.def("gradcheck_loss",
+        [](py::function make, const std::string& targets, std::vector<std::vector<size_t>> input_shapes,
+           uint32_t seed, double tolerance, double step, float input_range) {
+            cyxwiz::LossCheckTargets kind;
+            if (targets == "one_hot") {
+                kind = cyxwiz::LossCheckTargets::OneHot;
+            } else if (targets == "values") {
+                kind = cyxwiz::LossCheckTargets::Values;
+            } else {
+                throw py::value_error("targets must be 'one_hot' or 'values', not '" + targets + "'");
+            }
+            cyxwiz::GradientCheckOptions options;
+            options.input_shapes = input_shapes.empty()
+                ? std::vector<std::vector<size_t>>{{2, 3}, {4, 5}}
+                : std::move(input_shapes);
+            options.seed = seed;
+            options.tolerance = tolerance;
+            options.step = step;
+            options.input_range = input_range;
+            const auto factory = [&make]() -> std::unique_ptr<Loss> {
+                py::gil_scoped_acquire gil;
+                py::object loss = make();
+                if (!py::isinstance<Loss>(loss)) {
+                    throw std::runtime_error("the factory must return a pycyxwiz.Loss, not " +
+                                             std::string(py::str(py::type::handle_of(loss).attr("__name__"))));
+                }
+                Loss* target = loss.cast<Loss*>();
+                return std::make_unique<PythonHeldLoss>(std::move(loss), target);
+            };
+            return cyxwiz::CheckLossGradients(factory, kind, options);
+        },
+        py::arg("make"), py::arg("targets") = "one_hot",
+        py::arg("input_shapes") = std::vector<std::vector<size_t>>{}, py::arg("seed") = 125u,
+        py::arg("tolerance") = 2e-2, py::arg("step") = 1e-2, py::arg("input_range") = 2.0f,
+        "Check a loss's backward against central differences of its forward. make() returns a "
+        "fresh loss; targets 'one_hot' (rows over the last dimension) or 'values'. Default "
+        "predictions shapes [2, 3] and [4, 5]. The same checker as the Engine's Check gradient.");
 }
 
 void AddModuleToSequential(cyxwiz::SequentialModel& model, py::object module) {

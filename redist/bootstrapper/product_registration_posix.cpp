@@ -387,6 +387,41 @@ ProductRegistrationResult RegisterPlatformProduct(
     return result;
 }
 
+std::optional<std::filesystem::path> RegisteredPlatformInstallRoot(
+    ProductInstallScope scope) {
+#if defined(__APPLE__)
+    (void)scope;
+    return std::nullopt;
+#else
+    const auto applications = LinuxApplicationsDirectory(scope);
+    std::string content;
+    std::string error;
+    if (!applications.is_absolute() ||
+        !ReadTextFile(applications / "cyxwiz.desktop", content, error)) {
+        return std::nullopt;
+    }
+    // Exec="<launcher>", quoted as QuoteDesktopExec writes it.
+    const auto exec = content.find("\nExec=\"");
+    if (exec == std::string::npos) return std::nullopt;
+    std::string launcher;
+    for (std::size_t i = exec + 7; i < content.size(); ++i) {
+        const char c = content[i];
+        if (c == '"') return std::filesystem::path(launcher).parent_path();
+        if (c == '\\' && i + 1 < content.size()) {
+            launcher.push_back(content[++i]);
+        } else if (c == '%' && i + 1 < content.size() && content[i + 1] == '%') {
+            launcher.push_back('%');
+            ++i;
+        } else if (c == '\n') {
+            break;
+        } else {
+            launcher.push_back(c);
+        }
+    }
+    return std::nullopt;
+#endif
+}
+
 ProductUnregistrationResult UnregisterPlatformProduct(
     const ProductRegistrationRequest& request) {
     ProductUnregistrationResult result;

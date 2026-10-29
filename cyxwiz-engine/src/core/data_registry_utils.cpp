@@ -290,47 +290,6 @@ bool DataRegistry::IsArrowDataset(const std::string& name) const {
     return arrow_datasets_.find(name) != arrow_datasets_.end();
 }
 
-bool DataRegistry::MatchesResidentMaterialization(
-    const std::string& name, const std::shared_ptr<arrow::Table>& source,
-    const std::string& identity) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto entry = materialization_provenance_.find(name);
-    if (!source || identity.empty() || entry == materialization_provenance_.end() ||
-        entry->second.identity != identity || entry->second.source.lock() != source) {
-        return false;
-    }
-    const auto table = entry->second.table.lock();
-    const auto dense = arrow_datasets_.find(name);
-    if (table && dense != arrow_datasets_.end() &&
-        dense->second->GetArrowTable() == table) {
-        return true;
-    }
-    const auto sparse = entry->second.sparse.lock();
-    const auto registered = sparse_feature_datasets_.find(name);
-    return sparse && registered != sparse_feature_datasets_.end() &&
-           registered->second == sparse;
-}
-
-void DataRegistry::RecordMaterialization(
-    const std::string& name, MaterializationProvenance provenance) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    // Bound metadata to live registry entries; weak references never keep an
-    // unloaded dataset alive, including snapshots retained by another reader.
-    for (auto it = materialization_provenance_.begin();
-         it != materialization_provenance_.end();) {
-        if (it->second.source.expired() ||
-            (arrow_datasets_.count(it->first) == 0 &&
-             sparse_feature_datasets_.count(it->first) == 0)) {
-            it = materialization_provenance_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    if (!provenance.identity.empty()) {
-        materialization_provenance_[name] = std::move(provenance);
-    }
-}
-
 // -----------------------------------------------------------------------------
 // Parquet-backed dataset accessors (disk-backed lazy tabular data)
 // -----------------------------------------------------------------------------
@@ -448,7 +407,6 @@ std::shared_ptr<ArrowDataset> DataRegistry::ShareLoadedTableUnlocked(const std::
         arrow_datasets_[name] = shared;
         parquet_backed_datasets_.erase(name);
         sparse_feature_datasets_.erase(name);
-        materialization_provenance_.erase(name);
         RememberTabularSourcePathUnlocked(name, source_path);
         last_access_times_[name] = std::chrono::steady_clock::now();
         tabular_loads_[name] = {key, shared};
@@ -469,7 +427,6 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     bool removed_arrow = false;
     bool removed_parquet = false;
     bool removed_sparse = false;
-    materialization_provenance_.erase(name);
     tabular_loads_.erase(name);
 
     auto arrow_it = arrow_datasets_.find(name);
@@ -495,46 +452,6 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
         spdlog::debug(
             "UnregisterTabularDataset '{}': removed arrow={} parquet={} sparse={}",
             name, removed_arrow, removed_parquet, removed_sparse);
-    }
-
-    // Cascade: also drop the PipelineMaterializer-produced "__materialized"
-    // variant of this dataset, if one exists. Without this, re-loading a CSV
-    // under a different name leaks the previous run's materialized variant
-    // into the registry until project close. The cascade is inlined under
-    // the same lock to avoid recursive lock acquisition. The suffix matches
-    // PipelineMaterializer::kMaterializedSuffix; keep them in sync.
-    static const std::string kMaterializedSuffix = "__materialized";
-    const bool already_materialized =
-        name.size() >= kMaterializedSuffix.size() &&
-        name.compare(name.size() - kMaterializedSuffix.size(),
-                     kMaterializedSuffix.size(),
-                     kMaterializedSuffix) == 0;
-    if (!already_materialized) {
-        const std::string mat_name = name + kMaterializedSuffix;
-        InvalidateTabularPublicationUnlocked(mat_name);
-        materialization_provenance_.erase(mat_name);
-        bool mat_arrow = false;
-        bool mat_parquet = false;
-        bool mat_sparse = false;
-        if (auto it = arrow_datasets_.find(mat_name); it != arrow_datasets_.end()) {
-            arrow_datasets_.erase(it);
-            mat_arrow = true;
-        }
-        if (auto it = parquet_backed_datasets_.find(mat_name);
-            it != parquet_backed_datasets_.end()) {
-            parquet_backed_datasets_.erase(it);
-            mat_parquet = true;
-        }
-        if (auto it = sparse_feature_datasets_.find(mat_name);
-            it != sparse_feature_datasets_.end()) {
-            sparse_feature_datasets_.erase(it);
-            mat_sparse = true;
-        }
-        ForgetTabularSourcePathUnlocked(mat_name);
-        if (mat_arrow || mat_parquet || mat_sparse) {
-            spdlog::debug("UnregisterTabularDataset '{}' cascade: dropped materialized variant '{}'",
-                          name, mat_name);
-        }
     }
 }
 
@@ -586,9 +503,25 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
         removed_any = true;
     }
 
+    const std::string index = ImageIndexName(name);
+    if (arrow_datasets_.erase(index) > 0) {
+        InvalidateTabularPublicationUnlocked(index);
+        last_access_times_.erase(index);
+        removed_any = true;
+    }
+
     if (removed_any) {
         spdlog::debug("UnregisterImageDataset '{}'", name);
     }
+}
+
+bool DataRegistry::SetImageClassDisplayNames(const std::string& name,
+                                             const std::vector<std::string>& display_names) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = image_dataset_entries_.find(name);
+    if (it == image_dataset_entries_.end()) return false;
+    it->second.display_names = display_names;
+    return true;
 }
 
 // --- Audio dataset registry (Phase 2) ---
@@ -682,6 +615,30 @@ void DataRegistry::RestoreTabularDataset(
         name);
 }
 
+// Here, beside the per-map unregisters it calls (data_registry_core.cpp is
+// also built alone, without them).
+void DataRegistry::UnloadDataset(const std::string& name) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = datasets_.find(name);
+        if (it != datasets_.end()) {
+            InvalidateTabularPublicationUnlocked(name);
+            datasets_.erase(it);
+            spdlog::info("Unloaded dataset: {}", name);
+
+            if (on_unloaded_) {
+                on_unloaded_(name);
+            }
+        }
+    }
+    // Every other map too: "Unload from memory" on an Arrow, Parquet, image,
+    // audio or text dataset freed nothing (TOFIX160 P6). Each takes the lock.
+    UnregisterTabularDataset(name);
+    UnregisterImageDataset(name);
+    UnregisterAudioDataset(name);
+    UnregisterTextDataset(name);
+}
+
 void DataRegistry::ClearAllTabularDatasets() {
     std::lock_guard<std::mutex> lock(mutex_);
     tabular_publication_tokens_.clear();
@@ -692,9 +649,13 @@ void DataRegistry::ClearAllTabularDatasets() {
     size_t image_count = image_dataset_entries_.size();
     size_t audio_count = audio_dataset_entries_.size();
     size_t text_count = text_dataset_entries_.size();
+    size_t other_count = datasets_.size();
 
+    // The legacy Dataset map too (image folders and CSVs loaded through
+    // LoadImageFolder / LoadImageCSV): a closed project kept them before.
+    datasets_.clear();
+    last_access_times_.clear();
     arrow_datasets_.clear();
-    materialization_provenance_.clear();
     tabular_loads_.clear();
     parquet_backed_datasets_.clear();
     sparse_feature_datasets_.clear();
@@ -706,11 +667,11 @@ void DataRegistry::ClearAllTabularDatasets() {
 
     if (arrow_count > 0 || parquet_count > 0 || sparse_count > 0 ||
         image_count > 0 ||
-        audio_count > 0 || text_count > 0) {
+        audio_count > 0 || text_count > 0 || other_count > 0) {
         spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + "
-                     "{} Sparse + {} Image + {} Audio + {} Text entries",
+                     "{} Sparse + {} Image + {} Audio + {} Text + {} other entries",
                      arrow_count, parquet_count, sparse_count, image_count,
-                     audio_count, text_count);
+                     audio_count, text_count, other_count);
     }
 }
 

@@ -161,8 +161,9 @@ int main() {
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
-        // WordEmbeddings (TOFIX152).
-        Check(covered.size() == 78,
+        // WordEmbeddings (TOFIX152) + Max-Abs Scaler, Quantile Transform and
+        // Power Transform (TOFIX129 D2).
+        Check(covered.size() == 81,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");
@@ -531,6 +532,33 @@ int main() {
               "labeled dataset with zero classes should be a truth issue");
         Check(report.has_issue,
               "zero-class labeled dataset should mark report as issue");
+    }
+
+    {
+        // An image folder is labelled by its class folders or labels CSV: no
+        // "Label column" row, before or after loading.
+        auto input = MakeNode(1, gui::NodeType::DataInput, "Image input");
+        input.parameters["file_category"] = "image";
+        input.parameters["dataset_name"] = "cat_dog";
+        input.parameters["labels_csv"] = "cat_dog.csv";
+
+        const auto unloaded = gui::properties_truth::ResolveNodeTruth(input, gui::properties_truth::NodeTruthContext{});
+        Check(unloaded.properties.empty() && !unloaded.has_issue, "unloaded image input has no label column row");
+
+        gui::properties_truth::DatasetTruthFact fact;
+        fact.dataset_name = "cat_dog";
+        fact.backing_store = "ImageDataset";
+        fact.found = true;
+        fact.rows = 25000;
+        fact.has_labels = true;
+        fact.has_class_count = true;
+        fact.class_count = 2;
+        std::vector<gui::properties_truth::DatasetTruthFact> facts = {fact};
+        const auto report = gui::properties_truth::ResolveNodeTruth(
+            input, gui::properties_truth::NodeTruthContext{nullptr, nullptr, &facts});
+        Check(report.properties.size() == 1 && report.properties[0].canonical_key == "dataset_class_count",
+              "loaded image input shows its classes only");
+        Check(!report.has_issue, "loaded image input with classes has no issue");
     }
 
     {

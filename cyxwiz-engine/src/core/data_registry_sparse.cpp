@@ -24,14 +24,6 @@ const bool kGraphSparseCatalogInstalled = [] {
 }  // namespace
 namespace {
 
-constexpr const char* kMaterializedSuffix = "__materialized";
-
-bool HasMaterializedSuffix(const std::string& name) {
-    const std::string suffix = kMaterializedSuffix;
-    return name.size() >= suffix.size() &&
-        name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 SparseFeatureDatasetInfo MakeInfo(const SparseFeatureDataset& dataset) {
     SparseFeatureDatasetInfo info;
     info.name = dataset.GetName();
@@ -130,15 +122,7 @@ bool DataRegistry::UnregisterSparseFeatureDataset(const std::string& name) {
     if (sparse_feature_datasets_.count(name)) {
         InvalidateTabularPublicationUnlocked(name);
     }
-    bool removed = sparse_feature_datasets_.erase(name) > 0;
-
-    if (!HasMaterializedSuffix(name)) {
-        const std::string mat_name = name + kMaterializedSuffix;
-        if (sparse_feature_datasets_.count(mat_name)) {
-            InvalidateTabularPublicationUnlocked(mat_name);
-        }
-        removed = sparse_feature_datasets_.erase(mat_name) > 0 || removed;
-    }
+    const bool removed = sparse_feature_datasets_.erase(name) > 0;
     if (removed) {
         spdlog::debug("Unregistered sparse feature dataset '{}'", name);
     }

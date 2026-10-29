@@ -602,6 +602,21 @@ enum class NodeType {
     // ===== Appended Test Evaluation (TOFIX157) =====
     TestEvaluationNode, // A kept test's results: metrics, confusion, per class, worst rows
 
+    // ===== Appended scaling and transforms (TOFIX129 D2) =====
+    MaxAbsScaler,       // x / max |x| (keeps zeros)
+    QuantileTransform,  // through each column's quantiles onto uniform or normal
+    PowerTransform,     // Box-Cox / Yeo-Johnson
+
+    // ===== Appended OpenCV image steps (TOFIX178 1.3f) =====
+    // Done once when the images are prepared, on the CPU workers.
+    ImageContrast,      // CLAHE
+    ImageDenoise,       // non-local means
+    ImageSharpen,       // unsharp mask
+    ImageEdges,         // Canny / Sobel / Laplacian / Scharr: one channel
+    ImageSmooth,        // box / median / bilateral
+    ImageWarp,          // four corners, three points, log-polar, linear-polar
+    ImagePyramid,       // down, up or one level of detail
+
     // Special sentinel value
     Unknown
 };

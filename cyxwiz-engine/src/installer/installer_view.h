@@ -43,6 +43,10 @@ struct InstallerViewState {
   bool launch_after_install = true;
   bool install_completed = false;
   bool uninstall_completed = false;
+  // Why the last uninstall was refused (it restored everything); shown
+  // above the buttons until the next action, so Launch CyxWiz never reads
+  // as a finished uninstall.
+  std::string uninstall_refused;
   bool engine_launched = false;
   bool cancellation_requested = false;
   bool close_confirmation_requested = false;

@@ -96,10 +96,13 @@ struct ParameterDefinition {
 
     std::string name;
     std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory",
+                                // "channels" (one number per image channel, "0.53,0.49,0.45": a typed row each),
                                 // "fixed" (set by the engine, read-only in Properties, must equal default_value)
+                                // "column" (a column of the data reaching the node, picked from a list)
     std::string default_value;
     std::string description;
     std::vector<std::string> enum_values;  // For enum type
+    std::vector<std::string> enum_labels;  // Optional words shown for each enum value (same order)
     std::string validation;     // Regex or range "0-100"
     std::string display_name;   // Optional UI label; falls back to humanized name
     std::string group;          // Optional UI grouping label

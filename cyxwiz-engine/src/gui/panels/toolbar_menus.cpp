@@ -66,7 +66,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"nodes.delete", ICON_FA_TRASH}, {"nodes.custom_node_editor", ICON_FA_CUBE},
         {"train.compile", ICON_FA_WRENCH}, {"train.local_debug", ICON_FA_BUG}, {"train.start", ICON_FA_PLAY},
         {"train.pause", ICON_FA_PAUSE}, {"train.resume", ICON_FA_PLAY}, {"train.stop", ICON_FA_STOP},
-        {"train.test", ICON_FA_FLASK}, {"train.dashboard", ICON_FA_CHART_LINE},
+        {"train.test", ICON_FA_FLASK}, {"train.evaluate", ICON_FA_ROTATE}, {"train.dashboard", ICON_FA_CHART_LINE},
         {"train.optimizer_settings", ICON_FA_SLIDERS}, {"train.hyperparam_search", ICON_FA_MAGNIFYING_GLASS_CHART},
         {"data.import", ICON_FA_FILE_IMPORT}, {"data.create_custom", ICON_FA_FOLDER_PLUS},
         {"data.statistics", ICON_FA_CHART_SIMPLE}, {"data.explore", ICON_FA_MAGNIFYING_GLASS_CHART},
@@ -463,6 +463,8 @@ void ToolbarPanel::BuildActionHandlers() {
     call("train.run_test", run_test_callback_);
     call("train.quick_test", run_quick_test_callback_);
     call("train.view_test_results", view_test_results_callback_);
+    call("train.cross_validate", cross_validate_callback_);
+    call("train.learning_curve", learning_curve_callback_);
     call("train.compare_test_results", compare_test_results_callback_);
     call("train.export_test_report", export_test_report_callback_);
     call("train.load_checkpoint", load_checkpoint_callback_);

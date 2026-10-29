@@ -41,6 +41,7 @@ class PCAOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "PCA"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -59,6 +60,7 @@ private:
     int n_components_ = 2;
     bool center_ = true;
     bool scale_ = false;
+    bool keep_columns_ = false;  // the input with pc_* beside it, else pc_* (and y) alone
     PipelineOperatorProgressCallback progress_callback_;
 };
 

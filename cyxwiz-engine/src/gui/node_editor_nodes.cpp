@@ -5,6 +5,9 @@
 #include "../core/node_metadata_registry.h"
 #include "../core/extension_node_registry.h"
 #include "../core/data_registry.h"
+#include "../core/pipeline_executor.h"
+#include "plot/plot_node_lane.h"
+#include "loaders/data_loader.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -54,13 +57,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 }
 
 #ifndef CYXWIZ_NODE_FACTORY_ONLY
-// Helper: if this node owns a dataset (DataInput / DatasetInput with a
-// non-empty dataset_name parameter), drop it from every registry so the
-// next graph rebuild doesn't see a stale entry under the same name.
-// Defined locally because it's only used by DeleteNode and ClearGraph.
+// Helper: if this node owns a dataset (a Data Input with a non-empty
+// dataset_name parameter: its dialog loaded it), drop it from every registry
+// so the next graph rebuild doesn't see a stale entry under the same name.
+// A Dataset Input only names a dataset something else loaded (Data Studio),
+// so removing the node leaves it. Used by DeleteNode and ClearGraph.
 static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
-    if (node.type != NodeType::DataInput &&
-        node.type != NodeType::DatasetInput) {
+    if (node.type != NodeType::DataInput) {
         return;
     }
     auto it = node.parameters.find("dataset_name");
@@ -77,6 +80,86 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     reg.UnregisterTextDataset(it->second);
 }
 
+void NodeEditor::SyncDataAfterSwap(const std::vector<MLNode>& before) {
+    // Every node now on the canvas or inside a collapsed subgraph.
+    std::vector<const MLNode*> after;
+    for (const auto& node : nodes_) after.push_back(&node);
+    for (const auto& data : subgraphs_)
+        if (!data.expanded) for (const auto& node : data.internal_nodes) after.push_back(&node);
+    const auto dataset_of = [](const MLNode& node) -> std::string {
+        if (node.type != NodeType::DataInput) return "";
+        const auto it = node.parameters.find("dataset_name");
+        return it == node.parameters.end() ? "" : it->second;
+    };
+    std::map<int, std::string> now;  // id -> its dataset name
+    std::set<std::string> named;
+    for (const MLNode* node : after) {
+        now[node->id] = dataset_of(*node);
+        if (!now[node->id].empty()) named.insert(now[node->id]);
+    }
+    // Gone: a node no longer in the graph, or a Data Input whose undo went
+    // back to another file. Its data and its run results go.
+    std::set<int> released;
+    for (const auto& node : before) {
+        const auto it = now.find(node.id);
+        const std::string was = dataset_of(node);
+        if (it == now.end() || it->second != was) released.insert(node.id);
+        if (!was.empty() && !named.count(was)) UnregisterNodeDatasetIfOwned(node);
+    }
+    ReleaseRunData(released);
+    // Back: a Data Input whose data is not held reads Not loaded (its Apply
+    // reloads it), not the "loaded" its snapshot remembered.
+    for (auto& node : nodes_) {
+        const std::string name = dataset_of(node);
+        if (name.empty() || cyxwiz::loaders::GetByRegisteredDataset(name)) continue;
+        if (node.parameters["data_loaded"] != "false") {
+            node.parameters["data_loaded"] = "false";
+            spdlog::info("{}: its data was released; Apply loads it again", node.name);
+        }
+    }
+}
+
+void NodeEditor::ReleaseRunData(const std::set<int>& node_ids) {
+    if (plot_lane_) plot_lane_->ReleaseNodes(node_ids);  // what plots' runs read for them
+    pending_run_release_.insert(node_ids.begin(), node_ids.end());
+    ApplyPendingRunRelease();
+}
+
+void NodeEditor::ReleaseAllRunData() {
+    if (plot_lane_) plot_lane_->ReleaseAll();
+    pending_run_release_all_ = true;
+    ApplyPendingRunRelease();
+}
+
+void NodeEditor::ApplyPendingRunRelease() {
+    // A replaced executor whose run has ended: its names go, not the ones
+    // the current executor registered too. Not while the current run goes:
+    // a node registers its output before it completes (and is owned).
+    const bool current_running = pipeline_executor_ && pipeline_executor_->IsExecuting();
+    for (auto it = retired_executors_.begin(); !current_running && it != retired_executors_.end();) {
+        if ((*it)->IsExecuting()) {
+            ++it;
+            continue;
+        }
+        // Names a plot's run registered too stay with it.
+        std::set<std::string> keep = pipeline_executor_ ? pipeline_executor_->OwnedNames() : std::set<std::string>{};
+        if (plot_lane_) keep.merge(plot_lane_->OwnedNames());
+        (*it)->ReleaseAll(keep);
+        it = retired_executors_.erase(it);
+    }
+    if (pending_run_release_.empty() && !pending_run_release_all_) return;
+    if (!pipeline_executor_) {
+        pending_run_release_.clear();
+        pending_run_release_all_ = false;
+        return;
+    }
+    if (pipeline_executor_->IsExecuting()) return;  // when the run ends
+    if (pending_run_release_all_) pipeline_executor_->ReleaseAll();
+    else pipeline_executor_->ReleaseNodes(pending_run_release_);
+    pending_run_release_.clear();
+    pending_run_release_all_ = false;
+}
+
 void NodeEditor::DeleteNode(int node_id) {
     if (IsSubgraphMember(node_id)) {
         spdlog::warn("Cannot delete a subgraph member individually yet; delete its Subgraph container instead.");
@@ -86,10 +169,16 @@ void NodeEditor::DeleteNode(int node_id) {
         const auto members = data->internal_nodes;
         const bool expanded = data->expanded;
         std::erase_if(subgraphs_, [node_id](const SubgraphData& entry) { return entry.subgraph_node_id == node_id; });
+        std::set<int> collapsed;
         for (const auto& member : members) {
-            if (expanded) DeleteNode(member.id);
-            else UnregisterNodeDatasetIfOwned(member);
+            if (expanded) {
+                DeleteNode(member.id);
+            } else {
+                UnregisterNodeDatasetIfOwned(member);
+                collapsed.insert(member.id);
+            }
         }
+        ReleaseRunData(collapsed);
     }
     ClearValidationState();  // Graph changed — stale compile results
 
@@ -124,6 +213,9 @@ void NodeEditor::DeleteNode(int node_id) {
 
         nodes_.erase(node_it);
         RebuildPinLookup();  // Rebuild pin lookup after deleting node
+        // What the runs registered for it goes too (its copy of the data, its
+        // results), not only the dataset its dialog loaded.
+        ReleaseRunData({node_id});
     }
 }
 
@@ -148,6 +240,9 @@ void NodeEditor::ClearGraph() {
     for (const auto& data : subgraphs_) {
         if (!data.expanded) for (const auto& node : data.internal_nodes) UnregisterNodeDatasetIfOwned(node);
     }
+    // And everything the runs registered: the next graph's node ids start at
+    // 1 again, so an old run's copy would read as the new node's.
+    ReleaseAllRunData();
     subgraphs_.clear();
     nodes_.clear();
     links_.clear();
@@ -162,6 +257,7 @@ void NodeEditor::ClearGraph() {
     // Request a full ImNodes context reset - this fully clears ImNodes' internal state
     // which prevents crashes from stale node references
     pending_context_reset_ = true;
+    pending_context_keep_view_ = false;
 
     // Clear any pending positions
     pending_positions_.clear();

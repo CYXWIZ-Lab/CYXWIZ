@@ -1,4 +1,5 @@
 #include "compiled_node_presentation.h"
+#include "normalize_statistics.h"
 
 #include "sequence_fusion_presentation.h"
 
@@ -307,6 +308,60 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
                    return issue.node_id == node_id && issue.message.rfind("Word + POS fusion:", 0) == 0;
                })) {
         card.role = "Word + POS fusion, rejected by the compiler (see below)";
+    } else if (node_id == config->preprocessing.norm_node_id &&
+               config->preprocessing_domain == PreprocessingDomain::Image && !config->input_shape.empty()) {
+        // Normalize on images (TOFIX178 1.4): each batch, after the image steps.
+        const auto& pre = config->preprocessing;
+        const bool per_channel = !pre.norm_channel_mean.empty();
+        char text[64];
+        std::snprintf(text, sizeof(text), "(x - %g) / %g", pre.norm_mean, pre.norm_std);
+        card.role = per_channel ? "Each batch, on the GPU, after the image steps: every pixel becomes "
+                                  "(x - mean[c]) / std[c] for its channel c."
+                                : std::string("Each batch, on the GPU, after the image steps: every value becomes ") +
+                                      text + ".";
+        card.has_shapes = true;
+        card.batch = batch;
+        card.input_sample = card.output_sample = FormatCompiledShape(config->input_shape);
+        card.input_batch = card.output_batch = FormatCompiledShape(WithBatch(batch, config->input_shape));
+        card.output_memory = FormatCompiledBytes(Elements(WithBatch(batch, config->input_shape)) * kBytesPerElement);
+        SetParameters(card, inputs, true, 0);
+        if (per_channel) {
+            std::string mean, std_dev;
+            for (size_t c = 0; c < pre.norm_channel_mean.size(); ++c) {
+                const std::string name = ChannelName(c, pre.norm_channel_mean.size());
+                std::snprintf(text, sizeof(text), "%s%s %.4f", c ? ", " : "", name.c_str(), pre.norm_channel_mean[c]);
+                mean += text;
+                std::snprintf(text, sizeof(text), "%s%s %.4f", c ? ", " : "", name.c_str(), pre.norm_channel_std[c]);
+                std_dev += text;
+            }
+            card.details.emplace_back("Statistics", pre.norm_statistics == "imagenet" ? "ImageNet" : "per channel");
+            card.details.emplace_back("Mean", mean);
+            card.details.emplace_back("Std", std_dev);
+        }
+    } else if (const auto step = std::find_if(config->image_cv_steps.begin(), config->image_cv_steps.end(),
+                                              [&](const CvImageStep& s) { return s.node_id == node_id; });
+               step != config->image_cv_steps.end()) {
+        // An OpenCV image step (TOFIX178 1.3f): its shapes from the steps before it.
+        card.role = "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order. "
+                    "Every epoch reads the result.";
+        image::ImageShape in = DecodedImageShape(*config);
+        for (const auto& before : MergeImageSteps(config->image_augmentation, config->image_cv_steps)) {
+            const auto* cv_step = std::get_if<CvImageStep>(&before);
+            if (cv_step && cv_step->node_id == node_id) break;
+            in = cv_step ? CvImageShapeAfter(*cv_step, in) : image::ImageShapeAfter(std::get<image::ImageOp>(before), in);
+        }
+        const image::ImageShape out = CvImageShapeAfter(*step, in);
+        const std::vector<size_t> in_shape{in.height, in.width, in.channels}, out_shape{out.height, out.width, out.channels};
+        card.has_shapes = true;
+        card.batch = batch;
+        card.input_sample = FormatCompiledShape(in_shape);
+        card.input_batch = FormatCompiledShape(WithBatch(batch, in_shape));
+        card.output_sample = FormatCompiledShape(out_shape);
+        card.output_batch = FormatCompiledShape(WithBatch(batch, out_shape));
+        card.output_memory = FormatCompiledBytes(out.Size() * static_cast<size_t>(batch));  // uint8 in the prepared set
+        card.input_note = "Stored as uint8 in the prepared images; a new setting prepares them again.";
+        card.details.emplace_back("Done once", CvImageStepText(*step));
+        SetParameters(card, inputs, true, 0);
     } else {
         const bool on_path = std::any_of(config->graph_plan.nodes.begin(), config->graph_plan.nodes.end(),
                                          [&](const CompiledGraphNode& n) { return n.node_id == node_id; });

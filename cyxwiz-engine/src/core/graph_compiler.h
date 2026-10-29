@@ -10,6 +10,7 @@
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
+#include "image_cv_steps.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
@@ -98,6 +99,12 @@ struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
+    // Normalize's statistics (TOFIX178 1.4): "same" uses norm_mean / norm_std;
+    // "per_channel" and "imagenet" one value per image channel (norm_channels).
+    std::string norm_statistics = "same";
+    std::vector<float> norm_channel_mean, norm_channel_std;
+    size_t norm_channels = 0;  // the images' channels where Normalize sits (image graphs)
+    int norm_node_id = -1;
 
     bool has_onehot = false;
     size_t num_classes = 0;
@@ -166,7 +173,7 @@ struct AudioPreprocessingConfig {
 /**
  * Text shape contract the compiler reads from the graph: the reachable Text
  * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
- * Tokenizing itself runs in PipelineMaterializer.
+ * Tokenizing itself runs in the pipeline run before training.
  */
 struct TextPreprocessingConfig {
     int max_length = 512;
@@ -435,6 +442,9 @@ struct TrainingConfiguration {
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    // A step only the pipeline run applies (SQL, Text Clean ...) is on the
+    // Training Dataset path: training trains on that run's result.
+    bool training_data_needs_pipeline_run = false;
     TargetContract target;              // Objective target provenance
     RegressionTargetTransform regression_target_transform;
 
@@ -487,6 +497,9 @@ struct TrainingConfiguration {
     // The image transform nodes between Resize and Normalize, in graph
     // order: run by the image batcher on the device (Normalize after them).
     cyxwiz::image::ImageAugmentation image_augmentation;
+    // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
+    // prepared; each one's position places it among image_augmentation.ops.
+    std::vector<cyxwiz::CvImageStep> image_cv_steps;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
     // The Quality Analyzer node and the files its analysis leaves out of
@@ -500,7 +513,7 @@ struct TrainingConfiguration {
     AudioPreprocessingConfig audio_preprocessing;
 
     // Preprocessing - text-specific legacy override bundle. Graph text
-    // nodes now route through PipelineMaterializer instead of this config.
+    // nodes now run in the pipeline run instead of this config.
     TextPreprocessingConfig text_preprocessing;
 
     // Structured sequence tagging / NER contract. Populated when the selected
@@ -521,6 +534,10 @@ struct TrainingConfiguration {
     int loss_node_id = -1;              // Selected loss node
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
     std::map<std::string, std::string> loss_params;
+    // loss_type PluginCustom: the extension loss node (TOFIX125 P7).
+    std::string loss_extension_type_id;
+    std::string loss_extension_version;
+    std::string loss_extension_name;    // its display name
 
     // Optimizer
     int optimizer_node_id = -1;         // Selected supported optimizer node
@@ -662,6 +679,7 @@ struct TrainingConfiguration {
             case gui::NodeType::TripletLoss: return "Triplet";
             case gui::NodeType::ContrastiveLoss: return "Contrastive";
             case gui::NodeType::CosineEmbeddingLoss: return "CosineEmbedding";
+            case gui::NodeType::PluginCustom: return loss_extension_name;
             default: return "CrossEntropy";
         }
     }

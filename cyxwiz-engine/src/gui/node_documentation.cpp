@@ -310,6 +310,13 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
         case NodeType::AugmentationPreset:
+        case NodeType::ImageContrast:
+        case NodeType::ImageDenoise:
+        case NodeType::ImageSharpen:
+        case NodeType::ImageEdges:
+        case NodeType::ImageSmooth:
+        case NodeType::ImageWarp:
+        case NodeType::ImagePyramid:
         case NodeType::QualityAnalyzer:
             return "Data Pipeline";
 
@@ -1678,16 +1685,18 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::Normalize] = {
         "Normalize",
-        "Normalizes tensor values using mean and standard deviation. "
-        "Common preprocessing step for neural networks.",
-        "output = (input - mean) / std.",
+        "Centres and scales the inputs: output = (input - mean) / std.",
+        "Statistics: same for every channel (one mean and std: tables, audio, images), per channel (one for each "
+        "image channel, applied each batch on the GPU after the image steps) or ImageNet (torchvision's values). "
+        "Same result in training, validation and test.",
         {
-            {"mean", "Mean values per channel"},
-            {"std", "Standard deviation per channel"}
+            {"statistics", "same, per_channel or imagenet"},
+            {"mean, std", "Same for every channel: the one mean and std"},
+            {"channel_mean, channel_std", "Per channel: one value for each image channel (R, G, B, or grey)"}
         },
         {
-            "ImageNet mean/std for pre-trained models",
-            "Compute on training set for custom data"
+            "ImageNet statistics for models pretrained on ImageNet",
+            "Your data's own: Data Studio > Explore > Profile > Channel statistics > Use in Normalize"
         },
         "Data Pipeline"
     };
@@ -1822,6 +1831,129 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "open removes small bright specks; close fills small dark holes",
             "gradient outlines shapes; tophat keeps small bright details"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageContrast] = {
+        "Image Contrast (CLAHE)",
+        "Evens out contrast in every image, tile by tile (OpenCV CLAHE); colour images change only their lightness.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"clip_limit", "How far contrast may be raised; 1 is almost none"},
+            {"tile_grid", "Tiles per side; each tile gets its own histogram"},
+            {"colour", "lightness (Lab L, colours stay) or each_channel"}
+        },
+        {
+            "Dark or washed-out photos: details in shadows and highlights show",
+            "X-rays and scans: the usual first step",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageDenoise] = {
+        "Image Denoise",
+        "Removes grain while keeping edges (OpenCV non-local means). Slow, so done once.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"strength", "Lightness filter strength; higher removes more noise and detail"},
+            {"colour_strength", "Colour filter strength"},
+            {"patch_size", "Odd patch width compared between pixels"},
+            {"search_size", "Odd width of the window searched for similar patches"}
+        },
+        {
+            "Noisy camera or low-light images",
+            "About 45 ms an image at 64 x 64: preparing takes minutes, once",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageSharpen] = {
+        "Image Sharpen",
+        "Unsharp mask: adds back the detail a Gaussian blur of the given radius removes.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"amount", "How much detail is added back"},
+            {"radius", "Blur sigma in pixels"},
+            {"threshold", "Detail below this (0 to 1) is left alone"}
+        },
+        {
+            "Soft or slightly blurred images",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageEdges] = {
+        "Image Edges",
+        "An edge map instead of the photo: Canny, Sobel, Laplacian or Scharr. The output has one channel.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"method", "canny, sobel, laplacian or scharr"},
+            {"threshold1", "Canny: weak edge threshold (0 to 255 scale)"},
+            {"threshold2", "Canny: strong edge threshold"},
+            {"kernel_size", "Sobel: 1, 3, 5 or 7; Laplacian: odd up to 31"}
+        },
+        {
+            "Shapes matter more than colour or texture",
+            "The model's input becomes [H, W, 1]",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageSmooth] = {
+        "Image Smooth",
+        "Box, median or bilateral smoothing. Image Gaussian Blur is the GPU Gaussian.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"method", "box, median or bilateral"},
+            {"kernel_size", "Odd window width"},
+            {"sigma_color", "Bilateral: colour difference that still mixes"},
+            {"sigma_space", "Bilateral: distance that still mixes"}
+        },
+        {
+            "median removes salt-and-pepper specks",
+            "bilateral smooths flat areas and keeps edges",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageWarp] = {
+        "Image Warp",
+        "The same geometric warp for every image: four corners, three points, log-polar or linear-polar.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"method", "four_corners, three_points, log_polar or linear_polar"},
+            {"source_points", "x, y of each input point, fractions 0 to 1"},
+            {"target_points", "Where each source point goes"},
+            {"interpolation", "nearest, linear, cubic or lanczos"},
+            {"center_x, center_y, max_radius, inverse", "Polar warps"},
+            {"width, height", "Output size for corners and points; 0 = the input's"}
+        },
+        {
+            "Straighten a fixed camera's view",
+            "log_polar: a rotation becomes a shift",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImagePyramid] = {
+        "Image Pyramid",
+        "Halve (down) or double (up) the size with Gaussian smoothing, or keep one level of detail (Laplacian).",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"operation", "down, up or detail"},
+            {"levels", "How many times; detail: which level"}
+        },
+        {
+            "down: a quarter of the pixels with less aliasing than a plain resize",
+            "detail: edges and texture only, mid-grey where flat",
         },
         "Data Pipeline"
     };

@@ -1,6 +1,6 @@
 #pragma once
 
-// Test Results exports (TOFIX129 B5 E-3): what the Test Results window shows,
+// Test Results exports (TOFIX129 B5 E-3): what Results > Test shows,
 // written as CSV or JSON. The caller passes the results it shows, so an export
 // never writes an older or cleared run.
 

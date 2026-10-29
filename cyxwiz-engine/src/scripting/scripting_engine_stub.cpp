@@ -132,7 +132,9 @@ std::string ScriptingEngine::GetPythonRuntimeDiagnostics() {
     return "Python scripting is disabled in this Engine build";
 }
 
-bool ScriptingEngine::ReloadPythonForProject() { return false; }
+scripting::PythonProjectSwitch ScriptingEngine::SwitchPythonToProject(std::string*) {
+    return scripting::PythonProjectSwitch::Unchanged;
+}
 
 ScriptingEngine::InterpreterInfo ScriptingEngine::GetInterpreterInfo() { return {}; }
 

@@ -13,6 +13,7 @@ class RandomForestClassifierOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "RandomForestClassifier"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
 
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;

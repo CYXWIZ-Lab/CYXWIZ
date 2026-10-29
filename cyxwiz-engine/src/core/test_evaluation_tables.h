@@ -1,7 +1,7 @@
 #pragma once
 
 // The Test Evaluation node's outputs (TOFIX157, Keep as node): a test run's
-// results as four tables, in the Test Results panel's words and order
+// results as four tables, in Results > Test's words and order
 // (test_report::BuildView), so a kept test reads the same on the canvas, in
 // Data Studio and in the panel.
 //

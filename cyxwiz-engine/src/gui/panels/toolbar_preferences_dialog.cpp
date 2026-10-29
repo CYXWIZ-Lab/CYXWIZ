@@ -1317,6 +1317,13 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
+                if (ImGui::BeginTabItem(ICON_FA_HARD_DRIVE " Storage")) {
+                    RenderStorageTab();
+                    ImGui::EndTabItem();
+                } else {
+                    storage_stale_ = true;  // measured again when it opens
+                }
+
                 ImGui::EndTabBar();
             }
             ImGui::EndChild();
