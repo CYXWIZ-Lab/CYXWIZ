@@ -6,7 +6,7 @@ template first with the [quickstart](plugin-quickstart.md). Every type,
 [API reference](plugin-api-reference.md); the rules every node keeps are in
 the [node contract](node-contract.md).
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 
 The code in this guide is taken from the SDK's template
 (`plugins/template/my_nodes_plugin.cpp`, in the SDK as
@@ -34,7 +34,7 @@ The template's `plugin.json`:
     "id": "com.example.my-nodes",
     "name": "My Nodes",
     "version": "1.0.0",
-    "api_version": "1.2.0",
+    "api_version": "1.3.0",
     "description": "A trainable activation written in C++: Bent Identity",
     "author": "",
     "license": "",
@@ -52,7 +52,7 @@ The template's `plugin.json`:
 |---|---|
 | `id` | Required. `a-z`, `0-9`, `.`, `-`, `_` only (a plugin with other characters loads, but every node is refused). It is the first half of every node's saved type id, so do not change it once graphs use your nodes |
 | `name`, `version` | Shown on the Plugin Manager card. `version` is `major.minor.patch`; dangerous permissions are approved per version (section 4) |
-| `api_version` | The plugin API you built against, `1.2.0` with this SDK. The Engine loads the plugin when the major number equals its own and the minor number is not higher |
+| `api_version` | The plugin API you built against, `1.3.0` with this SDK. The Engine loads the plugin when the major number equals its own and the minor number is not higher |
 | `capabilities` | `ProvidesTensorNodes`. Shown only; the Engine finds your nodes through `QueryInterface`, whatever this says |
 | `permissions` | `Training`, as the template has. Nothing checks it for trainable nodes today. `FileSystem`, `Network`, `SystemCommands` and `Python` make the Engine ask the user (section 4) |
 | `platforms` | The library path per platform, relative to the folder |

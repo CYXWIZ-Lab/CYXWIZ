@@ -5,7 +5,7 @@ today. For a walk-through read the [quickstart](plugin-quickstart.md) and the
 [developer guide](plugin-developer-guide.md); for the rules a trainable
 module must keep, the [node contract](node-contract.md).
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > The CyxWiz SDK is version 0.2.
 
 ## 1. Headers
@@ -74,7 +74,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | `id` | string | Required. `a-z`, `0-9`, `.`, `-`, `_`; a plugin whose id has other characters loads, but all its nodes are refused. Part of every node's saved type id (`<id>:<TypeName>`), so do not change it once graphs use it. A plugin whose id is already loaded is not loaded again: **Refresh** skips it, **Install...** says it is already loaded |
 | `name` | string | Shown in the Plugin Manager (default: `id`) |
 | `version` | `"major.minor.patch"` | Your plugin's version (default `0.0.0`). Permission answers are stored per version |
-| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.2 today) |
+| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.3 today) |
 | `description`, `author`, `license`, `homepage`, `repository` | string | Stored; the Plugin Manager card shows `description` and `author` |
 | `capabilities` | array of strings | What the plugin says it provides (table below). Informational: the Engine finds interfaces through `QueryInterface` whatever this says |
 | `permissions` | array of strings | What it may do (table below) |
@@ -336,7 +336,7 @@ returning an `AnalyticsResult`.
 | `CyxWiz::Backend` | The backend's import library alone |
 | `cyxwiz_plugin_folder(<target> [FOLDER <dir>])` | Puts the library in `<dir>/bin` for every configuration and copies `plugin.json` from the current source folder to `<dir>` (default `<build>/<target>`). With MSVC every configuration uses the release C++ runtime (`MultiThreadedDLL`), so Debug builds load. Needs policy CMP0091, which `cmake_minimum_required(VERSION 3.15)` or later turns on |
 | `CyxWizSDK_VERSION` | The SDK version (0.2.0) |
-| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.2) |
+| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.3) |
 | `CyxWizSDK_TEMPLATE_DIR` | The template plugin's folder |
 
 <!-- excerpt: cmake/sdk/CyxWizPluginHelpers.cmake -->

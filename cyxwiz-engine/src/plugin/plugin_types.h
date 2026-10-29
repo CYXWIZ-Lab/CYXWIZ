@@ -17,7 +17,10 @@ namespace cyxwiz::plugin {
 // ============================================================================
 
 constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
-constexpr uint16_t PLUGIN_API_VERSION_MINOR = 2;  // 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125)
+// 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125); 1.3: typed
+// Tensor accessors check the type (Tensor::DataTypeName), data and analytics
+// providers on the Arrow C stream (TOFIX181).
+constexpr uint16_t PLUGIN_API_VERSION_MINOR = 3;
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 
 // ============================================================================

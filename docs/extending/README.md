@@ -4,7 +4,7 @@ CyxWiz lets you add nodes it does not ship and train them next to the
 built-in ones. A node you add is an **extension node**: it appears in the
 node editor, saves in `.cyxgraph` files, compiles into the model and trains.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > Each guide carries this line; a test fails when the plugin API or pycyxwiz
 > version changes until the guide is checked again (see
 > [How these pages stay true](#how-these-pages-stay-true)).

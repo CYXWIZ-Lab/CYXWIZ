@@ -4,7 +4,7 @@ Build the template plugin from an installed CyxWiz, check it, load it, train
 with its node, and update it after a change. You need no CyxWiz sources:
 every installation carries the plugin SDK and the check tool.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > Windows x64 is the main platform; Linux and macOS differences are given
 > where they exist.
 
@@ -250,7 +250,7 @@ lines, with a time stamp, are mixed in; the result lines are:
 
 ```
 D:\work\my_nodes\build\my_nodes
-  plugin com.example.my-nodes 1.0.0 (API 1.2.0)
+  plugin com.example.my-nodes 1.0.0 (API 1.3.0)
   ok   node com.example.my-nodes:BentIdentity: Passed: largest relative error 5.8e-06 in input (tolerance 2.0e-02)
 cyxwiz-plugin-check: all plugins pass
 ```
