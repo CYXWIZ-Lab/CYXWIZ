@@ -275,10 +275,13 @@ void NodeEditor::Render() {
     // and prevent crashes from stale node references
     if (pending_context_reset_) {
         spdlog::info("Resetting ImNodes editor context");
+        const ImVec2 panning = ImNodes::EditorContextGetPanning();
         ImNodes::EditorContextFree(editor_context_);
         editor_context_ = ImNodes::EditorContextCreate();
         ImNodes::EditorContextSet(editor_context_);
+        if (pending_context_keep_view_) ImNodes::EditorContextResetPanning(panning);
         pending_context_reset_ = false;
+        pending_context_keep_view_ = false;
     }
 
     ::gui::NextWindowMayLeave("CyxWiz Studio");
