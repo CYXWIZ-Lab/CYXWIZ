@@ -68,6 +68,13 @@ int main() {
           "Auto Excel should resolve to the unsupported format");
     Check(cyxwiz::loaders::ResolveTabularFileType("unknown", "/datasets/table.csv") == "unknown",
           "An unknown explicit format must not fall back to extension detection");
+    // The asset browser marks a file as a dataset by this detection.
+    for (const char* path : {"/d/a.TSV", "/d/a.pq", "/d/a.Feather", "/d/a.ipc", "/d/a.jsonl", "/d/a.zip", "/d/a.CSV"}) {
+        Check(cyxwiz::data_input::DetectFormat(path) != nullptr,
+              std::string("Data Input should recognise ") + path);
+    }
+    Check(cyxwiz::data_input::DetectFormat("/d/model.onnx") == nullptr,
+          "A model file is not a dataset format");
     const auto* hdf5 = cyxwiz::data_input::FindFormat("hdf5");
     Check(hdf5 && !hdf5->executable &&
               !cyxwiz::data_input::BuildAvailable(*hdf5, false) &&

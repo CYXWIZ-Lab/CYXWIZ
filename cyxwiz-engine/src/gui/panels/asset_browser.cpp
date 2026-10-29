@@ -6,6 +6,7 @@
 #include "../ui_widgets.h"
 #include "../editor_fonts.h"
 #include "../../core/project_manager.h"
+#include "../../core/data_input_formats.h"
 #include "../file_browser_launch.h"
 #include <imgui.h>
 #include <filesystem>
@@ -1287,6 +1288,8 @@ void AssetBrowserPanel::BuildDirectoryTree() {
 
 AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::string& path) {
     std::string ext = fs::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     // Scripts
     if (ext == ".py" || ext == ".pyw" || ext == ".cyx" || ext == ".ipynb") return AssetType::Script;
@@ -1295,10 +1298,8 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     if (ext == ".onnx" || ext == ".pt" || ext == ".safetensors" || ext == ".bin")
         return AssetType::Model;
 
-    // Datasets (including HDF5 files which are commonly used for ML datasets)
-    if (ext == ".csv" || ext == ".json" || ext == ".parquet" || ext == ".arrow" || ext == ".txt" ||
-        ext == ".h5" || ext == ".hdf5" || ext == ".hdf")
-        return AssetType::Dataset;
+    // Datasets: every format Data Input recognises, so each gets "Create Data Input"
+    if (data_input::DetectFormat(path)) return AssetType::Dataset;
 
     // Checkpoints
     if (ext == ".ckpt" || ext == ".checkpoint")
