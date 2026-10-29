@@ -25,13 +25,14 @@ public:
     PluginDataLoaderRegistry(const PluginDataLoaderRegistry&) = delete;
     PluginDataLoaderRegistry& operator=(const PluginDataLoaderRegistry&) = delete;
 
-    void Register(const std::string& plugin_id, IDataProvider* provider);
+    void Register(const std::string& plugin_id, const std::string& plugin_version, IDataProvider* provider);
     // Waits until no stream of the plugin is being read any more.
     void RemoveByPlugin(const std::string& plugin_id);
 
     struct Loader {
         std::string plugin_id;
-        PluginDataLoaderInfo info;  // extensions lower case, without the dot
+        std::string plugin_version;  // from plugin.json
+        PluginDataLoaderInfo info;   // extensions lower case, without the dot
     };
     std::vector<Loader> Loaders() const;  // ordered by format name
     bool Find(const std::string& loader_id, Loader& out) const;

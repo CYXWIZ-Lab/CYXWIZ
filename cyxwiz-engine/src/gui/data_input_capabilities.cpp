@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 
 namespace gui::data_input {
 
@@ -123,18 +124,33 @@ const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_categor
     return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
 }
 
+// Numbers from kFirstExternalFormatId up are plugin formats
+// (data_input_external_formats.h).
 const char* FileTypeParam(int detected_type) {
+    if (const char* external = cyxwiz::data_input::ExternalFormatNameOf(detected_type)) return external;
     const auto* format = cyxwiz::data_input::FindFormat(detected_type);
     return format ? format->name : "auto";
 }
 
 const char* FileTypeName(int detected_type) {
+    if (const char* external = cyxwiz::data_input::ExternalFormatNameOf(detected_type)) {
+        // The label lives here, per number: the plugin's list is rebuilt on each call.
+        static std::map<int, std::string> labels;
+        cyxwiz::data_input::ExternalFormat format;
+        labels[detected_type] = cyxwiz::data_input::FindExternalFormat(external, format)
+            ? format.label + " (plugin)"
+            : std::string(external) + " (not installed)";
+        return labels[detected_type].c_str();
+    }
     const auto* format = cyxwiz::data_input::FindFormat(detected_type);
     return format ? format->label : "Unknown";
 }
 
 int FileTypeFromParam(const std::string& value, int fallback) {
     if (Trim(value).empty()) return fallback;
+    const auto normalized = cyxwiz::NormalizeDataInputFormat(value);
+    if (cyxwiz::data_input::IsExternalFormatName(normalized))
+        return cyxwiz::data_input::ExternalFormatId(normalized);
     const auto* format = cyxwiz::data_input::FindFormat(value);
     return format ? format->id : fallback;
 }
@@ -155,7 +171,12 @@ int DetectFileTypeForPath(const std::string& path, std::size_t* file_size) {
         }
     }
 
+    // A built-in format the Engine reads wins; then a plugin format that
+    // accepts the file; then a built-in one, which explains why it cannot.
     const auto* format = cyxwiz::data_input::DetectFormat(path);
+    if (format && format->executable) return format->id;
+    if (auto external = cyxwiz::data_input::DetectExternalFormat(path); !external.empty())
+        return cyxwiz::data_input::ExternalFormatId(external);
     return format ? format->id : 0;
 }
 

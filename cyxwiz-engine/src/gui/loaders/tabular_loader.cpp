@@ -252,11 +252,17 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 };
 
                 const bool parquet = file_type == "parquet";
-                if (file_type == "csv" || file_type == "tsv" || parquet) {
-                    // CSV family and Parquet: the registry picks Arrow
+                const bool external = cyxwiz::data_input::IsExternalFormatName(file_type);
+                if (file_type == "csv" || file_type == "tsv" || parquet || external) {
+                    // CSV family, Parquet and plugin formats (streamed into a
+                    // Parquet cache first): the registry picks Arrow
                     // in-memory or a Parquet file on disk by the data budget.
                     std::string load_status;
-                    auto backend = parquet
+                    auto backend = external
+                        ? reg.LoadTabularExternal(file_type, path, name, force_disk, selected_columns,
+                                                  &load_status, ingestion_cache_directory,
+                                                  [&task] { return task.ShouldStop(); })
+                        : parquet
                         ? reg.LoadTabularParquet(path, name, force_disk, selected_columns,
                                                  &load_status, ingestion_cache_directory)
                         : reg.LoadTabularCSV(
@@ -309,7 +315,9 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         }
                     } else {
                         state->success = false;
-                        state->message = parquet
+                        state->message = external
+                            ? (load_status.empty() ? "Failed to load the file" : load_status)
+                            : parquet
                             ? "Failed to load Parquet. Check that the file is a Parquet file "
                               "and the selected columns exist."
                             : "Failed to load CSV. Check delimiter/header; if "

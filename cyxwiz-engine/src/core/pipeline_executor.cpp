@@ -4402,6 +4402,23 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     disk_backed = true;
                 }
                 spdlog::info("[Pipeline] DataInput Parquet backend: {}", load_status);
+            } else if (data_input::IsExternalFormatName(file_type)) {
+                // A plugin's dataset format, streamed into a Parquet cache (TOFIX181).
+                std::string load_status;
+                const auto backend = registry.LoadTabularExternal(
+                    file_type, file_path, dataset_name,
+                    OptionalBooleanParameterIsTrue(node.parameters, "force_disk_backed"),
+                    selected_columns, &load_status, ingestion_cache_root_,
+                    [this] { return cancel_requested_.load(); });
+                if (backend == DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset = registry.GetArrowDataset(dataset_name);
+                } else if (backend == DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                } else {
+                    ReportError("DataInput: " + load_status);
+                    return false;
+                }
+                spdlog::info("[Pipeline] DataInput {} backend: {}", file_type, load_status);
             } else if (file_type == "json") {
                 const auto lines = node.parameters.find("json_lines");
                 const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||

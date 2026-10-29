@@ -167,7 +167,7 @@ return, inside the crash guard. Unloading removes all of it.
 | `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
-| `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer); Data Input does not list them yet |
+| `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
 | `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio does not run them yet |
 | `"IAssistantProvider"` | `IAssistantProvider` | Runs assistant commands (the CyxWiz assistant plugin) |
 
@@ -336,6 +336,15 @@ Give numbers a numeric type (`g` float64, `f` float32, `l` int64, `i`
 int32) and text `u` (UTF-8): training and the Explore tabs work on numeric
 and text columns. Return batches of a bounded size (the example uses
 50,000 rows), so a file larger than memory streams.
+
+Data Input lists each loader in its **Format** list as *&lt;format_name&gt;
+(plugin)* and in the file types of **Browse...**; a Data Input stores it as
+`file_type` `plugin:<loader_id>` (lower case). Detection by extension: a
+format the Engine reads itself wins, then a loader whose `CanLoad` accepts
+the file. On Apply the Engine streams the file once into a Parquet copy in
+the project's cache and reads that copy until the file is newer or your
+plugin's `version` (plugin.json) changes: raise the version when your reader
+returns different data for the same file.
 
 `IAnalyticsProvider`:
 

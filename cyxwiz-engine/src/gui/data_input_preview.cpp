@@ -33,8 +33,7 @@ bool MatchesAppliedTabularPreview(
     const int current_type = source.detected_type == 0
         ? DetectFileTypeForPath(source.path, nullptr) : source.detected_type;
     if (applied_type <= 0 || applied_type != current_type) return false;
-    const auto* capability = cyxwiz::data_input::FindFormat(applied_type);
-    if (!capability || !capability->executable) return false;
+    if (!cyxwiz::data_input::IsExecutable(FileTypeParam(applied_type))) return false;
 
     const auto matches = [&parameters](const char* key, const std::string& value) {
         const auto it = parameters.find(key);

@@ -54,7 +54,8 @@ PluginDataLoaderRegistry& PluginDataLoaderRegistry::Instance() {
     return instance;
 }
 
-void PluginDataLoaderRegistry::Register(const std::string& plugin_id, IDataProvider* provider) {
+void PluginDataLoaderRegistry::Register(const std::string& plugin_id, const std::string& plugin_version,
+                                        IDataProvider* provider) {
     if (!provider) return;
 
     auto loaders = provider->GetLoaders();
@@ -77,7 +78,7 @@ void PluginDataLoaderRegistry::Register(const std::string& plugin_id, IDataProvi
         // The key first: the right side (which moves info) is evaluated
         // before the subscript (C++17), which would read an empty id.
         const std::string loader_id = info.loader_id;
-        loaders_[loader_id] = Entry{Loader{plugin_id, std::move(info)}, provider};
+        loaders_[loader_id] = Entry{Loader{plugin_id, plugin_version, std::move(info)}, provider};
         ++generation_;
     }
 }

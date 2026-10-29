@@ -109,7 +109,7 @@ bool EnginePluginContext::CheckDataInterfaces(const char* interface_name) const 
 bool EnginePluginContext::RegisterDataProvider(IDataProvider* provider) {
     if (!CheckPermission(PluginPermission::DataRegistry, "RegisterDataProvider")) return false;
     if (!CheckDataInterfaces("IDataProvider")) return false;
-    PluginDataLoaderRegistry::Instance().Register(plugin_id_, provider);
+    PluginDataLoaderRegistry::Instance().Register(plugin_id_, plugin_version_, provider);
     return true;
 }
 

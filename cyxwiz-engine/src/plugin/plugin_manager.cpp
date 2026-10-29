@@ -555,7 +555,8 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         if (data_provider && permitted(PluginPermission::DataRegistry, "IDataProvider") &&
             data_interfaces("IDataProvider")) {
             security::SafeExecute(plugin_id, "RegisterDataProvider", [&]() {
-                PluginDataLoaderRegistry::Instance().Register(plugin_id, data_provider);
+                PluginDataLoaderRegistry::Instance().Register(plugin_id, plugin->manifest.version.ToString(),
+                                                              data_provider);
             });
         }
 

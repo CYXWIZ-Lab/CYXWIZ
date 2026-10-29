@@ -251,6 +251,18 @@ void DataInputDialog::RenderFormatOptions() {
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
+        // Formats added by plugins (IDataProvider).
+        for (const auto& external : cyxwiz::data_input::ExternalFormats()) {
+            const int id = cyxwiz::data_input::ExternalFormatId(external.name);
+            const bool selected = detected_type_ == id;
+            const std::string label = external.label + " (plugin)##" + external.name;
+            if (ImGui::Selectable(label.c_str(), selected)) {
+                detected_type_ = id;
+                RefreshColumnList();
+                has_changes_ = true;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
         ImGui::EndCombo();
     }
     ImGui::SameLine();

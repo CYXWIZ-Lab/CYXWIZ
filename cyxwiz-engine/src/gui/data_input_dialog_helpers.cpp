@@ -352,12 +352,21 @@ void DataInputDialog::UpdateRAMEstimate() {
 
 void DataInputDialog::BrowseFile() {
     // A file is a table, a text document set or a ZIP of documents.
-    cyxwiz::FileDialogs::FilterList filters = {{"Supported Table and Document Data",
-                                                 cyxwiz::data_input::ExtensionFilter()}};
+    // Plugin formats (IDataProvider) join the supported list and get their own filter.
+    std::string supported = cyxwiz::data_input::ExtensionFilter();
+    const auto external_formats = cyxwiz::data_input::ExternalFormats();
+    for (const auto& external : external_formats)
+        for (const auto& extension : external.extensions) supported += "," + extension;
+    cyxwiz::FileDialogs::FilterList filters = {{"Supported Table and Document Data", supported}};
     for (const auto& format : cyxwiz::data_input::kSourceFormats) {
         if (!format.executable) continue;
         const auto extensions = cyxwiz::data_input::ExtensionFilter(format);
         if (!extensions.empty()) filters.emplace_back(format.label, extensions);
+    }
+    for (const auto& external : external_formats) {
+        std::string extensions;
+        for (const auto& extension : external.extensions) extensions += (extensions.empty() ? "" : ",") + extension;
+        filters.emplace_back(external.label + " (plugin)", extensions);
     }
     filters.emplace_back("Text (JSON, TXT)", "json,jsonl,txt");
     if (cyxwiz::data_input::kHdf5BuildAvailable) {

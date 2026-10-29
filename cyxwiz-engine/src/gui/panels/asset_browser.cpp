@@ -1300,6 +1300,11 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
 
     // Datasets: every format Data Input recognises, so each gets "Create Data Input"
     if (data_input::DetectFormat(path)) return AssetType::Dataset;
+    for (const auto& external : data_input::ExternalFormats()) {
+        const auto extension = ext.empty() ? std::string{} : ext.substr(1);
+        if (std::find(external.extensions.begin(), external.extensions.end(), extension) != external.extensions.end())
+            return AssetType::Dataset;
+    }
 
     // Checkpoints
     if (ext == ".ckpt" || ext == ".checkpoint")
