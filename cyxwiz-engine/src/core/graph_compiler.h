@@ -10,6 +10,7 @@
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
+#include "image_cv_steps.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
@@ -490,6 +491,9 @@ struct TrainingConfiguration {
     // The image transform nodes between Resize and Normalize, in graph
     // order: run by the image batcher on the device (Normalize after them).
     cyxwiz::image::ImageAugmentation image_augmentation;
+    // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
+    // prepared; each one's position places it among image_augmentation.ops.
+    std::vector<cyxwiz::CvImageStep> image_cv_steps;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
     // The Quality Analyzer node and the files its analysis leaves out of

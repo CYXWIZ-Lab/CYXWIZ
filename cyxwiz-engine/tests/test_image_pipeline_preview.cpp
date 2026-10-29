@@ -58,7 +58,7 @@ int main() {
     steps.mean = 0.5f;
     steps.std_dev = 0.5f;
 
-    const ImagePipelinePreview p = PreviewImagePipeline(file, spec, steps, 3, 7);
+    const ImagePipelinePreview p = PreviewImagePipeline(file, spec, steps, {}, 3, 7);
     Check(p.error.empty(), "no error: " + p.error);
 
     // Resize: the decode training uses, alpha opaque.
@@ -91,12 +91,12 @@ int main() {
     Check(p.random_ops == std::vector<std::string>({"Horizontal Flip (p 1)", "Rotate up to 10 degrees"}), "random ops");
     Check(p.draws.size() == 3 && p.draws[0].title == "Draw 1" && p.draws[0].width == 12, "three draws");
     for (const auto& d : p.draws) Check(d.detail.rfind("flipped, ", 0) == 0, "each draw is flipped: " + d.detail);
-    const ImagePipelinePreview again = PreviewImagePipeline(file, spec, steps, 3, 7);
+    const ImagePipelinePreview again = PreviewImagePipeline(file, spec, steps, {}, 3, 7);
     Check(again.draws[1].rgba == p.draws[1].rgba && again.draws[1].detail == p.draws[1].detail, "same seed, same draws");
 
     // A flip alone mirrors the fixed result exactly.
     steps.ops = {crop, flip};
-    const ImagePipelinePreview flipped = PreviewImagePipeline(file, spec, steps, 1, 3);
+    const ImagePipelinePreview flipped = PreviewImagePipeline(file, spec, steps, {}, 1, 3);
     bool mirrored = true;
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 12; ++x)
@@ -106,19 +106,37 @@ int main() {
 
     // No random steps: no draws. No Resize, or an unreadable file: an error.
     steps.ops = {crop};
-    const ImagePipelinePreview fixed_only = PreviewImagePipeline(file, spec, steps, 4, 1);
+    const ImagePipelinePreview fixed_only = PreviewImagePipeline(file, spec, steps, {}, 4, 1);
     Check(fixed_only.error.empty() && fixed_only.draws.empty() && fixed_only.random_ops.empty(), "fixed only: no draws");
-    Check(PreviewImagePipeline(file, {0, 0, ResizeMode::Exact}, steps, 1, 1).error == "The graph has no Resize node.", "no Resize");
+    Check(PreviewImagePipeline(file, {0, 0, ResizeMode::Exact}, steps, {}, 1, 1).error == "The graph has no Resize node.", "no Resize");
     {
         std::ofstream broken(dir / "broken.png");
         broken << "not an image";
     }
-    Check(PreviewImagePipeline((dir / "broken.png").string(), spec, steps, 1, 1).error == "This file cannot be read as an image.",
+    Check(PreviewImagePipeline((dir / "broken.png").string(), spec, steps, {}, 1, 1).error == "This file cannot be read as an image.",
           "unreadable");
     image::ImageOp too_big = crop;
     too_big.width = 99;
     steps.ops = {too_big};
-    Check(PreviewImagePipeline(file, spec, steps, 1, 1).error.rfind("Center Crop 99 \xC3\x97 8: ", 0) == 0, "an invalid op says why");
+    Check(PreviewImagePipeline(file, spec, steps, {}, 1, 1).error.rfind("Center Crop 99 \xC3\x97 8: ", 0) == 0, "an invalid op says why");
+
+    // An OpenCV step done once (1.3f): Image Edges after the crop gives one channel.
+    CvImageStep edges;
+    edges.kind = CvImageStepKind::Edges;
+    edges.position = 1;
+    steps.ops = {crop, flip};
+    const ImagePipelinePreview with_edges = PreviewImagePipeline(file, spec, steps, {edges}, 1, 1);
+    Check(with_edges.error.empty() && with_edges.fixed.size() == 2, "crop and edges done once: " + with_edges.error);
+    Check(with_edges.fixed[1].title == "Edges (Canny 50 / 150)" &&
+              with_edges.fixed[1].detail == "12 \xC3\x97 8, once on the CPU",
+          "the OpenCV step is named and done on the CPU: " + with_edges.fixed[1].detail);
+    bool binary = true;
+    for (size_t i = 0; i < 12 * 8; ++i) {
+        const uint8_t v = with_edges.fixed[1].rgba[i * 4];
+        binary = binary && (v == 0 || v == 255) && with_edges.fixed[1].rgba[i * 4 + 1] == v;
+    }
+    Check(binary, "Canny edges are black and white");
+    Check(ImageStepsKey(spec, steps, {edges}) != ImageStepsKey(spec, steps, {}), "the step is in the preview key");
 
     fs::remove_all(dir, ec);
     std::cout << "test_image_pipeline_preview: all checks passed\n";

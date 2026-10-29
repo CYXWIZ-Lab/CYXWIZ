@@ -24,6 +24,8 @@
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <stdexcept>
+#include <variant>
 #include <string>
 #include <vector>
 
@@ -258,12 +260,12 @@ void CheckFixedTransforms(const DataRegistry::ImageDatasetEntry& entry) {
     image::ImageAugmentation compiled;
     compiled.ops = {crop, grey, erode, flip, blur};
     compiled.normalize = true;
-    const auto split = SplitFixedImageTransforms(compiled);
+    const auto split = SplitFixedImageTransforms(compiled, {});
     Check(split.fixed.size() == 3 && split.per_batch.ops.size() == 2 && split.per_batch.normalize,
           "fixed: the transforms before the first random one; the rest and Normalize per batch");
 
     const PreparedImageSpec spec{24, 16, ResizeMode::Exact};
-    const std::vector<ImageOp> fixed = {crop, grey, erode, blur};
+    const std::vector<FixedImageStep> fixed = {crop, grey, erode, blur};
     auto base = PrepareImageSet(entry, spec);
     Check(base.set != nullptr, "the decoded set for the fixed transforms");
     auto derived = PrepareImageSet(entry, spec, fixed);
@@ -275,7 +277,7 @@ void CheckFixedTransforms(const DataRegistry::ImageDatasetEntry& entry) {
           "labels and unreadable files carried over");
 
     image::ImageAugmentation steps;
-    steps.ops = fixed;
+    steps.ops = {crop, grey, erode, blur};
     const image::ImageShape input{16, 24, 3};
     const int available = af::getAvailableBackends();
     for (const af::Backend backend : {AF_BACKEND_CPU, AF_BACKEND_CUDA, AF_BACKEND_OPENCL}) {
@@ -324,6 +326,86 @@ void CheckFixedTransforms(const DataRegistry::ImageDatasetEntry& entry) {
     DataRegistry::ImageDatasetEntry other = entry;
     other.folder_path += "_elsewhere";
     Check(ListPreparedImageSets(other).empty(), "another folder lists none of them");
+}
+
+// The OpenCV steps (1.3f) between device transforms: Center Crop on the
+// device, CLAHE on the CPU, Grayscale on the device, in that order, each
+// rounded to uint8; CLAHE is OpenCV's own on the cropped images.
+void CheckOpenCvSteps(const DataRegistry::ImageDatasetEntry& entry) {
+    image::ImageOp crop;
+    crop.kind = image::ImageOpKind::CenterCrop;
+    crop.height = 8;
+    crop.width = 12;
+    image::ImageOp grey;
+    grey.kind = image::ImageOpKind::Grayscale;
+    image::ImageOp flip;
+    flip.kind = image::ImageOpKind::HorizontalFlip;
+    CvImageStep clahe;
+    clahe.kind = CvImageStepKind::Contrast;
+    clahe.tile_grid = 4;
+    clahe.position = 1;  // after the crop
+
+    image::ImageAugmentation compiled;
+    compiled.ops = {crop, grey, flip};
+    const auto split = SplitFixedImageTransforms(compiled, {clahe});
+    Check(split.fixed.size() == 3 && std::holds_alternative<CvImageStep>(split.fixed[1]) &&
+              split.per_batch.ops.size() == 1,
+          "crop, CLAHE and Grayscale done once; the flip per batch");
+    CvImageStep late = clahe;
+    late.position = 3;
+    bool refused = false;
+    try {
+        SplitFixedImageTransforms(compiled, {late});
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Check(refused, "an OpenCV step after a random transform is refused");
+
+    const PreparedImageSpec spec{24, 16, ResizeMode::Exact};
+    const auto base = PrepareImageSet(entry, spec);
+    const auto derived = PrepareImageSet(entry, spec, split.fixed);
+    Check(base.set && derived.set, "the set with an OpenCV step: " + derived.error);
+    const auto& set = *derived.set;
+    Check(set.Height() == 8 && set.Width() == 12 && set.Channels() == 1, "[N, 8, 12, 1]");
+
+    // Expected: the crop (exact), OpenCV's CLAHE on Lab L, then Grayscale on the device.
+    const size_t n = base.set->Count();
+    std::vector<float> after_clahe;
+    for (size_t i = 0; i < n; ++i) {
+        const cv::Mat row(16, 24, CV_8UC3, const_cast<uint8_t*>(base.set->Row(i)));
+        cv::Mat cropped = row(cv::Rect(6, 4, 12, 8)).clone(), lab, rgb;
+        cv::cvtColor(cropped, lab, cv::COLOR_RGB2Lab);
+        std::vector<cv::Mat> planes;
+        cv::split(lab, planes);
+        cv::createCLAHE(2.0, cv::Size(4, 4))->apply(planes[0], planes[0]);
+        cv::merge(planes, lab);
+        cv::cvtColor(lab, rgb, cv::COLOR_Lab2RGB);
+        for (size_t k = 0; k < rgb.total() * 3; ++k) after_clahe.push_back(rgb.data[k] / 255.0f);
+    }
+    image::ImageAugmentation grey_only;
+    grey_only.ops = {grey};
+    std::mt19937 rng(0);
+    const Tensor expected =
+        grey_only.Apply(Tensor({n, 8 * 12 * 3}, after_clahe.data()), image::ImageShape{8, 12, 3}, false, rng);
+    const float* values = expected.ReadData<float>();
+    double worst = 0.0;
+    for (size_t k = 0; k < n * set.RowBytes(); ++k)
+        worst = std::max(worst, std::abs(set.Row(0)[k] / 255.0 - std::clamp(values[k], 0.0f, 1.0f)));
+    Check(worst <= 0.5 / 255.0 + 1e-5, "crop, CLAHE, Grayscale in order (worst " + std::to_string(worst * 255.0) + " steps)");
+
+    // Keyed and listed with the step and its settings.
+    CvImageStep other = clahe;
+    other.clip_limit = 3.0f;
+    std::vector<FixedImageStep> changed = split.fixed;
+    changed[1] = other;
+    Check(PreparedImageSetKeyFor(entry, spec, split.fixed) == set.Key() &&
+              PreparedImageSetKeyFor(entry, spec, changed) != set.Key(),
+          "another clip limit is another set");
+    const auto listed = ListPreparedImageSets(entry);
+    const auto it = std::find_if(listed.begin(), listed.end(), [&](const auto& s) { return s.key == set.Key(); });
+    Check(it != listed.end() &&
+              it->fixed == std::vector<std::string>({"Center Crop 12 \xC3\x97 8", "CLAHE 2.0 / 4", "Grayscale"}),
+          "listed with the OpenCV step in words");
 }
 
 void CheckChangesAndStops(const fs::path& folder, const DataRegistry::ImageDatasetEntry& entry) {
@@ -466,6 +548,7 @@ int main() {
     CheckChannelStats(folders);
     CheckBatcher(folders);
     CheckFixedTransforms(folders);
+    CheckOpenCvSteps(folders);
     CheckChangesAndStops(folder, folders);
 
     SetImageCacheProjectRoot("");

@@ -224,8 +224,6 @@ bool PerspectiveTransform::WarpPerspective(
         width = new_width;
         height = new_height;
 
-        spdlog::debug("PerspectiveTransform: Applied perspective warp ({}x{})",
-                      new_width, new_height);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -285,8 +283,6 @@ bool PerspectiveTransform::WarpAffine(
         width = new_width;
         height = new_height;
 
-        spdlog::debug("PerspectiveTransform: Applied affine warp ({}x{})",
-                      new_width, new_height);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -344,8 +340,6 @@ bool PerspectiveTransform::LogPolar(
             std::memcpy(image_data.data(), img.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("PerspectiveTransform: Applied log-polar transform (center=({},{}), radius={})",
-                      center_x, center_y, max_radius);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -399,8 +393,6 @@ bool PerspectiveTransform::LinearPolar(
             std::memcpy(image_data.data(), img.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("PerspectiveTransform: Applied linear-polar transform (center=({},{}), radius={})",
-                      center_x, center_y, max_radius);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -458,8 +450,6 @@ bool PerspectiveTransform::Rotate(
         width = new_width;
         height = new_height;
 
-        spdlog::debug("PerspectiveTransform: Rotated by {} degrees (scale={}, crop={})",
-                      angle, scale, crop);
         return true;
 
     } catch (const cv::Exception& e) {

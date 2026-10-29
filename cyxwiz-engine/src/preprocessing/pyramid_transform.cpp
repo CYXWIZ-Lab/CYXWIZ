@@ -149,7 +149,6 @@ bool PyramidTransform::PyrDown(
         width = new_width;
         height = new_height;
 
-        spdlog::debug("PyramidTransform: PyrDown to {}x{}", new_width, new_height);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -189,7 +188,6 @@ bool PyramidTransform::PyrUp(
         width = new_width;
         height = new_height;
 
-        spdlog::debug("PyramidTransform: PyrUp to {}x{}", new_width, new_height);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -263,12 +261,9 @@ bool PyramidTransform::BuildLaplacianLevel(
 
             cv::Mat laplacian = gaussian_pyramid[target_level] - upsampled;
 
-            // Normalize Laplacian to 0-1 range (it can have negative values)
-            double min_val, max_val;
-            cv::minMaxLoc(laplacian, &min_val, &max_val);
-            if (max_val > min_val) {
-                laplacian = (laplacian - min_val) / (max_val - min_val);
-            }
+            // Signed detail around mid-grey: 128 / 255 is no detail, the same
+            // scale for every image (TOFIX178 1.3f).
+            laplacian += 128.0 / 255.0;
 
             // Update output
             width = laplacian.cols;
@@ -299,17 +294,7 @@ bool PyramidTransform::BuildLaplacianLevel(
 
             cv::Mat laplacian = gaussian_pyramid[target_level] - upsampled;
 
-            // Normalize per channel
-            std::vector<cv::Mat> channels_vec;
-            cv::split(laplacian, channels_vec);
-            for (auto& ch : channels_vec) {
-                double min_val, max_val;
-                cv::minMaxLoc(ch, &min_val, &max_val);
-                if (max_val > min_val) {
-                    ch = (ch - min_val) / (max_val - min_val);
-                }
-            }
-            cv::merge(channels_vec, laplacian);
+            laplacian += cv::Scalar::all(128.0 / 255.0);  // as above
 
             width = laplacian.cols;
             height = laplacian.rows;
@@ -317,8 +302,6 @@ bool PyramidTransform::BuildLaplacianLevel(
             std::memcpy(image_data.data(), laplacian.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("PyramidTransform: Built Laplacian level {} ({}x{})",
-                      level, width, height);
         return true;
 
     } catch (const cv::Exception& e) {

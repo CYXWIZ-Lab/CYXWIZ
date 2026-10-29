@@ -279,6 +279,49 @@ void CheckCompiler() {
                  "Hue 0.7", "hue must be between 0 and 0.5", "hue above 0.5");
     CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip x", {{"probability", "often"}}}},
                  "Flip x", "probability must be a float", "a probability that is not a number");
+
+    // OpenCV steps (TOFIX178 1.3f): placed among the transforms in canvas
+    // order, done once, so before the first random one.
+    const auto cv = Compile({kResize,
+                             {gui::NodeType::ImageContrast, "CLAHE", {{"clip_limit", "3"}, {"tile_grid", "4"}}},
+                             {gui::NodeType::CenterCrop, "Crop 6", {{"width", "6"}, {"height", "6"}}},
+                             {gui::NodeType::ImageEdges, "Edges", {{"method", "sobel"}}},
+                             {gui::NodeType::HorizontalFlip, "Flip", {}},
+                             kNormalize});
+    Check(cv.is_valid, "CLAHE, Crop, Edges, Flip compiles; errors:\n" + Errors(cv));
+    Check(cv.image_cv_steps.size() == 2 && cv.image_cv_steps[0].position == 0 && cv.image_cv_steps[1].position == 1 &&
+              cv.image_cv_steps[0].clip_limit == 3.0f && cv.image_cv_steps[0].tile_grid == 4 &&
+              cv.image_cv_steps[1].edge_method == cyxwiz::CvEdgeMethod::Sobel,
+          "two OpenCV steps with their settings and places");
+    Check(cv.input_shape == std::vector<size_t>({6, 6, 1}) && !cv.layers.empty() &&
+              cv.layers.front().input_shape == std::vector<size_t>({6, 6, 1}),
+          "Edges gives one channel: the Conv2D sees [6, 6, 1]");
+    bool told = false;
+    for (const auto& issue : cv.issues)
+        told = told || (issue.level == cyxwiz::IssueLevel::Info && issue.node_name == "Edges" &&
+                        issue.message.find("one channel") != std::string::npos);
+    Check(told, "Edges says it gives one channel");
+    const auto denoise = Compile({kResize, {gui::NodeType::ImageDenoise, "Denoise", {}}});
+    bool warned = false;
+    for (const auto& issue : denoise.issues)
+        warned = warned || (issue.level == cyxwiz::IssueLevel::Warning && issue.node_name == "Denoise" &&
+                            issue.message.find("ms an image") != std::string::npos);
+    Check(denoise.is_valid && warned, "Denoise compiles with a warning on its cost");
+    CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip", {}}, {gui::NodeType::ImageContrast, "Late CLAHE", {}}},
+                 "Late CLAHE", "move it before Horizontal Flip", "an OpenCV step after a random one");
+    CheckRefused({kResize, {gui::NodeType::ImagePyramid, "Pyramid", {{"levels", "2"}}}},
+                 "Pyramid", "under 5 pixels a side: use a larger Resize", "a pyramid too deep for 8 x 8");
+    CheckRefused({kResize, {gui::NodeType::ImageWarp, "Warp", {{"source_points", "0,0, 1,0, 1.5,1, 0,1"}}}},
+                 "Warp", "Corner 3 of the source is outside the image", "a corner outside the image");
+    CheckRefused({kResize, {gui::NodeType::ImageWarp, "Warp 3", {{"source_points", "0,0, 1,0"}}}},
+                 "Warp 3", "must be 8 numbers", "too few points");
+    CheckRefused({kResize, {gui::NodeType::ImageSmooth, "Smooth", {{"method", "gaussian"}}}},
+                 "Smooth", "method must be box, median or bilateral", "an unknown smoothing");
+    CheckRefused({kResize, kNormalize, {gui::NodeType::ImageSharpen, "Late sharpen", {}}},
+                 "Late sharpen", "between Resize and Normalize", "an OpenCV step after Normalize");
+    CheckRefused({kResize, {gui::NodeType::ImageSharpen, "Sharpen", {}},
+                  {gui::NodeType::Resize, "Second resize", {{"width", "4"}, {"height", "4"}}}},
+                 "Second resize", "Resize must come before the image transforms", "Resize after an OpenCV step");
 }
 
 void WriteLe(std::ofstream& out, uint32_t value, int bytes) {

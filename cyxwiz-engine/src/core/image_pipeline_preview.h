@@ -32,9 +32,11 @@ struct ImagePipelinePreview {
 };
 
 // Changes with the Resize or any image step: views that depend on them redo.
-std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation);
+std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation,
+                          const std::vector<CvImageStep>& cv_steps);
 
 ImagePipelinePreview PreviewImagePipeline(const std::string& path, const PreparedImageSpec& spec,
-                                          const image::ImageAugmentation& augmentation, int draws, uint32_t seed);
+                                          const image::ImageAugmentation& augmentation,
+                                          const std::vector<CvImageStep>& cv_steps, int draws, uint32_t seed);
 
 }  // namespace cyxwiz

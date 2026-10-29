@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
 
     // What TrainingManager::StartTrainingImage builds: the images decoded
     // once (or opened from the cache), then the batcher on them.
-    const auto transforms = cyxwiz::SplitFixedImageTransforms(config.image_augmentation);
+    const auto transforms = cyxwiz::SplitFixedImageTransforms(config.image_augmentation, config.image_cv_steps);
     const auto prepared = cyxwiz::PrepareImageSet(
         entry, cyxwiz::PreparedImageSpecFrom(config.image_preprocessing), transforms.fixed);
     Check(prepared.set != nullptr, "the images are prepared: " + prepared.error);

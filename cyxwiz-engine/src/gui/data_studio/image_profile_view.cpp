@@ -125,7 +125,8 @@ void ImageProfileView::SetDataset(const std::string& dataset) {
 std::string ImageProfileView::GraphIdentity() const {
     const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
     if (!config) return "no graph";
-    return ImageStepsKey(PreparedImageSpecFrom(config->image_preprocessing), config->image_augmentation);
+    return ImageStepsKey(PreparedImageSpecFrom(config->image_preprocessing), config->image_augmentation,
+                         config->image_cv_steps);
 }
 
 void ImageProfileView::Refresh() {
@@ -174,8 +175,9 @@ void ImageProfileView::ListSets() {
     const DataRegistry::ImageDatasetEntry entry = *found;
     const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
     const PreparedImageSpec spec = config ? PreparedImageSpecFrom(config->image_preprocessing) : PreparedImageSpec{};
-    const std::vector<image::ImageOp> fixed =
-        config ? SplitFixedImageTransforms(config->image_augmentation).fixed : std::vector<image::ImageOp>{};
+    const std::vector<FixedImageStep> fixed =
+        config ? SplitFixedImageTransforms(config->image_augmentation, config->image_cv_steps).fixed
+               : std::vector<FixedImageStep>{};
     if (sets_task_) AsyncTaskManager::Instance().Cancel(sets_task_);
     input_.sets_listed = false;
     view_ = ip::Build(input_);
@@ -217,7 +219,8 @@ void ImageProfileView::MeasureStats() {
     if (!found || !config) return;
     const DataRegistry::ImageDatasetEntry entry = *found;
     const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
-    const std::vector<image::ImageOp> fixed = SplitFixedImageTransforms(config->image_augmentation).fixed;
+    const std::vector<FixedImageStep> fixed =
+        SplitFixedImageTransforms(config->image_augmentation, config->image_cv_steps).fixed;
     stats_for_ = GraphIdentity();
     input_.channel_mean.clear();
     input_.channel_std.clear();
