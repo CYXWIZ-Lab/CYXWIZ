@@ -182,6 +182,28 @@ the values (range, dates from - to, or distinct values), missing (count and
 share), mean, std, median and outliers (outside 1.5 times the interquartile
 range).
 
+### An image dataset's profile
+
+Picking an image dataset (its Data Input in the rail) shows its own profile,
+built from its index table; the Data Input dialog's Profile tab shows the
+same. Nothing is decoded for it.
+
+- The tiles: images, classes, size on disk, unreadable files, and the colour
+  (*RGB, all 25,000*, or *Mixed* with the count of each).
+- **Classes**: each class's images and share, from the labels CSV or the
+  class folders, and whether they are balanced (*Imbalanced: the largest
+  class is 4.0x the smallest*, or *A class has no images*).
+- **Original size**: width and height range and median, square images, and
+  what the graph's Resize does with them (*exact: stretched to 64 x 64,
+  aspect is not kept. 41 images are smaller than 64 x 64 on a side and are
+  enlarged*); a graph without Resize says it needs one.
+- Width and height histograms.
+- **Prepared sets**: the sets in cache/images made from this folder (size,
+  resize mode, the transforms done once, size on disk), with the one this
+  graph trains from marked *used by this graph*. Sets made before
+  2026-10-29 are not listed: their class order is the old one, and the
+  first training run makes a new set.
+
 ### Column roles
 
 Each column has one role: **ID**, **Group**, **Target**, **Numeric**,

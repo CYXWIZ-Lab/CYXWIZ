@@ -205,6 +205,7 @@ set(ENGINE_SOURCES
     src/core/prepared_image_set.cpp
     src/core/image_index.cpp
     src/core/image_index_service.cpp
+    src/core/image_profile_presentation.cpp
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
@@ -755,6 +756,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
+    src/gui/data_studio/image_profile_view.cpp
     src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/explore_tab.cpp
     src/gui/data_studio/transform_step_view.cpp
@@ -6860,6 +6862,17 @@ set_target_properties(test_image_index PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME image_index COMMAND test_image_index)
+
+# ===== Test: the image Profile's presentation (TOFIX178 1.3e) =====
+add_executable(test_image_profile_presentation
+    tests/test_image_profile_presentation.cpp
+    src/core/image_profile_presentation.cpp
+)
+set_target_properties(test_image_profile_presentation PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_profile_presentation COMMAND test_image_profile_presentation)
 
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE

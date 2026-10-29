@@ -34,6 +34,7 @@ void DataInputDialog::RenderDataProfilingTab() {
         profile_dataset_ = dataset;
         profile_view_->SetActiveDataset(profile_dataset_);
     }
+    if (node_editor_) profile_view_->SetLiveCompile(node_editor_->GetLiveCompile());
     profile_view_->Render();
 }
 

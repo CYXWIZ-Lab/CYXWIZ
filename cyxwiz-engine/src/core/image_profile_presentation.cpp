@@ -1,0 +1,189 @@
+#include "image_profile_presentation.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <iterator>
+#include <map>
+
+namespace cyxwiz::image_profile {
+
+namespace {
+
+const char* kTimes = " \xC3\x97 ";
+const char* kDot = " \xC2\xB7 ";
+
+std::string Thousands(uint64_t n) {
+    std::string digits = std::to_string(n);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<size_t>(i), ",");
+    return digits;
+}
+
+std::string Bytes(uint64_t bytes) {
+    char out[32];
+    if (bytes >= 1000ull * 1000 * 1000) std::snprintf(out, sizeof(out), "%.1f GB", bytes / 1e9);
+    else if (bytes >= 1000ull * 1000) std::snprintf(out, sizeof(out), "%.0f MB", bytes / 1e6);
+    else if (bytes >= 1000) std::snprintf(out, sizeof(out), "%.0f KB", bytes / 1e3);
+    else std::snprintf(out, sizeof(out), "%llu bytes", static_cast<unsigned long long>(bytes));
+    return out;
+}
+
+std::string ChannelsName(int channels) {
+    switch (channels) {
+        case 1: return "grey";
+        case 3: return "colour";
+        case 4: return "colour + alpha";
+        default: return std::to_string(channels) + " channels";
+    }
+}
+
+std::string Median(std::vector<int> values) {
+    if (values.empty()) return "-";
+    std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+    return std::to_string(values[values.size() / 2]);
+}
+
+std::string ResizeNote(const Input& in, size_t enlarged) {
+    const std::string size = std::to_string(in.resize_width) + kTimes + std::to_string(in.resize_height);
+    const std::string smaller = enlarged == 0 ? std::string()
+                                              : " " + Thousands(enlarged) + (enlarged == 1 ? " image is" : " images are") +
+                                                    " smaller than " + size + " on a side and " +
+                                                    (enlarged == 1 ? "is" : "are") + " enlarged.";
+    if (in.resize_mode == "fit") return "fit: the whole image is kept and padded with black to " + size + "." + smaller;
+    if (in.resize_mode == "fill") return "fill: covers " + size + " and crops the long side." + smaller;
+    if (in.resize_mode == "center")
+        return "center: no scaling; the middle " + size + " is kept, smaller images are padded.";
+    return "exact: stretched to " + size + ", aspect is not kept." + smaller;
+}
+
+}  // namespace
+
+Histogram MakeHistogram(const std::vector<int>& values, size_t max_bins) {
+    Histogram h;
+    int max = 0;
+    for (int v : values) max = std::max(max, v);
+    if (max <= 0 || max_bins == 0) return h;
+    static const int kSteps[] = {1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000, 20000, 50000};
+    int step = kSteps[std::size(kSteps) - 1];
+    for (int s : kSteps) {
+        if (static_cast<size_t>(max / s + 1) <= max_bins) {
+            step = s;
+            break;
+        }
+    }
+    const int bins = max / step + 1;
+    for (int i = 0; i <= bins; ++i) h.edges.push_back(i * step);
+    h.counts.assign(static_cast<size_t>(bins), 0);
+    for (int v : values) {
+        if (v < 0) continue;
+        ++h.counts[static_cast<size_t>(std::min(v / step, bins - 1))];
+    }
+    h.max_count = *std::max_element(h.counts.begin(), h.counts.end());
+    return h;
+}
+
+View Build(const Input& in) {
+    View v;
+    const size_t total = in.labels.size();
+    size_t unreadable = 0, square = 0, enlarged = 0;
+    uint64_t bytes = 0;
+    std::map<int, size_t> by_channels;
+    std::vector<int> widths, heights;
+    widths.reserve(total);
+    heights.reserve(total);
+    for (size_t i = 0; i < total; ++i) {
+        if (i < in.bytes.size() && in.bytes[i] > 0) bytes += static_cast<uint64_t>(in.bytes[i]);
+        const int w = i < in.widths.size() ? in.widths[i] : -1;
+        const int h = i < in.heights.size() ? in.heights[i] : -1;
+        if (w <= 0 || h <= 0) {
+            ++unreadable;
+            continue;
+        }
+        widths.push_back(w);
+        heights.push_back(h);
+        if (w == h) ++square;
+        if (in.resize_width > 0 && (w < in.resize_width || h < in.resize_height)) ++enlarged;
+        if (i < in.channels.size()) ++by_channels[in.channels[i]];
+    }
+
+    // Tiles: images, classes, on disk, unreadable, colour.
+    v.tiles.push_back({Thousands(total), total == 1 ? "image" : "images"});
+    v.tiles.push_back({Thousands(in.class_names.size()), in.class_names.size() == 1 ? "class" : "classes"});
+    v.tiles.push_back({Bytes(bytes), "on disk"});
+    v.tiles.push_back({Thousands(unreadable), "unreadable"});
+    if (by_channels.size() == 1) {
+        const int c = by_channels.begin()->first;
+        v.tiles.push_back({c == 1 ? "Grey" : c == 3 ? "RGB" : c == 4 ? "RGBA" : ChannelsName(c), "all " + Thousands(total - unreadable)});
+    } else if (!by_channels.empty()) {
+        std::string mix;
+        for (auto it = by_channels.rbegin(); it != by_channels.rend(); ++it) {
+            if (!mix.empty()) mix += ", ";
+            mix += Thousands(it->second) + " " + ChannelsName(it->first);
+        }
+        v.tiles.push_back({"Mixed", mix});
+    }
+
+    // Classes, in index order.
+    v.classes_title = in.labels_source.empty() ? "Classes" + std::string(kDot) + "from the class folders"
+                                               : "Classes" + std::string(kDot) + "from " + in.labels_source;
+    std::vector<size_t> counts(in.class_names.size(), 0);
+    for (int label : in.labels)
+        if (label >= 0 && static_cast<size_t>(label) < counts.size()) ++counts[static_cast<size_t>(label)];
+    for (size_t c = 0; c < counts.size(); ++c) {
+        ClassRow row;
+        row.label = static_cast<int>(c);
+        row.name = in.class_names[c];
+        row.count = counts[c];
+        row.share = total ? static_cast<float>(counts[c]) / static_cast<float>(total) : 0.0f;
+        char pct[16];
+        std::snprintf(pct, sizeof(pct), "%.0f%%", row.share * 100.0f);
+        row.text = Thousands(counts[c]) + kDot + pct;
+        v.classes.push_back(std::move(row));
+    }
+    if (counts.size() >= 2) {
+        const auto [lo, hi] = std::minmax_element(counts.begin(), counts.end());
+        if (*lo == 0) {
+            v.balance = "A class has no images.";
+        } else {
+            const double ratio = static_cast<double>(*hi) / static_cast<double>(*lo);
+            char text[96];
+            if (ratio <= 1.5) std::snprintf(text, sizeof(text), "Balanced.");
+            else std::snprintf(text, sizeof(text), "Imbalanced: the largest class is %.1f%sthe smallest.", ratio, "\xC3\x97 ");
+            v.balance = text;
+        }
+    }
+
+    // Original sizes and the Resize.
+    if (!widths.empty()) {
+        const auto [wmin, wmax] = std::minmax_element(widths.begin(), widths.end());
+        const auto [hmin, hmax] = std::minmax_element(heights.begin(), heights.end());
+        v.sizes.push_back({"Width", std::to_string(*wmin) + " to " + std::to_string(*wmax) + " px, median " + Median(widths)});
+        v.sizes.push_back({"Height", std::to_string(*hmin) + " to " + std::to_string(*hmax) + " px, median " + Median(heights)});
+        v.sizes.push_back({"Square", Thousands(square) + (square == 1 ? " image" : " images")});
+    }
+    if (in.resize_width > 0) {
+        v.sizes.push_back({"Resize " + std::to_string(in.resize_width) + kTimes + std::to_string(in.resize_height),
+                           ResizeNote(in, enlarged)});
+    } else {
+        v.sizes.push_back({"Resize", "This graph has no Resize node: training needs one to decode the images."});
+    }
+    v.widths = MakeHistogram(widths);
+    v.heights = MakeHistogram(heights);
+
+    // Prepared sets.
+    for (const auto& s : in.sets) {
+        SetRow row;
+        row.size = std::to_string(s.width) + kTimes + std::to_string(s.height) + kTimes + std::to_string(s.channels);
+        row.resize = s.mode;
+        for (const auto& f : s.fixed) row.fixed += (row.fixed.empty() ? "" : ", ") + f;
+        row.bytes = Bytes(s.bytes);
+        row.in_use = s.in_use;
+        v.sets.push_back(std::move(row));
+    }
+    if (!in.sets_listed) v.sets_note = "Reading cache/images...";
+    else if (in.sets.empty()) v.sets_note = "None yet: training decodes the images once at the Resize size and keeps them here.";
+    else v.sets_note = "Kept 30 days, at most 10 GB in all. A new Resize size or fixed transform makes a new set the first time training starts.";
+    return v;
+}
+
+}  // namespace cyxwiz::image_profile

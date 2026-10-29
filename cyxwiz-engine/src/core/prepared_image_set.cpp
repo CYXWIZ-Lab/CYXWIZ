@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -339,6 +340,7 @@ namespace {
 // What a set file says about its images besides the pixels.
 struct SetHeader {
     std::string key;
+    std::string folder, labels_csv;  // the image Data Input it was made from
     size_t height = 0, width = 0, channels = 3;
     std::string mode;
     std::vector<int> labels;
@@ -436,6 +438,8 @@ PreparedImageResult WriteImageSet(const fs::path& path, size_t count, size_t row
     json header;
     header["format"] = kFormat;
     header["key"] = meta.key;
+    header["folder"] = meta.folder;
+    header["labels_csv"] = meta.labels_csv;
     header["count"] = count;
     header["height"] = meta.height;
     header["width"] = meta.width;
@@ -527,6 +531,8 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     const auto finish = [&] {
         SetHeader meta;
         meta.key = key;
+        meta.folder = entry.folder_path;
+        meta.labels_csv = entry.labels_csv;
         meta.height = static_cast<size_t>(spec.height);
         meta.width = static_cast<size_t>(spec.width);
         meta.mode = ModeName(spec.mode);
@@ -565,8 +571,7 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     if (fixed.empty()) return PrepareImageSet(entry, spec, threads, progress);
     // Keyed on the decoded set's key: opened from the cache without decoding.
     const json identity = TransformIdentity(fixed);
-    const std::string key =
-        Hex(Fnv(Fnv(1469598103934665603ull, PreparedImageSetKey(entry, spec)), identity.dump()));
+    const std::string key = PreparedImageSetKeyFor(entry, spec, fixed);
     const fs::path path = PreparedImageSetPath(key);
     if (auto set = OpenCached(path, key)) {
         PreparedImageResult cached;
@@ -611,6 +616,8 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
     const auto finish = [&] {
         SetHeader meta;
         meta.key = key;
+        meta.folder = entry.folder_path;
+        meta.labels_csv = entry.labels_csv;
         meta.height = output.height;
         meta.width = output.width;
         meta.channels = output.channels;
@@ -633,6 +640,85 @@ PreparedImageResult PrepareImageSet(const DataRegistry::ImageDatasetEntry& entry
                      path.string());
     }
     return derived;
+}
+
+std::string PreparedImageSetKeyFor(const DataRegistry::ImageDatasetEntry& entry, const PreparedImageSpec& spec,
+                                   const std::vector<image::ImageOp>& fixed) {
+    const std::string decoded = PreparedImageSetKey(entry, spec);
+    if (fixed.empty()) return decoded;
+    return Hex(Fnv(Fnv(1469598103934665603ull, decoded), TransformIdentity(fixed).dump()));
+}
+
+namespace {
+
+// "Center Crop 64 x 64", "Gaussian Blur 5 x 5, sigma 1" from a header's fixed_transforms entry.
+std::string FixedTransformText(const json& op) {
+    static const char* kMorphology[] = {"Erode", "Dilate", "Open", "Close", "Gradient", "Top hat", "Black hat"};
+    const auto kind = static_cast<image::ImageOpKind>(op.value("kind", -1));
+    const int k = op.value("kernel_size", 0);
+    const std::string size = std::to_string(op.value("width", 0)) + " \xC3\x97 " + std::to_string(op.value("height", 0));
+    const std::string kernel = std::to_string(k) + " \xC3\x97 " + std::to_string(k);
+    switch (kind) {
+        case image::ImageOpKind::CenterCrop: return "Center Crop " + size;
+        case image::ImageOpKind::Grayscale: return "Grayscale";
+        case image::ImageOpKind::GaussianBlur: {
+            char sigma[32];
+            std::snprintf(sigma, sizeof(sigma), "%g", std::atof(op.value("sigma", std::string("0")).c_str()));
+            return "Gaussian Blur " + kernel + ", sigma " + sigma;
+        }
+        case image::ImageOpKind::Morphology: {
+            const int m = op.value("morphology", 0);
+            return std::string(m >= 0 && m < 7 ? kMorphology[m] : "Morphology") + " " + kernel;
+        }
+        default: return "transform";
+    }
+}
+
+bool SameFile(const std::string& a, const std::string& b) {
+    return fs::path(a).lexically_normal() == fs::path(b).lexically_normal();
+}
+
+}  // namespace
+
+std::vector<PreparedImageSetInfo> ListPreparedImageSets(const DataRegistry::ImageDatasetEntry& entry) {
+    std::vector<PreparedImageSetInfo> sets;
+    std::error_code ec;
+    const fs::path dir = ImageCacheDir("images");
+    if (!fs::is_directory(dir, ec)) return sets;
+    for (const auto& item : fs::directory_iterator(dir, ec)) {
+        if (!item.is_regular_file(ec) || item.path().extension() != kExtension) continue;
+        std::ifstream in(item.path(), std::ios::binary);
+        Preamble preamble{};
+        if (!in.read(reinterpret_cast<char*>(&preamble), sizeof(preamble))) continue;
+        if (std::memcmp(preamble.magic, kMagic, sizeof(kMagic)) != 0 || preamble.header_bytes == 0 ||
+            preamble.header_bytes > (64ull << 20))
+            continue;
+        std::string text(static_cast<size_t>(preamble.header_bytes), '\0');
+        in.seekg(static_cast<std::streamoff>(preamble.header_offset));
+        if (!in.read(text.data(), static_cast<std::streamsize>(text.size()))) continue;
+        try {
+            const json header = json::parse(text);
+            if (header.value("format", "") != kFormat) continue;
+            if (!SameFile(header.value("folder", ""), entry.folder_path) ||
+                header.value("labels_csv", "") != entry.labels_csv)
+                continue;
+            PreparedImageSetInfo info;
+            info.key = header.value("key", "");
+            info.path = item.path().string();
+            info.width = header.value("width", 0);
+            info.height = header.value("height", 0);
+            info.channels = header.value("channels", 0);
+            info.mode = header.value("mode", "");
+            for (const auto& op : header.value("fixed_transforms", json::array())) info.fixed.push_back(FixedTransformText(op));
+            info.bytes = static_cast<uint64_t>(fs::file_size(item.path(), ec));
+            sets.push_back(std::move(info));
+        } catch (const json::exception&) {
+        }
+    }
+    std::sort(sets.begin(), sets.end(), [](const auto& a, const auto& b) {
+        return a.bytes != b.bytes ? a.bytes > b.bytes : a.key < b.key;
+    });
+    return sets;
 }
 
 }  // namespace cyxwiz

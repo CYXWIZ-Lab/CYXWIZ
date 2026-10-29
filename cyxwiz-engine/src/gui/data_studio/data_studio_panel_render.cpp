@@ -414,7 +414,12 @@ void DataStudioPanel::RenderExplore() {
     ImGui::Spacing();
     switch (explore_tab_) {
         case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
-        case ExploreTab::Profile: if (profile_) profile_->Render(); break;
+        case ExploreTab::Profile:
+            if (profile_) {
+                if (node_editor_) profile_->SetLiveCompile(node_editor_->GetLiveCompile());
+                profile_->Render();
+            }
+            break;
         case ExploreTab::Missing: if (missing_) missing_->Render(MakeExploreContext()); break;
         case ExploreTab::Outliers: if (outliers_) outliers_->Render(MakeExploreContext()); break;
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;

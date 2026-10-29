@@ -18,6 +18,9 @@
 
 namespace cyxwiz {
 
+class ImageProfileView;
+class LiveGraphCompile;
+
 class ProfileView {
 public:
     ProfileView();
@@ -28,6 +31,9 @@ public:
     // Off where the view is embedded (the Data Input dialog): roles and
     // missing-value texts are set in Data Studio's Profile only.
     void SetRolesEditable(bool editable) { roles_editable_ = editable; }
+    // The canvas graph's compile: an image dataset's profile shows how its Resize
+    // treats the images and which prepared set it trains from.
+    void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
     void Reprofile();
     bool IsRunning() const { return task_id_ != 0; }
     float Progress() const { return progress_; }
@@ -75,6 +81,10 @@ private:
     char missing_buf_[256] = {};
     std::string missing_for_;
     std::string save_error_;
+    // An image dataset has its own profile (no columns to profile).
+    std::unique_ptr<ImageProfileView> image_;
+    bool images_ = false;
+    const LiveGraphCompile* live_compile_ = nullptr;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

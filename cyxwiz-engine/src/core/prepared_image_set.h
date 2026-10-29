@@ -56,6 +56,24 @@ inline PreparedImageSpec PreparedImageSpecFrom(const ImagePreprocessingConfig& c
             config.resize_mode == ResizeMode::None ? ResizeMode::Exact : config.resize_mode};
 }
 
+// A prepared set in the cache, as its header describes it (Data Studio's
+// image Profile lists them).
+struct PreparedImageSetInfo {
+    std::string key;
+    std::string path;
+    int width = 0, height = 0, channels = 0;
+    std::string mode;                // "exact", "fit", "fill", "center"
+    std::vector<std::string> fixed;  // the transforms done once ("Center Crop 64 x 64")
+    uint64_t bytes = 0;              // the file's size
+};
+// The sets in the cache made from this entry's folder and labels, largest
+// first. Sets written before their header named the folder are not listed.
+std::vector<PreparedImageSetInfo> ListPreparedImageSets(const DataRegistry::ImageDatasetEntry& entry);
+// The key PrepareImageSet gives the set for entry, spec and fixed transforms
+// (lists every file, like PrepareImageSet).
+std::string PreparedImageSetKeyFor(const DataRegistry::ImageDatasetEntry& entry, const PreparedImageSpec& spec,
+                                   const std::vector<image::ImageOp>& fixed);
+
 // One file decoded to uint8 RGB [height, width, 3] at `spec`, as training
 // sees it: exact stretches to the size; fit scales to fit inside and pads
 // with black; fill scales to cover and crops the centre; center crops (or

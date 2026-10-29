@@ -277,6 +277,7 @@ public:
     // The background compile of this graph (TOFIX123): link tooltips show
     // the compiler's reason for a failed node. Owned by MainWindow.
     void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+    const cyxwiz::LiveGraphCompile* GetLiveCompile() const { return live_compile_; }
     // The last Local Debug run against this graph, for the canvas bar
     // (TOFIX178 UI-1); MainWindow sets it every frame.
     void SetLocalDebugStatus(const cyxwiz::studio_toolbar::DebugInputs& status, bool require_debug) {

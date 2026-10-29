@@ -271,6 +271,22 @@ void CheckFixedTransforms(const DataRegistry::ImageDatasetEntry& entry) {
     batcher.SetImageTransforms(split.per_batch);
     const auto batch = batcher.GetNextBatch();
     Check(batch.data.Shape() == std::vector<size_t>({batch.size, 8, 12, 1}), "the batcher reads one channel");
+
+    // The cache lists the sets made from this folder, with the key the graph would use.
+    Check(PreparedImageSetKeyFor(entry, spec, fixed) == again.set->Key(), "the key for spec + fixed is the set's");
+    Check(PreparedImageSetKeyFor(entry, spec, {}) == PreparedImageSetKey(entry, spec), "no fixed: the decoded key");
+    const auto listed = ListPreparedImageSets(entry);
+    const auto it = std::find_if(listed.begin(), listed.end(), [&](const auto& s) { return s.key == again.set->Key(); });
+    Check(it != listed.end(), "the done-once set is listed for its folder");
+    Check(it->width == 12 && it->height == 8 && it->channels == 1 && it->mode == "exact" &&
+              it->bytes == fs::file_size(derived_path),
+          "listed with its size, mode and bytes");
+    Check(it->fixed == std::vector<std::string>({"Center Crop 12 \xC3\x97 8", "Grayscale", "Erode 3 \xC3\x97 3",
+                                                 "Gaussian Blur 3 \xC3\x97 3, sigma 0.8"}),
+          "listed with its transforms: " + (it->fixed.empty() ? std::string() : it->fixed.back()));
+    DataRegistry::ImageDatasetEntry other = entry;
+    other.folder_path += "_elsewhere";
+    Check(ListPreparedImageSets(other).empty(), "another folder lists none of them");
 }
 
 void CheckChangesAndStops(const fs::path& folder, const DataRegistry::ImageDatasetEntry& entry) {
