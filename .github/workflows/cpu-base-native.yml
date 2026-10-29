@@ -252,6 +252,7 @@ jobs:
           cyxwiz-route-probe
           cyxwiz-plugin-check
           cyxwiz-nvidia-provider
+          cyxwiz-cli
           pycyxwiz
 
       - name: Download pinned redistribution inputs
@@ -499,6 +500,7 @@ jobs:
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
           cyxwiz-plugin-check
+          cyxwiz-cli
           pycyxwiz
 
       - name: Normalize ArrayFire redistribution input

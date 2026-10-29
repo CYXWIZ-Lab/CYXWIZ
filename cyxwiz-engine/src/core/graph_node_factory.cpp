@@ -1444,45 +1444,9 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::TSNENode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Embedded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n_components"] = "2";
-            node.parameters["perplexity"] = "30";
-            node.parameters["learning_rate"] = "200";
-            break;
-        }
-
+        case NodeType::TSNENode:
         case NodeType::UMAPNode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Embedded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n_components"] = "2";
-            node.parameters["n_neighbors"] = "15";
-            node.parameters["min_dist"] = "0.1";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

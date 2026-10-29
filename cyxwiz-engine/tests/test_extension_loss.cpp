@@ -12,6 +12,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
 #include "../src/core/graph_training_job.h"
+#include "../src/core/pipeline_runtime_capabilities.h"
 #include "route_qualification_test_fixture.h"
 
 #include <arrow/api.h>
@@ -365,6 +366,25 @@ int main() {
         Check(regression.target.value_kind == cyxwiz::TargetValueKind::Continuous &&
                   cyxwiz::UsesContinuousTargetMetrics(regression),
               "continuous targets: regression metrics");
+    }
+
+    std::cout << "the toolbar's Train check counts an extension loss\n";
+    {
+        cyxwiz::GraphDocument document;
+        std::string error;
+        cyxwiz::ParseGraphDocument(Graph(false, "CrossEntropy", gui::NodeType::CrossEntropyLoss).dump(), document,
+                                   error);
+        Check(cyxwiz::HasTrainingGraphStructure(document.nodes, cyxwiz::ExtensionTrainingRole),
+              "built-in layers + an extension loss: Train is offered");
+        Check(!cyxwiz::HasTrainingGraphStructure(document.nodes),
+              "without the extension classifier the loss is not seen (the installer's build)");
+        const auto loss_role = [&]() -> std::optional<cyxwiz::PipelineTrainingSupportRole> {
+            for (const auto& node : document.nodes) {
+                if (node.id == kLossNodeId) return cyxwiz::ExtensionTrainingRole(node);
+            }
+            return std::nullopt;
+        }();
+        Check(loss_role == cyxwiz::PipelineTrainingSupportRole::Loss, "the extension loss node's role is Loss");
     }
 
     std::cout << "code export refuses an extension loss, naming it\n";

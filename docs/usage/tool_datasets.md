@@ -17,15 +17,17 @@ Everything else reads what Data Input nodes loaded.
   Precision-Recall Curve, Learning Curves) opens Data Studio's Results views
   (see [Data Studio > Results](data_studio.md#results)); they are no longer
   separate windows.
+- **Tools > Clustering and Projection** opens Data Studio's Groups tab (K-Means,
+  DBSCAN, Hierarchical, Gaussian mixture, Cluster Evaluation) or Projection tab
+  (PCA / t-SNE / UMAP) on the data in use (see [Data Studio > Groups](data_studio.md#groups));
+  they are no longer separate windows.
 - **Data > Transform** adds a scaling, log or power step after that dataset
   in Data Studio's Prepare (see [scaling and transforms](data_transforms.md));
   the Transform windows are gone.
 
 ## The Dataset dropdown
 
-Every analysis tool has the same Dataset dropdown as Data Studio:
-- Tools > Clustering and Projection
-- Tools > Evaluation > Feature Importance
+Feature Importance (Tools > Evaluation) has the same Dataset dropdown as Data Studio.
 
 It lists:
 - datasets loaded by Data Input nodes, shown with the node's name

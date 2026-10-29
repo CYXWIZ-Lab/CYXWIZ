@@ -404,7 +404,8 @@ void DataStudioPanel::RenderExplore() {
     static const std::pair<const char*, ExploreTab> kTabs[] = {
         {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Images", ExploreTab::Images}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
-        {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression}, {"Visualize", ExploreTab::Visualize}};
+        {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression},
+        {"Groups", ExploreTab::Groups}, {"Projection", ExploreTab::Projection}, {"Visualize", ExploreTab::Visualize}};
     const auto picked = DatasetCatalog::Instance().Resolve(active_dataset_);
     const bool images = picked && picked->modality == DatasetModality::Image &&
                         picked->storage != DatasetStorageKind::InMemoryArrow &&
@@ -440,6 +441,8 @@ void DataStudioPanel::RenderExplore() {
         case ExploreTab::Distribution: if (distribution_) distribution_->Render(MakeExploreContext()); break;
         case ExploreTab::Tests: if (tests_) tests_->Render(MakeExploreContext()); break;
         case ExploreTab::Regression: if (regression_) regression_->Render(MakeExploreContext()); break;
+        case ExploreTab::Groups: if (groups_) groups_->Render(MakeExploreContext()); break;
+        case ExploreTab::Projection: if (projection_) projection_->Render(MakeExploreContext()); break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
     }
 }
@@ -455,6 +458,8 @@ void DataStudioPanel::RenderStatusBar() {
     else if (distribution_ && distribution_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting distributions");
     else if (tests_ && tests_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Testing");
     else if (regression_ && regression_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting");
+    else if (groups_ && groups_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Grouping");
+    else if (projection_ && projection_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Projecting");
     else if (results_ && results_->CrossValidation()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Cross-validating");
     else if (results_ && results_->LearningCurve()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Learning curve");
     else if (results_ && results_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the test");

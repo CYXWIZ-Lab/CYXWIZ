@@ -13,10 +13,9 @@ namespace cyxwiz {
  * PipelineOperatorFactory — Category 1 factory.
  *
  * Maps gui::NodeType to a creator that builds a fresh IPipelineOperator
- * instance on demand. Unlike NodeExecutorFactory (Cat-2, which caches one
- * persistent UI executor per type) this factory hands out NEW instances per
- * call: pipeline operators carry per-evaluation state (configured params,
- * computed schemas) and are short-lived during graph execution.
+ * instance on demand: a NEW instance per call, because pipeline operators
+ * carry per-evaluation state (configured params, computed schemas) and are
+ * short-lived during graph execution.
  *
  * Register new operators by calling RegisterCreator from a Phase 4+ node's
  * own translation unit, or extend RegisterDefaults() in the .cpp.

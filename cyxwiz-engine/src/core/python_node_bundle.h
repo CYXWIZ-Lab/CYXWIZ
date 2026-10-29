@@ -37,8 +37,9 @@ struct PythonBundle {
 // one Tensor out, or node.py changed since the bundle was written.
 bool ReadPythonBundle(const std::filesystem::path& folder, PythonBundle& out, std::string& error);
 
-// The *.cyxnode folders directly inside each root, sorted by path. Missing
-// roots are skipped.
+// The *.cyxnode folders directly inside each root: root by root in the
+// order given (a bundle of an earlier root wins an id clash), sorted by
+// path within a root. Missing roots are skipped.
 std::vector<std::filesystem::path> FindPythonBundles(const std::vector<std::filesystem::path>& roots);
 
 // %APPDATA%\cyxwiz\nodes on Windows, ~/.cyxwiz/nodes elsewhere.

@@ -1,11 +1,11 @@
-#include "node_type_import_registry.h"
+﻿#include "node_type_import_registry.h"
 
 #include <array>
 
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 215> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 217> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -182,6 +182,8 @@ constexpr std::array<NodeTypeImportName, 215> kNodeTypeImportNames = {{
         {"DBSCANCluster", NodeType::DBSCANCluster},
         {"HierarchicalCluster", NodeType::HierarchicalCluster},
         {"GMMCluster", NodeType::GMMCluster},
+        {"TSNENode", NodeType::TSNENode},
+        {"UMAPNode", NodeType::UMAPNode},
         {"LinearRegressionNode", NodeType::LinearRegressionNode},
         {"PolynomialRegressionNode", NodeType::PolynomialRegressionNode},
         {"DecisionTreeClassifier", NodeType::DecisionTreeClassifier},

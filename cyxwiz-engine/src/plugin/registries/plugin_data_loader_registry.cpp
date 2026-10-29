@@ -18,8 +18,9 @@ void PluginDataLoaderRegistry::Register(const std::string& plugin_id, IDataProvi
     std::lock_guard lock(mutex_);
 
     for (auto& info : loaders) {
-        if (loaders_.count(info.loader_id)) {
-            spdlog::warn("PluginDataLoaderRegistry: Duplicate loader {}, skipping", info.loader_id);
+        if (const auto it = loaders_.find(info.loader_id); it != loaders_.end()) {
+            if (it->second.plugin_id != plugin_id || it->second.provider != provider)
+                spdlog::warn("PluginDataLoaderRegistry: Duplicate loader {}, skipping", info.loader_id);
             continue;
         }
 
@@ -32,7 +33,10 @@ void PluginDataLoaderRegistry::Register(const std::string& plugin_id, IDataProvi
 
         spdlog::info("PluginDataLoaderRegistry: Registered loader '{}' ({})",
                      info.format_name, info.loader_id);
-        loaders_[info.loader_id] = LoaderEntry{plugin_id, std::move(info), provider};
+        // The key first: the right side (which moves info) is evaluated
+        // before the subscript (C++17), which would read an empty id.
+        const std::string loader_id = info.loader_id;
+        loaders_[loader_id] = LoaderEntry{plugin_id, std::move(info), provider};
     }
 }
 

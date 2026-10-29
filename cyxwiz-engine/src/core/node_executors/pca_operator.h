@@ -60,6 +60,7 @@ private:
     int n_components_ = 2;
     bool center_ = true;
     bool scale_ = false;
+    bool keep_columns_ = false;  // the input with pc_* beside it, else pc_* (and y) alone
     PipelineOperatorProgressCallback progress_callback_;
 };
 

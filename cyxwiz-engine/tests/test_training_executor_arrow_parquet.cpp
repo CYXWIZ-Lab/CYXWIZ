@@ -1723,11 +1723,27 @@ public:
         epoch_end_val_losses.push_back(context.val_loss);
     }
 
+    void OnBatchStart(cyxwiz::plugin::TrainingContext& context) override {
+        batch_starts.push_back({context.current_epoch, context.current_batch});
+        batch_totals.push_back(context.total_batches);
+    }
+
+    void OnBatchEnd(cyxwiz::plugin::TrainingContext& context) override {
+        batch_ends.push_back({context.current_epoch, context.current_batch});
+        batch_end_losses.push_back(context.train_loss);
+        batch_total_epochs.push_back(context.total_epochs);
+    }
+
     int training_start_count = 0;
     int training_end_count = 0;
     std::vector<int> epoch_start_epochs;
     std::vector<int> epoch_end_epochs;
     std::vector<float> epoch_end_val_losses;
+    std::vector<std::pair<int, int>> batch_starts;  // (epoch, batch)
+    std::vector<std::pair<int, int>> batch_ends;
+    std::vector<int> batch_totals;
+    std::vector<float> batch_end_losses;
+    std::vector<int> batch_total_epochs;
 };
 
 void TestValidationEarlyStoppingLifecycle(
@@ -1804,6 +1820,22 @@ void TestValidationEarlyStoppingLifecycle(
               std::isfinite(hook.epoch_end_val_losses[0]) &&
               std::isfinite(hook.epoch_end_val_losses[1]),
           label + " should publish validation values to both epoch-end hooks");
+    // OnBatchStart / OnBatchEnd (TOFIX125 hardening): every training batch of
+    // both epochs, numbered 1..total in order, the end with its loss.
+    {
+        const int per_epoch = hook.batch_totals.empty() ? 0 : hook.batch_totals.front();
+        std::vector<std::pair<int, int>> expected;
+        for (int epoch = 1; epoch <= 2; ++epoch)
+            for (int batch = 1; batch <= per_epoch; ++batch) expected.push_back({epoch, batch});
+        Check(per_epoch > 0 && hook.batch_starts == expected && hook.batch_ends == expected,
+              label + " should call OnBatchStart and OnBatchEnd for every training batch, in order");
+        bool losses_finite = !hook.batch_end_losses.empty();
+        for (float loss : hook.batch_end_losses) losses_finite = losses_finite && std::isfinite(loss);
+        Check(losses_finite, label + " should give OnBatchEnd the batch loss");
+        bool totals = true;
+        for (int total : hook.batch_total_epochs) totals = totals && total == 5;
+        Check(totals, label + " should give batch hooks the run's epoch count");
+    }
 
     if (save_best_checkpoint) {
         Check(!final_metrics.checkpoint_used.empty(),

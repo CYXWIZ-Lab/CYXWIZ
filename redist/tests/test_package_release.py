@@ -62,6 +62,7 @@ class PackageReleaseTests(unittest.TestCase):
             "cyxwiz-route-probe.exe",
             "cyxwiz-installer.exe",
             "cyxwiz-runtime-bootstrapper.exe",
+            "cyxwiz-cli.exe",
             "cyxwiz-product-removal-finalizer.exe",
             "cyxwiz-backend-pack-installer.exe",
             "cyxwiz-plugin-check.exe",
@@ -587,15 +588,29 @@ class PackageReleaseTests(unittest.TestCase):
         destination = self.root / "sdk-stage" / "sdk"
         calls = []
 
-        def fake_run(command, **_kwargs):
-            calls.append(command)
-            for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
-                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
-                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
-                (destination / relative).write_text(relative, encoding="ascii")
-            return subprocess.CompletedProcess(command, 0, "")
+        backend_library = {"win32": "cyxwiz-backend.lib", "darwin": "libcyxwiz-backend.dylib"}.get(
+            sys.platform, "libcyxwiz-backend.so")
 
-        with mock.patch.object(package_release.subprocess, "run", fake_run):
+        def fake_install(with_library):
+            def fake_run(command, **_kwargs):
+                calls.append(command)
+                files = ["LICENSE", "NOTICE", "include/plugin/plugin_types.h",
+                         "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"]
+                if with_library:
+                    files.append("lib/" + backend_library)
+                for relative in files:
+                    (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                    (destination / relative).write_text(relative, encoding="ascii")
+                return subprocess.CompletedProcess(command, 0, "")
+            return fake_run
+
+        # The library plugins link is required (1.0.7's Linux and macOS SDKs
+        # lacked it: the install copied a symlink that packaging dropped).
+        with mock.patch.object(package_release.subprocess, "run", fake_install(False)):
+            with self.assertRaisesRegex(package_release.PackageError, "backend library"):
+                REAL_INSTALL_PLUGIN_SDK(paths, destination)
+        calls.clear()
+        with mock.patch.object(package_release.subprocess, "run", fake_install(True)):
             REAL_INSTALL_PLUGIN_SDK(paths, destination)
         self.assertEqual(
             ["cmake", "--install", str(build_root.resolve()), "--config", "Release",

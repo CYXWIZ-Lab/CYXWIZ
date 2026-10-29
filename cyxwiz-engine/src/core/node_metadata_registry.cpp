@@ -1173,7 +1173,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::PivotTable, NodeCategory::DataTransform, "Pivot Table", {"table", "pivot"}},
         {NodeType::UnionTables, NodeCategory::DataTransform, "Union Tables", {"table", "union"}},
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
-        {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
@@ -1895,7 +1894,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"init", "enum", "kmeans++", "Centroid initialization", {"kmeans++", "random"}, ""},
          {"n_init", "int", "10", "Independent initializations; retains the lowest-inertia fit", {}, "1-2147483647"},
          {"tol", "float", "0.0001", "Convergence tolerance", {}, ""},
-         {"seed", "int", "0", "Random seed; 0 selects nondeterministic initialization", {}, "0-2147483647"}},
+         {"seed", "int", "0", "Random seed; 0 selects nondeterministic initialization", {}, "0-2147483647"},
+         {"standardise", "bool", "false", "Scale each feature to z-scores before fitting (Explore > Groups does)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DBSCANCluster, NodeCategory::Analytics, "DBSCAN", ICON_FA_CIRCLE_NODES,
@@ -1908,7 +1908,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"label_col", "string", "", "Optional label column excluded from automatic feature detection", {}, "", "Label column", "Columns"},
          {"eps", "float", "0.5", "Positive neighborhood radius", {}, ""},
          {"min_samples", "int", "5", "Minimum neighborhood size for a core point", {}, "1-2147483647"},
-         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
+         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""},
+         {"standardise", "bool", "false", "Scale each feature to z-scores before fitting (Explore > Groups does)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::HierarchicalCluster, NodeCategory::Analytics, "Hierarchical Clustering", ICON_FA_SITEMAP,
@@ -1921,32 +1922,53 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"label_col", "string", "", "Optional label column excluded from automatic feature detection", {}, "", "Label column", "Columns"},
          {"n_clusters", "int", "3", "Number of clusters", {}, "1-2147483647"},
          {"linkage", "enum", "ward", "Linkage method", {"ward", "complete", "average", "single"}, ""},
-         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
+         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""},
+         {"standardise", "bool", "false", "Scale each feature to z-scores before fitting (Explore > Groups does)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     // Dimensionality Reduction
     RegisterNode({NodeType::PCANode, NodeCategory::Analytics, "PCA", ICON_FA_COMPRESS,
         {"pca", "principal", "dimensionality"}, 0, false,
         "Project numeric features onto principal components",
-        "Emits Float32 pc_0..pc_n columns and, when Label column is set, passes labels through as Int32 y.", "",
+        "With Keep columns on, adds Float64 pc_0..pc_n beside the input columns (null on rows missing a feature); otherwise emits Float32 pc_0..pc_n alone for the rows with every feature, with the label passed through as Int32 y.", "",
         {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
-        {{"Transformed", PinType::Dataset, true, "Principal-component columns plus optional y"}},
+        {{"Transformed", PinType::Dataset, true, "Input plus pc_* columns, or pc_* (and y) alone"}},
         {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
          {"label_col", "string", "", "Optional label column passed through as y and excluded from automatic features", {}, "", "Label column", "Columns"},
          {"n_components", "int", "2", "Number of principal components", {}, "1-2147483647"},
          {"center", "bool", "true", "Subtract each feature mean before projection", {}, ""},
-         {"scale", "bool", "false", "Scale each feature to unit variance before projection", {}, ""}},
+         {"scale", "bool", "false", "Scale each feature to unit variance before projection", {}, ""},
+         {"keep_columns", "bool", "false", "Keep the input columns and add pc_* beside them", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TSNENode, NodeCategory::Analytics, "t-SNE", ICON_FA_DIAGRAM_PROJECT,
-        {"tsne", "visualization", "embedding"}, 0, false, "t-SNE visualization",
-        "Non-linear dimensionality reduction for visualization.", "",
-        {{"Data", PinType::Dataset, true, "Input data matrix"}},
-        {{"Embedding", PinType::Dataset, true, "2D/3D embedding"}},
-        {{"n_components", "int", "2", "Output dimensions", {}, "2-3"},
-         {"perplexity", "float", "30.0", "Perplexity", {}, "5-50"},
-         {"learning_rate", "float", "200.0", "Learning rate", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"tsne", "t-sne", "visualization", "embedding", "projection"}, 0, false, "Embed rows in 2 or 3 dimensions (t-SNE)",
+        "Exact t-SNE of the chosen numeric columns (scikit-learn's method=exact, init=pca), standardised by default; adds tsne_0..tsne_n beside the input (null on rows missing a feature). Every row is compared with every other, so large tables need sampling first.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
+        {{"Embedded", PinType::Dataset, true, "Input plus tsne_* columns, or tsne_* alone"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional column excluded from automatic feature detection", {}, "", "Label column", "Columns"},
+         {"n_components", "int", "2", "Output dimensions (2 or 3)", {}, "2-3"},
+         {"perplexity", "int", "30", "About how many neighbours each row keeps close; below the rows used", {}, "1-2147483647"},
+         {"learning_rate", "float", "200", "Step size of the layout", {}, ""},
+         {"iterations", "int", "1000", "Steps of the layout (the first 250 exaggerate early clusters)", {}, "250-2147483647"},
+         {"standardise", "bool", "true", "Scale each feature to z-scores first", {}, ""},
+         {"keep_columns", "bool", "true", "Keep the input columns and add tsne_* beside them", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", ICON_FA_DIAGRAM_PROJECT,
+        {"umap", "dimension", "embedding", "projection"}, 0, false, "Embed rows in 2 or 3 dimensions (UMAP)",
+        "UMAP of the chosen numeric columns (umap-learn's fuzzy graph and a / b curve, PCA start), standardised by default; adds umap_0..umap_n beside the input (null on rows missing a feature).", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
+        {{"Embedded", PinType::Dataset, true, "Input plus umap_* columns, or umap_* alone"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional column excluded from automatic feature detection", {}, "", "Label column", "Columns"},
+         {"n_components", "int", "2", "Output dimensions (2 or 3)", {}, "2-3"},
+         {"n_neighbors", "int", "15", "Neighbours (the row itself included) that shape the layout", {}, "2-2147483647"},
+         {"min_dist", "float", "0.1", "How tightly points may pack together", {}, ""},
+         {"standardise", "bool", "true", "Scale each feature to z-scores first", {}, ""},
+         {"keep_columns", "bool", "true", "Keep the input columns and add umap_* beside them", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     // Classification
     RegisterNode({NodeType::DecisionTreeClassifier, NodeCategory::Analytics, "Decision Tree", ICON_FA_SITEMAP,
@@ -4907,7 +4929,7 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
     RegisterNode({NodeType::GMMCluster, NodeCategory::Analytics, "GMM Clustering", ICON_FA_CHART_PIE,
         {"gmm", "gaussian", "mixture", "clustering", "soft"}, 0, false,
         "Assign rows using a Gaussian mixture model",
-        "Fits a Gaussian mixture to selected numeric features and appends hard Int32 cluster_id assignments; component probabilities are not emitted.", "",
+        "Fits a Gaussian mixture to selected numeric features and appends Int32 cluster_id; with Probabilities on, also probability_0..k-1 (each row's chance of each component). Rows missing a feature get nulls.", "",
         {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
         {{"Clustered", PinType::Dataset, true, "Input table plus cluster_id"}},
         {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
@@ -4917,7 +4939,9 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
          {"max_iter", "int", "100", "Maximum fit iterations", {}, "1-2147483647"},
          {"tol", "float", "0.001", "Convergence tolerance", {}, ""},
          {"n_init", "int", "1", "Independent initializations", {}, "1-2147483647"},
-         {"seed", "int", "0", "Random seed; 0 selects nondeterministic initialization", {}, "0-2147483647"}},
+         {"seed", "int", "0", "Random seed; 0 selects nondeterministic initialization", {}, "0-2147483647"},
+         {"standardise", "bool", "false", "Scale each feature to z-scores before fitting (Explore > Groups does)", {}, ""},
+         {"probabilities", "bool", "false", "Also add probability_0..k-1, each row's chance of each component", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Convolution1D, NodeCategory::Signal, "Convolution 1D", ICON_FA_WAVE_SQUARE,

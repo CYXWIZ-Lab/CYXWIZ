@@ -2,7 +2,7 @@
   "version": "2.1",
   "data_boundary_version": 2,
   "framework": 0,
-  "execution_mode": 1,
+  "execution_mode": 2,
   "workflow_description": "Python example layers (the SDK's builtin-layers bundle) fed by a Data Input: Dense 16 -> ReLU -> Layer Norm -> Dense 4 -> Cross Entropy, all Python, trained with Adam on four blobs. Install and approve the bundle (Plugin Manager > Python node bundles) first.",
   "annotations": [],
   "groups": [],

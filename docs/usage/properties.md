@@ -79,7 +79,3 @@ the compiler's verdict and the fix when it will not compile.
 Position and connections, then **Raw parameters**: every key the graph file
 stores for this node, its value, which setting it maps to, the cleanup
 advice, and **Remove** where the rules allow it.
-
-## K-Means
-
-A K-Means node keeps its executor section (Configuration, Results) below.

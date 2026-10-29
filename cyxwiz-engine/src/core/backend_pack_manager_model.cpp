@@ -371,6 +371,43 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
   return plan;
 }
 
+std::vector<std::string> OptionalPacksForThisComputer(
+    const std::vector<BackendPackManagerRecord> &records,
+    const std::vector<std::string> &selected_pack_ids) {
+  std::vector<std::string> backends;
+  for (const auto &record : records) {
+    if (record.backend == "cpu" || record.installed || !record.compatibility) continue;
+    if (record.compatibility->eligibility != runtime::BackendPackEligibility::Compatible ||
+        !record.compatibility->recommendation_target_eligible) {
+      continue;
+    }
+    if (std::find(selected_pack_ids.begin(), selected_pack_ids.end(), record.pack_id) !=
+        selected_pack_ids.end()) {
+      continue;
+    }
+    if (std::find(backends.begin(), backends.end(), record.backend) == backends.end()) {
+      backends.push_back(record.backend);
+    }
+  }
+  return backends;
+}
+
+std::filesystem::path ParseInstallLocationText(std::string_view text) {
+  const auto trim = [](std::string_view value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos) return std::string_view{};
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+  };
+  text = trim(text);
+  if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'') &&
+      text.back() == text.front()) {
+    text = trim(text.substr(1, text.size() - 2));
+  }
+  return std::filesystem::path(std::u8string(
+      reinterpret_cast<const char8_t *>(text.data()), text.size()));
+}
+
 CyxWizInstallLocation
 ResolveCyxWizInstallLocation(std::filesystem::path install_root,
                              CyxWizInstallScope scope) {

@@ -92,7 +92,6 @@ private:
     void RenderCompiledCard(MLNode& node);
     void RenderFusionCard(MLNode& node);
     // Node executor integration (K-Means)
-    void RenderExecutorSection(MLNode& node);
 
     bool show_window_;
     MLNode* selected_node_ = nullptr;

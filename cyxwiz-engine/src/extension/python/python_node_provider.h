@@ -13,6 +13,7 @@
 // - A bundle that cannot be read is reported in Issues(); its nodes are not
 //   registered (a graph using them shows them as not installed).
 
+#include "../../core/graph_model.h"
 #include "../../core/python_node_approvals.h"
 #include "../../core/python_node_bundle.h"
 
@@ -49,6 +50,10 @@ public:
     void Clear();
 
     const std::vector<PythonBundleState>& Bundles() const { return bundles_; }
+
+    // True when one of these nodes comes from a bundle of this provider
+    // whose code is approved: the graph will need Python.
+    bool UsesApprovedNode(const std::vector<gui::MLNode>& nodes) const;
     const std::vector<PythonBundleIssue>& Issues() const { return issues_; }
 
     // "<project>/nodes"

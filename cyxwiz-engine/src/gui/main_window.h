@@ -67,18 +67,12 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
 class NASPanel;
 class HyperparamSearchPanel;
 class ServingPanel;
 class DNNInferencePanel;
-class KMeansPanel;
-class DBSCANPanel;
-class HierarchicalPanel;
-class GMMPanel;
-class ClusterEvalPanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
@@ -223,6 +217,7 @@ private:
     // Status bar height follows the interface text size (TOFIX129).
     static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
+    void RenderPythonRestartNotice();
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
@@ -383,7 +378,14 @@ private:
     std::unique_ptr<cyxwiz::PythonNodeProvider> python_node_provider_;
     double python_nodes_checked_at_ = -1.0;
     std::string python_start_error_logged_;
+    bool graph_needs_python_ = false;  // the open graph uses an approved Python node
     void UpdatePythonNodes();
+    // The running interpreter follows the open project's environment: moved
+    // in place when it can be, otherwise a restart is asked for.
+    void SyncProjectPython();
+    std::string python_restart_reason_;  // non-empty: this project needs a restart
+    std::string python_restart_project_; // the project that verdict is for
+    bool python_sync_pending_ = false;   // a project closed: sync on the next frame
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
@@ -418,7 +420,6 @@ private:
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    std::unique_ptr<cyxwiz::DimReductionPanel> dim_reduction_panel_;
     std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
@@ -427,11 +428,6 @@ private:
     std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
-    std::unique_ptr<cyxwiz::KMeansPanel> kmeans_panel_;
-    std::unique_ptr<cyxwiz::DBSCANPanel> dbscan_panel_;
-    std::unique_ptr<cyxwiz::HierarchicalPanel> hierarchical_panel_;
-    std::unique_ptr<cyxwiz::GMMPanel> gmm_panel_;
-    std::unique_ptr<cyxwiz::ClusterEvalPanel> cluster_eval_panel_;
 
     // Model Evaluation panels (Phase 6B)
 

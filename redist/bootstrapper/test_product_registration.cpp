@@ -154,6 +154,9 @@ void TestNativeRegistration() {
               !std::filesystem::exists(
                   install_root / "CyxWiz Installer.app"),
           "macOS unregistration must remove exact managed bundles");
+    Check(!cyxwiz::runtime::RegisteredInstallRoot(
+              cyxwiz::runtime::ProductInstallScope::CurrentUser),
+          "macOS keeps no registration outside the install root");
 #else
     const auto data_home = temporary.path() / "xdg-data";
     Check(::setenv("XDG_DATA_HOME", data_home.c_str(), 1) == 0,
@@ -172,6 +175,11 @@ void TestNativeRegistration() {
                   std::string::npos &&
               installer.find(" --installer\n") != std::string::npos,
           "Linux must register separate Engine and maintenance launch entries");
+    std::filesystem::create_directories(install_root / "runtime");
+    const auto found = cyxwiz::runtime::RegisteredInstallRoot(
+        cyxwiz::runtime::ProductInstallScope::CurrentUser);
+    Check(found && *found == install_root.lexically_normal(),
+          "The installer must find the registered Linux installation root");
     const auto unregistered =
         cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
     Check(unregistered.unregistered &&
@@ -180,6 +188,9 @@ void TestNativeRegistration() {
               !std::filesystem::exists(
                   applications / "cyxwiz-installer.desktop"),
           "Linux unregistration must remove exact managed desktop entries");
+    Check(!cyxwiz::runtime::RegisteredInstallRoot(
+              cyxwiz::runtime::ProductInstallScope::CurrentUser),
+          "No installation root is found after unregistration");
 #endif
 
     const auto repeated =

@@ -6,6 +6,7 @@
 #include "gradient_boosting_operator.h"
 #include "identity_operator.h"
 #include "pca_operator.h"
+#include "projection_operators.h"
 #include "preprocessing_operators.h"
 #include "random_forest_operator.h"
 #include "naive_bayes_operator.h"
@@ -87,6 +88,13 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // Cat-2 introspection panels).
     RegisterCreator(gui::NodeType::PCANode, []() {
         return std::make_unique<PCAOperator>();
+    });
+    // t-SNE and UMAP embeddings (TOFIX129 D5), beside the input columns.
+    RegisterCreator(gui::NodeType::TSNENode, []() {
+        return std::make_unique<TSNEOperator>();
+    });
+    RegisterCreator(gui::NodeType::UMAPNode, []() {
+        return std::make_unique<UMAPOperator>();
     });
     // Tool-to-Node text analytics: SentimentAnalyzer (lexicon-based,
     // zero-dependency; pretrained BERT-style models deferred to tofix).

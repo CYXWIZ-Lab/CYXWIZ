@@ -228,8 +228,10 @@ set(ENGINE_SOURCES
     src/core/data_explore.cpp
     src/core/explore_presentation.cpp
     src/core/transform_step_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
+    src/core/groups_explore.cpp
+    src/core/groups_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -298,7 +300,6 @@ set(ENGINE_SOURCES
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
-    src/core/node_executors/kmeans_executor.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/time_series_window_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/time_series_segment_operator.cpp # Gap-safe segments
@@ -318,6 +319,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/pca_operator.cpp                 # Tool-to-Node Band 1
     src/core/node_executors/sentiment_analyzer_operator.cpp  # Tool-to-Node Band 1
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp    # Tool-to-Node Band 1
     src/core/node_executors/tree_model_artifact.cpp          # Tool-to-Node Band 1
     src/core/node_executors/decision_tree_model.cpp          # Tool-to-Node Band 1
@@ -432,7 +435,6 @@ set(ENGINE_SOURCES
     src/gui/guided_editor.cpp
     src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
-    src/gui/properties_executor.cpp
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_extension_node.cpp
@@ -652,7 +654,6 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/dim_reduction_panel.cpp
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/nas_panel.cpp
@@ -661,11 +662,6 @@ set(ENGINE_SOURCES
     src/gui/panels/serving_panel.cpp
     src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
-    src/gui/panels/kmeans_panel.cpp
-    src/gui/panels/dbscan_panel.cpp
-    src/gui/panels/hierarchical_panel.cpp
-    src/gui/panels/gmm_panel.cpp
-    src/gui/panels/cluster_eval_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
     src/gui/panels/eigen_decomp_panel.cpp
     src/gui/panels/svd_panel.cpp
@@ -715,6 +711,7 @@ set(ENGINE_SOURCES
     src/data/table_text_export.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
+    src/scripting/python_environment.cpp
     src/scripting/script_manager.cpp
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
@@ -767,6 +764,8 @@ set(ENGINE_SOURCES
     src/gui/data_studio/transform_step_view.cpp
     src/gui/data_studio/tests_view.cpp
     src/gui/data_studio/regression_view.cpp
+    src/gui/data_studio/groups_view.cpp
+    src/gui/data_studio/projection_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp
@@ -848,9 +847,6 @@ set(ENGINE_HEADERS
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
-    src/core/node_executors/node_executor.h
-    src/core/node_executors/kmeans_executor.h
-    src/core/node_executors/node_executor_factory.h
     src/core/node_executors/pipeline_operator.h
     src/core/node_executors/pipeline_operator_factory.h
     src/core/node_executors/identity_operator.h
@@ -957,7 +953,6 @@ set(ENGINE_HEADERS
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
-    src/gui/panels/dim_reduction_panel.h
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/nas_panel.h
@@ -965,11 +960,6 @@ set(ENGINE_HEADERS
     src/core/hyperparam_search.h
     src/gui/panels/serving_panel.h
     src/serving/inference_server.h
-    src/gui/panels/kmeans_panel.h
-    src/gui/panels/dbscan_panel.h
-    src/gui/panels/hierarchical_panel.h
-    src/gui/panels/gmm_panel.h
-    src/gui/panels/cluster_eval_panel.h
     src/gui/panels/matrix_calculator_panel.h
     src/gui/panels/eigen_decomp_panel.h
     src/gui/panels/svd_panel.h
@@ -1107,7 +1097,7 @@ target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )
 if(WIN32)
-    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper)
+    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper cyxwiz-cli)
 endif()
 
 # Include directories
@@ -1197,9 +1187,12 @@ if(WIN32)
     )
     # Link Windows-specific libraries (PDH for CPU metrics in System Monitor)
     target_link_libraries(cyxwiz-engine PRIVATE pdh)
-    # Add icon resource if available
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.rc")
-        target_sources(cyxwiz-engine PRIVATE resources/icon.rc)
+    cyxwiz_windows_resources(cyxwiz-engine DESCRIPTION "CyxWiz Engine" ICON)
+    # A windowed application: no console window beside the Engine. Debug
+    # builds keep the console for developers. main() stays the entry point.
+    if(MSVC)
+        target_link_options(cyxwiz-engine PRIVATE
+            $<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>)
     endif()
     # Set Visual Studio debugger working directory to executable location
     # This ensures resources (fonts, icons) are found when running from VS IDE
@@ -1340,6 +1333,17 @@ if(TARGET pycyxwiz)
         $<TARGET_FILE_DIR:cyxwiz-engine>/${_cyxwiz_pycyxwiz_name}
         COMMENT "Copying pycyxwiz Python module..."
     )
+    # The extension docs against the code (TOFIX125): the generated reference
+    # pages match pycyxwiz and the SDK headers, and the guides' samples run,
+    # their excerpts match, their version line is current and links resolve.
+    if(Python3_EXECUTABLE)
+        add_test(NAME extension_docs_reference
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/generate_extension_reference.py"
+                    $<TARGET_FILE_DIR:pycyxwiz> $<TARGET_FILE_DIR:cyxwiz-engine> --check)
+        add_test(NAME extension_docs_samples
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/check_extension_docs.py"
+                    $<TARGET_FILE_DIR:pycyxwiz> $<TARGET_FILE_DIR:cyxwiz-engine>)
+    endif()
 endif()
 
 # Release installs bundle Python 3.12 under <engine dir>/python and the Engine
@@ -1390,6 +1394,7 @@ if(CYXWIZ_HAS_PYTHON)
 add_executable(test_sandbox_timeout
     tests/test_sandbox_timeout.cpp
     src/scripting/python_engine.cpp
+    src/scripting/python_environment.cpp
     src/scripting/python_sandbox.cpp
 )
 
@@ -2427,6 +2432,8 @@ set_target_properties(test_language_model_inference_contract PROPERTIES
 add_executable(test_operator_configure_resets
     tests/test_operator_configure_resets.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/pca_operator.cpp
@@ -2748,6 +2755,8 @@ add_executable(test_pipeline_operator_metadata
     src/gui/properties_contract.cpp
     src/gui/properties_truth.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -2776,7 +2785,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/training_evaluation_operator.cpp
     src/core/cross_validation_presentation.cpp
     src/core/compiled_node_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
     src/core/data_explore.cpp
@@ -3101,7 +3110,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/session_query_engine.cpp
     src/core/data_explore.cpp
     src/core/explore_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/sql_plan.cpp
     src/core/guided_sql.cpp
@@ -3116,6 +3125,8 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/datasets/streaming_dataset.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -3873,6 +3884,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/csv_records.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -3901,7 +3914,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/training_evaluation_operator.cpp
     src/core/cross_validation_presentation.cpp
     src/core/compiled_node_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
     src/core/data_explore.cpp
@@ -7486,7 +7499,7 @@ add_test(NAME TransformStepPresentation COMMAND test_transform_step_presentation
 # Data Studio > Explore Tests and Regression (TOFIX129 D3).
 add_executable(test_stats_explore tests/test_stats_explore.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
-    src/core/stats_explore.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp src/core/stats_presentation.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
     src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
@@ -7498,6 +7511,26 @@ if(WIN32)
 endif()
 set_target_properties(test_stats_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME StatsExplore COMMAND test_stats_explore)
+
+# Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
+add_executable(test_groups_explore tests/test_groups_explore.cpp
+    src/core/groups_explore.cpp src/core/groups_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/node_executors/clustering_operators.cpp src/core/node_executors/pca_operator.cpp
+    src/core/node_executors/projection_operators.cpp src/core/node_executors/feature_rows.cpp
+    src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
+    src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_groups_explore PRIVATE src)
+target_link_libraries(test_groups_explore PRIVATE cyxwiz-training-core)
+target_link_libraries(test_groups_explore PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_groups_explore PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+target_compile_definitions(test_groups_explore PRIVATE
+    CYXWIZ_GROUPS_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/groups_sklearn.json")
+set_target_properties(test_groups_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME GroupsExplore COMMAND test_groups_explore)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp
@@ -7573,9 +7606,17 @@ add_executable(cyxwiz-plugin-check
     src/plugin/plugin_loader.cpp
 )
 target_link_libraries(cyxwiz-plugin-check PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+cyxwiz_windows_resources(cyxwiz-plugin-check DESCRIPTION "CyxWiz plugin check")
 if(WIN32)
     target_compile_definitions(cyxwiz-plugin-check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
+# A dangerous permission is granted for the run, not waited on (needs the
+# activation_nodes example built, as test_plugin_tensor_nodes does).
+add_test(NAME plugin_check_permissions
+         COMMAND ${CMAKE_COMMAND} -DCHECK=$<TARGET_FILE:cyxwiz-plugin-check>
+                 -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/activation_nodes
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_permissions
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_permissions.cmake)
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)
@@ -7647,15 +7688,19 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
     add_executable(test_python_node_training
         tests/test_python_node_training.cpp
         src/extension/python/python_node_factory.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/engine_plugin_context.cpp
+        src/plugin/plugin_loader.cpp
     )
-    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core pybind11::embed)
+    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui
+                          pybind11::embed)
     target_compile_definitions(test_python_node_training PRIVATE
         CYXWIZ_HAS_PYTHON
         CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
         CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
         CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_node_training>"
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
-    add_dependencies(test_python_node_training pycyxwiz)
+    add_dependencies(test_python_node_training pycyxwiz activation_nodes)
     add_test(NAME python_node_training COMMAND test_python_node_training)
 
     # The SDK's Python example layers trained from a Data Input (TOFIX125).
@@ -7672,6 +7717,18 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
     add_dependencies(test_python_builtin_layers pycyxwiz)
     add_test(NAME python_builtin_layers COMMAND test_python_builtin_layers)
+
+    # A running interpreter moves to another project's venv in place
+    # (TOFIX125 walk). Starts its own interpreter: the Python the build uses.
+    add_executable(test_python_environment_switch
+        tests/test_python_environment_switch.cpp
+        src/scripting/python_environment.cpp
+    )
+    target_link_libraries(test_python_environment_switch PRIVATE pybind11::embed)
+    target_compile_definitions(test_python_environment_switch PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}")
+    add_test(NAME python_environment_switch COMMAND test_python_environment_switch)
 
     # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
     add_executable(bench_python_node_cost
@@ -7737,6 +7794,8 @@ add_executable(test_engine_node_parity
     src/core/csv_records.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/feature_rows.cpp
+    src/core/node_executors/projection_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
@@ -7765,7 +7824,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/training_evaluation_operator.cpp
     src/core/cross_validation_presentation.cpp
     src/core/compiled_node_presentation.cpp
-    src/core/stats_explore.cpp
+    src/core/stats_explore.cpp src/core/explore_read.cpp
     src/core/stats_presentation.cpp
     src/core/explore_presentation.cpp
     src/core/data_explore.cpp

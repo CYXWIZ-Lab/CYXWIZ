@@ -15,6 +15,13 @@
 #include <sstream>
 #include <string>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #ifndef CYXWIZ_SETUP_VERSION
 #define CYXWIZ_SETUP_VERSION "0.1.0"
 #endif
@@ -159,7 +166,7 @@ std::optional<cyxwiz::runtime::BackendPackTrustStore> LoadSetupTrust(
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int RunSetup(int argc, char** argv) {
     Options options;
     std::string error;
     if (!ParseArguments(argc, argv, options, error)) {
@@ -263,4 +270,34 @@ int main(int argc, char** argv) {
         return 6;
     }
     return child_exit;
+}
+
+// On Windows the setup is a windowed program (no console window for the
+// person who downloaded it); what went wrong is shown in a message box when
+// a person started it. Output still reaches a caller that captures it.
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    std::ostringstream errors;
+    auto* const previous = std::cerr.rdbuf(errors.rdbuf());
+    const int code = RunSetup(argc, argv);
+    std::cerr.rdbuf(previous);
+    const std::string text = errors.str();
+    if (!text.empty()) {
+        std::cerr << text;
+        // A message box only for a person: when output is captured (tests,
+        // CI, a script) there is a stderr handle, and a modal box would wait
+        // for a click that never comes.
+        const HANDLE stderr_handle = ::GetStdHandle(STD_ERROR_HANDLE);
+        const bool interactive = stderr_handle == nullptr || stderr_handle == INVALID_HANDLE_VALUE;
+        if (code != 0 && interactive) {
+            const int length = ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+            std::wstring wide(length > 0 ? length : 1, L'\0');
+            ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), length);
+            ::MessageBoxW(nullptr, wide.c_str(), L"CyxWiz Setup", MB_OK | MB_ICONERROR);
+        }
+    }
+    return code;
+#else
+    return RunSetup(argc, argv);
+#endif
 }

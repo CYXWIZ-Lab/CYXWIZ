@@ -20,6 +20,8 @@
 #include "distribution_view.h"
 #include "tests_view.h"
 #include "regression_view.h"
+#include "groups_view.h"
+#include "projection_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -43,7 +45,7 @@ class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
     // Images shows only for an image dataset.
-    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Visualize };
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -70,6 +72,9 @@ public:
     // Opens an Explore tab on a dataset, at a column when given (Data >
     // Explore, Profile's missing counts).
     void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});
+    // Explore > Groups / Projection on a method, for the data in use (Tools > Clustering and Projection).
+    void ShowGroups(groups::Method method);
+    void ShowProjection(groups::ProjectionMethod method);
 
     // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
     // after the data in use (a Data Input or a node's result; the graph's
@@ -110,6 +115,8 @@ private:
     std::unique_ptr<DistributionView> distribution_;
     std::unique_ptr<TestsView> tests_;
     std::unique_ptr<RegressionView> regression_;
+    std::unique_ptr<GroupsView> groups_;
+    std::unique_ptr<ProjectionView> projection_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

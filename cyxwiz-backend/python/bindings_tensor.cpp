@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -344,9 +345,12 @@ py::class_<cyxwiz::Tensor>(m, "Tensor",
         return cyxwiz::Tensor::Ones(shape, dtype) * value;
     }, py::arg("shape"), py::arg("value"), py::arg("dtype") = cyxwiz::DataType::Float32,
        "Create a tensor filled with one value")
-    .def_static("random", &cyxwiz::Tensor::Random,
-               py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
-               "Create a tensor with random values [0, 1)")
+    .def_static("random", [](const std::vector<size_t>& shape, cyxwiz::DataType dtype,
+                             std::optional<uint64_t> seed) {
+        return seed ? cyxwiz::Tensor::RandomSeeded(shape, *seed, dtype) : cyxwiz::Tensor::Random(shape, dtype);
+    }, py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32, py::arg("seed") = py::none(),
+       "Create a tensor with random values [0, 1). Without a seed it draws from the run's random stream "
+       "(seeded by the training run's model seed); with a seed the same seed gives the same values")
     .def_static("range_n", &cyxwiz::Tensor::RangeN,
                py::arg("shape"), py::arg("dtype") = cyxwiz::DataType::Float32,
                "Create a tensor filled with row-major sequential values")

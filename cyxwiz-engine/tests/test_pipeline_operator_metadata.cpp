@@ -2465,7 +2465,8 @@ void CheckClusteringFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
         metadata.GetMetadata(gui::NodeType::HierarchicalCluster);
     const auto* gmm = metadata.GetMetadata(gui::NodeType::GMMCluster);
 
-    Check(kmeans->parameters.size() == 8 &&
+    Check(kmeans->parameters.size() == 9 &&
+              ParameterMatches(kmeans, "standardise", "bool", "false") &&
               ParameterMatches(kmeans, "n_clusters", "int", "8") &&
               ParameterMatches(kmeans, "max_iter", "int", "300") &&
               ParameterMatches(kmeans, "init", "enum", "kmeans++") &&
@@ -2475,19 +2476,23 @@ void CheckClusteringFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
               ParameterMatches(kmeans, "seed", "int", "0") &&
               !HasParameter(kmeans, "random_state"),
           "KMeans metadata should match every consumed operator field");
-    Check(dbscan->parameters.size() == 5 &&
+    Check(dbscan->parameters.size() == 6 &&
+              ParameterMatches(dbscan, "standardise", "bool", "false") &&
               ParameterMatches(dbscan, "eps", "float", "0.5") &&
               ParameterMatches(dbscan, "min_samples", "int", "5") &&
               ParameterMatches(dbscan, "metric", "enum", "euclidean") &&
               HasEnumValue(dbscan, "metric", "cosine"),
           "DBSCAN metadata should match every consumed operator field");
-    Check(hierarchical->parameters.size() == 5 &&
+    Check(hierarchical->parameters.size() == 6 &&
+              ParameterMatches(hierarchical, "standardise", "bool", "false") &&
               ParameterMatches(hierarchical, "n_clusters", "int", "3") &&
               ParameterMatches(hierarchical, "linkage", "enum", "ward") &&
               HasEnumValue(hierarchical, "linkage", "single") &&
               ParameterMatches(hierarchical, "metric", "enum", "euclidean"),
           "Hierarchical metadata should match every consumed operator field");
-    Check(gmm->parameters.size() == 8 &&
+    Check(gmm->parameters.size() == 10 &&
+              ParameterMatches(gmm, "standardise", "bool", "false") &&
+              ParameterMatches(gmm, "probabilities", "bool", "false") &&
               ParameterMatches(gmm, "n_components", "int", "3") &&
               ParameterMatches(gmm, "covariance_type", "enum", "full") &&
               HasEnumValue(gmm, "covariance_type", "spherical") &&
@@ -2510,7 +2515,8 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
               HasOutputType(pca, "Transformed", gui::PinType::Dataset) &&
               !HasOutputType(pca, "Components", gui::PinType::Dataset),
           "PCA should expose only the table its operator materializes");
-    Check(pca->parameters.size() == 5 &&
+    Check(pca->parameters.size() == 6 &&
+              ParameterMatches(pca, "keep_columns", "bool", "false") &&
               ParameterMatches(pca, "feature_cols", "string", "") &&
               ParameterMatches(pca, "label_col", "string", "") &&
               ParameterMatches(pca, "n_components", "int", "2") &&
@@ -5133,7 +5139,6 @@ int main() {
               cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
           "SVMClassifier enum support should resolve to operator-backed");
     const gui::NodeType additional_fail_closed_enum_cases[] = {
-        gui::NodeType::UMAPNode,
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::Normalize,
         gui::NodeType::OneHotEncode,

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
+#include <string>
 #include <vector>
 #include <memory>
 #include <initializer_list>
@@ -55,20 +56,22 @@ public:
 
     // Explicit host access. ReadData preserves a current device copy;
     // MutableData invalidates it because the caller may modify host memory.
+    // The typed forms throw when T is not the tensor's data type (float for
+    // Float32, double, int32_t, int64_t, uint8_t).
     const void* ReadData() const;
     void* MutableData();
     template<typename T>
-    const T* ReadData() const { return static_cast<const T*>(ReadData()); }
+    const T* ReadData() const { EnsureDataType<T>(); return static_cast<const T*>(ReadData()); }
     template<typename T>
-    T* MutableData() { return static_cast<T*>(MutableData()); }
+    T* MutableData() { EnsureDataType<T>(); return static_cast<T*>(MutableData()); }
 
     // Compatibility aliases. New code should use explicit host access.
     void* Data();
     const void* Data() const;
     template<typename T>
-    T* Data() { return static_cast<T*>(Data()); }
+    T* Data() { EnsureDataType<T>(); return static_cast<T*>(Data()); }
     template<typename T>
-    const T* Data() const { return static_cast<const T*>(Data()); }
+    const T* Data() const { EnsureDataType<T>(); return static_cast<const T*>(Data()); }
 
     // Device metadata
     Device* GetDevice() const { return device_; }
@@ -289,10 +292,22 @@ private:
         }
     }
 
+    static const char* DataTypeName(DataType dtype) {
+        switch (dtype) {
+            case DataType::Float32: return "Float32 (float)";
+            case DataType::Float64: return "Float64 (double)";
+            case DataType::Int32: return "Int32 (int32_t)";
+            case DataType::Int64: return "Int64 (int64_t)";
+            case DataType::UInt8: return "UInt8 (uint8_t)";
+        }
+        return "unknown";
+    }
+
     template<typename T>
     void EnsureDataType() const {
         if (dtype_ != NativeDataType<T>()) {
-            throw std::runtime_error("Tensor typed accessor data type mismatch");
+            throw std::runtime_error(std::string("Tensor typed access as ") + DataTypeName(NativeDataType<T>()) +
+                                     " on a " + DataTypeName(dtype_) + " tensor");
         }
     }
 
