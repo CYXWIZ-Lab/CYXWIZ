@@ -1,4 +1,5 @@
 #include "image_profile_view.h"
+#include "../../core/normalize_statistics.h"
 
 #include "explore_plots.h"
 #include "../icons.h"
@@ -17,8 +18,11 @@
 
 #include <arrow/api.h>
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <functional>
 #include <vector>
@@ -28,6 +32,20 @@ namespace cyxwiz {
 namespace {
 
 namespace ip = image_profile;
+
+// "2026-10-29": the day the statistics were measured, for Properties' "From Data Studio" line.
+std::string Today() {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char text[16];
+    std::strftime(text, sizeof(text), "%Y-%m-%d", &local);
+    return text;
+}
 
 const char* ModeName(ResizeMode mode) {
     switch (mode) {
@@ -143,9 +161,6 @@ void ImageProfileView::Refresh() {
         return;
     index_seen_ = table.get();
     input_.dataset = dataset_;
-    input_.normalize = config && config->preprocessing.has_normalization;
-    input_.norm_mean = config ? config->preprocessing.norm_mean : 0.0f;
-    input_.norm_std = config ? config->preprocessing.norm_std : 1.0f;
     input_.resize_width = resize_width;
     input_.resize_height = resize_height;
     input_.resize_mode = mode;
@@ -276,6 +291,7 @@ void ImageProfileView::MeasureStats() {
             input_.stats_device = *device;
             input_.stats_width = size->first;
             input_.stats_height = size->second;
+            stats_measured_ = Today();
             input_.sets_listed = false;  // the set is in cache/images now
             graph_seen_.clear();
             view_ = ip::Build(input_);
@@ -330,6 +346,46 @@ void ImageProfileView::MeasureQuality() {
         alive_);
 }
 
+void ImageProfileView::SyncNormalize() {
+    const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+    const auto& pre = config ? config->preprocessing : GraphPreprocessingConfig{};
+    const bool normalize = config && pre.has_normalization;
+    const bool imagenet = normalize && pre.norm_statistics == "imagenet";
+    const bool can_set = normalize && node_writer_ && pre.norm_node_id >= 0;
+    if (normalize == input_.normalize && pre.norm_mean == input_.norm_mean && pre.norm_std == input_.norm_std &&
+        pre.norm_channel_mean == input_.norm_channel_mean && pre.norm_channel_std == input_.norm_channel_std &&
+        imagenet == input_.norm_imagenet && can_set == input_.can_set_normalize)
+        return;
+    input_.normalize = normalize;
+    input_.norm_mean = normalize ? pre.norm_mean : 0.0f;
+    input_.norm_std = normalize ? pre.norm_std : 1.0f;
+    input_.norm_channel_mean = normalize ? pre.norm_channel_mean : std::vector<float>{};
+    input_.norm_channel_std = normalize ? pre.norm_channel_std : std::vector<float>{};
+    input_.norm_imagenet = imagenet;
+    input_.can_set_normalize = can_set;
+    norm_node_id_ = normalize ? pre.norm_node_id : -1;
+    view_ = ip::Build(input_);
+}
+
+void ImageProfileView::UseInNormalize() {
+    if (!node_writer_ || norm_node_id_ < 0 || input_.channel_mean.empty()) return;
+    // The numbers as the card shows them (four places).
+    const auto rounded = [](const std::vector<double>& values) {
+        std::vector<float> out;
+        for (double v : values) out.push_back(static_cast<float>(std::round(v * 10000.0) / 10000.0));
+        return out;
+    };
+    // Properties names it: "cat_dog, the 64 x 64 set this graph trains from, measured 2026-10-29".
+    const std::string source = dataset_ + ", the " + std::to_string(input_.stats_width) + " \xC3\x97 " +
+                               std::to_string(input_.stats_height) + " set this graph trains from" +
+                               (stats_measured_.empty() ? "" : ", measured " + stats_measured_);
+    if (node_writer_(norm_node_id_, {{"statistics", "per_channel"},
+                                     {"channel_mean", FormatChannelValues(rounded(input_.channel_mean))},
+                                     {"channel_std", FormatChannelValues(rounded(input_.channel_std))},
+                                     {"statistics_source", source}}))
+        spdlog::info("Data Studio: Normalize set per channel from {}'s channel statistics", dataset_);
+}
+
 void ImageProfileView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (dataset_.empty()) return;
@@ -338,6 +394,7 @@ void ImageProfileView::Render() {
         return;
     }
     Refresh();
+    SyncNormalize();
     if (!stats_for_.empty() && !stats_task_ && GraphIdentity() != stats_for_) {
         stats_for_.clear();  // the graph's image steps changed: the statistics were of other images
         input_.channel_mean.clear();
@@ -484,12 +541,34 @@ void ImageProfileView::Render() {
     }
     ImGui::PushTextWrapPos(0.0f);
     const bool measuring = input_.stats_step != ip::Input::StatsStep::Idle;
-    ImGui::TextColored(measuring ? t.running : t.text_dim, "%s", view_.stats_note.c_str());
+    if (!measuring && view_.normalize_matches && view_.stats_note_head > 0) {
+        // "Normalize uses these statistics" in green, the rest as a note.
+        const std::string head = view_.stats_note.substr(0, view_.stats_note_head);
+        ImGui::TextColored(t.success, "%s", head.c_str());
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextColored(t.text_dim, "%s", view_.stats_note.c_str() + view_.stats_note_head);
+    } else {
+        ImGui::TextColored(measuring ? t.running : t.text_dim, "%s", view_.stats_note.c_str());
+    }
     ImGui::PopTextWrapPos();
+    if (!measuring && view_.can_use_in_normalize) {
+        if (ui::SecondaryButton("Use in Normalize")) UseInNormalize();
+        ui::Tooltip(view_.use_note.c_str());
+        ImGui::SameLine();
+    }
     if (!measuring &&
         ui::SecondaryButton(view_.stats.empty() ? "Measure" : "Measure again", view_.can_measure,
                             "The graph needs a Resize node"))
         MeasureStats();
+    if (!measuring && view_.normalize_matches && show_node_ && norm_node_id_ >= 0) {
+        ImGui::SameLine();
+        if (ui::LinkButton("Show Normalize on canvas")) show_node_(norm_node_id_);
+    }
+    if (!measuring && view_.can_use_in_normalize) {
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "%s", view_.use_note.c_str());
+    }
     ui::EndCard();
 
     // Quality.

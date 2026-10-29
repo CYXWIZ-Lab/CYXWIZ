@@ -33,6 +33,8 @@ public:
     size_t GetNumSamples() const override;
 
     void SetNormalization(float mean, float std_dev) override;
+    // One mean and std per channel of the batches (TOFIX178 1.4), instead of SetNormalization's pair.
+    void SetChannelNormalization(const std::vector<float>& mean, const std::vector<float>& std_dev);
     void SetOneHotEncoding(size_t num_classes) override;
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetFlatten(bool flatten) override;

@@ -99,6 +99,12 @@ struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
+    // Normalize's statistics (TOFIX178 1.4): "same" uses norm_mean / norm_std;
+    // "per_channel" and "imagenet" one value per image channel (norm_channels).
+    std::string norm_statistics = "same";
+    std::vector<float> norm_channel_mean, norm_channel_std;
+    size_t norm_channels = 0;  // the images' channels where Normalize sits (image graphs)
+    int norm_node_id = -1;
 
     bool has_onehot = false;
     size_t num_classes = 0;

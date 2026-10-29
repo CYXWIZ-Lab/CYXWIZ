@@ -13,6 +13,7 @@
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_quality_analysis.h"
+#include "../src/core/normalize_statistics.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <algorithm>
@@ -322,6 +323,42 @@ void CheckCompiler() {
     CheckRefused({kResize, {gui::NodeType::ImageSharpen, "Sharpen", {}},
                   {gui::NodeType::Resize, "Second resize", {{"width", "4"}, {"height", "4"}}}},
                  "Second resize", "Resize must come before the image transforms", "Resize after an OpenCV step");
+
+    // Normalize per channel (TOFIX178 1.4).
+    const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
+                                                {{"statistics", "per_channel"},
+                                                 {"channel_mean", "0.5282,0.4924,0.4528"},
+                                                 {"channel_std", "0.2346, 0.2270, 0.2304"}}}});
+    Check(cyxwiz::ChannelSummary("per channel", {0.5282f, 0.4924f, 0.4528f}, {0.2346f, 0.2270f, 0.2304f}) ==
+              "per channel, mean 0.528 / 0.492 / 0.453, std 0.235 / 0.227 / 0.230",
+          "the per-channel summary the compile report and the Data Input dialog show");
+    Check(per_channel.is_valid, "per channel compiles; errors:\n" + Errors(per_channel));
+    Check(per_channel.preprocessing.norm_channel_mean == std::vector<float>({0.5282f, 0.4924f, 0.4528f}) &&
+              per_channel.preprocessing.norm_channel_std == std::vector<float>({0.2346f, 0.2270f, 0.2304f}) &&
+              per_channel.preprocessing.norm_channels == 3 && per_channel.preprocessing.norm_node_id > 0,
+          "per channel: three means and stds for RGB");
+    const auto imagenet = Compile({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "imagenet"}}}});
+    bool noted = false;
+    for (const auto& issue : imagenet.issues)
+        noted = noted || (issue.level == cyxwiz::IssueLevel::Info && issue.message.find("pretrained on ImageNet") != std::string::npos);
+    Check(imagenet.is_valid && imagenet.preprocessing.norm_channel_mean == std::vector<float>({0.485f, 0.456f, 0.406f}) &&
+              imagenet.preprocessing.norm_channel_std == std::vector<float>({0.229f, 0.224f, 0.225f}) && noted,
+          "ImageNet: torchvision's values, with a note");
+    const auto same = Compile({kResize, kNormalize});
+    Check(same.is_valid && same.preprocessing.norm_channel_mean.empty() && same.preprocessing.norm_statistics == "same",
+          "same for every channel: one pair, as before");
+    CheckRefused({kResize, {gui::NodeType::Grayscale, "Gray", {}},
+                  {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"},
+                                                           {"channel_mean", "0.5,0.5,0.5"}, {"channel_std", "0.2,0.2,0.2"}}}},
+                 "Normalize", "3 means for 1 channel", "three means after Grayscale");
+    CheckRefused({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"},
+                                                                    {"channel_mean", "0.5,0.5,0.5"}, {"channel_std", "0.2,0,0.2"}}}},
+                 "Normalize", "Std G is 0", "a std of 0");
+    CheckRefused({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"}}}},
+                 "Normalize", "a mean and a std for each channel", "per channel without values");
+    CheckRefused({kResize, {gui::NodeType::Grayscale, "Gray", {}},
+                  {gui::NodeType::Normalize, "Normalize", {{"statistics", "imagenet"}}}},
+                 "Normalize", "ImageNet statistics are for RGB images", "ImageNet on one channel");
 }
 
 void WriteLe(std::ofstream& out, uint32_t value, int bytes) {
@@ -421,6 +458,26 @@ void CheckBatcher() {
     mixing.Reset();
     const auto mixed = mixing.GetNextBatch();
     Check(mixed.labels.Shape() == std::vector<size_t>({2, 2}), "mixed labels keep [N, C]");
+
+    // Normalize per channel (TOFIX178 1.4): each channel its own mean and std.
+    cyxwiz::ImageDatasetBatcher normalized(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, 0.5f, false, 11);
+    normalized.SetNormalization(0.5f, 0.5f);
+    normalized.SetChannelNormalization({0.1f, 0.2f, 0.3f}, {0.5f, 0.25f, 0.125f});
+    normalized.SetPhase(cyxwiz::BatcherPhase::Val);
+    normalized.Reset();
+    const auto n_batch = normalized.GetNextBatch();
+    const float* nv = n_batch.data.ReadData<float>();
+    double worst = 0.0;
+    for (size_t s = 0; s < 2; ++s)
+        for (int row = 0; row < 4; ++row)
+            for (int column = 0; column < 4; ++column) {
+                const float* px = nv + s * 48 + (row * 4 + column) * 3;
+                const float rgb[3] = {Red(column), 40.0f * row / 255.0f, 200.0f / 255.0f};
+                const float mean[3] = {0.1f, 0.2f, 0.3f}, sd[3] = {0.5f, 0.25f, 0.125f};
+                for (int c = 0; c < 3; ++c) worst = std::max<double>(worst, std::fabs(px[c] - (rgb[c] - mean[c]) / sd[c]));
+            }
+    Check(worst < 1e-5, "per channel normalize on the device: (x - mean[c]) / std[c] (worst " + std::to_string(worst) + ")");
     const float* mixed_labels = mixed.labels.ReadData<float>();
     for (size_t s = 0; s < 2; ++s) {
         Check(std::fabs(mixed_labels[2 * s] + mixed_labels[2 * s + 1] - 1.0f) < 1e-5f,

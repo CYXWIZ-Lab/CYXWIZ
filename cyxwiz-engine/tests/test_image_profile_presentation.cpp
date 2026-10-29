@@ -140,6 +140,38 @@ int main() {
     Check(s.stats_note == "Normalize uses mean 0.5, std 0.5: the model's inputs centre at -0.02 (R), -0.09 (G), -0.17 (B) "
                           "with spread 0.51, 0.50, 0.50, where 0 and 1 are the aim.",
           "Normalize's view: " + s.stats_note);
+    // Use in Normalize (TOFIX178 1.4): offered when the screen can write the
+    // graph's Normalize and it does not already match.
+    Check(!s.can_use_in_normalize, "Use in Normalize needs a node writer");
+    stats.can_set_normalize = true;
+    s = Build(stats);
+    Check(s.can_use_in_normalize && !s.normalize_matches &&
+              s.use_note == "Sets the graph's Normalize to Per channel with these numbers (Undo takes it back).",
+          "Use in Normalize offered");
+    stats.norm_channel_mean = {0.4883f, 0.4551f, 0.4170f};
+    stats.norm_channel_std = {0.2548f, 0.2481f, 0.2508f};
+    s = Build(stats);
+    Check(s.normalize_matches && !s.can_use_in_normalize &&
+              s.stats_note == "Normalize uses these statistics: the model's inputs centre at 0.00 (R, G, B) with spread 1.00.",
+          "after Use in Normalize: " + s.stats_note);
+    Check(s.stats_note.substr(0, s.stats_note_head) == "Normalize uses these statistics",
+          "the green head is the match: " + s.stats_note.substr(0, s.stats_note_head));
+    stats.norm_channel_mean = {0.485f, 0.456f, 0.406f};
+    stats.norm_channel_std = {0.229f, 0.224f, 0.225f};
+    stats.norm_imagenet = true;
+    s = Build(stats);
+    Check(s.stats_note.rfind("Normalize uses ImageNet's statistics: the model's inputs centre at ", 0) == 0 &&
+              s.can_use_in_normalize,
+          "ImageNet: " + s.stats_note);
+    stats.norm_imagenet = false;
+    stats.norm_channel_mean = {0.5f, 0.5f, 0.5f};
+    stats.norm_channel_std = {0.25f, 0.25f, 0.25f};
+    s = Build(stats);
+    Check(s.stats_note.rfind("Normalize uses mean 0.500 / 0.500 / 0.500, std 0.250 / 0.250 / 0.250: ", 0) == 0,
+          "per channel values named: " + s.stats_note);
+    stats.norm_channel_mean.clear();
+    stats.norm_channel_std.clear();
+    stats.can_set_normalize = false;
     stats.normalize = false;
     Check(Build(stats).stats_note.rfind("The graph has no Normalize node", 0) == 0, "no Normalize");
     stats.stats_error = "The images could not be prepared: disk full";

@@ -216,18 +216,61 @@ View Build(const Input& in) {
             sd.values.push_back(text);
         }
         v.stats = {mean, sd};
-        if (in.normalize && in.norm_std != 0.0f) {
-            std::string centre, spread;
+        // Normalize's value for each channel: its own per channel, else the one pair.
+        const bool per_channel = in.norm_channel_mean.size() == c && in.norm_channel_std.size() == c;
+        const auto norm_mean = [&](size_t i) { return per_channel ? in.norm_channel_mean[i] : in.norm_mean; };
+        const auto norm_std = [&](size_t i) { return per_channel ? in.norm_channel_std[i] : in.norm_std; };
+        bool usable = in.normalize;
+        for (size_t i = 0; i < c; ++i) usable = usable && norm_std(i) != 0.0f;
+        if (usable) {
+            std::vector<std::string> centres, spreads;
+            bool matches = true;
             for (size_t i = 0; i < c; ++i) {
-                std::snprintf(text, sizeof(text), "%.2f", (in.channel_mean[i] - in.norm_mean) / in.norm_std);
-                centre += (i ? ", " : "") + std::string(text) + (c > 1 ? " (" + v.channels[i] + ")" : "");
-                std::snprintf(text, sizeof(text), "%.2f", in.channel_std[i] / in.norm_std);
-                spread += (i ? ", " : "") + std::string(text);
+                const double centre = (in.channel_mean[i] - norm_mean(i)) / norm_std(i);
+                const double spread = in.channel_std[i] / norm_std(i);
+                matches = matches && std::abs(centre) < 0.005 && std::abs(spread - 1.0) < 0.005;
+                std::snprintf(text, sizeof(text), "%.2f", std::abs(centre) < 0.005 ? 0.0 : centre);  // never "-0.00"
+                centres.push_back(text);
+                std::snprintf(text, sizeof(text), "%.2f", spread);
+                spreads.push_back(text);
             }
-            char head[96];
-            std::snprintf(head, sizeof(head), "Normalize uses mean %g, std %g: ", in.norm_mean, in.norm_std);
-            v.stats_note = head + std::string("the model's inputs centre at ") + centre + " with spread " + spread +
-                           ", where 0 and 1 are the aim.";
+            // One figure for all channels when they agree ("0.00 (R, G, B)").
+            const bool same_centre = std::all_of(centres.begin(), centres.end(), [&](const auto& s) { return s == centres[0]; });
+            const bool same_spread = std::all_of(spreads.begin(), spreads.end(), [&](const auto& s) { return s == spreads[0]; });
+            std::string centre, spread, names;
+            for (size_t i = 0; i < c; ++i) {
+                names += (i ? ", " : "") + v.channels[i];
+                centre += (i ? ", " : "") + centres[i] + (c > 1 ? " (" + v.channels[i] + ")" : "");
+                spread += (i ? ", " : "") + spreads[i];
+            }
+            if (same_centre) centre = centres[0] + (c > 1 ? " (" + names + ")" : "");
+            if (same_spread) spread = spreads[0];
+            std::string head;
+            if (matches) {
+                head = "Normalize uses these statistics: ";
+            } else if (in.norm_imagenet) {
+                head = "Normalize uses ImageNet's statistics: ";
+            } else if (per_channel) {
+                std::string means, stds;
+                for (size_t i = 0; i < c; ++i) {
+                    std::snprintf(text, sizeof(text), "%s%.3f", i ? " / " : "", norm_mean(i));
+                    means += text;
+                    std::snprintf(text, sizeof(text), "%s%.3f", i ? " / " : "", norm_std(i));
+                    stds += text;
+                }
+                head = "Normalize uses mean " + means + ", std " + stds + ": ";
+            } else {
+                char pair[96];
+                std::snprintf(pair, sizeof(pair), "Normalize uses mean %g, std %g: ", in.norm_mean, in.norm_std);
+                head = pair;
+            }
+            v.stats_note = head + "the model's inputs centre at " + centre + " with spread " + spread +
+                           (matches ? "." : ", where 0 and 1 are the aim.");
+            v.normalize_matches = matches;
+            if (matches) v.stats_note_head = head.size() - 2;  // without ": "
+            v.can_use_in_normalize = !matches && in.can_set_normalize;
+            if (v.can_use_in_normalize)
+                v.use_note = "Sets the graph's Normalize to Per channel with these numbers (Undo takes it back).";
         } else {
             v.stats_note = "The graph has no Normalize node: the model's inputs are these values in 0 to 1.";
         }

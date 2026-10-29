@@ -201,6 +201,8 @@ void ProfileView::Render() {
     }
     if (images_ && image_) {
         image_->SetLiveCompile(live_compile_);
+        image_->SetNodeWriter(node_writer_);
+        image_->SetShowNode(show_node_);
         image_->Render();
         return;
     }

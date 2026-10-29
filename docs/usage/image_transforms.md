@@ -168,6 +168,41 @@ stays there for the model. Without a GPU the same code runs on ArrayFire's
 CPU backend. Each image's random settings (flip or not, crop position, angle,
 jitter factors) are a few numbers drawn on the CPU.
 
+## Normalize per channel
+
+Normalize comes last, after the image steps, and runs on each batch on the GPU:
+every value becomes `(x - mean) / std`. Its **Statistics** setting picks the
+numbers:
+
+| Statistics | Settings | For |
+| --- | --- | --- |
+| Same for every channel | `mean` (0.0), `std` (1.0) | Tables, audio, text features, and images when one pair is enough. Saved graphs open as this. |
+| Per channel | `channel_mean`, `channel_std`: one typed row per channel (R, G, B, or grey) | Images, with each channel's own statistics. Data Studio > Explore > Profile > Channel statistics > **Use in Normalize** fills them from the set this graph trains from. |
+| ImageNet | none: 0.485, 0.456, 0.406 and 0.229, 0.224, 0.225 (torchvision), shown read-only | Models pretrained on ImageNet. Pick Per channel to change a value; the numbers carry over. |
+
+- The rows follow the images' channels where Normalize sits: after Grayscale or
+  Image Edges there is one (grey).
+- The compiler refuses Per channel and ImageNet on data that is not images
+  (*Per channel needs images: this graph's data is a table. Use Same for every
+  channel.*), a count that does not match (*3 means for 1 channel: the images
+  have 1 here (Grayscale or Image Edges before Normalize). Give one mean and
+  one std per channel (Use in Normalize does).*), ImageNet on images that are
+  not RGB, and a std that is not above 0 (*Std G is 0: every std must be
+  greater than 0.*). ImageNet adds an Info note: for training from scratch,
+  the data's own statistics centre it better.
+- The Compile popup's setup list shows *Normalize · per channel, mean 0.528 /
+  0.492 / 0.453, std 0.235 / 0.227 / 0.230*; the AS COMPILED card shows the
+  formula, the shapes and the values under Details.
+- After **Use in Normalize**, Profile says *Normalize uses these statistics:
+  the model's inputs centre at 0.00 (R, G, B) with spread 1.00.* with a
+  **Show Normalize on canvas** link, and Properties names where the values came
+  from under the rows (*From Data Studio: cat_dog, the 64 × 64 set this graph
+  trains from, measured 2026-10-29*) with **Measure again in Data Studio**.
+  Typing a value or changing Statistics drops that line. Undo takes the whole
+  change back.
+- The Data Input dialog's Preprocessing list names the same values
+  (*Normalized by Normalize per channel, mean 0.528 / ...*).
+
 ## OpenCV steps done once
 
 These seven nodes call the Engine's OpenCV classes. Each one gives every image

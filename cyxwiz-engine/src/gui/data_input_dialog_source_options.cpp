@@ -11,6 +11,7 @@
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
 #include "../core/image_index.h"
+#include "../core/normalize_statistics.h"
 
 #include <arrow/api.h>
 #include <imgui_stdlib.h>
@@ -668,7 +669,16 @@ void DataInputDialog::RenderPreprocessingNodes() {
             case NodeType::Normalize:
                 role = "Normalized by";
                 normalized = true;
-                facts = "mean " + param(*n, "mean") + ", std " + param(*n, "std");
+                if (const std::string statistics = param(*n, "statistics"); statistics == "imagenet") {
+                    facts = cyxwiz::ChannelSummary("ImageNet", cyxwiz::ImageNetChannelMean(),
+                                                   cyxwiz::ImageNetChannelStd());
+                } else if (std::vector<float> mean, std_dev; statistics == "per_channel" &&
+                           cyxwiz::ParseChannelValues(param(*n, "channel_mean"), mean) &&
+                           cyxwiz::ParseChannelValues(param(*n, "channel_std"), std_dev)) {
+                    facts = cyxwiz::ChannelSummary("per channel", mean, std_dev);
+                } else {
+                    facts = "mean " + param(*n, "mean") + ", std " + param(*n, "std");
+                }
                 break;
             case NodeType::MFCC:
                 role = "Features by";

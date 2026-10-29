@@ -2099,7 +2099,12 @@ void NodeEditor::RenderNodes() {
             case NodeType::Normalize: {
                 auto mean_it = node.parameters.find("mean");
                 auto std_it = node.parameters.find("std");
-                if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
+                auto stat_it = node.parameters.find("statistics");
+                if (stat_it != node.parameters.end() && stat_it->second == "imagenet") {
+                    ImGui::TextColored(t.accent_text, "ImageNet");
+                } else if (stat_it != node.parameters.end() && stat_it->second == "per_channel") {
+                    ImGui::TextColored(t.accent_text, "Per channel");
+                } else if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
                     ImGui::TextColored(t.accent_text, "Mean: %s", mean_it->second.c_str());
                     ImGui::TextColored(t.accent_text, "Std: %s", std_it->second.c_str());
                 }

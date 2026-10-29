@@ -78,6 +78,7 @@ const cyxwiz::SupportAxisDefinition* FindSupportAxis(
 bool IsSupportedParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",
+        "channels",
         "column",
         "directory",
         "dropdown",
@@ -134,8 +135,11 @@ void CheckParameterSchema(const cyxwiz::NodeMetadata& metadata) {
                       choices.count(parameter.default_value) == 1,
                   "choice default is not an option: " + context + "=" +
                       parameter.default_value);
+            Check(parameter.enum_labels.empty() ||
+                      parameter.enum_labels.size() == parameter.enum_values.size(),
+                  "choice labels do not match its options: " + context);
         } else {
-            Check(parameter.enum_values.empty(),
+            Check(parameter.enum_values.empty() && parameter.enum_labels.empty(),
                   "non-choice parameter declares options: " + context);
         }
     }
