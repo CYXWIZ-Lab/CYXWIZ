@@ -449,9 +449,20 @@ public:
         int layout = 0;                 // 0=ClassSubdirs, 1=FlatWithCSV
         size_t num_images = 0;
         size_t num_classes = 0;
-        std::vector<std::string> class_names;
+        std::vector<std::string> class_names;    // as the labels give them, in class-index order
+        std::vector<std::string> display_names;  // typed on the Data Input ("" keeps the class name)
+        // What screens and the index call each class.
+        std::vector<std::string> ShownClassNames() const {
+            std::vector<std::string> shown = class_names;
+            for (size_t i = 0; i < shown.size() && i < display_names.size(); ++i)
+                if (!display_names[i].empty()) shown[i] = display_names[i];
+            return shown;
+        }
     };
     void RegisterImageDataset(const std::string& name, const ImageDatasetEntry& entry);
+    // Renames the classes on screen (not the labels, so no prepared set is
+    // rebuilt); false when the dataset is not loaded.
+    bool SetImageClassDisplayNames(const std::string& name, const std::vector<std::string>& display_names);
     bool IsImageDataset(const std::string& name) const;
     const ImageDatasetEntry* GetImageDatasetEntry(const std::string& name) const;
     void UnregisterImageDataset(const std::string& name);

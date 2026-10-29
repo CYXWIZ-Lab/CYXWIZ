@@ -96,6 +96,15 @@ void BuildImageIndexInBackground(const std::string& dataset, const DataRegistry:
         });
 }
 
+bool RenameImageClasses(const std::string& dataset, const std::vector<std::string>& display_names) {
+    auto& registry = DataRegistry::Instance();
+    if (!registry.SetImageClassDisplayNames(dataset, display_names)) return false;
+    const DataRegistry::ImageDatasetEntry* entry = registry.GetImageDatasetEntry(dataset);
+    if (!entry) return false;
+    BuildImageIndexInBackground(dataset, *entry, display_names);
+    return true;
+}
+
 ImageIndexStatus GetImageIndexStatus(const std::string& dataset) {
     std::lock_guard<std::mutex> lock(g_mutex);
     const auto it = g_builds.find(dataset);

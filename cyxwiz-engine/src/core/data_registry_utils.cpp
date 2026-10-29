@@ -515,6 +515,15 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
     }
 }
 
+bool DataRegistry::SetImageClassDisplayNames(const std::string& name,
+                                             const std::vector<std::string>& display_names) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = image_dataset_entries_.find(name);
+    if (it == image_dataset_entries_.end()) return false;
+    it->second.display_names = display_names;
+    return true;
+}
+
 // --- Audio dataset registry (Phase 2) ---
 
 void DataRegistry::RegisterAudioDataset(const std::string& name,

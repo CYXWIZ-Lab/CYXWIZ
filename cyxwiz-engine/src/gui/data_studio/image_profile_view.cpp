@@ -130,7 +130,7 @@ void ImageProfileView::Refresh() {
     input_.resize_mode = mode;
     input_.labels_source =
         entry && !entry->labels_csv.empty() ? std::filesystem::path(entry->labels_csv).filename().string() : std::string();
-    input_.class_names = entry ? entry->class_names : std::vector<std::string>{};
+    input_.class_names = entry ? entry->ShownClassNames() : std::vector<std::string>{};
     input_.labels.clear();
     input_.widths.clear();
     input_.heights.clear();

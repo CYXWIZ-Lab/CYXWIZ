@@ -27,4 +27,8 @@ void BuildImageIndexInBackground(const std::string& dataset, const DataRegistry:
 
 ImageIndexStatus GetImageIndexStatus(const std::string& dataset);
 
+// New class names for a loaded image dataset: the registry entry takes them
+// and the index is rebuilt with them (label_name). False when not loaded.
+bool RenameImageClasses(const std::string& dataset, const std::vector<std::string>& display_names);
+
 }  // namespace cyxwiz

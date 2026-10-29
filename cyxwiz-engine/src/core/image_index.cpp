@@ -107,6 +107,33 @@ void AppendOrNull(Builder& builder, bool present, const Value& value) {
 
 }  // namespace
 
+std::vector<std::string> SuggestClassNames(const std::vector<std::string>& files, const std::vector<int>& labels,
+                                           const std::vector<std::string>& class_names) {
+    const size_t classes = class_names.size();
+    std::vector<std::string> stem(classes);
+    std::vector<bool> shared(classes, true), seen(classes, false);
+    for (size_t i = 0; i < files.size() && i < labels.size(); ++i) {
+        const int label = labels[i];
+        if (label < 0 || static_cast<size_t>(label) >= classes || !shared[label]) continue;
+        const std::string name = fs::path(files[i]).filename().string();
+        const size_t end = name.find_first_of("._-0123456789");
+        const std::string prefix = name.substr(0, end == std::string::npos ? name.size() : end);
+        if (!seen[label]) {
+            stem[label] = prefix;
+            seen[label] = true;
+        } else if (prefix != stem[label]) {
+            shared[label] = false;
+        }
+    }
+    std::vector<std::string> out(classes);
+    for (size_t c = 0; c < classes; ++c) {
+        if (!seen[c] || !shared[c] || stem[c].empty() || stem[c] == class_names[c]) continue;
+        const bool unique = std::count(stem.begin(), stem.end(), stem[c]) == 1;
+        if (unique) out[c] = stem[c];
+    }
+    return out;
+}
+
 ImageHeader ReadImageHeader(const std::string& path) {
     ImageHeader h;
     std::ifstream in(path, std::ios::binary);

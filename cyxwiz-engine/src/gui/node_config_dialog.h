@@ -278,6 +278,7 @@ private:
     void RenderLabelColumn();
     void RenderTextColumns();
     void RenderImageLabels();
+    void RenderImageClassNames();
     void RenderAudioLoading();
     void RenderDatasetRoleNote();
     char source_buf_[512] = {};
@@ -370,6 +371,12 @@ private:
     // STATE: Image options
     ImageLayout image_layout_ = ImageLayout::ClassSubdirs;
     char labels_csv_[512] = {};
+    // An image folder's class names by class index ("" keeps the label), saved
+    // as the node's class_names; renaming does not reload the images.
+    std::vector<std::string> class_names_edit_;
+    std::vector<std::string> class_name_suggestions_;
+    const void* class_suggestions_from_ = nullptr;  // the index table they were read from
+    bool class_names_changed_ = false;
 
     // STATE: Audio options
     int sample_rate_ = 16000;

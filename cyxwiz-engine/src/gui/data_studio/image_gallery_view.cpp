@@ -81,7 +81,7 @@ void ImageGalleryView::Refresh() {
     const auto table = index ? index->GetArrowTable() : nullptr;
     if (table.get() == index_seen_) return;
     index_seen_ = table.get();
-    input_.class_names = entry ? entry->class_names : std::vector<std::string>{};
+    input_.class_names = entry ? entry->ShownClassNames() : std::vector<std::string>{};
     input_.rows.clear();
     if (!table) return;
     const auto combined = table->CombineChunks().ValueOrDie();

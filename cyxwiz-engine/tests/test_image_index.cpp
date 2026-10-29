@@ -139,6 +139,20 @@ int main() {
     std::atomic<bool> cancel{true};
     Check(BuildImageIndex(listing, {}, {}, &cancel, 2) == nullptr, "a cancelled build gives no table");
 
+    // Class names suggested from file names (cats vs dogs: labels 0 / 1, files cat.N.jpg / dog.N.jpg).
+    const std::vector<std::string> files = {"x/dog.11289.jpg", "x/cat.10836.jpg", "x/cat.7970.jpg", "x/dog.2653.jpg"};
+    const std::vector<int> labels = {1, 0, 0, 1};
+    Check(SuggestClassNames(files, labels, {"0", "1"}) == std::vector<std::string>({"cat", "dog"}), "cat, dog from 0, 1");
+    Check(SuggestClassNames(files, labels, {"cat", "1"}) == std::vector<std::string>({"", "dog"}),
+          "nothing to suggest where the name already says it");
+    Check(SuggestClassNames({"a/cat_1.png", "a/kitten2.png", "b/dog-3.png"}, {0, 0, 1}, {"0", "1"}) ==
+              std::vector<std::string>({"", "dog"}),
+          "no suggestion when a class's files disagree");
+    Check(SuggestClassNames({"img_1.png", "img_2.png"}, {0, 1}, {"0", "1"}) == std::vector<std::string>({"", ""}),
+          "no suggestion when two classes share the prefix");
+    Check(SuggestClassNames({"001.png"}, {0}, {"0", "1"}) == std::vector<std::string>({"", ""}),
+          "no prefix, no images: no suggestion");
+
     fs::remove_all(root, ec);
     std::cout << "test_image_index: all checks passed\n";
     return 0;

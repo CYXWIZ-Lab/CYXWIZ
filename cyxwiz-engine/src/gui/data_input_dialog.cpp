@@ -142,6 +142,15 @@ DataInputDialog::DataInputDialog(MLNode* node)
             force_disk_backed_ = true;
         }
 
+        class_names_edit_.clear();
+        class_names_changed_ = false;
+        if (const auto names = node_->parameters.find("class_names"); names != node_->parameters.end()) {
+            try {
+                for (const auto& name : nlohmann::json::parse(names->second)) class_names_edit_.push_back(name.get<std::string>());
+            } catch (const std::exception&) {
+                class_names_edit_.clear();  // unreadable: the labels' own names
+            }
+        }
         if (node_->parameters.count("labels_csv")) {
             strncpy(labels_csv_, node_->parameters["labels_csv"].c_str(), sizeof(labels_csv_) - 1);
             labels_csv_[sizeof(labels_csv_) - 1] = '\0';

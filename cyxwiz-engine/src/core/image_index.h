@@ -39,6 +39,13 @@ struct ImageHeader {
 // decoded once. readable is false when neither works.
 ImageHeader ReadImageHeader(const std::string& path);
 
+// A name per class from its files' names: the part before the first '.',
+// '_', '-' or digit that every file of the class shares ("cat.1.jpg" ->
+// "cat"), when each class has its own; "" for a class without one or whose
+// name already says it.
+std::vector<std::string> SuggestClassNames(const std::vector<std::string>& files, const std::vector<int>& labels,
+                                           const std::vector<std::string>& class_names);
+
 // The index rows, in the listing's order. label_names gives a display name
 // per class index (empty or missing: the class name). progress(done, total)
 // every few hundred files; null when cancel became true.

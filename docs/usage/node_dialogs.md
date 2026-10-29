@@ -94,7 +94,15 @@ strip keeps the earlier load and says the last Apply failed.
 The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
 (which columns to load, then the rows to skip and the row limit; not shown
 for an image or audio folder, which has no rows to read), **Memory** and
-**Audit**. For an image folder, **Preview** shows its first 24 images with
+**Audit**. An image folder's Source tab has **Class names** once it is
+loaded: a row per class (its label in the CSV, or its folder) with a name to
+type and a **suggested** one, the file-name prefix every file of the class
+shares (*cat* for `cat.1.jpg`, *dog* for `dog.1.jpg`) when each class has its
+own. **Use suggested** fills them in; Apply saves them with the node (an
+empty name keeps the label) and every screen and the index's label_name use
+them at once, without loading the images again. Class indices do not change:
+they follow the labels, sorted (numbers as numbers).
+For an image folder, **Preview** shows its first 24 images with
 their class once it is loaded (Explore > Images in Data Studio shows them
 all), and **Profile** shows the image profile (counts, classes, sizes,
 prepared sets; see Data Studio > Profile).

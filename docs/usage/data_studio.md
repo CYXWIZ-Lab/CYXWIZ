@@ -62,7 +62,8 @@ Loading an image dataset also builds its **index table**, one row per image,
 named after the dataset with `_index` (`cat_dog_index`). It reads only each
 file's header (JPEG, PNG and 16/24-bit BMP; other formats are decoded once),
 on a background task, so the Data Input is loaded before the index is
-ready; the 25,000 cats vs dogs images take under a second. The rail lists it
+ready: the 25,000 cats vs dogs images take 0.6 to 0.9 s when the files are in
+the system's file cache and about 33 s from a cold disk. The rail lists it
 under its Data Input (*indexing* while it builds). Its columns:
 
 | Column | What |
@@ -70,7 +71,7 @@ under its Data Input (*indexing* while it builds). Its columns:
 | path | the image file |
 | file | its file name |
 | label | the class index (classes in sorted order, numbers as numbers) |
-| label_name | the class name |
+| label_name | the class name (the Data Input's class names when set) |
 | width, height | the original size in pixels (empty when unreadable) |
 | channels | what a decode gives: 1 grey, 3 colour, 4 with alpha |
 | bytes | the file size |
