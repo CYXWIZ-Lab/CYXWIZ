@@ -180,6 +180,56 @@ View Build(const Input& in) {
         row.in_use = s.in_use;
         v.sets.push_back(std::move(row));
     }
+    // Channel statistics.
+    const std::string set_size = std::to_string(in.resize_width) + kTimes + std::to_string(in.resize_height);
+    v.stats_title = "Channel statistics";
+    v.can_measure = in.resize_width > 0 && in.stats_step == Input::StatsStep::Idle;
+    const size_t c = in.channel_mean.size();
+    if (c == 1) v.channels = {"grey"};
+    else if (c == 3) v.channels = {"R", "G", "B"};
+    else for (size_t i = 0; i < c; ++i) v.channels.push_back("channel " + std::to_string(i + 1));
+    if (in.resize_width <= 0) {
+        v.stats_note = "Needs the graph's Resize: the statistics are of the images as training reads them.";
+    } else if (!in.stats_error.empty()) {
+        v.stats_note = in.stats_error;
+    } else if (in.stats_step == Input::StatsStep::Preparing) {
+        v.stats_note = in.stats_total ? "Preparing images: " + Thousands(in.stats_done) + " of " + Thousands(in.stats_total)
+                                      : "Preparing the images...";
+    } else if (in.stats_step == Input::StatsStep::Measuring) {
+        v.stats_note = "Measuring" + (in.stats_device.empty() ? std::string() : " on " + in.stats_device) + "...";
+    } else if (c == 0) {
+        v.stats_note = "Mean and spread of each channel over every pixel of the prepared " + set_size +
+                       " set (after the fixed transforms), as Normalize receives them. Measure prepares the set first "
+                       "when training has not; training then reuses it.";
+    } else {
+        v.stats_title += std::string(kDot) + set_size + ", " + Thousands(in.stats_images) + " images" +
+                         (in.stats_device.empty() ? std::string() : ", on " + in.stats_device);
+        StatsRow mean{"mean", {}}, sd{"std", {}};
+        char text[32];
+        for (size_t i = 0; i < c; ++i) {
+            std::snprintf(text, sizeof(text), "%.4f", in.channel_mean[i]);
+            mean.values.push_back(text);
+            std::snprintf(text, sizeof(text), "%.4f", in.channel_std[i]);
+            sd.values.push_back(text);
+        }
+        v.stats = {mean, sd};
+        if (in.normalize && in.norm_std != 0.0f) {
+            std::string centre, spread;
+            for (size_t i = 0; i < c; ++i) {
+                std::snprintf(text, sizeof(text), "%.2f", (in.channel_mean[i] - in.norm_mean) / in.norm_std);
+                centre += (i ? ", " : "") + std::string(text) + (c > 1 ? " (" + v.channels[i] + ")" : "");
+                std::snprintf(text, sizeof(text), "%.2f", in.channel_std[i] / in.norm_std);
+                spread += (i ? ", " : "") + std::string(text);
+            }
+            char head[96];
+            std::snprintf(head, sizeof(head), "Normalize uses mean %g, std %g: ", in.norm_mean, in.norm_std);
+            v.stats_note = head + std::string("the model's inputs centre at ") + centre + " with spread " + spread +
+                           ", where 0 and 1 are the aim.";
+        } else {
+            v.stats_note = "The graph has no Normalize node: the model's inputs are these values in 0 to 1.";
+        }
+    }
+
     if (!in.sets_listed) v.sets_note = "Reading cache/images...";
     else if (in.sets.empty()) v.sets_note = "None yet: training decodes the images once at the Resize size and keeps them here.";
     else v.sets_note = "Kept 30 days, at most 10 GB in all. A new Resize size or fixed transform makes a new set the first time training starts.";

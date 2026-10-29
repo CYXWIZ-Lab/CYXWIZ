@@ -8,8 +8,10 @@
 #include "../../core/image_profile_presentation.h"
 #include "../../core/prepared_image_set.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace cyxwiz {
@@ -29,6 +31,7 @@ public:
 private:
     void Refresh();       // the index rows, when the index changed
     void ListSets();      // the prepared sets, on a task
+    void MeasureStats();  // prepares the set when needed, then its channel statistics, on a task
     std::string GraphIdentity() const;
 
     std::string dataset_;
@@ -38,6 +41,17 @@ private:
     const void* index_seen_ = nullptr;   // the index table the rows came from
     std::string graph_seen_;             // the Resize + fixed transforms the sets were matched against
     uint64_t sets_task_ = 0;
+    uint64_t stats_task_ = 0;
+    std::string stats_for_;              // the graph steps the statistics are of
+    // Progress the task writes and the UI thread reads; shared, so a task that
+    // outlives the view writes into it safely.
+    struct Progress {
+        std::mutex mutex;
+        image_profile::Input::StatsStep step = image_profile::Input::StatsStep::Idle;
+        size_t done = 0, total = 0;
+        std::string device;
+    };
+    std::shared_ptr<Progress> stats_progress_ = std::make_shared<Progress>();
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

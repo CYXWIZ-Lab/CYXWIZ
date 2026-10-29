@@ -4,6 +4,7 @@
 // labels CSV) with grey, RGBA, 16-bit, JPEG and unreadable files; no
 // example dataset.
 
+#include "../src/core/image_channel_stats.h"
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_utils.h"
 #include "../src/core/prepared_image_set.h"
@@ -15,6 +16,7 @@
 #include <opencv2/opencv.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -150,6 +152,41 @@ void CheckSet(const DataRegistry::ImageDatasetEntry& entry, const std::string& n
     // Another size or mode is another set.
     auto other = PrepareImageSet(entry, {24, 16, ResizeMode::AspectFit});
     Check(other.set && !other.from_cache && other.set->Path() != single.set->Path(), name + ": fit is its own set");
+}
+
+// Channel statistics on each device agree with the host over the readable rows.
+void CheckChannelStats(const DataRegistry::ImageDatasetEntry& entry) {
+    const auto prepared = PrepareImageSet(entry, {24, 16, ResizeMode::Exact});
+    Check(prepared.set != nullptr, "prepared for the statistics");
+    const auto& set = *prepared.set;
+    std::vector<double> sum(3, 0.0), squares(3, 0.0);
+    size_t images = 0;
+    for (size_t i = 0; i < set.Count(); ++i) {
+        if (std::find(set.Unreadable().begin(), set.Unreadable().end(), set.Files()[i]) != set.Unreadable().end()) continue;
+        ++images;
+        for (size_t k = 0; k < set.RowBytes(); ++k) {
+            const double v = set.Row(i)[k] / 255.0;
+            sum[k % 3] += v;
+            squares[k % 3] += v * v;
+        }
+    }
+    const double n = static_cast<double>(images) * 24 * 16;
+    const int available = af::getAvailableBackends();
+    for (const af::Backend backend : {AF_BACKEND_CPU, AF_BACKEND_CUDA, AF_BACKEND_OPENCL}) {
+        if (!(available & backend)) continue;
+        af::setBackend(backend);
+        size_t calls = 0;
+        const ImageChannelStats stats = MeasureImageChannelStats(set, [&](size_t, size_t) { ++calls; });
+        Check(stats.images == 5 && images == 5 && stats.mean.size() == 3 && calls > 0, "five readable images measured");
+        for (size_t c = 0; c < 3; ++c) {
+            const double mean = sum[c] / n;
+            const double sd = std::sqrt(squares[c] / n - mean * mean);
+            Check(std::abs(stats.mean[c] - mean) < 1e-5 && std::abs(stats.std_dev[c] - sd) < 1e-5,
+                  "channel " + std::to_string(c) + " mean and std as on the host");
+        }
+    }
+    std::atomic<bool> cancel{true};
+    Check(MeasureImageChannelStats(set, {}, &cancel).mean.empty(), "a cancelled measure gives nothing");
 }
 
 // The batcher trains from the set (1.3b): every readable image once per
@@ -426,6 +463,7 @@ int main() {
     CheckSet(csv, "labels CSV");
 
     CheckClassOrder(root);
+    CheckChannelStats(folders);
     CheckBatcher(folders);
     CheckFixedTransforms(folders);
     CheckChangesAndStops(folder, folders);

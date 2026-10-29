@@ -208,6 +208,7 @@ set(ENGINE_SOURCES
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
     src/core/image_pipeline_preview.cpp
+    src/core/image_channel_stats.cpp
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
@@ -6811,6 +6812,7 @@ add_dependencies(test_image_quality copy_test_image_quality_fixture)
 add_executable(test_prepared_image_set
     tests/test_prepared_image_set.cpp
     src/core/prepared_image_set.cpp
+    src/core/image_channel_stats.cpp
     src/core/image_dataset_batcher.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp

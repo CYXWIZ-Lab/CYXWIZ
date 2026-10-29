@@ -2,13 +2,16 @@
 
 #include "explore_plots.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/image_channel_stats.h"
 #include "../../core/image_index_service.h"
+#include "../../core/image_quality_analysis.h"
 #include "../../core/image_pipeline_preview.h"
 #include "../../core/live_graph_compile.h"
 
@@ -89,6 +92,7 @@ ImageProfileView::ImageProfileView() = default;
 
 ImageProfileView::~ImageProfileView() {
     if (sets_task_) AsyncTaskManager::Instance().Cancel(sets_task_);
+    if (stats_task_) AsyncTaskManager::Instance().Cancel(stats_task_);
 }
 
 void ImageProfileView::SetDataset(const std::string& dataset) {
@@ -120,6 +124,9 @@ void ImageProfileView::Refresh() {
         return;
     index_seen_ = table.get();
     input_.dataset = dataset_;
+    input_.normalize = config && config->preprocessing.has_normalization;
+    input_.norm_mean = config ? config->preprocessing.norm_mean : 0.0f;
+    input_.norm_std = config ? config->preprocessing.norm_std : 1.0f;
     input_.resize_width = resize_width;
     input_.resize_height = resize_height;
     input_.resize_mode = mode;
@@ -176,6 +183,71 @@ void ImageProfileView::ListSets() {
         alive_);
 }
 
+void ImageProfileView::MeasureStats() {
+    const DataRegistry::ImageDatasetEntry* found = DataRegistry::Instance().GetImageDatasetEntry(dataset_);
+    const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+    if (!found || !config) return;
+    const DataRegistry::ImageDatasetEntry entry = *found;
+    const PreparedImageSpec spec = PreparedImageSpecFrom(config->image_preprocessing);
+    const std::vector<image::ImageOp> fixed = SplitFixedImageTransforms(config->image_augmentation).fixed;
+    stats_for_ = GraphIdentity();
+    input_.channel_mean.clear();
+    input_.channel_std.clear();
+    input_.stats_error.clear();
+    using Step = ip::Input::StatsStep;
+    auto progress = stats_progress_;
+    {
+        std::lock_guard<std::mutex> lock(progress->mutex);
+        progress->step = Step::Preparing;
+        progress->done = progress->total = 0;
+        progress->device.clear();
+    }
+    auto result = std::make_shared<ImageChannelStats>();
+    auto error = std::make_shared<std::string>();
+    auto device = std::make_shared<std::string>();
+    std::weak_ptr<int> alive = alive_;
+    stats_task_ = AsyncTaskManager::Instance().RunAsync(
+        "Channel statistics " + dataset_,
+        [progress, entry, spec, fixed, result, error, device](LambdaTask& task) {
+            const PreparedImageResult prepared = PrepareImageSet(entry, spec, fixed, 0, [&](size_t done, size_t total) {
+                std::lock_guard<std::mutex> lock(progress->mutex);
+                progress->done = done;
+                progress->total = total;
+                return !task.ShouldStop();
+            });
+            if (!prepared.set) {
+                *error = "The images could not be prepared: " + prepared.error;
+                return;
+            }
+            *device = ImageQualityDeviceLabel();
+            {
+                std::lock_guard<std::mutex> lock(progress->mutex);
+                progress->step = Step::Measuring;
+                progress->device = *device;
+            }
+            std::atomic<bool> stop{false};
+            *result = MeasureImageChannelStats(*prepared.set, [&](size_t, size_t) { stop = task.ShouldStop(); }, &stop);
+        },
+        nullptr,
+        [this, alive, result, error, device](bool success, const std::string& message) {
+            if (alive.expired()) return;
+            stats_task_ = 0;
+            {
+                std::lock_guard<std::mutex> lock(stats_progress_->mutex);
+                stats_progress_->step = ip::Input::StatsStep::Idle;
+            }
+            if (!error->empty() || !success) input_.stats_error = !error->empty() ? *error : message;
+            input_.channel_mean = result->mean;
+            input_.channel_std = result->std_dev;
+            input_.stats_images = result->images;
+            input_.stats_device = *device;
+            input_.sets_listed = false;  // the set is in cache/images now
+            graph_seen_.clear();
+            view_ = ip::Build(input_);
+        },
+        alive_);
+}
+
 void ImageProfileView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (dataset_.empty()) return;
@@ -184,7 +256,25 @@ void ImageProfileView::Render() {
         return;
     }
     Refresh();
+    if (!stats_for_.empty() && !stats_task_ && GraphIdentity() != stats_for_) {
+        stats_for_.clear();  // the graph's image steps changed: the statistics were of other images
+        input_.channel_mean.clear();
+        input_.channel_std.clear();
+        input_.stats_error.clear();
+        view_ = ip::Build(input_);
+    }
     if (GraphIdentity() != graph_seen_ && !sets_task_) ListSets();
+    {
+        std::lock_guard<std::mutex> lock(stats_progress_->mutex);
+        const Progress& p = *stats_progress_;
+        if (p.step != input_.stats_step || p.done != input_.stats_done || p.total != input_.stats_total) {
+            input_.stats_step = p.step;
+            input_.stats_done = p.done;
+            input_.stats_total = p.total;
+            if (p.step == ip::Input::StatsStep::Measuring) input_.stats_device = p.device;
+            view_ = ip::Build(input_);
+        }
+    }
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(dataset_.c_str());
@@ -282,6 +372,35 @@ void ImageProfileView::Render() {
         Histogram("Height", view_.heights, ImGui::GetContentRegionAvail().x);
         ui::EndCard();
     });
+
+    // Channel statistics.
+    ui::BeginCard("image_stats");
+    ImGui::TextUnformatted(view_.stats_title.c_str());
+    if (!view_.stats.empty() && ImGui::BeginTable("##stats", 1 + static_cast<int>(view_.channels.size()),
+                                                   ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("");
+        for (const auto& c : view_.channels) ImGui::TableSetupColumn(c.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableHeadersRow();
+        for (const auto& row : view_.stats) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%s", row.what.c_str());
+            for (const auto& value : row.values) {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(value.c_str());
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    const bool measuring = input_.stats_step != ip::Input::StatsStep::Idle;
+    ImGui::TextColored(measuring ? t.running : t.text_dim, "%s", view_.stats_note.c_str());
+    ImGui::PopTextWrapPos();
+    if (!measuring &&
+        ui::SecondaryButton(view_.stats.empty() ? "Measure" : "Measure again", view_.can_measure,
+                            "The graph needs a Resize node"))
+        MeasureStats();
+    ui::EndCard();
 
     // Prepared sets.
     ImGui::Spacing();

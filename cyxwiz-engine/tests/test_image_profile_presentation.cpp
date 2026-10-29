@@ -105,6 +105,44 @@ int main() {
     lopsided.sets_listed = true;
     Check(Build(lopsided).sets_note.rfind("None yet", 0) == 0, "no sets yet");
 
+    // Channel statistics: what Measure does, then the values and Normalize's view of them.
+    Input stats = lopsided;
+    Check(Build(stats).stats_note.rfind("Needs the graph's Resize", 0) == 0 && !Build(stats).can_measure, "stats need a Resize");
+    stats.resize_width = stats.resize_height = 64;
+    View s = Build(stats);
+    Check(s.can_measure && s.stats.empty() && s.stats_note.rfind("Mean and spread of each channel", 0) == 0, "not measured yet");
+    stats.stats_step = Input::StatsStep::Preparing;
+    stats.stats_done = 1024;
+    stats.stats_total = 25000;
+    s = Build(stats);
+    Check(!s.can_measure && s.stats_note == "Preparing images: 1,024 of 25,000", "preparing: " + s.stats_note);
+    stats.stats_step = Input::StatsStep::Measuring;
+    stats.stats_device = "CUDA - GeForce GTX 1050 Ti";
+    Check(Build(stats).stats_note == "Measuring on CUDA - GeForce GTX 1050 Ti...", "measuring");
+    stats.stats_step = Input::StatsStep::Idle;
+    // The cats vs dogs set at 64 x 64 (2026-10-29), with the graph's Normalize 0.5 / 0.5.
+    stats.channel_mean = {0.4883, 0.4551, 0.4170};
+    stats.channel_std = {0.2548, 0.2481, 0.2508};
+    stats.stats_images = 25000;
+    stats.stats_device = "CUDA - GeForce GTX 1050 Ti";
+    stats.normalize = true;
+    stats.norm_mean = 0.5f;
+    stats.norm_std = 0.5f;
+    s = Build(stats);
+    Check(s.stats_title == "Channel statistics \xC2\xB7 64 \xC3\x97 64, 25,000 images, on CUDA - GeForce GTX 1050 Ti",
+          "stats title: " + s.stats_title);
+    Check(s.channels == std::vector<std::string>({"R", "G", "B"}), "RGB channels");
+    Check(s.stats.size() == 2 && s.stats[0].values == std::vector<std::string>({"0.4883", "0.4551", "0.4170"}) &&
+              s.stats[1].values == std::vector<std::string>({"0.2548", "0.2481", "0.2508"}),
+          "mean and std rows");
+    Check(s.stats_note == "Normalize uses mean 0.5, std 0.5: the model's inputs centre at -0.02 (R), -0.09 (G), -0.17 (B) "
+                          "with spread 0.51, 0.50, 0.50, where 0 and 1 are the aim.",
+          "Normalize's view: " + s.stats_note);
+    stats.normalize = false;
+    Check(Build(stats).stats_note.rfind("The graph has no Normalize node", 0) == 0, "no Normalize");
+    stats.stats_error = "The images could not be prepared: disk full";
+    Check(Build(stats).stats_note == "The images could not be prepared: disk full", "an error shows");
+
     // Histogram bins stay round and few.
     const Histogram big = MakeHistogram({42, 447, 1050});
     Check(big.edges.size() == 12 && big.edges[1] == 100 && big.counts[10] == 1, "bins of 100 up to 1100");

@@ -200,6 +200,14 @@ same. Nothing is decoded for it.
   aspect is not kept. 41 images are smaller than 64 x 64 on a side and are
   enlarged*); a graph without Resize says it needs one.
 - Width and height histograms.
+- **Channel statistics**: the mean and standard deviation of each colour
+  channel over every pixel of the prepared set this graph trains from (after
+  the Resize and the transforms done once), measured on the ArrayFire device,
+  and what the graph's Normalize makes of them (*Normalize uses mean 0.5, std
+  0.5: the model's inputs centre at -0.02 (R), -0.09 (G), -0.17 (B) with
+  spread 0.51, 0.50, 0.50*). **Measure** prepares the set first when training
+  has not (17 s for the 25,000 cats vs dogs images); training then reuses it.
+  The figures clear when the graph's image steps change.
 - **Prepared sets**: the sets in cache/images made from this folder (size,
   resize mode, the transforms done once, size on disk), with the one this
   graph trains from marked *used by this graph*. Sets made before

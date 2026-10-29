@@ -33,6 +33,16 @@ struct Input {
     std::string resize_mode;         // "exact", "fit", "fill", "center"
     std::vector<PreparedSet> sets;
     bool sets_listed = false;        // false while the cache is being read
+    // Channel statistics of the set this graph trains from.
+    std::vector<double> channel_mean, channel_std;  // empty until measured
+    size_t stats_images = 0;
+    std::string stats_device;        // "CUDA - GeForce GTX 1050 Ti"
+    // While measuring: preparing (done of total images), then measuring.
+    enum class StatsStep { Idle, Preparing, Measuring } stats_step = StatsStep::Idle;
+    size_t stats_done = 0, stats_total = 0;
+    std::string stats_error;
+    bool normalize = false;          // the graph has a Normalize node
+    float norm_mean = 0.0f, norm_std = 1.0f;
 };
 
 struct Tile {
@@ -58,6 +68,11 @@ struct SetRow {
     bool in_use = false;
 };
 
+struct StatsRow {
+    std::string what;                // "mean", "std"
+    std::vector<std::string> values; // per channel
+};
+
 struct View {
     std::vector<Tile> tiles;
     std::string classes_title;       // "Classes · from cat_dog.csv"
@@ -67,6 +82,12 @@ struct View {
     Histogram widths, heights;
     std::vector<SetRow> sets;
     std::string sets_note;
+    // Channel statistics.
+    std::string stats_title;         // "Channel statistics", then the set: "64 x 64, 25,000 images, on CUDA - ..."
+    std::vector<std::string> channels;  // "R", "G", "B" (or "grey")
+    std::vector<StatsRow> stats;     // empty until measured
+    std::string stats_note;          // what Normalize makes of them, or what Measure does
+    bool can_measure = false;        // the graph has a Resize and nothing runs
 };
 
 View Build(const Input& in);
