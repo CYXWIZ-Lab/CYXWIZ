@@ -3,6 +3,7 @@
 
 #include "arrow_dataset.h"
 #include "data_budget.h"
+#include "label_column_resolver.h"
 #include "classification_decision.h"
 #include "prefetch_batcher.h"
 #include "split_partitioning.h"
@@ -167,6 +168,15 @@ std::string FormatFloatVector(const std::vector<float>& values) {
 // order. The batchers give Validation every row after Train when its share is
 // 0 (their two-way rule), so that slice is the Test holdout and the Test
 // slice is empty: the caller swaps the two.
+// The shared split rule (split_partitioning.h, TOFIX178 S0-g1) marks each
+// row's partition: a stratified split, or any Data Split that shuffles (a
+// seeded shuffle over its three shares, like scikit-learn's
+// train_test_split). Without a Data Split, or for time series, the rows keep
+// the contiguous two-way slices.
+bool UsesSharedSplitRule(const TrainingConfiguration& config) {
+    return !config.is_time_series && (config.stratified || (config.has_data_split && config.shuffle));
+}
+
 bool HoldoutIsTestOnly(const TrainingConfiguration& config) {
     return config.has_data_split && config.val_ratio <= 0.0f && config.test_ratio > 0.0f;
 }
@@ -182,15 +192,17 @@ void AttachTrainingBatcherPrefetchWrappers(
 
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
-    size_t num_columns) {
+    const std::shared_ptr<arrow::Schema>& schema,
+    const std::string& label_column) {
 
     if (config.is_time_series) {
         return {config.input_size, true, true};
     }
-    if (num_columns > 1) {
-        return {num_columns - 1, false, true};
+    const int label_index = ResolveLabelColumnIndex(schema, label_column);
+    if (label_index >= 0) {
+        return {CountNumericBatchFeatureColumns(schema, label_index), false, true};
     }
-    return {num_columns, false, false};
+    return {CountNumericBatchFeatureColumns(schema), false, false};
 }
 
 bool TryApplyBalancedClassWeightsFromArrowTable(
@@ -222,7 +234,10 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
 
     std::shared_ptr<arrow::Table> effective_table = table;
     std::string effective_partition = partition_column;
-    if (effective_partition.empty() && config.stratified && !config.is_time_series) {
+    if (effective_partition.empty() && table && table->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0) {
+        effective_partition = kSplitPartitionColumn;  // marked by the pipeline run
+    }
+    if (effective_partition.empty() && UsesSharedSplitRule(config)) {
         auto partitioned = AddSplitPartitionColumn(
             table,
             SplitPartitionOptions{
@@ -232,7 +247,7 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
                 config.test_ratio,
                 config.shuffle,
                 static_cast<uint32_t>(std::max(0, config.split_seed)),
-                true,
+                config.stratified,
                 context + " class weights"});
         if (partitioned.ok()) {
             effective_table = partitioned.ValueOrDie();
@@ -379,10 +394,14 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                  config.is_time_series, num_workers, config.prefetch_factor,
                  config.dataloader_seed);
 
-    std::string partition_col = config.is_time_series
+    // A table the pipeline run marked (TOFIX178 S0-g2) keeps its partition:
+    // the steps learned from those Train rows.
+    const bool marked = dataset && dataset->GetArrowTable() &&
+        dataset->GetArrowTable()->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0;
+    std::string partition_col = config.is_time_series || marked
         ? kSplitPartitionColumn : "";
     auto effective_dataset = dataset;
-    if (config.stratified && !config.is_time_series) {
+    if (!marked && UsesSharedSplitRule(config)) {
         auto partitioned = AddSplitPartitionColumn(
             dataset ? dataset->GetArrowTable() : nullptr,
             SplitPartitionOptions{
@@ -392,7 +411,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                 config.test_ratio,
                 config.shuffle,
                 static_cast<uint32_t>(std::max(0, config.split_seed)),
-                true,
+                config.stratified,
                 "TrainingExecutor Arrow"});
         if (partitioned.ok()) {
             effective_dataset = std::make_shared<ArrowDataset>(
@@ -577,12 +596,13 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     if (partition_col.empty() && dataset && config.train_ratio < 1.0f) {
         const bool stratified = config.stratified && !continuous_target;
         const std::string stratify = stratified ? class_label : std::string();
-        const std::array<double, 3> shares = stratified
+        const bool shared_rule = stratified || UsesSharedSplitRule(config);
+        const std::array<double, 3> shares = shared_rule
             ? std::array<double, 3>{config.train_ratio, config.val_ratio, config.test_ratio}
             : std::array<double, 3>{config.train_ratio, effective_val_ratio, 0.0};
         {
             std::string split_error;
-            auto split = BuildParquetRowSplit(*dataset, stratify, shares, config.shuffle,
+            auto split = BuildParquetRowSplit(*dataset, stratify, shares, shared_rule && config.shuffle,
                                               static_cast<uint32_t>(std::max(0, config.split_seed)), split_error);
             if (!split) throw std::runtime_error("Parquet split: " + split_error);
             spdlog::info("TrainingExecutor: Parquet row split{} train={} val={} test={} ({} in memory)",
@@ -644,7 +664,8 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     }
 
     // A stratified split gives every share its rows; a time series has its partitions.
-    if (partition_col.empty() && !(config.stratified && !continuous_target) && HoldoutIsTestOnly(config))
+    if (partition_col.empty() && !(config.stratified && !continuous_target) && !UsesSharedSplitRule(config) &&
+        HoldoutIsTestOnly(config))
         std::swap(result.parquet_val, result.parquet_test);
 
     result.num_train_samples = result.parquet_train->GetNumSamples();
@@ -682,14 +703,17 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
             "' is not a registered Arrow or Parquet source";
         return result;
     }
-    if (partitions.dev.IsSupplied() &&
+    // A joined role is read from the Training table (its partition 1 / 2).
+    const bool external_dev = partitions.dev.IsSupplied() && !partitions.dev.joined_to_training;
+    const bool external_test = partitions.test.IsSupplied() && !partitions.test.joined_to_training;
+    if (external_dev &&
         !datasets.dev_arrow && !datasets.dev_parquet) {
         result.error_message = "Validation Dataset '" +
             partitions.dev.dataset_name +
             "' is not a registered Arrow or Parquet source";
         return result;
     }
-    if (partitions.test.IsSupplied() &&
+    if (external_test &&
         !datasets.test_arrow && !datasets.test_parquet) {
         result.error_message = "Test Dataset '" +
             partitions.test.dataset_name +
@@ -709,14 +733,12 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
     // and its concrete owner in one final assembly step.
     auto assembly_config = config;
     assembly_config.prefetch_factor = 0;
-    const bool external_dev = partitions.dev.IsSupplied();
-    const bool external_test = partitions.test.IsSupplied();
 
     // ArrowDatasetBatcher and ParquetArrowBatcher express derived slices as
     // Train, then Val, then Test. If Dev is supplied but Test is not, build the
     // remaining Train-derived holdout in the Val slot and move that owner to
     // Test before installing the external Dev owner below.
-    if (external_dev && !external_test) {
+    if (external_dev && !partitions.test.IsSupplied()) {
         assembly_config.val_ratio = partitions.policy.test_ratio;
         assembly_config.test_ratio = 0.0f;
     }
@@ -758,7 +780,7 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
               batch_size,
               vocabulary);
 
-    if (external_dev && !external_test) {
+    if (external_dev && !partitions.test.IsSupplied()) {
         result.batchers.arrow_test = std::move(result.batchers.arrow_val);
         result.batchers.parquet_test = std::move(result.batchers.parquet_val);
         result.batchers.val = nullptr;
@@ -785,23 +807,23 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
             static_cast<uint32_t>(config.dataloader_seed), vocabulary);
     };
 
-    if (datasets.dev_arrow) {
+    if (external_dev && datasets.dev_arrow) {
         result.batchers.parquet_val.reset();
         result.batchers.arrow_val = make_arrow_role(
             datasets.dev_arrow, partitions.dev.label_column);
         result.batchers.val = result.batchers.arrow_val.get();
-    } else if (datasets.dev_parquet) {
+    } else if (external_dev && datasets.dev_parquet) {
         result.batchers.arrow_val.reset();
         result.batchers.parquet_val = make_parquet_role(
             datasets.dev_parquet, partitions.dev.label_column);
         result.batchers.val = result.batchers.parquet_val.get();
     }
-    if (datasets.test_arrow) {
+    if (external_test && datasets.test_arrow) {
         result.batchers.parquet_test.reset();
         result.batchers.arrow_test = make_arrow_role(
             datasets.test_arrow, partitions.test.label_column);
         result.batchers.test = result.batchers.arrow_test.get();
-    } else if (datasets.test_parquet) {
+    } else if (external_test && datasets.test_parquet) {
         result.batchers.arrow_test.reset();
         result.batchers.parquet_test = make_parquet_role(
             datasets.test_parquet, partitions.test.label_column);

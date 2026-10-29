@@ -146,6 +146,75 @@ When a project opens, the Engine applies the 30-day / 10 GB rule to that
 project's two folders. The temporary cache gets the same rule when the
 Engine starts.
 
+Prepared datasets also hold the table training reads after the pipeline
+run (Execute Pipeline, or the run Train starts for SQL / Filter Rows ...
+steps): after training on it, the Console says "'ds_filter_50' is kept on
+disk for the next session". In a later session, Train with nothing changed
+before the Data Split loads it and runs no data step: "training reads
+'prepared_4ba1042cc5fa4c2b', prepared in an earlier session; the data steps
+do not run".
+
+### The prepared dataset's key
+
+Each entry is found by a key: a hash of everything that decides the rows
+training reads. Train computes it first and logs it (Debug, "prepared data
+key b5979ba17bfce829"); the same key finds the entry, a different key makes a
+new one. The key holds:
+
+- **the steps before the Data Split**: every node from the Data Input to the
+  step that feeds the Split, with each step's type and settings, and the
+  links between them;
+- **the Data Input**: its dataset name, its columns and their types, and,
+  for data with no file behind it, its rows' content;
+- **the source file**: its size and modified time (editing or replacing the
+  file makes a new entry);
+- **files a step reads**: a vocabulary, a lookup table or a Data Convert
+  target named in a step's settings, by size and content;
+- **the Data Split's rows**: its shares, seed, label column and Stratified,
+  and the Data Loader's Shuffle, since the steps learn from the Train rows
+  (see [big_data.md](big_data.md));
+- **the output kind**: table or sparse features (a vectorizer's Output
+  format);
+- **the entry format**: the Engine's own version of what an entry holds.
+  When it changes (2026-10-28: entries keep each row's Train / Validation /
+  Test mark, sparse ones too) older entries no longer match and the data is
+  prepared once again; the old entries go by the 30-day rule or
+  **Clear...**.
+
+Not in the key, so these keep the entry: the model and everything after the
+Data Split, renaming a step, moving nodes on the canvas, training settings
+(epochs, batch size, learning rate).
+
+Not kept at all (each Train prepares again, and the Console says why):
+paths with a SQL step (a query can read any file) or a scaler set to **Save
+fitted state** (an entry would skip writing the file: "'Standard Scaler'
+keeps fitted state"). A scaler that fits (the default) is kept: the key holds
+every row it learns from. With **Use saved values** the values file is in the
+key, by content.
+
+A table kept on disk (a result larger than memory allows) is kept as its
+file: the entry links to it, or copies it on another drive, and a later
+session opens it on disk again instead of streaming the steps over the data.
+
+Example (`s0g4.cyxgraph`: Blobs train -> Standard Scaler -> Data Split with
+supplied Validation and Test inputs): the first Train logs
+"'ds_operator_StandardScaler_5' is kept on disk for the next session" (key
+12cbbcf99101b971). After reopening the Engine, Train logs "the prepared data is
+on disk from an earlier session", "training reads 'prepared_12cbbcf99101b971',
+prepared in an earlier session; the data steps do not run", and the batchers
+read the kept marks: "partition '__partition__'=0 selected 384 / 480 rows",
+then 48 and 48.
+
+Example (`s0f.cyxgraph`, 3,000 reviews, TF-IDF with sparse output): the
+first Train after the 2026-10-28 format change logs a new key ("prepared
+data key b5979ba17bfce829") and prepares again: "Train rows of
+'ds_datainput_1': stratified split assigned 2399 train / 299 val / 302 test
+rows", then "SparseFeatureDatasetBatcher: train split (rows marked by the
+pipeline run), 2399 samples". After closing and reopening the Engine, Train
+logs the same key, "the prepared data is on disk from an earlier session",
+runs no data step, and the batcher serves the same 2399 / 299 / 302 marked
+rows. Setting the Split's train share to 0.7 makes another key.
+
 Example (MNIST project): Prepared inputs, 1 file, 3 MB, **Clear...** then
 **Clear** shows "Cleared 3 MB (1 file)." The next Apply of
 `mnist_test.csv` prepares the file again.

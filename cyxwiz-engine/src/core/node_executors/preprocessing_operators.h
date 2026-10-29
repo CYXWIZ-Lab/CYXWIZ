@@ -39,8 +39,16 @@ namespace cyxwiz {
 class ColumnTransformOperator : public IPipelineOperator {
 public:
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
-    // Fitted values depend on the rows that reached the step.
-    bool IsCacheable() const override { return false; }
+    // The fit learns from rows the cache key covers (the source, the steps
+    // before and the Split's Train rows), so the output is kept, unless the
+    // step saves its fitted values: a hit would not write them (TOFIX178 0.5).
+    bool IsCacheable() const override { return options_.IsTransformOnly() || !options_.save_state; }
+    // Use saved values: the values file is in the key.
+    bool CollectCacheDependencies(std::vector<PipelineOperatorCacheDependency>& dependencies,
+                                  std::string&) const override {
+        if (options_.IsTransformOnly()) dependencies.push_back({"fitted_state", options_.state_path});
+        return true;
+    }
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
@@ -400,6 +408,7 @@ class OutlierDetectorOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "OutlierDetector"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
 
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;

@@ -1531,6 +1531,23 @@ bool BuildSequential(
             }
 
             case gui::NodeType::BatchNorm: {
+                // Before Flatten / a global pool it normalises each channel of
+                // [H,W,C,N] (torch BatchNorm2d); after it, each feature (BatchNorm1d).
+                if (spatial_head && i < spatial_head->input_shapes.size()) {
+                    const auto& in_shape = spatial_head->input_shapes[i];
+                    if (in_shape.size() != 3) {
+                        throw std::runtime_error(
+                            "BatchNorm at index " + std::to_string(i) +
+                            " needs the model's input_shape [H,W,C] to know its channels");
+                    }
+                    const int channels = static_cast<int>(in_shape[2]);
+                    model.Add<BatchNorm2DModule>(channels, normalization_regularization_configuration.epsilon,
+                                                 normalization_regularization_configuration.momentum);
+                    CYXWIZ_BUILDER_INFO("  [{}] BatchNorm2D(channels={}, eps={}, momentum={})", i, channels,
+                                        normalization_regularization_configuration.epsilon,
+                                        normalization_regularization_configuration.momentum);
+                    break;
+                }
                 model.Add<BatchNormModule>(
                     current_input_size,
                     normalization_regularization_configuration.epsilon,

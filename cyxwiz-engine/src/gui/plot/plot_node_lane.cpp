@@ -6,7 +6,7 @@
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/pipeline_executor.h"
-#include "../../core/pipeline_materializer.h"
+#include "../../core/training_input_preparation.h"
 #include "../graph_training_launcher.h"
 #include "../../core/plot/plot_tree_model.h"
 #include "../../core/project_manager.h"
@@ -222,7 +222,7 @@ void PlotNodeLane::Start(int plot_id, Entry& e, const std::shared_ptr<const void
 void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
                                const std::shared_ptr<const void>& owner) {
     (void)owner;
-    // The closure as the materializer reads it (the graph's own node and link types).
+    // The steps above the vectorizer (the graph's own node and link types).
     std::vector<gui::MLNode> closure;
     for (const auto& n : nodes)
         if (std::find(e.plan.closure_ids.begin(), e.plan.closure_ids.end(), n.id) != e.plan.closure_ids.end()) closure.push_back(n);
@@ -242,40 +242,22 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
                // Training's prepared-data cache: the matrix is built once and read after
                // (by the Dashboard and by training) until the data or the vectorizer changes.
                cache = ::gui::GraphMaterializationCacheConfig(pm.GetProjectRoot())](LambdaTask& t) mutable {
-            // 1. The Data Input's table (as loaded, or read now).
-            std::string source = plan.dataset_name;
-            if (source.empty()) {
-                PipelineExecutor executor;
-                executor.SetArtifactRoot(artifacts);
-                executor.SetExportRoot(exports);
-                executor.SetIngestionCacheRoot(ingestion);
-                executor.SetProjectRoot(project);
-                t.ReportProgress(0.05f, "Reading the data");
-                if (!executor.ExecutePipeline(plan.input_pipeline_json))
-                    throw std::runtime_error(executor.GetLastError().empty() ? std::string("The Data Input could not be read.") : executor.GetLastError());
-                auto it = executor.NodeResults().find(plan.source_input_id);
-                if (it == executor.NodeResults().end()) throw std::runtime_error("The Data Input gave no table.");
-                source = it->second;
-                owned->AdoptOwnership(executor);  // the table it read goes with its node
-            }
-            if (t.ShouldStop()) return;
-            // 2. The vectorizer through the materializer, as training runs it.
+            // The vectorizer's sparse features as training makes them: kept on
+            // disk, else a run of the steps above it (TOFIX178 S0-f2); the run's
+            // tables go with this lane's owner.
             for (auto& n : closure)
-                if (n.id == plan.source_input_id) n.parameters["dataset_name"] = source;
-            PipelineOperatorExecutionContext context;
-            context.cancellation_requested = [&t]() { return t.ShouldStop(); };
-            const MaterializeResult m = PipelineMaterializer::Materialize(
-                closure, closure_links, DataRegistry::Instance(), source, cache,
-                [&t](const PipelineOperatorProgress& event) {
-                    t.ReportProgress(0.1f + 0.9f * std::clamp(event.progress, 0.0f, 1.0f), event.message.empty() ? event.stage : event.message);
-                },
-                std::move(context));
-            if (t.ShouldStop()) return;
-            if (!m.success) throw std::runtime_error(m.error_message.empty() ? std::string("The features could not be made.") : m.error_message);
-            if (m.effective_kind != PipelineMaterializerSourceKind::SparseFeatureDataset)
+                if (n.id == plan.source_input_id && !plan.dataset_name.empty()) n.parameters["dataset_name"] = plan.dataset_name;
+            const auto prepared = PrepareStepResult(
+                closure, closure_links, plan.feeder_id, DataRegistry::Instance(), {project, artifacts, exports, ingestion},
+                cache, [&t]() { return t.ShouldStop(); },
+                [&t](float progress, const std::string& message) { t.ReportProgress(std::clamp(progress, 0.0f, 1.0f), message); },
+                owned.get());
+            if (t.ShouldStop() || prepared.cancelled) return;
+            if (!prepared.ok) throw std::runtime_error(prepared.error.empty() ? std::string("The features could not be made.") : prepared.error);
+            if (!DataRegistry::Instance().IsSparseFeatureDataset(prepared.dataset))
                 throw std::runtime_error(plan.feeder_name + " gave no sparse features.");
-            spdlog::info("Sparse features for the dashboard: {} ({})", m.effective_dataset_name, m.cache_message.empty() ? "built" : m.cache_message);
-            *result = m.effective_dataset_name;
+            spdlog::info("Sparse features for the dashboard: {} ({})", prepared.dataset, prepared.from_disk ? "read from disk" : "built");
+            *result = prepared.dataset;
             t.MarkCompleted("Sparse features ready");
         });
     e.task_id = AsyncTaskManager::Instance().Submit(task);

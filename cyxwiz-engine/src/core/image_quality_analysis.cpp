@@ -3,6 +3,7 @@
 #include "datasets/image_csv_dataset.h"
 #include "datasets/image_folder_dataset.h"
 #include "graph_compiler_dataset_hooks.h"
+#include "prepared_image_set.h"
 
 #include <cyxwiz/device.h>
 #include <cyxwiz/neural_provider.h>
@@ -42,37 +43,14 @@ std::string Hex(uint64_t value) {
     return text;
 }
 
-// Modification times of the folder and its direct subfolders: they change
-// when files are added, removed or renamed.
-std::string DirectorySignature(const std::string& folder) {
-    std::error_code ec;
-    std::ostringstream out;
-    out << static_cast<long long>(fs::last_write_time(folder, ec).time_since_epoch().count());
-    for (const auto& entry : fs::directory_iterator(folder, ec)) {
-        if (entry.is_directory(ec)) {
-            out << '|' << entry.path().filename().string() << ':'
-                << static_cast<long long>(fs::last_write_time(entry.path(), ec).time_since_epoch().count());
-        }
-    }
-    return out.str();
-}
-
 std::string ComputeKey(const DataRegistry::ImageDatasetEntry& entry, int width, int height) {
-    const auto dataset = OpenImageQualityDataset(entry, width, height);
-    std::vector<std::string> rows;
-    rows.reserve(dataset->Size());
-    std::error_code ec;
-    for (size_t i = 0; i < dataset->Size(); ++i) {
-        const std::string file = dataset->GetItemSource(i);
-        const auto size = fs::file_size(file, ec);
-        const auto time = static_cast<long long>(fs::last_write_time(file, ec).time_since_epoch().count());
-        rows.push_back(file + '|' + std::to_string(ec ? 0 : size) + '|' + std::to_string(time));
-    }
-    std::sort(rows.begin(), rows.end());
+    const auto listing = ListImageSet(entry);
     uint64_t hash = 1469598103934665603ull;
     hash = Fnv(hash, "v" + std::to_string(image::kImageQualityVersion) + "|" + std::to_string(width) + "x" +
                          std::to_string(height) + "|" + entry.labels_csv);
-    for (const auto& row : rows) hash = Fnv(hash, row + '\n');
+    // The analysis stores label indices, so the class order is part of the key.
+    for (const auto& name : listing.class_names) hash = Fnv(hash, "class|" + name + '\n');
+    for (const auto& row : ImageFileIdentityRows(listing)) hash = Fnv(hash, row + '\n');
     return Hex(hash);
 }
 
@@ -130,11 +108,7 @@ std::string ImageQualityKey(const DataRegistry::ImageDatasetEntry& entry, int wi
 
     const std::string id = entry.folder_path + '|' + entry.labels_csv + '|' + std::to_string(width) + 'x' +
                            std::to_string(height);
-    std::string signature = DirectorySignature(entry.folder_path);
-    if (!entry.labels_csv.empty()) {
-        std::error_code ec;
-        signature += '|' + std::to_string(static_cast<long long>(fs::last_write_time(entry.labels_csv, ec).time_since_epoch().count()));
-    }
+    std::string signature = ImageSetSignature(entry);
     {
         std::lock_guard<std::mutex> lock(mutex);
         const auto it = remembered.find(id);
@@ -146,22 +120,8 @@ std::string ImageQualityKey(const DataRegistry::ImageDatasetEntry& entry, int wi
     return key;
 }
 
-namespace {
-
-std::mutex project_root_mutex;
-std::string project_root;
-
-}  // namespace
-
-void SetImageQualityProjectRoot(const std::string& root) {
-    std::lock_guard<std::mutex> lock(project_root_mutex);
-    project_root = root;
-}
-
 fs::path ImageQualityCacheDir() {
-    std::lock_guard<std::mutex> lock(project_root_mutex);
-    if (!project_root.empty()) return fs::path(project_root) / "cache" / "quality";
-    return fs::temp_directory_path() / "cyxwiz" / "quality";
+    return ImageCacheDir("quality");
 }
 
 std::optional<ImageQualityAnalysis> AnalyzeImageQuality(const DataRegistry::ImageDatasetEntry& entry,

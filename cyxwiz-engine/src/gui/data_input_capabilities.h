@@ -40,6 +40,9 @@ struct FolderScan {
 FolderScan ScanFolder(const std::string& path, int max_files = 200000);
 
 bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category);
+// Rows and columns (header rows, row limit, column list) is for files read as rows;
+// an image or audio folder has none.
+bool HasRowsAndColumns(cyxwiz::loaders::FileCategory file_category);
 const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_category);
 const char* FileTypeParam(int detected_type);
 const char* FileTypeName(int detected_type);

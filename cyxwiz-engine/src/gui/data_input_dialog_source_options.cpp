@@ -8,6 +8,12 @@
 #include "ui_tokens.h"
 #include "../core/data_input_formats.h"
 #include "../core/data_input_presentation.h"
+#include "../core/arrow_dataset.h"
+#include "../core/data_registry.h"
+#include "../core/image_index.h"
+
+#include <arrow/api.h>
+#include <imgui_stdlib.h>
 
 #include <algorithm>
 #include <cstring>
@@ -224,7 +230,10 @@ void DataInputDialog::RenderFileSource() {
         SectionTitle(folder_scan_.kind == data_input::FolderKind::Images  ? "2. Use as Images"
                      : folder_scan_.kind == data_input::FolderKind::Audio ? "2. Use as Audio"
                                                                           : "2. Use as Text");
-        if (folder_scan_.kind == data_input::FolderKind::Images) RenderImageLabels();
+        if (folder_scan_.kind == data_input::FolderKind::Images) {
+            RenderImageLabels();
+            RenderImageClassNames();
+        }
         else if (folder_scan_.kind == data_input::FolderKind::Audio) RenderAudioLoading();
         else ImGui::TextColored(t.text_dim, "Each class folder's name is the label; each file is one sample.");
     }
@@ -458,6 +467,75 @@ void DataInputDialog::RenderImageLabels() {
             }
         }
     }
+}
+
+void DataInputDialog::RenderImageClassNames() {
+    namespace ui = cyxwiz::ui;
+    const auto& t = ui::CurrentTokens();
+    FieldLabel("Class names");
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const auto* entry = data_load_state_ == DataLoadState::InMemory && !loaded_dataset_name_.empty()
+                            ? registry.GetImageDatasetEntry(loaded_dataset_name_)
+                            : nullptr;
+    if (!entry) {
+        ImGui::TextColored(t.text_dim, "Apply to load the folder; then each class can be named here.");
+        return;
+    }
+    const size_t classes = entry->class_names.size();
+    class_names_edit_.resize(classes);
+    // Suggestions from the files' names, read from the index table once it is built.
+    const auto index = registry.GetArrowDataset(cyxwiz::DataRegistry::ImageIndexName(loaded_dataset_name_));
+    const auto table = index ? index->GetArrowTable() : nullptr;
+    if (table && table.get() != class_suggestions_from_) {
+        class_suggestions_from_ = table.get();
+        const auto combined = table->CombineChunks().ValueOrDie();
+        const auto files = std::static_pointer_cast<arrow::StringArray>(combined->GetColumnByName("file")->chunk(0));
+        const auto labels = std::static_pointer_cast<arrow::Int32Array>(combined->GetColumnByName("label")->chunk(0));
+        std::vector<std::string> file_names;
+        std::vector<int> label_values;
+        for (int64_t i = 0; i < files->length(); ++i) {
+            file_names.push_back(files->GetString(i));
+            label_values.push_back(labels->IsNull(i) ? -1 : labels->Value(i));
+        }
+        class_name_suggestions_ = cyxwiz::SuggestClassNames(file_names, label_values, entry->class_names);
+    }
+    class_name_suggestions_.resize(classes);
+
+    if (ImGui::BeginTable("##class_names", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn(image_layout_ == ImageLayout::FlatWithCSV ? "label in the CSV" : "folder",
+                                ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("suggested", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableHeadersRow();
+        for (size_t c = 0; c < classes; ++c) {
+            ImGui::PushID(static_cast<int>(c));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(entry->class_names[c].c_str());
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputTextWithHint("##name", entry->class_names[c].c_str(), &class_names_edit_[c]))
+                class_names_changed_ = true;
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            if (class_name_suggestions_[c].empty()) ImGui::TextColored(t.text_faint, "-");
+            else ImGui::TextColored(t.text_dim, "%s", class_name_suggestions_[c].c_str());
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    const bool any_suggestion = std::any_of(class_name_suggestions_.begin(), class_name_suggestions_.end(),
+                                            [](const std::string& s) { return !s.empty(); });
+    if (ui::SecondaryButton("Use suggested", any_suggestion, "No common file-name prefix per class")) {
+        for (size_t c = 0; c < classes; ++c)
+            if (!class_name_suggestions_[c].empty()) class_names_edit_[c] = class_name_suggestions_[c];
+        class_names_changed_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Apply saves them; every screen and the index's label_name use them. "
+                                   "Empty keeps the label. The images are not loaded again.");
 }
 
 void DataInputDialog::RenderAudioLoading() {

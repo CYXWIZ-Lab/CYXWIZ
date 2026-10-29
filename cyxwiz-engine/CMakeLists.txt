@@ -204,6 +204,13 @@ set(ENGINE_SOURCES
     src/core/sparse_feature_dataset_cache.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/prepared_image_set.cpp
+    src/core/image_index.cpp
+    src/core/image_index_service.cpp
+    src/core/image_profile_presentation.cpp
+    src/core/image_gallery_presentation.cpp
+    src/core/image_pipeline_preview.cpp
+    src/core/image_channel_stats.cpp
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
@@ -243,8 +250,9 @@ set(ENGINE_SOURCES
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/node_palette.cpp  # TOFIX157 palette curation
-    src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
-    src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
+    src/core/prepared_data_cache.cpp
+    src/core/training_input_preparation.cpp
+    src/core/prepared_step_run.cpp
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
     src/core/storage_caches.cpp  # Preferences > Storage: measure and clear the prepared-data caches
     src/core/annotation_manager.cpp
@@ -354,14 +362,10 @@ set(ENGINE_SOURCES
     src/preprocessing/statistics_calculator.cpp
     src/preprocessing/normalization_transform.cpp
     src/preprocessing/scaling_transform.cpp
-    src/preprocessing/image_transform.cpp
     # OpenCV Transforms (Phase 1)
     src/preprocessing/morphology_transform.cpp
-    src/preprocessing/blur_transform.cpp
-    src/preprocessing/perspective_transform.cpp
-    src/preprocessing/pyramid_transform.cpp
+    # (blur, perspective, pyramid and image_enhancer: in cyxwiz-image-cv)
     # Image utilities
-    src/utils/image_enhancer.cpp
     src/utils/dataset_analyzer.cpp
     src/utils/image_deduplicator.cpp
     src/utils/hdf5_browser.cpp
@@ -442,6 +446,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
     src/core/test_results_presentation.cpp
     src/core/test_evaluation_tables.cpp
@@ -753,6 +758,9 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
+    src/gui/data_studio/image_profile_view.cpp
+    src/gui/data_studio/image_gallery_view.cpp
+    src/gui/image_thumbnails.cpp
     src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/explore_tab.cpp
     src/gui/data_studio/transform_step_view.cpp
@@ -885,7 +893,9 @@ set(ENGINE_HEADERS
     src/core/node_executors/feature_matrix_utils.h
     src/core/node_executors/text_column_utils.h
     src/core/node_executors/ts_column_utils.h
-    src/core/pipeline_materializer.h
+    src/core/prepared_data_cache.h
+    src/core/training_input_preparation.h
+    src/core/training_input_graph.h
     src/core/test_manager.h
     src/core/checkpoint_manifest.h
     src/core/checkpoint_payload_io.h
@@ -1053,7 +1063,6 @@ set(ENGINE_HEADERS
     src/preprocessing/statistics_calculator.h
     src/preprocessing/normalization_transform.h
     src/preprocessing/scaling_transform.h
-    src/preprocessing/image_transform.h
     # OpenCV Transforms (Phase 1)
     src/preprocessing/morphology_transform.h
     src/preprocessing/blur_transform.h
@@ -1081,12 +1090,26 @@ if(GIT_FOUND)
     endif()
 endif()
 
+# ===== OpenCV image steps (TOFIX178 1.3f): ApplyCvImageStep and the classes it
+# calls, for the Engine and the tests that prepare image sets =====
+add_library(cyxwiz-image-cv STATIC
+    src/core/image_cv_steps_apply.cpp
+    src/utils/image_enhancer.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
+)
+target_include_directories(cyxwiz-image-cv PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(cyxwiz-image-cv PUBLIC
+    cyxwiz-training-core ${OpenCV_LIBS} spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+set_target_properties(cyxwiz-image-cv PROPERTIES CXX_STANDARD 20)
+
 add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
 target_link_libraries(cyxwiz-engine PRIVATE
-    cyxwiz-implot3d cyxwiz-runtime-bootstrap)
+    cyxwiz-implot3d cyxwiz-runtime-bootstrap cyxwiz-image-cv)
 target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )
@@ -3128,10 +3151,10 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
-    src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
+    src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
-    src/core/pipeline_table_materializer.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
@@ -3293,9 +3316,24 @@ endif()
 set_target_properties(test_column_transform_operators PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME column_transform_operators COMMAND test_column_transform_operators)
 
+# Steps learn from the Train rows of a training graph's split (TOFIX178 S0-g3).
+add_executable(test_fit_on_train_rows
+    tests/test_fit_on_train_rows.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+)
+target_include_directories(test_fit_on_train_rows PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_fit_on_train_rows PRIVATE cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared
+    Parquet::parquet_shared duckdb nlohmann_json::nlohmann_json ${OpenCV_LIBS} spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_fit_on_train_rows PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_fit_on_train_rows PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME fit_on_train_rows COMMAND test_fit_on_train_rows)
+
 add_executable(test_pipeline_operator_materializer_parity
     tests/test_pipeline_operator_materializer_parity.cpp
     ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/prepared_step_run.cpp
 )
 target_link_libraries(test_pipeline_operator_materializer_parity PRIVATE cyxwiz-training-core)
 
@@ -3815,15 +3853,8 @@ set_target_properties(test_graph_executable_model PROPERTIES
 # ===== Test: Text Arrow Materializer =====
 add_executable(test_text_arrow_materializer
     tests/test_text_arrow_materializer.cpp
-    src/core/materialization_cache.cpp
-    src/core/pipeline_table_materializer.cpp
-    src/core/node_executors/text_tokenizer_operator.cpp
-    src/core/node_executors/word_embeddings_operator.cpp
-    src/core/fasttext_model_store.cpp
-    src/core/word_vectors_training_record.cpp
-    src/core/word_embeddings_presentation.cpp
-    src/core/node_executors/tree_classification_utils.cpp
-    src/core/node_executors/text_token_windows.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/prepared_step_run.cpp
 )
 target_link_libraries(test_text_arrow_materializer PRIVATE cyxwiz-training-core)
 
@@ -3838,6 +3869,9 @@ target_link_libraries(test_text_arrow_materializer PRIVATE
     spdlog::spdlog
     fmt::fmt
     cyxwiz-backend
+    duckdb
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
 )
 
 if(WIN32)
@@ -3854,15 +3888,8 @@ set_target_properties(test_text_arrow_materializer PROPERTIES
 # ===== Test: Text Arrow Runtime Training Launch =====
 add_executable(test_text_arrow_training_launch
     tests/test_text_arrow_training_launch.cpp
-    src/core/materialization_cache.cpp
-    src/core/pipeline_table_materializer.cpp
-    src/core/node_executors/text_tokenizer_operator.cpp
-    src/core/node_executors/word_embeddings_operator.cpp
-    src/core/fasttext_model_store.cpp
-    src/core/word_vectors_training_record.cpp
-    src/core/word_embeddings_presentation.cpp
-    src/core/node_executors/tree_classification_utils.cpp
-    src/core/node_executors/text_token_windows.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/prepared_step_run.cpp
 )
 target_link_libraries(test_text_arrow_training_launch PRIVATE cyxwiz-training-core)
 
@@ -3877,6 +3904,9 @@ target_link_libraries(test_text_arrow_training_launch PRIVATE
     spdlog::spdlog
     fmt::fmt
     cyxwiz-backend
+    duckdb
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
 )
 
 if(WIN32)
@@ -3921,10 +3951,10 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
-    src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
+    src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
-    src/core/pipeline_table_materializer.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
@@ -4033,6 +4063,8 @@ set_target_properties(test_graph_training_sequence_preflight PROPERTIES
 # ===== Test: Text GUI Training Launch Helper =====
 add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/prepared_step_run.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/generation_preview_view.cpp
@@ -4061,10 +4093,10 @@ add_executable(test_text_gui_training_launch
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
-    src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
+    src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
-    src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
     src/core/fasttext_model_store.cpp
@@ -4089,6 +4121,8 @@ target_include_directories(test_text_gui_training_launch PRIVATE
 
 target_link_libraries(test_text_gui_training_launch PRIVATE
     cyxwiz-implot3d
+    duckdb
+    ${OpenCV_LIBS}
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui
@@ -4494,6 +4528,29 @@ if(WIN32)
 endif()
 set_target_properties(cyxwiz-bench-out-of-core PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# Device-resident training features give the host batches exactly (TOFIX178 S0-b).
+add_executable(test_arrow_batcher_resident tests/test_arrow_batcher_resident.cpp)
+target_include_directories(test_arrow_batcher_resident PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_arrow_batcher_resident PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_arrow_batcher_resident PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_arrow_batcher_resident PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME arrow_batcher_resident COMMAND test_arrow_batcher_resident)
+
+# Training data-path benchmark (TOFIX178 S0-a): batch preparation vs the model step.
+add_executable(cyxwiz-bench-training-data tests/tool_bench_training_data.cpp)
+target_include_directories(cyxwiz-bench-training-data PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(cyxwiz-bench-training-data PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(cyxwiz-bench-training-data PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(cyxwiz-bench-training-data PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Properties AS COMPILED card (TOFIX123) =====
 add_executable(test_compiled_node_presentation
     tests/test_compiled_node_presentation.cpp
@@ -4619,6 +4676,19 @@ if(WIN32)
 endif()
 set_target_properties(test_compile_report_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME compile_report_presentation COMMAND test_compile_report_presentation)
+
+# The Studio canvas bar's words and folding (TOFIX178 UI-1).
+add_executable(test_studio_toolbar_presentation
+    tests/test_studio_toolbar_presentation.cpp
+    src/core/studio_toolbar_presentation.cpp
+)
+target_include_directories(test_studio_toolbar_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_studio_toolbar_presentation PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_studio_toolbar_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_studio_toolbar_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME studio_toolbar_presentation COMMAND test_studio_toolbar_presentation)
 
 # ===== Test: Test Results wording and exports (TOFIX129 B5) =====
 add_executable(test_test_results_presentation
@@ -5366,6 +5436,10 @@ add_executable(test_sparse_training_executor
 )
 configure_training_executor_harness(test_sparse_training_executor)
 
+# Training loop benchmark (TOFIX178 0.6): an epoch of TrainingExecutor on TF-IDF-shaped sparse rows.
+add_executable(cyxwiz-bench-training-loop tests/tool_bench_training_loop.cpp)
+configure_training_executor_harness(cyxwiz-bench-training-loop)
+
 # ===== Test: Legacy DatasetHandle cooperative lifecycle =====
 add_executable(test_training_executor_dataset_handle
     tests/test_training_executor_dataset_handle.cpp
@@ -5515,16 +5589,12 @@ add_executable(test_modality_batcher_drop_last
     tests/test_modality_batcher_drop_last.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/formats/audio_dataset.cpp
     src/core/image_utils.cpp
-    src/preprocessing/image_transform.cpp
-    src/preprocessing/morphology_transform.cpp
-    src/preprocessing/blur_transform.cpp
-    src/preprocessing/perspective_transform.cpp
-    src/preprocessing/pyramid_transform.cpp
-    src/utils/image_enhancer.cpp
 )
+target_link_libraries(test_modality_batcher_drop_last PRIVATE cyxwiz-image-cv)
 target_link_libraries(test_modality_batcher_drop_last PRIVATE cyxwiz-training-core)
 
 target_include_directories(test_modality_batcher_drop_last PRIVATE
@@ -6519,6 +6589,10 @@ endif()
 set_target_properties(test_cnn_graph_training PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+# The residual CNN graph checked against PyTorch (TOFIX178 1.2).
+target_compile_definitions(test_cnn_graph_training PRIVATE
+    CYXWIZ_CNN_GRAPH_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/cnn_graph_pytorch.json"
+)
 add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
 
 set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
@@ -6824,7 +6898,131 @@ add_custom_target(copy_test_image_quality_fixture
     VERBATIM
 )
 add_dependencies(test_image_quality copy_test_image_quality_fixture)
+
+# ===== Test: the OpenCV image steps (TOFIX178 1.3f) =====
+add_executable(test_image_cv_steps tests/test_image_cv_steps.cpp)
+target_link_libraries(test_image_cv_steps PRIVATE cyxwiz-image-cv)
+if(WIN32)
+    target_compile_definitions(test_image_cv_steps PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_cv_steps PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME image_cv_steps COMMAND test_image_cv_steps)
+
+# ===== Test: prepared image set (TOFIX178 1.3a): images decoded once =====
+add_executable(test_prepared_image_set
+    tests/test_prepared_image_set.cpp
+    src/core/prepared_image_set.cpp
+    src/core/image_channel_stats.cpp
+    src/core/image_dataset_batcher.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+)
+target_link_libraries(test_prepared_image_set PRIVATE cyxwiz-image-cv)
+target_include_directories(test_prepared_image_set PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_prepared_image_set PRIVATE
+    cyxwiz-training-core
+    ${OpenCV_LIBS}
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_prepared_image_set PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_prepared_image_set PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 add_test(NAME image_quality_opencv_parity COMMAND test_image_quality)
+
+# ===== Test: the image index table (TOFIX178 1.3e) =====
+add_executable(test_image_index
+    tests/test_image_index.cpp
+    src/core/image_index.cpp
+    src/core/prepared_image_set.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+)
+target_link_libraries(test_image_index PRIVATE cyxwiz-image-cv)
+target_include_directories(test_image_index PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_image_index PRIVATE
+    cyxwiz-training-core
+    ${OpenCV_LIBS}
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_image_index PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_index PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_index COMMAND test_image_index)
+
+# ===== Test: an image through the graph's image steps (TOFIX178 1.3e) =====
+add_executable(test_image_pipeline_preview
+    tests/test_image_pipeline_preview.cpp
+    src/core/image_pipeline_preview.cpp
+    src/core/prepared_image_set.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+)
+target_link_libraries(test_image_pipeline_preview PRIVATE cyxwiz-image-cv)
+target_include_directories(test_image_pipeline_preview PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_image_pipeline_preview PRIVATE
+    cyxwiz-training-core
+    ${OpenCV_LIBS}
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_image_pipeline_preview PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_pipeline_preview PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_pipeline_preview COMMAND test_image_pipeline_preview)
+
+# ===== Test: the image Profile's presentation (TOFIX178 1.3e) =====
+add_executable(test_image_profile_presentation
+    tests/test_image_profile_presentation.cpp
+    src/core/image_profile_presentation.cpp
+)
+set_target_properties(test_image_profile_presentation PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_profile_presentation COMMAND test_image_profile_presentation)
+
+# ===== Test: the image gallery's presentation (TOFIX178 1.3e) =====
+add_executable(test_image_gallery_presentation
+    tests/test_image_gallery_presentation.cpp
+    src/core/image_gallery_presentation.cpp
+)
+set_target_properties(test_image_gallery_presentation PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_gallery_presentation COMMAND test_image_gallery_presentation)
 
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
@@ -6951,14 +7149,9 @@ add_executable(test_cnn_image_training_smoke
     tests/test_cnn_image_training_smoke.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
-    src/preprocessing/image_transform.cpp
     src/core/image_utils.cpp
-    src/preprocessing/blur_transform.cpp
-    src/preprocessing/morphology_transform.cpp
-    src/preprocessing/perspective_transform.cpp
-    src/preprocessing/pyramid_transform.cpp
-    src/utils/image_enhancer.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -6966,6 +7159,7 @@ add_executable(test_cnn_image_training_smoke
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
 )
+target_link_libraries(test_cnn_image_training_smoke PRIVATE cyxwiz-image-cv)
 target_link_libraries(test_cnn_image_training_smoke PRIVATE cyxwiz-training-core)
 
 target_include_directories(test_cnn_image_training_smoke PRIVATE
@@ -7003,6 +7197,7 @@ add_executable(test_image_transform_graph
     tests/test_image_transform_graph.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
     src/core/data_registry_core.cpp
@@ -7012,6 +7207,7 @@ add_executable(test_image_transform_graph
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
 )
+target_link_libraries(test_image_transform_graph PRIVATE cyxwiz-image-cv)
 target_link_libraries(test_image_transform_graph PRIVATE
     cyxwiz-training-core
     OpenSSL::Crypto
@@ -7136,13 +7332,13 @@ set_target_properties(test_device_runtime_truth PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: Pipeline Materializer Cache Integration =====
-add_executable(test_pipeline_materializer_cache
-    tests/test_pipeline_materializer_cache.cpp
-    src/core/pipeline_materializer.cpp
+# ===== Test: Prepared Data Cache (TOFIX178 S0-e2) =====
+add_executable(test_prepared_data_cache
+    tests/test_prepared_data_cache.cpp
+    src/core/prepared_data_cache.cpp
+    src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
-    src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
     src/core/fasttext_model_store.cpp
@@ -7158,14 +7354,14 @@ add_executable(test_pipeline_materializer_cache
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
-target_link_libraries(test_pipeline_materializer_cache PRIVATE cyxwiz-training-core)
+target_link_libraries(test_prepared_data_cache PRIVATE cyxwiz-training-core)
 
-target_include_directories(test_pipeline_materializer_cache PRIVATE
+target_include_directories(test_prepared_data_cache PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${Stb_INCLUDE_DIR}
 )
 
-target_link_libraries(test_pipeline_materializer_cache PRIVATE
+target_link_libraries(test_prepared_data_cache PRIVATE
     Arrow::arrow_shared
     Parquet::parquet_shared
     spdlog::spdlog
@@ -7175,13 +7371,13 @@ target_link_libraries(test_pipeline_materializer_cache PRIVATE
 )
 
 if(WIN32)
-    target_compile_definitions(test_pipeline_materializer_cache PRIVATE
+    target_compile_definitions(test_prepared_data_cache PRIVATE
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
     )
 endif()
 
-set_target_properties(test_pipeline_materializer_cache PROPERTIES
+set_target_properties(test_prepared_data_cache PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 # ===== Test: Materialization Cache =====
@@ -7233,13 +7429,15 @@ set_target_properties(test_large_text_file PROPERTIES
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
         test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins
-        test_pipeline_operator_materializer_parity test_column_transform_operators cyxwiz-bench-out-of-core test_pipeline_run_release)
+        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows cyxwiz-bench-out-of-core test_pipeline_run_release
+        test_text_arrow_materializer test_text_arrow_training_launch test_text_gui_training_launch)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
 if(HighFive_FOUND)
     foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input test_pipeline_run_release
-            test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators
-            cyxwiz-bench-out-of-core)
+            test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
+            cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
+            test_text_gui_training_launch)
         target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
     endforeach()
 endif()
@@ -7296,8 +7494,9 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators
-        cyxwiz-bench-out-of-core)
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
+        cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
+        test_text_gui_training_launch)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
     target_link_libraries(${archive_input_target} PRIVATE LibArchive::LibArchive)
 endforeach()
@@ -7305,8 +7504,9 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators
-        cyxwiz-bench-out-of-core)
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
+        cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
+        test_text_gui_training_launch)
     cyxwiz_target_html_parser(${html_target})
 endforeach()
 add_executable(test_html_document_text tests/test_html_document_text.cpp)
@@ -7683,10 +7883,10 @@ add_executable(test_engine_node_parity
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
-    src/core/pipeline_materializer.cpp
+    src/core/prepared_data_cache.cpp
+    src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
-    src/core/pipeline_table_materializer.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
@@ -7826,5 +8026,5 @@ cyxwiz_enable_pch(test_cross_attention_graph_training)
 cyxwiz_enable_pch(test_linear_attention_training)
 cyxwiz_enable_pch(test_conv3d_training)
 cyxwiz_enable_pch(test_cnn_image_training_smoke)
-cyxwiz_enable_pch(test_pipeline_materializer_cache)
+cyxwiz_enable_pch(test_prepared_data_cache)
 cyxwiz_enable_pch(test_engine_node_parity)

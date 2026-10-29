@@ -72,6 +72,47 @@ int main() {
               "Bring in: a Data Input not loaded");
     }
 
+    // An image folder with a labels CSV (cats vs dogs, 2026-10-29): the folder
+    // and where the labels come from, and the image count, not "N x 0".
+    {
+        Input images;
+        GraphNode cats = Node(1, NodeType::DataInput, "Cats_Dogs Data");
+        cats.folder_path = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog";
+        cats.labels_csv = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv";
+        cats.dataset_name = "cat_dog";
+        images.nodes = {cats};
+        const View before = Build(images);
+        Check(before.sources[0].file == cats.folder_path && before.sources[0].state == "not loaded" &&
+                  before.sources[0].source_note == "image folder, labels from cat_dog.csv",
+              "Bring in: an image folder before loading");
+        Dataset loaded{"cat_dog", "", 25000, 0, false};
+        loaded.images = true;
+        images.datasets = {loaded};
+        const View after = Build(images);
+        Check(after.sources[0].size == "25,000 images" && after.sources[0].state == "loaded",
+              "Bring in: an image folder counts images: " + after.sources[0].size);
+        images.nodes[0].labels_csv.clear();
+        Check(Build(images).sources[0].source_note == "image folder, class folders", "Bring in: class folders");
+
+        // The index table: "indexing" while it builds, then a row under its Data Input.
+        images.image_index_progress["cat_dog"] = "12,480 of 25,000";
+        const View building = Build(images);
+        Check(building.rail[0].items.size() == 2 && building.rail[0].items[1].kind == RailItem::Kind::ImageIndex &&
+                  building.rail[0].items[1].meta == "indexing" && building.rail[0].items[1].dataset.empty(),
+              "rail: the index while it builds");
+        images.image_index_progress.clear();
+        Check(Build(images).rail[0].items.size() == 1, "rail: no index row before it exists");
+        images.datasets.push_back({"cat_dog_index", "", 25000, 9, true});
+        const View indexed = Build(images);
+        Check(indexed.rail[0].items.size() == 2 && indexed.rail[0].items[1].label == "cat_dog_index" &&
+                  indexed.rail[0].items[1].dataset == "cat_dog_index" &&
+                  indexed.rail[0].items[1].meta == "25,000 \xC3\x97 9",
+              "rail: the index under its Data Input");
+        for (const auto& section : indexed.rail)
+            for (const auto& item : section.items)
+                Check(section.title == "Data Inputs" || item.dataset != "cat_dog_index", "the index is not listed twice");
+    }
+
     // After the run (the Engine's numbers, 2026-10-14).
     in.nodes = {
         Ran(input, 7, 6, 0.7, "12:39:01", "ds_datainput_157"),

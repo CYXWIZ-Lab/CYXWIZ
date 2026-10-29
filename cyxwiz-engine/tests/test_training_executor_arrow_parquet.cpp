@@ -3654,6 +3654,47 @@ std::optional<cyxwiz::DeviceInfo> FirstDeviceOfType(
     return std::nullopt;
 }
 
+// A model the requested route cannot run (Conv2D on CUDA without the NVIDIA
+// provider, TOFIX178 1.0(d)): Strict refuses with the reason, Compatibility
+// recovers to ArrayFire CPU and keeps the reason.
+void TestRunPreflightRouteUnsupportedByModel() {
+    const auto inventory = cyxwiz::Device::GetAvailableDevices();
+    const auto accelerator = std::find_if(inventory.begin(), inventory.end(), [](const cyxwiz::DeviceInfo& device) {
+        return device.type == cyxwiz::DeviceType::CUDA || device.type == cyxwiz::DeviceType::OPENCL;
+    });
+    if (accelerator == inventory.end()) {
+        std::cout << "SKIP: an unsupported-route preflight needs an accelerator route\n";
+        return;
+    }
+    cyxwiz::test::InstallQualifiedRouteSnapshot(inventory);
+    const auto unsupported = [type = accelerator->type](cyxwiz::DeviceType requested, int) {
+        return requested == type ? std::string("Conv2D cannot run here in this test") : std::string();
+    };
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    bool strict_refused = false;
+    try {
+        (void)cyxwiz::PrepareExecutionDeviceForRun(cyxwiz::ExecutionPolicy::Strict, unsupported);
+    } catch (const std::runtime_error& error) {
+        strict_refused = std::string(error.what()).find("Conv2D cannot run here in this test") != std::string::npos;
+    }
+    Check(strict_refused, "strict preflight refuses a route the model cannot run, with the reason");
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    const auto recovered = cyxwiz::PrepareExecutionDeviceForRun(cyxwiz::ExecutionPolicy::Compatibility, unsupported);
+    Check(recovered.selection_fallback_applied && recovered.effective_backend == "arrayfire_cpu" &&
+              recovered.error.find("Conv2D cannot run here in this test") != std::string::npos,
+          "compatibility preflight recovers to ArrayFire CPU and says why: " + recovered.error);
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    const auto kept = cyxwiz::PrepareExecutionDeviceForRun(
+        cyxwiz::ExecutionPolicy::Compatibility, [](cyxwiz::DeviceType, int) { return std::string(); });
+    Check(!kept.selection_fallback_applied, "a route the model can run is kept");
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+}
+
 void TestRunPreflightEnforcesRouteQualification() {
     const auto inventory = cyxwiz::Device::GetAvailableDevices();
     const auto rejected = std::find_if(
@@ -4667,6 +4708,7 @@ int main(int argc, char** argv) {
     TestTrainingTracePersistenceCoalescing();
 
     TestRunPreflightEnforcesRouteQualification();
+    TestRunPreflightRouteUnsupportedByModel();
     TestWeightedSamplerEpochAndUpdateCount(work_dir);
 
     TestSequenceBatchContract();

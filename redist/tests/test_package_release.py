@@ -153,7 +153,7 @@ class PackageReleaseTests(unittest.TestCase):
     def artifact_args(self, *values: str):
         return package_release.parse_args([*values])
 
-    def create_arrayfire(self, oneapi: bool = False, opencl: bool = False) -> Path:
+    def create_arrayfire(self, oneapi: bool = False, opencl: bool = False, cuda: bool = False) -> Path:
         root = self.root / "arrayfire"
         library = root / "lib"
         licenses = root / "LICENSES"
@@ -167,6 +167,9 @@ class PackageReleaseTests(unittest.TestCase):
             (library / name).write_bytes(name.encode("ascii"))
         if opencl:
             (library / "afopencl.dll").write_bytes(b"opencl")
+        if cuda:
+            for name in ("afcuda.dll", "cublas64_12.dll", "cufft64_11.dll", "cusolver64_11.dll", "nvrtc64_120_0.dll"):
+                (library / name).write_bytes(name.encode("ascii"))
         if oneapi:
             for name in (
                 "afoneapi.dll",
@@ -660,6 +663,43 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual("backend_pack", manifest["signed"]["pack_kind"])
         self.assertEqual("opencl", manifest["signed"]["backend"])
         package_release.validate_pack_manifest(manifest)
+
+    def cuda_pack_args(self):
+        notices = self.root / "nvidia-notices"
+        notices.mkdir()
+        (notices / "EULA.txt").write_text("nvidia eula", encoding="ascii")
+        return self.args(
+            "pack",
+            "--backend",
+            "cuda",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(cuda=True)),
+            "--nvidia-runtime-license-dir",
+            str(notices),
+        )
+
+    def test_cuda_pack_carries_the_nvidia_provider_module(self) -> None:
+        # The NVIDIA provider is a module of its own (TOFIX178 1.0(c)): it
+        # needs the CUDA libraries, so it ships beside afcuda in the CUDA pack.
+        module = self.root / "build" / "bin" / "Release" / "cyxwiz-nvidia-provider.dll"
+        module.write_bytes(b"provider")
+
+        stage, _archive = package_release.build_package(self.cuda_pack_args(), self.script)
+
+        self.assertTrue((stage / "runtime" / "afcuda.dll").is_file())
+        self.assertEqual(b"provider", (stage / "runtime" / "cyxwiz-nvidia-provider.dll").read_bytes())
+
+    def test_cuda_pack_without_the_nvidia_provider_module_fails(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON"):
+            package_release.build_package(self.cuda_pack_args(), self.script)
+
+    def test_minimal_leaves_the_nvidia_provider_module_to_the_cuda_pack(self) -> None:
+        (self.root / "build" / "bin" / "Release" / "cyxwiz-nvidia-provider.dll").write_bytes(b"provider")
+
+        stage, _archive = package_release.build_package(self.args("minimal"), self.script)
+
+        self.assertTrue((stage / "cyxwiz-backend.dll").is_file())
+        self.assertFalse((stage / "cyxwiz-nvidia-provider.dll").exists())
 
     def test_pack_profile_requires_one_optional_backend(self) -> None:
         args = self.args("pack", "--arrayfire-dir", str(self.create_arrayfire()))

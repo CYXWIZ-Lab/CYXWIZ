@@ -1,10 +1,7 @@
 #pragma once
 
 #include "dataset_batcher.h"
-#include "data_registry.h"
-#include "datasets/image_folder_dataset.h"
-#include "datasets/image_csv_dataset.h"
-#include "../preprocessing/preprocessing_config.h"
+#include "prepared_image_set.h"
 #include <cyxwiz/image_augmentation.h>
 #include <cstdint>
 #include <memory>
@@ -14,14 +11,19 @@
 
 namespace cyxwiz {
 
+// Batches of an image Data Input from its prepared image set (TOFIX178 1.3b):
+// the images were decoded once (PrepareImageSet); a batch gathers its uint8
+// rows, uploads them once and turns them into float [0, 1] on the device,
+// then the compiled image transforms and Normalize run there. When the whole
+// set fits the device budget it is uploaded once and a batch is a lookup on
+// the device.
 class ImageDatasetBatcher : public IBatcher {
 public:
-    ImageDatasetBatcher(const DataRegistry::ImageDatasetEntry& entry,
-                        const ImagePreprocessingConfig& preprocess_config,
+    ~ImageDatasetBatcher() override;
+    ImageDatasetBatcher(std::shared_ptr<const PreparedImageSet> images,
                         int batch_size,
                         float train_split = 0.8f,
                         bool shuffle = true,
-                        int num_workers = 0,
                         uint32_t seed = 42);
 
     Batch GetNextBatch() override;
@@ -45,18 +47,21 @@ public:
     void ExcludeFiles(const std::vector<std::string>& files);
 
     size_t GetNumValSamples() const { return val_indices_.size(); }
+    // True once the whole set is on the device (from the first batch on).
+    bool ImagesOnDevice() const { return resident_on_; }
 
 private:
-    // Shuffled train/val split of these dataset indices.
+    // Shuffled train/val split of these image indices.
     void Split(std::vector<size_t> indices);
+    // The batch's images as float rows [n, H * W * 3] in [0, 1] on the device.
+    Tensor GatherRows(const size_t* indices, size_t n);
 
-    std::shared_ptr<Dataset> dataset_;
+    std::shared_ptr<const PreparedImageSet> images_;
     float train_split_ = 0.8f;
     uint32_t seed_ = 42;
 
     int batch_size_;
     bool shuffle_;
-    int num_workers_ = 0;
     bool drop_last_ = false;
     bool flatten_ = false;  // output [batch, H, W, C] — let graph's Flatten node handle it
 
@@ -76,11 +81,16 @@ private:
     std::vector<size_t> epoch_order_;
     size_t current_idx_ = 0;
 
-    int target_width_ = 224;
-    int target_height_ = 224;
     // The decoded [H, W, 3] image and the sample the model receives.
     image::ImageShape decoded_shape_;
     image::ImageShape sample_shape_;
+
+    // The whole set on the device when it fits (no ArrayFire header here:
+    // it brings windows.h, whose LoadImage macro renames ImageUtils::LoadImage).
+    struct Resident;
+    std::unique_ptr<Resident> resident_;
+    bool resident_on_ = false;
+    bool resident_tried_ = false;
 
     std::mt19937 rng_;
 };

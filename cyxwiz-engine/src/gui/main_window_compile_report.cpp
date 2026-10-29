@@ -13,6 +13,7 @@
 #include "ui_widgets.h"
 #include "../core/live_graph_compile.h"
 #include "data_studio/data_studio_panel.h"
+#include "panels/studio_debugger_panel.h"
 #include "panels/training_plot_panel.h"
 
 #include <imgui.h>
@@ -105,6 +106,7 @@ void MainWindow::ShowCompileReport(cyxwiz::compile_report::Mode mode, std::strin
         in.config.parameters = total;
     }
     compile_report_ = report::BuildReport(in);
+    compile_report_mode_ = mode;
     show_compile_result_popup_ = true;
 }
 
@@ -119,7 +121,11 @@ void MainWindow::RenderCompileResultPopup() {
     NextWindowFits(860.0f, 640.0f);
     int focus_node = -1, open_node = -1, add_tokenizer_after = -1, add_after_input = -1;
     gui::NodeType add_type = gui::NodeType::Resize;
-    bool open_data_studio = false, train = false;
+    bool open_data_studio = false, train = false, run_debug = false, open_debugger = false;
+    // The next step's state (TOFIX178 UI-1): the Compile and Train-blocked
+    // reports show the last Local Debug run against the graph now.
+    const bool show_debug = compile_report_mode_ == report::Mode::Compile ||
+                            compile_report_mode_ == report::Mode::TrainBlocked;
     if (ImGui::BeginPopupModal(window.c_str(), nullptr)) {
         const auto& t = cyxwiz::ui::CurrentTokens();
         // Verdict, subtitle, counts.
@@ -133,7 +139,7 @@ void MainWindow::RenderCompileResultPopup() {
         ChipRow(r.chips);
         ImGui::Dummy(ImVec2(0.0f, t.space_xs));
 
-        const float body_h = -FooterHeight();
+        const float body_h = -FooterHeight() - (show_debug ? ImGui::GetFrameHeightWithSpacing() + 6.0f : 0.0f);
         if (ImGui::BeginTabBar("##compile_report_tabs")) {
             const std::string findings_tab = "Findings (" + std::to_string(r.findings.size()) + ")###findings";
             if (ImGui::BeginTabItem(findings_tab.c_str())) {
@@ -291,14 +297,37 @@ void MainWindow::RenderCompileResultPopup() {
             ImGui::EndTabBar();
         }
 
+        // Local Debug: its last result on this graph and the way to it.
+        if (show_debug) {
+            namespace st = cyxwiz::studio_toolbar;
+            const st::StepChip chip = st::LocalDebugChip(local_debug_);
+            const ImVec4 tone = chip.tone == st::Tone::Ok        ? t.success
+                                : chip.tone == st::Tone::Warning ? t.warning
+                                : chip.tone == st::Tone::Error   ? t.error
+                                : chip.tone == st::Tone::Busy    ? t.running
+                                                                 : t.pending;
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(tone, ICON_FA_BUG "  Local Debug: %s", chip.headline.c_str());
+            ImGui::SameLine();
+            if (cyxwiz::ui::LinkButton("Open the Studio Debugger##report_debugger")) open_debugger = true;
+        }
         // Footer: Copy report at the left; Close (and Train when ready) at the right.
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
         if (cyxwiz::ui::SecondaryButton("Copy report", true, nullptr, cyxwiz::ui::ButtonSize::Small))
             ImGui::SetClipboardText(r.copy_text.c_str());
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const char* run_debug_label = ICON_FA_BUG " Run Local Debug (F6)";
         float right = cyxwiz::ui::ButtonWidth("Close", cyxwiz::ui::ButtonSize::Regular);
         if (r.offer_train) right += spacing + cyxwiz::ui::ButtonWidth("Train", cyxwiz::ui::ButtonSize::Regular);
+        if (show_debug) right += spacing + cyxwiz::ui::ButtonWidth(run_debug_label, cyxwiz::ui::ButtonSize::Regular);
         cyxwiz::ui::SameLineRight(right);
+        if (show_debug) {
+            if (cyxwiz::ui::SecondaryButton(run_debug_label, !local_debug_.running, "Local Debug is running",
+                                            cyxwiz::ui::ButtonSize::Regular))
+                run_debug = true;
+            ImGui::SameLine();
+        }
         bool close = false;
         if (r.offer_train) {
             close = cyxwiz::ui::SecondaryButton("Close", true, nullptr, cyxwiz::ui::ButtonSize::Regular);
@@ -309,7 +338,8 @@ void MainWindow::RenderCompileResultPopup() {
             close = cyxwiz::ui::PrimaryButton("Close");
             ImGui::SetItemDefaultFocus();
         }
-        if (close || train || EscapePressedHere() || focus_node >= 0 || open_node >= 0 || open_data_studio ||
+        if (close || train || run_debug || open_debugger || EscapePressedHere() || focus_node >= 0 || open_node >= 0 ||
+            open_data_studio ||
             add_tokenizer_after >= 0 || add_after_input >= 0)
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -325,6 +355,8 @@ void MainWindow::RenderCompileResultPopup() {
         if (compile_result_config_.backing != report::Backing::NotLoaded && !compile_result_config_.dataset.empty())
             data_studio_panel_->ShowProfile(compile_result_config_.dataset);
     }
+    if (run_debug) LocalDebugGraphAndReport();
+    if (open_debugger && studio_debugger_panel_) studio_debugger_panel_->Show();
     if (train && node_editor_) {
         StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
         if (training_plot_panel_) training_plot_panel_->SetVisible(true);

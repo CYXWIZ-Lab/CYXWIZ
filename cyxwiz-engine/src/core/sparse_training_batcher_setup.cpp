@@ -138,7 +138,10 @@ TrainingBatcherSet BuildSparseTrainingBatchers(
             static_cast<uint32_t>(config.dataloader_seed),
             balance, config.balance_mode, config.balance_target,
             static_cast<uint32_t>(std::max(0, config.balance_seed)),
-            MaterializationMemoryContext{}, config.stratified, false, true);
+            MaterializationMemoryContext{}, config.stratified, false, true,
+            SparseSplitRule{config.has_data_split && config.shuffle, config.shuffle,
+                            static_cast<uint32_t>(std::max(0, config.split_seed)),
+                            config.has_data_split ? config.test_ratio : 0.0f});
     };
     const bool continuous_target = UsesContinuousTargetMetrics(config);
     result.sparse_train = make(
@@ -176,18 +179,21 @@ ResolvedTabularBatcherBuildResult BuildResolvedSparseTrainingBatchers(
             "Training dataset";
         return result;
     }
-    if ((partitions.dev.IsSupplied() && !datasets.dev_sparse) ||
-        (partitions.test.IsSupplied() && !datasets.test_sparse)) {
+    // A joined role is read from the Training dataset (its partition 1 / 2).
+    const bool external_dev = partitions.dev.IsSupplied() && !partitions.dev.joined_to_training;
+    const bool external_test = partitions.test.IsSupplied() && !partitions.test.joined_to_training;
+    if ((external_dev && !datasets.dev_sparse) ||
+        (external_test && !datasets.test_sparse)) {
         result.error_message =
             "A sparse Training dataset requires supplied Dev/Test roles to "
             "use the same sparse feature representation";
         return result;
     }
-    if (datasets.dev_sparse) {
+    if (external_dev && datasets.dev_sparse) {
         result.error_message = SparseRoleCompatibilityError(
             *datasets.train_sparse, *datasets.dev_sparse, "Validation");
     }
-    if (result.error_message.empty() && datasets.test_sparse) {
+    if (result.error_message.empty() && external_test && datasets.test_sparse) {
         result.error_message = SparseRoleCompatibilityError(
             *datasets.train_sparse, *datasets.test_sparse, "Test");
     }
@@ -204,27 +210,25 @@ ResolvedTabularBatcherBuildResult BuildResolvedSparseTrainingBatchers(
 
     auto assembly_config = config;
     assembly_config.prefetch_factor = 0;
-    const bool external_dev = partitions.dev.IsSupplied();
-    const bool external_test = partitions.test.IsSupplied();
-    if (external_dev && !external_test) {
+    if (external_dev && !partitions.test.IsSupplied()) {
         assembly_config.val_ratio = partitions.policy.test_ratio;
         assembly_config.test_ratio = 0.0f;
     }
     try {
         result.batchers = BuildSparseTrainingBatchers(
             assembly_config, datasets.train_sparse, batch_size);
-        if (external_dev && !external_test) {
+        if (external_dev && !partitions.test.IsSupplied()) {
             result.batchers.sparse_test =
                 std::move(result.batchers.sparse_val);
             result.batchers.val = nullptr;
             result.batchers.test = result.batchers.sparse_test.get();
         }
-        if (datasets.dev_sparse) {
+        if (external_dev && datasets.dev_sparse) {
             result.batchers.sparse_val = MakeExternalSparseRole(
                 config, datasets.dev_sparse, batch_size, BatcherPhase::Val);
             result.batchers.val = result.batchers.sparse_val.get();
         }
-        if (datasets.test_sparse) {
+        if (external_test && datasets.test_sparse) {
             result.batchers.sparse_test = MakeExternalSparseRole(
                 config, datasets.test_sparse, batch_size, BatcherPhase::Test);
             result.batchers.test = result.batchers.sparse_test.get();

@@ -388,7 +388,6 @@ private:
     std::unique_ptr<struct PreprocessingConfig> preprocessing_config_;
     std::vector<std::unique_ptr<class NormalizationTransform>> normalization_transforms_;
     std::vector<std::unique_ptr<class ScalingTransform>> scaling_transforms_;
-    std::vector<std::unique_ptr<class ImageTransform>> image_transforms_;
     bool preprocessing_enabled_ = false;
 
     // Augmentation pipeline (applied BEFORE preprocessing, only on training split)
@@ -520,6 +519,12 @@ public:
     void SetBatchInspectionEnabled(bool enable) override {
         batch_inspection_enabled_ = enable;
     }
+    // Keep the converted features on the device for the run when they fit
+    // (default). Off prepares every batch on the host (tests compare the two).
+    void SetDeviceResidentFeatures(bool enable) {
+        device_resident_features_ = enable;
+        DropResidentFeatures();
+    }
 
     // Configure ordered regression targets. Width one consumes the primary
     // label; wider targets consume `<base>`, `<base>_1`, ... and remove every
@@ -569,9 +574,23 @@ private:
     bool class_index_label_mode_ = false;  // Int32 [batch] labels
     bool batch_inspection_enabled_ = false;
 
+    // Device-resident features (TOFIX178 S0-b): this batcher's rows converted
+    // and normalised once per run and kept on the device when they fit its
+    // budget; a batch is then a lookup of its rows there.
+    bool device_resident_features_ = true;
+    bool resident_tried_ = false;
+    Tensor resident_features_;                 // [rows, features] float32, normalised
+    std::vector<float> resident_host_;         // the same rows in memory on ArrayFire's CPU backend
+    std::vector<int32_t> resident_position_;   // dataset row -> row in resident_features_, -1 if absent
+
     void ShuffleIndices();
     void InitializeColumns();
     void RebuildBalancedIndices();
+    void GatherFeatures(const std::shared_ptr<arrow::Table>& table, const int64_t* rows, size_t count,
+                        float* out) const;
+    void NormalizeInPlace(std::vector<float>& values) const;
+    bool PrepareResidentFeatures(const std::shared_ptr<arrow::Table>& table);
+    void DropResidentFeatures();
 };
 
 } // namespace cyxwiz

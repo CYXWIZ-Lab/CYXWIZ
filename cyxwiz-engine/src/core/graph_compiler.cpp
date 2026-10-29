@@ -136,7 +136,8 @@ void CollectDatasetSourceOrigins(
     int output_pin_id,
     std::unordered_set<int>& active_path,
     std::unordered_set<int>& origins,
-    bool& invalid_path) {
+    bool& invalid_path,
+    bool& needs_pipeline_run) {
     const auto* node = FindNodeById(nodes, node_id);
     const auto* output_pin = node
         ? FindPinById(node->outputs, output_pin_id)
@@ -160,10 +161,14 @@ void CollectDatasetSourceOrigins(
         runtime_support.implementation_owner ==
             PipelineRuntimeImplementationOwner::PipelineOperatorFactory &&
         runtime_support.materializer_arrow_table_supported;
-    if (!training_filter && !table_operator) {
+    // SQL, Text Clean, Filter Rows ... run in the pipeline run only: training
+    // trains on that run's result (TOFIX178 S0-e).
+    const bool run_step = IsPipelineRunTrainingStep(node->type);
+    if (!training_filter && !table_operator && !run_step) {
         invalid_path = true;
         return;
     }
+    if (run_step) needs_pipeline_run = true;
 
     if (!active_path.insert(node->id).second) {
         invalid_path = true;
@@ -177,7 +182,7 @@ void CollectDatasetSourceOrigins(
         if (!input_pin || input_pin->type != gui::PinType::Dataset) continue;
         found_dataset_input = true;
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, needs_pipeline_run);
     }
     if (!found_dataset_input) invalid_path = true;
     active_path.erase(node->id);
@@ -189,9 +194,11 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     const gui::MLNode& split_node,
     const std::string& pin_name,
     bool* has_connection = nullptr,
-    bool* has_multiple_sources = nullptr) {
+    bool* has_multiple_sources = nullptr,
+    bool* needs_pipeline_run = nullptr) {
     if (has_connection) *has_connection = false;
     if (has_multiple_sources) *has_multiple_sources = false;
+    if (needs_pipeline_run) *needs_pipeline_run = false;
 
     const auto* input_pin = FindInputPinByName(split_node, pin_name);
     if (!input_pin) return nullptr;
@@ -199,6 +206,7 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     std::unordered_set<int> origins;
     std::unordered_set<int> active_path;
     bool invalid_path = false;
+    bool run_steps = false;
     for (const auto& link : links) {
         if (link.to_node != split_node.id || link.to_pin != input_pin->id) {
             continue;
@@ -206,8 +214,9 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
         if (has_connection) *has_connection = true;
 
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, run_steps);
     }
+    if (needs_pipeline_run) *needs_pipeline_run = run_steps;
     if (origins.size() > 1) {
         if (has_multiple_sources) *has_multiple_sources = true;
         return nullptr;
@@ -731,6 +740,25 @@ void ValidateSparseFeatureTrainingContract(
                      "training path emits sparse features",
                  role.source_node_id, role.dataset_name,
                  errors::Compiler::UnsupportedTrainingNode);
+    }
+}
+
+// TextVocabulary and TextPadding linked from a tokenizer are legacy: their
+// settings belong on the Text Tokenizer (ReportLegacyTextConfigNodes).
+void ReportLegacyTextConfigNodes(TrainingConfiguration& config,
+                                 const std::vector<gui::MLNode>& nodes,
+                                 const std::vector<gui::NodeLink>& links) {
+    for (const auto& link : links) {
+        const auto* from = FindNodeById(nodes, link.from_node);
+        const auto* to = FindNodeById(nodes, link.to_node);
+        if (!from || !to || from->type != gui::NodeType::TextTokenizer) continue;
+        if (to->type != gui::NodeType::TextVocabulary && to->type != gui::NodeType::TextPadding) continue;
+        AddIssue(config, IssueLevel::Warning,
+                 "'" + to->name + "' is a legacy node and its settings are not applied; set " +
+                     (to->type == gui::NodeType::TextVocabulary ? "Min Word Freq and Max Vocab Size"
+                                                                : "Max Length and Pad Value") +
+                     " on '" + from->name + "' instead",
+                 to->id, to->name);
     }
 }
 
@@ -2082,7 +2110,8 @@ void ApplyImageInputShape(TrainingConfiguration& config) {
     if (config.preprocessing_domain != PreprocessingDomain::Image) {
         return;
     }
-    const auto shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    const auto shape =
+        cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
     config.input_shape = {shape.height, shape.width, shape.channels};
     config.input_size = shape.Size();
 }
@@ -4540,7 +4569,8 @@ TrainingConfiguration GraphCompiler::Compile(
             bool train_has_multiple_sources = false;
             const auto* topology_train = FindDatasetSourceConnectedToSplitInput(
                 nodes, links, *role_split, "Training Dataset",
-                &train_has_connection, &train_has_multiple_sources);
+                &train_has_connection, &train_has_multiple_sources,
+                &config.training_data_needs_pipeline_run);
             if (train_has_multiple_sources) {
                 AddIssue(config, IssueLevel::Error,
                          "Data Split 'Training Dataset' accepts exactly one "
@@ -4567,9 +4597,40 @@ TrainingConfiguration GraphCompiler::Compile(
                 DatasetSourceRef& output) {
                 bool has_connection = false;
                 bool has_multiple_sources = false;
+                bool needs_run = false;
                 const auto* source = FindDatasetSourceConnectedToSplitInput(
                     nodes, links, *role_split, pin_name,
-                    &has_connection, &has_multiple_sources);
+                    &has_connection, &has_multiple_sources, &needs_run);
+                // A supplied input goes through the Training branch's steps,
+                // fitted on the Train rows (TOFIX178 S0-g4); steps of its
+                // own would not run. The Quality Analyzer (it filters image
+                // files) may stay.
+                bool own_steps = needs_run;
+                if (const auto* pin = FindInputPinByName(*role_split, pin_name)) {
+                    int at = -1;
+                    for (const auto& link : links)
+                        if (link.to_node == role_split->id && link.to_pin == pin->id) at = link.from_node;
+                    std::unordered_set<int> seen;
+                    while (at >= 0 && seen.insert(at).second) {
+                        const gui::MLNode* node = FindNodeById(at, nodes);
+                        if (!node || IsDatasetSourceType(node->type)) break;
+                        if (node->type != gui::NodeType::QualityAnalyzer) own_steps = true;
+                        int next = -1;
+                        for (const auto& link : links)
+                            if (link.to_node == at) next = link.from_node;
+                        at = next;
+                    }
+                }
+                if (own_steps) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string(role_name) +
+                                 " input goes through the Training branch's steps (they learn from the "
+                                 "Train rows and transform its rows too); connect its Data Input to the "
+                                 "Data Split directly",
+                             role_split->id, role_split->name,
+                             errors::Compiler::InvalidConnectivity);
+                    return;
+                }
                 if (has_multiple_sources) {
                     AddIssue(config, IssueLevel::Error,
                              std::string("Data Split '") + pin_name +
@@ -4596,6 +4657,32 @@ TrainingConfiguration GraphCompiler::Compile(
                 "Validation Dataset", "Validation", config.dataset_roles.dev);
             resolve_optional_role(
                 "Test Dataset", "Test", config.dataset_roles.test);
+
+            // The Training branch's steps learn from its Train rows; one that
+            // learns from every row also learns from the Validation and Test
+            // rows (TOFIX178 S0-g5).
+            if (const auto* pin = FindInputPinByName(*role_split, "Training Dataset")) {
+                std::vector<int> pending;
+                for (const auto& link : links)
+                    if (link.to_node == role_split->id && link.to_pin == pin->id) pending.push_back(link.from_node);
+                std::unordered_set<int> seen;
+                while (!pending.empty()) {
+                    const int at = pending.back();
+                    pending.pop_back();
+                    if (!seen.insert(at).second) continue;
+                    const gui::MLNode* node = FindNodeById(at, nodes);
+                    if (!node || IsDatasetSourceType(node->type)) continue;
+                    if (PipelineStepLearnsFromEveryRow(node->type)) {
+                        AddIssue(config, IssueLevel::Warning,
+                                 "'" + node->name + "' learns from every row before the Data Split, the "
+                                 "Validation and Test rows too (it cannot learn from the Train rows only yet), "
+                                 "so their scores read better than new data would",
+                                 node->id, node->name, errors::Compiler::LearnsFromEveryRow);
+                    }
+                    for (const auto& link : links)
+                        if (link.to_node == at) pending.push_back(link.from_node);
+                }
+            }
         }
 
         for (const auto& node : nodes) {
@@ -4692,9 +4779,17 @@ TrainingConfiguration GraphCompiler::Compile(
             ? cat_it_lbl->second : std::string();
         const bool labels_from_structure = GraphCategoryLabelsFromStructure(cat_str);
 
-        const std::string requested_label_col = dataset_node->parameters.count("label_column")
+        std::string requested_label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
+        // The Data Split's Label column wins (TOFIX178 S0-e): steps before the
+        // Split can make or rename the label.
+        if (const gui::MLNode* label_split =
+                FindFirstReachableNodeOfType(nodes, dataset_reachable, gui::NodeType::DataSplit)) {
+            const auto split_label = label_split->parameters.find("label_column");
+            if (split_label != label_split->parameters.end() && !TrimAscii(split_label->second).empty())
+                requested_label_col = TrimAscii(split_label->second);
+        }
 
         std::shared_ptr<arrow::Schema> tabular_schema;
         if (auto arrow_dataset = GraphArrowDataset(config.dataset_name)) {
@@ -4726,6 +4821,22 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         if (!requested_label_col.empty() && tabular_schema &&
+            resolved_label_index < 0 && !labels_from_structure &&
+            config.training_data_needs_pipeline_run &&
+            !config.target.IsGeneratedByGraph()) {
+            // A SQL / Rename / Math Formula step before the Split can make the
+            // label column (TOFIX178 S0-e): training checks it on their result.
+            config.dataset_roles.train.label_column = requested_label_col;
+            config.target.origin = TargetOrigin::DatasetColumn;
+            config.target.producer_node_id = dataset_node->id;
+            config.target.producer_node_name = dataset_node->name;
+            config.target.primary_column = requested_label_col;
+            config.target.width = 1;
+            AddIssue(config, IssueLevel::Warning,
+                     "Label column '" + requested_label_col + "' is not in '" + config.dataset_name +
+                         "'; the steps before the Data Split must make it (checked when they run)",
+                     dataset_node->id, dataset_node->name);
+        } else if (!requested_label_col.empty() && tabular_schema &&
             resolved_label_index < 0 && !labels_from_structure) {
             if (config.target.IsGeneratedByGraph()) {
                 AddIssue(config, IssueLevel::Warning,
@@ -5160,6 +5271,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
+    ReportLegacyTextConfigNodes(config, nodes, links);
     ValidateSparseFeatureTrainingContract(
         config, nodes, links, training_path_ids, sorted_ids);
     const auto sequence_fusion =
@@ -6128,8 +6240,9 @@ TrainingConfiguration GraphCompiler::Compile(
             // Estimate total model memory (weights + gradients + optimizer)
             // and warn if it's likely to exceed reasonable GPU memory.
             if (has_resize && config.image_preprocessing.target_width > 0) {
-                // The model's input after the image transforms (crops, Grayscale).
-                const auto image_shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+                // The model's input after the image steps (crops, Grayscale, OpenCV steps).
+                const auto image_shape = cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps,
+                                                                    DecodedImageShape(config));
                 size_t img_features = image_shape.Size();
                 size_t total_params = 0;
                 size_t prev_size = img_features;
@@ -6804,7 +6917,7 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
 // --- Image extractors (Phase 1) ---
 
 static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& config) {
-    if (!config.image_augmentation.ops.empty()) {
+    if (!config.image_augmentation.ops.empty() || !config.image_cv_steps.empty()) {
         AddIssue(config, IssueLevel::Error,
                  "Resize must come before the image transforms: the batcher decodes every image at "
                  "the Resize size first",
@@ -6842,10 +6955,10 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
 // --- Image transforms (TOFIX140): appended in graph order, run by the image
 // batcher on the device after Resize and before Normalize. ---
 
-// The [H, W, C] image the next transform receives: the Resize size with three
-// channels, after the transforms already compiled.
+// The [H, W, C] image the next step receives: the Resize size with three
+// channels, after the transforms and OpenCV steps already compiled.
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
-    return config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    return cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
 
 void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
@@ -7071,6 +7184,184 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
     AppendImageOp(node, op, error, config);
 }
 
+// --- OpenCV image steps (TOFIX178 1.3f): done once when the images are
+// prepared, in canvas order with the device transforms done once. ---
+
+template <typename T>
+bool ParseChoiceParam(const std::map<std::string, std::string>& params, const std::string& key,
+                      const std::string& fallback, const std::vector<std::pair<std::string, T>>& choices, T& out,
+                      std::string& error) {
+    const auto it = params.find(key);
+    const std::string value = it == params.end() || it->second.empty() ? fallback : it->second;
+    std::string names;
+    for (const auto& [name, choice] : choices) {
+        if (name == value) {
+            out = choice;
+            return true;
+        }
+        names += (names.empty() ? "" : choices.back().first == name ? " or " : ", ") + name;
+    }
+    error = key + " must be " + names;
+    return false;
+}
+
+// "0,0, 1,0, 1,1, 0,1": x and y of each point, as fractions of the image.
+bool ParsePointsParam(const std::map<std::string, std::string>& params, const std::string& key, int count,
+                      std::array<float, 8>& out, std::string& error) {
+    const auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) return true;
+    std::string text = it->second;
+    std::replace(text.begin(), text.end(), ',', ' ');
+    std::istringstream in(text);
+    std::vector<float> values;
+    for (float v; in >> v;) values.push_back(v);
+    if (!in.eof() || values.size() != static_cast<size_t>(2 * count)) {
+        error = key + " must be " + std::to_string(2 * count) + " numbers: x, y of each of the " +
+                std::to_string(count) + " points";
+        return false;
+    }
+    for (size_t i = 0; i < values.size(); ++i) out[i] = values[i];
+    return true;
+}
+
+static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::CvImageStepKind;
+    cyxwiz::CvImageStep s;
+    s.node_id = node.id;
+    s.node_name = node.name;
+    s.position = config.image_augmentation.ops.size();
+    std::string error;
+    const auto& p = node.parameters;
+    switch (node.type) {
+        case gui::NodeType::ImageContrast:
+            s.kind = CvImageStepKind::Contrast;
+            (void)(ParseFloatParam(p, "clip_limit", 2.0f, s.clip_limit, error) &&
+                ParseIntParam(p, "tile_grid", 8, s.tile_grid, error) &&
+                ParseChoiceParam<cyxwiz::CvContrastColour>(
+                    p, "colour", "lightness",
+                    {{"lightness", cyxwiz::CvContrastColour::Lightness},
+                     {"each_channel", cyxwiz::CvContrastColour::EachChannel}},
+                    s.colour, error));
+            break;
+        case gui::NodeType::ImageDenoise:
+            s.kind = CvImageStepKind::Denoise;
+            (void)(ParseFloatParam(p, "strength", 10.0f, s.strength, error) &&
+                ParseFloatParam(p, "colour_strength", 10.0f, s.colour_strength, error) &&
+                ParseIntParam(p, "patch_size", 7, s.patch_size, error) &&
+                ParseIntParam(p, "search_size", 21, s.search_size, error));
+            break;
+        case gui::NodeType::ImageSharpen:
+            s.kind = CvImageStepKind::Sharpen;
+            (void)(ParseFloatParam(p, "amount", 1.0f, s.amount, error) && ParseFloatParam(p, "radius", 1.0f, s.radius, error) &&
+                ParseFloatParam(p, "threshold", 0.0f, s.threshold, error));
+            break;
+        case gui::NodeType::ImageEdges:
+            s.kind = CvImageStepKind::Edges;
+            (void)(ParseChoiceParam<cyxwiz::CvEdgeMethod>(p, "method", "canny",
+                                                   {{"canny", cyxwiz::CvEdgeMethod::Canny},
+                                                    {"sobel", cyxwiz::CvEdgeMethod::Sobel},
+                                                    {"laplacian", cyxwiz::CvEdgeMethod::Laplacian},
+                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr}},
+                                                   s.edge_method, error) &&
+                ParseFloatParam(p, "threshold1", 50.0f, s.threshold1, error) &&
+                ParseFloatParam(p, "threshold2", 150.0f, s.threshold2, error) &&
+                ParseIntParam(p, "kernel_size", 3, s.edge_kernel, error));
+            break;
+        case gui::NodeType::ImageSmooth:
+            s.kind = CvImageStepKind::Smooth;
+            (void)(ParseChoiceParam<cyxwiz::CvSmoothMethod>(p, "method", "median",
+                                                     {{"box", cyxwiz::CvSmoothMethod::Box},
+                                                      {"median", cyxwiz::CvSmoothMethod::Median},
+                                                      {"bilateral", cyxwiz::CvSmoothMethod::Bilateral}},
+                                                     s.smooth_method, error) &&
+                ParseIntParam(p, "kernel_size", 5, s.kernel_size, error) &&
+                ParseFloatParam(p, "sigma_color", 75.0f, s.sigma_color, error) &&
+                ParseFloatParam(p, "sigma_space", 75.0f, s.sigma_space, error));
+            break;
+        case gui::NodeType::ImageWarp: {
+            s.kind = CvImageStepKind::Warp;
+            const int count = ParseChoiceParam<cyxwiz::CvWarpMethod>(
+                                  p, "method", "four_corners",
+                                  {{"four_corners", cyxwiz::CvWarpMethod::FourCorners},
+                                   {"three_points", cyxwiz::CvWarpMethod::ThreePoints},
+                                   {"log_polar", cyxwiz::CvWarpMethod::LogPolar},
+                                   {"linear_polar", cyxwiz::CvWarpMethod::LinearPolar}},
+                                  s.warp_method, error)
+                                  ? (s.warp_method == cyxwiz::CvWarpMethod::ThreePoints ? 3 : 4)
+                                  : 0;
+            if (count == 3) s.source_points[6] = s.source_points[7] = s.target_points[6] = s.target_points[7] = 0.0f;
+            const bool polar = s.warp_method == cyxwiz::CvWarpMethod::LogPolar ||
+                               s.warp_method == cyxwiz::CvWarpMethod::LinearPolar;
+            if (count > 0 && !polar) {
+                (void)(ParsePointsParam(p, "source_points", count, s.source_points, error) &&
+                    ParsePointsParam(p, "target_points", count, s.target_points, error));
+            }
+            if (error.empty()) {
+                (void)(ParseChoiceParam<cyxwiz::CvWarpInterpolation>(
+                    p, "interpolation", "linear",
+                    {{"nearest", cyxwiz::CvWarpInterpolation::Nearest},
+                     {"linear", cyxwiz::CvWarpInterpolation::Linear},
+                     {"cubic", cyxwiz::CvWarpInterpolation::Cubic},
+                     {"lanczos", cyxwiz::CvWarpInterpolation::Lanczos}},
+                    s.interpolation, error) &&
+                    ParseFloatParam(p, "center_x", 0.5f, s.center_x, error) &&
+                    ParseFloatParam(p, "center_y", 0.5f, s.center_y, error) &&
+                    ParseFloatParam(p, "max_radius", 0.5f, s.max_radius, error) &&
+                    ParseIntParam(p, "width", 0, s.out_width, error) &&
+                    ParseIntParam(p, "height", 0, s.out_height, error));
+                s.inverse = ParseBoolParam(p, "inverse");
+            }
+            break;
+        }
+        case gui::NodeType::ImagePyramid:
+            s.kind = CvImageStepKind::Pyramid;
+            (void)(ParseChoiceParam<cyxwiz::CvPyramidOperation>(p, "operation", "down",
+                                                         {{"down", cyxwiz::CvPyramidOperation::Down},
+                                                          {"up", cyxwiz::CvPyramidOperation::Up},
+                                                          {"detail", cyxwiz::CvPyramidOperation::Detail}},
+                                                         s.pyramid, error) &&
+                ParseIntParam(p, "levels", 1, s.levels, error));
+            break;
+        default:
+            return;
+    }
+    const auto issue = [&](IssueLevel level, const std::string& message) {
+        AddIssue(config, level, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    if (!error.empty()) return issue(IssueLevel::Error, error);
+    if (config.preprocessing.has_normalization)
+        return issue(IssueLevel::Error,
+                     "Image steps work on [0, 1] pixels: put this node between Resize and Normalize");
+    for (const auto& op : config.image_augmentation.ops) {
+        if (cyxwiz::image::IsRandomImageOp(op.kind))
+            return issue(IssueLevel::Error, "Runs once on the prepared images, so it must come before the first "
+                                            "random step: move it before " + cyxwiz::ImageOpText(op));
+    }
+    const auto shape = CurrentImageShape(config);
+    if (const std::string why = cyxwiz::ValidateCvImageStep(s, shape); !why.empty())
+        return issue(IssueLevel::Error, why);
+    const auto after = cyxwiz::CvImageShapeAfter(s, shape);
+    if (s.kind == CvImageStepKind::Denoise) {
+        // Measured on this PC's cats vs dogs at 64 x 64 x 3, patch 7, search 21
+        // (TOFIX178 1.3f): 44.5 ms an image on one core; it grows with the area
+        // and the search window.
+        const double ms = 44.5 * static_cast<double>(shape.height * shape.width) / (64.0 * 64.0) *
+                          (static_cast<double>(s.search_size) * s.search_size) / (21.0 * 21.0) *
+                          (shape.channels == 1 ? 0.5 : 1.0);
+        const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+        char text[256];
+        std::snprintf(text, sizeof(text),
+                      "About %.0f ms an image at %zu Ã %zu: preparing 10,000 images takes about %.0f s on "
+                      "%u cores, once. Later runs read the prepared images.",
+                      ms, shape.width, shape.height, ms * 10000.0 / 1000.0 / cores, cores);
+        issue(IssueLevel::Warning, text);
+    }
+    if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
+        issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
+                                    " Ã " + std::to_string(after.height) + " Ã 1 here");
+    config.image_cv_steps.push_back(std::move(s));
+}
+
 // --- Audio extractors (Phase 2.1) ---
 //
 // Each extractor sets has_feature_node=true (except AudioAugmentation,
@@ -7146,8 +7437,8 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
                  config.audio_preprocessing.pitch_shift);
 }
 
-// --- Text preprocessing (Arrow materializer path) ---
-// TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
+// --- Text preprocessing ---
+// TextTokenizer is applied by the pipeline run before training. The compiler
 // still extracts its shape contract so recurrent preflight uses the graph's
 // current max_length.
 static void ExtractTextTokenizerShape(
@@ -7176,8 +7467,6 @@ static void ExtractTextVectorizerShape(
         config.text_preprocessing.max_length);
 }
 
-// TextVocabulary and TextPadding fold into the reachable tokenizer in
-// PipelineMaterializer; they do not own a separate training shape.
 
 // --- TimeSeries extractors (Phase 4 — deferred) ---
 
@@ -7210,6 +7499,14 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::QualityAnalyzer,    PreprocessingDomain::Image,       ExtractImageQuality},
+    // OpenCV steps done once with the images (TOFIX178 1.3f)
+    {gui::NodeType::ImageContrast,      PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageDenoise,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageSharpen,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageEdges,         PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageSmooth,        PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},

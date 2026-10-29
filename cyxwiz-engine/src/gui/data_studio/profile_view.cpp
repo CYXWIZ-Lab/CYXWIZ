@@ -1,5 +1,7 @@
 #include "profile_view.h"
 
+#include "image_profile_view.h"
+
 #include "../../core/async_task_manager.h"
 #include "../../core/column_role_store.h"
 #include "../../core/dataset_catalog.h"
@@ -96,6 +98,7 @@ void ProfileView::SetActiveDataset(const std::string& dataset_name) {
     selected_ = -1;
     error_.clear();
     generation_ = 0;
+    images_ = false;
     if (!dataset_.empty()) Reprofile();
 }
 
@@ -106,8 +109,16 @@ void ProfileView::Reprofile() {
         error_ = "'" + dataset_ + "' is no longer loaded.";
         return;
     }
+    images_ = entry->modality == DatasetModality::Image && entry->storage != DatasetStorageKind::InMemoryArrow &&
+              entry->storage != DatasetStorageKind::DiskBackedParquet;
+    if (images_) {
+        if (!image_) image_ = std::make_unique<ImageProfileView>();
+        image_->SetDataset(dataset_);
+        error_.clear();
+        return;
+    }
     if (entry->storage != DatasetStorageKind::InMemoryArrow && entry->storage != DatasetStorageKind::DiskBackedParquet) {
-        error_ = std::string("This dataset is ") + StorageText(entry->storage) + ": its profile comes with its dashboard (file counts, classes).";
+        error_ = std::string("This dataset is ") + StorageText(entry->storage) + ": it has no columns to profile.";
         return;
     }
     if (task_id_) AsyncTaskManager::Instance().Cancel(task_id_);
@@ -185,7 +196,12 @@ void ProfileView::Render() {
         }
     }
     if (dataset_.empty()) {
-        ImGui::TextColored(t.text_dim, "Pick a dataset above to profile it.");
+        ImGui::TextColored(t.text_dim, "Pick a dataset in the list on the left to profile it.");
+        return;
+    }
+    if (images_ && image_) {
+        image_->SetLiveCompile(live_compile_);
+        image_->Render();
         return;
     }
     RenderOverview();

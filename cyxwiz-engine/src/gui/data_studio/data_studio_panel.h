@@ -13,6 +13,7 @@
 #include "../../core/data_studio_presentation.h"
 #include "query_editor.h"
 #include "profile_view.h"
+#include "image_gallery_view.h"
 #include "missing_view.h"
 #include "outliers_view.h"
 #include "correlation_view.h"
@@ -44,7 +45,8 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize, Plugins };
+    // Images shows only for an image dataset.
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize, Plugins };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -112,6 +114,7 @@ public:
 private:
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
+    std::unique_ptr<ImageGalleryView> gallery_;
     std::unique_ptr<MissingView> missing_;
     std::unique_ptr<OutliersView> outliers_;
     std::unique_ptr<CorrelationView> correlation_;

@@ -4,7 +4,6 @@
 
 #include "../src/core/annotation_manager.h"
 #include "../src/core/data_registry.h"
-#include "../src/preprocessing/image_transform.h"
 #include "../src/preprocessing/normalization_transform.h"
 #include "../src/preprocessing/scaling_transform.h"
 #include "../src/preprocessing/statistics_calculator.h"
@@ -98,14 +97,6 @@ void ScalingTransform::Initialize(const DatasetStatistics&) {
 Tensor ScalingTransform::Apply(const Tensor&) {
     throw std::logic_error(
         "legacy lifecycle harness does not enable scaling");
-}
-
-ImageTransform::ImageTransform(const ImagePreprocessingConfig& config)
-    : config_(config) {}
-
-Tensor ImageTransform::Apply(const Tensor&) {
-    throw std::logic_error(
-        "legacy lifecycle harness does not enable image preprocessing");
 }
 
 } // namespace cyxwiz

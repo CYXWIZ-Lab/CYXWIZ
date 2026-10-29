@@ -52,11 +52,46 @@ node's dialog on the canvas; **Explore** opens a loaded one in Explore >
 Profile. Where the five columns do not fit, each Data Input is listed as a
 block with the same facts and links.
 
+An image Data Input shows its folder, where its labels come from (*image
+folder, labels from cat_dog.csv* or *image folder, class folders*) and the
+image count (*25,000 images*).
+
+### The image index
+
+Loading an image dataset also builds its **index table**, one row per image,
+named after the dataset with `_index` (`cat_dog_index`). It reads only each
+file's header (JPEG, PNG and 16/24-bit BMP; other formats are decoded once),
+on a background task, so the Data Input is loaded before the index is
+ready: the 25,000 cats vs dogs images take 0.6 to 0.9 s when the files are in
+the system's file cache and about 33 s from a cold disk. The rail lists it
+under its Data Input (*indexing* while it builds). Its columns:
+
+| Column | What |
+| --- | --- |
+| path | the image file |
+| file | its file name |
+| label | the class index (classes in sorted order, numbers as numbers) |
+| label_name | the class name (the Data Input's class names when set) |
+| width, height | the original size in pixels (empty when unreadable) |
+| channels | what a decode gives: 1 grey, 3 colour, 4 with alpha |
+| bytes | the file size |
+| readable | false when the file cannot be read as an image |
+
+Once quality is measured (Profile > Quality) the index has five more columns:
+blur, brightness, contrast, verdict (empty when the image passes, else its
+reasons, *blurry, low contrast*) and duplicate_of (the file it repeats). They
+stay when the index is rebuilt (renamed classes).
+
+It is an ordinary table: Query (`SELECT label_name, COUNT(*) FROM
+"cat_dog_index" GROUP BY label_name`), the Explore views and the Table Viewer
+all work on it. It is dropped when the images are unloaded and rebuilt when
+they are loaded again.
+
 ## Explore
 
 Explore has twelve views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Visualize** and **Plugins**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Visualize** and **Plugins**, and a thirteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -157,6 +192,46 @@ the values (range, dates from - to, or distinct values), missing (count and
 share), mean, std, median and outliers (outside 1.5 times the interquartile
 range).
 
+### An image dataset's profile
+
+Picking an image dataset (its Data Input in the rail) shows its own profile,
+built from its index table; the Data Input dialog's Profile tab shows the
+same. Nothing is decoded for it.
+
+- The tiles: images, classes, size on disk, unreadable files, and the colour
+  (*RGB, all 25,000*, or *Mixed* with the count of each).
+- **Classes**: each class's images and share, from the labels CSV or the
+  class folders, and whether they are balanced (*Imbalanced: the largest
+  class is 4.0x the smallest*, or *A class has no images*).
+- **Original size**: width and height range and median, square images, and
+  what the graph's Resize does with them (*exact: stretched to 64 x 64,
+  aspect is not kept. 41 images are smaller than 64 x 64 on a side and are
+  enlarged*); a graph without Resize says it needs one.
+- Width and height histograms.
+- **Channel statistics**: the mean and standard deviation of each colour
+  channel over every pixel of the prepared set this graph trains from (after
+  the Resize and the transforms done once), measured on the ArrayFire device,
+  and what the graph's Normalize makes of them (*Normalize uses mean 0.5, std
+  0.5: the model's inputs centre at -0.02 (R), -0.09 (G), -0.17 (B) with
+  spread 0.51, 0.50, 0.50*). **Measure** prepares the set first when training
+  has not (17 s for the 25,000 cats vs dogs images); training then reuses it.
+  The figures clear when the graph's image steps change.
+- **Quality**: the Quality Analyzer's measurements of every image at the Resize
+  size (blur, brightness, contrast, near duplicates), judged with the default
+  checks (blur at least 700, brightness 50 to 220, contrast at least 0.12,
+  duplicates within 4 bits): how many fail, a bar per reason, and the count per
+  class. **Measure quality** runs it on the ArrayFire device (40 s for the 25,000
+  cats vs dogs images here: 2,369 fail, 1,700 blurry, 864 low contrast, 157 dark,
+  30 bright, 48 duplicates) and saves it, so it is found again next time.
+  Nothing is left out of training: only a Quality node on the canvas does that.
+  Once measured, the index gets the quality columns and Images its quality
+  filters.
+- **Prepared sets**: the sets in cache/images made from this folder (size,
+  resize mode, the transforms done once, size on disk), with the one this
+  graph trains from marked *used by this graph*. Sets made before
+  2026-10-29 are not listed: their class order is the old one, and the
+  first training run makes a new set.
+
 ### Column roles
 
 Each column has one role: **ID**, **Group**, **Target**, **Numeric**,
@@ -197,6 +272,32 @@ looks like one, the panel suggests it. Spotify's artist_genres has `N/A` in
 
 The strongest correlations between number columns (Pearson) are listed
 under the details (Spotify: artist_popularity and artist_followers +0.64).
+
+## Images
+
+For an image dataset (its Data Input in the rail), **Images** shows its
+thumbnails, a page at a time, in the order of its index table. The chips
+filter by class (*All*, *Class 0*, *Class 1*, or the class names) and show
+the unreadable files when there are any; once quality is measured, also
+*Fails a check* and one chip per reason (*blurry*, *low contrast*, *dark*,
+*bright*, *duplicate*), and tiles that fail carry their first reason at the
+top right (*blurry +1*). **Sort** puts them in dataset order, smallest first,
+largest first (by pixel count, unreadable files last) or, once measured,
+blurriest first. Each tile has its class at the bottom left; hovering shows the file
+name. Clicking a tile shows it larger with its row, label, original size and
+colour, size on disk and path (and, when measured, its blur, brightness,
+contrast, verdict and the image it duplicates), and the links **Show in folder** and **Open
+the index table** (Query on `<dataset>_index`). Thumbnails are read on two
+background threads, the ones on screen first.
+
+**What the model sees**, under the grid, runs the picked image through this
+graph's image steps with the code training runs, on the ArrayFire device:
+the Resize (*Resize 72 x 72, exact, once*), each transform done once with the
+images (*Center Crop 64 x 64*, *Gaussian Blur 3 x 3, sigma 0.8*), then four
+draws of the random transforms done per batch, each saying what it drew
+(*flipped, rotated 7.5 degrees*). A graph without random transforms says every
+epoch sees the same images. Normalize is left out so the pictures stay
+viewable. It runs again when the graph's image steps change.
 
 ## Missing
 

@@ -2,6 +2,7 @@
 // (TOFIX160 P2): a node's own results go, a name another kept node uses
 // stays, a Save output the user named stays, and ReleaseAll leaves only that.
 #include "core/data_registry.h"
+#include "core/data_budget.h"
 #include "core/pipeline_executor.h"
 
 #include <arrow/memory_pool.h>
@@ -169,6 +170,69 @@ int main() try {
         Check(Held("ds_dataconvert_2"), "another node's result stays");
         owner.ReleaseAll();
         Check(!Held("ds_dataconvert_2") && Held("kept_output"), "ReleaseAll frees the rest, the Save output stays");
+        registry.ClearAllTabularDatasets();
+    }
+
+    // Training reads the canvas run's result while it is current (TOFIX178
+    // S0-d): Data Input -> Standard Scaler -> Min-Max Scaler.
+    {
+        const auto graph = [&](const std::string& with_mean, const std::string& max) {
+            return std::string(R"({"nodes":[)"
+                               R"({"id":11,"type":"DataInput","name":"Input","parameters":{)"
+                               R"("source_type":"file","file_path":")") + JsonEscapePath(csv_path.string()) +
+                   R"(","type":"csv","has_header":"true"}},)"
+                   R"({"id":12,"type":"StandardScaler","name":"Scale","parameters":{"columns":"value","with_mean":")" +
+                   with_mean + R"(","with_std":"true"}},)"
+                   R"({"id":13,"type":"MinMaxScaler","name":"Range","parameters":{"columns":"value","min":"0","max":")" +
+                   max + R"("}}],"links":[{"start_node":11,"end_node":12},{"start_node":12,"end_node":13}]})";
+        };
+        cyxwiz::PipelineExecutor canvas;
+        canvas.SetIngestionCacheRoot((work_dir / "ingestion").string());
+        Check(!canvas.CurrentNodeResult(graph("true", "1"), 12), "nothing is current before a run");
+        Check(canvas.ExecutePipeline(graph("true", "1")), "the canvas run: " + canvas.GetLastError());
+        const std::string scaled = canvas.NodeResults().at(12);
+        const auto current = canvas.CurrentNodeResult(graph("true", "1"), 12);
+        Check(current && *current == scaled, "an unchanged step's result is current: " + scaled);
+        const auto downstream_edit = canvas.CurrentNodeResult(graph("true", "2"), 12);
+        Check(downstream_edit && *downstream_edit == scaled, "an edit after the step keeps it current");
+        Check(!canvas.CurrentNodeResult(graph("false", "1"), 12), "an edit of the step makes it stale");
+        Check(!canvas.CurrentNodeResult(graph("false", "1"), 13), "an edit before a step makes it stale");
+        Check(Held(scaled), "asking ran nothing and released nothing");
+        cyxwiz::DataRegistry::Instance().UnloadDataset(scaled);
+        Check(!canvas.CurrentNodeResult(graph("true", "1"), 12), "an unloaded result is not current");
+        canvas.ReleaseAll();
+        registry.ClearAllTabularDatasets();
+    }
+
+    // The runtime memory guard (TOFIX178 S0-e2): a step during which the
+    // process grows by the safe budget stops with the numbers. The probe
+    // reports 1 TB of growth after the step starts.
+    {
+        const std::string scale =
+            R"({"nodes":[{"id":21,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":22,"type":"StandardScaler","name":"Scale","parameters":{"columns":"value"}}],)"
+            R"("links":[{"start_node":21,"end_node":22}]})";
+        cyxwiz::PipelineExecutor guarded;
+        guarded.SetIngestionCacheRoot((work_dir / "ingestion_guard").string());
+        int reads = 0;
+        guarded.SetProcessMemoryProbe([&reads] {
+            cyxwiz::ProcessMemorySnapshot snapshot;
+            snapshot.detected = true;
+            snapshot.resident_bytes = (1ULL << 30) + (reads++ == 0 ? 0 : (1ULL << 40));
+            return snapshot;
+        });
+        const bool ran = guarded.ExecutePipeline(scale);
+        const std::string error = guarded.GetLastError();
+        Check(!ran && error.find("the memory guard stopped 'Scale'") != std::string::npos,
+              "the guard stops the step with its reason: " + error);
+        Check(error.find("Sample Rows") != std::string::npos, "the reason says what to do");
+        guarded.ReleaseAll();
+        cyxwiz::PipelineExecutor unguarded;
+        unguarded.SetIngestionCacheRoot((work_dir / "ingestion_guard").string());
+        Check(unguarded.ExecutePipeline(scale), "the same step runs when memory stays: " + unguarded.GetLastError());
+        unguarded.ReleaseAll();
         registry.ClearAllTabularDatasets();
     }
 

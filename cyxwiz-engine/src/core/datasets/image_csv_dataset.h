@@ -106,6 +106,9 @@ public:
     std::string GetItemSource(size_t index) const override {
         return index < image_paths_.size() ? image_paths_[index] : std::string();
     }
+    int GetItemLabel(size_t index) const override {
+        return index < labels_.size() ? labels_[index] : -1;
+    }
 
 private:
     // Initialization

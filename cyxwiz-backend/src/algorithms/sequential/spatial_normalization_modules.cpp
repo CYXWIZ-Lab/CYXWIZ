@@ -110,4 +110,42 @@ std::string InstanceNorm2DModule::GetName() const {
         ", affine=" + (affine_ ? "true" : "false") + ")";
 }
 
+BatchNorm2DModule::BatchNorm2DModule(int num_features, float eps, float momentum)
+    : layer_(std::make_unique<BatchNorm2DLayer>(num_features, eps, momentum))
+    , num_features_(num_features)
+    , eps_(eps)
+    , momentum_(momentum) {}
+
+Tensor BatchNorm2DModule::Forward(const Tensor& input) {
+    // Batch statistics while training, running statistics in eval.
+    layer_->SetTraining(IsTraining());
+    return layer_->Forward(input);
+}
+
+Tensor BatchNorm2DModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output);
+}
+
+std::map<std::string, Tensor> BatchNorm2DModule::GetParameters() {
+    // The running statistics travel with the weights (checkpoints, eval);
+    // the optimizer only updates what GetGradients names.
+    std::map<std::string, Tensor> state = layer_->GetParameters();
+    state.erase("grad_gamma");
+    state.erase("grad_beta");
+    return state;
+}
+
+void BatchNorm2DModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> BatchNorm2DModule::GetGradients() {
+    return SelectAffineState(layer_->GetParameters(), AffineStateKind::Gradients);
+}
+
+std::string BatchNorm2DModule::GetName() const {
+    return "BatchNorm2D(features=" + std::to_string(num_features_) + ", eps=" + std::to_string(eps_) +
+        ", momentum=" + std::to_string(momentum_) + ")";
+}
+
 } // namespace cyxwiz

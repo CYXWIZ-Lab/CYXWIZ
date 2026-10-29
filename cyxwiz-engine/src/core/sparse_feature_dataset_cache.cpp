@@ -183,6 +183,15 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> MakeCacheBatch(
         columns.push_back(std::move(label_list));
     }
 
+    if (!dataset.GetPartition().empty()) {
+        ARROW_ASSIGN_OR_RAISE(
+            auto partition,
+            (BuildPrimitiveArray<arrow::Int8Builder>(dataset.GetPartition())));
+        ARROW_ASSIGN_OR_RAISE(auto partition_list, WrapInSingleList(partition));
+        fields.push_back(arrow::field("partition", partition_list->type()));
+        columns.push_back(std::move(partition_list));
+    }
+
     std::vector<std::string> meta_keys = {std::string(kFormatKey), std::string(kVersionKey),
                                      std::string(kNameKey), std::string(kRowsKey),
                                      std::string(kFeaturesKey), std::string(kLabelNameKey)};
@@ -409,6 +418,14 @@ SparseFeatureDatasetCache::Load(const std::string& path) {
                           ReadListValues(*batch, "labels", false));
     if (labels) {
         contents.labels = std::make_shared<arrow::ChunkedArray>(labels);
+    }
+    ARROW_ASSIGN_OR_RAISE(auto partition,
+                          ReadListValues(*batch, "partition", false));
+    if (partition) {
+        ARROW_ASSIGN_OR_RAISE(
+            contents.partition,
+            (ReadPrimitiveValues<arrow::Int8Array, int8_t>(
+                partition, arrow::Type::INT8, "partition")));
     }
     return SparseFeatureDataset::Create(std::move(contents));
 }
