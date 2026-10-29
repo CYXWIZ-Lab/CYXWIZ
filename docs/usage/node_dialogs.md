@@ -92,8 +92,9 @@ the Resize size into cache/images when training starts*). When an Apply fails wh
 strip keeps the earlier load and says the last Apply failed.
 
 The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
-(which columns to load, then the rows to skip and the row limit),
-**Memory** and **Audit**.
+(which columns to load, then the rows to skip and the row limit; not shown
+for an image or audio folder, which has no rows to read), **Memory** and
+**Audit**.
 
 ### Source: the file or folder, then how its rows are used
 

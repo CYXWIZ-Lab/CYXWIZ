@@ -394,7 +394,7 @@ void DataInputDialog::RenderContent() {
             RenderDataProfilingTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Rows and columns")) {
+        if (data_input::HasRowsAndColumns(file_category_) && ImGui::BeginTabItem("Rows and columns")) {
             RenderRowsAndColumnsTab();
             ImGui::EndTabItem();
         }
