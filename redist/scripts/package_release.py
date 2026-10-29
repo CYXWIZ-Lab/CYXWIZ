@@ -468,6 +468,10 @@ def copy_build_payload(
             "package-local runtime bootstrapper",
         ),
         require_file(
+            paths.build / f"cyxwiz-cli{exe_suffix}",
+            "command-line launcher (cyxwiz-cli plugin-check)",
+        ),
+        require_file(
             paths.build / f"cyxwiz-product-removal-finalizer{exe_suffix}",
             "detached product-removal finalizer",
         ),
@@ -536,6 +540,13 @@ def install_plugin_sdk(paths: PackagePaths, destination: Path) -> None:
     for required in ("LICENSE", "NOTICE", "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake",
                      "include/plugin/plugin_types.h", "template/plugin.json"):
         require_file(destination / required, f"plugin SDK {required}")
+    # The library plugins link (CyxWizSDKConfig finds it by this name); a
+    # symlink would have been dropped from the package (1.0.7 Linux/macOS).
+    linker_library = {"win32": "cyxwiz-backend.lib", "darwin": "libcyxwiz-backend.dylib"}.get(
+        sys.platform, "libcyxwiz-backend.so")
+    library = require_file(destination / "lib" / linker_library, "plugin SDK backend library")
+    if library.is_symlink():
+        raise PackageError(f"plugin SDK {linker_library} is a symlink; the SDK needs the real library")
 
 
 def arrayfire_library_dir(root: Path) -> Path:
@@ -989,6 +1000,7 @@ def create_deterministic_zip(stage: Path, destination: Path) -> Path:
                     "cyxwiz-installer",
                     "cyxwiz-backend-pack-installer",
                     "cyxwiz-runtime-bootstrapper",
+                    "cyxwiz-cli",
                     "cyxwiz-product-removal-finalizer",
                     "cyxwiz-route-probe",
                     "cyxwiz-plugin-check",

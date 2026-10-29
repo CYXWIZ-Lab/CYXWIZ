@@ -703,6 +703,7 @@ set(ENGINE_SOURCES
     src/data/table_text_export.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
+    src/scripting/python_environment.cpp
     src/scripting/script_manager.cpp
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
@@ -1084,7 +1085,7 @@ target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )
 if(WIN32)
-    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper)
+    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper cyxwiz-cli)
 endif()
 
 # Include directories
@@ -1320,6 +1321,17 @@ if(TARGET pycyxwiz)
         $<TARGET_FILE_DIR:cyxwiz-engine>/${_cyxwiz_pycyxwiz_name}
         COMMENT "Copying pycyxwiz Python module..."
     )
+    # The extension docs against the code (TOFIX125): the generated reference
+    # pages match pycyxwiz and the SDK headers, and the guides' samples run,
+    # their excerpts match, their version line is current and links resolve.
+    if(Python3_EXECUTABLE)
+        add_test(NAME extension_docs_reference
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/generate_extension_reference.py"
+                    $<TARGET_FILE_DIR:pycyxwiz> $<TARGET_FILE_DIR:cyxwiz-engine> --check)
+        add_test(NAME extension_docs_samples
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/check_extension_docs.py"
+                    $<TARGET_FILE_DIR:pycyxwiz> $<TARGET_FILE_DIR:cyxwiz-engine>)
+    endif()
 endif()
 
 # Release installs bundle Python 3.12 under <engine dir>/python and the Engine
@@ -1370,6 +1382,7 @@ if(CYXWIZ_HAS_PYTHON)
 add_executable(test_sandbox_timeout
     tests/test_sandbox_timeout.cpp
     src/scripting/python_engine.cpp
+    src/scripting/python_environment.cpp
     src/scripting/python_sandbox.cpp
 )
 
@@ -7423,6 +7436,13 @@ cyxwiz_windows_resources(cyxwiz-plugin-check DESCRIPTION "CyxWiz plugin check")
 if(WIN32)
     target_compile_definitions(cyxwiz-plugin-check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
+# A dangerous permission is granted for the run, not waited on (needs the
+# activation_nodes example built, as test_plugin_tensor_nodes does).
+add_test(NAME plugin_check_permissions
+         COMMAND ${CMAKE_COMMAND} -DCHECK=$<TARGET_FILE:cyxwiz-plugin-check>
+                 -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/activation_nodes
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_permissions
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_permissions.cmake)
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)
@@ -7494,15 +7514,19 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
     add_executable(test_python_node_training
         tests/test_python_node_training.cpp
         src/extension/python/python_node_factory.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/engine_plugin_context.cpp
+        src/plugin/plugin_loader.cpp
     )
-    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core pybind11::embed)
+    target_link_libraries(test_python_node_training PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui
+                          pybind11::embed)
     target_compile_definitions(test_python_node_training PRIVATE
         CYXWIZ_HAS_PYTHON
         CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
         CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}"
         CYXWIZ_TEST_EXE_DIR="$<TARGET_FILE_DIR:test_python_node_training>"
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
-    add_dependencies(test_python_node_training pycyxwiz)
+    add_dependencies(test_python_node_training pycyxwiz activation_nodes)
     add_test(NAME python_node_training COMMAND test_python_node_training)
 
     # The SDK's Python example layers trained from a Data Input (TOFIX125).
@@ -7519,6 +7543,18 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         CYXWIZ_TEST_PYCYXWIZ_DIR="$<TARGET_FILE_DIR:pycyxwiz>")
     add_dependencies(test_python_builtin_layers pycyxwiz)
     add_test(NAME python_builtin_layers COMMAND test_python_builtin_layers)
+
+    # A running interpreter moves to another project's venv in place
+    # (TOFIX125 walk). Starts its own interpreter: the Python the build uses.
+    add_executable(test_python_environment_switch
+        tests/test_python_environment_switch.cpp
+        src/scripting/python_environment.cpp
+    )
+    target_link_libraries(test_python_environment_switch PRIVATE pybind11::embed)
+    target_compile_definitions(test_python_environment_switch PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}")
+    add_test(NAME python_environment_switch COMMAND test_python_environment_switch)
 
     # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
     add_executable(bench_python_node_cost

@@ -12,6 +12,9 @@ PluginTrainingHookManager& PluginTrainingHookManager::Instance() {
 void PluginTrainingHookManager::RegisterHook(const std::string& plugin_id, ITrainingHook* hook) {
     if (!hook) return;
     std::lock_guard lock(mutex_);
+    for (const auto& e : hooks_) {
+        if (e.plugin_id == plugin_id && e.hook == hook) return;  // registered both ways: once
+    }
     hooks_.push_back(HookEntry{plugin_id, hook});
     spdlog::info("PluginTrainingHookManager: Registered hook from plugin {}", plugin_id);
 }

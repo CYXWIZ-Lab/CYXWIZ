@@ -86,9 +86,17 @@ size_t LoadStartupPlugins(PluginManager& manager) {
             spdlog::debug("Plugin {} could not be loaded at startup from {} (the loader said why)", entry.id, entry.folder);
             continue;
         }
-        // A plugin whose OnLoad fails (or crashes) is not counted as loaded.
+        // A plugin whose OnLoad fails (or crashes) is not counted as loaded;
+        // nor is one still waiting for the user to approve its permissions
+        // (it stays Loaded and starts once they are decided).
         if (!manager.InitializePlugin(entry.id)) {
-            spdlog::debug("Plugin {} did not start: its OnLoad failed", entry.id);
+            const auto* plugin = manager.GetLoadedPlugin(entry.id);
+            if (plugin && plugin->state == PluginState::Loaded) {
+                spdlog::info("Plugin {} waits for its permissions to be approved", entry.id);
+            } else {
+                spdlog::debug("Plugin {} did not start: {}", entry.id,
+                              plugin && !plugin->error_message.empty() ? plugin->error_message : "its OnLoad failed");
+            }
             continue;
         }
         ++loaded;

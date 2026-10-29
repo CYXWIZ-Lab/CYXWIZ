@@ -23,6 +23,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -32,17 +33,23 @@ class PythonNodeRuntime {
 public:
     static PythonNodeRuntime& Instance();
 
-    // True when the interpreter runs. Otherwise false with the reason, and
-    // Wanted() becomes true so the Engine can start Python.
+    // True when the interpreter runs the open project's environment.
+    // Otherwise false with the reason; when Python is not running, Wanted()
+    // becomes true so the Engine can start it.
     bool Ready(std::string& error);
     bool Wanted() const { return wanted_.load(); }
     void ClearWanted() { wanted_.store(false); }
+    // Set while the running interpreter is another project's environment
+    // and the Engine needs a restart (empty: none); Ready() reports it.
+    void SetRestartReason(std::string reason);
 
     // False when this Engine was built without Python.
     static bool Available();
 
 private:
     std::atomic<bool> wanted_{false};
+    std::mutex restart_mutex_;
+    std::string restart_reason_;
 };
 
 // "cyxwiz_node_<id>_<first 16 hash digits>": the private import name.

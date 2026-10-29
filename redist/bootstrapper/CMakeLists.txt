@@ -155,6 +155,44 @@ endif()
 if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
     install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
 endif()
+
+# cyxwiz-cli: the launcher's command-line build, beside it in the install
+# root on every platform (TOFIX125). A terminal waits for a console program
+# and gets its output and exit code; the launcher is a GUI program on
+# Windows. `cyxwiz-cli plugin-check <folder>...` checks a C++ plugin.
+add_executable(cyxwiz-cli
+    ${_cyxwiz_runtime_bootstrapper_source}
+)
+target_compile_definitions(cyxwiz-cli PRIVATE CYXWIZ_COMMAND_LINE_TOOL)
+cyxwiz_windows_resources(cyxwiz-cli DESCRIPTION "CyxWiz command line")
+if(MSVC)
+    # Static CRT, like the launcher: the install root has no C++ runtime.
+    get_target_property(_cyxwiz_bootstrap_sources cyxwiz-runtime-bootstrap SOURCES)
+    get_target_property(_cyxwiz_maintenance_sources
+        cyxwiz-backend-pack-maintenance SOURCES)
+    target_sources(cyxwiz-cli PRIVATE
+        ${_cyxwiz_bootstrap_sources} ${_cyxwiz_maintenance_sources})
+    target_include_directories(cyxwiz-cli PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(cyxwiz-cli PRIVATE
+        nlohmann_json::nlohmann_json advapi32 ole32 shell32)
+    set_property(TARGET cyxwiz-cli PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    unset(_cyxwiz_bootstrap_sources)
+    unset(_cyxwiz_maintenance_sources)
+else()
+    target_link_libraries(cyxwiz-cli PRIVATE
+        cyxwiz-backend-pack-maintenance
+        cyxwiz-runtime-bootstrap
+    )
+endif()
+set_target_properties(cyxwiz-cli PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
+    install(TARGETS cyxwiz-cli RUNTIME DESTINATION .)
+endif()
 unset(_cyxwiz_runtime_bootstrapper_source)
 
 set(CYXWIZ_SETUP_BUNDLE_URL "" CACHE STRING

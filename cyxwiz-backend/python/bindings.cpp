@@ -8,6 +8,11 @@
 #include <cstring>
 #include <functional>
 #include <stdexcept>
+#include <filesystem>
+#include <cstdlib>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 #include "cyxwiz/sequential.h"
 #include "cyxwiz/tokenizer.h"
 #include "cyxwiz/audio_processing.h"
@@ -23,6 +28,26 @@
 #include "cyxwiz/distributed/distributed_trainer.h"
 
 using namespace pybind11::literals;  // For _a suffix
+
+namespace {
+
+#ifndef _WIN32
+// Outside the Engine (a terminal, a test) nothing tells ArrayFire where the
+// installed base keeps its backends: its loader is isolated from system
+// folders, so the first tensor fails with "ArrayFire couldn't locate any
+// backends" (macOS). The launcher sets AF_PATH to <base>/arrayfire; an
+// import from the base does the same when nobody set it.
+void PointArrayFireAtTheBase() {
+    if (const char* set = std::getenv("AF_PATH"); set && *set) return;
+    Dl_info info{};
+    if (!dladdr(reinterpret_cast<void*>(&PointArrayFireAtTheBase), &info) || !info.dli_fname) return;
+    const auto arrayfire = std::filesystem::path(info.dli_fname).parent_path() / "arrayfire";
+    std::error_code error;
+    if (std::filesystem::is_directory(arrayfire, error)) setenv("AF_PATH", arrayfire.string().c_str(), 0);
+}
+#endif
+
+}  // namespace
 
 namespace py = pybind11;
 
@@ -205,6 +230,9 @@ py::array_t<std::complex<double>> complex_matrix_to_numpy(
 
 PYBIND11_MODULE(pycyxwiz, m) {
     m.doc() = "CyxWiz Python Bindings - High-performance ML compute library";
+#ifndef _WIN32
+    PointArrayFireAtTheBase();
+#endif
 
     // Initialization
     m.def("initialize", &cyxwiz::Initialize, "Initialize the CyxWiz backend");

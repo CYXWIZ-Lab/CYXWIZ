@@ -54,8 +54,18 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/cyxwiz-backend/include/cyxwiz"
         PATTERN "distributed" EXCLUDE)
 install(FILES "${CMAKE_BINARY_DIR}/cyxwiz-backend/include/cyxwiz/cyxwiz_export.h"
         DESTINATION include/cyxwiz COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
-install(FILES "$<TARGET_LINKER_FILE:cyxwiz-backend>"
-        DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# The library a plugin links. Windows: the import library. Elsewhere the
+# linker file is the lib<name>.so / .dylib symlink, which would point at a
+# file the SDK does not have (and packaging keeps real files only): install
+# the real shared library under that name instead.
+if(WIN32)
+    install(FILES "$<TARGET_LINKER_FILE:cyxwiz-backend>"
+            DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+else()
+    install(FILES "$<TARGET_FILE:cyxwiz-backend>"
+            DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL
+            RENAME "${CMAKE_SHARED_LIBRARY_PREFIX}cyxwiz-backend${CMAKE_SHARED_LIBRARY_SUFFIX}")
+endif()
 install(FILES
             "${_cyxwiz_sdk_cmake}/CyxWizSDKConfig.cmake"
             "${_cyxwiz_sdk_cmake}/CyxWizSDKConfigVersion.cmake"

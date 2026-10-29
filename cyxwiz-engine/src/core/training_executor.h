@@ -418,6 +418,7 @@ private:
     bool RunGenerationPreview(GenerationPreviewPoint point);
     // Run state a checkpoint records, kept current by Train.
     int resume_total_epochs_ = 0;
+    int hook_total_epochs_ = 0;  // the run's epochs, for plugin batch hooks
     int resume_model_seed_ = -1;
     float resume_best_val_loss_ = 0.0f;
     int resume_epochs_without_improvement_ = 0;
@@ -526,6 +527,10 @@ private:
      * Update metrics (thread-safe)
      */
     void UpdateMetrics(const std::function<void(TrainingMetrics&)>& updater);
+    // Plugin ITrainingHook OnBatchStart / OnBatchEnd around one training
+    // batch (1-based `batch`); nothing to do without hooks.
+    void NotifyPluginBatch(bool start, int epoch, int batch, int total_batches,
+                           float loss, float accuracy);
 
     /**
      * Check if we should stop (for cooperative cancellation)

@@ -36,8 +36,12 @@ public:
     bool RegisterTrainingHook(ITrainingHook* hook) override;
     bool RegisterAnalyticsProvider(IAnalyticsProvider* provider) override;
 
-private:
+    // Whether the plugin may do `action` (declared in plugin.json, and
+    // approved when the permission is dangerous); logs the refusal.
     bool CheckPermission(PluginPermission required, const char* action) const;
+    static const char* PermissionLabel(PluginPermission permission);
+
+private:
 
     std::string plugin_id_;
     std::string plugin_version_;

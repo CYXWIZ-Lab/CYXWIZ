@@ -252,7 +252,7 @@ CreateNodeView BuildCreateNodeView(const CreateNodeInputs& in) {
     view.title = "Create nodes from " + in.script_name;
     const size_t count = in.nodes.size();
     const std::string found = "Found " + std::to_string(count) + (count == 1 ? " node" : " nodes") +
-                              " (classes marked with @nodes.activation or @nodes.node).";
+                              " (classes marked with @nodes.node, @nodes.activation or @nodes.loss).";
     view.target = in.project_nodes.empty()
         ? std::string()
         : (in.project_nodes / ((in.bundle_name.empty() ? std::string("?") : in.bundle_name) + ".cyxnode")).string();
@@ -267,7 +267,7 @@ CreateNodeView BuildCreateNodeView(const CreateNodeInputs& in) {
             break;
         case CreateNodeStage::NoNodes:
             view.lead = "No node in " + in.script_name +
-                        ": mark a class with @nodes.node or @nodes.activation (see docs/extending/python-nodes.md).";
+                        ": mark a class with @nodes.node, @nodes.activation or @nodes.loss (see docs/extending/python-nodes.md).";
             view.primary_label = "Close";
             view.primary_enabled = true;
             break;
