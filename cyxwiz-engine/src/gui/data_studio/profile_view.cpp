@@ -185,7 +185,7 @@ void ProfileView::Render() {
         }
     }
     if (dataset_.empty()) {
-        ImGui::TextColored(t.text_dim, "Pick a dataset above to profile it.");
+        ImGui::TextColored(t.text_dim, "Pick a dataset in the list on the left to profile it.");
         return;
     }
     RenderOverview();
