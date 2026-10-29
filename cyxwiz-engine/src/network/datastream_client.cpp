@@ -1,4 +1,5 @@
 #include "datastream_client.h"
+#include "common/server_address.h"
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -70,11 +71,7 @@ bool DataStreamClient::Connect(const std::string& gateway_address) {
         args.SetMaxReceiveMessageSize(100 * 1024 * 1024);  // 100 MB for large batches
         args.SetMaxSendMessageSize(100 * 1024 * 1024);
 
-        channel_ = grpc::CreateCustomChannel(
-            gateway_address,
-            grpc::InsecureChannelCredentials(),
-            args
-        );
+        channel_ = cyxwiz::protocol::CreateServerChannel(gateway_address, args);
 
         if (!channel_) {
             last_error_ = "Failed to create channel";

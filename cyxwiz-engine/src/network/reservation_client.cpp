@@ -1,5 +1,6 @@
 #include "reservation_client.h"
 #include "../auth/auth_client.h"
+#include "common/server_address.h"
 #include <spdlog/spdlog.h>
 
 namespace network {
@@ -32,7 +33,7 @@ bool ReservationClient::Connect(const std::string& server_address) {
     }
 
     try {
-        channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+        channel_ = cyxwiz::protocol::CreateServerChannel(server_address);
         stub_ = cyxwiz::protocol::JobReservationService::NewStub(channel_);
 
         // Test connection with a short deadline
@@ -59,7 +60,7 @@ void ReservationClient::ConnectAsync(const std::string& server_address) {
     }
 
     // Create channel and stub immediately (non-blocking)
-    channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+    channel_ = cyxwiz::protocol::CreateServerChannel(server_address);
     stub_ = cyxwiz::protocol::JobReservationService::NewStub(channel_);
     server_address_ = server_address;
 

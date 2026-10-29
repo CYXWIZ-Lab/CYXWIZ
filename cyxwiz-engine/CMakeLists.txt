@@ -3511,6 +3511,16 @@ set_target_properties(test_cloud_gateway_address PROPERTIES
 )
 add_test(NAME test_cloud_gateway_address COMMAND test_cloud_gateway_address)
 
+# One server address: front door or three services (TOFIX168 step 3)
+add_executable(test_server_address
+    tests/test_server_address.cpp
+)
+target_link_libraries(test_server_address PRIVATE cyxwiz-protocol)
+set_target_properties(test_server_address PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_server_address COMMAND test_server_address)
+
 # ===== Test: Reservation card presentation (TOFIX118 gaps 5-6) =====
 add_executable(test_reservation_presentation
     tests/test_reservation_presentation.cpp

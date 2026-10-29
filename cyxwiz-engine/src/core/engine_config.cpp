@@ -1,6 +1,7 @@
 // engine_config.cpp - Centralized configuration management implementation
 #include "core/engine_config.h"
 #include "core/cloud_gateway_address.h"
+#include "common/server_address.h"
 
 #include <fstream>
 #include <algorithm>
@@ -133,12 +134,12 @@ EngineConfig::EngineConfig() {
 }
 
 void EngineConfig::SetDefaults() {
+    server_address_.clear();
     central_server_address_ = "localhost:50051";
     cloud_gateway_address_.clear();  // derived from the central address
     auth_api_url_ = "http://127.0.0.1:3002/api";
     default_deployment_address_ = "localhost:50056";
     default_p2p_port_ = 50052;
-    use_secure_connection_ = false;
     auto_connect_on_startup_ = false;
     connection_timeout_ = 10;
     request_timeout_ = 30;
@@ -221,6 +222,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             // Build default config using current values
             json defaults;
             defaults["servers"] = {
+                {"cyxwiz", server_address_},
                 {"central", central_server_address_},
                 {"cloud_gateway", cloud_gateway_address_},
                 {"deployment", default_deployment_address_},
@@ -230,7 +232,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 {"api_url", auth_api_url_}
             };
             defaults["connection"] = {
-                {"use_tls", use_secure_connection_},
                 {"auto_connect", auto_connect_on_startup_},
                 {"timeout", connection_timeout_},
                 {"request_timeout", request_timeout_}
@@ -285,6 +286,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             if (!exe_dir.empty() && !std::filesystem::exists(template_path)) {
                 json template_config;
                 template_config["servers"] = {
+                    {"cyxwiz", server_address_},
                     {"central", central_server_address_},
                     {"cloud_gateway", cloud_gateway_address_},
                     {"deployment", default_deployment_address_},
@@ -294,7 +296,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                     {"api_url", auth_api_url_}
                 };
                 template_config["connection"] = {
-                    {"use_tls", use_secure_connection_},
                     {"auto_connect", auto_connect_on_startup_},
                     {"timeout", connection_timeout_},
                     {"request_timeout", request_timeout_}
@@ -334,6 +335,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         // Server addresses
         if (config.contains("servers")) {
             const auto& servers = config["servers"];
+            if (servers.contains("cyxwiz")) {
+                server_address_ = servers["cyxwiz"].get<std::string>();
+            }
             if (servers.contains("central")) {
                 central_server_address_ = servers["central"].get<std::string>();
             }
@@ -359,9 +363,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         // Connection settings
         if (config.contains("connection")) {
             const auto& conn = config["connection"];
-            if (conn.contains("use_tls")) {
-                use_secure_connection_ = conn["use_tls"].get<bool>();
-            }
             if (conn.contains("auto_connect")) {
                 auto_connect_on_startup_ = conn["auto_connect"].get<bool>();
             }
@@ -448,10 +449,18 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         modified_ = false;
 
         spdlog::debug("Loaded config from: {}", config_path.string());
-        spdlog::debug("  Central Server: {}", central_server_address_);
-        spdlog::debug("  CyxCloud gateway: {}",
-                      ResolveCloudGatewayAddress(cloud_gateway_address_, central_server_address_));
-        spdlog::debug("  Auth API: {}", auth_api_url_);
+        if (!server_address_.empty()) {
+            const auto endpoints = cyxwiz::protocol::ResolveServerAddress(server_address_);
+            if (!endpoints.error.empty()) {
+                spdlog::warn("servers.cyxwiz: {}; using the per-service addresses", endpoints.error);
+            } else {
+                spdlog::debug("  Server: {} ({})", server_address_,
+                              endpoints.front_door ? "front door" : "three services");
+            }
+        }
+        spdlog::debug("  Central Server: {}", CentralLocked());
+        spdlog::debug("  CyxCloud gateway: {}", GatewayLocked());
+        spdlog::debug("  Auth API: {}", AuthApiLocked());
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
         spdlog::debug("  Default P2P Port: {}", default_p2p_port_);
         spdlog::debug("  System Python: {}", system_python_path_.empty() ? "not configured" : system_python_path_);
@@ -488,6 +497,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
 
         // Server addresses
         config["servers"] = {
+            {"cyxwiz", server_address_},
             {"central", central_server_address_},
             {"cloud_gateway", cloud_gateway_address_},
             {"deployment", default_deployment_address_},
@@ -501,7 +511,6 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
 
         // Connection settings
         config["connection"] = {
-            {"use_tls", use_secure_connection_},
             {"auto_connect", auto_connect_on_startup_},
             {"timeout", connection_timeout_},
             {"request_timeout", request_timeout_}
@@ -573,9 +582,53 @@ std::filesystem::path EngineConfig::GetConfigPath() const {
 
 // ===== Getters and Setters =====
 
+// The one address decides when it is set and usable (TOFIX168)
+std::string EngineConfig::CentralLocked() const {
+    if (!server_address_.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(server_address_);
+        if (e.error.empty()) {
+            return e.central;
+        }
+    }
+    return central_server_address_;
+}
+
+std::string EngineConfig::GatewayLocked() const {
+    if (!server_address_.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(server_address_);
+        if (e.error.empty()) {
+            return e.gateway;
+        }
+    }
+    return ResolveCloudGatewayAddress(cloud_gateway_address_, central_server_address_);
+}
+
+std::string EngineConfig::AuthApiLocked() const {
+    if (!server_address_.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(server_address_);
+        if (e.error.empty()) {
+            return e.api_base_url;
+        }
+    }
+    return auth_api_url_;
+}
+
+std::string EngineConfig::GetServerAddress() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return server_address_;
+}
+
+void EngineConfig::SetServerAddress(const std::string& address) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (server_address_ != address) {
+        server_address_ = address;
+        modified_ = true;
+    }
+}
+
 std::string EngineConfig::GetCentralServerAddress() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return central_server_address_;
+    return CentralLocked();
 }
 
 void EngineConfig::SetCentralServerAddress(const std::string& address) {
@@ -588,7 +641,7 @@ void EngineConfig::SetCentralServerAddress(const std::string& address) {
 
 std::string EngineConfig::GetCloudGatewayAddress() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return ResolveCloudGatewayAddress(cloud_gateway_address_, central_server_address_);
+    return GatewayLocked();
 }
 
 void EngineConfig::SetCloudGatewayAddress(const std::string& address) {
@@ -601,7 +654,7 @@ void EngineConfig::SetCloudGatewayAddress(const std::string& address) {
 
 std::string EngineConfig::GetAuthApiUrl() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return auth_api_url_;
+    return AuthApiLocked();
 }
 
 void EngineConfig::SetAuthApiUrl(const std::string& url) {
@@ -625,18 +678,6 @@ void EngineConfig::SetDefaultDeploymentAddress(const std::string& address) {
     }
 }
 
-bool EngineConfig::UseSecureConnection() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return use_secure_connection_;
-}
-
-void EngineConfig::SetUseSecureConnection(bool secure) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (use_secure_connection_ != secure) {
-        use_secure_connection_ = secure;
-        modified_ = true;
-    }
-}
 
 bool EngineConfig::AutoConnectOnStartup() const {
     std::lock_guard<std::mutex> lock(mutex_);

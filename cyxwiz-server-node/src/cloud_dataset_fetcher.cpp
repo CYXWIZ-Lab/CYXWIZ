@@ -1,4 +1,5 @@
 #include "cloud_dataset_fetcher.h"
+#include "common/server_address.h"
 
 #include "core/sha256_digest.h"
 
@@ -51,10 +52,11 @@ CloudDatasetFetcher::CloudDatasetFetcher(fs::path directory, int chunk_timeout_m
     : directory_(std::move(directory)), chunk_timeout_ms_(chunk_timeout_ms) {}
 
 std::shared_ptr<grpc::Channel> CloudDatasetFetcher::ChannelFor(const std::string& gateway_address) {
-    // Plain channel on the LAN for now; TLS between machines is TOFIX163 D4.
+    // The address comes in the job from the Engine: "https://..." (a front
+    // door, TOFIX168) is dialled over TLS, "host:port" plain.
     grpc::ChannelArguments args;
     args.SetMaxReceiveMessageSize(64 * 1024 * 1024);
-    return grpc::CreateCustomChannel(gateway_address, grpc::InsecureChannelCredentials(), args);
+    return cyxwiz::protocol::CreateServerChannel(gateway_address, args);
 }
 
 void CloudDatasetFetcher::Cancel() { cancelled_.store(true); }

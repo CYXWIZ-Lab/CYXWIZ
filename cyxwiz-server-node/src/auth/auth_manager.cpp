@@ -81,13 +81,13 @@ AuthManager::AuthManager() {
     // Try to load auth API URL from config
     auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
     if (backend.IsInitialized()) {
-        api_base_url_ = backend.GetConfig().auth_api_url;
+        api_base_url_ = backend.GetConfig().AuthApiUrl();
     } else {
         // BackendManager not initialized yet, try loading from config file directly
         cyxwiz::servernode::core::ConfigManager config_manager;
         std::string config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
         if (config_manager.Load(config_path)) {
-            api_base_url_ = config_manager.GetConfig().auth_api_url;
+            api_base_url_ = config_manager.GetConfig().AuthApiUrl();
         }
     }
     spdlog::info("AuthManager initialized with API URL: {}", api_base_url_);
@@ -335,8 +335,9 @@ bool AuthManager::FetchUserProfile() {
         // Parse URL (same as DoLogin)
         std::string host = base_url;
         std::string port = "80";
+        const bool https = host.find("https://") == 0;
 
-        if (host.find("https://") == 0) {
+        if (https) {
             host = host.substr(8);
             port = "443";
         } else if (host.find("http://") == 0) {
@@ -357,7 +358,9 @@ bool AuthManager::FetchUserProfile() {
             host = host.substr(0, slash_pos);
         }
 
-        httplib::Client client(host + ":" + port);
+        // The scheme decides TLS: this call used plain HTTP even for an
+        // https:// service (TOFIX168)
+        httplib::Client client((https ? "https://" : "http://") + host + ":" + port);
         client.set_connection_timeout(10);
         client.set_read_timeout(30);
 
@@ -1262,13 +1265,10 @@ bool AuthManager::SyncNodeIdWithWebApi(const std::string& central_server_node_id
         }
         
         // Create HTTP client
-        std::unique_ptr<httplib::Client> cli;
-        if (protocol == "https") {
-            cli = std::make_unique<httplib::Client>(host, port);
-            cli->enable_server_certificate_verification(false);
-        } else {
-            cli = std::make_unique<httplib::Client>(host, port);
-        }
+        // The scheme decides TLS, with the certificate checked: this call
+        // used plain HTTP for an https:// service and turned verification
+        // off (TOFIX168)
+        auto cli = std::make_unique<httplib::Client>(protocol + "://" + host + ":" + std::to_string(port));
         cli->set_connection_timeout(10);
         cli->set_read_timeout(10);
         

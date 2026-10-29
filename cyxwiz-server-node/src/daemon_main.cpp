@@ -11,6 +11,7 @@
 #endif
 
 #include <cyxwiz/cyxwiz.h>
+#include "common/server_address.h"
 #include <spdlog/spdlog.h>
 #include <iostream>
 #include <memory>
@@ -66,7 +67,9 @@ void PrintUsage(const char* program) {
     std::cout << "Usage: " << program << " [options]\n"
               << "\nOptions:\n"
               << "  --ipc-address=ADDR   IPC address for GUI connection (default: localhost:50054)\n"
-              << "  --central-server=ADDR Central server address (default: localhost:50051)\n"
+              << "  --server=ADDR        The CyxWiz server: https://HOST (front door), http://HOST:PORT,\n"
+              << "                       or HOST (central :50051, sign-in :3002)\n"
+              << "  --central-server=ADDR Central server address only (default: localhost:50051)\n"
               << "  --http-port=PORT     HTTP REST API port (default: 8082)\n"
               << "  --inference-addr=ADDR gRPC InferenceService address (default: 0.0.0.0:50057)\n"
               << "  --config=PATH        Path to config file (default: ~/.cyxwiz/daemon.yaml)\n"
@@ -101,6 +104,8 @@ struct DaemonConfig {
     std::string deployment_address;
     std::string inference_address;
     std::string central_server;
+    std::string auth_api_url;  // where the sign-in is renewed
+    std::string server;        // --server: the one server address
     std::string config_path;
     int http_port = 0;
     std::string p2p_secret;
@@ -118,7 +123,8 @@ struct DaemonConfig {
         node_service_address = cfg.node_service_address;
         deployment_address = cfg.deployment_address;
         inference_address = cfg.inference_address;
-        central_server = cfg.central_server;
+        central_server = cfg.CentralAddress();
+        auth_api_url = cfg.AuthApiUrl();
         http_port = cfg.http_api_port;
         p2p_secret = cfg.p2p_secret;
         enable_tls = cfg.enable_tls;
@@ -347,6 +353,8 @@ DaemonConfig ParseArgs(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strncmp(argv[i], "--ipc-address=", 14) == 0) {
             config.ipc_address = argv[i] + 14;
+        } else if (std::strncmp(argv[i], "--server=", 9) == 0) {
+            config.server = argv[i] + 9;
         } else if (std::strncmp(argv[i], "--central-server=", 17) == 0) {
             config.central_server = argv[i] + 17;
         } else if (std::strncmp(argv[i], "--http-port=", 12) == 0) {
@@ -402,6 +410,15 @@ int main(int argc, char** argv) {
     // Parse command-line args (overrides config file)
     DaemonConfig cli_config = ParseArgs(argc, argv);
     if (!cli_config.ipc_address.empty()) daemon_config.ipc_address = cli_config.ipc_address;
+    if (!cli_config.server.empty()) {
+        const auto endpoints = cyxwiz::protocol::ResolveServerAddress(cli_config.server);
+        if (!endpoints.error.empty()) {
+            std::cerr << "--server: " << endpoints.error << std::endl;
+            return 1;
+        }
+        daemon_config.central_server = endpoints.central;
+        daemon_config.auth_api_url = endpoints.api_base_url;
+    }
     if (!cli_config.central_server.empty()) daemon_config.central_server = cli_config.central_server;
     if (cli_config.http_port > 0) daemon_config.http_port = cli_config.http_port;
     if (!cli_config.inference_address.empty()) daemon_config.inference_address = cli_config.inference_address;
@@ -729,6 +746,7 @@ int main(int argc, char** argv) {
             daemon_config.central_server,
             node_id
         );
+        node_client->SetAuthApiUrl(daemon_config.auth_api_url);
 
         // Set up callback to clear pending jobs when Central Server connection is lost
         auto* node_service_ptr = node_service.get();

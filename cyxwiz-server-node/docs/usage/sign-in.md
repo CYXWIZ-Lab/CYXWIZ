@@ -7,8 +7,10 @@ local.
 ## The card
 
 - **Signing in to `host:port` · Change**: the CyxWiz service this node signs in
-  with. The address comes from the node config (`network.auth_api_url`, default
-  `http://127.0.0.1:3002/api`). Change opens the Sign-in service dialog.
+  with. The address comes from the node config: `network.cyxwiz_server` (the
+  one server address, docs/usage/server-address.md) when set, else
+  `network.auth_api_url` (default `http://127.0.0.1:3002/api`). Change opens
+  the Sign-in service dialog.
 - **Email** and **Password**. The email is remembered between runs; the
   password never is, and it is wiped from memory as soon as the request is sent.
   Enter submits from either field; the eye button shows the password.
@@ -71,7 +73,8 @@ runs.
 
 - Session file (token, node registration, remembered email):
   `%APPDATA%\CyxWiz\server-node\auth.json` on Windows.
-- Sign-in service address: `network.auth_api_url` in the node config.
+- Sign-in service address: `network.cyxwiz_server`, else
+  `network.auth_api_url`, in the node config.
 - Code: `src/core/sign_in_presentation.{h,cpp}` (every word and state, with
   `tests/test_sign_in_presentation.cpp`), `src/gui/panels/login_panel.*` (the
   drawing), `src/gui/ui_widgets.*` (the shared buttons, links, fields and

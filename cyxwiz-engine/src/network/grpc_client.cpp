@@ -1,6 +1,7 @@
 #include "grpc_client.h"
 #include "../auth/auth_client.h"
 #include "../core/engine_config.h"
+#include "common/server_address.h"
 #include <spdlog/spdlog.h>
 
 namespace network {
@@ -28,7 +29,7 @@ bool GRPCClient::Connect(const std::string& server_address) {
 
     try {
         // Create gRPC channel
-        channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+        channel_ = cyxwiz::protocol::CreateServerChannel(server_address);
 
         // Create stubs for services
         job_stub_ = cyxwiz::protocol::JobService::NewStub(channel_);

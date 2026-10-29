@@ -23,6 +23,10 @@ int main() {
     Check(ResolveCloudGatewayAddress("", "[::1]:50051") == "[::1]:50060", "IPv6 literal keeps brackets");
     Check(ResolveCloudGatewayAddress("", "") == "localhost:50060", "nothing configured at all");
     Check(ResolveCloudGatewayAddress("gw.local:7000", "localhost:50051") == "gw.local:7000", "configured wins");
+    Check(ResolveCloudGatewayAddress("", "https://cloud.cyxwiz.ai:443") == "https://cloud.cyxwiz.ai:443",
+          "a front door serves the gateway too");
+    Check(ResolveCloudGatewayAddress("", "http://192.168.1.216:8000") == "http://192.168.1.216:8000",
+          "a front door without TLS");
     if (failures == 0) std::printf("test_cloud_gateway_address: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

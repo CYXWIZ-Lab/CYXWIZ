@@ -62,6 +62,7 @@ add_library(cyxwiz-protocol STATIC
     ${GRPC_HDRS}
     common/version.cpp
     common/utils.cpp
+    common/server_address.cpp
 )
 
 target_include_directories(cyxwiz-protocol
