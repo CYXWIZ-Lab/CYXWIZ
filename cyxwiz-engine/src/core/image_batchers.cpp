@@ -37,7 +37,11 @@ std::unique_ptr<ImageDatasetBatcher> MakeImageBatcher(const DataRegistry::ImageD
                                                          static_cast<uint32_t>(run.dataloader_seed));
     batcher->SetDropLast(run.drop_last);
     batcher->SetImageTransforms(transforms.per_batch);
-    batcher->ExcludeFiles(run.image_excluded_files);
+    // Left out before the split, as the compile counted: a Quality node's
+    // rejects and the images the index found unreadable.
+    std::vector<std::string> left_out = run.image_excluded_files;
+    left_out.insert(left_out.end(), run.image_unreadable_files.begin(), run.image_unreadable_files.end());
+    batcher->ExcludeFiles(left_out);
     if (run.preprocessing.has_normalization) {
         batcher->SetNormalization(run.preprocessing.norm_mean, run.preprocessing.norm_std);
         if (!run.preprocessing.norm_channel_mean.empty())

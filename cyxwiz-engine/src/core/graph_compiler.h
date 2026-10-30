@@ -513,6 +513,10 @@ struct TrainingConfiguration {
     // training (the image batcher skips them; they stay on disk).
     int image_quality_node_id = -1;
     std::vector<std::string> image_excluded_files;
+    // The images the image index found unreadable (the training dataset's and
+    // any wired role's): training leaves them out before the split, as the
+    // compile counted, so its parts are the counted ones (TOFIX178 1.5).
+    std::vector<std::string> image_unreadable_files;
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when

@@ -13,11 +13,12 @@ namespace cyxwiz {
 
 namespace {
 
-// The images training may use: every one except the unreadable files and
-// `excluded`, in set order.
+// The images the split is made over: every one except `excluded` (a
+// Quality node's rejects and the images the index found unreadable, as the
+// compile counts), in set order. Files that fail to decode here are taken
+// out of their part after the split (Split), so the parts stay the counted ones.
 std::vector<size_t> UsableImages(const PreparedImageSet& images, const std::vector<std::string>& excluded) {
-    std::unordered_set<std::string> left_out(excluded.begin(), excluded.end());
-    left_out.insert(images.Unreadable().begin(), images.Unreadable().end());
+    const std::unordered_set<std::string> left_out(excluded.begin(), excluded.end());
     std::vector<size_t> kept;
     kept.reserve(images.Count());
     for (size_t i = 0; i < images.Count(); ++i)
@@ -53,7 +54,9 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     if (!images_->Unreadable().empty())
         spdlog::warn("ImageDatasetBatcher: {} of {} images cannot be read and are left out (first: {})",
                      images_->Unreadable().size(), images_->Count(), images_->Unreadable().front());
-    Split(UsableImages(*images_, {}));
+    // Until ExcludeFiles hands the compile's list, the files that do not
+    // decode are left out before the split (no index to follow).
+    Split(UsableImages(*images_, images_->Unreadable()));
     Reset();
     spdlog::info("ImageDatasetBatcher: {} train / {} validation / {} test images at {}x{}, {} classes, "
                  "batch_size={}", train_indices_.size(), val_indices_.size(), test_indices_.size(), images_->Width(),
@@ -62,6 +65,18 @@ ImageDatasetBatcher::ImageDatasetBatcher(
 
 void ImageDatasetBatcher::Split(const std::vector<size_t>& usable) {
     auto parts = SplitSamples(usable, images_->Labels(), split_);
+    // A file the index read but that does not decode (a truncated JPEG):
+    // out of its own part, so the other images stay where the split put them.
+    const std::unordered_set<std::string> broken(images_->Unreadable().begin(), images_->Unreadable().end());
+    size_t dropped = 0;
+    for (auto* part : {&parts.train, &parts.val, &parts.test}) {
+        const auto end = std::remove_if(part->begin(), part->end(),
+                                        [&](size_t i) { return broken.count(images_->Files()[i]) > 0; });
+        dropped += static_cast<size_t>(part->end() - end);
+        part->erase(end, part->end());
+    }
+    if (dropped > 0)
+        spdlog::warn("ImageDatasetBatcher: {} image(s) the index read cannot be decoded; left out of their part", dropped);
     train_indices_ = std::move(parts.train);
     val_indices_ = std::move(parts.val);
     test_indices_ = std::move(parts.test);
@@ -79,10 +94,11 @@ const std::vector<size_t>& ImageDatasetBatcher::Part(BatcherPhase phase) const {
 void ImageDatasetBatcher::ExcludeFiles(const std::vector<std::string>& files) {
     if (!images_ || files.empty()) return;
     const auto kept = UsableImages(*images_, files);
-    const size_t left_out = images_->Count() - images_->Unreadable().size() - kept.size();
+    const size_t left_out = images_->Count() - kept.size();
     Split(kept);
     Reset();
-    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images; split again: {} train / {} "
+    spdlog::info("ImageDatasetBatcher: {} of {} images left out before the split (a Quality node's, or unreadable in "
+                 "the image index); split: {} train / {} "
                  "validation / {} test", left_out, images_->Count(), train_indices_.size(), val_indices_.size(),
                  test_indices_.size());
 }

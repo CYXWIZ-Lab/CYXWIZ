@@ -41,11 +41,14 @@ ImageSplitCounts CountImageSplit(const std::string& image_dataset, const SampleS
     std::vector<int> labels(rows, -1);
     std::vector<size_t> usable;
     usable.reserve(rows);
+    std::vector<std::string> path_of;
+    path_of.reserve(rows);
     size_t row = 0;
     for (int chunk = 0; chunk < path_column->num_chunks(); ++chunk) {
         const auto paths = std::static_pointer_cast<arrow::StringArray>(path_column->chunk(chunk));
         for (int64_t i = 0; i < paths->length(); ++i, ++row) {
-            if (left_out.count(paths->GetString(i))) {
+            path_of.push_back(paths->GetString(i));
+            if (left_out.count(path_of.back())) {
                 ++counts.left_out;
                 labels[row] = -2;  // marked; skipped below
             }
@@ -64,6 +67,7 @@ ImageSplitCounts CountImageSplit(const std::string& image_dataset, const SampleS
             if (labels[row] == -2) continue;
             if (readable->IsNull(i) || !readable->Value(i)) {
                 ++counts.unreadable;
+                counts.unreadable_files.push_back(path_of[row]);
                 continue;
             }
             usable.push_back(row);

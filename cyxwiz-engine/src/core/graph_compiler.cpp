@@ -6936,6 +6936,7 @@ void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLN
     const auto counts = GraphImageSplit(config.dataset_name, split, config.image_excluded_files);
     if (!counts || !counts->known) return;
     config.image_split = *counts;
+    config.image_unreadable_files = counts->unreadable_files;
 
     // A wired Validation / Test image dataset: read whole, with the training classes.
     for (auto [role, target, what] :
@@ -6945,6 +6946,8 @@ void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLN
         const auto whole = GraphImageSplit(role->dataset_name, SampleSplitSettings{0.0f, 0.0f, 1.0f, false, split.seed}, {});
         if (!whole || !whole->known) continue;
         *target = *whole;
+        config.image_unreadable_files.insert(config.image_unreadable_files.end(), whole->unreadable_files.begin(),
+                                             whole->unreadable_files.end());
         if (whole->class_names != counts->class_names)
             AddIssue(config, IssueLevel::Error,
                      std::string("The ") + what + " Dataset's classes (" + JoinedNames(whole->class_names) +

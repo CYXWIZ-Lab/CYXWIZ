@@ -790,6 +790,41 @@ void CheckImageSplit() {
               std::to_string(wired.image_split_dev.known) + ", " + std::to_string(wired.image_split_dev.parts[2]) +
               " images, manifest " + std::to_string(wired.dataset_roles.manifest.dev_rows) + "); errors:\n" +
               Errors(wired));
+    // Training leaves out what the compile counted as unreadable before the
+    // split, so its parts are the counted ones.
+    Check(config.image_unreadable_files.size() == 1 &&
+              fs::path(config.image_unreadable_files[0]).filename() == "broken.bmp",
+          "the compile hands training the unreadable files");
+
+    // A file whose header reads but whose pixels are cut off: the index counts
+    // it, decoding fails; training drops it from its own part and every
+    // other image stays where the compile counted it.
+    {
+        const fs::path cut = root / "cut";
+        for (int i = 0; i < 10; ++i)
+            WriteBmp(cut / "a" / (std::to_string(i) + ".bmp"), 4, [i](int r, int c) { return Texture(i, r, c); });
+        WriteBmp(cut / "a" / "truncated.bmp", 4, [](int r, int c) { return Texture(7, r, c); });
+        fs::resize_file(cut / "a" / "truncated.bmp", 60);  // the headers (54 bytes) and a few pixels
+        RegisterIndexed("split_cut", cut, 11, {"a"});
+        const cyxwiz::SampleSplitSettings cut_split{0.6f, 0.2f, 0.2f, true, 9};
+        const auto counted = cyxwiz::CountImageSplit("split_cut", cut_split, {});
+        const auto* cut_entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry("split_cut");
+        const auto cut_images = cyxwiz::PrepareImageSet(*cut_entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set;
+        if (counted.known && counted.unreadable == 0 && cut_images && cut_images->Unreadable().size() == 1) {
+            cyxwiz::ImageDatasetBatcher cut_batcher(cut_images, 4, cut_split, true, 3);
+            cut_batcher.ExcludeFiles(counted.unreadable_files);
+            size_t smaller = 0, same = 0;
+            for (size_t part = 0; part < 3; ++part) {
+                const size_t n = cut_batcher.SamplesIn(phases[part]);
+                smaller += n + 1 == counted.parts[part] ? 1 : 0;
+                same += n == counted.parts[part] ? 1 : 0;
+            }
+            Check(smaller == 1 && same == 2, "an image that does not decode leaves only its own part");
+        } else {
+            std::cout << "note: this OpenCV decodes or the index rejects the truncated BMP; case skipped\n";
+        }
+    }
+
     cyxwiz::TrainingConfiguration other = config;
     other.issues.clear();
     other.dataset_roles.test.dataset_name = "split_other";

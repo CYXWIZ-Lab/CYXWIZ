@@ -21,6 +21,7 @@ struct ImageSplitCounts {
     std::vector<std::string> shown_names;     // as the screens show them (renamed on the Data Input)
     size_t images = 0;                        // the images training reads
     size_t unreadable = 0;                    // left out: the file cannot be read
+    std::vector<std::string> unreadable_files;  // their paths: training leaves the same ones out
     size_t left_out = 0;                      // left out: a Quality node's rejects
     std::array<size_t, 3> parts{};            // train, validation, test
     std::vector<std::array<size_t, 3>> per_class;  // [class][part]; an unlabelled class last
