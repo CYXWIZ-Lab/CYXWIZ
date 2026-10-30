@@ -814,22 +814,22 @@ void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {
         spdlog::warn("Node {} has no input link; nothing moved", step_id);
         return;
     }
-    if (!CanReplaceGraph(remove ? "remove a step" : "move a step")) return;
     const int source = feed->from_node;
     const int source_pin = feed->from_pin;
+    if (!remove && move.after == source) return;  // already there
+    if (!CanReplaceGraph(remove ? "remove a step" : "move a step")) return;
     const std::string name = step->name;
 
-    // The chain after the source (each node read by exactly one link from
-    // its first output), with where its nodes are now.
+    // A chain from a pin (each node read by exactly one link from its first
+    // output), with where its nodes are now.
     const auto place = [&](int id) {
         if (const auto pending = pending_positions_.find(id); pending != pending_positions_.end()) return pending->second;
         if (const auto cached = cached_node_positions_.find(id); cached != cached_node_positions_.end()) return cached->second;
         const MLNode* node = FindNodeById(id);
         return node ? ImVec2(node->initial_pos_x, node->initial_pos_y) : ImVec2(0.0f, 0.0f);
     };
-    const auto chain = [&]() {
+    const auto chain = [&](int from, int pin) {
         std::vector<int> ids;
-        int from = source, pin = source_pin;
         for (size_t guard = 0; guard < nodes_.size(); ++guard) {
             int next = -1, readers = 0;
             for (const auto& link : links_)
@@ -845,9 +845,28 @@ void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {
         }
         return ids;
     };
-    const std::vector<int> before = chain();
+    // The stretch the move reorders: from the upper of its two ends through
+    // the lower; its nodes swap places on the canvas and nothing else moves.
+    // A removal moves nothing.
+    int span_from = source, span_pin = source_pin;
+    size_t span = 0;
+    if (!remove) {
+        const auto index_of = [](const std::vector<int>& ids, int id) {
+            const auto it = std::find(ids.begin(), ids.end(), id);
+            return it == ids.end() ? size_t{0} : static_cast<size_t>(it - ids.begin()) + 1;
+        };
+        span = index_of(chain(source, source_pin), move.after);  // moving down
+        if (span == 0) {                                          // moving up
+            span_from = move.after;
+            span_pin = after->outputs.front().id;
+            span = index_of(chain(span_from, span_pin), step_id);
+        }
+    }
     std::vector<ImVec2> places;
-    for (const int id : before) places.push_back(place(id));
+    for (const int id : chain(span_from, span_pin)) {
+        if (places.size() == span) break;
+        places.push_back(place(id));
+    }
 
     SaveUndoState();
     if (properties_panel_) properties_panel_->ClearNodeReferences();
@@ -873,10 +892,10 @@ void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {
         links_.push_back({next_link_id_++, move.after, after_out, step_id, step_in, LinkType::TensorFlow});
         RebuildPinLookup();
     }
-    // The chain's nodes take its places in their new order, so it stays a line.
-    const std::vector<int> now = chain();
+    // The stretch's nodes take its places in their new order, so it stays a line.
+    const std::vector<int> now = chain(span_from, span_pin);
     for (size_t i = 0; i < now.size() && i < places.size(); ++i) pending_positions_[now[i]] = places[i];
-    pending_positions_frames_ = 3;
+    if (!places.empty()) pending_positions_frames_ = 3;
     ClearValidationState();
     spdlog::info("{} node {} ({})", remove ? "Removed" : "Moved", step_id, name);
 }
