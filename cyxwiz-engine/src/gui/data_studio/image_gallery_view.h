@@ -39,6 +39,9 @@ private:
     enum class Layout { Grid, List, Viewer };
 
     void Refresh();
+    // The view of input_, built again only when the rows, the filter, the
+    // sort, the page or the pick changed (Build sorts every row).
+    const image_gallery::View& CurrentView();
     void RenderToolbar(const image_gallery::View& view);
     void RenderFilters(const image_gallery::View& view, bool sort_buttons);
     void RenderGrid(const image_gallery::View& view, float width, float height);
@@ -56,6 +59,9 @@ private:
 
     std::string dataset_;
     image_gallery::Input input_;
+    image_gallery::View view_;
+    std::string view_key_;
+    uint64_t rows_generation_ = 0;         // counts the index tables read
     const void* index_seen_ = nullptr;
     gui::ImageThumbnails tiles_;
     gui::ImageThumbnails preview_;

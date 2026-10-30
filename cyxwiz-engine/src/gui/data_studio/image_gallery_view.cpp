@@ -261,6 +261,7 @@ void ImageGalleryView::SetDataset(const std::string& dataset) {
     dataset_ = dataset;
     index_seen_ = nullptr;
     input_ = {};
+    ++rows_generation_;
     layout_ = Layout::Grid;
 }
 
@@ -271,6 +272,7 @@ void ImageGalleryView::Refresh() {
     const auto table = index ? index->GetArrowTable() : nullptr;
     if (table.get() == index_seen_) return;
     index_seen_ = table.get();
+    ++rows_generation_;
     input_.class_names = entry ? entry->ShownClassNames() : std::vector<std::string>{};
     input_.rows.clear();
     if (!table) return;
@@ -312,6 +314,18 @@ void ImageGalleryView::Refresh() {
         }
         input_.rows.push_back(std::move(row));
     }
+}
+
+const ig::View& ImageGalleryView::CurrentView() {
+    const std::string key = input_.filter + '|' + std::to_string(static_cast<int>(input_.sort)) + '|' +
+                            std::to_string(input_.page) + '|' + std::to_string(input_.per_page) + '|' +
+                            std::to_string(input_.selected) + '|' + std::to_string(input_.strip_radius) + '|' +
+                            std::to_string(rows_generation_);
+    if (key != view_key_) {
+        view_ = ig::Build(input_);
+        view_key_ = key;
+    }
+    return view_;
 }
 
 // Picks `row` and turns to the page that shows it.
@@ -671,35 +685,35 @@ void ImageGalleryView::Render() {
     } else if (layout_ == Layout::List) {
         input_.per_page = 100;
     }
-    ig::View view = ig::Build(input_);
+    const ig::View* view = &CurrentView();
     input_.filter = "all";
-    for (const auto& chip : view.chips)
+    for (const auto& chip : view->chips)
         if (chip.on) input_.filter = chip.key;
-    input_.page = view.page;
-    HandleKeys(view);
+    input_.page = view->page;
+    HandleKeys(*view);
 
     ui::BeginCard("gallery_toolbar");
-    RenderToolbar(view);
+    RenderToolbar(*view);
     ui::EndCard();
-    view = ig::Build(input_);  // a pick or layout change this frame
+    view = &CurrentView();  // a pick or layout change this frame
     if (layout_ == Layout::Viewer) {
-        RenderViewer(view);
+        RenderViewer(*view);
         return;
     }
-    RenderFilters(view, layout_ == Layout::Grid);
+    RenderFilters(*view, layout_ == Layout::Grid);
     ImGui::Spacing();
 
     const float height = ImGui::GetContentRegionAvail().y;
-    if (layout_ == Layout::Grid) RenderGrid(view, grid_w, height);
-    else RenderList(view, grid_w, height);
-    view = ig::Build(input_);  // a click this frame
+    if (layout_ == Layout::Grid) RenderGrid(*view, grid_w, height);
+    else RenderList(*view, grid_w, height);
+    view = &CurrentView();  // a click this frame
     if (side) {
         ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
         ImGui::BeginChild("##gallery_details", ImVec2(kDetailWidth, height), ImGuiChildFlags_None);
-        RenderDetails(view, kDetailWidth - style.ScrollbarSize);
+        RenderDetails(*view, kDetailWidth - style.ScrollbarSize);
         ImGui::EndChild();
     } else {
-        RenderDetails(view, ImGui::GetContentRegionAvail().x);
+        RenderDetails(*view, ImGui::GetContentRegionAvail().x);
     }
 }
 
