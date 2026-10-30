@@ -54,9 +54,9 @@ block with the same facts and links.
 
 ## Explore
 
-Explore has eleven views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has thirteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast** and **Visualize**. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -64,7 +64,8 @@ Distribution Fitter open Distribution; Hypothesis Testing opens Tests; Linear /
 Polynomial Regression opens Regression) and Tools > Clustering and Projection
 (K-Means, DBSCAN, Hierarchical Clustering and Gaussian Mixture Models open
 Groups on that method, Cluster Evaluation opens Groups, PCA / t-SNE / UMAP opens
-Projection). In Profile, a column's missing or outlier count opens
+Projection) and Tools > Time Series (Decomposition, ACF / PACF, Stationarity and
+Seasonality open Series on that look; Forecasting opens Forecast). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -385,6 +386,41 @@ they were found on the same columns. **Add as a step** / **Keep as a node**
 add the PCA, t-SNE or UMAP node, which keeps the input columns and adds
 `pc_*`, `tsne_*` or `umap_*` beside them; the t-SNE and UMAP nodes work on
 every row ([dimensionality reduction](dimensionality_reduction.md#the-nodes)).
+
+## Series
+
+One number column over time, in four looks: **Parts** (STL or classical
+decomposition into trend, season and residual), **Seasonality** (the periods
+of the detrended periodogram ranked by their share of the power, the season
+by position), **Stationarity** (ADF and KPSS on the series and its
+differences, the suggested differencing, rolling mean and spread) and
+**Correlogram** (ACF / PACF with their bands, the seasonal lags marked, the
+Ljung-Box test, the orders the cut-offs suggest). **Time** is the Data Input's
+time column, else the one date column, else the row order: a date column, a
+text that reads as dates, or numbers; the rows are sorted by it and the step
+(monthly, daily, every 10 seconds) is read from it. **Period** is found from
+the detrended periodogram and can be typed over. Each look says the series
+("144 months, monthly, 1949-01 .. 1960-12; period found: 12") and puts its
+node into the graph: **Add as a step** (Decomposition, a Differencing step at
+the suggested order) or **Keep as a node** (Seasonality Detector, Stationarity
+Test, ACF and PACF). The figures match statsmodels; the rules, the words and
+the nodes are in [time series](time_series.md).
+
+## Forecast
+
+The same series forecast a typed horizon ahead by **Simple** exponential
+smoothing, **Holt** (additive or damped trend), **Holt-Winters** (additive or
+multiplicative season), **ARIMA** (p, d, q typed or chosen) or the
+**Seasonal naive** baseline, with the model's prediction interval at the
+typed level and the dates continued from the step. **Check on the last** H
+rows (on by default: twice the period, else 12) holds them out, fits every
+method on the rest and scores each against repeating last cycle (MAPE,
+RMSE), in a table and a sentence; then the chosen method is fitted on
+everything. The page shows the next value with its range, the AIC, the
+series with the fit and the band, the forecast table and the held-out
+table. **Add as a step** / **Keep as a node** add the ARIMA or Exp. Smoothing
+node with these settings; **Stop** ends a long search ([time
+series](time_series.md#forecast)).
 
 ## Visualize
 
