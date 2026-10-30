@@ -13,6 +13,7 @@
 
 #include <arrow/api.h>
 #include <imgui.h>
+#include <imgui_internal.h>  // SetKeyOwner
 
 #include <algorithm>
 #include <cmath>
@@ -323,15 +324,23 @@ void ImageGalleryView::Pick(const ig::View& view, long long row) {
 
 // Arrow keys move the pick (Up / Down a row in the grid), Enter opens it in
 // the viewer, Esc goes back; only while Data Studio has focus and no field
-// is being typed in.
+// is being typed in. The gallery owns those keys then, so keyboard
+// navigation (on in the Engine) does not also move its focus or press the
+// widget it is on: ImGui's navigation reads only keys nobody owns, and an
+// owner set this frame holds for the next.
 void ImageGalleryView::HandleKeys(const ig::View& view) {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::GetIO().WantTextInput) return;
     if (view.order.empty()) return;
-    if (layout_ == Layout::Viewer && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    const ImGuiID owner = ImGui::GetID("##gallery_keys");
+    for (const ImGuiKey key : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow,
+                               ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Escape})
+        ImGui::SetKeyOwner(key, owner);
+    const auto pressed = [&](ImGuiKey key) { return ImGui::IsKeyPressed(key, ImGuiInputFlags_Repeat, owner); };
+    if (layout_ == Layout::Viewer && pressed(ImGuiKey_Escape)) {
         layout_ = before_viewer_;
         return;
     }
-    if (view.selected >= 0 && layout_ != Layout::Viewer && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+    if (view.selected >= 0 && layout_ != Layout::Viewer && (pressed(ImGuiKey_Enter) || pressed(ImGuiKey_KeypadEnter))) {
         before_viewer_ = layout_;
         layout_ = Layout::Viewer;
         return;
@@ -341,10 +350,10 @@ void ImageGalleryView::HandleKeys(const ig::View& view) {
     const long long index = at == view.order.end() ? -1 : static_cast<long long>(at - view.order.begin());
     const long long row_step = layout_ == Layout::Grid ? std::max(1, columns_) : 1;
     long long move = 0;
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) move = 1;
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) move = -1;
-    if (layout_ != Layout::Viewer && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) move = row_step;
-    if (layout_ != Layout::Viewer && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) move = -row_step;
+    if (pressed(ImGuiKey_RightArrow)) move = 1;
+    if (pressed(ImGuiKey_LeftArrow)) move = -1;
+    if (layout_ != Layout::Viewer && pressed(ImGuiKey_DownArrow)) move = row_step;
+    if (layout_ != Layout::Viewer && pressed(ImGuiKey_UpArrow)) move = -row_step;
     if (move == 0) return;
     const long long last = static_cast<long long>(view.order.size()) - 1;
     const long long next = index < 0 ? 0 : std::clamp(index + move, 0LL, last);
