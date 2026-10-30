@@ -144,6 +144,26 @@ int main() {
     }
 
     {
+        // Advanced Augment shows only the chosen method's fields (TOFIX178 1.6b).
+        auto augment = MakeNode(103, gui::NodeType::AdvancedAugment, "Advanced Augment");
+        const auto hidden = [&](const char* name) {
+            cyxwiz::ParameterDefinition param;
+            param.name = name;
+            return gui::properties_rules::ShouldHideGenericParameter(augment, param);
+        };
+        Check(!hidden("cutout_size") && !hidden("value") && hidden("severity") && hidden("policy") && !hidden("probability"),
+              "cutout (the default method) shows its size and value, not the policies' fields");
+        augment.parameters["method"] = "augmix";
+        Check(!hidden("severity") && !hidden("mixture_width") && !hidden("chain_depth") && !hidden("alpha") &&
+                  hidden("cutout_size") && hidden("magnitude_bins") && !hidden("probability") && !hidden("method"),
+              "augmix shows severity, chains, depth and alpha");
+        augment.parameters["method"] = "autoaugment";
+        Check(!hidden("policy") && hidden("alpha") && hidden("num_ops"), "autoaugment shows its policy only");
+        augment.parameters["method"] = "trivialaugment";
+        Check(!hidden("magnitude_bins") && hidden("policy"), "trivialaugment shows its magnitude bins");
+    }
+
+    {
         // A file parameter's patterns become the Browse dialog's filter.
         cyxwiz::ParameterDefinition model_path(
             "model_path", "file", "", "", {}, "*.cyxclassic.json; *.json");

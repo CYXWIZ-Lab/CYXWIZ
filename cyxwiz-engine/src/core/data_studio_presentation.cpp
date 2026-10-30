@@ -80,6 +80,8 @@ bool IsImageStepType(NodeType type) {
         case NodeType::AdvancedAugment: case NodeType::AugmentationPreset: case NodeType::ImageContrast:
         case NodeType::ImageDenoise: case NodeType::ImageSharpen: case NodeType::ImageEdges:
         case NodeType::ImageSmooth: case NodeType::ImageWarp: case NodeType::ImagePyramid:
+        case NodeType::RandomResizedCrop: case NodeType::RandomAffine: case NodeType::RandomPerspective:
+        case NodeType::GaussianNoise: case NodeType::RandomGrayscale:
             return true;
         default:
             return false;

@@ -699,8 +699,9 @@ built once); the label says *Drawing the pictures of ...* meanwhile.
   (*Image Contrast (CLAHE) is done once with the images: it must come before
   the first random step.*); a refused move shows why while you drag.
 - **+ Add a step** offers the steps done once; **+ Add an augmentation** offers
-  the random ones (Random Crop, Horizontal / Vertical Flip, Rotate, Color
-  Jitter, Advanced Augment, Augmentation Preset) and, under **The same for
+  the random ones (Random Crop, Random Resized Crop, Horizontal / Vertical
+  Flip, Rotate, Random Affine, Random Perspective, Color Jitter, Random
+  Grayscale, Gaussian Noise, Advanced Augment, Augmentation Preset) and, under **The same for
   every image**, the device steps that are not random. Only image steps are
   offered, and the new node goes after the group's last row.
 

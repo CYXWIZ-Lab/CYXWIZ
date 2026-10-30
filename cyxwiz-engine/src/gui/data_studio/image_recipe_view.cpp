@@ -37,9 +37,10 @@ const NodeType kOnceSteps[] = {NodeType::CenterCrop,   NodeType::Grayscale,     
 const NodeType kOpenCvSteps[] = {NodeType::ImageContrast, NodeType::ImageDenoise, NodeType::ImageSharpen,
                                  NodeType::ImageEdges,    NodeType::ImageSmooth,  NodeType::ImageWarp,
                                  NodeType::ImagePyramid};
-const NodeType kPerBatchSteps[] = {NodeType::RandomCrop,  NodeType::HorizontalFlip, NodeType::VerticalFlip,
-                                   NodeType::ImageRotate, NodeType::ColorJitter,    NodeType::AdvancedAugment,
-                                   NodeType::AugmentationPreset};
+const NodeType kPerBatchSteps[] = {NodeType::RandomCrop,        NodeType::RandomResizedCrop, NodeType::HorizontalFlip,
+                                   NodeType::VerticalFlip,      NodeType::ImageRotate,       NodeType::RandomAffine,
+                                   NodeType::RandomPerspective, NodeType::ColorJitter,       NodeType::RandomGrayscale,
+                                   NodeType::GaussianNoise,     NodeType::AdvancedAugment,   NodeType::AugmentationPreset};
 
 uint32_t Upload(const PreviewPicture& p) {
     return p.rgba.empty() ? 0u : TextureManager::Instance().CreateTextureFromUint8Data(p.rgba.data(), p.width, p.height, 4);

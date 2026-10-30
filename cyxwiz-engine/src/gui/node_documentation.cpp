@@ -317,6 +317,11 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::RandomResizedCrop:
+        case NodeType::RandomAffine:
+        case NodeType::RandomPerspective:
+        case NodeType::GaussianNoise:
+        case NodeType::RandomGrayscale:
         case NodeType::QualityAnalyzer:
             return "Data Pipeline";
 
@@ -1795,6 +1800,91 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Data Pipeline"
     };
 
+    docs_[NodeType::RandomResizedCrop] = {
+        "Random Resized Crop",
+        "Crops a random box of each training image and resizes it (torchvision RandomResizedCrop).",
+        "The box covers scale_min to scale_max of the image with an aspect ratio (width / height) from "
+        "ratio_min to ratio_max; it is resized to width x height (bilinear antialiased, or nearest). "
+        "Validation and test take the centred box. 0 keeps the incoming size.",
+        {
+            {"width / height", "Output size in pixels; 0 keeps the incoming size"},
+            {"scale_min / scale_max", "Box area as a fraction of the image (torchvision: 0.08 to 1)"},
+            {"ratio_min / ratio_max", "Box aspect ratio, width / height (torchvision: 3/4 to 4/3)"},
+            {"interpolation", "bilinear (antialiased, torchvision's default) or nearest"}
+        },
+        {
+            "The ImageNet training recipe: Random Resized Crop 224 -> Horizontal Flip",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::RandomAffine] = {
+        "Random Affine",
+        "Rotates, shifts, scales and shears each training image at random (torchvision RandomAffine).",
+        "Angle from [-degrees, degrees], shift up to translate_x / translate_y of the side in whole pixels, "
+        "scale from scale_min to scale_max, shears from their ranges, all about the centre; pixels from "
+        "outside the image take fill. Validation and test pass through.",
+        {
+            {"degrees", "Largest rotation, either way (0 to 180)"},
+            {"translate_x / translate_y", "Largest shift as a fraction of the width / height"},
+            {"scale_min / scale_max", "Scale factor range (1 and 1 = no scaling)"},
+            {"shear_x / shear_y min and max", "Shear ranges in degrees (0 and 0 = none)"},
+            {"interpolation", "nearest (torchvision's default) or bilinear"},
+            {"fill", "Value of the pixels from outside the image, 0 to 1"}
+        },
+        {
+            "Keeps one random geometry step instead of Image Rotate plus a crop",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::RandomPerspective] = {
+        "Random Perspective",
+        "Tilts training images as if seen from another angle (torchvision RandomPerspective).",
+        "With the given probability each corner moves inwards by up to distortion of half the side; "
+        "pixels from outside the image take fill. Validation and test pass through.",
+        {
+            {"distortion", "How far the corners may move, 0 to 1"},
+            {"probability", "Chance that a training image is tilted"},
+            {"interpolation", "bilinear (torchvision's default) or nearest"},
+            {"fill", "Value of the pixels from outside the image, 0 to 1"}
+        },
+        {
+            "Suits photos of flat things (documents, signs) taken at an angle",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::RandomGrayscale] = {
+        "Random Grayscale",
+        "Turns some training images gray, keeping their channels (torchvision RandomGrayscale).",
+        "With the given probability a training image becomes its luminance in every channel, so the "
+        "model's input shape does not change. Validation and test pass through.",
+        {
+            {"probability", "Chance that a training image turns gray (torchvision: 0.1)"}
+        },
+        {
+            "Makes a model rely less on colour",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::GaussianNoise] = {
+        "Gaussian Noise",
+        "Adds random noise to every pixel of training images (torchvision v2 GaussianNoise).",
+        "Noise from N(mean, sigma) on pixels in [0, 1], drawn on the device for every batch; clip keeps "
+        "the result in [0, 1]. Validation and test pass through.",
+        {
+            {"mean", "Mean of the noise"},
+            {"sigma", "Standard deviation of the noise (torchvision: 0.1)"},
+            {"clip", "Keep the result in [0, 1]"}
+        },
+        {
+            "Helps models that must cope with noisy sensors or low light",
+        },
+        "Data Pipeline"
+    };
+
     docs_[NodeType::ImageGaussianBlur] = {
         "Image Gaussian Blur",
         "Smooths every image with a Gaussian kernel, edges reflected (torchvision gaussian_blur).",
@@ -1976,18 +2066,24 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::AdvancedAugment] = {
         "Advanced Augment",
-        "Erases a random patch of training images, or mixes training images and their labels.",
+        "Erases a random patch of training images, mixes training images and their labels, or applies a policy.",
         "cutout: a cutout_size square centred at a random pixel, clipped at the edges (DeVries & Taylor). "
         "random_erasing: a box of random area and aspect ratio (torchvision RandomErasing). "
         "mixup / cutmix: the batch is mixed with itself rolled by one, one lambda from Beta(alpha, alpha), "
         "labels mixed the same way (torchvision v2 MixUp / CutMix); needs Cross Entropy. "
         "randaugment: num_ops random ops out of 14 per image at strength magnitude (torchvision v2 RandAugment). "
+        "autoaugment: one of the policy's 25 learned pairs of ops (torchvision v2 AutoAugment). "
+        "trivialaugment: one op of 14 at a random strength (torchvision v2 TrivialAugmentWide). "
+        "augmix: chains of ops mixed together and with the image (torchvision v2 AugMix). "
         "Validation and test pass through unchanged.",
         {
-            {"method", "cutout, random_erasing, mixup, cutmix or randaugment"},
+            {"method", "cutout, random_erasing, mixup, cutmix, randaugment, autoaugment, trivialaugment or augmix"},
             {"num_ops / magnitude", "randaugment: ops per image, and their strength bin 0 to 30"},
+            {"policy", "autoaugment: imagenet, cifar10 or svhn"},
+            {"magnitude_bins", "trivialaugment: strength bins (torchvision: 31)"},
+            {"severity / mixture_width / chain_depth", "augmix: strength bins of 10, chains, ops per chain (-1: 1 to 3)"},
             {"probability", "Chance that a training image is erased, or a training batch mixed (0 to 1)"},
-            {"alpha", "mixup / cutmix: Beta(alpha, alpha); 1.0 draws lambda uniformly"},
+            {"alpha", "mixup / cutmix: Beta(alpha, alpha), 1.0 draws lambda uniformly; augmix: its Dirichlet weights"},
             {"cutout_size", "cutout: side of the square in pixels"},
             {"scale_min / scale_max", "random_erasing: box area as a fraction of the image"},
             {"ratio_min / ratio_max", "random_erasing: box aspect ratio (height / width)"},
