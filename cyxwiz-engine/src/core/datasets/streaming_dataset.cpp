@@ -214,9 +214,9 @@ void StreamingDataset::LoadImageChunk(DataChunk& chunk, size_t start_idx, size_t
             chunk.samples.push_back(std::move(sample));
             chunk.labels.push_back(label);
 
-            // Update shape
+            // Height, width, channels, as every image dataset reports it
             if (shape_.empty()) {
-                shape_ = {static_cast<size_t>(width), static_cast<size_t>(height), static_cast<size_t>(channels)};
+                shape_ = {static_cast<size_t>(height), static_cast<size_t>(width), static_cast<size_t>(channels)};
             }
         }
     }
