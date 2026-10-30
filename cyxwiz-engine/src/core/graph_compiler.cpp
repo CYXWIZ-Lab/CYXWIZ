@@ -2,6 +2,7 @@
 #include <tuple>
 #include "normalize_statistics.h"
 #include "sample_split.h"
+#include "count_text.h"
 #include "classification_decision.h"
 #include "sequence_fusion_presentation.h"
 #include "quiet_build_log.h"
@@ -6911,12 +6912,6 @@ bool GraphCompiler::IsActivation(gui::NodeType type) const {
 
 namespace {
 
-std::string ThousandsText(size_t value) {
-    std::string digits = std::to_string(value);
-    for (int at = static_cast<int>(digits.size()) - 3; at > 0; at -= 3) digits.insert(static_cast<size_t>(at), ",");
-    return digits;
-}
-
 std::string JoinedNames(const std::vector<std::string>& names) {
     std::string text;
     for (const auto& name : names) text += (text.empty() ? "" : ", ") + name;
@@ -6965,8 +6960,8 @@ void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLN
     char seed[32];
     std::snprintf(seed, sizeof(seed), "%d", config.split_seed);
     AddIssue(config, IssueLevel::Info,
-             "Images: " + ThousandsText(counts->parts[0]) + " train · " + ThousandsText(val) +
-                 " validation · " + ThousandsText(test) + " test, " +
+             "Images: " + CountText(counts->parts[0]) + " train · " + CountText(val) +
+                 " validation · " + CountText(test) + " test, " +
                  (config.stratified ? "by class" : "one shuffle") + " (seed " + seed + ").",
              node_id, node_name);
 
@@ -6981,10 +6976,10 @@ void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLN
         for (size_t part = 1; part < 3; ++part) {
             if (images == 0 || shares[part] <= 0.0f || by_part[part] > 0) continue;
             AddIssue(config, IssueLevel::Warning,
-                     "Class '" + counts->shown_names[c] + "' has " + ThousandsText(images) + " image" +
+                     "Class '" + counts->shown_names[c] + "' has " + CountText(images) + " image" +
                          (images == 1 ? "" : "s") + ": its " + part_names[part] + " part is empty (" +
                          std::to_string(static_cast<int>(shares[part] * 100.0f + 0.5f)) + " % of " +
-                         ThousandsText(images) + " is less than one image). Give it more images or a larger " +
+                         CountText(images) + " is less than one image). Give it more images or a larger " +
                          (part == 1 ? "Val" : "Test") + " ratio.",
                      node_id, node_name, errors::Data::InvalidSplit);
         }

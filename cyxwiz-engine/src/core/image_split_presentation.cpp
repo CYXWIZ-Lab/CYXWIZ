@@ -1,5 +1,7 @@
 #include "image_split_presentation.h"
 
+#include "count_text.h"
+
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -7,12 +9,6 @@
 namespace cyxwiz::image_split {
 
 namespace {
-
-std::string Thousands(size_t value) {
-    std::string digits = std::to_string(value);
-    for (int at = static_cast<int>(digits.size()) - 3; at > 0; at -= 3) digits.insert(static_cast<size_t>(at), ",");
-    return digits;
-}
 
 std::string Percent(double share) {
     return std::to_string(static_cast<int>(std::lround(share * 100.0))) + " %";
@@ -48,14 +44,14 @@ View Build(const Input& in) {
         const size_t column = wired[part] ? 2 : part;
         totals[part] = from.parts[column];
         for (size_t c = 0; c < classes && c < from.per_class.size(); ++c) by_class[c][part] = from.per_class[c][column];
-        PartCard card{names[part], Thousands(totals[part]), {}};
+        PartCard card{names[part], CountText(totals[part]), {}};
         if (wired[part]) {
             card.detail = "all of '" + wired_names[part] + "'";
         } else {
             card.detail = Percent(shares[part]);
             for (size_t c = 0; c < classes && classes <= 6; ++c)
                 // "cat: 10,000"; the colon keeps a numbered class ("0: 10,000") readable.
-                card.detail += " \xC2\xB7 " + split.shown_names[c] + ": " + Thousands(by_class[c][part]);
+                card.detail += " \xC2\xB7 " + split.shown_names[c] + ": " + CountText(by_class[c][part]);
         }
         v.cards.push_back(std::move(card));
     }
@@ -67,10 +63,10 @@ View Build(const Input& in) {
         const size_t in_set = c < split.per_class.size()
             ? split.per_class[c][0] + split.per_class[c][1] + split.per_class[c][2] : 0;
         const double set_share = split.images ? static_cast<double>(in_set) / static_cast<double>(split.images) : 0.0;
-        ClassRow row{split.shown_names[c], Thousands(in_set), {}};
+        ClassRow row{split.shown_names[c], CountText(in_set), {}};
         for (size_t part = 0; part < 3; ++part) {
             const double share = totals[part] ? static_cast<double>(by_class[c][part]) / static_cast<double>(totals[part]) : 0.0;
-            row.parts.push_back(totals[part] ? Thousands(by_class[c][part]) + " \xC2\xB7 " + Percent(share) : "-");
+            row.parts.push_back(totals[part] ? CountText(by_class[c][part]) + " \xC2\xB7 " + Percent(share) : "-");
             if (totals[part] && std::abs(share - set_share) > 0.02) {
                 v.balanced = false;
                 if (first_off.empty())
@@ -85,9 +81,9 @@ View Build(const Input& in) {
                            : "The parts' class shares differ: " + first_off + "." +
                                  (in.stratified ? "" : " Stratified on the Data Split keeps them alike.");
 
-    v.counted = "The images training reads: unreadable files (" + Thousands(split.unreadable) +
+    v.counted = "The images training reads: unreadable files (" + CountText(split.unreadable) +
                 ") and images a Quality node leaves out (" +
-                (split.left_out ? Thousands(split.left_out) : std::string("none")) +
+                (split.left_out ? CountText(split.left_out) : std::string("none")) +
                 ") are taken out first, then the split is made, the same way training makes it. Counts follow the "
                 "Data Split's settings as you change them.";
     return v;
