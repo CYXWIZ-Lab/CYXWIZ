@@ -139,13 +139,49 @@ af::array RoundHalfEven(const af::array& value) {
     return low + ((fraction > 0.5) || ((fraction == 0.5) && odd)).as(value.type());
 }
 
-// torchvision's affine grid sampling with each sample's inverse matrix: in
-// float32, step for step, the matrix is scaled by (0.5 W, 0.5 H) and applied
-// to pixel centres relative to the middle (_affine_grid), then grid_sample
-// (zero padding, align_corners=False) unnormalises ((g + 1) * size - 1) / 2.
-// Half-pixel ties (90 degrees on an even side) round as torchvision's do.
+// torchvision grid_sample (zero padding, align_corners=False) at grid
+// coordinates gx, gy in [-1, 1] ([H, W, 1, N]), unnormalised as
+// ((g + 1) * size - 1) / 2. With a fill (the transform classes: fill=0 by
+// default) torchvision samples a ones mask alongside, then nearest takes the
+// fill where the mask is below 0.5 and bilinear blends towards it,
+// mask * (image - fill) + fill.
+af::array GridSample(const af::array& images, const af::array& gx, const af::array& gy,
+                     Interpolation interpolation, const float* fill) {
+    const dim_t h = images.dims(0), w = images.dims(1);
+    const af::array source = fill ? af::join(2, images, af::constant(1.0f, af::dim4(h, w, 1, images.dims(3))))
+                                  : images;
+    const af::array sx = ((gx + 1.0f) * static_cast<float>(w) - 1.0f) / 2.0f;
+    const af::array sy = ((gy + 1.0f) * static_cast<float>(h) - 1.0f) / 2.0f;
+    af::array sampled;
+    if (interpolation == Interpolation::Nearest) {
+        sampled = GatherPixels(source, RoundHalfEven(sy), RoundHalfEven(sx));
+    } else {
+        const af::array x0 = af::floor(sx), y0 = af::floor(sy);
+        const af::array wx = sx - x0, wy = sy - y0;
+        const unsigned c = static_cast<unsigned>(source.dims(2));
+        const auto weight = [c](const af::array& v) { return af::tile(v, 1, 1, c, 1); };
+        sampled = GatherPixels(source, y0, x0) * weight((1 - wy) * (1 - wx)) +
+                  GatherPixels(source, y0, x0 + 1) * weight((1 - wy) * wx) +
+                  GatherPixels(source, y0 + 1, x0) * weight(wy * (1 - wx)) +
+                  GatherPixels(source, y0 + 1, x0 + 1) * weight(wy * wx);
+    }
+    if (!fill) return sampled;
+    const dim_t c = images.dims(2);
+    const af::array image = sampled(af::span, af::span, af::seq(0, static_cast<double>(c) - 1), af::span);
+    const af::array mask =
+        af::tile(sampled(af::span, af::span, static_cast<int>(c), af::span), 1, 1, static_cast<unsigned>(c), 1);
+    if (interpolation == Interpolation::Nearest) {
+        return af::select(mask < 0.5f, af::constant(*fill, image.dims(), image.type()), image);
+    }
+    return mask * (image - *fill) + *fill;
+}
+
+// torchvision's affine grid with each sample's inverse matrix: in float32,
+// step for step, the matrix is scaled by (0.5 W, 0.5 H) and applied to pixel
+// centres relative to the middle (_affine_grid), then GridSample. Half-pixel
+// ties (90 degrees on an even side) round as torchvision's do.
 af::array AffineSample(const af::array& images, const std::vector<std::array<double, 6>>& matrices,
-                       Interpolation interpolation) {
+                       Interpolation interpolation, const float* fill = nullptr) {
     const dim_t h = images.dims(0), w = images.dims(1), n = images.dims(3);
     const af::dim4 grid(h, w, 1, n);
     const float half_w = 0.5f * static_cast<float>(w), half_h = 0.5f * static_cast<float>(h);
@@ -164,28 +200,18 @@ af::array AffineSample(const af::array& images, const std::vector<std::array<dou
     const af::array y = af::iota(af::dim4(h, 1, 1, 1), af::dim4(1, w, 1, n), f32) - (half_h - 0.5f);
     const af::array gx = x * PerSample(ax, grid) + y * PerSample(bx, grid) + PerSample(cx, grid);
     const af::array gy = x * PerSample(ay, grid) + y * PerSample(by, grid) + PerSample(cy, grid);
-    const af::array sx = ((gx + 1.0f) * static_cast<float>(w) - 1.0f) / 2.0f;
-    const af::array sy = ((gy + 1.0f) * static_cast<float>(h) - 1.0f) / 2.0f;
-    if (interpolation == Interpolation::Nearest) {
-        return GatherPixels(images, RoundHalfEven(sy), RoundHalfEven(sx));
-    }
-    const af::array x0 = af::floor(sx), y0 = af::floor(sy);
-    const af::array wx = sx - x0, wy = sy - y0;
-    const unsigned c = static_cast<unsigned>(images.dims(2));
-    const auto weight = [c](const af::array& v) { return af::tile(v, 1, 1, c, 1); };
-    return GatherPixels(images, y0, x0) * weight((1 - wy) * (1 - wx)) +
-           GatherPixels(images, y0, x0 + 1) * weight((1 - wy) * wx) +
-           GatherPixels(images, y0 + 1, x0) * weight(wy * (1 - wx)) +
-           GatherPixels(images, y0 + 1, x0 + 1) * weight(wy * wx);
+    return GridSample(images, gx, gy, interpolation, fill);
 }
 
-// torchvision F.rotate: the inverse affine of -angle about the image centre.
+// torchvision RandomRotation (F.rotate with its fill 0): the inverse affine
+// of -angle about the image centre.
 af::array Rotate(const af::array& images, const std::vector<float>& degrees, Interpolation interpolation) {
     std::vector<std::array<double, 6>> matrices(degrees.size());
     for (size_t i = 0; i < degrees.size(); ++i) {
         matrices[i] = InverseAffineMatrix(0.0, 0.0, -static_cast<double>(degrees[i]), 0.0, 0.0, 1.0, 0.0, 0.0);
     }
-    return AffineSample(images, matrices, interpolation);
+    const float fill = 0.0f;
+    return AffineSample(images, matrices, interpolation, &fill);
 }
 
 af::array Luminance(const af::array& images) {

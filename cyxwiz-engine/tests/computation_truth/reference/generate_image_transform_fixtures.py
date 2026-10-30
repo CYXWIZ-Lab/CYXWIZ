@@ -21,6 +21,7 @@ import torch
 import torchvision
 import torchvision.transforms.functional as F
 import torchvision.transforms.v2 as v2
+import torchvision.transforms.v2.functional as F2
 from torchvision.transforms import InterpolationMode
 
 SCHEMA_VERSION = 1
@@ -162,12 +163,13 @@ def build() -> list[dict[str, Any]]:
     cases.append(case("vertical_flip", {"kind": "vertical_flip"}, {"apply": [0, 1]}, rgb,
                       per_sample(rgb, lambda img, i: F.vflip(img) if i == 1 else img)))
 
+    # RandomRotation's fill=0: outside pixels through the fill mask (it changes bilinear borders).
     for interpolation, mode in (("nearest", InterpolationMode.NEAREST), ("bilinear", InterpolationMode.BILINEAR)):
         for label, angles, images in (("odd", [30.0, -45.0], rgb), ("even", [90.0, 17.5], big)):
             cases.append(case(f"rotate_{interpolation}_{label}",
                               {"kind": "rotate", "interpolation": interpolation},
                               {"angle": angles}, images,
-                              per_sample(images, lambda img, i: F.rotate(img, angles[i], interpolation=mode))))
+                              per_sample(images, lambda img, i: F2.rotate(img, angles[i], interpolation=mode, fill=0))))
 
     for index, (label, factors) in enumerate((("brightness", [0.5, 1.4]), ("contrast", [0.6, 1.3]),
                                                ("saturation", [0.2, 1.7]), ("hue", [-0.3, 0.25]))):
