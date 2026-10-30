@@ -7133,6 +7133,7 @@ void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
         return;
     }
     config.image_augmentation.ops.push_back(op);
+    config.image_op_node_ids.push_back(node.id);
 }
 
 // mixup / cutmix mix whole training batches and their one-hot labels; the

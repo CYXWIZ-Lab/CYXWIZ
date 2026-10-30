@@ -504,6 +504,10 @@ struct TrainingConfiguration {
     // The image transform nodes between Resize and Normalize, in graph
     // order: run by the image batcher on the device (Normalize after them).
     cyxwiz::image::ImageAugmentation image_augmentation;
+    // The node each of image_augmentation.ops came from, in the same order (an
+    // Augmentation Preset gives several): Data Studio's image recipe (TOFIX178
+    // 1.6) shows training's own steps by node.
+    std::vector<int> image_op_node_ids;
     // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
     // prepared; each one's position places it among image_augmentation.ops.
     std::vector<cyxwiz::CvImageStep> image_cv_steps;
