@@ -28,7 +28,7 @@ int main() {
     s.found = {{"3.13.2", "C:/Python313/python.exe", true, true, false, "This Engine embeds Python 3.12; found 3.13.2"},
                {"3.12.8", "C:/Python312/python.exe", true, true, true, ""},
                {"3.11.9", "C:/Python311/python.exe", true, true, false, "Python version too old"},
-               {"3.12.4", "C:/Users/me/Python312/python.exe", true, true, true, ""}};
+               {"3.12.4", "C:/Users/me/Python312/python.exe", true, true, true, "", ""}};
 
     v = BuildPythonView(s, false, "3.12", "C:/Python312/python.exe");
     Check(v.ready && v.level == 0 && v.chip == "Python 3.12.8 ready", "ready chip");

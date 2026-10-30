@@ -25,6 +25,11 @@ mkdir -p "$work"
 work=$(cd "$work" && pwd)
 rm -rf "$work/sdk" "$work/src" "$work/build"
 
+# Multi-config generators (Visual Studio, Xcode) put binaries in bin/Release,
+# single-config ones (Ninja, Makefiles: build.sh on Linux) in bin.
+bin="$build/bin/Release"; lib="$build/lib/Release"
+[ -d "$bin" ] || { bin="$build/bin"; lib="$build/lib"; }
+
 failures=0
 step() { echo; echo "== $*"; }
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
@@ -53,7 +58,7 @@ done
 # pycyxwiz is given: CYXWIZ_SDK_CHECK_PYTHON=<python> (pycyxwiz from the build).
 if [ -n "${CYXWIZ_SDK_CHECK_PYTHON:-}" ]; then
     step "Python example nodes: their test, run from the installed SDK"
-    (cd "$examples" && "$CYXWIZ_SDK_CHECK_PYTHON" test_builtin_layers.py "$build/lib/Release" "$build/bin/Release"         > "$work/python_examples.log" 2>&1) || fail "test_builtin_layers.py (see $work/python_examples.log)"
+    (cd "$examples" && "$CYXWIZ_SDK_CHECK_PYTHON" test_builtin_layers.py "$lib" "$bin"         > "$work/python_examples.log" 2>&1) || fail "test_builtin_layers.py (see $work/python_examples.log)"
     tail -1 "$work/python_examples.log"
 fi
 
@@ -89,8 +94,8 @@ build_plugin activation_nodes "$source_root/plugins/examples/activation_nodes"
 build_plugin data_formats "$data_example"
 
 step "load and check with cyxwiz-plugin-check"
-check="$build/bin/Release/cyxwiz-plugin-check"
-export PATH="$build/bin/Release:$PATH"
+check="$bin/cyxwiz-plugin-check"
+export PATH="$bin:$PATH"
 folders=()
 for folder in "$work/build/my_nodes/my_nodes" "$work/build/my_nodes_debug/my_nodes" \
               "$work/build/activation_nodes/activation_nodes" "$work/build/data_formats/data_formats"               "$data_example/built"; do
