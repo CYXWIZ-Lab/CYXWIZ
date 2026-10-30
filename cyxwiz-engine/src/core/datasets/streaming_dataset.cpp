@@ -1,6 +1,7 @@
 #include "streaming_dataset.h"
+#include "../image_formats.h"
+#include "../image_utils.h"
 #include <spdlog/spdlog.h>
-#include <stb_image.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -111,13 +112,8 @@ void StreamingDataset::EstimateSize() {
     else if (detected_type_ == DatasetType::ImageFolder) {
         // Count images
         for (const auto& entry : fs::recursive_directory_iterator(path_)) {
-            if (entry.is_regular_file()) {
-                auto ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
-                    estimated_total_size_++;
-                }
-            }
+            if (entry.is_regular_file() && image_formats::IsImageExtension(entry.path().extension().string()))
+                estimated_total_size_++;
         }
     }
     else {
@@ -211,16 +207,10 @@ void StreamingDataset::LoadImageChunk(DataChunk& chunk, size_t start_idx, size_t
     for (size_t i = start_idx; i < end_idx && i < image_paths_.size(); i++) {
         const auto& [path, label] = image_paths_[i];
 
-        int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
-
-        if (data) {
-            std::vector<float> sample(width * height * channels);
-            for (int j = 0; j < width * height * channels; j++) {
-                sample[j] = data[j] / 255.0f;
-            }
-            stbi_image_free(data);
-
+        // OpenCV, as training reads images: RGB in [0, 1].
+        int width = 0, height = 0, channels = 0;
+        std::vector<float> sample;
+        if (ImageUtils::LoadImage(path, sample, width, height, channels)) {
             chunk.samples.push_back(std::move(sample));
             chunk.labels.push_back(label);
 
@@ -255,12 +245,8 @@ void StreamingDataset::CollectImagePaths() const {
         for (const auto& entry : fs::directory_iterator(class_path)) {
             if (!entry.is_regular_file()) continue;
 
-            std::string ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-            if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
+            if (image_formats::IsImageExtension(entry.path().extension().string()))
                 image_paths_.push_back({entry.path().string(), label});
-            }
         }
     }
 

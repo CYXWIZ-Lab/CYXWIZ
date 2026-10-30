@@ -5,8 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
-// stb_image.h is already included with STB_IMAGE_IMPLEMENTATION in stb_image_impl.cpp
-#include <stb_image.h>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace cyxwiz {
 
@@ -93,20 +93,27 @@ uint32_t TextureManager::CreateTextureFromUint8Data(const unsigned char* data, i
 }
 
 uint32_t TextureManager::LoadTextureFromFile(const std::string& filepath, int* out_width, int* out_height) {
-    int width, height, channels;
-    unsigned char* data = stbi_load(filepath.c_str(), &width, &height, &channels, 0);
-
-    if (!data) {
+    // OpenCV, as the image index and training read: every type in
+    // core/image_formats.h, 16-bit and float images scaled to 8 bits.
+    cv::Mat image = cv::imread(filepath, cv::IMREAD_UNCHANGED);
+    if (image.empty()) {
         spdlog::warn("Failed to load image: {}", filepath);
         return 0;
     }
+    if (image.depth() == CV_16U) image.convertTo(image, CV_8U, 1.0 / 257.0);
+    else if (image.depth() == CV_32F || image.depth() == CV_64F) image.convertTo(image, CV_8U, 255.0);
+    else if (image.depth() != CV_8U) image.convertTo(image, CV_8U);
+    if (image.channels() == 2) cv::extractChannel(image, image, 0);  // grey + alpha: the grey
+    cv::Mat rgba;
+    const int code = image.channels() == 1 ? cv::COLOR_GRAY2RGBA
+                     : image.channels() == 4 ? cv::COLOR_BGRA2RGBA
+                                             : cv::COLOR_BGR2RGBA;
+    cv::cvtColor(image, rgba, code);
 
-    uint32_t texture_id = CreateTextureFromUint8Data(data, width, height, channels);
+    uint32_t texture_id = CreateTextureFromUint8Data(rgba.data, rgba.cols, rgba.rows, 4);
 
-    if (out_width) *out_width = width;
-    if (out_height) *out_height = height;
-
-    stbi_image_free(data);
+    if (out_width) *out_width = rgba.cols;
+    if (out_height) *out_height = rgba.rows;
     return texture_id;
 }
 

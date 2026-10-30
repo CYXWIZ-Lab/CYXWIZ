@@ -1,5 +1,7 @@
 #include "dataset_contract.h"
 
+#include "image_formats.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -132,8 +134,8 @@ bool LooksLikeDate(const std::string& text) {
 }
 
 bool LooksLikeMediaPath(const std::string& text) {
-    static const char* const kExt[] = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp",
-                                       ".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"};
+    if (image_formats::IsImagePath(text)) return true;
+    static const char* const kExt[] = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"};
     const std::string s = Lower(text);
     for (const char* e : kExt)
         if (EndsWith(s, e)) return true;

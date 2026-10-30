@@ -1,6 +1,7 @@
 #include "dataset_audit.h"
 
 #include "arrow_dataset.h"
+#include "image_formats.h"
 #include "image_utils.h"
 #include "parquet_backed_dataset.h"
 
@@ -253,16 +254,6 @@ void AuditClassNameList(DatasetAuditResult& result,
     }
 }
 
-bool IsSupportedImageExtension(std::string ext) {
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    static const std::vector<std::string> kExtensions = {
-        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tga", ".tiff", ".webp"
-    };
-    return std::find(kExtensions.begin(), kExtensions.end(), ext) != kExtensions.end();
-}
-
 bool IsSupportedAudioExtension(std::string ext) {
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -357,7 +348,7 @@ std::vector<fs::path> CollectImagePaths(const std::string& folder) {
     for (const auto& entry : fs::recursive_directory_iterator(folder, ec)) {
         if (ec) break;
         if (!entry.is_regular_file(ec)) continue;
-        if (IsSupportedImageExtension(entry.path().extension().string())) {
+        if (image_formats::IsImageExtension(entry.path().extension().string())) {
             paths.push_back(entry.path());
         }
     }

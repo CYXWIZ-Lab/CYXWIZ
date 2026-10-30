@@ -1474,6 +1474,15 @@ set_target_properties(test_plot_arrow_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY
 add_test(NAME plot_arrow_source_contract COMMAND test_plot_arrow_source)
 
 # ===== Test: OpenCV Integration =====
+# ===== Test: the image types the Engine reads decode through its OpenCV =====
+add_executable(test_image_formats tests/test_image_formats.cpp)
+target_include_directories(test_image_formats PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_image_formats PRIVATE ${OpenCV_LIBS})
+set_target_properties(test_image_formats PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_formats COMMAND test_image_formats)
+
 add_executable(test_opencv_integration
     tests/test_opencv_integration.cpp
     src/preprocessing/morphology_transform.cpp

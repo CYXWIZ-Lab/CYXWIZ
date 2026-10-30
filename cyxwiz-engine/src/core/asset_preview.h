@@ -22,7 +22,7 @@ enum class FileKind {
     Notebook,     // .ipynb
     Graph,        // .cyxgraph
     Model,        // .onnx .pt .pth .safetensors .bin .ckpt .checkpoint .gguf .lora
-    Image,        // .png .jpg .jpeg .bmp .gif .webp .tif .tiff
+    Image,        // the types in image_formats.h
     Audio,        // .wav .mp3 .flac .ogg .m4a
     Video,        // .mp4 .avi .mov .mkv .webm
     Text,         // .txt .md .log .rst

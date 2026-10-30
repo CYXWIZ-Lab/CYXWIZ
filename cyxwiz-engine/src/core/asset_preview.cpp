@@ -1,5 +1,7 @@
 #include "asset_preview.h"
 
+#include "image_formats.h"
+
 #include "excel_table_adapter.h"
 #include "../utils/hdf5_browser.h"
 
@@ -347,7 +349,7 @@ FileKind KindOfPath(const std::string& path, bool is_directory) {
     if (ext == ".cyxgraph") return FileKind::Graph;
     if (OneOf(ext, {".onnx", ".pt", ".pth", ".safetensors", ".bin", ".ckpt", ".checkpoint", ".gguf", ".lora"}))
         return FileKind::Model;
-    if (OneOf(ext, {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"})) return FileKind::Image;
+    if (image_formats::IsImageExtension(ext)) return FileKind::Image;
     if (OneOf(ext, {".wav", ".mp3", ".flac", ".ogg", ".m4a"})) return FileKind::Audio;
     if (OneOf(ext, {".mp4", ".avi", ".mov", ".mkv", ".webm"})) return FileKind::Video;
     if (OneOf(ext, {".txt", ".md", ".log", ".rst"})) return FileKind::Text;

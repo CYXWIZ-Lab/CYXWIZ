@@ -56,6 +56,16 @@ An image Data Input shows its folder, where its labels come from (*image
 folder, labels from cat_dog.csv* or *image folder, class folders*) and the
 image count (*25,000 images*).
 
+### Image types
+
+The Engine reads JPEG (`.jpg` `.jpeg` `.jpe`), PNG, BMP (`.bmp` `.dib`),
+TIFF (`.tif` `.tiff`), WebP, GIF (its first frame), the Netpbm types
+(`.ppm` `.pgm` `.pbm` `.pnm`), Sun raster (`.sr` `.ras`), Radiance HDR
+(`.hdr` `.pic`) and PFM. The same list is used everywhere: the Data Input's
+folder scan, the image index, training, Explore > Images and the asset
+previews. Other files in an image folder are skipped. TGA, AVIF, HEIC,
+JPEG 2000, JPEG XL and EXR are not read: convert them first.
+
 ### The image index
 
 Loading an image dataset also builds its **index table**, one row per image,
