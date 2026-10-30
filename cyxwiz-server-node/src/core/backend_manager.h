@@ -153,7 +153,9 @@ public:
 
     // Configuration
     const NodeConfig& GetConfig() const { return config_; }
-    void UpdateConfig(const NodeConfig& config);
+    // Keeps the config and saves it to the file it was loaded from
+    // (ConfigManager::FindConfigFile). False when the file was not written.
+    bool UpdateConfig(const NodeConfig& config);
 
 private:
     BackendManager() = default;
