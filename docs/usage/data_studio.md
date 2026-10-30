@@ -350,7 +350,9 @@ Double-click a row to open it in the viewer.
 - The arrows by the file name (or Left and Right) go to the previous and
   next image; Esc goes back to the grid or list.
 
-The images are read with OpenCV, as training reads them; 16-bit and float
+The images are read with OpenCV, as training reads them: the pixels as
+stored, without turning a photo by its EXIF orientation (a phone photo
+taken sideways shows sideways, as the model gets it). 16-bit and float
 images are scaled to 8 bits for the screen (the status bar names the file's
 own depth).
 

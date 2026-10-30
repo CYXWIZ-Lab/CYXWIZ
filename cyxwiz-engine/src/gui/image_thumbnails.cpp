@@ -106,7 +106,10 @@ void ImageThumbnails::Work() {
 ImageThumbnails::Decoded ImageThumbnails::Decode(const std::string& path) const {
     Decoded d;
     d.path = path;
-    cv::Mat image = cv::imread(path, cv::IMREAD_COLOR);  // 8-bit BGR, as the Engine shows colour
+    // 8-bit BGR, as the Engine shows colour. EXIF orientation is ignored, as
+    // training, the index and the viewer read the pixels as stored: a phone
+    // photo shows here the way the model gets it.
+    cv::Mat image = cv::imread(path, cv::IMREAD_COLOR | cv::IMREAD_IGNORE_ORIENTATION);
     if (image.empty()) {
         d.failed = true;
         return d;
