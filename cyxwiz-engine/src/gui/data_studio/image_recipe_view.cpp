@@ -204,24 +204,32 @@ void ImageRecipeView::RenderAddMenu(::gui::NodeEditor* editor, int after_node, b
     }
 }
 
-void ImageRecipeView::DropTarget(::gui::NodeEditor* editor, const ir::View& view, long long after_index) {
+void ImageRecipeView::DropTarget(::gui::NodeEditor* editor, const ir::View& view, size_t index) {
     const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
     if (!ImGui::BeginDragDropTarget()) return;
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
             kRowPayload, ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
         const size_t from = *static_cast<const size_t*>(payload->Data);
-        const std::string refusal = ir::MoveRefusal(view, from, after_index);
+        // The upper half puts it before this row (after the one above), the
+        // lower half after it; Resize takes only after, Normalize only before.
+        const ir::Group group = view.rows[index].group;
+        const bool before = group == ir::Group::Normalize ||
+                            (group != ir::Group::Resize && ImGui::GetMousePos().y < (lo.y + hi.y) * 0.5f);
+        const long long after_index = static_cast<long long>(index) - (before ? 1 : 0);
+        const bool same = ir::MoveChangesNothing(view, from, after_index);
+        const std::string refusal = same ? std::string() : ir::MoveRefusal(view, from, after_index);
         if (!refusal.empty()) {
             ImGui::SetTooltip("%s", refusal.c_str());
-        } else {
-            // Where it lands: a wash on this row and a mark under it.
+        } else if (!same) {
+            // Where it lands: a wash on this row and a mark on the side it goes.
             const ui::Tokens& t = ui::CurrentTokens();
             ImDrawList* dl = ImGui::GetWindowDrawList();
             dl->AddRectFilled(lo, hi, ui::ToU32(t.hover), 4.0f);
-            dl->AddRectFilled(ImVec2(lo.x, hi.y + 1.0f), ImVec2(hi.x, hi.y + 3.0f), ui::ToU32(t.accent), 1.0f);
+            const float y = before ? lo.y - 3.0f : hi.y + 1.0f;
+            dl->AddRectFilled(ImVec2(lo.x, y), ImVec2(hi.x, y + 2.0f), ui::ToU32(t.accent), 1.0f);
         }
-        if (payload->IsDelivery()) {
-            if (refusal.empty() && after_index >= 0 && static_cast<size_t>(after_index) != from) {
+        if (payload->IsDelivery() && !same) {
+            if (refusal.empty() && after_index >= 0) {
                 editor->RequestMoveStep(view.rows[from].node_id, view.rows[static_cast<size_t>(after_index)].node_id);
                 message_ = "Moved " + view.rows[from].name + " (Ctrl+Z on the canvas undoes it).";
                 message_error_ = false;
@@ -319,8 +327,8 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
         }
     }
     ImGui::EndGroup();
-    // Dropping a row here puts it after this one.
-    if (row.group != ir::Group::Normalize) DropTarget(editor, view, static_cast<long long>(index));
+    // Dropping a row here puts it before or after this one.
+    DropTarget(editor, view, index);
 
     // Its settings, with Properties' own editor.
     if (open_settings_ == row.node_id && row.node_id >= 0) {

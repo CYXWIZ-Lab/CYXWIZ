@@ -48,7 +48,7 @@ private:
     std::string SamplePath(const std::string& dataset, size_t* count) const;
     void RenderRow(::gui::NodeEditor* editor, const image_recipe::View& view, size_t index);
     void RenderAddMenu(::gui::NodeEditor* editor, int after_node, bool per_batch);
-    void DropTarget(::gui::NodeEditor* editor, const image_recipe::View& view, long long after_index);
+    void DropTarget(::gui::NodeEditor* editor, const image_recipe::View& view, size_t index);
 
     size_t sample_ = 0;
     std::string preview_key_;

@@ -102,6 +102,10 @@ void CheckMoves() {
     // Moving the flip first puts CLAHE after a random step.
     Check(!ir::MoveRefusal(v, 3, 0).empty(), "the flip before CLAHE is refused");
     Check(!ir::MoveRefusal(v, 2, 5).empty(), "nothing after Normalize");
+    // Dropping a step after itself or after the row before it changes nothing.
+    Check(ir::MoveChangesNothing(v, 4, 3) && ir::MoveChangesNothing(v, 4, 4), "the blur after the flip or itself: no change");
+    Check(ir::MoveChangesNothing(v, 1, 0) && ir::MoveChangesNothing(v, 1, -1), "CLAHE after the Resize: no change");
+    Check(!ir::MoveChangesNothing(v, 4, 2) && !ir::MoveChangesNothing(v, 2, -1), "real moves change the order");
 }
 
 void CheckPresetAndMix() {

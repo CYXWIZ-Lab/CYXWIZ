@@ -193,4 +193,11 @@ std::string MoveRefusal(const View& view, size_t from, long long after) {
     return {};
 }
 
+bool MoveChangesNothing(const View& view, size_t from, long long after) {
+    const long long at = static_cast<long long>(from);
+    if (after == at || after + 1 == at) return true;
+    // First of the steps: where a step right after the Resize already is.
+    return after < 0 && from > 0 && from < view.rows.size() && view.rows[from - 1].group == Group::Resize;
+}
+
 }  // namespace cyxwiz::image_recipe

@@ -55,4 +55,8 @@ View Build(const Input& in);
 // with the images; the compiler refuses that graph).
 std::string MoveRefusal(const View& view, size_t from, long long after);
 
+// True when moving `rows[from]` to just after `rows[after]` leaves the order
+// as it is (after itself, or after the row already before it).
+bool MoveChangesNothing(const View& view, size_t from, long long after);
+
 }  // namespace cyxwiz::image_recipe
