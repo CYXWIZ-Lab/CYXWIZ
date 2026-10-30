@@ -37,7 +37,11 @@ SeasonalityResult TimeSeries::DetectSeasonality(const std::vector<double>& data,
     }
     const int n = static_cast<int>(data.size());
     if (min_period < 2) min_period = 2;
-    if (max_period < 0 || max_period > n / 2) max_period = n / 2;
+    // A season has to repeat: unless a longer one is asked for, the period
+    // goes up to a quarter of the rows (four full cycles), so a slow wave over
+    // a long series is not read as its season.
+    if (max_period < 0) max_period = n / 4;
+    if (max_period > n / 2) max_period = n / 2;
     if (max_period < min_period) {
         r.error_message = "Invalid period range: the longest period is below the shortest";
         return r;
@@ -91,7 +95,9 @@ SeasonalityResult TimeSeries::DetectSeasonality(const std::vector<double>& data,
         } else {
             r.strength = r.detected_share;
         }
-        r.has_seasonality = r.detected_period >= min_period && r.strength >= 0.3;
+        // Found: a pattern of that length explains 30% of what is left after the trend,
+        // and its peak carries at least 5% of the detrended power (not one wave among many).
+        r.has_seasonality = r.detected_period >= min_period && r.strength >= 0.3 && r.detected_share >= 0.05;
 
         // Peaks of the autocorrelation outside its band.
         const AutocorrelationResult acf = ComputeACF(data, std::min(max_period, n / 2 - 1));

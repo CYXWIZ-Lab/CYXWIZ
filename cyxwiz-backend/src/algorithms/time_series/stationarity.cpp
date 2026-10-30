@@ -14,6 +14,8 @@
 #include "mackinnon.h"
 #include "series_device.h"
 
+#include <arrayfire.h>
+
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -63,6 +65,106 @@ LinearFit AdfRegression(const std::vector<double>& x, const std::vector<double>&
     return StatisticalTests::FitLinear(columns, response, names, trend >= 1);
 }
 
+// The AIC of every lag length 0 .. max_lags at once: the Gram matrix of the
+// widest design (one pass on the device, in blocks of columns), then each
+// shorter design is its leading block, solved on the host (Cholesky; a lag
+// that makes the design singular ends the search). The columns are ordered
+// intercept, level, trend terms, then the lagged differences, so that lag k
+// is the first fixed + k columns. Returns the best lag; `icbest` its AIC.
+int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, int max_lags, int nobs, const std::string& regression, double& icbest) {
+    const size_t n = x.size();
+    const size_t first = xdiff.size() - static_cast<size_t>(nobs);
+    const int trend = TrendTerms(regression);
+    const int fixed = (trend >= 1 ? 1 : 0) + 1 + (trend >= 2 ? 1 : 0) + (trend >= 3 ? 1 : 0);
+    const int total = fixed + max_lags;
+    const af::array xd = series_detail::ToDevice(xdiff);
+    const af::array lv = series_detail::ToDevice(x);
+    const double f0 = static_cast<double>(first);
+    const af::array y = xd(af::seq(f0, f0 + nobs - 1));
+    const auto column = [&](int c) -> af::array {
+        int i = 0;
+        if (trend >= 1 && c == i++) return af::constant(1.0, nobs, series_detail::ComputeType());
+        if (c == i++) return lv(af::seq(static_cast<double>(n - 1 - static_cast<size_t>(nobs)), static_cast<double>(n - 2)));
+        if (trend >= 2 && c == i++) return (af::iota(af::dim4(nobs), af::dim4(1), series_detail::ComputeType()) + 1.0);
+        if (trend >= 3 && c == i++) {
+            const af::array t = af::iota(af::dim4(nobs), af::dim4(1), series_detail::ComputeType()) + 1.0;
+            return t * t;
+        }
+        const int lag = c - fixed + 1;
+        return xd(af::seq(f0 - lag, f0 - lag + nobs - 1));
+    };
+    // The Gram matrix G and X'y by blocks of columns.
+    constexpr int kBlock = 8;
+    std::vector<double> G(static_cast<size_t>(total) * static_cast<size_t>(total), 0.0), g(static_cast<size_t>(total), 0.0);
+    std::vector<af::array> blocks;
+    for (int start = 0; start < total; start += kBlock) {
+        af::array block = column(start);
+        for (int c = start + 1; c < std::min(total, start + kBlock); ++c) block = af::join(1, block, column(c));
+        blocks.push_back(block);
+    }
+    for (size_t a = 0; a < blocks.size(); ++a) {
+        const int a0 = static_cast<int>(a) * kBlock;
+        const std::vector<double> gy = series_detail::ToHost(af::matmulTN(blocks[a], y), "TimeSeries ADF autolag");
+        for (size_t i = 0; i < gy.size(); ++i) g[static_cast<size_t>(a0) + i] = gy[i];
+        for (size_t b = a; b < blocks.size(); ++b) {
+            const int b0 = static_cast<int>(b) * kBlock;
+            const af::array gab = af::matmulTN(blocks[a], blocks[b]);
+            const int rows = static_cast<int>(gab.dims(0)), cols = static_cast<int>(gab.dims(1));
+            const std::vector<double> host = series_detail::ToHost(gab, "TimeSeries ADF autolag");  // column-major rows x cols
+            for (int j = 0; j < cols; ++j)
+                for (int i = 0; i < rows; ++i) {
+                    const double v = host[static_cast<size_t>(j) * static_cast<size_t>(rows) + static_cast<size_t>(i)];
+                    G[static_cast<size_t>(a0 + i) * static_cast<size_t>(total) + static_cast<size_t>(b0 + j)] = v;
+                    G[static_cast<size_t>(b0 + j) * static_cast<size_t>(total) + static_cast<size_t>(a0 + i)] = v;
+                }
+        }
+    }
+    const double yy = af::dot<double>(y, y);
+    // Each lag: solve the leading block, the SSE from the normal equations, the AIC as FitLinear's.
+    int best = 0;
+    icbest = NAN;
+    for (int lag = 0; lag <= max_lags; ++lag) {
+        const int pcount = fixed + lag;
+        std::vector<double> L(static_cast<size_t>(pcount) * static_cast<size_t>(pcount), 0.0);
+        bool ok = true;
+        for (int j = 0; j < pcount && ok; ++j) {
+            for (int i = j; i < pcount; ++i) {
+                double sum = G[static_cast<size_t>(i) * static_cast<size_t>(total) + static_cast<size_t>(j)];
+                for (int k = 0; k < j; ++k) sum -= L[static_cast<size_t>(i) * pcount + k] * L[static_cast<size_t>(j) * pcount + k];
+                if (i == j) {
+                    const double diag = G[static_cast<size_t>(j) * static_cast<size_t>(total) + static_cast<size_t>(j)];
+                    if (!(sum > 1e-12 * std::max(1.0, std::fabs(diag)))) {
+                        ok = false;
+                        break;
+                    }
+                    L[static_cast<size_t>(j) * pcount + j] = std::sqrt(sum);
+                } else {
+                    L[static_cast<size_t>(i) * pcount + j] = sum / L[static_cast<size_t>(j) * pcount + j];
+                }
+            }
+        }
+        if (!ok) break;  // collinear from this lag on
+        std::vector<double> z(static_cast<size_t>(pcount));
+        for (int i = 0; i < pcount; ++i) {
+            double sum = g[static_cast<size_t>(i)];
+            for (int k = 0; k < i; ++k) sum -= L[static_cast<size_t>(i) * pcount + k] * z[static_cast<size_t>(k)];
+            z[static_cast<size_t>(i)] = sum / L[static_cast<size_t>(i) * pcount + i];
+        }
+        // b'X'y = z'z (L z = g, L L' b = g).
+        double explained = 0.0;
+        for (const double v : z) explained += v * v;
+        const double sse = yy - explained;
+        if (!(sse > 0.0)) break;
+        const double loglik = -nobs / 2.0 * (std::log(2.0 * 3.14159265358979323846) + std::log(sse / nobs) + 1.0);
+        const double aic = 2.0 * pcount - 2.0 * loglik;
+        if (std::isnan(icbest) || aic < icbest) {
+            icbest = aic;
+            best = lag;
+        }
+    }
+    return best;
+}
+
 std::string Short(double p) {
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%.3f", p);
@@ -104,27 +206,20 @@ StationarityResult TimeSeries::ADFTest(const std::vector<double>& data, int max_
     int used = max_lags;
     double icbest = NAN;
     if (autolag) {
-        // Every lag length fitted on the same rows (those left after max_lags); the smallest AIC wins.
+        // Every lag length on the same rows (those left after max_lags); the
+        // smallest AIC wins. One device pass for every lag (AdfAutolag); a lag
+        // that makes the design collinear ends the search.
         const int nobs = n - 1 - max_lags;
-        int best = 0;
-        for (int lag = 0; lag <= max_lags; ++lag) {
-            const LinearFit fit = AdfRegression(data, xdiff, lag, nobs, regression);
-            if (!fit.ok) {
-                // A lag the regression cannot tell apart (a deterministic
-                // pattern makes the lagged differences collinear): the
-                // longer lags are left out of the search.
-                if (std::isnan(icbest)) {
-                    r.error_message = "The ADF regression failed: " + fit.error;
-                    return r;
-                }
-                break;
-            }
-            if (std::isnan(icbest) || fit.aic < icbest) {
-                icbest = fit.aic;
-                best = lag;
-            }
+        try {
+            used = AdfAutolag(data, xdiff, max_lags, nobs, regression, icbest);
+        } catch (const af::exception& e) {
+            r.error_message = std::string("The ADF lag search failed on the ArrayFire device: ") + e.what();
+            return r;
         }
-        used = best;
+        if (std::isnan(icbest)) {
+            r.error_message = "The ADF regression failed: the series is a deterministic pattern";
+            return r;
+        }
     }
     const int nobs = n - 1 - used;
     const LinearFit fit = AdfRegression(data, xdiff, used, nobs, regression);

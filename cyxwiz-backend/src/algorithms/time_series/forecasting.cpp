@@ -327,10 +327,14 @@ Params Fit(const std::vector<double>& y, const Spec& spec, double alpha, double 
     fitter.sel[0] = alpha < 0.0;
     fitter.sel[1] = spec.trend && beta < 0.0;
     fitter.sel[2] = spec.season != Season::None && gamma < 0.0;
-    fitter.sel[3] = true;
-    fitter.sel[4] = spec.trend;
+    // The initial states are estimated with the weights, as statsmodels does,
+    // up to a period of 50; a longer season (a day of seconds) keeps its
+    // heuristic start values, or the search would run over thousands of states.
+    const bool estimate_states = m <= 50;
+    fitter.sel[3] = estimate_states;
+    fitter.sel[4] = spec.trend && estimate_states;
     fitter.sel[5] = spec.damped && phi < 0.0;
-    for (int i = 0; i < m; ++i) fitter.sel[static_cast<size_t>(6 + i)] = true;
+    for (int i = 0; i < m; ++i) fitter.sel[static_cast<size_t>(6 + i)] = estimate_states;
     const double init_alpha = alpha >= 0.0 ? alpha : 0.5 / std::max(m, 1);
     fitter.fixed.alpha = init_alpha;
     fitter.fixed.beta = beta >= 0.0 ? beta : (spec.trend ? 0.1 * init_alpha : 0.0);
@@ -341,7 +345,12 @@ Params Fit(const std::vector<double>& y, const Spec& spec, double alpha, double 
     double a = fitter.fixed.alpha, b = fitter.fixed.beta, g = fitter.fixed.gamma;
     const int free_smoothing = static_cast<int>(fitter.sel[0]) + static_cast<int>(fitter.sel[1]) + static_cast<int>(fitter.sel[2]);
     if (free_smoothing > 0) {
-        const int ns = 87 / free_smoothing;
+        // statsmodels' grid (87 points shared by the free parameters); a long
+        // series gets a coarser one so the grid spends at most ~2e8 point
+        // evaluations (the local search after it finds the optimum either way).
+        int ns = 87 / free_smoothing;
+        const double budget = 2e8 / static_cast<double>(std::max<size_t>(1, y.size()));
+        ns = std::min(ns, std::max(3, static_cast<int>(std::pow(std::max(27.0, budget), 1.0 / free_smoothing))));
         const auto sse_at = [&](double aa, double bb, double gg) {
             Params p = fitter.fixed;
             p.alpha = aa;
@@ -383,9 +392,11 @@ Params Fit(const std::vector<double>& y, const Spec& spec, double alpha, double 
     scale[5] = 0.02;
     for (int i = 0; i < m; ++i) scale[static_cast<size_t>(6 + i)] = spec.season == Season::Multiplicative ? 0.02 : 0.1 * level_scale;
     const auto objective = [&](const std::vector<double>& z) { return fitter.Sse(z); };
-    NelderMead(objective, x, fitter.sel, scale, 4000 * static_cast<int>(x.size()));
+    // The local search: statsmodels' cap, or on a long series what ~4e8 point evaluations allow (at least 200).
+    const int max_evals = std::min(4000 * static_cast<int>(x.size()), std::max(200, static_cast<int>(4e8 / static_cast<double>(std::max<size_t>(1, y.size())))));
+    NelderMead(objective, x, fitter.sel, scale, max_evals);
     for (double& v : scale) v *= 0.1;
-    NelderMead(objective, x, fitter.sel, scale, 4000 * static_cast<int>(x.size()));
+    NelderMead(objective, x, fitter.sel, scale, max_evals);
     return fitter.Unpack(x);
 }
 

@@ -356,8 +356,12 @@ ForecastResult TimeSeries::ARIMA(const std::vector<double>& data, int horizon, i
     Fitted fit;
     if (p < 0 || q < 0) {
         double best = INFINITY;
-        for (int pp = (p < 0 ? 0 : p); pp <= (p < 0 ? 3 : p); ++pp)
-            for (int qq = (q < 0 ? 0 : q); qq <= (q < 0 ? 3 : q); ++qq) {
+        // The bounds first: p and q take the best orders as the search goes.
+        // Orders up to 3 each; a long series (over 200,000 rows) tries up to 1 each, every fit being a full Kalman pass.
+        const int top = n > 200000 ? 1 : 3;
+        const int p_lo = p < 0 ? 0 : p, p_hi = p < 0 ? top : p, q_lo = q < 0 ? 0 : q, q_hi = q < 0 ? top : q;
+        for (int pp = p_lo; pp <= p_hi; ++pp)
+            for (int qq = q_lo; qq <= q_hi; ++qq) {
                 if (n < pp + qq + 5) continue;
                 const Fitted candidate = FitArma(w, pp, qq, mean);
                 if (candidate.ok && candidate.aic < best) {

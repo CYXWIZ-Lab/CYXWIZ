@@ -336,6 +336,15 @@ DecompositionResult TimeSeries::STLDecompose(const std::vector<double>& data, in
     stl.ns = seasonal_window;
     stl.nt = trend_window;
     stl.nl = low_pass_window;
+    // A long series (over 50,000 rows) takes the jumps Cleveland et al. advise
+    // (a tenth of each window: loess at every jump-th point, linear between),
+    // so a day-long period over months of seconds finishes; statsmodels' default
+    // (every point) is kept below that, where the references are checked.
+    if (n > 50000) {
+        stl.nsjump = std::max(1, static_cast<int>(std::ceil(seasonal_window / 10.0)));
+        stl.ntjump = std::max(1, static_cast<int>(std::ceil(trend_window / 10.0)));
+        stl.nljump = std::max(1, static_cast<int>(std::ceil(low_pass_window / 10.0)));
+    }
     stl.y = data;
     stl.season.assign(static_cast<size_t>(n), 0.0);
     stl.trend.assign(static_cast<size_t>(n), 0.0);
