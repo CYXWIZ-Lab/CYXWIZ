@@ -11,6 +11,7 @@
 // the step, the held-out check, future dates) is checked in test_series_explore.
 
 #include "data_explore.h"
+#include "time_steps.h"
 
 #include <cyxwiz/time_series.h>
 
@@ -21,20 +22,10 @@
 
 namespace cyxwiz::series {
 
-enum class TimeKind { Order, Numbers, Dates };
-
 struct SeriesRequest {
     std::string time;   // "" = the row order
     std::string value;
     int period = 0;     // 0: find it
-};
-
-// A time step read from the dates (or numbers).
-struct Step {
-    std::string name;        // "monthly", "daily", "every 3 days", "every 0.5" (numbers), "" (order)
-    double seconds = 0.0;    // dates: the step in seconds (a month: 30.436875 days); numbers: the step
-    bool even = false;       // at least 95% of the gaps are the step (a month: 28 .. 31 days)
-    int natural_period = 0;  // the period the step suggests (monthly 12, quarterly 4, daily 7, hourly 24), else 0
 };
 
 struct Series {
@@ -177,18 +168,8 @@ struct ForecastAnswer {
 ForecastAnswer RunForecast(const std::string& table, const ForecastRequest& request, const QueryRunner& run,
                            const explore::MissingTexts& texts);
 
-// ---- Pure helpers (test_series_explore)
+// ---- Pure helpers (test_series_explore); the time steps are in time_steps.h
 
-// The step of sorted times (dates in seconds, or numbers): its name, size,
-// whether the gaps are even, and the period it suggests.
-Step StepOf(const std::vector<double>& t, TimeKind kind);
-// Dates `count` steps after the last one (calendar months for a monthly step).
-std::vector<double> FutureTimes(const std::vector<double>& t, const Step& step, TimeKind kind, int count);
-// A date in seconds since 1970 as "YYYY-MM-DD" (with " HH:MM" when the step is below a day).
-std::string DateLabel(double seconds, const Step& step);
-// seconds since 1970 of a civil date, and back.
-double CivilToSeconds(int year, int month, int day, int hour = 0, int minute = 0, int second = 0);
-void SecondsToCivil(double seconds, int& year, int& month, int& day, int& hour, int& minute, int& second);
 // Mean absolute percentage error (rows at 0 skipped) and RMSE of a forecast against actual values.
 double Mape(const std::vector<double>& actual, const std::vector<double>& forecast);
 double Rmse(const std::vector<double>& actual, const std::vector<double>& forecast);

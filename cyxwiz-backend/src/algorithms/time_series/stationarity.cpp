@@ -110,8 +110,14 @@ StationarityResult TimeSeries::ADFTest(const std::vector<double>& data, int max_
         for (int lag = 0; lag <= max_lags; ++lag) {
             const LinearFit fit = AdfRegression(data, xdiff, lag, nobs, regression);
             if (!fit.ok) {
-                r.error_message = "The ADF regression failed: " + fit.error;
-                return r;
+                // A lag the regression cannot tell apart (a deterministic
+                // pattern makes the lagged differences collinear): the
+                // longer lags are left out of the search.
+                if (std::isnan(icbest)) {
+                    r.error_message = "The ADF regression failed: " + fit.error;
+                    return r;
+                }
+                break;
             }
             if (std::isnan(icbest) || fit.aic < icbest) {
                 icbest = fit.aic;

@@ -1,5 +1,14 @@
 #pragma once
 
+// The time series analysis nodes (TOFIX129 D6 step 3). Each reads one numeric
+// signal column in table order (rows with a missing value are refused: fill
+// or drop them first) and runs cyxwiz::TimeSeries, whose figures match
+// statsmodels (test_computation_truth_time_series). Decomposition appends
+// its parts; ACF, PACF, Stationarity Test and Seasonality Detector emit a
+// table of their own; ARIMA and Exp. Smoothing append fitted and residual
+// columns and, with a horizon, future rows holding forecast / low / high
+// (the time column continues its step there, every other column is empty).
+
 #include "pipeline_operator.h"
 #include <string>
 #include <utility>
@@ -7,226 +16,200 @@
 namespace cyxwiz {
 
 /**
- * TimeSeriesDecompositionOperator — Cat-1 Band 1 pipeline operator.
- *
- * Classical additive/multiplicative decomposition of a time-series
- * column into trend + seasonal + residual via
- * `TimeSeries::Decompose`. Appends three new columns to the input
- * table (same row count, no alignment break).
- *
- * Closes the TimeSeriesDecomposition dead NodeType from the
- * "Phase 5 time-series" block in tofix.md.
+ * Decomposition: trend, seasonal and residual columns appended to the input.
  *
  * Params:
- *   signal_col (required)               — numeric column to decompose.
- *   period     (required, int)          — seasonal period (e.g. 12 for
- *                                          monthly-with-yearly-seasonality).
- *   method     (default "additive")     — "additive" / "multiplicative".
- *   algorithm  (default "classical")    — "classical" / "stl" (STL uses
- *                                          Loess smoothing, more robust).
+ *   signal_col (required)            numeric column
+ *   period (default -1)              seasonal period; -1 finds it from the detrended periodogram
+ *   method (default "additive")      "additive" / "multiplicative" (classical)
+ *   algorithm (default "stl")        "stl" / "classical" (classical leaves half a period empty at each end)
+ *   seasonal_window (default 7)      STL: the seasonal loess window (odd, >= 3)
+ *   robust (default false)           STL: robustness iterations
  */
 class TimeSeriesDecompositionOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "TimeSeriesDecomposition"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;
-    int period_ = 0;
+    int period_ = -1;
     std::string method_ = "additive";
-    std::string algorithm_ = "classical";
+    std::string algorithm_ = "stl";
+    int seasonal_window_ = 7;
+    bool robust_ = false;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
- * ARIMAOperator — Cat-1 Band 1 pipeline operator (in-sample fit only).
- *
- * Fits an ARIMA(p, d, q) model to a signal column via
- * `TimeSeries::ARIMA` and appends `fitted` + `residual` columns.
- * Row count is preserved — the forecast horizon goes to zero so
- * only in-sample fitted values are written back.
- *
- * Out-of-sample forecasting (horizon > 0) would add future rows to
- * the table; that schema change is deferred to a separate Cat-1
- * "forecast-rows" operator or a Cat-2 visualization panel. See
- * tofix.md for reasoning.
+ * ARIMA: an ARIMA(p, d, q) fit by exact maximum likelihood; fitted and
+ * residual columns on the input rows, and `horizon` future rows with
+ * forecast / low / high at the chosen level.
  *
  * Params:
- *   signal_col (required)         — numeric column to model.
- *   p          (default -1, auto) — AR order.
- *   d          (default -1, auto) — differencing order.
- *   q          (default -1, auto) — MA order.
+ *   signal_col (required)   numeric column
+ *   p, d, q (default -1)    orders; -1 chooses them (d by the stationarity tests, p and q by AIC)
+ *   horizon (default 12)    future rows (0: the in-sample fit only)
+ *   level (default 0.95)    the prediction interval's level
+ *   time_col (default "")   a date, timestamp or numeric column continued over the future rows
  */
 class ARIMAOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "ARIMA"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;
-    int p_ = -1;
-    int d_ = -1;
-    int q_ = -1;
+    int p_ = -1, d_ = -1, q_ = -1;
+    int horizon_ = 12;
+    double level_ = 0.95;
+    std::string time_col_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
- * ExponentialSmoothingOperator — Cat-1 Band 1 pipeline operator.
- *
- * Fits a Simple ES / Holt / Holt-Winters model to a signal column
- * (selected via `method` param) and appends `fitted` + `residual`
- * columns. Horizon=0 — in-sample fit only, same rationale as
- * ARIMAOperator.
+ * Exp. Smoothing: simple, Holt (optionally damped) or Holt-Winters; fitted
+ * and residual columns, and `horizon` future rows with forecast / low / high.
  *
  * Params:
- *   signal_col (required)             — numeric column.
- *   method     (default "simple")     — "simple" / "holt" / "holt_winters".
- *   alpha      (default -1, auto)     — level smoothing.
- *   beta       (default -1, auto)     — trend smoothing (holt/hw).
- *   gamma      (default -1, auto)     — seasonal smoothing (hw).
- *   period     (default -1, auto)     — seasonal period (hw).
- *   damped     (default false)        — damped trend (holt).
+ *   signal_col (required)          numeric column
+ *   method (default "holt_winters") "simple" / "holt" / "holt_winters"
+ *   seasonal (default "additive")  Holt-Winters season: "additive" / "multiplicative"
+ *   alpha, beta, gamma (default -1) smoothing weights; -1 estimates them
+ *   period (default -1)            Holt-Winters period; -1 finds it
+ *   damped (default false)         damped trend (Holt)
+ *   horizon (default 12), level (default 0.95), time_col (default ""): as ARIMA
  */
 class ExponentialSmoothingOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "ExponentialSmoothing"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;
-    std::string method_ = "simple";
-    double alpha_ = -1.0;
-    double beta_ = -1.0;
-    double gamma_ = -1.0;
+    std::string method_ = "holt_winters";
+    std::string seasonal_ = "additive";
+    double alpha_ = -1.0, beta_ = -1.0, gamma_ = -1.0;
     int period_ = -1;
     bool damped_ = false;
+    int horizon_ = 12;
+    double level_ = 0.95;
+    std::string time_col_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
- * ACFOperator - Cat-1 Band 1 analysis operator.
+ * ACF: one row per lag 0 .. max_lag: lag, acf, confidence_lower,
+ * confidence_upper (Bartlett band at `confidence`), significant,
+ * ljung_box_q, ljung_box_p (the white-noise test up to that lag).
  *
- * Emits a lag-indexed table: lag, acf, confidence_lower,
- * confidence_upper, significant.
+ * Params: signal_col (required), max_lag (default -1: min(n/2, 40)), confidence (default 0.95).
  */
 class ACFOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "ACF"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;
     int max_lag_ = -1;
+    double confidence_ = 0.95;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
- * PACFOperator - Cat-1 Band 1 analysis operator.
- *
- * Emits a lag-indexed table: lag, pacf, confidence_lower,
- * confidence_upper, significant.
+ * PACF: one row per lag: lag, pacf, confidence_lower, confidence_upper
+ * (z / sqrt(n) at `confidence`), significant. Params as ACF.
  */
 class PACFOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "PACF"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;
     int max_lag_ = -1;
+    double confidence_ = 0.95;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
- * StationarityTestOperator - Cat-1 Band 1 analysis operator.
+ * Stationarity Test: ADF and KPSS on the series and on its first and second
+ * differences, one row each: differencing, adf_statistic, adf_pvalue,
+ * adf_lags, kpss_statistic, kpss_pvalue, kpss_lags, stationary (KPSS p >= 0.05
+ * and ADF p < 0.10), suggested_differencing (the smallest d that is enough,
+ * -1 when none), analysis.
  *
- * Emits a one-row summary table with ADF/KPSS statistics and the
- * suggested ARIMA differencing order.
+ * Params: signal_col (required), max_lags (default -1: 12 (n/100)^0.25, chosen by AIC),
+ *         regression (default "c": around a level; "ct": around a trend).
  */
 class StationarityTestOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "StationarityTest"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;
     int max_lags_ = -1;
+    std::string regression_ = "c";
     PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
- * SeasonalityDetectorOperator - Cat-1 Band 1 analysis operator.
+ * Seasonality Detector: the candidate periods of the detrended periodogram,
+ * ranked by their share of the power: period, share, harmonic_of (the
+ * stronger period this one divides, 0 for none), is_primary, has_seasonality,
+ * strength (the primary's: how much of the detrended series a season of that
+ * length explains), analysis.
  *
- * Emits candidate periods with strength scores. If no candidate exists,
- * emits one row containing the primary detection fields.
+ * Params: signal_col (required), min_period (default 2), max_period (default -1: n/2).
  */
 class SeasonalityDetectorOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "SeasonalityDetector"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(const std::shared_ptr<arrow::Schema>& input_schema) override;
 
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override { progress_callback_ = std::move(callback); }
 
 private:
     std::string signal_col_;

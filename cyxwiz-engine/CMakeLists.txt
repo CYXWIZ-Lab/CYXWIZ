@@ -226,6 +226,7 @@ set(ENGINE_SOURCES
     src/core/groups_explore.cpp
     src/core/groups_presentation.cpp
     src/core/series_explore.cpp
+    src/core/time_steps.cpp
     src/core/series_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
@@ -2445,6 +2446,7 @@ set_target_properties(test_operator_configure_resets PROPERTIES
 add_executable(test_time_series_analysis_operators
     tests/test_time_series_analysis_operators.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
 )
 
 target_include_directories(test_time_series_analysis_operators PRIVATE
@@ -2782,6 +2784,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -3141,6 +3144,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -3904,6 +3908,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -7344,7 +7349,7 @@ add_test(NAME StatsExplore COMMAND test_stats_explore)
 
 # Data Studio > Explore > Series and Forecast (TOFIX129 D6): reading, steps, periods, the held-out check, words.
 add_executable(test_series_explore tests/test_series_explore.cpp
-    src/core/series_explore.cpp src/core/series_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/series_explore.cpp src/core/series_presentation.cpp src/core/time_steps.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
     src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
@@ -7670,6 +7675,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
