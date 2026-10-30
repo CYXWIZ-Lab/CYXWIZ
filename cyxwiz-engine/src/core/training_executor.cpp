@@ -1495,7 +1495,9 @@ void TrainingExecutor::Train(
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
             validation_ran_this_epoch = RunValidationSequence(*active_sequence_batcher);
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
-        } else if (should_validate_this_epoch && active_val_ibatcher) {
+        } else if (should_validate_this_epoch && active_val_ibatcher && num_val_samples > 0) {
+            // Not without a validation part (an image Data Split at 0.9 / 0 /
+            // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
             RunValidationArrow(*active_val_ibatcher);
             active_val_ibatcher->SetPhase(train_batcher_phase);

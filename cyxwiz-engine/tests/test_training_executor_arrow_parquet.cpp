@@ -2199,6 +2199,25 @@ void CheckHeldOutTestOfPhaseCountedSet(const std::shared_ptr<cyxwiz::ArrowDatase
           "a test set counted only in its phase is still scored after training");
 }
 
+// A split with no validation part runs no validation (it scored 0 samples
+// every epoch and reported a validation loss and accuracy of 0).
+void CheckNoValidationWithoutValidationPart(const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+                                            cyxwiz::TrainingConfiguration config) {
+    config.train_ratio = 0.75f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.25f;
+    config.validation_freq = 1;
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+        cyxwiz::BuildArrowTrainingBatchers(config, dataset, "label", config.batch_size));
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(config.epochs, config.batch_size, [](int, int, int, float, float) {},
+                   [](int, float, float, float, float, float) {},
+                   [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
+    Check(final_metrics.val_sample_count == 0 && !final_metrics.has_validation_metrics,
+          "no validation part: no validation metrics");
+}
+
 void CheckExternalResolvedRoleLifecycleCase(
     const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
     cyxwiz::TrainingConfiguration config,
@@ -2317,6 +2336,7 @@ void TestExternalResolvedRoleLifecycle(
         "completed",
         "completed_all_epochs");
     CheckHeldOutTestOfPhaseCountedSet(dataset, completed_config);
+    CheckNoValidationWithoutValidationPart(dataset, completed_config);
 
     auto plateau_config = MakeConfig(
         work_dir / "external-resolved-scheduled-patience");
