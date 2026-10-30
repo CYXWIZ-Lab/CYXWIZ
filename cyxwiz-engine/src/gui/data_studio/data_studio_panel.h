@@ -21,6 +21,7 @@
 #include "regression_view.h"
 #include "groups_view.h"
 #include "projection_view.h"
+#include "series_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -43,7 +44,7 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize };
+    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -73,6 +74,8 @@ public:
     // Explore > Groups / Projection on a method, for the data in use (Tools > Clustering and Projection).
     void ShowGroups(groups::Method method);
     void ShowProjection(groups::ProjectionMethod method);
+    // Explore > Series on a look, for the data in use (Tools > Time Series).
+    void ShowSeries(SeriesView::Look look);
 
     // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
     // after the data in use (a Data Input or a node's result; the graph's
@@ -114,6 +117,7 @@ private:
     std::unique_ptr<RegressionView> regression_;
     std::unique_ptr<GroupsView> groups_;
     std::unique_ptr<ProjectionView> projection_;
+    std::unique_ptr<SeriesView> series_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

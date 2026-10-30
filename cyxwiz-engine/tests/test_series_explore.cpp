@@ -224,6 +224,20 @@ int main() {
     Check(arima.ok() && arima.fit.method == "ARIMA(2,1,1)" && arima.scores.empty(), "ARIMA without the check: " + arima.error);
     Contains(series_view::ForecastSentence(arima), "ARIMA(2,1,1) (ar.L1 ", "ARIMA words");
 
+    // Into the graph: the nodes' parameters.
+    Check(series::NodeParameters(parts).at("algorithm") == "classical" && series::NodeParameters(parts).at("method") == "multiplicative" &&
+              series::NodeParameters(parts).at("period") == "-1",
+          "Decomposition parameters");
+    Check(series::NodeParameters(stationarity).at("regression") == "c" && series::NodeParameters(correlogram).at("max_lag") == "40", "test and correlogram parameters");
+    Check(series::NodeParameters(forecast).at("p") == "2" && series::NodeParameters(forecast).at("time_col") == "Month" && series::NodeParameters(forecast).at("horizon") == "24" &&
+              std::string(series::ForecastNodeType(forecast.method)) == "ARIMAForecaster",
+          "ARIMA node parameters");
+    forecast.method = series::Method::HoltWinters;
+    Check(series::NodeParameters(forecast).at("method") == "holt_winters" && series::NodeParameters(forecast).at("seasonal") == "multiplicative" &&
+              std::string(series::ForecastNodeType(forecast.method)) == "ExponentialSmoothing",
+          "Exp. Smoothing node parameters");
+    forecast.method = series::Method::SeasonalNaive;
+    Check(series::NodeParameters(forecast).empty() && std::string(series::ForecastNodeType(forecast.method)).empty(), "the baseline has no node");
     forecast.method = series::Method::Simple;
     forecast.horizon = 0;
     Check(!series::RunForecast("airline", forecast, run, {}).ok(), "a horizon of 0 is refused");

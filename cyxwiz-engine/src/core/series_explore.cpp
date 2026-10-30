@@ -354,4 +354,70 @@ ForecastAnswer RunForecast(const std::string& table, const ForecastRequest& requ
     return a;
 }
 
+// ---- into the graph
+
+namespace {
+std::string Number(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6g", v);
+    return buf;
+}
+}  // namespace
+
+std::map<std::string, std::string> NodeParameters(const PartsRequest& r) {
+    return {{"signal_col", r.base.value},
+            {"period", std::to_string(r.base.period > 0 ? r.base.period : -1)},
+            {"algorithm", r.stl ? "stl" : "classical"},
+            {"method", r.multiplicative ? "multiplicative" : "additive"},
+            {"seasonal_window", std::to_string(r.seasonal_window)},
+            {"robust", r.robust ? "true" : "false"}};
+}
+
+std::map<std::string, std::string> NodeParameters(const SeriesRequest& r) {
+    return {{"signal_col", r.value}, {"min_period", "2"}, {"max_period", "-1"}};
+}
+
+std::map<std::string, std::string> NodeParameters(const StationarityRequest& r) {
+    return {{"signal_col", r.base.value}, {"regression", r.trend ? "ct" : "c"}, {"max_lags", "-1"}};
+}
+
+std::map<std::string, std::string> NodeParameters(const CorrelogramRequest& r) {
+    return {{"signal_col", r.base.value}, {"max_lag", std::to_string(r.lags)}, {"confidence", "0.95"}};
+}
+
+std::map<std::string, std::string> NodeParameters(const ForecastRequest& r) {
+    std::map<std::string, std::string> p = {{"signal_col", r.base.value}, {"time_col", r.base.time}, {"horizon", std::to_string(r.horizon)}, {"level", Number(r.level)}};
+    switch (r.method) {
+        case Method::Arima:
+            p["p"] = std::to_string(r.p);
+            p["d"] = std::to_string(r.d);
+            p["q"] = std::to_string(r.q);
+            break;
+        case Method::Simple:
+        case Method::Holt:
+        case Method::HoltWinters:
+            p["method"] = r.method == Method::Simple ? "simple" : r.method == Method::Holt ? "holt" : "holt_winters";
+            p["seasonal"] = r.multiplicative ? "multiplicative" : "additive";
+            p["period"] = std::to_string(r.base.period > 0 ? r.base.period : -1);
+            p["damped"] = r.damped ? "true" : "false";
+            p["alpha"] = Number(r.alpha);
+            p["beta"] = Number(r.beta);
+            p["gamma"] = Number(r.gamma);
+            break;
+        case Method::SeasonalNaive: return {};
+    }
+    return p;
+}
+
+const char* ForecastNodeType(Method method) {
+    switch (method) {
+        case Method::Arima: return "ARIMAForecaster";
+        case Method::Simple:
+        case Method::Holt:
+        case Method::HoltWinters: return "ExponentialSmoothing";
+        case Method::SeasonalNaive: return "";
+    }
+    return "";
+}
+
 }  // namespace cyxwiz::series

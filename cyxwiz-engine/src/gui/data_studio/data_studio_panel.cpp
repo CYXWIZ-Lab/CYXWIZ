@@ -3,6 +3,8 @@
 // data_studio_panel_render.cpp.
 
 #include "data_studio_panel.h"
+
+#include "../node_type_import_registry.h"
 #include "../../core/node_executors/hypothesis_test_operator.h"
 #include "../../core/groups_presentation.h"
 #include "../../core/stats_presentation.h"
@@ -44,6 +46,7 @@ DataStudioPanel::DataStudioPanel() {
     regression_ = std::make_unique<RegressionView>();
     groups_ = std::make_unique<GroupsView>();
     projection_ = std::make_unique<ProjectionView>();
+    series_ = std::make_unique<SeriesView>();
     projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
     // Groups and projections go into the graph as their nodes (TOFIX129 D5): in the
     // data path (a step: the rest of the graph gets the new columns) or as a branch.
@@ -74,6 +77,12 @@ DataStudioPanel::DataStudioPanel() {
             case groups::ProjectionMethod::UMAP: type = ::gui::NodeType::UMAPNode; break;
         }
         return add_node(type, groups_view::ProjectionLabel(r.method), groups::NodeParameters(r), step);
+    };
+    // Explore > Series adds the analysis node that does what the tab did (TOFIX129 D6).
+    series_->add_to_graph = [add_node](const std::string& type, const std::string& name, std::map<std::string, std::string> params, bool step) {
+        const auto node_type = ::gui::ResolveNodeTypeImportName(type);
+        if (!node_type) return "No node of type " + type + ".";
+        return add_node(*node_type, name, std::move(params), step);
     };
     // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
     tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
@@ -198,6 +207,11 @@ void DataStudioPanel::ShowProjection(groups::ProjectionMethod method) {
     ShowExplore(active_dataset_, ExploreTab::Projection);
 }
 
+void DataStudioPanel::ShowSeries(SeriesView::Look look) {
+    if (series_) series_->SelectLook(look);
+    ShowExplore(active_dataset_, ExploreTab::Series);
+}
+
 ExploreContext DataStudioPanel::MakeExploreContext() const {
     ExploreContext c;
     c.dataset = active_dataset_;
@@ -207,6 +221,7 @@ ExploreContext DataStudioPanel::MakeExploreContext() const {
     c.missing_texts = profile_->MissingTexts();
     c.profiling = profile_->IsRunning();
     c.error = profile_->Error();
+    if (const studio::GraphNode* n = NodeOfDataset(active_dataset_)) c.time_column = n->time_column;
     return c;
 }
 

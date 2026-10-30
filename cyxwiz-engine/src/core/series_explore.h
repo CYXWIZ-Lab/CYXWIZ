@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -167,6 +168,21 @@ struct ForecastAnswer {
 
 ForecastAnswer RunForecast(const std::string& table, const ForecastRequest& request, const QueryRunner& run,
                            const explore::MissingTexts& texts);
+
+// ---- Into the graph (Add as a step / Keep as a node)
+
+// The parameters of the node that does what the tab did: Decomposition for
+// Parts, Seasonality Detector, Stationarity Test, ACF / PACF (the lags and
+// band; a differenced correlogram needs a Differencing step before it),
+// ARIMA or Exp. Smoothing for a forecast (empty for the seasonal naive
+// baseline, which has no node).
+std::map<std::string, std::string> NodeParameters(const PartsRequest& request);
+std::map<std::string, std::string> NodeParameters(const SeriesRequest& request);        // Seasonality Detector
+std::map<std::string, std::string> NodeParameters(const StationarityRequest& request);
+std::map<std::string, std::string> NodeParameters(const CorrelogramRequest& request);   // ACF and PACF alike
+std::map<std::string, std::string> NodeParameters(const ForecastRequest& request);
+// "ARIMAForecaster", "ExponentialSmoothing", or "" for the seasonal naive baseline.
+const char* ForecastNodeType(Method method);
 
 // ---- Pure helpers (test_series_explore); the time steps are in time_steps.h
 
