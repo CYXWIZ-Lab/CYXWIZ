@@ -423,6 +423,14 @@ void PrepareView::Render() {
         ImGui::TextColored(t.text_dim, "No graph is open.");
         return;
     }
+    // An image graph prepares images: its image recipe, not table steps.
+    if (ImageRecipeView::IsImageGraph(editor_)) {
+        image_recipe_.show_on_canvas = show_on_canvas;
+        ImGui::BeginChild("##image_recipe", ImVec2(0.0f, 0.0f));
+        image_recipe_.Render(editor_);
+        ImGui::EndChild();
+        return;
+    }
     if (recipes_.empty() && loose_.empty()) {
         RenderEmpty();
         return;

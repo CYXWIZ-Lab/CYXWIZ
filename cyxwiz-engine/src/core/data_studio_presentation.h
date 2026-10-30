@@ -21,6 +21,9 @@ const char* JobName(Job job);
 
 // The job a node belongs to; false for nodes no job shows (layers, losses).
 bool JobOf(gui::NodeType type, Job& job);
+// An image step Prepare's image recipe shows (TOFIX178 1.6): Resize, the
+// crops, flips, colour and OpenCV steps and the augmentations.
+bool IsImageStepType(gui::NodeType type);
 
 struct GraphNode {
     int id = -1;

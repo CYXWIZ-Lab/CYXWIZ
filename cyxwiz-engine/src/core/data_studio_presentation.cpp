@@ -72,6 +72,20 @@ bool JobOf(NodeType type, Job& job) {
     }
 }
 
+bool IsImageStepType(NodeType type) {
+    switch (type) {
+        case NodeType::Resize: case NodeType::CenterCrop: case NodeType::RandomCrop: case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip: case NodeType::ImageRotate: case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur: case NodeType::Grayscale: case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment: case NodeType::AugmentationPreset: case NodeType::ImageContrast:
+        case NodeType::ImageDenoise: case NodeType::ImageSharpen: case NodeType::ImageEdges:
+        case NodeType::ImageSmooth: case NodeType::ImageWarp: case NodeType::ImagePyramid:
+            return true;
+        default:
+            return false;
+    }
+}
+
 std::string Thousands(int64_t n) {
     std::string digits = std::to_string(n < 0 ? -n : n);
     for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<size_t>(i), ",");
@@ -251,14 +265,17 @@ View Build(const Input& in) {
         Job job;
         if (JobOf(n.type, job) && !(n.type == NodeType::Subgraph && !n.recipe)) per_job[static_cast<size_t>(job)].push_back(&n);
     }
-    size_t recipes = 0, checks = 0, checks_ran = 0, checks_passed = 0, inputs = 0;
+    size_t recipes = 0, checks = 0, checks_ran = 0, checks_passed = 0, inputs = 0, image_steps = 0;
     std::string recipe_name;
+    std::vector<const GraphNode*> image_nodes;
     for (const auto& n : in.nodes) {
+        if (IsImageStepType(n.type)) image_nodes.push_back(&n);
         if (n.recipe) {
             ++recipes;
             recipe_name = n.name;
         }
         if (IsDataInput(n)) ++inputs;
+        if (IsImageStepType(n.type) && n.type != NodeType::Resize) ++image_steps;
         if (IsCheck(n)) {
             ++checks;
             if (n.ran) ++checks_ran;
@@ -272,13 +289,28 @@ View Build(const Input& in) {
         for (const GraphNode* n : per_job[j]) jv.node_ids.push_back(n->id);
         AddChips(jv, per_job[j]);
         const size_t count = per_job[j].size();
+        // An image graph's Prepare is its image steps: one chip naming them.
+        if (jv.job == Job::Prepare && count == 0 && !image_nodes.empty()) {
+            NodeChip chip{"image steps", "", {}};
+            for (size_t i = 0; i < image_nodes.size(); ++i) {
+                chip.ids.push_back(image_nodes[i]->id);
+                if (i < 3) chip.note += (i ? ", " : "") + image_nodes[i]->name;
+            }
+            if (image_nodes.size() > 3) chip.note += ", \xE2\x80\xA6";
+            jv.node_ids = chip.ids;
+            jv.chips.push_back(std::move(chip));
+        }
         switch (jv.job) {
             case Job::BringIn:
                 jv.state = inputs ? Plural(inputs, "Data Input", "Data Inputs") : count ? Plural(count, "source", "sources") : "none yet";
                 break;
             case Job::Explore: jv.state = "query, profile, missing, outliers, plot"; break;
             case Job::Prepare:
-                jv.state = recipes ? Plural(recipes, "recipe", "recipes") : count ? Plural(count, "step", "steps") : "none yet";
+                jv.state = recipes ? Plural(recipes, "recipe", "recipes")
+                           : count ? Plural(count, "step", "steps")
+                           // An image graph's steps (Prepare shows its image recipe).
+                           : image_steps ? Plural(image_steps, "image step", "image steps")
+                                         : "none yet";
                 break;
             case Job::Validate:
                 jv.state = !checks ? (count ? Plural(count, "validator", "validators") : "no checks")

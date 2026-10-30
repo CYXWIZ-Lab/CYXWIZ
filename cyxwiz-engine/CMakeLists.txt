@@ -763,6 +763,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/image_profile_view.cpp
     src/gui/data_studio/image_gallery_view.cpp
     src/gui/data_studio/image_viewer_view.cpp
+    src/gui/data_studio/image_recipe_view.cpp
     src/gui/image_thumbnails.cpp
     src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/explore_tab.cpp
