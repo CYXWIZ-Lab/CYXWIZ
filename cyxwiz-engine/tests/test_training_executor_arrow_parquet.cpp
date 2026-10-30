@@ -2155,6 +2155,50 @@ void TestScheduledValidationPatienceLifecycle(
         "scheduled validation patience");
 }
 
+// A test set whose count follows its phase, like a wired image or audio
+// test dataset: none outside the test phase (TOFIX178 1.5).
+class TestPhaseOnlyBatcher : public cyxwiz::IBatcher {
+public:
+    TestPhaseOnlyBatcher(std::shared_ptr<cyxwiz::IBatcher> inner, cyxwiz::BatcherPhase test_phase)
+        : inner_(std::move(inner)), test_phase_(test_phase) {}
+    cyxwiz::Batch GetNextBatch() override { return inner_->GetNextBatch(); }
+    void Reset() override { inner_->Reset(); }
+    bool IsEpochComplete() const override { return inner_->IsEpochComplete(); }
+    size_t GetNumBatches() const override { return in_test_ ? inner_->GetNumBatches() : 0; }
+    size_t GetNumSamples() const override { return in_test_ ? inner_->GetNumSamples() : 0; }
+    void SetNormalization(float mean, float std_dev) override { inner_->SetNormalization(mean, std_dev); }
+    void SetOneHotEncoding(size_t classes) override { inner_->SetOneHotEncoding(classes); }
+    void SetScalarLabelMode(bool enable) override { inner_->SetScalarLabelMode(enable); }
+    void SetClassIndexLabelMode(bool enable) override { inner_->SetClassIndexLabelMode(enable); }
+    void SetFlatten(bool flatten) override { inner_->SetFlatten(flatten); }
+    void SetDropLast(bool drop_last) override { inner_->SetDropLast(drop_last); }
+    void SetPhase(cyxwiz::BatcherPhase phase) override {
+        in_test_ = phase == test_phase_;
+        inner_->SetPhase(phase);
+    }
+
+private:
+    std::shared_ptr<cyxwiz::IBatcher> inner_;
+    cyxwiz::BatcherPhase test_phase_;
+    bool in_test_ = false;
+};
+
+void CheckHeldOutTestOfPhaseCountedSet(const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+                                       cyxwiz::TrainingConfiguration config) {
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+        cyxwiz::BuildArrowTrainingBatchers(config, dataset, "label", config.batch_size));
+    Check(resolved.test != nullptr, "phase-counted case has a test batcher");
+    resolved.test = std::make_shared<TestPhaseOnlyBatcher>(resolved.test, resolved.test_phase);
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(config.epochs, config.batch_size, [](int, int, int, float, float) {},
+                   [](int, float, float, float, float, float) {},
+                   [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
+    // It was skipped: the gate read the count outside the test phase (0).
+    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 2,
+          "a test set counted only in its phase is still scored after training");
+}
+
 void CheckExternalResolvedRoleLifecycleCase(
     const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
     cyxwiz::TrainingConfiguration config,
@@ -2272,6 +2316,7 @@ void TestExternalResolvedRoleLifecycle(
         {2, 3},
         "completed",
         "completed_all_epochs");
+    CheckHeldOutTestOfPhaseCountedSet(dataset, completed_config);
 
     auto plateau_config = MakeConfig(
         work_dir / "external-resolved-scheduled-patience");

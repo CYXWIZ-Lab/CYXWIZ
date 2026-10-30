@@ -1881,8 +1881,9 @@ void TrainingExecutor::Train(
                 "TrainingExecutor: configured Sequence test split produced "
                 "0 held-out samples; test metrics were skipped");
         }
-    } else if (!stop_requested_.load() && active_test_ibatcher &&
-        active_test_ibatcher->GetNumSamples() > 0) {
+    } else if (!stop_requested_.load() && active_test_ibatcher && num_test_samples > 0) {
+        // num_test_samples: counted in the test phase (a batcher's count
+        // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
         const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
@@ -1911,11 +1912,11 @@ void TrainingExecutor::Train(
                 "test_mae={:.4f}, test_rmse={:.4f} ({} samples)",
                 test_evaluation.loss, test_evaluation.mae,
                 test_evaluation.rmse,
-                active_test_ibatcher->GetNumSamples());
+                num_test_samples);
         } else {
             spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
                          test_evaluation.loss, test_evaluation.accuracy * 100.0f,
-                         active_test_ibatcher->GetNumSamples());
+                         num_test_samples);
         }
         if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_test) {
             model_->SetTraining(false);
