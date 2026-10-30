@@ -290,21 +290,71 @@ under the details (Spotify: artist_popularity and artist_followers +0.64).
 ## Images
 
 For an image dataset (its Data Input in the rail), **Images** shows its
-thumbnails, a page at a time, in the order of its index table. The chips
-filter by class (*All*, *Class 0*, *Class 1*, or the class names) and show
-the unreadable files when there are any; once quality is measured, also
-*Fails a check* and one chip per reason (*blurry*, *low contrast*, *dark*,
-*bright*, *duplicate*), and tiles that fail carry their first reason at the
-top right (*blurry +1*). **Sort** puts them in dataset order, smallest first,
-largest first (by pixel count, unreadable files last) or, once measured,
-blurriest first. Each tile has its class at the bottom left; hovering shows the file
-name. Clicking a tile shows it larger with its row, label, original size and
-colour, size on disk and path (and, when measured, its blur, brightness,
-contrast, verdict and the image it duplicates), and the links **Show in folder** and **Open
-the index table** (Query on `<dataset>_index`). Thumbnails are read on two
-background threads, the ones on screen first.
+images as a **Grid**, a **List** or one at a time in the **Viewer** (the
+first buttons of its toolbar). It works for any image dataset: the facts
+come from the dataset's index table.
 
-**What the model sees**, under the grid, runs the picked image through this
+The chips filter by class (*All*, *Class 0*, *Class 1*, or the class names)
+and show the unreadable files when there are any; once quality is measured,
+also *Fails a check* and one chip per reason (*blurry*, *low contrast*,
+*dark*, *bright*, *duplicate*). The filter holds in all three views. The
+arrows at the right turn the pages (*1 to 60 of 25,000*).
+
+**Grid.** The tiles fill the panel and scroll. **Tile** sets their size
+(64 to 256 px, typed or with - / +); **Fill** crops each image to its
+square, **Fit** shows it whole. **Show** chooses what a tile carries: its
+**Class** (bottom left), **Name** (bottom right), **Size** in pixels (top
+left) and **Flags**, the first failed check (top right, *blurry +1*).
+**Sort** puts them in dataset order, smallest first, largest first (by pixel
+count, unreadable files last) or, once measured, blurriest first. Hovering
+shows the file name.
+
+Clicking a tile picks it (a ring and a wash): the panel at the right shows
+it larger with its row, label, original size and colour, size on disk and
+path (and, when measured, its blur, brightness, contrast, verdict and the
+image it duplicates), **Open in viewer**, and the links **Show in folder**
+and **Open the index table** (Query on `<dataset>_index`). The arrow keys
+move the pick (Up and Down a row), Enter or a double-click opens it in the
+viewer. Thumbnails are read on two background threads, the ones on screen
+first.
+
+**List.** A row per image: thumbnail, file, class, size, channels, size on
+disk and quality (*not measured* until it is). Click a column to sort by it
+(File by name, Class, Size smallest or largest first, On disk largest first,
+Quality blurriest first); a third click goes back to dataset order.
+Double-click a row to open it in the viewer.
+
+**Viewer.** One image at full size; nothing here changes the file.
+
+- **Zoom**: **Fit** (the whole image, enlarging a small one), **100 %**, a
+  typed percent, and - / + through steps from 6 % to 1600 %. The mouse wheel
+  zooms around the cursor, a drag pans, a double-click goes between Fit and
+  100 %.
+- **Channel**: RGB, R, G or B alone, Luminance (as the Grayscale node:
+  0.2989 R + 0.587 G + 0.114 B), and Alpha when the image has one.
+- **View**: rotate left or right, **Flip** left to right, **Pixel grid**
+  (lines between pixels from 800 %), **Checkerboard** behind transparent
+  pixels.
+- **Compare**: **Original**, **Model sees** (the image after this graph's
+  fixed image steps, the size the model gets, *Gaussian Blur 3 x 3, sigma
+  0.8 · 546 %*) or **Side by side**; each fitted to its half.
+- Under the picture, the filmstrip (the images before and after it in the
+  current order; click one to go to it) and the status bar: the pixel under
+  the cursor (*x 189 y 190 · R 151 G 150 B 146 · #979692*), and the image's
+  size, colour type, bits per channel and zoom.
+- At the right: a **Histogram** per channel (red, green, blue, luminance,
+  alpha when there is one; 32 bins of 0 to 255, with the mean and standard
+  deviation; the chosen channel stays bright), **Around the cursor** (the
+  12 x 8 pixels around the pointed one, one cell each), and the image's
+  details.
+- The arrows by the file name (or Left and Right) go to the previous and
+  next image; Esc goes back to the grid or list.
+
+The images are read with OpenCV, as training reads them; 16-bit and float
+images are scaled to 8 bits for the screen (the status bar names the file's
+own depth).
+
+**What the model sees**, folded under the grid (click it to open), runs the picked image through this
 graph's image steps with the code training runs, on the ArrayFire device:
 the Resize (*Resize 72 x 72, exact, once*), each transform done once with the
 images (*Center Crop 64 x 64*, *Gaussian Blur 3 x 3, sigma 0.8*), then four

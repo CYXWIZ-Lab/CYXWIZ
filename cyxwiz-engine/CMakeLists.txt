@@ -211,6 +211,8 @@ set(ENGINE_SOURCES
     src/core/image_index_service.cpp
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
+    src/core/image_pixels.cpp
+    src/core/image_viewer.cpp
     src/core/image_pipeline_preview.cpp
     src/core/image_channel_stats.cpp
     src/core/quality_analyzer_presentation.cpp
@@ -759,6 +761,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/profile_view.cpp
     src/gui/data_studio/image_profile_view.cpp
     src/gui/data_studio/image_gallery_view.cpp
+    src/gui/data_studio/image_viewer_view.cpp
     src/gui/image_thumbnails.cpp
     src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/explore_tab.cpp
@@ -6999,6 +7002,19 @@ set_target_properties(test_image_gallery_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME image_gallery_presentation COMMAND test_image_gallery_presentation)
+
+# ===== Test: Explore > Images viewer: zoom, orientation, pixels, histograms =====
+add_executable(test_image_viewer
+    tests/test_image_viewer.cpp
+    src/core/image_viewer.cpp
+    src/core/image_pixels.cpp
+)
+target_include_directories(test_image_viewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_image_viewer PRIVATE ${OpenCV_LIBS})
+set_target_properties(test_image_viewer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_viewer COMMAND test_image_viewer)
 
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
