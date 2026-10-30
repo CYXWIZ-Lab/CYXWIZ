@@ -118,6 +118,19 @@ int main() {
     Near(series::Mape({100.0, 200.0}, {110.0, 180.0}), 10.0, 1e-12, "MAPE");
     Near(series::Rmse({1.0, 2.0}, {2.0, 4.0}), std::sqrt(2.5), 1e-12, "RMSE");
 
+    // ---- backend edges found by the audit: a short series with a season (the heuristic start
+    // values must not read past the end), and a constant series in KPSS.
+    {
+        std::vector<double> saw;
+        for (int i = 0; i < 14; ++i) saw.push_back(10.0 + 0.3 * i + (i % 4));
+        const ForecastResult hw = TimeSeries::HoltWinters(saw, 2, 4, "additive");
+        Check(hw.success && hw.forecast.size() == 2 && std::isfinite(hw.forecast[0]), "Holt-Winters on 14 rows with period 4: " + hw.error_message);
+        const StationarityResult flat = TimeSeries::KPSSTest(std::vector<double>(30, 5.0));
+        Check(!flat.success && !flat.error_message.empty(), "KPSS refuses a constant series");
+        const StationarityResult line = TimeSeries::KPSSTest({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}, "ct");
+        Check(!line.success, "KPSS around a trend refuses an exact line");
+    }
+
     // ---- reading
     const fs::path root = fs::temp_directory_path() / "cyxwiz_test_series_explore";
     std::error_code ec;

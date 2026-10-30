@@ -198,7 +198,7 @@ private:
  * strength (the primary's: how much of the detrended series a season of that
  * length explains), analysis.
  *
- * Params: signal_col (required), min_period (default 2), max_period (default -1: n/2).
+ * Params: signal_col (required), min_period (default 2), max_period (default -1: a quarter of the rows, four cycles).
  */
 class SeasonalityDetectorOperator : public IPipelineOperator {
 public:

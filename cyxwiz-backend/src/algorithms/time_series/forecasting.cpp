@@ -128,7 +128,7 @@ Params StartValues(const std::vector<double>& y, const Spec& spec) {
         }
         int cycles = std::min(5, n / m);
         cycles = std::max(cycles, static_cast<int>(std::ceil((10.0 + 2 * (m / 2)) / m)));
-        const int len = cycles * m;
+        const int len = std::min(cycles * m, n);  // statsmodels' endog[:m * cycles] stops at the end
         std::vector<double> part(y.begin(), y.begin() + len);
         // pandas rolling(m, center=True).mean(), then for an even m the mean of neighbours (shift(-1).rolling(2)).
         std::vector<double> trend(static_cast<size_t>(len), NAN);

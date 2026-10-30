@@ -80,7 +80,7 @@ int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, i
     const af::array xd = series_detail::ToDevice(xdiff);
     const af::array lv = series_detail::ToDevice(x);
     const double f0 = static_cast<double>(first);
-    const af::array y = xd(af::seq(f0, f0 + nobs - 1));
+    const af::array y_raw = xd(af::seq(f0, f0 + nobs - 1));
     const auto column = [&](int c) -> af::array {
         int i = 0;
         if (trend >= 1 && c == i++) return af::constant(1.0, nobs, series_detail::ComputeType());
@@ -93,13 +93,24 @@ int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, i
         const int lag = c - fixed + 1;
         return xd(af::seq(f0 - lag, f0 - lag + nobs - 1));
     };
+    // Each column centred (when there is an intercept: the fit is the same) and
+    // scaled to unit spread, and the response centred too, so the Gram matrix
+    // stays well conditioned on a float32 device; the SSE is unchanged.
+    const bool intercept = trend >= 1;
+    const auto conditioned = [&](const af::array& v, bool is_intercept) -> af::array {
+        if (is_intercept) return v;
+        af::array w = intercept ? v - af::mean<double>(v) : v;
+        const double spread = std::sqrt(af::sum<double>(w * w) / static_cast<double>(nobs));
+        return spread > 0.0 ? w / spread : w;
+    };
+    const af::array y = intercept ? y_raw - af::mean<double>(y_raw) : y_raw;
     // The Gram matrix G and X'y by blocks of columns.
     constexpr int kBlock = 8;
     std::vector<double> G(static_cast<size_t>(total) * static_cast<size_t>(total), 0.0), g(static_cast<size_t>(total), 0.0);
     std::vector<af::array> blocks;
     for (int start = 0; start < total; start += kBlock) {
-        af::array block = column(start);
-        for (int c = start + 1; c < std::min(total, start + kBlock); ++c) block = af::join(1, block, column(c));
+        af::array block = conditioned(column(start), intercept && start == 0);
+        for (int c = start + 1; c < std::min(total, start + kBlock); ++c) block = af::join(1, block, conditioned(column(c), false));
         blocks.push_back(block);
     }
     for (size_t a = 0; a < blocks.size(); ++a) {
@@ -133,7 +144,7 @@ int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, i
                 for (int k = 0; k < j; ++k) sum -= L[static_cast<size_t>(i) * pcount + k] * L[static_cast<size_t>(j) * pcount + k];
                 if (i == j) {
                     const double diag = G[static_cast<size_t>(j) * static_cast<size_t>(total) + static_cast<size_t>(j)];
-                    if (!(sum > 1e-12 * std::max(1.0, std::fabs(diag)))) {
+                    if (!(sum > 1e-7 * std::max(1.0, std::fabs(diag)))) {
                         ok = false;
                         break;
                     }
@@ -279,6 +290,14 @@ StationarityResult TimeSeries::KPSSTest(const std::vector<double>& data, const s
         const int covlags = static_cast<int>(std::pow(static_cast<double>(n), 2.0 / 9.0));
         const std::vector<double> acov = series_detail::Autocovariance(resids, std::max(covlags, std::max(0, nlags)));
         const auto dot = [&](int i) { return acov[static_cast<size_t>(i)] * static_cast<double>(n); };
+        // Nothing left (a constant series; an exact line around a trend): the residuals' variance is below rounding of the series.
+        double mean_square = 0.0;
+        for (const double v : data) mean_square += v * v;
+        mean_square /= static_cast<double>(n);
+        if (!(acov[0] > 1e-20 * (mean_square + 1.0))) {
+            r.error_message = regression == "ct" ? "The series is an exact line: nothing is left for the KPSS test" : "The series has the same value in every row";
+            return r;
+        }
         if (nlags < 0) {
             // Hobijn et al.: the Newey-West truncation from the residuals' autocovariances.
             double s0 = dot(0) / static_cast<double>(n), s1 = 0.0;
@@ -287,9 +306,9 @@ StationarityResult TimeSeries::KPSSTest(const std::vector<double>& data, const s
                 s0 += prod;
                 s1 += i * prod;
             }
-            const double s_hat = s1 / s0;
+            const double s_hat = s0 > 0.0 ? s1 / s0 : 0.0;
             const double gamma_hat = 1.1447 * std::pow(s_hat * s_hat, 1.0 / 3.0);
-            nlags = static_cast<int>(gamma_hat * std::pow(static_cast<double>(n), 1.0 / 3.0));
+            nlags = std::isfinite(gamma_hat) ? static_cast<int>(gamma_hat * std::pow(static_cast<double>(n), 1.0 / 3.0)) : 0;
             nlags = std::min(nlags, static_cast<int>(n) - 1);
         }
         const std::vector<double> acov2 = nlags > covlags ? series_detail::Autocovariance(resids, nlags) : acov;

@@ -4725,7 +4725,7 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
         {{"Periods", PinType::Dataset, true, "period, share, harmonic_of, is_primary, has_seasonality, strength"}},
         {{"signal_col", "string", "", "Numeric signal column", {}, ""},
          {"min_period", "int", "2", "Minimum period", {}, ""},
-         {"max_period", "int", "-1", "Maximum period (-1: n/2)", {}, ""}},
+         {"max_period", "int", "-1", "Maximum period (-1: a quarter of the rows, so a season repeats four times)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ARIMAForecaster, NodeCategory::TimeSeries, "ARIMA", ICON_FA_CHART_LINE,

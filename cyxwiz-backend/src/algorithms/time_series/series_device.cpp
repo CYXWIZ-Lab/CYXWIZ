@@ -107,14 +107,18 @@ void Rolling(const std::vector<double>& x, int window, std::vector<double>& mean
     mean.assign(n, NAN);
     sd.assign(n, NAN);
     if (n < w) return;
-    // Window sums by a device convolution of x and x^2 (the window's mean, then its sample variance).
-    const af::array d = ToDevice(x);
+    // Window sums by a device convolution of x and x^2 (the window's mean, then
+    // its sample variance), on the series less its mean so the sums do not
+    // cancel on a float32 device (the variance is shift-invariant).
+    const af::array raw = ToDevice(x);
+    const double centre = af::mean<double>(raw);
+    const af::array d = raw - centre;
     const af::array ones = af::constant(1.0, static_cast<dim_t>(w), ComputeType());
     const std::vector<double> s1 = ToHost(af::convolve1(d, ones, AF_CONV_EXPAND), "TimeSeries rolling");
     const std::vector<double> s2 = ToHost(af::convolve1(d * d, ones, AF_CONV_EXPAND), "TimeSeries rolling");
     for (size_t i = w - 1; i < n; ++i) {
         const double sum = s1[i], sum2 = s2[i];
-        mean[i] = sum / static_cast<double>(w);
+        mean[i] = sum / static_cast<double>(w) + centre;
         if (w > 1) sd[i] = std::sqrt(std::max(0.0, (sum2 - sum * sum / static_cast<double>(w)) / static_cast<double>(w - 1)));
     }
 }

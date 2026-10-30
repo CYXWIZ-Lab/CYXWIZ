@@ -345,8 +345,10 @@ void SeriesView::RenderSeasonality(const ExploreContext& context) {
     RenderSeriesLine(s);
     ImGui::Spacing();
     const float avail = ImGui::GetContentRegionAvail().x;
-    const bool split = avail >= 820.0f && !a->season_by_position.empty();
-    if (split && ImGui::BeginTable("##series_season_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
+    bool split = avail >= 820.0f && !a->season_by_position.empty();
+    // split stays true only when the table began (EndTable must not run otherwise).
+    split = split && ImGui::BeginTable("##series_season_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
+    if (split) {
         ImGui::TableSetupColumn("candidates", ImGuiTableColumnFlags_WidthStretch, 0.8f);
         ImGui::TableSetupColumn("season", ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableNextRow();
@@ -511,8 +513,10 @@ void SeriesView::RenderCorrelogram(const ExploreContext& context) {
     RenderSeriesLine(s);
     ImGui::Spacing();
     const float avail = ImGui::GetContentRegionAvail().x;
-    const bool split = avail >= 820.0f;
-    if (split && ImGui::BeginTable("##series_correlogram_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
+    bool split = avail >= 820.0f;
+    // split stays true only when the table began (EndTable must not run otherwise).
+    split = split && ImGui::BeginTable("##series_correlogram_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
+    if (split) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
     }

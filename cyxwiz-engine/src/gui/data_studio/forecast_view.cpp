@@ -286,6 +286,7 @@ void ForecastView::RenderAnswer(const series::ForecastAnswer& a) {
     ExploreFigures("##forecast_figures", figures);
     Wrapped(t.text, sv::ForecastSentence(a));
     Wrapped(t.text, sv::HoldoutSentence(a));
+    Wrapped(t.caution, a.holdout_note);
     Faint(sv::SeriesWords(s) + "; period " + sv::PeriodWords(s) + ".");
     Faint(sv::LeftOut(s));
     ImGui::Spacing();
@@ -312,8 +313,10 @@ void ForecastView::RenderAnswer(const series::ForecastAnswer& a) {
     Heading(("THE SERIES, THE FIT AND THE FORECAST WITH ITS " + Round(100.0 * a.request.level, "%.0f") + "% RANGE").c_str());
     explore_plot::Band(xs, observed, fit, low, high, w, std::clamp(w * 0.34f, 160.0f, 280.0f), n > 0 ? s.t[n - 1] : NAN, "forecast", "", lo, hi);
     ImGui::Spacing();
-    const bool split = w >= 820.0f && !a.scores.empty();
-    if (split && ImGui::BeginTable("##forecast_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
+    bool split = w >= 820.0f && !a.scores.empty();
+    // split stays true only when the table began (EndTable must not run otherwise).
+    split = split && ImGui::BeginTable("##forecast_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
+    if (split) {
         ImGui::TableSetupColumn("table", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("holdout", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableNextRow();

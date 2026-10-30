@@ -162,6 +162,7 @@ struct ForecastAnswer {
     std::vector<double> future_t;
     // The held-out check: the last `holdout` rows, every method fitted on the rest.
     int holdout = 0;                     // rows held out (the default resolved)
+    std::string holdout_note;            // why a typed hold-out could not run ("" when it did)
     std::vector<double> actual;
     std::vector<HoldoutScore> scores;    // the chosen method first, the seasonal naive baseline last
 };

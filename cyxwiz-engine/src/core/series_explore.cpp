@@ -137,7 +137,7 @@ SeriesAnswer ReadSeries(const std::string& table, const SeriesRequest& request, 
         exprs.push_back((s.kind == TimeKind::Numbers ? "CAST(" + Ident(request.time) + " AS DOUBLE)" : TimeExpr(request.time, type)) + " AS t");
     }
     exprs.push_back(NumberExpr(request.value, texts, params, "v"));
-    exprs.push_back("row_number() OVER () AS r");
+    exprs.push_back("CAST(row_number() OVER () AS DOUBLE) AS r");
     QueryRequest query;
     query.sql = "SELECT " + exprs[0];
     for (size_t i = 1; i < exprs.size(); ++i) query.sql += ", " + exprs[i];
@@ -311,6 +311,8 @@ ForecastAnswer RunForecast(const std::string& table, const ForecastRequest& requ
     // The held-out check (D6-6): the last H rows; by default twice the period (else 12), at most a third of the rows.
     int holdout = request.holdout;
     if (holdout < 0) holdout = std::min(period >= 2 ? 2 * period : 12, static_cast<int>(n) / 3);
+    if (holdout > 0 && n - holdout < minimum)
+        a.holdout_note = "The last " + std::to_string(holdout) + " rows cannot be held out: fewer than " + std::to_string(minimum) + " rows would be left to fit on.";
     if (holdout > 0 && n - holdout >= minimum) {
         a.holdout = holdout;
         const std::vector<double> train(y.begin(), y.end() - a.holdout);

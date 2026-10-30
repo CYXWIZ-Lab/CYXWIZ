@@ -199,11 +199,17 @@ std::string SeasonalitySentence(const series::SeasonalityAnswer& a) {
         }
     out += s.has_seasonality ? "; a seasonal pattern of that length explains " + Percent(s.strength) + " of what is left after the trend."
                              : "; but a seasonal pattern of that length explains only " + Percent(s.strength) + " of what is left after the trend, so the season is weak.";
-    if (!a.season_by_position.empty()) {
-        const auto hi = std::max_element(a.season_by_position.begin(), a.season_by_position.end());
-        const auto lo = std::min_element(a.season_by_position.begin(), a.season_by_position.end());
-        const size_t ih = static_cast<size_t>(hi - a.season_by_position.begin()), il = static_cast<size_t>(lo - a.season_by_position.begin());
-        out += " " + a.position_names[ih] + " is the high (" + (*hi >= 0 ? "+" : "") + Round(*hi) + " on average), " + a.position_names[il] + " the low (" + Round(*lo) + ").";
+    // The high and low positions among those seen (a month never observed is NaN).
+    size_t ih = a.season_by_position.size(), il = ih;
+    for (size_t i = 0; i < a.season_by_position.size(); ++i) {
+        const double v = a.season_by_position[i];
+        if (!std::isfinite(v)) continue;
+        if (ih == a.season_by_position.size() || v > a.season_by_position[ih]) ih = i;
+        if (il == a.season_by_position.size() || v < a.season_by_position[il]) il = i;
+    }
+    if (ih < a.season_by_position.size() && ih < a.position_names.size() && il < a.position_names.size()) {
+        const double hi = a.season_by_position[ih], lo = a.season_by_position[il];
+        out += " " + a.position_names[ih] + " is the high (" + (hi >= 0 ? "+" : "") + Round(hi) + " on average), " + a.position_names[il] + " the low (" + Round(lo) + ").";
     }
     return out;
 }
@@ -236,13 +242,20 @@ std::string CorrelogramSentence(const series::CorrelogramAnswer& a) {
     else out = what + " looks like white noise (Ljung-Box p " + Round(c.ljung_box_pvalue) + " at " + std::to_string(c.ljung_box_lags) + " lags).";
     const int period = a.series.period;
     const bool slow = c.acf.size() > 10 && c.acf[1] > 0.8 && std::fabs(c.acf[10]) > c.confidence_upper[10] - c.acf[10];
-    if (slow) out += " The ACF decays slowly, which is a trend";
+    bool open = false;  // a sentence about the ACF's shape is being built
+    if (slow) {
+        out += " The ACF decays slowly, which is a trend";
+        open = true;
+    }
     if (period >= 2 && static_cast<size_t>(period) < c.acf.size()) {
         bool seasonal = c.acf[static_cast<size_t>(period)] > c.confidence_upper[static_cast<size_t>(period)] - c.acf[static_cast<size_t>(period)] &&
                         c.acf[static_cast<size_t>(period)] > c.acf[static_cast<size_t>(period) - 1];
-        if (seasonal) out += std::string(slow ? ", and rises again at " : " The ACF rises at ") + std::to_string(period) + (static_cast<size_t>(2 * period) < c.acf.size() ? ", " + std::to_string(2 * period) : "") + ", which is the season";
+        if (seasonal) {
+            out += std::string(slow ? ", and rises again at " : " The ACF rises at ") + std::to_string(period) + (static_cast<size_t>(2 * period) < c.acf.size() ? ", " + std::to_string(2 * period) : "") + ", which is the season";
+            open = true;
+        }
     }
-    if (slow || (period >= 2)) out += ".";
+    if (open) out += ".";
     if (c.suggested_ar_order > 0 || c.suggested_ma_order > 0) {
         out += " For an ARIMA" + std::string(a.request.differenced ? "" : " on the differenced series") + ", start from p = " + std::to_string(c.suggested_ar_order) +
                ", q = " + std::to_string(c.suggested_ma_order) + " (the PACF cuts off after " + std::to_string(c.suggested_ar_order) + ", the ACF after " +

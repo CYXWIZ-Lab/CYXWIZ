@@ -18,6 +18,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace cyxwiz {
@@ -262,7 +263,9 @@ bool ParseDoubleOptional(const std::map<std::string, std::string>& params, const
     auto it = params.find(key);
     if (it == params.end() || it->second.empty()) return true;
     try {
-        out = std::stod(it->second);
+        size_t consumed = 0;
+        out = std::stod(it->second, &consumed);
+        if (consumed != it->second.size()) throw std::invalid_argument("trailing characters");
         return true;
     } catch (...) {
         error = op_name + ": '" + key + "' is not a valid float: " + it->second;
@@ -628,8 +631,8 @@ bool TimeSeriesDecompositionOperator::Configure(const std::map<std::string, std:
     if (!ParseChoice(params, "method", method_, {"additive", "multiplicative"}, GetName(), error)) return false;
     if (!ParseChoice(params, "algorithm", algorithm_, {"stl", "classical"}, GetName(), error)) return false;
     if (!ParseIntOptional(params, "seasonal_window", seasonal_window_, GetName(), error)) return false;
-    if (seasonal_window_ < 3) {
-        error = GetName() + ": 'seasonal_window' must be >= 3 (got " + std::to_string(seasonal_window_) + ")";
+    if (seasonal_window_ < 3 || seasonal_window_ % 2 == 0) {
+        error = GetName() + ": 'seasonal_window' must be an odd number of 3 or more (got " + std::to_string(seasonal_window_) + ")";
         return false;
     }
     if (!ParseBoolOptional(params, "robust", robust_, GetName(), error)) return false;
@@ -689,9 +692,9 @@ bool ARIMAOperator::Configure(const std::map<std::string, std::string>& params, 
     if (!ParseIntOptional(params, "p", p_, GetName(), error)) return false;
     if (!ParseIntOptional(params, "d", d_, GetName(), error)) return false;
     if (!ParseIntOptional(params, "q", q_, GetName(), error)) return false;
-    for (const auto [name, value] : {std::pair{"p", p_}, std::pair{"d", d_}, std::pair{"q", q_}})
-        if (value < -1 || value > 5) {
-            error = GetName() + ": '" + name + "' must be between 0 and 5, or -1 to choose it (got " + std::to_string(value) + ")";
+    for (const auto [name, value, top] : {std::tuple{"p", p_, 5}, std::tuple{"d", d_, 2}, std::tuple{"q", q_, 5}})
+        if (value < -1 || value > top) {
+            error = GetName() + ": '" + name + "' must be between 0 and " + std::to_string(top) + ", or -1 to choose it (got " + std::to_string(value) + ")";
             return false;
         }
     if (!ParseHorizonAndLevel(params, horizon_, level_, GetName(), error)) return false;
