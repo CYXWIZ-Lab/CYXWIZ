@@ -293,8 +293,11 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
     // Window-local x of the panel's right edge: nothing runs past it.
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
     ImGui::BeginGroup();
+    const float text_x = ImGui::GetCursorPosX();
+    ImGui::PushTextWrapPos(std::max(right, text_x + 1.0f));
     ImGui::TextUnformatted(row.name.c_str());
-    ImGui::PushTextWrapPos(std::min(ImGui::GetCursorPosX() + 320.0f, right));
+    ImGui::PopTextWrapPos();
+    ImGui::PushTextWrapPos(std::max(std::min(text_x + 320.0f, right), text_x + 1.0f));
     ImGui::TextColored(t.text_dim, "%s \xC2\xB7 %s", row.what.c_str(), row.output_text.c_str());
     ImGui::PopTextWrapPos();
     ImGui::EndGroup();
@@ -399,16 +402,26 @@ void ImageRecipeView::Render(::gui::NodeEditor* editor) {
         const std::string file = sample.substr(sample.find_last_of("/\\") + 1);
         // While the pictures are drawn (the first draw of a step builds its GPU code).
         const std::string label = (task_ ? "Drawing the pictures of " : "Sample ") + file;
-        ui::SameLineRight(ImGui::CalcTextSize(label.c_str()).x + ui::ButtonWidth("Next sample", ui::ButtonSize::Small) + 24.0f);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.text_dim, "%s", label.c_str());
-        ImGui::SameLine();
+        const float line_w = ImGui::CalcTextSize(label.c_str()).x + ui::ButtonWidth("Next sample", ui::ButtonSize::Small) + 24.0f;
+        if (line_w <= ImGui::GetContentRegionAvail().x) {
+            ui::SameLineRight(line_w);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(t.text_dim, "%s", label.c_str());
+            ImGui::SameLine();
+        } else {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "%s", label.c_str());
+            ImGui::PopTextWrapPos();
+        }
         if (ui::SecondaryButton("Next sample")) ++sample_;
     } else {
         ImGui::TextColored(t.text_faint, "The pictures show once the images are loaded and indexed.");
     }
     if (message_graph_ != editor->GraphGeneration()) {
         message_.clear();
+        open_settings_ = -1;
+        settings_key_.clear();
+        sample_ = 0;
         message_graph_ = editor->GraphGeneration();
     }
     if (!message_.empty()) {
