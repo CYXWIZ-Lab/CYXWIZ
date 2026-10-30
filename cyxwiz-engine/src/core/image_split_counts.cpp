@@ -15,7 +15,9 @@ ImageSplitCounts CountImageSplit(const std::string& image_dataset, const SampleS
                                  const std::vector<std::string>& excluded_files) {
     ImageSplitCounts counts;
     auto& registry = DataRegistry::Instance();
-    const auto* entry = registry.GetImageDatasetEntry(image_dataset);
+    // A copy: this runs on the live compile's thread while the UI may reload
+    // or rename the dataset.
+    const auto entry = registry.CopyImageDatasetEntry(image_dataset);
     if (!entry) {
         counts.reason = "'" + image_dataset + "' is not loaded";
         return counts;

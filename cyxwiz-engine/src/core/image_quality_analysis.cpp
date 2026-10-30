@@ -348,7 +348,8 @@ ImageQualityVerdict JudgeImageQualityAnalysis(const ImageQualityAnalysis& analys
 GraphImageQualityResult ResolveImageQuality(const std::string& dataset_name, int width, int height,
                                             const std::map<std::string, std::string>& parameters) {
     GraphImageQualityResult result;
-    const auto* entry = DataRegistry::Instance().GetImageDatasetEntry(dataset_name);
+    // A copy: the compile hook runs on the live compile's thread.
+    const auto entry = DataRegistry::Instance().CopyImageDatasetEntry(dataset_name);
     if (!entry) {
         result.error = "the image dataset is not loaded";
         return result;
