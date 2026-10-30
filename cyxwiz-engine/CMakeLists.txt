@@ -673,11 +673,6 @@ set(ENGINE_SOURCES
     src/gui/panels/qp_panel.cpp
     src/gui/panels/differentiation_panel.cpp
     src/gui/panels/integration_panel.cpp
-    src/gui/panels/decomposition_panel.cpp
-    src/gui/panels/acf_pacf_panel.cpp
-    src/gui/panels/stationarity_panel.cpp
-    src/gui/panels/seasonality_panel.cpp
-    src/gui/panels/forecasting_panel.cpp
     src/gui/panels/tokenization_panel.cpp
     src/gui/panels/word_frequency_panel.cpp
     src/gui/panels/tfidf_panel.cpp
@@ -967,11 +962,6 @@ set(ENGINE_HEADERS
     src/gui/panels/qp_panel.h
     src/gui/panels/differentiation_panel.h
     src/gui/panels/integration_panel.h
-    src/gui/panels/decomposition_panel.h
-    src/gui/panels/acf_pacf_panel.h
-    src/gui/panels/stationarity_panel.h
-    src/gui/panels/seasonality_panel.h
-    src/gui/panels/forecasting_panel.h
     src/gui/panels/tokenization_panel.h
     src/gui/panels/word_frequency_panel.h
     src/gui/panels/tfidf_panel.h

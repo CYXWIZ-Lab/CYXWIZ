@@ -92,12 +92,6 @@ class LPPanel;
 class QPPanel;
 class DifferentiationPanel;
 class IntegrationPanel;
-// Time Series Analysis panels (Phase 10)
-class DecompositionPanel;
-class ACFPACFPanel;
-class StationarityPanel;
-class SeasonalityPanel;
-class ForecastingPanel;
 // Text Processing panels (Phase 11)
 class TokenizationPanel;
 class WordFrequencyPanel;
@@ -431,13 +425,6 @@ private:
     std::unique_ptr<cyxwiz::QPPanel> qp_panel_;
     std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
     std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
-
-    // Time Series Analysis panels (Phase 10)
-    std::unique_ptr<cyxwiz::DecompositionPanel> decomposition_panel_;
-    std::unique_ptr<cyxwiz::ACFPACFPanel> acf_pacf_panel_;
-    std::unique_ptr<cyxwiz::StationarityPanel> stationarity_panel_;
-    std::unique_ptr<cyxwiz::SeasonalityPanel> seasonality_panel_;
-    std::unique_ptr<cyxwiz::ForecastingPanel> forecasting_panel_;
 
     // Text Processing panels (Phase 11)
     std::unique_ptr<cyxwiz::TokenizationPanel> tokenization_panel_;

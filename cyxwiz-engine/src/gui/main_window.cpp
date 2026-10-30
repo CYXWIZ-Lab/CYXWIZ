@@ -101,13 +101,9 @@
 #include "panels/qp_panel.h"
 #include "panels/differentiation_panel.h"
 #include "panels/integration_panel.h"
-#include "panels/decomposition_panel.h"
-#include "panels/acf_pacf_panel.h"
-#include "panels/stationarity_panel.h"
 #include "data_studio/folds_view.h"
+#include "data_studio/series_view.h"
 #include "../core/node_executors/training_evaluation_operator.h"
-#include "panels/seasonality_panel.h"
-#include "panels/forecasting_panel.h"
 #include "panels/tokenization_panel.h"
 #include "panels/word_frequency_panel.h"
 #include "panels/tfidf_panel.h"
@@ -694,13 +690,6 @@ MainWindow::MainWindow()
     qp_panel_ = std::make_unique<cyxwiz::QPPanel>();
     differentiation_panel_ = std::make_unique<cyxwiz::DifferentiationPanel>();
     integration_panel_ = std::make_unique<cyxwiz::IntegrationPanel>();
-
-    // Time Series Analysis panels (Phase 10)
-    decomposition_panel_ = std::make_unique<cyxwiz::DecompositionPanel>();
-    acf_pacf_panel_ = std::make_unique<cyxwiz::ACFPACFPanel>();
-    stationarity_panel_ = std::make_unique<cyxwiz::StationarityPanel>();
-    seasonality_panel_ = std::make_unique<cyxwiz::SeasonalityPanel>();
-    forecasting_panel_ = std::make_unique<cyxwiz::ForecastingPanel>();
 
     // Text Processing panels (Phase 11)
     tokenization_panel_ = std::make_unique<cyxwiz::TokenizationPanel>();
@@ -1993,36 +1982,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Time Series Analysis callbacks (Phase 10)
-    toolbar_->SetOpenDecompositionCallback([this]() {
-        if (decomposition_panel_) {
-            decomposition_panel_->Toggle();
-            spdlog::info("Toggled Time Series Decomposition panel");
-        }
-    });
-    toolbar_->SetOpenACFPACFCallback([this]() {
-        if (acf_pacf_panel_) {
-            acf_pacf_panel_->Toggle();
-            spdlog::info("Toggled ACF/PACF panel");
-        }
-    });
-    toolbar_->SetOpenStationarityCallback([this]() {
-        if (stationarity_panel_) {
-            stationarity_panel_->Toggle();
-            spdlog::info("Toggled Stationarity Testing panel");
-        }
-    });
-    toolbar_->SetOpenSeasonalityCallback([this]() {
-        if (seasonality_panel_) {
-            seasonality_panel_->Toggle();
-            spdlog::info("Toggled Seasonality Detection panel");
-        }
-    });
+    // Tools > Time Series opens Data Studio's Explore tabs Series (on that
+    // look) and Forecast, for the data in use (TOFIX129 D6).
+    const auto open_series = [this](cyxwiz::SeriesView::Look look) {
+        if (data_studio_panel_) data_studio_panel_->ShowSeries(look);
+    };
+    toolbar_->SetOpenDecompositionCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Parts); });
+    toolbar_->SetOpenACFPACFCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Correlogram); });
+    toolbar_->SetOpenStationarityCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Stationarity); });
+    toolbar_->SetOpenSeasonalityCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Seasonality); });
     toolbar_->SetOpenForecastingCallback([this]() {
-        if (forecasting_panel_) {
-            forecasting_panel_->Toggle();
-            spdlog::info("Toggled Forecasting panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->ShowForecast();
     });
 
     // Text Processing callbacks (Phase 11)
@@ -2598,16 +2568,6 @@ MainWindow::~MainWindow() {
     word_frequency_panel_.reset();
     spdlog::info("~MainWindow: tokenization_panel_");
     tokenization_panel_.reset();
-    spdlog::info("~MainWindow: forecasting_panel_");
-    forecasting_panel_.reset();
-    spdlog::info("~MainWindow: seasonality_panel_");
-    seasonality_panel_.reset();
-    spdlog::info("~MainWindow: stationarity_panel_");
-    stationarity_panel_.reset();
-    spdlog::info("~MainWindow: acf_pacf_panel_");
-    acf_pacf_panel_.reset();
-    spdlog::info("~MainWindow: decomposition_panel_");
-    decomposition_panel_.reset();
     spdlog::info("~MainWindow: integration_panel_");
     integration_panel_.reset();
     spdlog::info("~MainWindow: differentiation_panel_");
@@ -3073,13 +3033,6 @@ void MainWindow::Render() {
     TimedRender("qp", qp_panel_);
     TimedRender("differentiation", differentiation_panel_);
     TimedRender("integration", integration_panel_);
-
-    // Time Series Analysis panels (Phase 10)
-    TimedRender("decomposition", decomposition_panel_);
-    TimedRender("acf pacf", acf_pacf_panel_);
-    TimedRender("stationarity", stationarity_panel_);
-    TimedRender("seasonality", seasonality_panel_);
-    TimedRender("forecasting", forecasting_panel_);
 
     // Text Processing panels (Phase 11)
     TimedRender("tokenization", tokenization_panel_);
@@ -3547,13 +3500,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (qp_panel_) qp_panel_->SetVisible(false);
     if (differentiation_panel_) differentiation_panel_->SetVisible(false);
     if (integration_panel_) integration_panel_->SetVisible(false);
-
-    // Time Series Analysis panels (Phase 10)
-    if (decomposition_panel_) decomposition_panel_->SetVisible(false);
-    if (acf_pacf_panel_) acf_pacf_panel_->SetVisible(false);
-    if (stationarity_panel_) stationarity_panel_->SetVisible(false);
-    if (seasonality_panel_) seasonality_panel_->SetVisible(false);
-    if (forecasting_panel_) forecasting_panel_->SetVisible(false);
 
     // Text Processing panels (Phase 11)
     if (tokenization_panel_) tokenization_panel_->SetVisible(false);

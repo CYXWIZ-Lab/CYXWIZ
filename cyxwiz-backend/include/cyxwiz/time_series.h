@@ -470,66 +470,6 @@ public:
      */
     static double StdDev(const std::vector<double>& data);
 
-    // ==================== Synthetic Data Generation ====================
-
-    /**
-     * Generate white noise
-     */
-    static std::vector<double> GenerateWhiteNoise(
-        int n,
-        double mean = 0.0,
-        double std = 1.0
-    );
-
-    /**
-     * Generate random walk
-     */
-    static std::vector<double> GenerateRandomWalk(
-        int n,
-        double start = 0.0,
-        double std = 1.0
-    );
-
-    /**
-     * Generate trend + seasonal + noise
-     */
-    static std::vector<double> GenerateTrendSeasonal(
-        int n,
-        double trend_slope,
-        double seasonal_amplitude,
-        int period,
-        double noise_std
-    );
-
-    /**
-     * Generate AR(p) process
-     */
-    static std::vector<double> GenerateAR(
-        int n,
-        const std::vector<double>& coeffs,
-        double noise_std = 1.0
-    );
-
-    /**
-     * Generate MA(q) process
-     */
-    static std::vector<double> GenerateMA(
-        int n,
-        const std::vector<double>& coeffs,
-        double noise_std = 1.0
-    );
-
-    /**
-     * Generate ARIMA(p,d,q) process
-     */
-    static std::vector<double> GenerateARIMA(
-        int n,
-        const std::vector<double>& ar_coeffs,
-        const std::vector<double>& ma_coeffs,
-        int d,
-        double noise_std = 1.0
-    );
-
     // ==================== Windowing for ML ====================
 
     /**
