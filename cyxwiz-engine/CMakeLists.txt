@@ -1054,13 +1054,6 @@ set(ENGINE_HEADERS
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
-    # Transform/Augmentation system
-    src/transforms/transform.h
-    src/transforms/geometric.h
-    src/transforms/color.h
-    src/transforms/noise.h
-    src/transforms/advanced.h
-    src/transforms/transforms.h
     # Preprocessing system
     src/preprocessing/preprocessing_config.h
     src/preprocessing/statistics_calculator.h

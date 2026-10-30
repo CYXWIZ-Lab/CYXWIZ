@@ -20,7 +20,6 @@
 #include "image_formats.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
-#include "../transforms/transform.h"
 #include "../plugin/registries/plugin_data_loader_registry.h"
 
 // Dataset implementations

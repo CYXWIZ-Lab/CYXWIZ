@@ -7,7 +7,6 @@
 #include "../src/preprocessing/normalization_transform.h"
 #include "../src/preprocessing/scaling_transform.h"
 #include "../src/preprocessing/statistics_calculator.h"
-#include "../src/transforms/transform.h"
 
 #include <stdexcept>
 
@@ -27,15 +26,6 @@ PreprocessingConfig DataRegistry::GetPreprocessingConfig(
     PreprocessingConfig config;
     config.dataset_id = dataset_id;
     return config;
-}
-
-bool DataRegistry::HasAugmentationPipeline(const std::string&) const {
-    return false;
-}
-
-std::shared_ptr<transforms::Compose> DataRegistry::GetAugmentationPipeline(
-    const std::string&) const {
-    return nullptr;
 }
 
 AnnotationManager& DataRegistry::GetAnnotationManager() {
