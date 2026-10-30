@@ -126,8 +126,7 @@ bool Tile(gui::ImageThumbnails& thumbs, const ig::Row& row, float size, bool fil
 }  // namespace
 
 ImageGalleryView::ImageGalleryView()
-    : tiles_(kThumbSize, gui::ImageThumbnails::Shape::Fit, 240),
-      preview_(256, gui::ImageThumbnails::Shape::Fit, 24) {}
+    : tiles_(kThumbSize, 240), preview_(256, 24) {}
 
 ImageGalleryView::~ImageGalleryView() {
     if (pipeline_task_) AsyncTaskManager::Instance().Cancel(pipeline_task_);

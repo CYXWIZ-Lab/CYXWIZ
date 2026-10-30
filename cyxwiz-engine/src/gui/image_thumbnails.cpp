@@ -13,8 +13,8 @@ namespace {
 constexpr size_t kMaxQueued = 400;  // older requests (scrolled away) are dropped
 }
 
-ImageThumbnails::ImageThumbnails(int size, Shape shape, size_t capacity)
-    : size_(std::max(8, size)), shape_(shape), capacity_(std::max<size_t>(16, capacity)) {
+ImageThumbnails::ImageThumbnails(int size, size_t capacity)
+    : size_(std::max(8, size)), capacity_(std::max<size_t>(16, capacity)) {
     for (int i = 0; i < 2; ++i) workers_.emplace_back([this] { Work(); });
 }
 
@@ -114,15 +114,9 @@ ImageThumbnails::Decoded ImageThumbnails::Decode(const std::string& path) const 
         d.failed = true;
         return d;
     }
-    if (shape_ == Shape::Square) {
-        const int side = std::min(image.cols, image.rows);
-        image = image(cv::Rect((image.cols - side) / 2, (image.rows - side) / 2, side, side));
-        d.width = d.height = std::min(size_, side);
-    } else {
-        const double scale = std::min(1.0, static_cast<double>(size_) / std::max(image.cols, image.rows));
-        d.width = std::max(1, static_cast<int>(image.cols * scale + 0.5));
-        d.height = std::max(1, static_cast<int>(image.rows * scale + 0.5));
-    }
+    const double scale = std::min(1.0, static_cast<double>(size_) / std::max(image.cols, image.rows));
+    d.width = std::max(1, static_cast<int>(image.cols * scale + 0.5));
+    d.height = std::max(1, static_cast<int>(image.rows * scale + 0.5));
     cv::Mat small;
     cv::resize(image, small, cv::Size(d.width, d.height), 0, 0, cv::INTER_AREA);
     cv::Mat rgba;
