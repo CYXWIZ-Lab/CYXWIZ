@@ -432,6 +432,13 @@ void TestAudioBatcher(const fs::path& root) {
     cyxwiz::AudioDatasetBatcher three(entry, preprocessing, 2, split, true, 0, 1);
     cyxwiz::AudioDatasetBatcher other_shuffle(entry, preprocessing, 2, split, true, 0, 77);
     CheckThreeParts(three, other_shuffle, 4, 2, 0, 2, "AudioDatasetBatcher");
+
+    // A dataset wired as the whole validation part (0 / 1 / 0): every clip
+    // is validation, none trains.
+    const cyxwiz::SampleSplitSettings whole_val{0.0f, 1.0f, 0.0f, false, 23};
+    cyxwiz::AudioDatasetBatcher wired(entry, preprocessing, 2, whole_val, true, 0, 1);
+    cyxwiz::AudioDatasetBatcher wired_other(entry, preprocessing, 2, whole_val, true, 0, 77);
+    CheckThreeParts(wired, wired_other, 4, 0, 4, 0, "AudioDatasetBatcher wired as validation");
 }
 
 } // namespace

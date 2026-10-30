@@ -62,4 +62,8 @@ the images load), so they are known before training starts:
 
 An audio dataset (a folder of class folders) splits the same way, with the
 same three parts, the same settings and the same rule. Its test part is
-scored at the end of training as for images.
+scored at the end of training as for images. A loaded audio Data Input
+wired into the Data Split's Validation or Test input is that part whole,
+with the same features; training refuses it, saying why, when its classes
+differ from the training dataset's (names and order) or its features have
+another shape (load it with the same sample rate and duration).

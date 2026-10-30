@@ -851,23 +851,72 @@ bool TrainingManager::StartTrainingAudio(
                  batcher->SamplesIn(BatcherPhase::Val), batcher->SamplesIn(BatcherPhase::Test), config.input_size,
                  batcher->GetFeatureRows(), batcher->GetFeatureCols(), config.num_workers, config.split_seed);
 
-    // Mirror image path: hand normalization / one-hot through to the batcher.
-    if (config.preprocessing.has_normalization) {
-        batcher->SetNormalization(config.preprocessing.norm_mean,
-                                  config.preprocessing.norm_std);
-    }
-    if (UsesScalarBinaryTargets(config.loss_type)) {
-        batcher->SetScalarLabelMode(true);
-    } else if (config.preprocessing.has_onehot &&
-               config.preprocessing.num_classes > 0) {
-        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+    // A Validation or Test audio dataset wired to the Data Split (the
+    // compiler gave its share to train): read whole as that part, with the
+    // same features. Its classes must be the training set's, in the same
+    // order, and its features the same shape, or the model's inputs and
+    // outputs would not line up.
+    std::shared_ptr<AudioDatasetBatcher> wired_dev, wired_test;
+    for (auto [role, wired] : {std::pair{&config.dataset_roles.dev, &wired_dev},
+                               std::pair{&config.dataset_roles.test, &wired_test}}) {
+        if (!role->IsSupplied() || role->joined_to_training) continue;
+        const bool dev = role == &config.dataset_roles.dev;
+        const char* part = dev ? "validation" : "test";
+        const auto* entry = DataRegistry::Instance().GetAudioDatasetEntry(role->dataset_name);
+        if (!entry) {
+            spdlog::error("TrainingManager: '{}' is wired as {} but is not a loaded audio dataset",
+                          role->dataset_name, part);
+            return false;
+        }
+        if (!entry->class_names.empty() && !audio_entry.class_names.empty() &&
+            entry->class_names != audio_entry.class_names) {
+            spdlog::error("TrainingManager: '{}' (wired as {}) has other classes than the training dataset; "
+                          "they must be the same, in the same order", role->dataset_name, part);
+            return false;
+        }
+        auto set = std::make_shared<AudioDatasetBatcher>(
+            *entry, config.audio_preprocessing, batch_size,
+            SampleSplitSettings{0.0f, dev ? 1.0f : 0.0f, dev ? 0.0f : 1.0f, false,
+                                static_cast<uint32_t>(config.split_seed)},
+            config.shuffle, config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
+        set->SetDropLast(config.drop_last);
+        if (set->SamplesIn(dev ? BatcherPhase::Val : BatcherPhase::Test) == 0) {
+            spdlog::error("TrainingManager: '{}' (wired as {}) has no clips", role->dataset_name, part);
+            return false;
+        }
+        if (set->GetFeatureRows() != batcher->GetFeatureRows() || set->GetFeatureCols() != batcher->GetFeatureCols()) {
+            spdlog::error("TrainingManager: '{}' (wired as {}) gives {}x{} features, the training dataset {}x{}; "
+                          "load it with the same sample rate and duration", role->dataset_name, part,
+                          set->GetFeatureRows(), set->GetFeatureCols(), batcher->GetFeatureRows(),
+                          batcher->GetFeatureCols());
+            return false;
+        }
+        spdlog::info("TrainingManager: '{}' is the {} part: {} clips", role->dataset_name, part,
+                     set->SamplesIn(dev ? BatcherPhase::Val : BatcherPhase::Test));
+        *wired = std::move(set);
     }
 
-    // One batcher, three parts by phase (the held-out test runs at the end).
+    // Mirror image path: hand normalization / one-hot through to the batchers.
+    for (AudioDatasetBatcher* b : {batcher.get(), wired_dev.get(), wired_test.get()}) {
+        if (!b) continue;
+        if (config.preprocessing.has_normalization) {
+            b->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
+        }
+        if (UsesScalarBinaryTargets(config.loss_type)) {
+            b->SetScalarLabelMode(true);
+        } else if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+            b->SetOneHotEncoding(config.preprocessing.num_classes);
+        }
+    }
+
+    // One batcher, three parts by phase (the held-out test runs at the end);
+    // a wired role reads its own set.
     ResolvedExternalBatchers batchers;
     batchers.train = batcher;
-    if (batcher->SamplesIn(BatcherPhase::Val) > 0) batchers.dev = batcher;
-    if (batcher->SamplesIn(BatcherPhase::Test) > 0) batchers.test = batcher;
+    if (wired_dev) batchers.dev = wired_dev;
+    else if (batcher->SamplesIn(BatcherPhase::Val) > 0) batchers.dev = batcher;
+    if (wired_test) batchers.test = wired_test;
+    else if (batcher->SamplesIn(BatcherPhase::Test) > 0) batchers.test = batcher;
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batchers));
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
