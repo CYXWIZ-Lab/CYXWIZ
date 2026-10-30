@@ -360,8 +360,10 @@ af::array ResizedCrop(const af::array& images, const ImageOpDraws& draws, int he
 // torchvision _get_perspective_coeffs: the a..h mapping an output pixel
 // (x, y) to ((ax + by + c), (dx + ey + f)) / (gx + hy + 1) in the input, from
 // the drawn end corners back to the image's own; the exact 8 x 8 solve in
-// double, then float32.
-std::array<float, 8> PerspectiveCoefficients(const std::vector<int>& corners, int height, int width) {
+// double, then float32. False when the corners give no mapping (three or
+// more on one line, possible on tiny images with a large distortion).
+bool SolvePerspective(const std::vector<int>& corners, int height, int width, std::array<float, 8>& out) {
+    if (corners.size() != 8) return false;
     const double start[4][2] = {{0.0, 0.0}, {width - 1.0, 0.0}, {width - 1.0, height - 1.0}, {0.0, height - 1.0}};
     std::array<std::array<double, 9>, 8> a{};
     for (int i = 0; i < 4; ++i) {
@@ -374,6 +376,7 @@ std::array<float, 8> PerspectiveCoefficients(const std::vector<int>& corners, in
         size_t pivot = col;
         for (size_t r = col + 1; r < 8; ++r)
             if (std::fabs(a[r][col]) > std::fabs(a[pivot][col])) pivot = r;
+        if (std::fabs(a[pivot][col]) < 1e-9) return false;
         std::swap(a[col], a[pivot]);
         for (size_t r = 0; r < 8; ++r) {
             if (r == col || a[r][col] == 0.0) continue;
@@ -381,9 +384,8 @@ std::array<float, 8> PerspectiveCoefficients(const std::vector<int>& corners, in
             for (size_t k = col; k < 9; ++k) a[r][k] -= f * a[col][k];
         }
     }
-    std::array<float, 8> out{};
     for (size_t i = 0; i < 8; ++i) out[i] = static_cast<float>(a[i][8] / a[i][i]);
-    return out;
+    return true;
 }
 
 // torchvision F.perspective (_perspective_grid in float32, then GridSample)
@@ -395,9 +397,10 @@ af::array Perspective(const af::array& images, const ImageOpDraws& draws, Interp
     std::array<std::vector<float>, 8> c;
     for (auto& v : c) v.assign(static_cast<size_t>(n), 0.0f);
     for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
-        const std::array<float, 8> k = draws.apply[i] ? PerspectiveCoefficients(draws.corners[i], static_cast<int>(h),
-                                                                                static_cast<int>(w))
-                                                      : std::array<float, 8>{1, 0, 0, 0, 1, 0, 0, 0};
+        std::array<float, 8> k{1, 0, 0, 0, 1, 0, 0, 0};
+        if (draws.apply[i] && !SolvePerspective(draws.corners[i], static_cast<int>(h), static_cast<int>(w), k)) {
+            throw std::invalid_argument("Random Perspective needs 8 corner values per sample that are not on one line");
+        }
         for (size_t j = 0; j < 8; ++j) c[j][i] = k[j];
     }
     const auto scaled = [&](const std::vector<float>& v, float by) {
@@ -421,6 +424,9 @@ af::array GaussianNoise(const af::array& images, const ImageOpDraws& draws, cons
     af::array noise;
     if (!draws.noise.empty()) {
         const dim_t n = images.dims(3);
+        if (draws.noise.size() != shape.Size() * static_cast<size_t>(n)) {
+            throw std::invalid_argument("Gaussian Noise needs one noise value per pixel of every sample");
+        }
         noise = RowsToImages(af::transpose(af::array(static_cast<dim_t>(shape.Size()), n, draws.noise.data())), shape);
     } else {
         af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, draws.noise_seed);
@@ -883,8 +889,16 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
             if (draws.order.empty()) return images;
             return AugMix(images, draws, op.mixture_width, op.interpolation);
         case ImageOpKind::RandomResizedCrop:
-            if (draws.top.size() != static_cast<size_t>(dims[3])) {
+            if (draws.top.size() != static_cast<size_t>(dims[3]) || draws.left.size() != draws.top.size() ||
+                draws.box_height.size() != draws.top.size() || draws.box_width.size() != draws.top.size()) {
                 throw std::invalid_argument("Random Resized Crop needs one box per sample");
+            }
+            for (size_t i = 0; i < draws.top.size(); ++i) {
+                if (draws.box_height[i] < 1 || draws.box_width[i] < 1 || draws.top[i] < 0 || draws.left[i] < 0 ||
+                    static_cast<dim_t>(draws.top[i] + draws.box_height[i]) > dims[0] ||
+                    static_cast<dim_t>(draws.left[i] + draws.box_width[i]) > dims[1]) {
+                    throw std::invalid_argument("Random Resized Crop boxes must lie inside the image");
+                }
             }
             return ResizedCrop(images, draws, op.height, op.width, op.interpolation);
         case ImageOpKind::RandomAffine:
@@ -1059,7 +1073,8 @@ std::string ValidateImageOp(const ImageOp& op, const ImageShape& input) {
             if (input.height < 2 || input.width < 2) return "Random Perspective needs an image of 2 x 2 or more";
             return {};
         case ImageOpKind::GaussianNoise:
-            if (!(op.sigma >= 0.0f)) return "Gaussian Noise sigma must be 0 or more";
+            if (!(op.sigma >= 0.0f && std::isfinite(op.sigma))) return "Gaussian Noise sigma must be 0 or more";
+            if (!std::isfinite(op.noise_mean)) return "Gaussian Noise mean must be a number";
             return {};
         case ImageOpKind::RandomGrayscale:
             if (!(op.probability >= 0.0f && op.probability <= 1.0f)) {
@@ -1259,9 +1274,9 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 const double in_ratio = static_cast<double>(w) / h;
                 int bw = w, bh = h;
                 if (in_ratio < op.ratio_min) {
-                    bh = RoundHalfEven(w / static_cast<double>(op.ratio_min));
+                    bh = (std::max)(RoundHalfEven(w / static_cast<double>(op.ratio_min)), 1);
                 } else if (in_ratio > op.ratio_max) {
-                    bw = RoundHalfEven(h * static_cast<double>(op.ratio_max));
+                    bw = (std::max)(RoundHalfEven(h * static_cast<double>(op.ratio_max)), 1);
                 }
                 draws.top[i] = (h - bh) / 2;
                 draws.left[i] = (w - bw) / 2;
@@ -1300,9 +1315,12 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             const auto pick = [&rng](int low, int high) { return std::uniform_int_distribution<int>(low, high - 1)(rng); };
             for (size_t i = 0; i < batch; ++i) {
                 if (!(unit(rng) < op.probability)) continue;
-                draws.apply[i] = 1;
                 draws.corners[i] = {pick(0, bound_w),     pick(0, bound_h),     pick(w - bound_w, w), pick(0, bound_h),
                                     pick(w - bound_w, w), pick(h - bound_h, h), pick(0, bound_w),     pick(h - bound_h, h)};
+                // Corners with no mapping (torchvision's lstsq would return
+                // a meaningless one) leave the image as it is.
+                std::array<float, 8> unused{};
+                draws.apply[i] = SolvePerspective(draws.corners[i], h, w, unused) ? 1 : 0;
             }
             break;
         }
@@ -1417,7 +1435,7 @@ float AugmentMagnitude(AugmentSpace space, AugmentOp op, int bins, int index, si
             const size_t side = op == AugmentOp::TranslateX ? width : height;
             const float end = wide                            ? 32.0f
                               : space == AugmentSpace::AugMix ? static_cast<float>(static_cast<double>(side) / 3.0)
-                                                              : 150.0f / 331.0f * static_cast<float>(side);
+                                                              : static_cast<float>(150.0 / 331.0 * static_cast<double>(side));
             return LinspaceAt(0.0f, end, bins, index);
         }
         case AugmentOp::Rotate:

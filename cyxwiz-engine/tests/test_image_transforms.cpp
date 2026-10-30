@@ -17,8 +17,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -410,6 +412,28 @@ void CheckNewDraws() {
     const auto wide = cyxwiz::image::DrawImageOp(crop, shape, 1, false, rng);
     Check(wide.box_width[0] == 40 && wide.box_height[0] == 27 && wide.top[0] == 2,
           "outside training: the centred box of the nearest allowed aspect");
+    crop.ratio_min = 100.0f;
+    crop.ratio_max = 200.0f;
+    const auto thin = cyxwiz::image::DrawImageOp(crop, shape, 1, false, rng);
+    Check(thin.box_height[0] == 1 && thin.box_width[0] == 40, "a ratio past the image still keeps a one-pixel box");
+    const std::vector<float> pixels(32 * 40 * 3, 0.5f);
+    const cyxwiz::Tensor one({1, 32 * 40 * 3}, pixels.data(), cyxwiz::DataType::Float32);
+    const auto refused_apply = [&](const ImageOp& op, const cyxwiz::image::ImageOpDraws& draws, const std::string& what) {
+        bool threw = false;
+        try {
+            cyxwiz::image::ApplyImageOp(op, draws, shape, one);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Check(threw, what + " is refused");
+    };
+    auto outside = thin;
+    outside.top[0] = 5;
+    outside.box_height[0] = 30;
+    refused_apply(crop, outside, "a resized crop box past the image");
+    auto empty_box = thin;
+    empty_box.box_height[0] = 0;
+    refused_apply(crop, empty_box, "an empty resized crop box");
 
     ImageOp affine;
     affine.kind = ImageOpKind::RandomAffine;
@@ -443,6 +467,23 @@ void CheckNewDraws() {
               "perspective corners move inwards by at most distortion of half a side");
     }
     Check(applied > 820 && applied < 980, "perspective follows its probability (" + std::to_string(applied) + ")");
+    cyxwiz::image::ImageOpDraws line;
+    line.apply = {1};
+    line.corners = {{0, 0, 10, 10, 20, 20, 30, 30}};
+    refused_apply(perspective, line, "perspective corners on one line");
+    // A 2 x 2 image at full distortion can draw corners with no mapping: those
+    // samples stay as they are, and every applied one solves.
+    perspective.distortion = 1.0f;
+    perspective.probability = 1.0f;
+    const ImageShape tiny{2, 2, 1};
+    const auto tiny_draws = cyxwiz::image::DrawImageOp(perspective, tiny, 400, true, rng);
+    int tiny_applied = 0;
+    for (int a : tiny_draws.apply) tiny_applied += a;
+    Check(tiny_applied > 0 && tiny_applied < 400, "tiny perspective skips only corners with no mapping (" +
+                                                       std::to_string(tiny_applied) + ")");
+    const std::vector<float> tiny_pixels(400 * 4, 0.5f);
+    const cyxwiz::Tensor tiny_rows({400, 4}, tiny_pixels.data(), cyxwiz::DataType::Float32);
+    cyxwiz::image::ApplyImageOp(perspective, tiny_draws, tiny, tiny_rows);  // throws if one did not solve
 
     ImageOp gray;
     gray.kind = ImageOpKind::RandomGrayscale;
@@ -471,6 +512,10 @@ void CheckNewDraws() {
           "device noise has the mean and sigma asked for (" + std::to_string(mean) + ", " + std::to_string(sd) + ")");
     const auto clean = cyxwiz::image::ApplyImageOp(noise, cyxwiz::image::DrawImageOp(noise, shape, 64, false, rng), shape, rows);
     Check(clean.ReadData<float>()[0] == 0.5f, "noise passes through outside training");
+    cyxwiz::image::ImageOpDraws short_noise;
+    short_noise.apply = {1};
+    short_noise.noise.assign(10, 0.0f);
+    refused_apply(noise, short_noise, "recorded noise shorter than the image");
 
     ImageOp autoaugment;
     autoaugment.kind = ImageOpKind::AutoAugment;
@@ -592,6 +637,9 @@ void CheckRefusals() {
     noise.kind = ImageOpKind::GaussianNoise;
     noise.sigma = -0.1f;
     refused(noise, "sigma", "a negative noise sigma");
+    noise.sigma = 0.1f;
+    noise.noise_mean = std::numeric_limits<float>::quiet_NaN();
+    refused(noise, "mean must be a number", "a noise mean that is not a number");
     ImageOp augmix;
     augmix.kind = ImageOpKind::AugMix;
     augmix.chain_depth = 0;
