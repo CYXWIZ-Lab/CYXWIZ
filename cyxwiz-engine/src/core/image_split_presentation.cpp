@@ -35,7 +35,11 @@ View Build(const Input& in) {
     const ImageSplitCounts* wired[3] = {nullptr, in.wired_val.known ? &in.wired_val : nullptr,
                                         in.wired_test.known ? &in.wired_test : nullptr};
     const std::string wired_names[3] = {"", in.wired_val_name, in.wired_test_name};
-    const float shares[3] = {in.train, in.val, in.test};
+    // The shares the split uses: the ratios over their sum (0.7 / 0.2 / 0.2
+    // makes 64 / 18 / 18 %), as SplitSamples normalises them.
+    const float sum = in.train + in.val + in.test;
+    const float shares[3] = {sum > 0.0f ? in.train / sum : 0.0f, sum > 0.0f ? in.val / sum : 0.0f,
+                             sum > 0.0f ? in.test / sum : 0.0f};
     const size_t classes = split.shown_names.size();
     std::vector<std::array<size_t, 3>> by_class(classes, {0, 0, 0});
     size_t totals[3] = {0, 0, 0};

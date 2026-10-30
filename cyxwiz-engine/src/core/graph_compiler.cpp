@@ -6967,8 +6967,10 @@ void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLN
                  (config.stratified ? "by class" : "one shuffle") + " (seed " + seed + ").",
              node_id, node_name);
 
-    // A class too small for a part's share: that part has none of it.
-    const float shares[3] = {config.train_ratio, config.val_ratio, config.test_ratio};
+    // A class too small for a part's share: that part has none of it. The
+    // shares are the ratios over their sum, as the split uses them.
+    const auto normalized = split_partition_detail::Normalize(config.train_ratio, config.val_ratio, config.test_ratio);
+    const float shares[3] = {normalized.train, normalized.val, normalized.test};
     const char* part_names[3] = {"train", "validation", "test"};
     for (size_t c = 0; c < counts->per_class.size() && c < counts->shown_names.size(); ++c) {
         const auto& by_part = counts->per_class[c];

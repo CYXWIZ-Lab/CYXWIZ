@@ -46,6 +46,17 @@ void CheckStratified() {
     Check(v.counted.find("none") != std::string::npos, "no images left out: " + v.counted);
 }
 
+// Ratios that do not add up to 1 show the shares the split uses.
+void CheckSharesNormalised() {
+    auto in = CatsAndDogs();
+    in.train = 0.7f;
+    in.val = 0.2f;
+    in.test = 0.2f;
+    const auto v = cyxwiz::image_split::Build(in);
+    Check(v.cards[0].detail.rfind("64 %", 0) == 0 && v.cards[1].detail.rfind("18 %", 0) == 0,
+          "normalised shares: " + v.cards[0].detail + " / " + v.cards[1].detail);
+}
+
 void CheckUnbalanced() {
     auto in = CatsAndDogs();
     in.stratified = false;
@@ -73,6 +84,7 @@ void CheckWired() {
 
 int main() {
     CheckStratified();
+    CheckSharesNormalised();
     CheckUnbalanced();
     CheckWired();
     std::cout << "Image split presentation passed\n";
