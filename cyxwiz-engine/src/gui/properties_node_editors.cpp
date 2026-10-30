@@ -12,6 +12,7 @@
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -316,8 +317,12 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             properties_rows::Rows rows("##rows");
             if (!rows.ok) break;
             properties_rows::Label("Value");
-            if (ImGui::SliderFloat("##slider_val", &val, mn, mx)) {
-                store("value", val, "%.4f");
+            // A typed field with - / + a hundredth of the range (owner
+            // 2026-10-21: no sliders), kept in the range.
+            const float step = mx > mn ? (mx - mn) / 100.0f : 0.01f;
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::InputFloat("##slider_val", &val, step, step * 10.0f, "%.4g")) {
+                store("value", std::clamp(val, mn, mx), "%.6g");
                 edited = true;
             }
             properties_rows::Status("value");
