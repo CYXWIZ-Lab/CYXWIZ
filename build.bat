@@ -173,11 +173,13 @@ if exist "%BUILD_DIR%\CMakeCache.txt" (
     set "CMAKE_TOOLCHAIN_ARGS=-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake"
 )
 
+REM The overlay folder as an absolute path: CMake keeps it as given, and a
+REM rebuild that re-runs CMake by itself does so from the build folder.
 cmake -B "%BUILD_DIR%" -S . ^
     %CMAKE_GENERATOR_ARGS% ^
     %CMAKE_TOOLCHAIN_ARGS% ^
     -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
-    -DVCPKG_OVERLAY_PORTS=vcpkg-ports ^
+    -DVCPKG_OVERLAY_PORTS="%CD%\vcpkg-ports" ^
     -DCYXWIZ_BUILD_ENGINE=%BUILD_ENGINE% ^
     -DCYXWIZ_BUILD_SERVER_NODE=%BUILD_SERVER_NODE% ^
     -DCYXWIZ_BUILD_TESTS=ON

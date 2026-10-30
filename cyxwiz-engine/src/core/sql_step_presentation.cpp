@@ -203,7 +203,7 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
 
     const auto whole_query = [&] {
         outline.structured = false;
-        SqlPart query{"query", tokens.front().line, last_line, ""};
+        SqlPart query{"query", tokens.front().line, last_line, "", {}, 0, 0};
         query.begin_offset = tokens.front().offset;
         query.end_offset = sql.size();
         outline.parts = {std::move(query)};
@@ -262,7 +262,7 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
         }
     }
     if (k < tokens.size()) {
-        SqlPart result{"result", tokens[k].line, last_line, ""};
+        SqlPart result{"result", tokens[k].line, last_line, "", {}, 0, 0};
         result.description = CommentAbove(scan, result.first_line, header_end_line);
         result.reads = ReadsIn(tokens, k, tokens.size());
         result.begin_offset = tokens[k].offset;

@@ -1,6 +1,6 @@
 # Troubleshooting extension nodes
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 
 Problems are grouped by where you see them. Messages in *italics* are the
 Engine's own words.
@@ -21,7 +21,7 @@ Engine's own words.
   `platforms` entry must exist at that path (for example
   `bin/my_nodes.dll`).
 - `api_version` must have the Engine's major number and a minor number no
-  higher than the Engine's (1.2 today).
+  higher than the Engine's (1.3 today).
 - **Install...** shows why a plugin did not load: *Failed to load plugin
   from &lt;folder&gt;: &lt;reason&gt;*. **Refresh** and startup write the
   reason to the **Console**. A plugin that loaded but failed to start shows
@@ -57,7 +57,7 @@ list gives each reason:
 - *node type '...' is already registered by '...'*: another plugin or a
   Python node bundle already uses this type id.
 
-`cyxwiz-plugin-check` reports the same reasons as *FAIL node not added*.
+`cyxwiz-plugin-check` reports the same reasons as *FAIL not added*.
 
 ### *The plugin was built with ...; this Engine with ...*
 
@@ -71,6 +71,22 @@ the [developer guide](plugin-developer-guide.md).
 
 The plugin was built with an SDK older than plugin API 1.2. Rebuild it
 against the current CyxWiz SDK; nothing in its code needs to change.
+
+### *... (the plugin uses a function this Engine does not have: it was built against a newer CyxWiz SDK; ...)*
+
+The plugin was built against a newer SDK than the Engine that loads it, and
+calls something only the newer Engine has. On Linux and macOS the message
+names the missing symbol. Rebuild the plugin against the SDK of this Engine,
+or update CyxWiz.
+
+Building with `cyxwiz_plugin_folder` stops with *plugin.json: api_version is
+1.2.0, but this SDK has plugin API 1.3* when `plugin.json` declares an older
+plugin API than the SDK: set `"api_version"` to the SDK's (`1.3.0`). An
+older Engine then refuses the plugin before loading it (*API version
+mismatch: plugin requires 1.3.0, engine provides 1.2.0*).
+
+CyxWiz 1.0.7 shows a Windows *Entry Point Not Found* box instead, and waits
+until it is closed: close it, and the Engine goes on without that plugin.
 
 ### `cyxwiz-plugin-check` grants a permission
 

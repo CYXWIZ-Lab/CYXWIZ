@@ -6,7 +6,7 @@ parameters it declares. This page is the first half of the Python route.
 The second half, [python-nodes.md](python-nodes.md), turns such a class into
 a node in the Engine's palette, bundles it and uses it in a graph.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > The Python samples on this page run, in order, as one script
 > (`scripts/docs/check_extension_docs.py` runs them). Every pycyxwiz name is
 > in [python-api-reference.md](python-api-reference.md); the tensor

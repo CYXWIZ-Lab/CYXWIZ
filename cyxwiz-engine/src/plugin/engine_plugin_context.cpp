@@ -98,9 +98,18 @@ bool EnginePluginContext::RegisterPanelProvider(IPanelProvider* provider) {
     return true;
 }
 
+bool EnginePluginContext::CheckDataInterfaces(const char* interface_name) const {
+    if (plugin_api_ >= kDataInterfacesApi) return true;
+    spdlog::warn("[Plugin:{}] {} not used: it changed in plugin API {} and the plugin is built for {}; "
+                 "rebuild it against the current SDK",
+                 plugin_id_, interface_name, kDataInterfacesApi.ToString(), plugin_api_.ToString());
+    return false;
+}
+
 bool EnginePluginContext::RegisterDataProvider(IDataProvider* provider) {
     if (!CheckPermission(PluginPermission::DataRegistry, "RegisterDataProvider")) return false;
-    PluginDataLoaderRegistry::Instance().Register(plugin_id_, provider);
+    if (!CheckDataInterfaces("IDataProvider")) return false;
+    PluginDataLoaderRegistry::Instance().Register(plugin_id_, plugin_version_, provider);
     return true;
 }
 
@@ -112,7 +121,8 @@ bool EnginePluginContext::RegisterTrainingHook(ITrainingHook* hook) {
 
 bool EnginePluginContext::RegisterAnalyticsProvider(IAnalyticsProvider* provider) {
     if (!CheckPermission(PluginPermission::DataRegistry, "RegisterAnalyticsProvider")) return false;
-    PluginAnalyticsRegistry::Instance().Register(plugin_id_, provider);
+    if (!CheckDataInterfaces("IAnalyticsProvider")) return false;
+    PluginAnalyticsRegistry::Instance().Register(plugin_id_, plugin_version_, provider);
     return true;
 }
 

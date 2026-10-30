@@ -48,7 +48,7 @@ fs::path PluginFolder(const fs::path& work, const std::string& name, const fs::p
     fs::create_directories(folder);
     fs::copy_file(library, folder / library.filename(), fs::copy_options::overwrite_existing);
     std::ofstream(folder / "plugin.json") << R"({"id": "com.test.)" << name << R"(", "name": ")" << name
-                                          << R"(", "version": "1.0.0", "api_version": "1.2.0",
+                                          << R"(", "version": "1.0.0", "api_version": "1.3.0",
         "platforms": {"windows": {"library": ")" << library.filename().string()
                                           << R"("}, "linux": {"library": ")" << library.filename().string()
                                           << R"("}, "macos": {"library": ")" << library.filename().string()

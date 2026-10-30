@@ -1683,7 +1683,7 @@ bool BuildSequential(
                         ") could not create its module" + (error.empty() ? std::string() : ": " + error));
                 }
                 model.AddModule(std::make_unique<GuardedExtensionModule>(
-                    std::move(module), layer_cfg.node_id, layer_cfg.name, layer_cfg.extension_type_id,
+                    std::move(module), layer_cfg.name, layer_cfg.extension_type_id,
                     layer_cfg.output_shape, registry.ProviderLease(layer_cfg.extension_type_id)));
                 CYXWIZ_BUILDER_INFO("  [{}] Extension {} ({} -> {})", i, layer_cfg.extension_type_id,
                                     FormatTensorShape(layer_cfg.input_shape), FormatTensorShape(layer_cfg.output_shape));
@@ -2042,7 +2042,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             }
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using extension loss {}", config.loss_extension_type_id);
             return std::make_unique<GuardedExtensionLoss>(
-                std::move(loss), config.loss_node_id, config.loss_extension_name,
+                std::move(loss), config.loss_extension_name,
                 config.loss_extension_type_id, registry.ProviderLease(config.loss_extension_type_id));
         }
         default:

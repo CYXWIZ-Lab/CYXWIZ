@@ -117,9 +117,6 @@ public:
     /** Save a model file (ONNX, etc.) */
     static std::optional<std::string> SaveModel(const char* default_path = nullptr);
 
-    /** Open a dataset file (CSV, HDF5, etc.) */
-    static std::optional<std::string> OpenDataset(const char* default_path = nullptr);
-
     /** Open an image file */
     static std::optional<std::string> OpenImage(const char* default_path = nullptr);
 

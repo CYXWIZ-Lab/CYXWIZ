@@ -22,6 +22,7 @@
 #include "regression_view.h"
 #include "groups_view.h"
 #include "projection_view.h"
+#include "plugins_view.h"
 #include "series_view.h"
 #include "forecast_view.h"
 #include "prepare_view.h"
@@ -47,7 +48,7 @@ class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
     // Images shows only for an image dataset.
-    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize };
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize, Plugins };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -67,6 +68,11 @@ public:
 
     // Show graph / Show on canvas raise CyxWiz Studio through this.
     void SetOpenNodeEditorCallback(std::function<void()> cb) { open_node_editor_callback_ = std::move(cb); }
+
+    // Explore > Plugins shows the Plugin Manager through this.
+    void SetOpenPluginManagerCallback(std::function<void()> cb) {
+        if (plugins_) plugins_->open_plugin_manager = std::move(cb);
+    }
 
     // Opens Explore > Profile on a dataset (a dashboard's "Edit roles").
     void ShowProfile(const std::string& dataset_name);
@@ -125,6 +131,7 @@ private:
     std::unique_ptr<RegressionView> regression_;
     std::unique_ptr<GroupsView> groups_;
     std::unique_ptr<ProjectionView> projection_;
+    std::unique_ptr<PluginsView> plugins_;
     std::unique_ptr<SeriesView> series_;
     std::unique_ptr<ForecastView> forecast_;
     std::unique_ptr<PrepareView> prepare_;

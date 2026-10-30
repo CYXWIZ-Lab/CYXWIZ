@@ -7,8 +7,10 @@
 #include "data_budget.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
+#include "data_input_formats.h"
 #include "split_partitioning.h"
 #include <arrow/csv/writer.h>
+#include <arrow/record_batch.h>
 #include <arrow/io/buffered.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
@@ -20,7 +22,6 @@
 #include "image_formats.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
-#include "../plugin/registries/plugin_data_loader_registry.h"
 
 // Dataset implementations
 #include "datasets/kaggle_dataset.h"
@@ -93,20 +94,10 @@ DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::stri
             return LoadImageFolder(path, name);
         case DatasetType::HDF5:
             return LoadHDF5(path, name);
-        default: {
-            // Check if a plugin data loader can handle this format
-            try {
-                auto ext = std::filesystem::path(path).extension().string();
-                if (!ext.empty() && cyxwiz::plugin::PluginDataLoaderRegistry::Instance().HasLoaderForExtension(ext)) {
-                    spdlog::info("DataRegistry: Plugin data loader available for '{}' (bridge not yet implemented)", path);
-                    // TODO: Bridge PluginDataset to DatasetHandle with adapter class
-                }
-            } catch (const std::exception& e) {
-                spdlog::warn("DataRegistry: Plugin loader check failed: {}", e.what());
-            }
+        default:
+            // Plugin formats load through Data Input (PluginDataLoaderRegistry).
             spdlog::error("Unknown dataset type for path: {}", path);
             return DatasetHandle();
-        }
     }
 }
 
@@ -1849,6 +1840,100 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularParquet(
         RememberTabularSourcePathUnlocked(unique_name, path);
     }
     return TabularLoadBackend::DiskBacked;
+}
+
+void DataRegistry::SetExternalReaderOpener(ExternalReaderOpener opener) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    external_opener_ = std::move(opener);
+}
+
+DataRegistry::TabularLoadBackend DataRegistry::LoadTabularExternal(
+    const std::string& format, const std::string& path, const std::string& name, bool force_disk_backed,
+    const std::vector<std::string>& selected_columns, std::string* load_status,
+    const std::string& cache_directory, const std::function<bool()>& should_cancel) {
+    if (load_status) load_status->clear();
+    const auto fail = [&](const std::string& why) {
+        spdlog::error("LoadTabularExternal: '{}' ({}): {}", path, format, why);
+        if (load_status) *load_status = why;
+        return TabularLoadBackend::Failed;
+    };
+    data_input::ExternalFormat external;
+    if (!data_input::FindExternalFormat(format, external))
+        return fail(data_input::UnsupportedReason(format, false));
+    ExternalReaderOpener opener;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        opener = external_opener_;
+    }
+    if (!opener) return fail("No reader is installed for plugin formats");
+
+    // One Parquet copy per file and format version, rewritten when the file changes.
+    const std::string cache_path =
+        ParquetBackedDataset::GetCacheFilePath(path, "format=" + format + "@" + external.version, cache_directory);
+    if (!ParquetBackedDataset::IsCacheFresh(path, cache_path)) {
+        std::shared_ptr<arrow::RecordBatchReader> reader;
+        std::string error;
+        if (!opener(format, path, reader, error) || !reader)
+            return fail(error.empty() ? "The format's reader could not open the file" : error);
+
+        const std::string temp_path = ParquetBackedDataset::UniqueTempPath(cache_path);
+        auto opened = arrow::io::FileOutputStream::Open(temp_path);
+        if (!opened.ok()) return fail("Cannot write the cache file " + temp_path + ": " + opened.status().message());
+        std::shared_ptr<arrow::io::FileOutputStream> out = *opened;
+        parquet::WriterProperties::Builder properties;
+        properties.compression(parquet::Compression::SNAPPY);
+        auto made = parquet::arrow::FileWriter::Open(*reader->schema(), arrow::default_memory_pool(), out,
+                                                     properties.build(),
+                                                     parquet::ArrowWriterProperties::Builder().store_schema()->build());
+        if (!made.ok()) {
+            (void)out->Close();
+            std::error_code ignored;
+            fs::remove(temp_path, ignored);
+            return fail("Cannot write the cache file: " + made.status().message());
+        }
+        std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(*made);
+        arrow::Status status;
+        int64_t rows = 0;
+        while (status.ok()) {
+            if (should_cancel && should_cancel()) {
+                status = arrow::Status::Cancelled("cancelled");
+                break;
+            }
+            std::shared_ptr<arrow::RecordBatch> batch;
+            status = reader->ReadNext(&batch);
+            if (!status.ok() || !batch) break;
+            status = writer->WriteRecordBatch(*batch);
+            rows += batch->num_rows();
+        }
+        reader.reset();  // the plugin's stream is released before the file is used
+        const arrow::Status closed = writer->Close();
+        const arrow::Status out_closed = out->Close();
+        if (status.ok() && !closed.ok()) status = closed;
+        if (status.ok() && !out_closed.ok()) status = out_closed;
+        std::error_code ec;
+        if (status.ok()) fs::rename(temp_path, cache_path, ec);
+        if (!status.ok() || ec) {
+            fs::remove(temp_path, ec);
+            if (status.IsCancelled()) return fail("Cancelled");
+            return fail(status.ok() ? "Cannot place the cache file: " + ec.message() : status.message());
+        }
+        spdlog::info("LoadTabularExternal: '{}' ({}) streamed {} rows into {}", path, external.label, rows, cache_path);
+    }
+    const auto backend = LoadTabularParquet(cache_path, name, force_disk_backed, selected_columns, load_status,
+                                            cache_directory);
+    if (backend == TabularLoadBackend::Failed && load_status && load_status->empty())
+        *load_status = "The converted file could not be read; check the selected columns";
+    if (backend != TabularLoadBackend::Failed) {
+        // The table came from `path`, not from its cache copy: Preview and
+        // the dialogs find it by the file the user chose.
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (const auto it = tabular_dataset_by_source_path_.find(NormalizeTabularSourcePath(cache_path));
+            it != tabular_dataset_by_source_path_.end()) {
+            const std::string loaded = it->second;
+            RememberTabularSourcePathUnlocked(loaded, path);
+        }
+    }
+    return backend;
 }
 
 std::optional<TableRef> DataRegistry::GetTableRef(const std::string& name) const {

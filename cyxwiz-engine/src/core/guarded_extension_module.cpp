@@ -15,12 +15,11 @@ std::string FormatTensorShape(const std::vector<size_t>& shape) {
     return text + "]";
 }
 
-GuardedExtensionModule::GuardedExtensionModule(std::unique_ptr<Module> inner, int node_id,
+GuardedExtensionModule::GuardedExtensionModule(std::unique_ptr<Module> inner,
                                                std::string node_name, std::string type_id,
                                                std::vector<size_t> expected_sample_shape,
                                                std::shared_ptr<void> lease)
     : inner_(std::move(inner)),
-      node_id_(node_id),
       node_name_(std::move(node_name)),
       type_id_(std::move(type_id)),
       expected_sample_shape_(std::move(expected_sample_shape)),
@@ -133,12 +132,11 @@ Tensor GuardedExtensionModule::ForwardIncremental(const Tensor& input, size_t po
 
 void GuardedExtensionModule::ResetIncrementalState() { inner_->ResetIncrementalState(); }
 
-GuardedExtensionLoss::GuardedExtensionLoss(std::unique_ptr<Loss> inner, int node_id,
+GuardedExtensionLoss::GuardedExtensionLoss(std::unique_ptr<Loss> inner,
                                            std::string node_name, std::string type_id,
                                            std::shared_ptr<void> lease)
     : Loss(inner ? inner->GetReduction() : Reduction::Mean),
       inner_(std::move(inner)),
-      node_id_(node_id),
       node_name_(std::move(node_name)),
       type_id_(std::move(type_id)),
       lease_(std::move(lease)) {

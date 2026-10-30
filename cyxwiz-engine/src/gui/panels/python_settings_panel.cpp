@@ -285,7 +285,7 @@ void PythonSettingsPanel::RunAutoDetection() {
     }
 
     if (detected_pythons_.empty()) {
-        spdlog::warn("No supported Python 3.12-3.13 installations found");
+        spdlog::warn("No supported Python {} installations found", cyxwiz::core::PythonDetector::SupportedVersionsText());
     } else {
         spdlog::info("Found {} Python installation(s)", detected_pythons_.size());
         show_detection_results_ = true;

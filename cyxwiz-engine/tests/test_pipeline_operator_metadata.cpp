@@ -4573,6 +4573,10 @@ int main() {
               cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly)) ==
               "arrow_table_only",
           "materializer storage support name for ArrowTableOnly is stable");
+    Check(std::string(cyxwiz::PipelineMaterializerStorageSupportName(
+              cyxwiz::PipelineMaterializerStorageSupport::StreamingOperatorsOnly)) ==
+              "streaming_operators_only",
+          "materializer storage support name for StreamingOperatorsOnly is stable");
 
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::FilterRows)) == "FilterRows",

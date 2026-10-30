@@ -81,8 +81,7 @@ private:
     IBatcher* source_;
     MetricSampling sampling_;
     MetricMining mining_;
-    uint64_t seed_;
-    uint64_t epoch_key_;
+    uint64_t epoch_key_;  // the constructor's seed, then each epoch's (SetEpochShuffleSeed)
     uint64_t batch_index_ = 0;
     size_t skipped_batches_ = 0;
     size_t rows_seen_ = 0;

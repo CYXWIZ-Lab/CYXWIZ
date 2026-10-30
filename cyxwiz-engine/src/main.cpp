@@ -2,6 +2,7 @@
 #include "engine_runtime_ownership.h"
 #include "backend_pack_platform.h"
 #include "plugin/plugin_manager.h"
+#include "plugin/plugin_data_formats.h"
 #include "plugin/plugin_session.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
@@ -464,6 +465,8 @@ int main(int argc, char** argv) {
             spdlog::debug("Plugin system: {} search paths configured", search_paths.size());
             // Plugins loaded in an earlier session and set to load at startup
             // (TOFIX125 step 2.9); others load from the Plugin Manager.
+            // Plugin dataset formats reach Data Input through the core's hook (TOFIX181).
+            cyxwiz::plugin::InstallPluginDataFormats();
             cyxwiz::plugin::LoadStartupPlugins(pm);
         }
 

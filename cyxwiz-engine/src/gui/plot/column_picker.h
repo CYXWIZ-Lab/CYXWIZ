@@ -22,12 +22,20 @@ public:
     // and chips to remove one. True when the choice changed.
     bool PickMany(const char* id, std::vector<std::string>& values, const std::vector<ColumnSummary>& columns,
                   bool numeric_only, float width);
+    // Several columns, where `refused` (one per column, in order) says why
+    // the field cannot take a column: those stay in the list, dimmed, with
+    // the reason. Empty: the column can be picked.
+    bool PickMany(const char* id, std::vector<std::string>& values, const std::vector<ColumnSummary>& columns,
+                  const std::vector<std::string>& refused, float width);
 
 private:
     // The list inside an open picker; returns the index of the picked
     // column in `columns`, or -1.
-    int DrawList(const std::vector<ColumnSummary>& columns, bool numeric_only, const std::vector<std::string>& chosen,
-                 const std::string& current, bool many, std::vector<int>* matches);
+    int DrawList(const std::vector<ColumnSummary>& columns, bool numeric_only, const std::vector<std::string>* refused,
+                 const std::vector<std::string>& chosen, const std::string& current, bool many,
+                 std::vector<int>* matches);
+    bool PickManyIn(const char* id, std::vector<std::string>& values, const std::vector<ColumnSummary>& columns,
+                    bool numeric_only, const std::vector<std::string>* refused, float width);
     void Opened(const char* id);
 
     std::string open_id_;   // the picker whose list is open

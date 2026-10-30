@@ -99,9 +99,9 @@ they are loaded again.
 
 ## Explore
 
-Explore has thirteen views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has fourteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Series**, **Forecast** and **Visualize**, and a fourteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast**, **Visualize** and **Plugins**, and a fifteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -617,6 +617,41 @@ settings as the Dashboard.
   greyed, with the reason), plus **New Dashboard node on Spotify**, which
   adds a Dashboard connected to the Data Input with the automatic layout
   and this plot. The dashboard opens with the plot selected.
+
+## Plugins
+
+The analytics installed plugins add: questions about a dataset that a plugin
+answers (for example *Coefficient of variation* from the example plugin
+*Example Data Formats*). The tab is there with no such plugin too; it then
+says so and has **Open Plugin Manager**.
+
+- **Analytic** lists every analytic of every loaded plugin, grouped by the
+  category the plugin gives, with the plugin and its version beside it and
+  its description under it.
+- **Columns** starts with every column the analytic reads (numbers, text or
+  any, up to the plugin's maximum). In the list, the columns it cannot read
+  stay, dimmed, with the reason (*text · this analytic reads numbers*).
+- **Run** starts it; nothing runs on its own, since the analytic is the
+  plugin's code and may read every row. Beside it: *reads 14 rows of 2
+  columns*, or why Run is off (too few or too many columns, or *Example Data
+  Formats is not loaded*, with **Open Plugin Manager**).
+- While it runs, the rows read so far and **Cancel**; Task View shows the run.
+  The chosen columns go to the plugin in batches, every row: a table kept on
+  disk is read one row group at a time, so it does not have to fit in memory.
+  The plugin sees only those columns.
+- The answer: the plugin's single number (when it gives one) large, its
+  values per label as bars with the value printed, its note, and *Computed by
+  Example Data Formats 1.0.0 on 14 rows in 3 ms, 11:24:05*. **Values** is
+  the same numbers as a table, with **Copy** and **Export CSV...**.
+- Changing the analytic or the columns keeps the answer, dimmed, under
+  *Choices changed since this answer* with **Run again**. When the plugin is
+  unloaded, the answer stays dimmed and Run is off.
+- A plugin that fails, throws or crashes in its analytic shows its message;
+  the Engine keeps running.
+
+Plugin analytics are not graph nodes: they answer a question and do not
+change the data. Writing one: [the plugin API
+reference](../extending/plugin-api-reference.md) (IAnalyticsProvider).
 
 ## Prepare
 
