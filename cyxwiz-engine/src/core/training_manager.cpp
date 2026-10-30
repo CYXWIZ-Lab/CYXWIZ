@@ -524,6 +524,17 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
                 : config.dataset_roles.train.label_column;
         active_model_info_.checkpoint_metadata = *metadata;
         active_model_info_.evaluation_config = prepared;
+        // The Data Split the checkpoint trained with, when it recorded one:
+        // Run Test reads the test part from it, not from today's graph.
+        if (metadata->split.known) {
+            auto& trained = *active_model_info_.evaluation_config;
+            trained.train_ratio = metadata->split.train;
+            trained.val_ratio = metadata->split.val;
+            trained.test_ratio = metadata->split.test;
+            trained.stratified = metadata->split.stratified;
+            trained.split_seed = metadata->split.seed;
+            trained.image_excluded_files = metadata->split.excluded_files;
+        }
     }
 
     result.success = true;

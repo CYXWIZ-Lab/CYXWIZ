@@ -1288,6 +1288,15 @@ void TrainingExecutor::Train(
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
                                       initialized_from);
     checkpoint_manager->SetTokenizer(CheckpointTokenizerFromConfig(config_));
+    CheckpointDataSplit split;
+    split.known = true;
+    split.train = config_.train_ratio;
+    split.val = config_.val_ratio;
+    split.test = config_.test_ratio;
+    split.stratified = config_.stratified;
+    split.seed = config_.split_seed;
+    split.excluded_files = config_.image_excluded_files;
+    checkpoint_manager->SetDataSplit(std::move(split));
 
     generation_preview_.reset();
     generation_preview_checkpoints_ = nullptr;

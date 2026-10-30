@@ -83,6 +83,15 @@ int main() {
             CheckpointManager manager(run.string());
             manager.SetProvenance(kept.Sha256(), 8, "");
             manager.SetTokenizer(kept);
+            CheckpointDataSplit split;
+            split.known = true;
+            split.train = 0.7f;
+            split.val = 0.1f;
+            split.test = 0.2f;
+            split.stratified = true;
+            split.seed = 7;
+            split.excluded_files = {"D:/pets/cat/blurry.jpg"};
+            manager.SetDataSplit(split);
             Require(!manager.SaveCheckpoint(*built.model, nullptr, TrainingMetrics{}, "best").empty(), "save best");
             TrainingMetrics later;
             later.current_epoch = 2;
@@ -91,6 +100,17 @@ int main() {
         for (const char* name : {"best", "epoch_0002"}) {
             for (const char* file : {"config.json", "vocab.txt", "sequence.json"})
                 Require(fs::exists(run / name / "tokenizer" / file), std::string(name) + " keeps tokenizer/" + file);
+        }
+
+        // The Data Split it trained with (Run Test reads its test part from it).
+        {
+            CheckpointManager reader(run.string());
+            const auto metadata = reader.LoadCheckpoint(*built.model, nullptr, "best");
+            Require(metadata && metadata->split.known && metadata->split.train == 0.7f &&
+                        metadata->split.val == 0.1f && metadata->split.test == 0.2f && metadata->split.stratified &&
+                        metadata->split.seed == 7 &&
+                        metadata->split.excluded_files == std::vector<std::string>{"D:/pets/cat/blurry.jpg"},
+                    "the Data Split read back");
         }
 
         // Read back as it was.
@@ -128,6 +148,11 @@ int main() {
             Require(!manager.SaveCheckpoint(*built.model, nullptr, TrainingMetrics{}, "best").empty(), "save tabular");
         }
         Require(!ReadCheckpointTokenizer(root / "tabular" / "best", error) && error.empty(), "none stored: no error");
+        {
+            CheckpointManager reader((root / "tabular").string());
+            const auto metadata = reader.LoadCheckpoint(*built.model, nullptr, "best");
+            Require(metadata && !metadata->split.known, "a checkpoint without a Data Split says so");
+        }
         Require(!fs::exists(root / "tabular" / "best" / "tokenizer"), "no tokenizer folder");
 
         // A damaged one is reported, not ignored.

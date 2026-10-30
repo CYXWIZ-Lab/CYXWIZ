@@ -5863,6 +5863,26 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         return;
     }
 
+    // The test part is the one the model trained without: the Data Split it
+    // trained with (kept with the model and its checkpoints), even when the
+    // graph's Data Split changed since; otherwise the test could score rows
+    // or images the model trained on.
+    if (active_model_info.evaluation_config && active_model_info.evaluation_config->dataset_name == dataset_name) {
+        const auto& trained = *active_model_info.evaluation_config;
+        if (trained.train_ratio != config.train_ratio || trained.val_ratio != config.val_ratio ||
+            trained.test_ratio != config.test_ratio || trained.stratified != config.stratified ||
+            trained.split_seed != config.split_seed || trained.image_excluded_files != config.image_excluded_files)
+            spdlog::warn("Run Test: the Data Split changed since the model trained; testing the test part of the "
+                         "split it trained with ({:.2f} / {:.2f} / {:.2f}, seed {})", trained.train_ratio, trained.val_ratio,
+                         trained.test_ratio, trained.split_seed);
+        config.train_ratio = trained.train_ratio;
+        config.val_ratio = trained.val_ratio;
+        config.test_ratio = trained.test_ratio;
+        config.stratified = trained.stratified;
+        config.split_seed = trained.split_seed;
+        config.image_excluded_files = trained.image_excluded_files;
+    }
+
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
