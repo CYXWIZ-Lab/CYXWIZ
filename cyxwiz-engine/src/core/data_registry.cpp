@@ -19,6 +19,7 @@
 #include <limits>              // for std::numeric_limits (Arrow block_size cap)
 
 #include "annotation_manager.h"
+#include "image_formats.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../transforms/transform.h"
@@ -767,11 +768,7 @@ DatasetType DataRegistry::DetectType(const std::string& path) {
         for (const auto& entry : fs::directory_iterator(path)) {
             if (entry.is_directory()) {
                 for (const auto& sub : fs::directory_iterator(entry)) {
-                    auto ext = sub.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
-                        return DatasetType::ImageFolder;
-                    }
+                    if (image_formats::IsImageExtension(sub.path().extension().string())) return DatasetType::ImageFolder;
                 }
             }
         }

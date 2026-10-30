@@ -147,6 +147,13 @@ void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, f
 
 void Lines(const std::vector<double>& xs, const std::vector<Line>& lines, float width, float height, bool own_scale,
            double mark_x, const std::string& mark, const char* x_label, size_t first_colour) {
+    if (xs.empty()) return;
+    LinesOver(xs, lines, width, height, own_scale, mark_x, mark, x_label, sv::Num(xs.front()), sv::Num(xs.back()), first_colour);
+}
+
+void LinesOver(const std::vector<double>& xs, const std::vector<Line>& lines, float width, float height, bool own_scale,
+               double mark_x, const std::string& mark, const char* x_label, const std::string& lo_text, const std::string& hi_text,
+               size_t first_colour) {
     const ui::Tokens& t = ui::CurrentTokens();
     if (xs.empty() || lines.empty()) return;
     double x0 = xs.front(), x1 = xs.back();
@@ -191,22 +198,27 @@ void Lines(const std::vector<double>& xs, const std::vector<Line>& lines, float 
         dl->AddText(ImVec2(tx, at.y + height - line_h - 2.0f), ui::ToU32(t.text_dim), mark.c_str());
     }
     float legend_x = at.x + width - 4.0f;
+    const size_t stride = std::max<size_t>(1, xs.size() / kPoints);  // a long series: every n-th point
+    // The legend from the right; the lines in order, so a later line (a trend) draws over an earlier one (the series).
     for (size_t l = lines.size(); l-- > 0;) {
+        legend_x -= ImGui::CalcTextSize(lines[l].name.c_str()).x + 18.0f;
+        dl->AddCircleFilled(ImVec2(legend_x + 5.0f, at.y + 2.0f + line_h * 0.5f), 4.0f, ui::ToU32(ui::SeriesColour(t, first_colour + l)));
+        dl->AddText(ImVec2(legend_x + 13.0f, at.y + 2.0f), ui::ToU32(t.text_dim), lines[l].name.c_str());
+    }
+    for (size_t l = 0; l < lines.size(); ++l) {
         const ImU32 c = ui::ToU32(ui::SeriesColour(t, first_colour + l));
         std::vector<ImVec2> pts;
-        for (size_t i = 0; i < xs.size() && i < lines[l].ys.size(); ++i)
+        for (size_t i = 0; i < xs.size() && i < lines[l].ys.size(); i += stride)
             if (std::isfinite(lines[l].ys[i])) pts.emplace_back(X(xs[i]), Y(l, lines[l].ys[i]));
         if (pts.size() > 1) dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), c, ImDrawFlags_None, 2.0f);
-        for (const auto& q : pts) dl->AddCircleFilled(q, 3.0f, c);
-        legend_x -= ImGui::CalcTextSize(lines[l].name.c_str()).x + 18.0f;
-        dl->AddCircleFilled(ImVec2(legend_x + 5.0f, at.y + 2.0f + line_h * 0.5f), 4.0f, c);
-        dl->AddText(ImVec2(legend_x + 13.0f, at.y + 2.0f), ui::ToU32(t.text_dim), lines[l].name.c_str());
+        if (stride == 1 && pts.size() <= 400)
+            for (const auto& q : pts) dl->AddCircleFilled(q, 3.0f, c);
     }
     dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(t.text_faint), (lines[0].name + " " + sv::Num(data[0].second)).c_str());
     const std::string low = sv::Num(data[0].first);
     if (!std::isfinite(mark_x) || X(mark_x) > at.x + ImGui::CalcTextSize(low.c_str()).x + 12.0f)
         dl->AddText(ImVec2(at.x + 4.0f, at.y + height - line_h - 2.0f), ui::ToU32(t.text_faint), low.c_str());
-    XAxis(at, width, sv::Num(xs.front()), x_label, sv::Num(xs.back()));
+    XAxis(at, width, lo_text, x_label, hi_text);
 }
 
 void Curve(const std::vector<double>& ys, float width, float height, double level, const std::string& caption,
@@ -279,6 +291,154 @@ void Dendrogram(const std::vector<std::array<double, 4>>& xs, const std::vector<
         dl->AddText(ImVec2(P(10.0 * static_cast<double>(i) + 5.0, 0.0).x - w * 0.5f, at.y + height + 2.0f), ui::ToU32(t.text_faint),
                     label.c_str());
     }
+}
+
+void Band(const std::vector<double>& xs, const Line& line, const Line& centre, const std::vector<double>& low, const std::vector<double>& high,
+          float width, float height, double mark_x, const std::string& mark, const char* x_label, const std::string& lo_text, const std::string& hi_text) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (xs.size() < 2) return;
+    double x0 = xs.front(), x1 = xs.back();
+    if (!(x1 > x0)) x1 = x0 + 1.0;
+    const double px = (x1 - x0) * 0.03;
+    x0 -= px;
+    x1 += px;
+    double lo = INFINITY, hi = -INFINITY;
+    Extent(line.ys, lo, hi);
+    Extent(centre.ys, lo, hi);
+    Extent(low, lo, hi);
+    Extent(high, lo, hi);
+    if (!std::isfinite(lo)) lo = 0.0, hi = 1.0;
+    if (!(hi > lo)) hi = lo + 1.0;
+    const double pad = (hi - lo) * 0.1;
+    const double y0 = lo - pad, y1 = hi + pad;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.plot_bg), 4.0f);
+    const float line_h = ImGui::GetTextLineHeight();
+    const float top = at.y + line_h + 6.0f, bottom = at.y + height - line_h - 4.0f;
+    const auto X = [&](double x) { return at.x + static_cast<float>((x - x0) / (x1 - x0)) * width; };
+    const auto Y = [&](double y) { return bottom - static_cast<float>((y - y0) / (y1 - y0)) * (bottom - top); };
+    // The band: one quad per step where both edges are known.
+    ImVec4 fill = ui::SeriesColour(t, 1);
+    fill.w = 0.22f;
+    const size_t stride = std::max<size_t>(1, xs.size() / kPoints);  // a long series: every n-th point
+    for (size_t i = 0; i + stride < xs.size() && i + stride < low.size() && i + stride < high.size(); i += stride) {
+        const size_t j = i + stride;
+        if (!std::isfinite(low[i]) || !std::isfinite(high[i]) || !std::isfinite(low[j]) || !std::isfinite(high[j])) continue;
+        const ImVec2 q[4] = {ImVec2(X(xs[i]), Y(high[i])), ImVec2(X(xs[j]), Y(high[j])), ImVec2(X(xs[j]), Y(low[j])), ImVec2(X(xs[i]), Y(low[i]))};
+        dl->AddConvexPolyFilled(q, 4, ui::ToU32(fill));
+    }
+    if (std::isfinite(mark_x)) {
+        const float mx = X(mark_x);
+        DashedLine(dl, ImVec2(mx, top), ImVec2(mx, at.y + height - 2.0f), ui::ToU32(t.text_faint));
+        const float w = ImGui::CalcTextSize(mark.c_str()).x;
+        const float tx = mx + 4.0f + w <= at.x + width ? mx + 4.0f : mx - 4.0f - w;
+        dl->AddText(ImVec2(tx, at.y + height - line_h - 2.0f), ui::ToU32(t.text_dim), mark.c_str());
+    }
+    float legend_x = at.x + width - 4.0f;
+    const Line* both[2] = {&line, &centre};
+    for (int l = 1; l >= 0; --l) {
+        const ImU32 c = ui::ToU32(ui::SeriesColour(t, static_cast<size_t>(l)));
+        const float thickness = l == 0 ? 1.6f : 2.0f;
+        std::vector<ImVec2> pts;
+        for (size_t i = 0; i < xs.size() && i < both[l]->ys.size(); i += stride) {
+            if (std::isfinite(both[l]->ys[i])) {
+                pts.emplace_back(X(xs[i]), Y(both[l]->ys[i]));
+                continue;
+            }
+            if (pts.size() > 1) dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), c, ImDrawFlags_None, thickness);
+            pts.clear();
+        }
+        if (pts.size() > 1) dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), c, ImDrawFlags_None, thickness);
+        if (both[l]->name.empty()) continue;
+        legend_x -= ImGui::CalcTextSize(both[l]->name.c_str()).x + 18.0f;
+        dl->AddCircleFilled(ImVec2(legend_x + 5.0f, at.y + 2.0f + line_h * 0.5f), 4.0f, c);
+        dl->AddText(ImVec2(legend_x + 13.0f, at.y + 2.0f), ui::ToU32(t.text_dim), both[l]->name.c_str());
+    }
+    dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(t.text_faint), sv::Num(hi).c_str());
+    dl->AddText(ImVec2(at.x + 4.0f, at.y + height - line_h - 2.0f), ui::ToU32(t.text_faint), sv::Num(lo).c_str());
+    XAxis(at, width, lo_text, x_label, hi_text);
+}
+
+void Stems(const std::vector<double>& values, const std::vector<double>& lower, const std::vector<double>& upper, float width, float height, int season,
+           const char* y_label) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const size_t n = values.size();
+    if (n < 2) return;
+    double lo = -0.2, hi = 1.0;
+    for (size_t k = 1; k < n; ++k) {
+        if (std::isfinite(values[k])) lo = std::min(lo, values[k] - 0.05);
+        if (k < lower.size() && std::isfinite(lower[k])) lo = std::min(lo, lower[k] - 0.05);
+    }
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.plot_bg), 4.0f);
+    const float line_h = ImGui::GetTextLineHeight();
+    const float top = at.y + line_h + 4.0f, bottom = at.y + height - 4.0f;
+    const float step = (width - 16.0f) / static_cast<float>(n);
+    const auto X = [&](size_t k) { return at.x + 8.0f + (static_cast<float>(k) + 0.5f) * step; };
+    const auto Y = [&](double y) { return bottom - static_cast<float>((y - lo) / (hi - lo)) * (bottom - top); };
+    // The band's half-width around 0 (the backend centres it on the value).
+    ImVec4 fill = t.text_faint;
+    fill.w = 0.18f;
+    for (size_t k = 1; k < n && k < lower.size() && k < upper.size(); ++k) {
+        if (!std::isfinite(lower[k]) || !std::isfinite(upper[k])) continue;
+        const double half = 0.5 * (upper[k] - lower[k]);
+        dl->AddRectFilled(ImVec2(X(k) - step * 0.5f, Y(half)), ImVec2(X(k) + step * 0.5f, Y(-half)), ui::ToU32(fill));
+    }
+    const float zero = Y(0.0);
+    dl->AddLine(ImVec2(at.x + 4.0f, zero), ImVec2(at.x + width - 4.0f, zero), ui::ToU32(t.text_faint), 1.0f);
+    const ImU32 strong = ui::ToU32(ui::SeriesColour(t, 0));
+    ImVec4 weak_c = ui::SeriesColour(t, 0);
+    weak_c.w = 0.45f;
+    const ImU32 weak = ui::ToU32(weak_c);
+    for (size_t k = 0; k < n; ++k) {
+        if (!std::isfinite(values[k])) continue;
+        const bool outside = k > 0 && k < lower.size() && k < upper.size() && std::isfinite(lower[k]) && std::isfinite(upper[k]) &&
+                             std::fabs(values[k]) > 0.5 * (upper[k] - lower[k]);
+        if (season > 0 && k > 0 && static_cast<int>(k) % season == 0) DashedLine(dl, ImVec2(X(k), top), ImVec2(X(k), bottom), ui::ToU32(t.caution));
+        const ImU32 c = k == 0 ? ui::ToU32(t.text_faint) : outside ? strong : weak;
+        dl->AddLine(ImVec2(X(k), zero), ImVec2(X(k), Y(values[k])), c, std::max(1.5f, std::min(4.0f, step * 0.5f)));
+        dl->AddCircleFilled(ImVec2(X(k), Y(values[k])), std::max(2.0f, std::min(3.5f, step * 0.3f)), c);
+    }
+    dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(t.text_faint), (std::string(y_label) + "  1").c_str());
+    XAxis(at, width, "0", "lag", std::to_string(n - 1));
+}
+
+void PositionBars(const std::vector<double>& values, const std::vector<std::string>& names, float width, float height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const size_t n = values.size();
+    if (n == 0) return;
+    double lo = 0.0, hi = 0.0;
+    Extent(values, lo, hi);
+    if (!(hi > lo)) hi = lo + 1.0;
+    const double pad = (hi - lo) * 0.1;
+    lo -= pad;
+    hi += pad;
+    const float line_h = ImGui::GetTextLineHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height + line_h + 4.0f));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.plot_bg), 4.0f);
+    const float bw = (width - 8.0f) / static_cast<float>(n);
+    const auto Y = [&](double y) { return at.y + height - 2.0f - static_cast<float>((y - lo) / (hi - lo)) * (height - line_h - 6.0f); };
+    const float zero = Y(0.0);
+    dl->AddLine(ImVec2(at.x + 4.0f, zero), ImVec2(at.x + width - 4.0f, zero), ui::ToU32(t.text_faint), 1.0f);
+    ImVec4 up = ui::SeriesColour(t, 0), down = ui::SeriesColour(t, 1);
+    up.w = down.w = 0.8f;
+    for (size_t i = 0; i < n; ++i) {
+        if (!std::isfinite(values[i])) continue;
+        const float x = at.x + 4.0f + static_cast<float>(i) * bw;
+        const float y = Y(values[i]);
+        dl->AddRectFilled(ImVec2(x + 2.0f, std::min(y, zero)), ImVec2(x + std::max(3.0f, bw - 2.0f), std::max(y, zero)), ui::ToU32(values[i] >= 0 ? up : down), 2.0f);
+        if (i < names.size()) {
+            const float w = ImGui::CalcTextSize(names[i].c_str()).x;
+            if (w <= bw) dl->AddText(ImVec2(x + (bw - w) * 0.5f, at.y + height + 2.0f), ui::ToU32(t.text_faint), names[i].c_str());
+        }
+    }
+    dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(t.text_faint), sv::Num(hi - pad).c_str());
 }
 
 }  // namespace cyxwiz::explore_plot

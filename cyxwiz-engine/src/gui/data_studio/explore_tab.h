@@ -23,6 +23,7 @@ struct ExploreContext {
     std::string shown;                                // as the graph calls it
     std::shared_ptr<const DatasetProfile> profile;    // null while profiling or failed
     std::map<std::string, std::vector<std::string>> missing_texts;  // column -> texts marked as missing
+    std::string time_column;                          // the Data Input's time column (Series and Forecast take it first)
     bool profiling = false;
     std::string error;                                // why there is no profile
 };

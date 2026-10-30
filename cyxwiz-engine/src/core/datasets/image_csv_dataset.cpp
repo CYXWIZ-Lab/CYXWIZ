@@ -1,5 +1,6 @@
 #include "image_csv_dataset.h"
 #include "class_order.h"
+#include "../image_formats.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -79,23 +80,15 @@ void ImageCSVDataset::LoadData() {
         return;
     }
 
-    // Valid image extensions
-    std::vector<std::string> valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tga", ".tiff", ".webp"};
-    auto is_image = [&](const std::string& ext) {
-        std::string lower_ext = ext;
-        std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(), ::tolower);
-        return std::find(valid_extensions.begin(), valid_extensions.end(), lower_ext) != valid_extensions.end();
-    };
-
     // Check if CSV is provided and exists
     bool use_csv = !csv_path_.empty() && fs::exists(csv_path_);
 
     if (use_csv) {
         // CSV mode: load images with labels from CSV file
-        LoadFromCSV(valid_extensions);
+        LoadFromCSV();
     } else {
         // Folder mode: scan subfolders, use subfolder names as class labels
-        LoadFromFolder(is_image);
+        LoadFromFolder();
     }
 
     if (image_paths_.empty()) {
@@ -125,7 +118,7 @@ void ImageCSVDataset::LoadData() {
     SetSplit(SplitConfig{});
 }
 
-void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensions) {
+void ImageCSVDataset::LoadFromCSV() {
     std::ifstream file(csv_path_);
     if (!file.is_open()) {
         spdlog::error("ImageDataset: Failed to open CSV file: {}", csv_path_);
@@ -311,10 +304,7 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
             if (entry.is_directory()) {
                 self(entry.path(), self);
             } else if (entry.is_regular_file()) {
-                std::string ext = entry.path().extension().string();
-                std::string lower_ext = ext;
-                std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(), ::tolower);
-                if (std::find(valid_extensions.begin(), valid_extensions.end(), lower_ext) != valid_extensions.end()) {
+                if (image_formats::IsImageExtension(entry.path().extension().string())) {
                     std::string full_path = entry.path().string();
                     std::string stem = entry.path().stem().string();
                     std::string name_with_ext = entry.path().filename().string();
@@ -344,8 +334,8 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
                 resolved_path = image_path.string();
             } else {
                 // Try adding extensions
-                for (const auto& ext : valid_extensions) {
-                    fs::path test_path = fs::path(image_folder_) / (filename + ext);
+                for (const auto ext : image_formats::kExtensions) {
+                    fs::path test_path = fs::path(image_folder_) / (filename + std::string(ext));
                     if (fs::exists(test_path)) {
                         resolved_path = test_path.string();
                         break;
@@ -364,7 +354,7 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
     }
 }
 
-void ImageCSVDataset::LoadFromFolder(std::function<bool(const std::string&)> is_image) {
+void ImageCSVDataset::LoadFromFolder() {
     bool has_subfolders = false;
 
     // Check if we have class subfolders
@@ -393,8 +383,7 @@ void ImageCSVDataset::LoadFromFolder(std::function<bool(const std::string&)> is_
             for (const auto& img_entry : fs::directory_iterator(fs::path(image_folder_) / class_names_[class_idx])) {
                 if (!img_entry.is_regular_file()) continue;
 
-                std::string ext = img_entry.path().extension().string();
-                if (!is_image(ext)) continue;
+                if (!image_formats::IsImageExtension(img_entry.path().extension().string())) continue;
 
                 files.push_back(img_entry.path().string());
             }
@@ -413,8 +402,7 @@ void ImageCSVDataset::LoadFromFolder(std::function<bool(const std::string&)> is_
         for (const auto& entry : fs::directory_iterator(image_folder_)) {
             if (!entry.is_regular_file()) continue;
 
-            std::string ext = entry.path().extension().string();
-            if (!is_image(ext)) continue;
+            if (!image_formats::IsImageExtension(entry.path().extension().string())) continue;
 
             image_paths_.push_back(entry.path().string());
             labels_.push_back(0);

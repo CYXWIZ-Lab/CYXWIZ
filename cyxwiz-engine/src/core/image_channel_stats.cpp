@@ -43,10 +43,12 @@ ImageChannelStats MeasureImageChannelStats(const PreparedImageSet& set,
             const af::array s = af::sum(x, 1);
             const af::array q = af::sum(x * x, 1);
             std::vector<float> hs(channels), hq(channels);
-            MaterializeArrayFireToHost(s, hs.data(), ArrayFireHostSyncCategory::OutputMaterialization,
-                                       "MeasureImageChannelStats::Sum", "arrayfire_column_major");
-            MaterializeArrayFireToHost(q, hq.data(), ArrayFireHostSyncCategory::OutputMaterialization,
-                                       "MeasureImageChannelStats::SumOfSquares", "arrayfire_column_major");
+            MaterializeArrayFireToHost(s, hs.data(), ArrayFireHostSyncCategory::MetricScalarReadback,
+                                       "ImageChannelStats::Measure", "arrayfire_aggregate_vector",
+                                       "bounded_metric_readback", "per-channel pixel sum");
+            MaterializeArrayFireToHost(q, hq.data(), ArrayFireHostSyncCategory::MetricScalarReadback,
+                                       "ImageChannelStats::Measure", "arrayfire_aggregate_vector",
+                                       "bounded_metric_readback", "per-channel pixel sum of squares");
             for (size_t c = 0; c < channels; ++c) {
                 sum[c] += hs[c];
                 squares[c] += hq[c];

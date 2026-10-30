@@ -7,6 +7,7 @@
 // defaults: no dataset is registered, categories carry no loader facts.
 
 #include "dataset_partitions.h"
+#include "image_split_counts.h"
 
 #include <cstddef>
 #include <functional>
@@ -76,6 +77,10 @@ struct GraphDatasetCatalog {
     // height, judged with the node's parameters (image_quality_analysis.cpp).
     std::function<GraphImageQualityResult(const std::string& name, int width, int height,
                                           const std::map<std::string, std::string>& parameters)> image_quality;
+    // How an image dataset splits into train / validation / test with these
+    // settings, leaving out `excluded` (image_split_counts.cpp; TOFIX178 1.5).
+    std::function<ImageSplitCounts(const std::string& name, const SampleSplitSettings& split,
+                                   const std::vector<std::string>& excluded)> image_split;
 };
 
 void SetGraphDatasetCatalog(GraphDatasetCatalog catalog);
@@ -89,6 +94,10 @@ std::optional<GraphTextDatasetInfo> GraphTextDatasetInfoFor(const std::string& n
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name);
 // The catalog's answer; nullopt when the installed catalog has no storage_kind.
 std::optional<DatasetStorageKind> GraphDatasetStorageKind(const std::string& name);
+// An image dataset's split as training makes it; nullopt when this host
+// cannot count it (no registry).
+std::optional<ImageSplitCounts> GraphImageSplit(const std::string& name, const SampleSplitSettings& split,
+                                                const std::vector<std::string>& excluded);
 // The catalog's verdict; nullopt when this host cannot judge image quality.
 std::optional<GraphImageQualityResult> GraphImageQuality(const std::string& name, int width, int height,
                                                          const std::map<std::string, std::string>& parameters);

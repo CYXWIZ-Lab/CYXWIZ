@@ -203,13 +203,18 @@ set(ENGINE_SOURCES
     src/core/datasets/huggingface_dataset.cpp
     src/core/datasets/custom_dataset.cpp
     src/core/sparse_feature_dataset_cache.cpp
+    src/core/image_batchers.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
     src/core/prepared_image_set.cpp
     src/core/image_index.cpp
+    src/core/image_split_counts.cpp
+    src/core/image_split_presentation.cpp
     src/core/image_index_service.cpp
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
+    src/core/image_pixels.cpp
+    src/core/image_viewer.cpp
     src/core/image_pipeline_preview.cpp
     src/core/image_channel_stats.cpp
     src/core/quality_analyzer_presentation.cpp
@@ -237,6 +242,9 @@ set(ENGINE_SOURCES
     src/core/groups_presentation.cpp
     src/core/explore_plugins_presentation.cpp
     src/core/dataset_column_stream.cpp
+    src/core/series_explore.cpp
+    src/core/time_steps.cpp
+    src/core/series_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -681,11 +689,6 @@ set(ENGINE_SOURCES
     src/gui/panels/qp_panel.cpp
     src/gui/panels/differentiation_panel.cpp
     src/gui/panels/integration_panel.cpp
-    src/gui/panels/decomposition_panel.cpp
-    src/gui/panels/acf_pacf_panel.cpp
-    src/gui/panels/stationarity_panel.cpp
-    src/gui/panels/seasonality_panel.cpp
-    src/gui/panels/forecasting_panel.cpp
     src/gui/panels/tokenization_panel.cpp
     src/gui/panels/word_frequency_panel.cpp
     src/gui/panels/tfidf_panel.cpp
@@ -761,6 +764,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/profile_view.cpp
     src/gui/data_studio/image_profile_view.cpp
     src/gui/data_studio/image_gallery_view.cpp
+    src/gui/data_studio/image_viewer_view.cpp
     src/gui/image_thumbnails.cpp
     src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/explore_tab.cpp
@@ -770,6 +774,8 @@ set(ENGINE_SOURCES
     src/gui/data_studio/groups_view.cpp
     src/gui/data_studio/plugins_view.cpp
     src/gui/data_studio/projection_view.cpp
+    src/gui/data_studio/series_view.cpp
+    src/gui/data_studio/forecast_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp
@@ -980,11 +986,6 @@ set(ENGINE_HEADERS
     src/gui/panels/qp_panel.h
     src/gui/panels/differentiation_panel.h
     src/gui/panels/integration_panel.h
-    src/gui/panels/decomposition_panel.h
-    src/gui/panels/acf_pacf_panel.h
-    src/gui/panels/stationarity_panel.h
-    src/gui/panels/seasonality_panel.h
-    src/gui/panels/forecasting_panel.h
     src/gui/panels/tokenization_panel.h
     src/gui/panels/word_frequency_panel.h
     src/gui/panels/tfidf_panel.h
@@ -1477,6 +1478,15 @@ set_target_properties(test_plot_arrow_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY
 add_test(NAME plot_arrow_source_contract COMMAND test_plot_arrow_source)
 
 # ===== Test: OpenCV Integration =====
+# ===== Test: the image types the Engine reads decode through its OpenCV =====
+add_executable(test_image_formats tests/test_image_formats.cpp)
+target_include_directories(test_image_formats PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_image_formats PRIVATE ${OpenCV_LIBS})
+set_target_properties(test_image_formats PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_formats COMMAND test_image_formats)
+
 add_executable(test_opencv_integration
     tests/test_opencv_integration.cpp
     src/preprocessing/morphology_transform.cpp
@@ -2501,6 +2511,7 @@ set_target_properties(test_operator_configure_resets PROPERTIES
 add_executable(test_time_series_analysis_operators
     tests/test_time_series_analysis_operators.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
 )
 
 target_include_directories(test_time_series_analysis_operators PRIVATE
@@ -2838,6 +2849,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -3215,6 +3227,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -4033,6 +4046,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -4612,6 +4626,17 @@ set_target_properties(test_compiled_node_presentation PROPERTIES
 # Reads examples/cyxgraph/NER from the repository.
 add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ===== Test: ML readiness for image datasets (TOFIX178 1.5) =====
+add_executable(test_image_split_presentation
+    tests/test_image_split_presentation.cpp
+    src/core/image_split_presentation.cpp
+)
+target_include_directories(test_image_split_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_image_split_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_split_presentation COMMAND test_image_split_presentation)
 
 # ===== Test: live compile recounts parameters after training (TOFIX123/TOFIX125) =====
 add_executable(test_live_graph_compile
@@ -6423,6 +6448,24 @@ add_test(NAME roc_pr_sklearn_parity COMMAND test_computation_truth_roc_pr)
 set(CYXWIZ_CLUSTERING_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/clustering_pytorch.json"
 )
+set(CYXWIZ_TIME_SERIES_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/time_series_statsmodels.json")
+add_executable(test_computation_truth_time_series
+    tests/computation_truth/test_computation_truth_time_series.cpp
+)
+target_include_directories(test_computation_truth_time_series PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_time_series PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_time_series PRIVATE
+    CYXWIZ_TIME_SERIES_FIXTURE="${CYXWIZ_TIME_SERIES_FIXTURE}"
+)
+set_target_properties(test_computation_truth_time_series PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ComputationTruthTimeSeries COMMAND test_computation_truth_time_series)
+
 add_executable(test_computation_truth_clustering
     tests/computation_truth/test_computation_truth_clustering.cpp
 )
@@ -7043,6 +7086,19 @@ set_target_properties(test_image_gallery_presentation PROPERTIES
 )
 add_test(NAME image_gallery_presentation COMMAND test_image_gallery_presentation)
 
+# ===== Test: Explore > Images viewer: zoom, orientation, pixels, histograms =====
+add_executable(test_image_viewer
+    tests/test_image_viewer.cpp
+    src/core/image_viewer.cpp
+    src/core/image_pixels.cpp
+)
+target_include_directories(test_image_viewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_image_viewer PRIVATE ${OpenCV_LIBS})
+set_target_properties(test_image_viewer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_viewer COMMAND test_image_viewer)
+
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/scheduler_node_pytorch.json")
@@ -7215,6 +7271,8 @@ target_link_libraries(test_cnn_image_training_smoke PRIVATE ${OpenCV_LIBS})
 add_executable(test_image_transform_graph
     tests/test_image_transform_graph.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/image_index.cpp
+    src/core/image_split_counts.cpp
     src/core/image_quality_analysis.cpp
     src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -7623,6 +7681,32 @@ endif()
 set_target_properties(test_stats_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME StatsExplore COMMAND test_stats_explore)
 
+# Timing of the time series fits on a long series (TOFIX129 D6); prints, not a check.
+add_executable(bench_time_series_long tests/bench_time_series_long.cpp)
+target_include_directories(bench_time_series_long PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include)
+target_link_libraries(bench_time_series_long PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(bench_time_series_long PRIVATE NOMINMAX _USE_MATH_DEFINES)
+endif()
+set_target_properties(bench_time_series_long PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Data Studio > Explore > Series and Forecast (TOFIX129 D6): reading, steps, periods, the held-out check, words.
+add_executable(test_series_explore tests/test_series_explore.cpp
+    src/core/series_explore.cpp src/core/series_presentation.cpp src/core/time_steps.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
+    src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_series_explore PRIVATE src)
+target_link_libraries(test_series_explore PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_series_explore PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+target_compile_definitions(test_series_explore PRIVATE
+    CYXWIZ_AIRLINE_CSV="${CMAKE_SOURCE_DIR}/examples/datasets/airline_passengers.csv")
+set_target_properties(test_series_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SeriesExplore COMMAND test_series_explore)
+
 # Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
 add_executable(test_groups_explore tests/test_groups_explore.cpp
     src/core/groups_explore.cpp src/core/groups_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
@@ -7965,6 +8049,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/time_steps.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp

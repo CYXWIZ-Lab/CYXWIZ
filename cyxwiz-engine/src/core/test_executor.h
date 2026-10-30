@@ -105,6 +105,9 @@ struct TestingMetrics {
     // The dataset row of each sample (as Batch::row_ids), in the table named
     // source_dataset; empty when the test batcher does not report rows.
     std::vector<int64_t> row_ids;
+    // Each sample's file (images: the image file, TOFIX178 1.5), when the
+    // source names them; empty otherwise.
+    std::vector<std::string> row_files;
     std::string source_dataset;
 
     // Per-sample class probabilities, row-major [total_samples][probability_classes]
@@ -168,6 +171,10 @@ using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 struct ExternalTestSource {
     std::function<std::unique_ptr<IBatcher>(const TrainingConfiguration& config, int batch_size)> make_batcher;
     std::vector<std::string> class_names;
+    // The table the batches' row ids count rows of (an image dataset's index).
+    std::string source_dataset;
+    // A row id's file, called after make_batcher; unset when rows have none.
+    std::function<std::string(int64_t row)> row_file;
 };
 
 /**

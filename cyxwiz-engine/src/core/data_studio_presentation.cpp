@@ -35,6 +35,10 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::DataProfiler: case NodeType::Plot: case NodeType::Dashboard: case NodeType::DescribeStats:
         case NodeType::CorrelationMatrix: case NodeType::ValueCounts: case NodeType::VisualizeData:
         case NodeType::CrossTabulation: case NodeType::QualityAnalyzer:
+        // Time series analysis kept as nodes (Explore > Series and Forecast, TOFIX129 D6).
+        case NodeType::TimeSeriesDecomposition: case NodeType::ACFNode: case NodeType::PACFNode:
+        case NodeType::StationarityTest: case NodeType::SeasonalityDetector: case NodeType::ARIMAForecaster:
+        case NodeType::ExponentialSmoothing:
             job = Job::Explore; return true;
         case NodeType::Subgraph: case NodeType::SQLQuery: case NodeType::FilterRows: case NodeType::SelectColumns:
         case NodeType::JoinTables: case NodeType::GroupByAggregate: case NodeType::SortRows:

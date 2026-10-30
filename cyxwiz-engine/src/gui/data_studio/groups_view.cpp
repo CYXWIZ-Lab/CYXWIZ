@@ -280,8 +280,10 @@ void GroupsView::RenderAnswer(const groups::GroupsAnswer& a, const DatasetProfil
     ImGui::Spacing();
 
     const float avail = ImGui::GetContentRegionAvail().x;
-    const bool split = avail >= 820.0f;
-    if (split && ImGui::BeginTable("##groups_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
+    bool split = avail >= 820.0f;
+    // split stays true only when the table began (EndTable must not run otherwise).
+    split = split && ImGui::BeginTable("##groups_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
+    if (split) {
         ImGui::TableSetupColumn("scatter", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("profile", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableNextRow();

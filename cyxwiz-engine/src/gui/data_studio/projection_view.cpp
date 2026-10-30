@@ -279,8 +279,10 @@ void ProjectionView::RenderAnswer(const groups::ProjectionAnswer& a, const group
 
     const float avail = ImGui::GetContentRegionAvail().x;
     const bool pca = a.request.method == ProjectionMethod::PCA;
-    const bool split = pca && avail >= 820.0f;
-    if (split && ImGui::BeginTable("##projection_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
+    bool split = pca && avail >= 820.0f;
+    // split stays true only when the table began (EndTable must not run otherwise).
+    split = split && ImGui::BeginTable("##projection_split", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
+    if (split) {
         ImGui::TableSetupColumn("plot", ImGuiTableColumnFlags_WidthStretch, 1.3f);
         ImGui::TableSetupColumn("components", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableNextRow();

@@ -1288,6 +1288,15 @@ void TrainingExecutor::Train(
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
                                       initialized_from);
     checkpoint_manager->SetTokenizer(CheckpointTokenizerFromConfig(config_));
+    CheckpointDataSplit split;
+    split.known = true;
+    split.train = config_.train_ratio;
+    split.val = config_.val_ratio;
+    split.test = config_.test_ratio;
+    split.stratified = config_.stratified;
+    split.seed = config_.split_seed;
+    split.excluded_files = config_.image_excluded_files;
+    checkpoint_manager->SetDataSplit(std::move(split));
 
     generation_preview_.reset();
     generation_preview_checkpoints_ = nullptr;
@@ -1495,7 +1504,9 @@ void TrainingExecutor::Train(
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
             validation_ran_this_epoch = RunValidationSequence(*active_sequence_batcher);
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
-        } else if (should_validate_this_epoch && active_val_ibatcher) {
+        } else if (should_validate_this_epoch && active_val_ibatcher && num_val_samples > 0) {
+            // Not without a validation part (an image Data Split at 0.9 / 0 /
+            // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
             RunValidationArrow(*active_val_ibatcher);
             active_val_ibatcher->SetPhase(train_batcher_phase);
@@ -1881,8 +1892,9 @@ void TrainingExecutor::Train(
                 "TrainingExecutor: configured Sequence test split produced "
                 "0 held-out samples; test metrics were skipped");
         }
-    } else if (!stop_requested_.load() && active_test_ibatcher &&
-        active_test_ibatcher->GetNumSamples() > 0) {
+    } else if (!stop_requested_.load() && active_test_ibatcher && num_test_samples > 0) {
+        // num_test_samples: counted in the test phase (a batcher's count
+        // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
         const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
@@ -1911,11 +1923,11 @@ void TrainingExecutor::Train(
                 "test_mae={:.4f}, test_rmse={:.4f} ({} samples)",
                 test_evaluation.loss, test_evaluation.mae,
                 test_evaluation.rmse,
-                active_test_ibatcher->GetNumSamples());
+                num_test_samples);
         } else {
             spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
                          test_evaluation.loss, test_evaluation.accuracy * 100.0f,
-                         active_test_ibatcher->GetNumSamples());
+                         num_test_samples);
         }
         if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_test) {
             model_->SetTraining(false);

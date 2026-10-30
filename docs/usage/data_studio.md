@@ -56,6 +56,16 @@ An image Data Input shows its folder, where its labels come from (*image
 folder, labels from cat_dog.csv* or *image folder, class folders*) and the
 image count (*25,000 images*).
 
+### Image types
+
+The Engine reads JPEG (`.jpg` `.jpeg` `.jpe`), PNG, BMP (`.bmp` `.dib`),
+TIFF (`.tif` `.tiff`), WebP, GIF (its first frame), the Netpbm types
+(`.ppm` `.pgm` `.pbm` `.pnm`), Sun raster (`.sr` `.ras`), Radiance HDR
+(`.hdr` `.pic`) and PFM. The same list is used everywhere: the Data Input's
+folder scan, the image index, training, Explore > Images and the asset
+previews. Other files in an image folder are skipped. TGA, AVIF, HEIC,
+JPEG 2000, JPEG XL and EXR are not read: convert them first.
+
 ### The image index
 
 Loading an image dataset also builds its **index table**, one row per image,
@@ -89,9 +99,9 @@ they are loaded again.
 
 ## Explore
 
-Explore has twelve views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has fourteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Visualize** and **Plugins**, and a thirteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast**, **Visualize** and **Plugins**, and a fifteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -99,7 +109,8 @@ Distribution Fitter open Distribution; Hypothesis Testing opens Tests; Linear /
 Polynomial Regression opens Regression) and Tools > Clustering and Projection
 (K-Means, DBSCAN, Hierarchical Clustering and Gaussian Mixture Models open
 Groups on that method, Cluster Evaluation opens Groups, PCA / t-SNE / UMAP opens
-Projection). In Profile, a column's missing or outlier count opens
+Projection) and Tools > Time Series (Decomposition, ACF / PACF, Stationarity and
+Seasonality open Series on that look; Forecasting opens Forecast). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -280,21 +291,73 @@ under the details (Spotify: artist_popularity and artist_followers +0.64).
 ## Images
 
 For an image dataset (its Data Input in the rail), **Images** shows its
-thumbnails, a page at a time, in the order of its index table. The chips
-filter by class (*All*, *Class 0*, *Class 1*, or the class names) and show
-the unreadable files when there are any; once quality is measured, also
-*Fails a check* and one chip per reason (*blurry*, *low contrast*, *dark*,
-*bright*, *duplicate*), and tiles that fail carry their first reason at the
-top right (*blurry +1*). **Sort** puts them in dataset order, smallest first,
-largest first (by pixel count, unreadable files last) or, once measured,
-blurriest first. Each tile has its class at the bottom left; hovering shows the file
-name. Clicking a tile shows it larger with its row, label, original size and
-colour, size on disk and path (and, when measured, its blur, brightness,
-contrast, verdict and the image it duplicates), and the links **Show in folder** and **Open
-the index table** (Query on `<dataset>_index`). Thumbnails are read on two
-background threads, the ones on screen first.
+images as a **Grid**, a **List** or one at a time in the **Viewer** (the
+first buttons of its toolbar). It works for any image dataset: the facts
+come from the dataset's index table.
 
-**What the model sees**, under the grid, runs the picked image through this
+The chips filter by class (*All*, *Class 0*, *Class 1*, or the class names)
+and show the unreadable files when there are any; once quality is measured,
+also *Fails a check* and one chip per reason (*blurry*, *low contrast*,
+*dark*, *bright*, *duplicate*). The filter holds in all three views. The
+arrows at the right turn the pages (*1 to 60 of 25,000*).
+
+**Grid.** The tiles fill the panel and scroll. **Tile** sets their size
+(64 to 256 px, typed or with - / +); **Fill** crops each image to its
+square, **Fit** shows it whole. **Show** chooses what a tile carries: its
+**Class** (bottom left), **Name** (bottom right), **Size** in pixels (top
+left) and **Flags**, the first failed check (top right, *blurry +1*).
+**Sort** puts them in dataset order, smallest first, largest first (by pixel
+count, unreadable files last) or, once measured, blurriest first. Hovering
+shows the file name.
+
+Clicking a tile picks it (a ring and a wash): the panel at the right shows
+it larger with its row, label, original size and colour, size on disk and
+path (and, when measured, its blur, brightness, contrast, verdict and the
+image it duplicates), **Open in viewer**, and the links **Show in folder**
+and **Open the index table** (Query on `<dataset>_index`). The arrow keys
+move the pick (Up and Down a row), Enter or a double-click opens it in the
+viewer. Thumbnails are read on two background threads, the ones on screen
+first.
+
+**List.** A row per image: thumbnail, file, class, size, channels, size on
+disk and quality (*not measured* until it is). Click a column to sort by it
+(File by name, Class, Size smallest or largest first, On disk largest first,
+Quality blurriest first); a third click goes back to dataset order.
+Double-click a row to open it in the viewer.
+
+**Viewer.** One image at full size; nothing here changes the file.
+
+- **Zoom**: **Fit** (the whole image, enlarging a small one), **100 %**, a
+  typed percent, and - / + through steps from 6 % to 1600 %. The mouse wheel
+  zooms around the cursor, a drag pans, a double-click goes between Fit and
+  100 %.
+- **Channel**: RGB, R, G or B alone, Luminance (as the Grayscale node:
+  0.2989 R + 0.587 G + 0.114 B), and Alpha when the image has one.
+- **View**: rotate left or right, **Flip** left to right, **Pixel grid**
+  (lines between pixels from 800 %), **Checkerboard** behind transparent
+  pixels.
+- **Compare**: **Original**, **Model sees** (the image after this graph's
+  fixed image steps, the size the model gets, *Gaussian Blur 3 x 3, sigma
+  0.8 · 546 %*) or **Side by side**; each fitted to its half.
+- Under the picture, the filmstrip (the images before and after it in the
+  current order; click one to go to it) and the status bar: the pixel under
+  the cursor (*x 189 y 190 · R 151 G 150 B 146 · #979692*), and the image's
+  size, colour type, bits per channel and zoom.
+- At the right: a **Histogram** per channel (red, green, blue, luminance,
+  alpha when there is one; 32 bins of 0 to 255, with the mean and standard
+  deviation; the chosen channel stays bright), **Around the cursor** (the
+  12 x 8 pixels around the pointed one, one cell each), and the image's
+  details.
+- The arrows by the file name (or Left and Right) go to the previous and
+  next image; Esc goes back to the grid or list.
+
+The images are read with OpenCV, as training reads them: the pixels as
+stored, without turning a photo by its EXIF orientation (a phone photo
+taken sideways shows sideways, as the model gets it). 16-bit and float
+images are scaled to 8 bits for the screen (the status bar names the file's
+own depth).
+
+**What the model sees**, folded under the grid (click it to open), runs the picked image through this
 graph's image steps with the code training runs, on the ArrayFire device:
 the Resize (*Resize 72 x 72, exact, once*), each transform done once with the
 images (*Center Crop 64 x 64*, *Gaussian Blur 3 x 3, sigma 0.8*), then four
@@ -491,6 +554,41 @@ add the PCA, t-SNE or UMAP node, which keeps the input columns and adds
 `pc_*`, `tsne_*` or `umap_*` beside them; the t-SNE and UMAP nodes work on
 every row ([dimensionality reduction](dimensionality_reduction.md#the-nodes)).
 
+## Series
+
+One number column over time, in four looks: **Parts** (STL or classical
+decomposition into trend, season and residual), **Seasonality** (the periods
+of the detrended periodogram ranked by their share of the power, the season
+by position), **Stationarity** (ADF and KPSS on the series and its
+differences, the suggested differencing, rolling mean and spread) and
+**Correlogram** (ACF / PACF with their bands, the seasonal lags marked, the
+Ljung-Box test, the orders the cut-offs suggest). **Time** is the Data Input's
+time column, else the one date column, else the row order: a date column, a
+text that reads as dates, or numbers; the rows are sorted by it and the step
+(monthly, daily, every 10 seconds) is read from it. **Period** is found from
+the detrended periodogram and can be typed over. Each look says the series
+("144 months, monthly, 1949-01 .. 1960-12; period found: 12") and puts its
+node into the graph: **Add as a step** (Decomposition, a Differencing step at
+the suggested order) or **Keep as a node** (Seasonality Detector, Stationarity
+Test, ACF and PACF). The figures match statsmodels; the rules, the words and
+the nodes are in [time series](time_series.md).
+
+## Forecast
+
+The same series forecast a typed horizon ahead by **Simple** exponential
+smoothing, **Holt** (additive or damped trend), **Holt-Winters** (additive or
+multiplicative season), **ARIMA** (p, d, q typed or chosen) or the
+**Seasonal naive** baseline, with the model's prediction interval at the
+typed level and the dates continued from the step. **Check on the last** H
+rows (on by default: twice the period, else 12) holds them out, fits every
+method on the rest and scores each against repeating last cycle (MAPE,
+RMSE), in a table and a sentence; then the chosen method is fitted on
+everything. The page shows the next value with its range, the AIC, the
+series with the fit and the band, the forecast table and the held-out
+table. **Add as a step** / **Keep as a node** add the ARIMA or Exp. Smoothing
+node with these settings; **Stop** ends a long search ([time
+series](time_series.md#forecast)).
+
 ## Visualize
 
 Quick plots of the picked dataset, with the same plot types, plot view and
@@ -684,6 +782,11 @@ pick from. A Data Split that splits one input by ratio does that during
 training; it is not previewed here. A Data Split input that is not loaded is
 named in an orange line.
 
+**Images.** For an image dataset the job shows the split training will
+make, from the canvas graph's compile: a card per part, each class in each
+part with its share, whether the shares match the whole set's, and what was
+counted. Nothing is queried (see image_split.md).
+
 **When.** Opening the job compares the splits in the background (Task View
 shows it); so do a change to a split's data and **Check again**. The tab's
 line then says what it found (*no leakage*, *leakage found*, *not
@@ -794,7 +897,7 @@ Sections:
 | Curves | ROC and precision-recall (one line per class against the rest for three or more), AUC and AP; the precision-recall curve is drawn as steps, so its area is AP; a ring marks the threshold |
 | Threshold | two classes, or one class against the rest: the **Positive class** by name, a typed **Threshold** (- / +) and **Best F1**; precision, recall, specificity, F1, balanced accuracy, MCC, accuracy and the 2 x 2 counts at that threshold |
 | Plots | regression: predicted vs actual, residuals vs predicted, residual histogram |
-| Predictions | every row with its dataset row, or the mistakes with the most confident first (regression: the largest errors first) |
+| Predictions | every row with its dataset row (an image test: its file, the full path on hover), or the mistakes with the most confident first (regression: the largest errors first) |
 | By column value | the error by the values (or ranges) of a column of the tested table |
 | Comparison | the latest test beside the one before (Train > Test > Compare Test Results opens it) |
 
@@ -808,7 +911,9 @@ keeps the latest test (below). **Clear** asks first, then forgets the latest
 test and the one before (kept tests stay). **Run test again** tests again.
 
 `test_predictions` has a `row_id` column (each test row's row in the tested
-table, counted from 0), and its metadata keeps the tested table's name, the
+table, counted from 0; an image test's row in the dataset's index table),
+a `file` column after it for an image test, and its metadata keeps the
+tested table's name, the
 class names, the loss and the time, so the results join back to the data and
 a copy read back later gives the whole run.
 

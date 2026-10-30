@@ -1,3 +1,4 @@
+#include "../core/image_batchers.h"
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/session_query_service.h"
 #include "../core/pipeline_type_names.h"
@@ -104,13 +105,9 @@
 #include "panels/qp_panel.h"
 #include "panels/differentiation_panel.h"
 #include "panels/integration_panel.h"
-#include "panels/decomposition_panel.h"
-#include "panels/acf_pacf_panel.h"
-#include "panels/stationarity_panel.h"
 #include "data_studio/folds_view.h"
+#include "data_studio/series_view.h"
 #include "../core/node_executors/training_evaluation_operator.h"
-#include "panels/seasonality_panel.h"
-#include "panels/forecasting_panel.h"
 #include "panels/tokenization_panel.h"
 #include "panels/word_frequency_panel.h"
 #include "panels/tfidf_panel.h"
@@ -700,13 +697,6 @@ MainWindow::MainWindow()
     differentiation_panel_ = std::make_unique<cyxwiz::DifferentiationPanel>();
     integration_panel_ = std::make_unique<cyxwiz::IntegrationPanel>();
 
-    // Time Series Analysis panels (Phase 10)
-    decomposition_panel_ = std::make_unique<cyxwiz::DecompositionPanel>();
-    acf_pacf_panel_ = std::make_unique<cyxwiz::ACFPACFPanel>();
-    stationarity_panel_ = std::make_unique<cyxwiz::StationarityPanel>();
-    seasonality_panel_ = std::make_unique<cyxwiz::SeasonalityPanel>();
-    forecasting_panel_ = std::make_unique<cyxwiz::ForecastingPanel>();
-
     // Text Processing panels (Phase 11)
     tokenization_panel_ = std::make_unique<cyxwiz::TokenizationPanel>();
     word_frequency_panel_ = std::make_unique<cyxwiz::WordFrequencyPanel>();
@@ -962,6 +952,9 @@ MainWindow::MainWindow()
     properties_->SetNodeEditor(node_editor_.get());
     // A step's input or output opens in the Table Viewer (TOFIX146). The
     // viewer holds rows in memory, so a very large output opens its first rows.
+    properties_->SetOpenReadinessCallback([this] {
+        if (data_studio_panel_) data_studio_panel_->ShowReadiness();
+    });
     properties_->SetOpenProfileCallback([this](const std::string& dataset_name) {
         if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset_name);
     });
@@ -981,6 +974,12 @@ MainWindow::MainWindow()
     });
 
     live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
+    // A dataset added, replaced or removed changes what the graph compiles to
+    // without a graph edit: an image index built after loading gives the Data
+    // Split its counts (TOFIX178 1.5), a table loaded gives its columns.
+    cyxwiz::DatasetCatalog::Instance().Subscribe(live_compile_datasets_, [this](const cyxwiz::DatasetChange&) {
+        if (live_compile_) live_compile_->Invalidate();
+    });
     properties_->SetLiveCompile(live_compile_.get());
     node_editor_->SetLiveCompile(live_compile_.get());
 
@@ -2049,36 +2048,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Time Series Analysis callbacks (Phase 10)
-    toolbar_->SetOpenDecompositionCallback([this]() {
-        if (decomposition_panel_) {
-            decomposition_panel_->Toggle();
-            spdlog::info("Toggled Time Series Decomposition panel");
-        }
-    });
-    toolbar_->SetOpenACFPACFCallback([this]() {
-        if (acf_pacf_panel_) {
-            acf_pacf_panel_->Toggle();
-            spdlog::info("Toggled ACF/PACF panel");
-        }
-    });
-    toolbar_->SetOpenStationarityCallback([this]() {
-        if (stationarity_panel_) {
-            stationarity_panel_->Toggle();
-            spdlog::info("Toggled Stationarity Testing panel");
-        }
-    });
-    toolbar_->SetOpenSeasonalityCallback([this]() {
-        if (seasonality_panel_) {
-            seasonality_panel_->Toggle();
-            spdlog::info("Toggled Seasonality Detection panel");
-        }
-    });
+    // Tools > Time Series opens Data Studio's Explore tabs Series (on that
+    // look) and Forecast, for the data in use (TOFIX129 D6).
+    const auto open_series = [this](cyxwiz::SeriesView::Look look) {
+        if (data_studio_panel_) data_studio_panel_->ShowSeries(look);
+    };
+    toolbar_->SetOpenDecompositionCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Parts); });
+    toolbar_->SetOpenACFPACFCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Correlogram); });
+    toolbar_->SetOpenStationarityCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Stationarity); });
+    toolbar_->SetOpenSeasonalityCallback([open_series]() { open_series(cyxwiz::SeriesView::Look::Seasonality); });
     toolbar_->SetOpenForecastingCallback([this]() {
-        if (forecasting_panel_) {
-            forecasting_panel_->Toggle();
-            spdlog::info("Toggled Forecasting panel");
-        }
+        if (data_studio_panel_) data_studio_panel_->ShowForecast();
     });
 
     // Text Processing callbacks (Phase 11)
@@ -2654,16 +2634,6 @@ MainWindow::~MainWindow() {
     word_frequency_panel_.reset();
     spdlog::info("~MainWindow: tokenization_panel_");
     tokenization_panel_.reset();
-    spdlog::info("~MainWindow: forecasting_panel_");
-    forecasting_panel_.reset();
-    spdlog::info("~MainWindow: seasonality_panel_");
-    seasonality_panel_.reset();
-    spdlog::info("~MainWindow: stationarity_panel_");
-    stationarity_panel_.reset();
-    spdlog::info("~MainWindow: acf_pacf_panel_");
-    acf_pacf_panel_.reset();
-    spdlog::info("~MainWindow: decomposition_panel_");
-    decomposition_panel_.reset();
     spdlog::info("~MainWindow: integration_panel_");
     integration_panel_.reset();
     spdlog::info("~MainWindow: differentiation_panel_");
@@ -3131,13 +3101,6 @@ void MainWindow::Render() {
     TimedRender("qp", qp_panel_);
     TimedRender("differentiation", differentiation_panel_);
     TimedRender("integration", integration_panel_);
-
-    // Time Series Analysis panels (Phase 10)
-    TimedRender("decomposition", decomposition_panel_);
-    TimedRender("acf pacf", acf_pacf_panel_);
-    TimedRender("stationarity", stationarity_panel_);
-    TimedRender("seasonality", seasonality_panel_);
-    TimedRender("forecasting", forecasting_panel_);
 
     // Text Processing panels (Phase 11)
     TimedRender("tokenization", tokenization_panel_);
@@ -3629,13 +3592,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (qp_panel_) qp_panel_->SetVisible(false);
     if (differentiation_panel_) differentiation_panel_->SetVisible(false);
     if (integration_panel_) integration_panel_->SetVisible(false);
-
-    // Time Series Analysis panels (Phase 10)
-    if (decomposition_panel_) decomposition_panel_->SetVisible(false);
-    if (acf_pacf_panel_) acf_pacf_panel_->SetVisible(false);
-    if (stationarity_panel_) stationarity_panel_->SetVisible(false);
-    if (seasonality_panel_) seasonality_panel_->SetVisible(false);
-    if (forecasting_panel_) forecasting_panel_->SetVisible(false);
 
     // Text Processing panels (Phase 11)
     if (tokenization_panel_) tokenization_panel_->SetVisible(false);
@@ -5859,6 +5815,26 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         return;
     }
 
+    // The test part is the one the model trained without: the Data Split it
+    // trained with (kept with the model and its checkpoints), even when the
+    // graph's Data Split changed since; otherwise the test could score rows
+    // or images the model trained on.
+    if (active_model_info.evaluation_config && active_model_info.evaluation_config->dataset_name == dataset_name) {
+        const auto& trained = *active_model_info.evaluation_config;
+        if (trained.train_ratio != config.train_ratio || trained.val_ratio != config.val_ratio ||
+            trained.test_ratio != config.test_ratio || trained.stratified != config.stratified ||
+            trained.split_seed != config.split_seed || trained.image_excluded_files != config.image_excluded_files)
+            spdlog::warn("Run Test: the Data Split changed since the model trained; testing the test part of the "
+                         "split it trained with ({:.2f} / {:.2f} / {:.2f}, seed {})", trained.train_ratio, trained.val_ratio,
+                         trained.test_ratio, trained.split_seed);
+        config.train_ratio = trained.train_ratio;
+        config.val_ratio = trained.val_ratio;
+        config.test_ratio = trained.test_ratio;
+        config.stratified = trained.stratified;
+        config.split_seed = trained.split_seed;
+        config.image_excluded_files = trained.image_excluded_files;
+    }
+
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
@@ -5870,6 +5846,12 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
             test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
+    } else if (const auto* image_entry = registry.GetImageDatasetEntry(dataset_name)) {
+        // Images (TOFIX178 1.5): the Data Split's test part, or a wired Test
+        // dataset whole, through the graph's image steps.
+        started = cyxwiz::TestManager::Instance().StartTesting(
+            std::move(config), cyxwiz::MakeImageTestSource(dataset_name, *image_entry, test_selection.scope), test_batch_size,
+            model, nullptr, active_model_info.model_device);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {

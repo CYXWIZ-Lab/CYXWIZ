@@ -30,6 +30,7 @@ struct GraphNode {
     std::string folder_path;   // an image or audio Data Input's folder
     std::string labels_csv;    // an image Data Input's labels CSV ("" for class folders)
     std::string dataset_name;  // a Data Input's registry name once loaded ("documents_train")
+    std::string time_column;   // a Data Input's time column (Explore > Series and Forecast take it first)
     bool recipe = false;       // a Preparation Recipe (a Subgraph)
     int recipe_steps = 0;
     std::vector<int> input_from;  // the node linked to each input pin, in pin order (-1: none)

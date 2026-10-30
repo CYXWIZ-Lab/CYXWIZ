@@ -38,6 +38,7 @@ To write your own nodes in Python or C++, see
 | [Scaling and transforms](data_transforms.md) | Scaling and shape changes as graph steps |
 | [Image transforms](image_transforms.md) | Image nodes between the Data Input and the model |
 | [Quality Analyzer](quality_analyzer.md) | Leaving poor images out of training |
+| [Splitting images and audio](image_split.md) | Train, validation and test parts of an image or audio dataset |
 | [Text vectorizers](text_vectorizers.md) | TF-IDF and count vectorizers |
 | [Word embeddings](word_embeddings.md) | word2vec, GloVe and fastText vectors |
 

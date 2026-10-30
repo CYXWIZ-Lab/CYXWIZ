@@ -121,6 +121,15 @@ View Build(const Input& in) {
         });
     else if (in.sort == Sort::Largest)
         std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return area(a) > area(b); });
+    else if (in.sort == Sort::Name)
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return in.rows[a].file < in.rows[b].file; });
+    else if (in.sort == Sort::Class)
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            const int x = in.rows[a].label, y = in.rows[b].label;
+            return (x < 0 ? INT_MAX : x) < (y < 0 ? INT_MAX : y);  // no label last
+        });
+    else if (in.sort == Sort::LargestFile)
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return in.rows[a].bytes > in.rows[b].bytes; });
     else if (in.sort == Sort::Blurriest)
         std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
             const Row& x = in.rows[a];
@@ -142,6 +151,13 @@ View Build(const Input& in) {
         const auto reasons = Reasons(in.rows[order[k]].verdict);
         v.flags.push_back(reasons.empty() ? std::string()
                                           : reasons[0] + (reasons.size() > 1 ? " +" + std::to_string(reasons.size() - 1) : ""));
+        const Row& r = in.rows[order[k]];
+        v.sizes.push_back(r.readable && r.width > 0
+                              ? std::to_string(r.width) + " \xC3\x97 " + std::to_string(r.height)
+                              : std::string("unreadable"));
+        v.channels.push_back(ChannelsText(r.channels));
+        v.on_disk.push_back(Kilobytes(r.bytes));
+        v.verdicts.push_back(!r.measured ? "not measured" : r.verdict.empty() ? "passes" : r.verdict);
     }
     v.has_previous = v.page > 0;
     v.has_next = v.page + 1 < v.pages;
@@ -177,7 +193,16 @@ View Build(const Input& in) {
             if (!r.duplicate_of.empty()) v.detail.push_back({"Same as", r.duplicate_of});
         }
         v.detail.push_back({"Path", r.path});
+
+        const size_t at = static_cast<size_t>(std::find(order.begin(), order.end(), static_cast<size_t>(in.selected)) - order.begin());
+        v.position = Thousands(at + 1) + " of " + Thousands(order.size());
+        if (at > 0) v.previous = static_cast<long long>(order[at - 1]);
+        if (at + 1 < order.size()) v.next = static_cast<long long>(order[at + 1]);
+        const size_t from = at > in.strip_radius ? at - in.strip_radius : 0;
+        const size_t to = std::min(order.size(), at + in.strip_radius + 1);
+        v.strip.assign(order.begin() + static_cast<std::ptrdiff_t>(from), order.begin() + static_cast<std::ptrdiff_t>(to));
     }
+    v.order = std::move(order);
     return v;
 }
 

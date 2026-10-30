@@ -2,6 +2,7 @@
 
 #include "../dataset_base.h"
 #include "../data_registry.h"
+#include "../image_formats.h"
 #include "../image_utils.h"
 #include "image_csv_dataset.h"  // For LRUCache template
 #include "class_order.h"
@@ -103,9 +104,6 @@ private:
             class_to_label[class_names_[i]] = static_cast<int>(i);
         }
 
-        // Scan for images in each class directory
-        std::vector<std::string> valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tga"};
-
         for (const auto& class_name : class_names_) {
             fs::path class_path = fs::path(path_) / class_name;
             int label = class_to_label[class_name];
@@ -115,10 +113,7 @@ private:
             for (const auto& entry : fs::directory_iterator(class_path)) {
                 if (!entry.is_regular_file()) continue;
 
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-                if (std::find(valid_extensions.begin(), valid_extensions.end(), ext) != valid_extensions.end()) {
+                if (image_formats::IsImageExtension(entry.path().extension().string())) {
                     files.push_back(entry.path().string());
                 }
             }

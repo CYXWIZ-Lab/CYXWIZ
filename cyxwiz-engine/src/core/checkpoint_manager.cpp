@@ -115,6 +115,7 @@ std::string CheckpointManager::SaveCheckpoint(
     metadata.tokenizer_sha256 = provenance_.tokenizer_sha256;
     metadata.context = provenance_.context;
     metadata.initialized_from = provenance_.initialized_from;
+    metadata.split = provenance_.split;
 
     // Add timestamp
     auto now = std::chrono::system_clock::now();
@@ -394,6 +395,13 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         if (!metadata.tokenizer_sha256.empty()) j["tokenizer_sha256"] = metadata.tokenizer_sha256;
         if (metadata.context > 0) j["context"] = metadata.context;
         if (!metadata.initialized_from.empty()) j["initialized_from"] = metadata.initialized_from;
+        if (metadata.split.known)
+            j["data_split"] = {{"train", metadata.split.train},
+                               {"val", metadata.split.val},
+                               {"test", metadata.split.test},
+                               {"stratified", metadata.split.stratified},
+                               {"seed", metadata.split.seed},
+                               {"excluded_files", metadata.split.excluded_files}};
 
         // Save history arrays
         j["loss_history"] = metadata.loss_history;
@@ -456,6 +464,17 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         metadata.tokenizer_sha256 = j.value("tokenizer_sha256", "");
         metadata.context = j.value("context", 0);
         metadata.initialized_from = j.value("initialized_from", "");
+        if (j.contains("data_split") && j["data_split"].is_object()) {
+            const auto& s = j["data_split"];
+            metadata.split.known = true;
+            metadata.split.train = s.value("train", 0.8f);
+            metadata.split.val = s.value("val", 0.1f);
+            metadata.split.test = s.value("test", 0.1f);
+            metadata.split.stratified = s.value("stratified", false);
+            metadata.split.seed = s.value("seed", 42);
+            if (s.contains("excluded_files") && s["excluded_files"].is_array())
+                metadata.split.excluded_files = s["excluded_files"].get<std::vector<std::string>>();
+        }
 
         // Load history arrays
         if (j.contains("loss_history")) {

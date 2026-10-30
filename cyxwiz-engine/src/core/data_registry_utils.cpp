@@ -479,6 +479,14 @@ DataRegistry::GetImageDatasetEntry(const std::string& name) const {
     return &it->second;
 }
 
+std::optional<DataRegistry::ImageDatasetEntry>
+DataRegistry::CopyImageDatasetEntry(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = image_dataset_entries_.find(name);
+    if (it == image_dataset_entries_.end()) return std::nullopt;
+    return it->second;
+}
+
 void DataRegistry::UnregisterImageDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     bool removed_any = false;

@@ -6300,7 +6300,7 @@ int main(int argc, char** argv) {
               bad_decomposition_period_json),
           "TimeSeriesDecomposition period 1 should fail validation");
     Check(bad_decomposition_period_executor.GetLastError().find(
-              "TimeSeriesDecomposition period must be an integer >= 2") !=
+              "TimeSeriesDecomposition period must be an integer >= -1 except 0, 1") !=
               std::string::npos,
           "TimeSeriesDecomposition period validation should be specific: " +
               bad_decomposition_period_executor.GetLastError());

@@ -23,6 +23,8 @@
 #include "groups_view.h"
 #include "projection_view.h"
 #include "plugins_view.h"
+#include "series_view.h"
+#include "forecast_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
 #include "validate_view.h"
@@ -46,7 +48,7 @@ class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
     // Images shows only for an image dataset.
-    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Visualize, Plugins };
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize, Plugins };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -81,6 +83,10 @@ public:
     // Explore > Groups / Projection on a method, for the data in use (Tools > Clustering and Projection).
     void ShowGroups(groups::Method method);
     void ShowProjection(groups::ProjectionMethod method);
+    // Explore > Series on a look, for the data in use (Tools > Time Series).
+    void ShowSeries(SeriesView::Look look);
+    // Explore > Forecast, for the data in use (Tools > Time Series > Forecasting).
+    void ShowForecast();
 
     // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
     // after the data in use (a Data Input or a node's result; the graph's
@@ -95,6 +101,8 @@ public:
     // Opens Results on one of its views (a test finished, Train > Test >
     // View / Compare test results, Tools > Evaluation).
     void ShowResults(ResultsView::View view);
+    // ML readiness (the Data Split card's "Show the split in Data Studio").
+    void ShowReadiness();
     // Results > Test: MainWindow hands it each finished test and its "Run
     // test again".
     TestView* GetTestView() { return results_ ? &results_->Test() : nullptr; }
@@ -124,6 +132,8 @@ private:
     std::unique_ptr<GroupsView> groups_;
     std::unique_ptr<ProjectionView> projection_;
     std::unique_ptr<PluginsView> plugins_;
+    std::unique_ptr<SeriesView> series_;
+    std::unique_ptr<ForecastView> forecast_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

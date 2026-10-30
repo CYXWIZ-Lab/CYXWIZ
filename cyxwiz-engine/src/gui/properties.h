@@ -70,6 +70,8 @@ public:
     // Data Studio").
     using OpenProfileCallback = std::function<void(const std::string& dataset_name)>;
     void SetOpenProfileCallback(OpenProfileCallback callback) { open_profile_ = std::move(callback); }
+    // Opens Data Studio's ML readiness (the Data Split card's "Show the split").
+    void SetOpenReadinessCallback(std::function<void()> callback) { open_readiness_ = std::move(callback); }
 
     void SetBackendPlacementFacts(
         std::vector<properties_truth::BackendPlacementTruthFact> facts);
@@ -152,6 +154,7 @@ private:
     std::unique_ptr<SqlStepView> sql_view_;
     OpenTableCallback open_table_;
     OpenProfileCallback open_profile_;
+    std::function<void()> open_readiness_;
     void RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* metadata);
 

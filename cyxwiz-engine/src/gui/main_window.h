@@ -93,12 +93,6 @@ class LPPanel;
 class QPPanel;
 class DifferentiationPanel;
 class IntegrationPanel;
-// Time Series Analysis panels (Phase 10)
-class DecompositionPanel;
-class ACFPACFPanel;
-class StationarityPanel;
-class SeasonalityPanel;
-class ForecastingPanel;
 // Text Processing panels (Phase 11)
 class TokenizationPanel;
 class WordFrequencyPanel;
@@ -371,6 +365,10 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    // Scopes the dataset catalog subscription that recompiles the graph when a
+    // dataset is added, replaced or removed (declared after live_compile_, so
+    // it goes first).
+    std::shared_ptr<int> live_compile_datasets_ = std::make_shared<int>(0);
     void UpdateLiveCompile();
     // Python node bundles (TOFIX125 P4): registered from <project>/nodes,
     // the user nodes folder and plugin nodes/ folders; Python is started
@@ -452,13 +450,6 @@ private:
     std::unique_ptr<cyxwiz::QPPanel> qp_panel_;
     std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
     std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
-
-    // Time Series Analysis panels (Phase 10)
-    std::unique_ptr<cyxwiz::DecompositionPanel> decomposition_panel_;
-    std::unique_ptr<cyxwiz::ACFPACFPanel> acf_pacf_panel_;
-    std::unique_ptr<cyxwiz::StationarityPanel> stationarity_panel_;
-    std::unique_ptr<cyxwiz::SeasonalityPanel> seasonality_panel_;
-    std::unique_ptr<cyxwiz::ForecastingPanel> forecasting_panel_;
 
     // Text Processing panels (Phase 11)
     std::unique_ptr<cyxwiz::TokenizationPanel> tokenization_panel_;

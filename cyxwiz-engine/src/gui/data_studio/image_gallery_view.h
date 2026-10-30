@@ -1,12 +1,14 @@
 #pragma once
 
 // Explore > Images (TOFIX178 1.3e): an image dataset's thumbnails from its
-// index table, by page, filtered by class and sorted, with the picked
+// index table, filtered by class and sorted, as a grid that fills the panel,
+// a list, or one image in the viewer (image_viewer_view), with the picked
 // image's details. Draws core/image_gallery_presentation.
 
 #include "../../core/image_gallery_presentation.h"
 #include "../../core/image_pipeline_preview.h"
 #include "../image_thumbnails.h"
+#include "image_viewer_view.h"
 
 #include <cstdint>
 #include <functional>
@@ -34,15 +36,44 @@ public:
     std::function<void(const std::string& index_table)> on_open_index;
 
 private:
+    enum class Layout { Grid, List, Viewer };
+
     void Refresh();
+    // The view of input_, built again only when the rows, the filter, the
+    // sort, the page or the pick changed (Build sorts every row).
+    const image_gallery::View& CurrentView();
+    void RenderToolbar(const image_gallery::View& view);
+    void RenderFilters(const image_gallery::View& view, bool sort_buttons);
+    void RenderGrid(const image_gallery::View& view, float width, float height);
+    void RenderList(const image_gallery::View& view, float width, float height);
+    void RenderDetails(const image_gallery::View& view, float width);
+    void RenderViewer(const image_gallery::View& view);
+    void HandleKeys(const image_gallery::View& view);
+    void Pick(const image_gallery::View& view, long long row);
+    // Runs the graph's image steps on the picked image (once per image and
+    // graph); RenderPipeline draws them.
+    void UpdatePipeline(const image_gallery::Row& row);
     void RenderPipeline(const image_gallery::Row& row);
+    ImageViewerView::ModelPicture ModelPicture() const;
     void ReleasePipeline();
 
     std::string dataset_;
     image_gallery::Input input_;
+    image_gallery::View view_;
+    std::string view_key_;
+    uint64_t rows_generation_ = 0;         // counts the index tables read
     const void* index_seen_ = nullptr;
     gui::ImageThumbnails tiles_;
     gui::ImageThumbnails preview_;
+    ImageViewerView viewer_;
+
+    Layout layout_ = Layout::Grid;
+    Layout before_viewer_ = Layout::Grid;  // Esc in the viewer goes back to it
+    int tile_ = 128;                       // px
+    bool fill_ = true;                     // fill the tile (crop) or fit the whole image
+    bool show_class_ = true, show_name_ = false, show_size_ = false, show_flags_ = true;
+    bool model_sees_open_ = false;
+    int columns_ = 1;                      // grid columns last frame (Up / Down move a row)
 
     const LiveGraphCompile* live_compile_ = nullptr;
     std::string pipeline_key_;            // the image + the graph's steps it was run for
