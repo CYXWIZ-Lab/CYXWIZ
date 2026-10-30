@@ -1,10 +1,11 @@
 #pragma once
 
 // Thumbnails of image files for the image gallery and the Data Input
-// dialog's preview (TOFIX178 1.3e). Files are decoded (OpenCV) and shrunk on
-// two worker threads, newest request first; the textures are made on the UI
-// thread in Pump(). At most `capacity` textures are kept, the least recently
-// drawn go first.
+// dialog's preview (TOFIX178 1.3e): the whole image inside size x size,
+// aspect kept (a tile crops it to its square when drawn). Files are decoded
+// (OpenCV) and shrunk on two worker threads, newest request first; the
+// textures are made on the UI thread in Pump(). At most `capacity` textures
+// are kept, the least recently drawn go first.
 
 #include <imgui.h>
 
@@ -21,12 +22,7 @@ namespace gui {
 
 class ImageThumbnails {
 public:
-    enum class Shape {
-        Square,  // the centre square, scaled to size x size (a grid tile)
-        Fit,     // the whole image inside size x size, aspect kept (a preview)
-    };
-
-    ImageThumbnails(int size, Shape shape, size_t capacity);
+    ImageThumbnails(int size, size_t capacity);
     ~ImageThumbnails();
     ImageThumbnails(const ImageThumbnails&) = delete;
     ImageThumbnails& operator=(const ImageThumbnails&) = delete;
@@ -58,7 +54,6 @@ private:
     Decoded Decode(const std::string& path) const;
 
     const int size_;
-    const Shape shape_;
     const size_t capacity_;
     uint64_t frame_ = 0;
     std::map<std::string, Entry> entries_;   // UI thread only

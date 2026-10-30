@@ -2,7 +2,8 @@
 // results as a table for the ROC / PR nodes and panels - columns, binary
 // "score" (positive class), multi-class "score_<class>" with duplicate-name
 // fallback, and no score columns when the scores were not kept; (TOFIX157 B2)
-// the row_id column and source metadata, and the regression table.
+// the row_id column and source metadata, and the regression table;
+// (TOFIX178 1.5) each image's file after row_id.
 #include "../src/core/test_predictions_table.h"
 
 #include <arrow/api.h>
@@ -83,6 +84,21 @@ int main() {
               "source dataset in the metadata");
     }
     const auto unsourced = BuildTestPredictionsTable({0, 1}, {0, 1}, {1.0f, 1.0f}, {}, 0, {}, {{7}, "iris"});
+    {
+        cyxwiz::TestPredictionsSource images{{4, 0}, "pets_index"};
+        images.files = {"D:/pets/dog/4.jpg", "D:/pets/cat/0.jpg"};
+        const auto named = BuildTestPredictionsTable({1, 0}, {1, 1}, {0.9f, 0.6f}, {}, 0, {"cat", "dog"}, images);
+        Check(named && Names(named) == std::vector<std::string>(
+                           {"row_id", "file", "true_class", "predicted_class", "confidence"}),
+              "an image's file follows row_id");
+        if (named) {
+            const auto files = std::static_pointer_cast<arrow::StringArray>(named->GetColumnByName("file")->chunk(0));
+            Check(files->GetString(1) == "D:/pets/cat/0.jpg", "files kept in test order");
+        }
+        images.files.pop_back();
+        const auto short_files = BuildTestPredictionsTable({1, 0}, {1, 1}, {0.9f, 0.6f}, {}, 0, {}, images);
+        Check(short_files && !short_files->GetColumnByName("file"), "a file per row or none");
+    }
     Check(unsourced && unsourced->num_columns() == 3, "a row id per row or none");
 
     // The run's figures and class names in the metadata (TOFIX157), so a

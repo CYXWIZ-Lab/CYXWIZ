@@ -49,7 +49,9 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
 Random nodes make each training epoch see slightly different images, which
 reduces overfitting. Validation and test always see the same images, so their
 scores are comparable from epoch to epoch. The random choices come from the
-Data Loader's seed, so a run repeats exactly with the same seed.
+Data Loader's seed, so a run repeats exactly with the same seed. Which
+images are train, validation and test is the Data Split's (see
+image_split.md).
 
 ## The nodes
 

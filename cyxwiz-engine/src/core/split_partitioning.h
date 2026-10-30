@@ -58,7 +58,9 @@ inline SplitCounts CountsFor(size_t total, const NormalizedSplit& split) {
     SplitCounts counts;
     counts.train = static_cast<size_t>(total * split.train);
     counts.val = static_cast<size_t>(total * split.val);
-    if (total > 0 && counts.train == 0) counts.train = 1;
+    // Train gets at least one row when it has a share; a 0 / 0 / 1 split (a
+    // dataset that is the whole test part) keeps every row in its part.
+    if (total > 0 && counts.train == 0 && split.train > 0.0f) counts.train = 1;
     if (counts.train > total) counts.train = total;
     if (counts.train + counts.val > total) {
         counts.val = total - counts.train;

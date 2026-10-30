@@ -1,3 +1,4 @@
+#include "../core/image_batchers.h"
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/session_query_service.h"
 #include "../core/pipeline_type_names.h"
@@ -956,6 +957,9 @@ MainWindow::MainWindow()
     properties_->SetNodeEditor(node_editor_.get());
     // A step's input or output opens in the Table Viewer (TOFIX146). The
     // viewer holds rows in memory, so a very large output opens its first rows.
+    properties_->SetOpenReadinessCallback([this] {
+        if (data_studio_panel_) data_studio_panel_->ShowReadiness();
+    });
     properties_->SetOpenProfileCallback([this](const std::string& dataset_name) {
         if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset_name);
     });
@@ -975,6 +979,12 @@ MainWindow::MainWindow()
     });
 
     live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
+    // A dataset added, replaced or removed changes what the graph compiles to
+    // without a graph edit: an image index built after loading gives the Data
+    // Split its counts (TOFIX178 1.5), a table loaded gives its columns.
+    cyxwiz::DatasetCatalog::Instance().Subscribe(live_compile_datasets_, [this](const cyxwiz::DatasetChange&) {
+        if (live_compile_) live_compile_->Invalidate();
+    });
     properties_->SetLiveCompile(live_compile_.get());
     node_editor_->SetLiveCompile(live_compile_.get());
 
@@ -5853,6 +5863,26 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         return;
     }
 
+    // The test part is the one the model trained without: the Data Split it
+    // trained with (kept with the model and its checkpoints), even when the
+    // graph's Data Split changed since; otherwise the test could score rows
+    // or images the model trained on.
+    if (active_model_info.evaluation_config && active_model_info.evaluation_config->dataset_name == dataset_name) {
+        const auto& trained = *active_model_info.evaluation_config;
+        if (trained.train_ratio != config.train_ratio || trained.val_ratio != config.val_ratio ||
+            trained.test_ratio != config.test_ratio || trained.stratified != config.stratified ||
+            trained.split_seed != config.split_seed || trained.image_excluded_files != config.image_excluded_files)
+            spdlog::warn("Run Test: the Data Split changed since the model trained; testing the test part of the "
+                         "split it trained with ({:.2f} / {:.2f} / {:.2f}, seed {})", trained.train_ratio, trained.val_ratio,
+                         trained.test_ratio, trained.split_seed);
+        config.train_ratio = trained.train_ratio;
+        config.val_ratio = trained.val_ratio;
+        config.test_ratio = trained.test_ratio;
+        config.stratified = trained.stratified;
+        config.split_seed = trained.split_seed;
+        config.image_excluded_files = trained.image_excluded_files;
+    }
+
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
@@ -5864,6 +5894,12 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
             test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
+    } else if (const auto* image_entry = registry.GetImageDatasetEntry(dataset_name)) {
+        // Images (TOFIX178 1.5): the Data Split's test part, or a wired Test
+        // dataset whole, through the graph's image steps.
+        started = cyxwiz::TestManager::Instance().StartTesting(
+            std::move(config), cyxwiz::MakeImageTestSource(dataset_name, *image_entry, test_selection.scope), test_batch_size,
+            model, nullptr, active_model_info.model_device);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {

@@ -1,5 +1,8 @@
 #include "graph_compiler.h"
+#include <tuple>
 #include "normalize_statistics.h"
+#include "sample_split.h"
+#include "count_text.h"
 #include "classification_decision.h"
 #include "sequence_fusion_presentation.h"
 #include "quiet_build_log.h"
@@ -45,6 +48,8 @@
 #include <unordered_set>
 
 namespace cyxwiz {
+
+void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLNode>& nodes);
 
 namespace {
 // "28, 28, 1"
@@ -4972,6 +4977,7 @@ TrainingConfiguration GraphCompiler::Compile(
     if (const gui::MLNode* split_node = FindFirstReachableNodeOfType(
             nodes, dataset_reachable, gui::NodeType::DataSplit)) {
         config.has_data_split = true;
+        config.data_split_node_id = split_node->id;
         AddIssue(config,
                  IssueLevel::Info,
                  "Data Split resolves its named Dataset inputs into one "
@@ -6337,6 +6343,13 @@ TrainingConfiguration GraphCompiler::Compile(
                 }
             }
 
+            // The image split as training makes it (TOFIX178 1.5): the counts
+            // for the Data Split's card, the report and Data Studio, and the
+            // parts that would come out empty. Known once the images are indexed.
+            if (GraphDatasetIsKind(config.dataset_name, GraphDatasetKind::Image)) {
+                CompileImageSplit(config, nodes);
+            }
+
             // Check 4: Pipeline ordering — Normalize before Resize is
             // almost certainly wrong (normalization stats are scale-
             // dependent). Walk the TOPOLOGICAL order (from links), not
@@ -6896,6 +6909,82 @@ bool GraphCompiler::IsActivation(gui::NodeType type) const {
 // plus a static extraction function. No switch cases to update in
 // multiple places.
 // ---------------------------------------------------------------------------
+
+namespace {
+
+std::string JoinedNames(const std::vector<std::string>& names) {
+    std::string text;
+    for (const auto& name : names) text += (text.empty() ? "" : ", ") + name;
+    return text;
+}
+
+}  // namespace
+
+// The image split's counts and messages (TOFIX178 1.5), on the Data Split
+// node when the graph has one.
+void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLNode>& nodes) {
+    const gui::MLNode* split_node = FindNodeById(nodes, config.data_split_node_id);
+    const int node_id = split_node ? split_node->id : -1;
+    const std::string node_name = split_node ? split_node->name : std::string();
+    const SampleSplitSettings split{config.train_ratio, config.val_ratio, config.test_ratio, config.stratified,
+                                    static_cast<uint32_t>(config.split_seed)};
+    const auto counts = GraphImageSplit(config.dataset_name, split, config.image_excluded_files);
+    if (!counts || !counts->known) return;
+    config.image_split = *counts;
+    config.image_unreadable_files = counts->unreadable_files;
+
+    // A wired Validation / Test image dataset: read whole, with the training classes.
+    for (auto [role, target, what] :
+         {std::tuple{&config.dataset_roles.dev, &config.image_split_dev, "Validation"},
+          std::tuple{&config.dataset_roles.test, &config.image_split_test, "Test"}}) {
+        if (!role->IsSupplied() || !GraphDatasetIsKind(role->dataset_name, GraphDatasetKind::Image)) continue;
+        const auto whole = GraphImageSplit(role->dataset_name, SampleSplitSettings{0.0f, 0.0f, 1.0f, false, split.seed}, {});
+        if (!whole || !whole->known) continue;
+        *target = *whole;
+        config.image_unreadable_files.insert(config.image_unreadable_files.end(), whole->unreadable_files.begin(),
+                                             whole->unreadable_files.end());
+        if (whole->class_names != counts->class_names)
+            AddIssue(config, IssueLevel::Error,
+                     std::string("The ") + what + " Dataset's classes (" + JoinedNames(whole->class_names) +
+                         ") are not the training classes (" + JoinedNames(counts->class_names) +
+                         "): the model's outputs would not line up.",
+                     node_id, node_name, errors::Data::InvalidSplit);
+    }
+
+    const size_t val = config.image_split_dev.known ? config.image_split_dev.parts[2] : counts->parts[1];
+    const size_t test = config.image_split_test.known ? config.image_split_test.parts[2] : counts->parts[2];
+    auto& manifest = config.dataset_roles.manifest;
+    manifest.train_rows = static_cast<int64_t>(counts->parts[0]);
+    manifest.dev_rows = static_cast<int64_t>(val);
+    manifest.test_rows = static_cast<int64_t>(test);
+    char seed[32];
+    std::snprintf(seed, sizeof(seed), "%d", config.split_seed);
+    AddIssue(config, IssueLevel::Info,
+             "Images: " + CountText(counts->parts[0]) + " train · " + CountText(val) +
+                 " validation · " + CountText(test) + " test, " +
+                 (config.stratified ? "by class" : "one shuffle") + " (seed " + seed + ").",
+             node_id, node_name);
+
+    // A class too small for a part's share: that part has none of it. The
+    // shares are the ratios over their sum, as the split uses them.
+    const auto normalized = split_partition_detail::Normalize(config.train_ratio, config.val_ratio, config.test_ratio);
+    const float shares[3] = {normalized.train, normalized.val, normalized.test};
+    const char* part_names[3] = {"train", "validation", "test"};
+    for (size_t c = 0; c < counts->per_class.size() && c < counts->shown_names.size(); ++c) {
+        const auto& by_part = counts->per_class[c];
+        const size_t images = by_part[0] + by_part[1] + by_part[2];
+        for (size_t part = 1; part < 3; ++part) {
+            if (images == 0 || shares[part] <= 0.0f || by_part[part] > 0) continue;
+            AddIssue(config, IssueLevel::Warning,
+                     "Class '" + counts->shown_names[c] + "' has " + CountText(images) + " image" +
+                         (images == 1 ? "" : "s") + ": its " + part_names[part] + " part is empty (" +
+                         std::to_string(static_cast<int>(shares[part] * 100.0f + 0.5f)) + " % of " +
+                         CountText(images) + " is less than one image). Give it more images or a larger " +
+                         (part == 1 ? "Val" : "Test") + " ratio.",
+                     node_id, node_name, errors::Data::InvalidSplit);
+        }
+    }
+}
 
 namespace {
 

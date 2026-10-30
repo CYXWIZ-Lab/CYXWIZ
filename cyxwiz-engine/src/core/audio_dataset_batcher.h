@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dataset_batcher.h"
+#include "sample_split.h"
 #include "data_registry.h"
 #include "graph_compiler.h"
 #include "formats/audio_dataset.h"
@@ -29,9 +30,9 @@ inline constexpr const char* kAudioFeaturesMissingMessage =
  *   MelSpectrogram: n_mels        ×   n_frames
  *   MFCC:           n_mfcc        ×   n_frames
  *
- * Uses the same train/val split-by-fraction and shuffle pattern as
- * ImageDatasetBatcher. No augmentation pipeline is plumbed yet — that
- * comes when AudioAugmentation node extractors land in graph_compiler.
+ * The clips split once into train, validation and test (SplitSamples, the
+ * rule every training path uses; TOFIX178 1.5); the phase picks the part a
+ * pass reads, and only train batches are shuffled.
  */
 class AudioDatasetBatcher : public IBatcher {
 public:
@@ -42,10 +43,10 @@ public:
     AudioDatasetBatcher(const DataRegistry::AudioDatasetEntry& entry,
                         const AudioPreprocessingConfig& preprocess_config,
                         int batch_size,
-                        float train_split = 0.8f,
+                        const SampleSplitSettings& split = {},
                         bool shuffle = true,
                         int num_workers = 0,
-                        uint32_t seed = 42);
+                        uint32_t shuffle_seed = 42);
 
     // IBatcher interface
     Batch GetNextBatch() override;
@@ -64,7 +65,9 @@ public:
     // Audio-specific accessors
     int GetFeatureRows() const { return feature_rows_; }
     int GetFeatureCols() const { return feature_cols_; }
-    size_t GetNumValSamples() const { return val_indices_.size(); }
+    // The clips in a part (Train, Val or Test), whatever the current phase.
+    size_t SamplesIn(BatcherPhase phase) const { return Part(phase).size(); }
+    const std::vector<size_t>& Part(BatcherPhase phase) const;
 
 private:
     std::shared_ptr<AudioDataset> dataset_;
@@ -86,11 +89,11 @@ private:
     bool do_onehot_ = false;
     bool scalar_label_mode_ = false;
 
-    // Separate train/val index sets (shuffled split at construction).
-    // SetPhase toggles current_phase_; Reset() copies the appropriate
-    // set into epoch_order_ for iteration.
+    // The three parts; SetPhase picks one, Reset() copies it into
+    // epoch_order_ for iteration.
     std::vector<size_t> train_indices_;
     std::vector<size_t> val_indices_;
+    std::vector<size_t> test_indices_;
     BatcherPhase current_phase_ = BatcherPhase::Train;
 
     std::vector<size_t> epoch_order_;

@@ -11,6 +11,7 @@
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
 #include "image_cv_steps.h"
+#include "image_split_counts.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
@@ -454,6 +455,12 @@ struct TrainingConfiguration {
     float test_ratio = 0.1f;
     int split_seed = 42;
     bool has_data_split = false;        // true if a DataSplit node was found
+    int data_split_node_id = -1;        // that node (its compile messages and AS COMPILED card)
+    // An image dataset's parts as training reads them (TOFIX178 1.5; known
+    // once the images are indexed).
+    ImageSplitCounts image_split;
+    // A Validation / Test image dataset wired to the Data Split, counted whole.
+    ImageSplitCounts image_split_dev, image_split_test;
     bool stratified = false;            // preserve label ratios when supported
 
     // DataLoader configuration (from DataLoader node, or defaults if absent).
@@ -506,6 +513,10 @@ struct TrainingConfiguration {
     // training (the image batcher skips them; they stay on disk).
     int image_quality_node_id = -1;
     std::vector<std::string> image_excluded_files;
+    // The images the image index found unreadable (the training dataset's and
+    // any wired role's): training leaves them out before the split, as the
+    // compile counted, so its parts are the counted ones (TOFIX178 1.5).
+    std::vector<std::string> image_unreadable_files;
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when

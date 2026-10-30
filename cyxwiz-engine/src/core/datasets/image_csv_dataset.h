@@ -113,8 +113,8 @@ public:
 private:
     // Initialization
     void LoadData();
-    void LoadFromCSV(const std::vector<std::string>& valid_extensions);
-    void LoadFromFolder(std::function<bool(const std::string&)> is_image);
+    void LoadFromCSV();
+    void LoadFromFolder();
 
     // CSV parsing
     std::vector<std::string> ParseCSVLine(const std::string& line);

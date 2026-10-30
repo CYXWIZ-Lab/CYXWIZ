@@ -292,9 +292,12 @@ View Build(const Inputs& in) {
     // Data Input: the data fact (A7-4)
     if (node.type == gui::NodeType::DataInput) {
         DataFact fact;
-        const std::string file = ParamOr(node, "file_path");
+        // A file, or the folder of an image / audio Data Input.
+        std::string file = ParamOr(node, "file_path");
+        if (file.empty()) file = ParamOr(node, "folder_path");
         if (!file.empty()) {
-            fact.label = std::filesystem::path(file).filename().string();
+            const std::filesystem::path path(file);
+            fact.label = (path.has_filename() ? path : path.parent_path()).filename().string();
         } else if (in.dataset && !in.dataset->dataset_name.empty()) {
             fact.label = in.dataset->dataset_name;
         } else {

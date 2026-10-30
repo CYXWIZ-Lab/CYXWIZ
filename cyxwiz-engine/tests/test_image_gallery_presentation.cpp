@@ -123,6 +123,38 @@ int main() {
     in.selected = 0;
     Check(Build(in).detail[7].second == "passes the checks", "a passing image");
 
+    {
+        // The list's columns and the viewer (2026-10-30): name, class and
+        // file-size sorts, each image's facts, its place and neighbours.
+        Input list;
+        list.class_names = {"cat", "dog"};
+        list.rows = {Image("dog.11289.jpg", 1, 267, 399, 20800), Image("cat.10836.jpg", 0, 500, 370, 14736),
+                     Image("cat.7970.jpg", 0, 371, 457, 18061),  Image("cat.2212.jpg", 0, 417, 500, 18633),
+                     Image("dog.2653.jpg", 1, 500, 373, 31637),  Image("dog.3051.jpg", 1, 359, 359, 22695)};
+        list.per_page = 6;
+        list.sort = Sort::Name;
+        View lv = Build(list);
+        Check(lv.shown == std::vector<size_t>({1, 3, 2, 0, 4, 5}), "by name");
+        Check(lv.sizes[0] == "500 \xC3\x97 370" && lv.channels[0] == "colour" && lv.on_disk[0] == "14.7 KB" &&
+                  lv.verdicts[0] == "not measured",
+              "a row's facts");
+        list.sort = Sort::Class;
+        Check(Build(list).shown == std::vector<size_t>({1, 2, 3, 0, 4, 5}), "by class, dataset order within");
+        list.sort = Sort::LargestFile;
+        Check(Build(list).shown == std::vector<size_t>({4, 5, 0, 3, 2, 1}), "largest file first");
+
+        list.sort = Sort::Name;
+        list.selected = 2;  // cat.7970.jpg, third by name
+        list.strip_radius = 1;
+        lv = Build(list);
+        Check(lv.position == "3 of 6" && lv.previous == 3 && lv.next == 0, "place and neighbours: " + lv.position);
+        Check(lv.strip == std::vector<size_t>({3, 2, 0}), "the filmstrip around it");
+        Check(lv.order == std::vector<size_t>({1, 3, 2, 0, 4, 5}), "every match in order");
+        list.selected = 1;  // first by name
+        lv = Build(list);
+        Check(lv.previous == -1 && lv.next == 3 && lv.strip == std::vector<size_t>({1, 3}), "the first has no previous");
+    }
+
     in.rows.clear();
     v = Build(in);
     Check(v.shown.empty() && v.showing == "No image matches." && v.pages == 0, "no images");

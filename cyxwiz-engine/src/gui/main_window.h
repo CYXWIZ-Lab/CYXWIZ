@@ -371,6 +371,10 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    // Scopes the dataset catalog subscription that recompiles the graph when a
+    // dataset is added, replaced or removed (declared after live_compile_, so
+    // it goes first).
+    std::shared_ptr<int> live_compile_datasets_ = std::make_shared<int>(0);
     void UpdateLiveCompile();
     // Python node bundles (TOFIX125 P4): registered from <project>/nodes,
     // the user nodes folder and plugin nodes/ folders; Python is started

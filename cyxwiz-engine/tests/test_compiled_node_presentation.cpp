@@ -245,6 +245,63 @@ void CheckDataOnlyGraph() {
           "training-graph complaints are not listed as the data step's errors");
 }
 
+// The Data Split's card on an image graph (TOFIX178 1.5): the parts by class.
+void CheckImageSplitCard() {
+    std::vector<gui::MLNode> nodes(2);
+    nodes[0].id = 1;
+    nodes[0].type = gui::NodeType::DataInput;
+    nodes[0].name = "Pets";
+    nodes[1].id = 2;
+    nodes[1].type = gui::NodeType::DataSplit;
+    nodes[1].name = "Data Split";
+    cyxwiz::TrainingConfiguration config;
+    config.is_valid = true;
+    config.data_split_node_id = 2;
+    config.stratified = true;
+    config.split_seed = 42;
+    auto& split = config.image_split;
+    split.known = true;
+    split.class_names = split.shown_names = {"cat", "dog"};
+    split.images = 19997;
+    split.unreadable = 3;
+    split.parts = {15997, 2000, 2000};
+    split.per_class = {{7999, 1000, 1000}, {7998, 1000, 1000}};
+    cyxwiz::CompiledNodeInputs inputs;
+    inputs.state = cyxwiz::LiveCompileState::Compiled;
+    inputs.config = &config;
+    const std::vector<gui::NodeLink> links;
+    auto card = cyxwiz::BuildCompiledNodeCard(nodes, links, 2, inputs);
+    Check(card.role == "Splits the 19,997 images once, by class, the same way every run (seed 42).",
+          "the split card says what it does: " + card.role);
+    Check(card.table_columns == std::vector<std::string>({"", "cat", "dog", "images"}), "a column per class");
+    Check(card.table_rows.size() == 3 &&
+              card.table_rows[0] == std::vector<std::string>({"Train", "7,999", "7,998", "15,997"}) &&
+              card.table_rows[2] == std::vector<std::string>({"Test", "1,000", "1,000", "2,000"}),
+          "a row per part");
+    Check(card.show_split_link && card.no_shapes_text.empty(), "the link to Data Studio, no shapes text");
+    bool left_out = false;
+    for (const auto& note : card.notes) left_out = left_out || note == "Left out before the split: 3 unreadable, 0 by the Quality node.";
+    Check(left_out, "the unreadable images are noted");
+
+    // A wired Test dataset is that part whole; more than six classes show totals.
+    config.dataset_roles.test.dataset_name = "holdout";
+    config.image_split_test = split;
+    config.image_split_test.parts = {0, 0, 500};
+    config.image_split_test.per_class = {{0, 0, 250}, {0, 0, 250}};
+    card = cyxwiz::BuildCompiledNodeCard(nodes, links, 2, inputs);
+    Check(card.table_rows[2] == std::vector<std::string>({"Test", "250", "250", "500"}), "the wired Test part");
+    bool wired = false;
+    for (const auto& note : card.notes) wired = wired || note == "Test: all of 'holdout', wired to this split.";
+    Check(wired, "the wired dataset is named");
+    config.dataset_roles.test.dataset_name.clear();
+    config.image_split_test = {};
+    split.shown_names = {"a", "b", "c", "d", "e", "f", "g"};
+    card = cyxwiz::BuildCompiledNodeCard(nodes, links, 2, inputs);
+    Check(card.table_columns == std::vector<std::string>({"", "images"}) &&
+              card.table_rows[1] == std::vector<std::string>({"Validation", "2,000"}),
+          "seven classes: totals only");
+}
+
 }  // namespace
 
 int main() {
@@ -252,6 +309,7 @@ int main() {
     CheckNer();
     CheckBerean();
     CheckDataOnlyGraph();
+    CheckImageSplitCard();
     std::cout << "Compiled node presentation passed\n";
     return 0;
 }

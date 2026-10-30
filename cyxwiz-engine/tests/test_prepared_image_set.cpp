@@ -203,7 +203,7 @@ void CheckBatcher(const DataRegistry::ImageDatasetEntry& entry) {
         if (!(available & backend)) continue;
         af::setBackend(backend);
         const std::string name = backend == AF_BACKEND_CPU ? "cpu" : backend == AF_BACKEND_CUDA ? "cuda" : "opencl";
-        ImageDatasetBatcher batcher(prepared.set, 2, 1.0f, true, 5);
+        ImageDatasetBatcher batcher(prepared.set, 2, {1.0f, 0.0f, 0.0f, false, 5}, true, 5);
         Check(batcher.GetNumSamples() == 5, name + ": the unreadable image is left out");
         std::set<size_t> seen;
         while (!batcher.IsEpochComplete()) {
@@ -306,7 +306,7 @@ void CheckFixedTransforms(const DataRegistry::ImageDatasetEntry& entry) {
     Check(again.set && again.from_cache && again.set->Path() == derived_path, "the done-once set is reused");
     Check(!fs::exists(base_path), "reusing it does not decode the images again");
 
-    ImageDatasetBatcher batcher(again.set, 3, 1.0f, false, 1);
+    ImageDatasetBatcher batcher(again.set, 3, {1.0f, 0.0f, 0.0f, false, 1}, false, 1);
     batcher.SetImageTransforms(split.per_batch);
     const auto batch = batcher.GetNextBatch();
     Check(batch.data.Shape() == std::vector<size_t>({batch.size, 8, 12, 1}), "the batcher reads one channel");

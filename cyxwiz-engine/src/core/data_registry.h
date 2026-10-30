@@ -465,6 +465,9 @@ public:
     bool SetImageClassDisplayNames(const std::string& name, const std::vector<std::string>& display_names);
     bool IsImageDataset(const std::string& name) const;
     const ImageDatasetEntry* GetImageDatasetEntry(const std::string& name) const;
+    // A copy taken under the registry's lock, for code off the UI thread (the
+    // live compile): the pointer above can change or go while it is read.
+    std::optional<ImageDatasetEntry> CopyImageDatasetEntry(const std::string& name) const;
     void UnregisterImageDataset(const std::string& name);
     // The image dataset's index table (one row per image, TOFIX178 1.3e),
     // built by BuildImageIndexInBackground and dropped with the images.

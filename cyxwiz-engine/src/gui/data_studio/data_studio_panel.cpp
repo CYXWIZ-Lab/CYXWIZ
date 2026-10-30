@@ -166,6 +166,13 @@ void DataStudioPanel::ShowProfile(const std::string& dataset_name) {
     explore_tab_ = ExploreTab::Profile;
 }
 
+void DataStudioPanel::ShowReadiness() {
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Ready;
+    if (readiness_) readiness_->Activate();
+}
+
 void DataStudioPanel::ShowResults(ResultsView::View view) {
     visible_ = true;
     ::gui::BringToFront("Data Studio");

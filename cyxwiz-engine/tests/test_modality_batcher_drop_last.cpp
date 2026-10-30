@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -167,7 +168,7 @@ template <typename Batcher>
 void CheckTrainOnlyDropLast(Batcher& batcher, const std::string& modality) {
     Check(batcher.GetNumSamples() == 3,
           modality + " should expose three Train samples");
-    Check(batcher.GetNumValSamples() == 1,
+    Check(batcher.SamplesIn(cyxwiz::BatcherPhase::Val) == 1,
           modality + " should expose one validation sample");
     Check(batcher.GetNumBatches() == 2,
           modality + " should keep its partial Train batch by default");
@@ -190,6 +191,81 @@ void CheckTrainOnlyDropLast(Batcher& batcher, const std::string& modality) {
           modality + " validation should emit its one-sample partial batch");
 }
 
+std::vector<size_t> RowIdsOfEpoch(cyxwiz::IBatcher& batcher) {
+    std::vector<size_t> rows;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        const auto batch = batcher.GetNextBatch();
+        for (const int64_t id : batch.row_ids) rows.push_back(static_cast<size_t>(id));
+    }
+    return rows;
+}
+
+std::set<size_t> AsSet(const std::vector<size_t>& rows) { return {rows.begin(), rows.end()}; }
+
+// The three parts (TOFIX178 1.5): disjoint, the whole set between them,
+// each phase reads its own part, only Train shuffles, and the split does
+// not move with the shuffle seed.
+template <typename Batcher>
+void CheckThreeParts(Batcher& batcher, Batcher& other_shuffle, size_t total, size_t train, size_t val,
+                     size_t test, const std::string& modality) {
+    using cyxwiz::BatcherPhase;
+    Check(batcher.SamplesIn(BatcherPhase::Train) == train && batcher.SamplesIn(BatcherPhase::Val) == val &&
+              batcher.SamplesIn(BatcherPhase::Test) == test,
+          modality + " splits " + std::to_string(total) + " samples " + std::to_string(train) + " / " +
+              std::to_string(val) + " / " + std::to_string(test));
+    std::set<size_t> all;
+    for (const auto phase : {BatcherPhase::Train, BatcherPhase::Val, BatcherPhase::Test})
+        for (const size_t row : batcher.Part(phase)) Check(all.insert(row).second, modality + " parts are disjoint");
+    Check(all.size() == total, modality + " parts cover every sample");
+    for (const auto phase : {BatcherPhase::Train, BatcherPhase::Val, BatcherPhase::Test}) {
+        batcher.SetPhase(phase);
+        Check(batcher.GetNumSamples() == batcher.SamplesIn(phase), modality + " counts the phase's part");
+        const auto rows = RowIdsOfEpoch(batcher);
+        Check(AsSet(rows) == AsSet(batcher.Part(phase)) && rows.size() == batcher.SamplesIn(phase),
+              modality + " reads the phase's own samples, each once");
+        if (phase != BatcherPhase::Train)
+            Check(rows == batcher.Part(phase) && RowIdsOfEpoch(batcher) == rows,
+                  modality + " validation and test keep set order");
+        Check(other_shuffle.Part(phase) == batcher.Part(phase), modality + " split does not follow the shuffle seed");
+    }
+    batcher.SetPhase(BatcherPhase::Train);
+}
+
+void TestImageThreeParts(const fs::path& root) {
+    const auto image_root = root / "three_parts";
+    for (int i = 0; i < 5; ++i) {
+        WriteBmp24(image_root / "class_a" / ("a" + std::to_string(i) + ".bmp"), 200, static_cast<uint8_t>(i * 20), 0);
+        WriteBmp24(image_root / "class_b" / ("b" + std::to_string(i) + ".bmp"), 0, static_cast<uint8_t>(i * 20), 200);
+    }
+    cyxwiz::DataRegistry::ImageDatasetEntry entry;
+    entry.folder_path = image_root.string();
+    entry.layout = 0;
+    entry.num_images = 10;
+    entry.num_classes = 2;
+    cyxwiz::ImagePreprocessingConfig preprocessing;
+    preprocessing.resize_mode = cyxwiz::ResizeMode::Exact;
+    preprocessing.target_width = 2;
+    preprocessing.target_height = 2;
+    const auto images = cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set;
+    Check(images != nullptr, "the three-part images are prepared");
+    const cyxwiz::SampleSplitSettings split{0.6f, 0.2f, 0.2f, true, 7};
+    cyxwiz::ImageDatasetBatcher batcher(images, 3, split, true, 1);
+    cyxwiz::ImageDatasetBatcher other_shuffle(images, 3, split, true, 99);
+    CheckThreeParts(batcher, other_shuffle, 10, 6, 2, 2, "ImageDatasetBatcher");
+    // Stratified: each class keeps its share in every part; row_ids name files.
+    for (const auto phase : {cyxwiz::BatcherPhase::Val, cyxwiz::BatcherPhase::Test}) {
+        size_t a = 0;
+        for (const size_t row : batcher.Part(phase))
+            a += batcher.Files().at(row).find("class_a") != std::string::npos ? 1 : 0;
+        Check(a == 1, "a stratified part holds one image of each class");
+    }
+    // The same split seed gives the same parts.
+    cyxwiz::ImageDatasetBatcher again(images, 3, split, true, 1);
+    Check(again.Part(cyxwiz::BatcherPhase::Test) == batcher.Part(cyxwiz::BatcherPhase::Test),
+          "the same split seed gives the same test images");
+}
+
 void TestImageBatcher(const fs::path& root) {
     const auto image_root = root / "images";
     WriteBmp24(image_root / "class_a" / "a0.bmp", 255, 0, 0);
@@ -210,11 +286,11 @@ void TestImageBatcher(const fs::path& root) {
 
     const auto images = cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set;
     Check(images != nullptr, "the images are prepared");
-    cyxwiz::ImageDatasetBatcher batcher(images, 2, 0.75f, false, 17);
+    cyxwiz::ImageDatasetBatcher batcher(images, 2, {0.75f, 0.25f, 0.0f, false, 17}, false, 17);
     CheckTrainOnlyDropLast(batcher, "ImageDatasetBatcher");
 
-    cyxwiz::ImageDatasetBatcher first_seeded(images, 2, 0.75f, true, 1701);
-    cyxwiz::ImageDatasetBatcher second_seeded(images, 2, 0.75f, true, 1701);
+    cyxwiz::ImageDatasetBatcher first_seeded(images, 2, {0.75f, 0.25f, 0.0f, false, 1701}, true, 1701);
+    cyxwiz::ImageDatasetBatcher second_seeded(images, 2, {0.75f, 0.25f, 0.0f, false, 1701}, true, 1701);
     CheckMatchingPayloads(CollectEpochPayload(first_seeded),
                           CollectEpochPayload(second_seeded),
                           "ImageDatasetBatcher");
@@ -231,7 +307,7 @@ void TestImageBatcher(const fs::path& root) {
     two_tone.num_images = 2;
     two_tone.num_classes = 2;
     cyxwiz::ImageDatasetBatcher whole_images(
-        cyxwiz::PrepareImageSet(two_tone, cyxwiz::PreparedImageSpecFrom(preprocessing)).set, 2, 1.0f, false, 17);
+        cyxwiz::PrepareImageSet(two_tone, cyxwiz::PreparedImageSpecFrom(preprocessing)).set, 2, {1.0f, 0.0f, 0.0f, false, 17}, false, 17);
     const auto batch = whole_images.GetNextBatch();
     Check(batch.size == 2, "ImageDatasetBatcher should emit both two-tone images");
     const float* pixels = batch.data.ReadData<float>();
@@ -289,7 +365,7 @@ void TestGrayscaleImages(const fs::path& root) {
     preprocessing.target_width = 2;
     preprocessing.target_height = 2;
     cyxwiz::ImageDatasetBatcher batcher(
-        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set, 2, 1.0f, false, 17);
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set, 2, {1.0f, 0.0f, 0.0f, false, 17}, false, 17);
     const auto batch = batcher.GetNextBatch();
     Check(batch.size == 2, "both grayscale images form a batch");
     const float* pixels = batch.data.ReadData<float>();
@@ -330,7 +406,7 @@ void TestAudioBatcher(const fs::path& root) {
 
     // Without a feature node the batcher refuses rather than invent features.
     cyxwiz::AudioPreprocessingConfig no_features;
-    cyxwiz::AudioDatasetBatcher refused(entry, no_features, 2, 0.75f, false, 0, 19);
+    cyxwiz::AudioDatasetBatcher refused(entry, no_features, 2, {0.75f, 0.25f, 0.0f, false, 19}, false, 0, 19);
     Check(refused.GetNumSamples() == 0 && refused.GetFeatureRows() == 0,
           "AudioDatasetBatcher refuses audio without a feature node");
 
@@ -340,16 +416,29 @@ void TestAudioBatcher(const fs::path& root) {
     preprocessing.n_fft = 16;
     preprocessing.hop_length = 8;
     cyxwiz::AudioDatasetBatcher batcher(
-        entry, preprocessing, 2, 0.75f, false, 0, 19);
+        entry, preprocessing, 2, {0.75f, 0.25f, 0.0f, false, 19}, false, 0, 19);
     CheckTrainOnlyDropLast(batcher, "AudioDatasetBatcher");
 
     cyxwiz::AudioDatasetBatcher first_seeded(
-        entry, preprocessing, 2, 0.75f, true, 0, 1901);
+        entry, preprocessing, 2, {0.75f, 0.25f, 0.0f, false, 1901}, true, 0, 1901);
     cyxwiz::AudioDatasetBatcher second_seeded(
-        entry, preprocessing, 2, 0.75f, true, 0, 1901);
+        entry, preprocessing, 2, {0.75f, 0.25f, 0.0f, false, 1901}, true, 0, 1901);
     CheckMatchingPayloads(CollectEpochPayload(first_seeded),
                           CollectEpochPayload(second_seeded),
                           "AudioDatasetBatcher");
+
+    // A test part (TOFIX178 1.5): it used to be dropped, and Test read Train.
+    const cyxwiz::SampleSplitSettings split{0.5f, 0.0f, 0.5f, true, 23};
+    cyxwiz::AudioDatasetBatcher three(entry, preprocessing, 2, split, true, 0, 1);
+    cyxwiz::AudioDatasetBatcher other_shuffle(entry, preprocessing, 2, split, true, 0, 77);
+    CheckThreeParts(three, other_shuffle, 4, 2, 0, 2, "AudioDatasetBatcher");
+
+    // A dataset wired as the whole validation part (0 / 1 / 0): every clip
+    // is validation, none trains.
+    const cyxwiz::SampleSplitSettings whole_val{0.0f, 1.0f, 0.0f, false, 23};
+    cyxwiz::AudioDatasetBatcher wired(entry, preprocessing, 2, whole_val, true, 0, 1);
+    cyxwiz::AudioDatasetBatcher wired_other(entry, preprocessing, 2, whole_val, true, 0, 77);
+    CheckThreeParts(wired, wired_other, 4, 0, 4, 0, "AudioDatasetBatcher wired as validation");
 }
 
 } // namespace
@@ -361,6 +450,7 @@ int main() {
     fs::create_directories(root);
 
     TestImageBatcher(root);
+    TestImageThreeParts(root);
     TestGrayscaleImages(root);
     TestAudioBatcher(root);
 

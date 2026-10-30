@@ -13,12 +13,12 @@ AudioDatasetBatcher::AudioDatasetBatcher(
     const DataRegistry::AudioDatasetEntry& entry,
     const AudioPreprocessingConfig& preprocess_config,
     int batch_size,
-    float train_split,
+    const SampleSplitSettings& split,
     bool shuffle,
     int num_workers,
-    uint32_t seed)
+    uint32_t shuffle_seed)
     : batch_size_(batch_size), shuffle_(shuffle),
-      num_workers_(std::max(0, num_workers)), rng_(seed)
+      num_workers_(std::max(0, num_workers)), rng_(shuffle_seed)
 {
     // Loading settings come from the Data Input entry; the features come only
     // from the graph's Spectrogram / Mel Spectrogram / MFCC node (TOFIX129 B-9).
@@ -98,31 +98,14 @@ AudioDatasetBatcher::AudioDatasetBatcher(
         }
     }
 
-    // Shuffled train/val split.
-    //
-    // Previously: first 80% of file_paths_ was train, last 20% was val.
-    // Since AudioDataset::ScanDirectory iterates class subdirs alphabetically
-    // and appends all files per class, the sequential split made the val set
-    // heavily imbalanced (for a 2-class binary: train = class_a + some class_b,
-    // val = only class_b). A model that learned to always predict class_b
-    // scored 100% val accuracy with zero real skill — that's where the
-    // suspicious "100% val on epoch 1" came from.
-    //
-    // Fix: shuffle the full index list first, THEN split. Random sampling
-    // approximately balances classes in expectation. A true stratified
-    // split (shuffle within each class then split) would be even better
-    // but this is sufficient to eliminate the pathological bias.
-    size_t total = dataset_->Size();
-    size_t train_count = static_cast<size_t>(total * train_split);
-    if (train_count == 0) train_count = total;
-    if (train_count > total) train_count = total;
-
-    std::vector<size_t> all_indices(total);
+    // Train / validation / test by the shared rule (by class when
+    // stratified); the split has its own seed, apart from the batch order.
+    std::vector<size_t> all_indices(dataset_->Size());
     std::iota(all_indices.begin(), all_indices.end(), 0);
-    std::shuffle(all_indices.begin(), all_indices.end(), rng_);
-
-    train_indices_.assign(all_indices.begin(), all_indices.begin() + train_count);
-    val_indices_.assign(all_indices.begin() + train_count, all_indices.end());
+    auto parts = SplitSamples(all_indices, dataset_->Labels(), split);
+    train_indices_ = std::move(parts.train);
+    val_indices_ = std::move(parts.val);
+    test_indices_ = std::move(parts.test);
 
     num_classes_ = entry.num_classes;
     if (num_classes_ == 0) {
@@ -130,9 +113,9 @@ AudioDatasetBatcher::AudioDatasetBatcher(
     }
 
     Reset();
-    spdlog::info("AudioDatasetBatcher: {} train / {} val samples, "
+    spdlog::info("AudioDatasetBatcher: {} train / {} validation / {} test samples, "
                  "{} classes, feature shape [{} x {}], batch_size={}, num_workers={}",
-                 train_indices_.size(), val_indices_.size(), num_classes_,
+                 train_indices_.size(), val_indices_.size(), test_indices_.size(), num_classes_,
                  feature_rows_, feature_cols_, batch_size_, num_workers_);
 }
 
@@ -256,23 +239,19 @@ Batch AudioDatasetBatcher::GetNextBatch() {
                               batch_labels.data(), DataType::Float32);
     }
 
+    // Clip numbers in the dataset: test results name the clips with them.
+    batch.row_ids.assign(epoch_order_.begin() + static_cast<std::ptrdiff_t>(current_idx_),
+                         epoch_order_.begin() + static_cast<std::ptrdiff_t>(current_idx_ + actual_size));
     batch.size = actual_size;
     current_idx_ += actual_size;
     return batch;
 }
 
 void AudioDatasetBatcher::Reset() {
-    // Pick the active index set based on current phase. For validation
-    // we never shuffle — deterministic iteration order makes val metrics
-    // reproducible across epochs.
-    if (current_phase_ == BatcherPhase::Val) {
-        epoch_order_ = val_indices_;
-    } else {
-        epoch_order_ = train_indices_;
-        if (shuffle_) {
-            std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
-        }
-    }
+    // The current phase's part; only train batches are shuffled, so
+    // validation and test metrics are reproducible across epochs.
+    epoch_order_ = Part(current_phase_);
+    if (current_phase_ == BatcherPhase::Train && shuffle_) std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }
 
@@ -299,7 +278,11 @@ size_t AudioDatasetBatcher::GetNumBatches() const {
 }
 
 size_t AudioDatasetBatcher::GetNumSamples() const {
-    return train_indices_.size();
+    return Part(current_phase_).size();
+}
+
+const std::vector<size_t>& AudioDatasetBatcher::Part(BatcherPhase phase) const {
+    return phase == BatcherPhase::Val ? val_indices_ : phase == BatcherPhase::Test ? test_indices_ : train_indices_;
 }
 
 void AudioDatasetBatcher::SetNormalization(float mean, float std_dev) {
