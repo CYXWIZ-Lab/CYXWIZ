@@ -3,6 +3,7 @@
 #include "image_cv_steps.h"
 
 #include <cstdio>
+#include <stdexcept>
 
 namespace cyxwiz::image_recipe {
 
@@ -67,51 +68,59 @@ View Build(const Input& in) {
     const auto& cv = c.image_cv_steps;
     bool fixed = true;
     size_t next_cv = 0;
-    const auto add_cv = [&](const CvImageStep& step, size_t ops_through) {
-        shape = CvImageShapeAfter(step, shape);
-        Row row;
-        row.node_id = step.node_id;
-        row.name = Name(in, step.node_id, step.node_name);
-        row.what = CvImageStepText(step);
-        row.group = Group::Once;
-        row.opencv = true;
-        row.output = shape;
-        row.output_text = ShapeText(shape);
-        row.ops_through = ops_through;
-        v.rows.push_back(row);
-    };
-    for (size_t i = 0; i <= ops.size(); ++i) {
-        for (; next_cv < cv.size() && cv[next_cv].position <= i; ++next_cv) add_cv(cv[next_cv], i);
-        if (i == ops.size()) break;
-        const image::ImageOp& op = ops[i];
-        const int node = i < c.image_op_node_ids.size() ? c.image_op_node_ids[i] : -1;
-        const bool random = image::IsRandomImageOp(op.kind);
-        fixed = fixed && !random;
-        shape = image::ImageShapeAfter(op, shape);
-        // A preset's ops (one node) are one row.
-        if (!v.rows.empty() && node >= 0 && v.rows.back().node_id == node && !v.rows.back().opencv &&
-            v.rows.back().group != Group::Resize) {
-            Row& last = v.rows.back();
-            last.what += ", " + ImageOpText(op);
-            last.random = last.random || random;
-            if (!fixed) last.group = Group::PerBatch;
-            last.output = shape;
-            last.output_text = ShapeText(shape);
-            last.ops_through = i + 1;
-            continue;
+    // A step the compile let through but cannot be sized on these images
+    // (ImageShapeAfter throws): say why instead of drawing the rows.
+    try {
+        const auto add_cv = [&](const CvImageStep& step, size_t ops_through) {
+            shape = CvImageShapeAfter(step, shape);
+            Row row;
+            row.node_id = step.node_id;
+            row.name = Name(in, step.node_id, step.node_name);
+            row.what = CvImageStepText(step);
+            row.group = Group::Once;
+            row.opencv = true;
+            row.output = shape;
+            row.output_text = ShapeText(shape);
+            row.ops_through = ops_through;
+            v.rows.push_back(row);
+        };
+        for (size_t i = 0; i <= ops.size(); ++i) {
+            for (; next_cv < cv.size() && cv[next_cv].position <= i; ++next_cv) add_cv(cv[next_cv], i);
+            if (i == ops.size()) break;
+            const image::ImageOp& op = ops[i];
+            const int node = i < c.image_op_node_ids.size() ? c.image_op_node_ids[i] : -1;
+            const bool random = image::IsRandomImageOp(op.kind);
+            fixed = fixed && !random;
+            shape = image::ImageShapeAfter(op, shape);
+            // A preset's ops (one node) are one row.
+            if (!v.rows.empty() && node >= 0 && v.rows.back().node_id == node && !v.rows.back().opencv &&
+                v.rows.back().group != Group::Resize) {
+                Row& last = v.rows.back();
+                last.what += ", " + ImageOpText(op);
+                last.random = last.random || random;
+                if (!fixed) last.group = Group::PerBatch;
+                last.output = shape;
+                last.output_text = ShapeText(shape);
+                last.ops_through = i + 1;
+                continue;
+            }
+            Row row;
+            row.node_id = node;
+            row.name = Name(in, node, ImageOpText(op));
+            row.what = ImageOpText(op);
+            row.group = fixed ? Group::Once : Group::PerBatch;
+            row.random = random;
+            row.output = shape;
+            row.output_text = ShapeText(shape);
+            row.ops_through = i + 1;
+            v.rows.push_back(row);
         }
-        Row row;
-        row.node_id = node;
-        row.name = Name(in, node, ImageOpText(op));
-        row.what = ImageOpText(op);
-        row.group = fixed ? Group::Once : Group::PerBatch;
-        row.random = random;
-        row.output = shape;
-        row.output_text = ShapeText(shape);
-        row.ops_through = i + 1;
-        v.rows.push_back(row);
+        for (; next_cv < cv.size(); ++next_cv) add_cv(cv[next_cv], ops.size());
+    } catch (const std::exception& e) {
+        View refused;
+        refused.reason = e.what();
+        return refused;
     }
-    for (; next_cv < cv.size(); ++next_cv) add_cv(cv[next_cv], ops.size());
 
     const auto& aug = c.image_augmentation;
     if (aug.mix != image::BatchMix::None) {
@@ -122,6 +131,7 @@ View Build(const Input& in) {
         mix.name = Name(in, c.image_mix_node_id, mix.what);
         mix.group = Group::PerBatch;
         mix.random = true;
+        mix.mix = true;
         mix.output = shape;
         mix.output_text = ShapeText(shape);
         mix.ops_through = ops.size();
@@ -163,13 +173,19 @@ View Build(const Input& in) {
     return v;
 }
 
+bool CanMove(const Row& row) {
+    return row.node_id >= 0 && !row.mix && (row.group == Group::Once || row.group == Group::PerBatch);
+}
+
 std::string MoveRefusal(const View& view, size_t from, long long after) {
     if (from >= view.rows.size()) return "There is no such step.";
     const Row& moved = view.rows[from];
     if (moved.group == Group::Resize || moved.group == Group::Normalize)
         return moved.name + " stays " + (moved.group == Group::Resize ? "first" : "last") + ".";
+    if (moved.mix) return moved.name + " mixes the whole batch after every other augmentation; it stays last.";
     if (after >= static_cast<long long>(view.rows.size())) return "There is no such step.";
-    if (after >= 0 && view.rows[static_cast<size_t>(after)].group == Group::Normalize)
+    if (after >= 0 && (view.rows[static_cast<size_t>(after)].group == Group::Normalize ||
+                       view.rows[static_cast<size_t>(after)].mix))
         return "Image steps come before " + view.rows[static_cast<size_t>(after)].name + ".";
     // The order after the move; an OpenCV step may not follow a random one.
     std::vector<const Row*> order;

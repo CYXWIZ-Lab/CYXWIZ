@@ -25,6 +25,7 @@ struct Row {
     Group group = Group::Once;
     bool opencv = false;     // an OpenCV step: done once, never after a random step
     bool random = false;     // a random device step (per batch from here on)
+    bool mix = false;        // the batch mix (MixUp / CutMix): after every per-batch step, on the whole batch
     image::ImageShape output;  // after this step
     std::string output_text; // "64 x 64 x 3" (a times sign)
     // The compiled ops up to and including this row (image_augmentation.ops),
@@ -49,10 +50,15 @@ struct View {
 
 View Build(const Input& in);
 
+// True when the row's node may be dragged to another place: an image step
+// with a node, not Resize, Normalize or the batch mix (training runs those
+// where they are).
+bool CanMove(const Row& row);
+
 // Empty when `rows[from]` may move to just after `rows[after]` (after = -1:
-// first of the steps); otherwise why not. Resize and Normalize stay where
-// they are, and an OpenCV step may not follow a random one (it is done once
-// with the images; the compiler refuses that graph).
+// first of the steps); otherwise why not. Resize, the batch mix and
+// Normalize stay where they are, and an OpenCV step may not follow a random
+// one (it is done once with the images; the compiler refuses that graph).
 std::string MoveRefusal(const View& view, size_t from, long long after);
 
 // True when moving `rows[from]` to just after `rows[after]` leaves the order

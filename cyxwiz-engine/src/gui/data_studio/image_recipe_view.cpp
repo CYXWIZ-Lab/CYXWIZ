@@ -217,12 +217,19 @@ void ImageRecipeView::DropTarget(::gui::NodeEditor* editor, const ir::View& view
     if (!ImGui::BeginDragDropTarget()) return;
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
             kRowPayload, ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-        const size_t from = *static_cast<const size_t*>(payload->Data);
+        const int node = *static_cast<const int*>(payload->Data);
+        const auto dragged = std::find_if(view.rows.begin(), view.rows.end(), [node](const ir::Row& r) { return r.node_id == node; });
+        if (dragged == view.rows.end()) {
+            ImGui::EndDragDropTarget();
+            return;
+        }
+        const size_t from = static_cast<size_t>(dragged - view.rows.begin());
         // The upper half puts it before this row (after the one above), the
-        // lower half after it; Resize takes only after, Normalize only before.
-        const ir::Group group = view.rows[index].group;
-        const bool before = group == ir::Group::Normalize ||
-                            (group != ir::Group::Resize && ImGui::GetMousePos().y < (lo.y + hi.y) * 0.5f);
+        // lower half after it; Resize takes only after, the mix and Normalize
+        // only before.
+        const ir::Row& target = view.rows[index];
+        const bool before = target.group == ir::Group::Normalize || target.mix ||
+                            (target.group != ir::Group::Resize && ImGui::GetMousePos().y < (lo.y + hi.y) * 0.5f);
         const long long after_index = static_cast<long long>(index) - (before ? 1 : 0);
         const bool same = ir::MoveChangesNothing(view, from, after_index);
         const std::string refusal = same ? std::string() : ir::MoveRefusal(view, from, after_index);
@@ -254,14 +261,15 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
     const ui::Tokens& t = ui::CurrentTokens();
     const ir::Row& row = view.rows[index];
     ImGui::PushID(row.node_id >= 0 ? row.node_id : static_cast<int>(index) + 100000);
-    const bool movable = row.group == ir::Group::Once || row.group == ir::Group::PerBatch;
+    const bool movable = ir::CanMove(row);
+    const bool removable = row.group == ir::Group::Once || row.group == ir::Group::PerBatch;
     ImGui::BeginGroup();
     // The handle: drag the row to move its node.
     if (movable) {
         ui::GhostButton(ICON_FA_GRIP_VERTICAL "##drag");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag to move this step; its node moves on the canvas");
         if (ImGui::BeginDragDropSource()) {
-            ImGui::SetDragDropPayload(kRowPayload, &index, sizeof(index));
+            ImGui::SetDragDropPayload(kRowPayload, &row.node_id, sizeof(row.node_id));
             ImGui::TextUnformatted(row.name.c_str());
             ImGui::EndDragDropSource();
         }
@@ -315,7 +323,7 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
     const char* settings_label = open_settings_ == row.node_id ? "Hide settings" : "Settings";
     const float actions_w = ui::ButtonWidth(settings_label, ui::ButtonSize::Small) +
                             ui::ButtonWidth("Open dialog", ui::ButtonSize::Small) +
-                            ImGui::CalcTextSize("Show on canvas").x + (movable ? ui::ButtonWidth("Remove", ui::ButtonSize::Small) : 0.0f) +
+                            ImGui::CalcTextSize("Show on canvas").x + (removable ? ui::ButtonWidth("Remove", ui::ButtonSize::Small) : 0.0f) +
                             4.0f * ImGui::GetStyle().ItemSpacing.x + 16.0f;
     ui::SameLineRight(actions_w);
     if (row.node_id >= 0) {
@@ -324,7 +332,7 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
         if (ui::SecondaryButton(settings_label)) open_settings_ = open_settings_ == row.node_id ? -1 : row.node_id;
         ImGui::SameLine();
         if (ui::SecondaryButton("Open dialog")) editor->RequestOpenNode(row.node_id);
-        if (movable) {
+        if (removable) {
             ImGui::SameLine();
             if (ui::DangerButton("Remove")) {
                 editor->RequestRemoveStep(row.node_id);
@@ -414,7 +422,7 @@ void ImageRecipeView::Render(::gui::NodeEditor* editor) {
     const auto last_of = [&](ir::Group g) {
         int id = -1;
         for (const auto& row : view.rows)
-            if (row.group == g) id = row.node_id;
+            if (row.group == g && !row.mix) id = row.node_id;
         return id;
     };
     const int resize_id = in.resize_node_id;

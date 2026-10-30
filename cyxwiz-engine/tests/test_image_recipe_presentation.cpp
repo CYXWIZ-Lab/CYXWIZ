@@ -121,9 +121,23 @@ void CheckPresetAndMix() {
     const auto v = Build(c);
     Check(v.rows.size() == 7 && v.rows[4].node_id == 5 && v.rows[4].ops_through == 4 && v.rows[4].random,
           "the blur and the vertical flip share their node's row");
-    Check(v.rows[5].node_id == 7 && v.rows[5].group == ir::Group::PerBatch &&
+    Check(v.rows[5].node_id == 7 && v.rows[5].group == ir::Group::PerBatch && v.rows[5].mix &&
               v.rows[5].what.rfind("MixUp (alpha 0.2", 0) == 0,
           "the batch mix: " + v.rows[5].what);
+    // Training mixes the batch after every augmentation: the mix row stays last.
+    Check(!ir::CanMove(v.rows[5]) && ir::CanMove(v.rows[4]) && !ir::CanMove(v.rows[0]) && !ir::CanMove(v.rows[6]),
+          "only image steps move, not the mix");
+    Check(!ir::MoveRefusal(v, 5, 2).empty(), "the mix does not move");
+    Check(ir::MoveRefusal(v, 3, 5).find("come before") != std::string::npos, "nothing after the mix");
+    Check(ir::MoveRefusal(v, 3, 4).empty(), "a flip may still go last of the augmentations");
+}
+
+void CheckUnsizedStep() {
+    // A crop larger than the resized images: the reason, not the rows.
+    auto c = Graph();
+    c.image_augmentation.ops[0].height = 100;
+    const auto v = Build(c);
+    Check(!v.known && v.rows.empty() && v.reason.find("larger") != std::string::npos, "unsized step: " + v.reason);
 }
 
 void CheckNotReady() {
@@ -140,6 +154,7 @@ int main() {
     CheckRows();
     CheckMoves();
     CheckPresetAndMix();
+    CheckUnsizedStep();
     CheckNotReady();
     std::cout << "Image recipe presentation passed\n";
     return 0;
