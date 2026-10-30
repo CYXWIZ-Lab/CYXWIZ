@@ -1655,6 +1655,8 @@ const char* PipelineMaterializerStorageSupportName(
         return "none";
     case PipelineMaterializerStorageSupport::ArrowTableOnly:
         return "arrow_table_only";
+    case PipelineMaterializerStorageSupport::StreamingOperatorsOnly:
+        return "streaming_operators_only";
     }
     return "unknown";
 }
@@ -1903,6 +1905,13 @@ ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name) {
     for (const auto& capability : capabilities) {
         if (legacy_type_name == capability.legacy_type_name) {
             result.push_back(capability);
+            // Plugin formats come and go with their plugins: add the current ones.
+            const std::string parameter = capability.parameter_name;
+            if (legacy_type_name == "DataInput" && (parameter == "type" || parameter == "file_type")) {
+                for (const auto& external : data_input::ExternalFormats())
+                    result.back().allowed_values.push_back(
+                        data_input::ExternalFormatNameOf(data_input::ExternalFormatId(external.name)));
+            }
         }
     }
     return result;

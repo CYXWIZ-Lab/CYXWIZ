@@ -1,8 +1,21 @@
 #include "python_setup_presentation.h"
 
 #include <cstdio>
+#include <string>
 
 namespace cyxwiz::pythonsetup {
+
+namespace {
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+// "3.12" -> "312", as in Arch's package name python312.
+std::string RemoveDots(std::string version) {
+    std::erase(version, '.');
+    return version;
+}
+#endif
+
+}  // namespace
 
 PythonView BuildPythonView(const ScanResult& scan, bool scanning, const std::string& required, const std::string& in_use) {
     PythonView v;
@@ -16,8 +29,10 @@ PythonView BuildPythonView(const ScanResult& scan, bool scanning, const std::str
     v.install_hint = "Install Python " + required + " from python.org/downloads or with \"brew install python@" + required +
                      "\". Then press Scan again, or point the Engine at the interpreter you installed.";
 #else
-    v.install_hint = "Install Python " + required + " and its venv module, for example \"sudo apt install python" + required +
-                     " python" + required + "-venv\". Then press Scan again, or point the Engine at the interpreter you installed.";
+    v.install_hint = "Install Python " + required + " and its venv module next to the system Python: \"sudo apt install python" +
+                     required + " python" + required + "-venv\" on Debian and Ubuntu, the AUR package python" +
+                     RemoveDots(required) + " on Arch Linux, or a build from python.org (INSTALL.md, \"Python " + required +
+                     " for scripting\"). Then press Scan again, or point the Engine at the interpreter you installed.";
 #endif
     if (scanning || !scan.scanned) {
         v.chip = "Checking Python...";

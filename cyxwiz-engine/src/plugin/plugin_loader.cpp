@@ -258,20 +258,33 @@ void* PluginLoader::LoadDLL(const std::filesystem::path& path, std::string& erro
     auto dir = path.parent_path().wstring();
     DLL_DIRECTORY_COOKIE cookie = ::AddDllDirectory(dir.c_str());
 
+    // A missing DLL or function fails the call instead of showing Windows'
+    // "Entry Point Not Found" box, which stops the Engine until it is closed.
+    DWORD previous_mode = 0;
+    ::SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &previous_mode);
     void* handle = ::LoadLibraryExW(
         path.wstring().c_str(), nullptr,
         LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
+    const DWORD load_error = ::GetLastError();
+    ::SetThreadErrorMode(previous_mode, nullptr);
 
     if (cookie) {
         ::RemoveDllDirectory(cookie);
     }
 
     if (!handle) {
+        ::SetLastError(load_error);
         error_out = GetLastDLLError();
+        if (load_error == ERROR_PROC_NOT_FOUND) {
+            error_out += " (the plugin uses a function this Engine does not have: it was built "
+                         "against a newer CyxWiz SDK; rebuild it against this Engine's SDK)";
+        }
     }
     return handle;
 #else
-    void* handle = ::dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL);
+    // RTLD_NOW: a function the Engine does not have fails here, with its name,
+    // instead of stopping the Engine when the plugin first calls it.
+    void* handle = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         error_out = ::dlerror();
     }

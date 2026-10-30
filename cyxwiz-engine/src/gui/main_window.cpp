@@ -768,6 +768,12 @@ MainWindow::MainWindow()
             spdlog::debug("Raised CyxWiz Studio from Data Studio");
         }
     });
+    // Explore > Plugins: no plugin with analytics, or its plugin is gone (TOFIX181).
+    data_studio_panel_->SetOpenPluginManagerCallback([this]() {
+        if (!plugin_manager_panel_) return;
+        plugin_manager_panel_->SetVisible(true);
+        ::gui::BringToFront(plugin_manager_panel_->GetName());
+    });
     // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
     if (node_editor_) {
         node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {

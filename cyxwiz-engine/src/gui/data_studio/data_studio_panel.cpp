@@ -49,6 +49,7 @@ DataStudioPanel::DataStudioPanel() {
     regression_ = std::make_unique<RegressionView>();
     groups_ = std::make_unique<GroupsView>();
     projection_ = std::make_unique<ProjectionView>();
+    plugins_ = std::make_unique<PluginsView>();
     series_ = std::make_unique<SeriesView>();
     forecast_ = std::make_unique<ForecastView>();
     projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };

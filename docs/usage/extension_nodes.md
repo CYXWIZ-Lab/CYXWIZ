@@ -6,7 +6,7 @@ node editor, connected like a built-in layer, saved in `.cyxgraph` files and
 trained. This page is how to use them in the Engine; how to write one is in
 [docs/extending](../extending/README.md).
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 
 ## Try the examples first
 

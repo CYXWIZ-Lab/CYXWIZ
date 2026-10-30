@@ -100,7 +100,7 @@ std::vector<std::array<int, 3>> SelectBatchPairs(
 
 MetricBatchSampler::MetricBatchSampler(IBatcher& source, MetricSampling sampling, MetricMining mining,
                                        uint64_t seed)
-    : source_(&source), sampling_(sampling), mining_(mining), seed_(seed), epoch_key_(seed) {
+    : source_(&source), sampling_(sampling), mining_(mining), epoch_key_(seed) {
     if (sampling_ == MetricSampling::None) {
         throw std::invalid_argument("MetricBatchSampler needs pair or triplet sampling");
     }

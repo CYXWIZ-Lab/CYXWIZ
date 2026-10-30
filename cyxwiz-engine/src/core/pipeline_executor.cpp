@@ -4400,6 +4400,23 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     disk_backed = true;
                 }
                 spdlog::info("[Pipeline] DataInput Parquet backend: {}", load_status);
+            } else if (data_input::IsExternalFormatName(file_type)) {
+                // A plugin's dataset format, streamed into a Parquet cache (TOFIX181).
+                std::string load_status;
+                const auto backend = registry.LoadTabularExternal(
+                    file_type, file_path, dataset_name,
+                    OptionalBooleanParameterIsTrue(node.parameters, "force_disk_backed"),
+                    selected_columns, &load_status, ingestion_cache_root_,
+                    [this] { return cancel_requested_.load(); });
+                if (backend == DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset = registry.GetArrowDataset(dataset_name);
+                } else if (backend == DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                } else {
+                    ReportError("DataInput: " + load_status);
+                    return false;
+                }
+                spdlog::info("[Pipeline] DataInput {} backend: {}", file_type, load_status);
             } else if (file_type == "json") {
                 const auto lines = node.parameters.find("json_lines");
                 const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||
@@ -7342,7 +7359,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     // Simple hash combining node type and parameters
     // Using FNV-1a hash algorithm for fast hashing
     uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
-    const uint64_t prime = 1099511628211ULL;  // FNV prime
+    constexpr uint64_t prime = 1099511628211ULL;  // FNV prime
 
     // Hash node type
     for (char c : node.type) {
@@ -7367,7 +7384,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     }
 
     // The wiring: which node and output pin feeds each input.
-    auto mix = [&hash, prime](const std::string& text) {
+    auto mix = [&hash](const std::string& text) {
         for (char c : text) {
             hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
             hash *= prime;

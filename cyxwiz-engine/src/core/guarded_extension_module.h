@@ -21,7 +21,7 @@ public:
     // expected_sample_shape: the output shape the compiler inferred, per
     // sample (without the batch dimension). lease keeps the provider loaded
     // while this module exists.
-    GuardedExtensionModule(std::unique_ptr<Module> inner, int node_id, std::string node_name,
+    GuardedExtensionModule(std::unique_ptr<Module> inner, std::string node_name,
                            std::string type_id, std::vector<size_t> expected_sample_shape,
                            std::shared_ptr<void> lease);
 
@@ -48,7 +48,6 @@ private:
     void CheckOutput(const Tensor& input, const Tensor& output) const;
 
     std::unique_ptr<Module> inner_;
-    int node_id_ = -1;
     std::string node_name_;
     std::string type_id_;
     std::vector<size_t> expected_sample_shape_;
@@ -62,7 +61,7 @@ private:
 // The reduction is the inner loss's, so the trainer weighs it the same way.
 class GuardedExtensionLoss : public Loss {
 public:
-    GuardedExtensionLoss(std::unique_ptr<Loss> inner, int node_id, std::string node_name,
+    GuardedExtensionLoss(std::unique_ptr<Loss> inner, std::string node_name,
                          std::string type_id, std::shared_ptr<void> lease);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
@@ -77,7 +76,6 @@ private:
     [[noreturn]] void Fail(const std::string& what) const;
 
     std::unique_ptr<Loss> inner_;
-    int node_id_ = -1;
     std::string node_name_;
     std::string type_id_;
     std::shared_ptr<void> lease_;

@@ -506,6 +506,7 @@ if(CYXWIZ_BUILD_ENGINE)
     add_subdirectory(plugins/examples/mlflow_logger)
     add_subdirectory(plugins/examples/image_nodes)
     add_subdirectory(plugins/examples/activation_nodes)
+    add_subdirectory(plugins/examples/data_formats)
     # The SDK's template plugin, built here so it always compiles.
     add_subdirectory(plugins/template)
     if(CYXWIZ_BUILD_MUJOCO_PLUGIN)

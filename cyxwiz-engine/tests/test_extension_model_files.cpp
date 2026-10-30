@@ -195,7 +195,7 @@ std::shared_ptr<cyxwiz::SequentialModel> ModelWithExtension() {
     auto model = std::make_shared<cyxwiz::SequentialModel>();
     model->Add<cyxwiz::LinearModule>(3, 3, true);
     model->AddModule(std::make_unique<cyxwiz::GuardedExtensionModule>(
-        std::make_unique<ScaleModule>(0.5f), 50, "My Scale", std::string(kProvider) + ":Scale",
+        std::make_unique<ScaleModule>(0.5f), "My Scale", std::string(kProvider) + ":Scale",
         std::vector<size_t>{3}, nullptr));
     return model;
 }

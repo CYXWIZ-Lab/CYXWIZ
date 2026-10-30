@@ -279,7 +279,7 @@ int main(int argc, char** argv) {
 #ifdef CYXWIZ_COMMAND_LINE_TOOL
     if (installer_mode || argc <= first_forwarded_argument ||
         std::string_view(argv[first_forwarded_argument]) != "plugin-check") {
-        std::cerr << "usage: cyxwiz-cli [--runtime-root <folder>] plugin-check <plugin folder>...\n";
+        std::cerr << "usage: cyxwiz-cli [--runtime-root <folder>] plugin-check [--open <file>]... <plugin folder>...\n";
         return 64;
     }
     plugin_check_mode = true;

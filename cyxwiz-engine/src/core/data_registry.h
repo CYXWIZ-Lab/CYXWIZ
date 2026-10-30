@@ -19,6 +19,7 @@
 namespace arrow {
     class Schema;
     class Table;
+    class RecordBatchReader;
 }
 
 // Forward declarations for preprocessing and augmentation
@@ -579,6 +580,32 @@ public:
                                           std::string* load_status = nullptr,
                                           const std::string& cache_directory = {});
 
+    /**
+     * A file in a format the Engine reads through someone else (a plugin's
+     * dataset format, data_input_external_formats.h; TOFIX181). The opener
+     * returns the format's batches; the Engine installs it at startup.
+     */
+    using ExternalReaderOpener = std::function<bool(const std::string& format, const std::string& path,
+                                                    std::shared_ptr<arrow::RecordBatchReader>& reader,
+                                                    std::string& error)>;
+    void SetExternalReaderOpener(ExternalReaderOpener opener);
+
+    /**
+     * Loads a file of an external format: its batches are streamed once into
+     * a Parquet file of the ingestion cache (refreshed when the file is newer,
+     * or the format's version changes), which then loads like LoadTabularParquet
+     * (in memory up to the data budget, on disk beyond). On failure the status
+     * holds the reason.
+     */
+    TabularLoadBackend LoadTabularExternal(const std::string& format,
+                                           const std::string& path,
+                                           const std::string& name,
+                                           bool force_disk_backed = false,
+                                           const std::vector<std::string>& selected_columns = {},
+                                           std::string* load_status = nullptr,
+                                           const std::string& cache_directory = {},
+                                           const std::function<bool()>& should_cancel = {});
+
     // The dataset under this name, in memory or on disk (nullopt if neither).
     std::optional<TableRef> GetTableRef(const std::string& name) const;
 
@@ -827,6 +854,7 @@ private:
     std::map<std::string, TextDatasetEntry> text_dataset_entries_;
 
     mutable std::mutex mutex_;
+    ExternalReaderOpener external_opener_;  // guarded by mutex_
 
     // Memory management
     size_t memory_limit_ = 4ULL * 1024 * 1024 * 1024;  // 4GB default

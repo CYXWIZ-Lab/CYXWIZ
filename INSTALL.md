@@ -25,10 +25,66 @@ Ubuntu 22.04 package names, as used by CI:
 ```bash
 sudo apt-get install -y autoconf autoconf-archive automake build-essential cmake curl \
   libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev libxext-dev libxi-dev \
-  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev ninja-build patchelf pkg-config
+  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev nasm ninja-build patchelf pkg-config \
+  tar unzip zip
 curl -LO https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
 chmod +x ArrayFire.sh && sudo ./ArrayFire.sh --include-subdir --prefix=/opt
 ```
+
+Arch Linux names. Bring the system fully up to date first: a rolling system that has not been updated for a while cannot install new packages (see [Troubleshooting](#troubleshooting)).
+
+```bash
+sudo pacman -Syu
+sudo pacman -S --needed base-devel autoconf autoconf-archive automake cmake curl git gtk3 libtool \
+  libxcursor libxi libxinerama libxkbcommon libxrandr mesa nasm ninja patchelf pkgconf tar unzip wayland zip
+```
+
+### ArrayFire from source (Linux)
+
+The `ArrayFire.sh` installer is 3.9 GB, served from Amazon S3; where S3 is slow (measured at about 10 KB/s on one network that downloads from GitHub at 10 MB/s) it can take days. ArrayFire's GitHub release has the full source (84 MB). The Engine on Linux needs only the CPU backend, which builds in about an hour on four cores:
+
+```bash
+# Ubuntu: sudo apt-get install -y libboost-dev libfftw3-dev liblapacke-dev libopenblas-dev
+# Arch:   sudo pacman -S --needed boost fftw lapacke openblas
+curl -LO https://github.com/arrayfire/arrayfire/releases/download/v3.10.0/arrayfire-full-3.10.0.tar.bz2
+tar xjf arrayfire-full-3.10.0.tar.bz2 && cd arrayfire-full-3.10.0
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-include cstdint" \
+  -DCMAKE_INSTALL_PREFIX="$HOME/opt/ArrayFire-3.10.0" \
+  -DAF_BUILD_CPU=ON -DAF_BUILD_CUDA=OFF -DAF_BUILD_OPENCL=OFF -DAF_BUILD_ONEAPI=OFF -DAF_BUILD_UNIFIED=ON \
+  -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_DOCS=OFF -DAF_BUILD_FORGE=OFF -DBUILD_TESTING=OFF \
+  -DAF_WITH_IMAGEIO=OFF -DAF_COMPUTE_LIBRARY="FFTW/LAPACK/BLAS"
+cmake --build build && cmake --install build
+```
+
+`-include cstdint` is for GCC 15 and newer, which no longer include `<cstdint>` through other standard headers; older compilers ignore the difference. Then build with `./build.sh --engine -DArrayFire_DIR=$HOME/opt/ArrayFire-3.10.0/share/ArrayFire/cmake`, and run with `LD_LIBRARY_PATH=$HOME/opt/ArrayFire-3.10.0/lib`.
+
+### Python 3.12 for scripting (Linux)
+
+The Engine embeds Python 3.12. Scripts, the Python console and project environments also need a Python 3.12 on the system with its `venv` module; everything else in the Engine works without it. At start the Engine looks for `python3.12` on `PATH` and in `/usr/bin`, `/usr/local/bin` and `/opt/python3.12/bin`, and lists any other versions it finds as not usable. Support for newer Python versions is planned; until then, install 3.12 next to the system Python (it does not replace `python3`):
+
+```bash
+# Ubuntu 24.04 and Debian 13
+sudo apt-get install -y python3.12 python3.12-venv
+# Ubuntu 22.04: from the deadsnakes PPA
+sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt-get install -y python3.12 python3.12-venv
+# Arch Linux: the AUR package python312 (installs /usr/bin/python3.12)
+sudo pacman -S --needed base-devel git tk
+git clone https://aur.archlinux.org/python312.git && cd python312
+makepkg -f && sudo pacman -U python312-3.12.*-x86_64.pkg.tar.zst
+```
+
+Where no package exists, build it from python.org into `/usr/local` (about 15 minutes; `altinstall` adds `python3.12` without touching `python3`). The build needs the development packages for OpenSSL, libffi, zlib, bzip2, xz, SQLite, readline and gdbm, or the matching Python modules are left out:
+
+```bash
+curl -LO https://www.python.org/ftp/python/3.12.16/Python-3.12.16.tar.xz
+tar xf Python-3.12.16.tar.xz && cd Python-3.12.16
+./configure --prefix=/usr/local --enable-shared --enable-optimizations --with-ensurepip=install \
+  LDFLAGS="-Wl,-rpath,/usr/local/lib"
+make -j"$(nproc)" && sudo make altinstall
+python3.12 -c "import venv, ssl, sqlite3, ctypes"   # no output means the modules the Engine uses are there
+```
+
+Then press **Scan again** in the Engine's Python dialog, or restart the Engine.
 
 ### macOS packages
 
@@ -189,7 +245,7 @@ cmake -LAH -N build | Select-String CYXWIZ_      # Linux/macOS: cmake -LAH -N bu
 
 ## ArrayFire discovery
 
-If CMake cannot find ArrayFire, pass the directory that contains `ArrayFireConfig.cmake`:
+If CMake cannot find ArrayFire, pass the directory that contains `ArrayFireConfig.cmake` (the Linux and macOS wrapper takes it too: `./build.sh --engine -DArrayFire_DIR=<dir>`). On Linux that is `share/ArrayFire/cmake` under the install prefix, for example `$HOME/opt/ArrayFire-3.10.0/share/ArrayFire/cmake` for the source build above:
 
 ```powershell
 cmake --preset windows-debug -DArrayFire_DIR="C:\Program Files\ArrayFire\v3\cmake"
@@ -227,5 +283,15 @@ When configuration fails:
 3. disable unavailable optional integrations;
 4. confirm the compiler matches the configured generator (Visual Studio 2026 for the Windows presets);
 5. set `ArrayFire_DIR` only when ArrayFire is installed.
+
+On Linux and macOS, `build.sh` installs the vcpkg libraries with the project's overlay ports (`vcpkg-ports/`) and, on Linux, the triplet in `vcpkg-triplets/`, which forces `-include cstdint` for GCC 15 and newer (some pinned libraries, ONNX Runtime among them, use `uint32_t` without including `<cstdint>`) and builds Abseil as C++17 (GCC 16 defaults to C++20, and Abseil records the standard it was built with, which breaks the libraries that use it as C++17). Configuring by hand, pass the same folders as absolute paths, from the repository root `-DVCPKG_OVERLAY_PORTS=$PWD/vcpkg-ports -DVCPKG_OVERLAY_TRIPLETS=$PWD/vcpkg-triplets`: CMake keeps a relative path as given, and when a later build re-runs CMake by itself it does so from the build folder ("Overlay path .../build/linux-release/vcpkg-ports must be an existing directory").
+
+Specific messages:
+
+- **"CMake was unable to find a build program corresponding to "Ninja""** right after `-- Running vcpkg install - failed`: not a Ninja problem. A vcpkg library failed to build; scroll up to `error: building <library>:x64-linux failed` and read the log it names under `vcpkg/buildtrees/<library>/`.
+- **"'partial_ordering' has not been declared in 'std'"** in `absl/types/compare.h` while building ONNX Runtime: Abseil was built as C++20 (GCC 16's default) without the project triplet. Build through `build.sh`, or pass `-DVCPKG_OVERLAY_TRIPLETS=$PWD/vcpkg-triplets`; vcpkg then rebuilds the libraries once.
+- **Arch: "invalid or corrupted package (PGP signature)"**: the package keyring is older than the package. Run `sudo pacman -Sy archlinux-keyring`, then `sudo pacman -Syu`.
+- **Arch: before a full update that changes the kernel**, run `sudo mkinitcpio -P` once and make sure it ends without `ERROR`. If `/etc/mkinitcpio.conf` is damaged, the update installs the new kernel without the startup image it needs, and the next boot stops with "Kernel panic ... unable to mount root fs". To recover: boot the Arch install medium, `mount` the system and its `/boot`, `arch-chroot` in, move the damaged file aside, `pacman -S mkinitcpio` (which restores the default file and builds the image), then `grub-mkconfig -o /boot/grub/grub.cfg` and reboot.
+- **Slow ArrayFire download**: see [ArrayFire from source](#arrayfire-from-source-linux).
 
 For reproducible problems, follow [SUPPORT.md](SUPPORT.md).
