@@ -203,6 +203,17 @@ void ReadinessView::RenderImages(const studio::SplitSet& set) {
         ImGui::PopTextWrapPos();
         return;
     }
+    // The compile counts the dataset the canvas graph trains on; a set built
+    // around another dataset gets no counts that are not its own.
+    const std::string& shown = set.parts.front().dataset;
+    if (!config->dataset_name.empty() && config->dataset_name != shown) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "The canvas graph trains on '%s', not '%s': its split is counted for '%s' only. "
+                                       "Pick that set, or open a graph that trains on '%s'.",
+                           config->dataset_name.c_str(), shown.c_str(), config->dataset_name.c_str(), shown.c_str());
+        ImGui::PopTextWrapPos();
+        return;
+    }
     image_split::Input input;
     input.split = config->image_split;
     input.wired_val = config->image_split_dev;
