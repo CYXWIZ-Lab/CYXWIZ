@@ -7,6 +7,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Plugin SDK: `cyxwiz::image::RandAugmentOp` is now `AugmentOp`** in
+  `cyxwiz/image_augmentation.h`, with a new `Invert` value: AutoAugment,
+  TrivialAugment and AugMix pick from the same list as RandAugment. A plugin
+  that names `RandAugmentOp` needs the new name; `kRandAugmentOps` (14)
+  still counts RandAugment's own ops, `kAugmentOps` (15) the whole list.
+- **Image Rotate fills the corners outside the image with 0 through
+  torchvision's fill mask** (RandomRotation's default), which changes
+  bilinear borders slightly.
 - **Recurrent layers (RNN, LSTM, GRU) now reset their state at the start of
   every forward call.** Each batch starts from a zero hidden (and cell)
   state, matching PyTorch and TensorFlow defaults and making CPU and GPU

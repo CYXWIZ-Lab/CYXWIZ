@@ -58,12 +58,6 @@ ResolvedExternalBatchers BuildLegacyTrainingBatchers(const TrainingConfiguration
             }
         }
     }
-    if (registry.HasAugmentationPipeline(dataset_name)) {
-        if (auto pipeline = registry.GetAugmentationPipeline(dataset_name)) {
-            train->SetAugmentationPipeline(pipeline);
-            train->SetApplyAugmentationOnTrain(true);
-        }
-    }
     ApplyLegacyLabelAndInputSettings(config, *train);
     ApplyLegacyLabelAndInputSettings(config, *val);
 

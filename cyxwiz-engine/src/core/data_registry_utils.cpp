@@ -9,7 +9,6 @@
 #include "parquet_backed_dataset.h"
 #include "annotation_manager.h"
 #include "../preprocessing/preprocessing_config.h"
-#include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <ctime>
@@ -117,38 +116,6 @@ void DataRegistry::ClearPreprocessingConfig(const std::string& dataset_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     preprocessing_configs_.erase(dataset_id);
     spdlog::info("DataRegistry: Cleared preprocessing config for dataset '{}'", dataset_id);
-}
-
-// =============================================================================
-// Augmentation Pipeline Management
-// =============================================================================
-
-void DataRegistry::SetAugmentationPipeline(const std::string& dataset_id,
-                                            std::shared_ptr<transforms::Compose> pipeline) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    augmentation_pipelines_[dataset_id] = pipeline;
-    spdlog::info("DataRegistry: Set augmentation pipeline for dataset '{}'", dataset_id);
-}
-
-std::shared_ptr<transforms::Compose> DataRegistry::GetAugmentationPipeline(
-    const std::string& dataset_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = augmentation_pipelines_.find(dataset_id);
-    if (it != augmentation_pipelines_.end()) {
-        return it->second;
-    }
-    return nullptr;
-}
-
-bool DataRegistry::HasAugmentationPipeline(const std::string& dataset_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return augmentation_pipelines_.find(dataset_id) != augmentation_pipelines_.end();
-}
-
-void DataRegistry::ClearAugmentationPipeline(const std::string& dataset_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    augmentation_pipelines_.erase(dataset_id);
-    spdlog::info("DataRegistry: Cleared augmentation pipeline for dataset '{}'", dataset_id);
 }
 
 // =============================================================================

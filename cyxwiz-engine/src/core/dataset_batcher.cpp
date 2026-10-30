@@ -4,7 +4,6 @@
 #include "../preprocessing/statistics_calculator.h"
 #include "../preprocessing/normalization_transform.h"
 #include "../preprocessing/scaling_transform.h"
-#include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
@@ -103,24 +102,6 @@ Batch DatasetBatcher::GetNextBatch() {
     batch_data.reserve(actual_batch_size * sample_size);
     batch_labels.reserve(actual_batch_size);
 
-    // Check if augmentation should be applied
-    bool should_augment = augmentation_pipeline_ != nullptr &&
-                          apply_augmentation_on_train_ &&
-                          split_ == DatasetSplit::Train;
-
-    int transform_height = 0;
-    int transform_width = 0;
-    int transform_channels = 0;
-    if (should_augment) {
-        if (info.shape.size() < 2 ||
-            !TryConvertImageDimension(info.shape[0], "height", transform_height) ||
-            !TryConvertImageDimension(info.shape[1], "width", transform_width) ||
-            !TryConvertImageDimension(info.shape.size() > 2 ? info.shape[2] : 1,
-                                      "channel", transform_channels)) {
-            return batch;
-        }
-    }
-
     std::vector<std::pair<std::vector<float>, int>> samples(actual_batch_size);
 
     auto load_range = [&](size_t begin, size_t end) {
@@ -152,19 +133,6 @@ Batch DatasetBatcher::GetNextBatch() {
 
     for (size_t offset = 0; offset < actual_batch_size; ++offset) {
         auto [sample, label] = std::move(samples[offset]);
-
-        // Apply augmentation if enabled (BEFORE preprocessing)
-        if (should_augment) {
-            // Convert sample to transforms::Image
-            // Assume image format: [height, width, channels] or [width, height, channels]
-            transforms::Image img(sample, transform_width, transform_height, transform_channels);
-
-            // Apply augmentation pipeline
-            transforms::Image augmented = augmentation_pipeline_->apply(img);
-
-            // Use augmented data
-            sample = augmented.data;
-        }
 
         // Append sample data
         batch_data.insert(batch_data.end(), sample.begin(), sample.end());
@@ -409,20 +377,6 @@ void DatasetBatcher::ApplyPreprocessing(Tensor& batch) {
 }
 
 // =============================================================================
-// Augmentation Pipeline Management
-// =============================================================================
-
-void DatasetBatcher::SetAugmentationPipeline(std::shared_ptr<transforms::Compose> pipeline) {
-    augmentation_pipeline_ = pipeline;
-    if (pipeline) {
-        spdlog::info("DatasetBatcher: Augmentation pipeline enabled for split={}",
-                     static_cast<int>(split_));
-    } else {
-        spdlog::info("DatasetBatcher: Augmentation pipeline disabled");
-    }
-}
-
-// =============================================================================
 // DatasetIterator implementation
 // =============================================================================
 
@@ -540,21 +494,6 @@ AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
     batch_data.reserve(batch.size * sample_size);
     batch_labels.reserve(batch.size);
 
-    // Check if augmentation should be applied
-    bool should_augment = augmentation_pipeline_ != nullptr &&
-                          apply_augmentation_on_train_ &&
-                          split_ == DatasetSplit::Train;
-
-    int transform_height = 0;
-    int transform_width = 0;
-    int transform_channels = 0;
-    if (should_augment &&
-        (!TryConvertImageDimension(batch.height, "height", transform_height) ||
-         !TryConvertImageDimension(batch.width, "width", transform_width) ||
-         !TryConvertImageDimension(batch.channels, "channel", transform_channels))) {
-        return {};
-    }
-
     std::vector<std::pair<std::vector<float>, int>> samples(batch.size);
 
     auto load_range = [&](size_t begin, size_t end) {
@@ -585,13 +524,6 @@ AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
 
     for (size_t offset = 0; offset < batch.size; ++offset) {
         auto [sample, label] = std::move(samples[offset]);
-
-        // Apply augmentation if enabled
-        if (should_augment && !sample.empty()) {
-            transforms::Image img(sample, transform_width, transform_height, transform_channels);
-            transforms::Image augmented = augmentation_pipeline_->apply(img);
-            sample = augmented.data;
-        }
 
         batch_data.insert(batch_data.end(), sample.begin(), sample.end());
         batch_labels.push_back(label);

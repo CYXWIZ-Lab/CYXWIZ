@@ -7104,6 +7104,24 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
     pre.norm_channel_std = std::move(std_dev);
 }
 
+template <typename T>
+bool ParseChoiceParam(const std::map<std::string, std::string>& params, const std::string& key,
+                      const std::string& fallback, const std::vector<std::pair<std::string, T>>& choices, T& out,
+                      std::string& error) {
+    const auto it = params.find(key);
+    const std::string value = it == params.end() || it->second.empty() ? fallback : it->second;
+    std::string names;
+    for (const auto& [name, choice] : choices) {
+        if (name == value) {
+            out = choice;
+            return true;
+        }
+        names += (names.empty() ? "" : choices.back().first == name ? " or " : ", ") + name;
+    }
+    error = key + " must be " + names;
+    return false;
+}
+
 // --- Image transforms (TOFIX140): appended in graph order, run by the image
 // batcher on the device after Resize and before Normalize. ---
 
@@ -7112,6 +7130,9 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
     return cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
+
+const std::vector<std::pair<std::string, cyxwiz::image::Interpolation>> kInterpolations = {
+    {"nearest", cyxwiz::image::Interpolation::Nearest}, {"bilinear", cyxwiz::image::Interpolation::Bilinear}};
 
 void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
                    const std::string& parse_error, TrainingConfiguration& config) {
@@ -7133,6 +7154,7 @@ void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
         return;
     }
     config.image_augmentation.ops.push_back(op);
+    config.image_op_node_ids.push_back(node.id);
 }
 
 // mixup / cutmix mix whole training batches and their one-hot labels; the
@@ -7244,20 +7266,60 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
                                                                  : ImageOpKind::VerticalFlip;
             ParseFloatParam(p, "probability", 0.5f, op.probability, error);
             break;
-        case gui::NodeType::ImageRotate: {
+        case gui::NodeType::ImageRotate:
             op.kind = ImageOpKind::Rotate;
-            if (ParseFloatParam(p, "max_angle", 15.0f, op.max_angle, error)) {
-                ParseFloatParam(p, "probability", 0.5f, op.probability, error);
-            }
-            const auto it = p.find("interpolation");
-            const std::string interpolation = it == p.end() ? "nearest" : it->second;
-            if (interpolation == "bilinear") {
-                op.interpolation = cyxwiz::image::Interpolation::Bilinear;
-            } else if (interpolation != "nearest" && error.empty()) {
-                error = "interpolation must be nearest or bilinear";
+            if (ParseFloatParam(p, "max_angle", 15.0f, op.max_angle, error) &&
+                ParseFloatParam(p, "probability", 0.5f, op.probability, error)) {
+                ParseChoiceParam(p, "interpolation", "nearest", kInterpolations, op.interpolation, error);
             }
             break;
+        case gui::NodeType::RandomResizedCrop: {
+            // 0 keeps the size of the image coming in.
+            op.kind = ImageOpKind::RandomResizedCrop;
+            const auto incoming = CurrentImageShape(config);
+            if (ParseIntParam(p, "width", 0, op.width, error) && ParseIntParam(p, "height", 0, op.height, error) &&
+                ParseFloatParam(p, "scale_min", 0.08f, op.scale_min, error) &&
+                ParseFloatParam(p, "scale_max", 1.0f, op.scale_max, error) &&
+                ParseFloatParam(p, "ratio_min", 0.75f, op.ratio_min, error) &&
+                ParseFloatParam(p, "ratio_max", 1.3333f, op.ratio_max, error)) {
+                ParseChoiceParam(p, "interpolation", "bilinear", kInterpolations, op.interpolation, error);
+            }
+            if (op.width == 0) op.width = static_cast<int>(incoming.width);
+            if (op.height == 0) op.height = static_cast<int>(incoming.height);
+            break;
         }
+        case gui::NodeType::RandomAffine:
+            op.kind = ImageOpKind::RandomAffine;
+            if (ParseFloatParam(p, "degrees", 10.0f, op.max_angle, error) &&
+                ParseFloatParam(p, "translate_x", 0.1f, op.translate_x, error) &&
+                ParseFloatParam(p, "translate_y", 0.1f, op.translate_y, error) &&
+                ParseFloatParam(p, "scale_min", 0.9f, op.zoom_min, error) &&
+                ParseFloatParam(p, "scale_max", 1.1f, op.zoom_max, error) &&
+                ParseFloatParam(p, "shear_x_min", 0.0f, op.shear_x_min, error) &&
+                ParseFloatParam(p, "shear_x_max", 0.0f, op.shear_x_max, error) &&
+                ParseFloatParam(p, "shear_y_min", 0.0f, op.shear_y_min, error) &&
+                ParseFloatParam(p, "shear_y_max", 0.0f, op.shear_y_max, error) &&
+                ParseFloatParam(p, "fill", 0.0f, op.fill, error)) {
+                ParseChoiceParam(p, "interpolation", "nearest", kInterpolations, op.interpolation, error);
+            }
+            break;
+        case gui::NodeType::RandomPerspective:
+            op.kind = ImageOpKind::RandomPerspective;
+            if (ParseFloatParam(p, "distortion", 0.5f, op.distortion, error) &&
+                ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                ParseFloatParam(p, "fill", 0.0f, op.fill, error)) {
+                ParseChoiceParam(p, "interpolation", "bilinear", kInterpolations, op.interpolation, error);
+            }
+            break;
+        case gui::NodeType::GaussianNoise:
+            op.kind = ImageOpKind::GaussianNoise;
+            if (ParseFloatParam(p, "mean", 0.0f, op.noise_mean, error)) ParseFloatParam(p, "sigma", 0.1f, op.sigma, error);
+            op.clip = ParseBoolParam(p, "clip", true);
+            break;
+        case gui::NodeType::RandomGrayscale:
+            op.kind = ImageOpKind::RandomGrayscale;
+            ParseFloatParam(p, "probability", 0.1f, op.probability, error);
+            break;
         case gui::NodeType::ColorJitter:
             op.kind = ImageOpKind::ColorJitter;
             if (ParseFloatParam(p, "brightness", 0.2f, op.brightness, error) &&
@@ -7313,12 +7375,44 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
                 }
                 break;
             }
+            if (method == "autoaugment") {
+                op.kind = ImageOpKind::AutoAugment;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error)) {
+                    using cyxwiz::image::AutoAugmentPolicy;
+                    ParseChoiceParam<AutoAugmentPolicy>(p, "policy", "imagenet",
+                                                        {{"imagenet", AutoAugmentPolicy::ImageNet},
+                                                         {"cifar10", AutoAugmentPolicy::Cifar10},
+                                                         {"svhn", AutoAugmentPolicy::Svhn}},
+                                                        op.policy, error);
+                }
+                break;
+            }
+            if (method == "trivialaugment") {
+                op.kind = ImageOpKind::TrivialAugment;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error)) {
+                    ParseIntParam(p, "magnitude_bins", 31, op.magnitude_bins, error);
+                }
+                break;
+            }
+            if (method == "augmix") {
+                // torchvision AugMix samples its chains with bilinear interpolation.
+                op.kind = ImageOpKind::AugMix;
+                op.interpolation = cyxwiz::image::Interpolation::Bilinear;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                    ParseIntParam(p, "severity", 3, op.severity, error) &&
+                    ParseIntParam(p, "mixture_width", 3, op.mixture_width, error) &&
+                    ParseIntParam(p, "chain_depth", -1, op.chain_depth, error)) {
+                    ParseFloatParam(p, "alpha", 1.0f, op.alpha, error);
+                }
+                break;
+            }
             if (method == "cutout") {
                 op.erase_method = cyxwiz::image::EraseMethod::Cutout;
             } else if (method == "random_erasing") {
                 op.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
             } else {
-                error = "method must be cutout, random_erasing, mixup, cutmix or randaugment";
+                error = "method must be cutout, random_erasing, mixup, cutmix, randaugment, autoaugment, "
+                        "trivialaugment or augmix";
             }
             if (error.empty() && ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
                 ParseIntParam(p, "cutout_size", 16, op.cutout_size, error) &&
@@ -7338,24 +7432,6 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
 
 // --- OpenCV image steps (TOFIX178 1.3f): done once when the images are
 // prepared, in canvas order with the device transforms done once. ---
-
-template <typename T>
-bool ParseChoiceParam(const std::map<std::string, std::string>& params, const std::string& key,
-                      const std::string& fallback, const std::vector<std::pair<std::string, T>>& choices, T& out,
-                      std::string& error) {
-    const auto it = params.find(key);
-    const std::string value = it == params.end() || it->second.empty() ? fallback : it->second;
-    std::string names;
-    for (const auto& [name, choice] : choices) {
-        if (name == value) {
-            out = choice;
-            return true;
-        }
-        names += (names.empty() ? "" : choices.back().first == name ? " or " : ", ") + name;
-    }
-    error = key + " must be " + names;
-    return false;
-}
 
 // "0,0, 1,0, 1,1, 0,1": x and y of each point, as fractions of the image.
 bool ParsePointsParam(const std::map<std::string, std::string>& params, const std::string& key, int count,
@@ -7659,6 +7735,12 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ImageSmooth,        PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    // Augmentation steps drawn per batch (TOFIX178 1.6b)
+    {gui::NodeType::RandomResizedCrop,  PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomAffine,       PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomPerspective,  PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::GaussianNoise,      PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomGrayscale,    PreprocessingDomain::Image,       ExtractImageTransform},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},

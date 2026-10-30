@@ -225,7 +225,8 @@ void CheckCompiler() {
               erasing.image_augmentation.ops[0].scale_max == 0.2f && erasing.image_augmentation.ops[0].value == 0.5f,
           "Advanced Augment settings reach the plan");
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Old method", {{"method", "Cutout"}}}},
-                 "Old method", "method must be cutout, random_erasing, mixup, cutmix or randaugment",
+                 "Old method",
+                 "method must be cutout, random_erasing, mixup, cutmix, randaugment, autoaugment, trivialaugment or augmix",
                  "an unknown Advanced Augment method");
 
     const auto mixing = Compile({
@@ -265,6 +266,55 @@ void CheckCompiler() {
     Check(rand_preset.is_valid && rand_preset.image_augmentation.ops.size() == 2 &&
               rand_preset.image_augmentation.ops[1].kind == ImageOpKind::RandAugment,
           "randaugment preset expands to Horizontal Flip, RandAugment");
+    // The augmentation steps of TOFIX178 1.6b: settings reach the plan; a
+    // Random Resized Crop of 0 x 0 keeps the size coming in.
+    const auto steps = Compile({
+        kResize,
+        {gui::NodeType::RandomResizedCrop, "Resized crop", {}},
+        {gui::NodeType::RandomResizedCrop, "Resized crop 5x6", {{"width", "6"}, {"height", "5"}, {"interpolation", "nearest"}}},
+        {gui::NodeType::RandomAffine, "Affine", {{"degrees", "20"}, {"shear_x_max", "4"}, {"fill", "0.5"}}},
+        {gui::NodeType::RandomPerspective, "Perspective", {{"distortion", "0.3"}}},
+        {gui::NodeType::GaussianNoise, "Noise", {{"sigma", "0.05"}, {"clip", "false"}}},
+        {gui::NodeType::RandomGrayscale, "Random gray", {{"probability", "0.2"}}},
+        {gui::NodeType::AdvancedAugment, "AutoAugment", {{"method", "autoaugment"}, {"policy", "svhn"}}},
+        {gui::NodeType::AdvancedAugment, "Trivial", {{"method", "trivialaugment"}, {"magnitude_bins", "20"}}},
+        {gui::NodeType::AdvancedAugment, "AugMix", {{"method", "augmix"}, {"severity", "5"}, {"chain_depth", "2"}}},
+        kNormalize,
+    });
+    Check(steps.is_valid, "the 1.6b steps compile; errors:\n" + Errors(steps));
+    const auto& s16 = steps.image_augmentation.ops;
+    Check(s16.size() == 9, "nine augmentation steps in graph order");
+    Check(s16[0].kind == ImageOpKind::RandomResizedCrop && s16[0].height == 8 && s16[0].width == 8 &&
+              s16[0].scale_min == 0.08f && s16[0].ratio_max == 1.3333f &&
+              s16[0].interpolation == cyxwiz::image::Interpolation::Bilinear,
+          "Random Resized Crop 0 x 0 keeps 8 x 8, torchvision's scale and ratio, bilinear");
+    Check(s16[1].height == 5 && s16[1].width == 6 && s16[1].interpolation == cyxwiz::image::Interpolation::Nearest,
+          "Random Resized Crop 5 x 6, nearest");
+    Check(steps.input_shape == std::vector<size_t>({5, 6, 3}), "the model's input follows the resized crop");
+    Check(s16[2].kind == ImageOpKind::RandomAffine && s16[2].max_angle == 20.0f && s16[2].translate_x == 0.1f &&
+              s16[2].zoom_min == 0.9f && s16[2].zoom_max == 1.1f && s16[2].shear_x_max == 4.0f && s16[2].fill == 0.5f,
+          "Random Affine settings with the node's starting values");
+    Check(s16[3].kind == ImageOpKind::RandomPerspective && s16[3].distortion == 0.3f && s16[3].probability == 0.5f &&
+              s16[3].interpolation == cyxwiz::image::Interpolation::Bilinear,
+          "Random Perspective distortion 0.3, bilinear");
+    Check(s16[4].kind == ImageOpKind::GaussianNoise && s16[4].sigma == 0.05f && !s16[4].clip && s16[4].noise_mean == 0.0f,
+          "Gaussian Noise sigma 0.05, not clipped");
+    Check(s16[5].kind == ImageOpKind::RandomGrayscale && s16[5].probability == 0.2f, "Random Grayscale p 0.2");
+    Check(s16[6].kind == ImageOpKind::AutoAugment && s16[6].policy == cyxwiz::image::AutoAugmentPolicy::Svhn,
+          "AutoAugment with the SVHN policy");
+    Check(s16[7].kind == ImageOpKind::TrivialAugment && s16[7].magnitude_bins == 20, "TrivialAugment 20 bins");
+    Check(s16[8].kind == ImageOpKind::AugMix && s16[8].severity == 5 && s16[8].chain_depth == 2 &&
+              s16[8].mixture_width == 3 && s16[8].interpolation == cyxwiz::image::Interpolation::Bilinear,
+          "AugMix severity 5, depth 2, three chains, bilinear");
+    CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "MNIST policy", {{"method", "autoaugment"},
+                                                                             {"policy", "mnist"}}}},
+                 "MNIST policy", "policy must be imagenet, cifar10 or svhn", "an unknown AutoAugment policy");
+    CheckRefused({kResize, {gui::NodeType::RandomAffine, "Shear", {{"shear_y_min", "10"}}}},
+                 "Shear", "min <= max", "a reversed shear range");
+    CheckRefused({kResize, kNormalize, {gui::NodeType::GaussianNoise, "Late noise", {}}},
+                 "Late noise", "between Resize and Normalize", "noise after Normalize");
+    CheckRefused({kResize, {gui::NodeType::RandomResizedCrop, "Area", {{"scale_max", "2"}}}},
+                 "Area", "scale_max <= 1", "a resized crop area past the image");
     CheckRefused({kResize, {gui::NodeType::AugmentationPreset, "ImageNet", {{"preset", "ImageNet"}}}},
                  "ImageNet", "preset must be flip, cifar, cifar_cutout or randaugment", "an unknown preset");
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "MixUp", {{"method", "mixup"}}},

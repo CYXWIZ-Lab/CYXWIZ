@@ -1069,6 +1069,11 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
     font_config.PixelSnapH = true;
     font_config.RasterizerDensity = font_rasterizer_density_;
+    // The text the Engine writes: Latin, then punctuation (… – — ‘ ’ “ ”),
+    // arrows (→) and maths signs (≤ ≥ ≈ −). ImGui's default stops at Latin-1,
+    // which drew those as "?".
+    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x2000, 0x206F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
+    font_config.GlyphRanges = text_ranges;
 
     // Try multiple font paths (running from different directories)
     std::vector<std::string> font_paths = {

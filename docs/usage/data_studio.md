@@ -693,6 +693,54 @@ the step is saved: in Prepare, in the SQL Workbench, or by switching the
 operation on in Properties (they need to be its last operation that is on).
 **Validate** lists them all and adds new ones.
 
+### An image graph's recipe
+
+A graph whose images go through a **Resize** shows its **Image recipe** in
+Prepare instead of the table steps: the graph's image steps in the order
+training runs them, each row being the node itself. The subtitle names the
+data, the model input and the counts (*cat_dog to model input [64, 64, 3] ·
+2 steps once, 2 per batch*); the tab caption counts the steps without the
+Resize (*4 image steps*), and the **In the graph** strip has one *image
+steps* chip with Show on canvas.
+
+The rows come in four groups, the same split training makes:
+
+- **First**: the Resize.
+- **Once, before training**: steps done the same way to every image of every
+  part when the images are prepared (they are kept in cache/images): Center
+  Crop, Grayscale, Blur, Morphology and the OpenCV steps (CLAHE, Denoise,
+  Sharpen, Edges, Smooth, Warp, Pyramid).
+- **Per batch, training images only**: everything from the first random step
+  on, drawn again for every batch on the GPU; validation and test images skip
+  them. A Blur or Grayscale after a random step runs here too.
+- **Last**: the Normalize, on the GPU with each batch.
+
+Each row shows the step's picture on a sample image (the image after that
+step; a per-batch row shows several draws, and Normalize shows the picture the
+model gets), its settings in short and the shape after it. **Next sample**
+takes the next image of the index; the pictures show once the images are
+loaded and indexed. The first pictures of a step take a moment (its GPU code is
+built once); the label says *Drawing the pictures of ...* meanwhile.
+
+- **Settings** opens the node's settings in the row, the same typed fields as
+  Properties; a change applies to the node.
+- **Show on canvas**, **Open dialog** and **Remove** (once-only and per-batch
+  rows) act on the node; Ctrl+Z on the canvas undoes a removal.
+- **Drag a row by its handle** to move its step: over the upper half of a row
+  it goes before that row, over the lower half after it, and a line on that
+  side shows where it lands (no line: the order would not change). The node
+  moves on the canvas with its links, and the steps between its old and new
+  place swap places so the line stays in order. Resize stays
+  first and Normalize last, and an OpenCV step can't go after a random one
+  (*Image Contrast (CLAHE) is done once with the images: it must come before
+  the first random step.*); a refused move shows why while you drag.
+- **+ Add a step** offers the steps done once; **+ Add an augmentation** offers
+  the random ones (Random Crop, Random Resized Crop, Horizontal / Vertical
+  Flip, Rotate, Random Affine, Random Perspective, Color Jitter, Random
+  Grayscale, Gaussian Noise, Advanced Augment, Augmentation Preset) and, under **The same for
+  every image**, the device steps that are not random. Only image steps are
+  offered, and the new node goes after the group's last row.
+
 ## Validate
 
 The graph's checks in one table: **check (node)**, what it **reads** (the step

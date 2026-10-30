@@ -108,6 +108,20 @@ int main() {
                   indexed.rail[0].items[1].dataset == "cat_dog_index" &&
                   indexed.rail[0].items[1].meta == "25,000 \xC3\x97 9",
               "rail: the index under its Data Input");
+
+        // Prepare on an image graph (TOFIX178 1.6): its image steps, Resize
+        // not counted as a step, all of them in one chip with Show on canvas.
+        Input recipe_graph = images;
+        recipe_graph.nodes = {cats, Node(4, NodeType::Resize, "Resize 64x64"), Node(5, NodeType::ImageContrast, "CLAHE"),
+                              Node(6, NodeType::CenterCrop, "Center Crop 64"), Node(7, NodeType::HorizontalFlip, "Flip"),
+                              Node(8, NodeType::Normalize, "Normalize")};
+        const View recipe_view = Build(recipe_graph);
+        const JobView& prepare = JobOfView(recipe_view, Job::Prepare);
+        Check(prepare.state == "3 image steps", "Prepare caption on an image graph: " + prepare.state);
+        Check(prepare.chips.size() == 1 && prepare.chips[0].name == "image steps" &&
+                  prepare.chips[0].note == "Resize 64x64, CLAHE, Center Crop 64, \xE2\x80\xA6" &&
+                  prepare.chips[0].ids == std::vector<int>({4, 5, 6, 7}) && prepare.node_ids == prepare.chips[0].ids,
+              "Prepare chip on an image graph: " + (prepare.chips.empty() ? std::string() : prepare.chips[0].note));
         for (const auto& section : indexed.rail)
             for (const auto& item : section.items)
                 Check(section.title == "Data Inputs" || item.dataset != "cat_dog_index", "the index is not listed twice");

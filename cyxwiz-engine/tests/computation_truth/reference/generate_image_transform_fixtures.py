@@ -21,6 +21,7 @@ import torch
 import torchvision
 import torchvision.transforms.functional as F
 import torchvision.transforms.v2 as v2
+import torchvision.transforms.v2.functional as F2
 from torchvision.transforms import InterpolationMode
 
 SCHEMA_VERSION = 1
@@ -88,10 +89,10 @@ RANDAUGMENT_OPS = ["Identity", "ShearX", "ShearY", "TranslateX", "TranslateY", "
                    "Contrast", "Sharpness", "Posterize", "Solarize", "AutoContrast", "Equalize"]
 
 
-def randaugment_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def randaugment_cases() -> list[dict[str, Any]]:
     """Each RandAugment op through torchvision v2's own dispatcher
     (_apply_image_or_video_transform) with fixed signed magnitudes, plus a
-    two-pick sequence, plus its magnitude table."""
+    two-pick sequence."""
     ra = v2.RandAugment()
     images = batch(144, 2, 3, 9, 8)
 
@@ -127,9 +128,233 @@ def randaugment_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     factors = [[-magnitude(1, 12, 9, 8), 0.0], [magnitude(10, 9, 9, 8), magnitude(5, 9, 9, 8)]]
     cases.append(case("randaugment_two_picks", {"kind": "randaugment"}, {"order": order, "factors": factors},
                       images, per_sample(images, lambda img, i: apply(img, order[i], factors[i]))))
-    table = {f"{h}x{w}": [[magnitude(op, b, h, w) for b in range(31)] for op in range(14)]
-             for h, w in ((9, 8), (224, 224), (32, 40))}
-    return cases, table
+    return cases
+
+
+AUGMENT_OPS = RANDAUGMENT_OPS + ["Invert"]
+
+
+def recorded(transform: Any, image: torch.Tensor, seed: int) -> tuple[torch.Tensor, list[tuple[Any, str, float]]]:
+    """The transform class run for real on one [C, H, W] image under a seed,
+    with each op it applied recorded as (its input, name, magnitude)."""
+    calls: list[tuple[Any, str, float]] = []
+    apply = transform._apply_image_or_video_transform
+
+    def logging_apply(img, transform_id, magnitude, interpolation, fill):
+        calls.append((img, transform_id, magnitude))
+        return apply(img, transform_id, magnitude, interpolation=interpolation, fill=fill)
+
+    transform._apply_image_or_video_transform = logging_apply
+    torch.manual_seed(seed)
+    out = transform(image)
+    return out, calls
+
+
+def policy_cases() -> list[dict[str, Any]]:
+    """AutoAugment, TrivialAugmentWide and AugMix run for real (seeded) on
+    each sample; the ops, magnitudes and mixing weights they drew are recorded
+    so the Engine replays them."""
+    images = batch(146, 2, 3, 9, 8)
+    gray = batch(147, 2, 1, 9, 8)
+    cases = []
+
+    def index(name: str) -> int:
+        return AUGMENT_OPS.index(name)
+
+    for policy, label, seeds in ((v2.AutoAugmentPolicy.IMAGENET, "imagenet", (3, 8)),
+                                 (v2.AutoAugmentPolicy.CIFAR10, "cifar10", (4, 12)),
+                                 (v2.AutoAugmentPolicy.SVHN, "svhn", (1, 6))):
+        outs, order, factors = [], [], []
+        for i, seed in enumerate(seeds):
+            out, calls = recorded(v2.AutoAugment(policy), images[i], seed)
+            outs.append(out)
+            ops = [index(name) for _, name, _ in calls] + [0] * (2 - len(calls))
+            mags = [m for _, _, m in calls] + [0.0] * (2 - len(calls))
+            order.append(ops)
+            factors.append(mags)
+        cases.append(case(f"autoaugment_{label}", {"kind": "autoaugment"}, {"order": order, "factors": factors},
+                          images, torch.stack(outs)))
+    # Invert, AutoAugment's own op, through the same dispatcher.
+    aa = v2.AutoAugment()
+    cases.append(case("autoaugment_invert", {"kind": "autoaugment"}, {"order": [[14, 0], [14, 0]],
+                      "factors": [[0.0, 0.0], [0.0, 0.0]]}, gray,
+                      per_sample(gray, lambda img, i: aa._apply_image_or_video_transform(
+                          img, "Invert", 0.0, interpolation=aa.interpolation, fill=aa._fill))))
+
+    outs, order, factors = [], [], []
+    for i, seed in enumerate((5, 9)):
+        out, calls = recorded(v2.TrivialAugmentWide(), images[i], seed)
+        outs.append(out)
+        order.append([index(calls[0][1])])
+        factors.append([calls[0][2]])
+    cases.append(case("trivialaugment_seeded", {"kind": "trivialaugment"}, {"order": order, "factors": factors},
+                      images, torch.stack(outs)))
+    # Every Wide op at a large bin (signed ones negative on the second sample).
+    ta = v2.TrivialAugmentWide()
+    for op in range(1, 14):
+        name = RANDAUGMENT_OPS[op]
+        fn, signed = ta._AUGMENTATION_SPACE[name]
+        values = fn(31, 9, 8)
+        m = 0.0 if values is None else float(values[27])
+        mags = [m, -m if signed else m]
+        cases.append(case(f"trivialaugment_{name.lower()}", {"kind": "trivialaugment"},
+                          {"order": [[op], [op]], "factors": [[mags[0]], [mags[1]]]}, images,
+                          per_sample(images, lambda img, i: ta._apply_image_or_video_transform(
+                              img, name, mags[i], interpolation=ta.interpolation, fill=ta._fill))))
+
+    for label, kwargs, seeds, source in (("default", {}, (2, 7), images),
+                                         ("depth2_width4", {"chain_depth": 2, "mixture_width": 4, "severity": 6}, (3, 10), images),
+                                         ("one_channel", {"alpha": 0.5}, (4, 11), gray)):
+        transform = v2.AugMix(**kwargs)
+        width = transform.mixture_width
+        slots = transform.chain_depth if transform.chain_depth > 0 else 3
+        dirichlet = transform._sample_dirichlet
+        outs, order, factors, weights = [], [], [], []
+        for i, seed in enumerate(seeds):
+            drawn: list[torch.Tensor] = []
+
+            def recording_dirichlet(params, drawn=drawn):
+                value = dirichlet(params)
+                drawn.append(value)
+                return value
+
+            transform._sample_dirichlet = recording_dirichlet
+            out, calls = recorded(transform, source[i], seed)
+            outs.append(out)
+            m, mixing = drawn
+            weights.append([float(m[0, 0])] + (mixing * m[:, 1].reshape(1, -1)).reshape(-1).tolist())
+            # Each chain starts again from the same batch object.
+            chains: list[list[tuple[str, float]]] = []
+            for img, name, magnitude in calls:
+                if img is calls[0][0]:
+                    chains.append([])
+                chains[-1].append((name, magnitude))
+            assert len(chains) == width, (label, len(chains))
+            ops, mags = [], []
+            for chain in chains:
+                ops += [index(name) for name, _ in chain] + [0] * (slots - len(chain))
+                mags += [mag for _, mag in chain] + [0.0] * (slots - len(chain))
+            order.append(ops)
+            factors.append(mags)
+        spec = {"kind": "augmix", "mixture_width": width, "interpolation": "bilinear"}
+        cases.append(case(f"augmix_{label}", spec, {"order": order, "factors": factors, "weights": weights},
+                          source, torch.stack(outs)))
+    return cases
+
+
+def geometry_cases() -> list[dict[str, Any]]:
+    """Random Resized Crop, Random Affine and Random Perspective with the
+    params their transform classes draw (seeded), applied by those classes."""
+    images = batch(148, 2, 3, 9, 8)
+    cases = []
+
+    def run(transform: Any, seeds: tuple[int, ...], source: torch.Tensor) -> tuple[list[Any], torch.Tensor]:
+        params: list[Any] = []
+        make = transform.make_params
+
+        def recording_make(flat_inputs):
+            value = make(flat_inputs)
+            params.append(value)
+            return value
+
+        transform.make_params = recording_make
+        outs = []
+        for i, seed in enumerate(seeds):
+            before = len(params)
+            torch.manual_seed(seed)
+            outs.append(transform(source[i]))
+            if len(params) == before:
+                params.append(None)  # not applied (the class's probability)
+        return params, torch.stack(outs)
+
+    for interpolation, mode in (("bilinear", InterpolationMode.BILINEAR), ("nearest", InterpolationMode.NEAREST)):
+        for size in ((5, 6), (12, 10)):
+            params, out = run(v2.RandomResizedCrop(size, interpolation=mode), (13, 21), images)
+            cases.append(case(f"resized_crop_{interpolation}_{size[0]}x{size[1]}",
+                              {"kind": "random_resized_crop", "height": size[0], "width": size[1],
+                               "interpolation": interpolation},
+                              {"top": [p["top"] for p in params], "left": [p["left"] for p in params],
+                               "box_height": [p["height"] for p in params], "box_width": [p["width"] for p in params]},
+                              images, out))
+    # The box the same size as the output: the crop itself.
+    cases.append(case("resized_crop_same_size", {"kind": "random_resized_crop", "height": 4, "width": 3,
+                                                 "interpolation": "bilinear"},
+                      {"top": [2, 0], "left": [1, 5], "box_height": [4, 4], "box_width": [3, 3]}, images,
+                      per_sample(images, lambda img, i: F2.crop(img, [2, 0][i], [1, 5][i], 4, 3))))
+
+    for interpolation, mode in (("nearest", InterpolationMode.NEAREST), ("bilinear", InterpolationMode.BILINEAR)):
+        for fill in (0.0, 0.5):
+            transform = v2.RandomAffine(degrees=25, translate=(0.2, 0.3), scale=(0.8, 1.2), shear=(-10, 10, -5, 8),
+                                        interpolation=mode, fill=fill)
+            params, out = run(transform, (31, 32), images)
+            factors = [[p["angle"], float(p["translate"][0]), float(p["translate"][1]), p["scale"],
+                        p["shear"][0], p["shear"][1]] for p in params]
+            cases.append(case(f"affine_{interpolation}_fill{fill}",
+                              {"kind": "random_affine", "interpolation": interpolation, "fill": fill},
+                              {"factors": factors}, images, out))
+
+    import torchvision.transforms.v2._geometry as geometry
+    coeffs = geometry._get_perspective_coeffs
+    corners: list[list[int]] = []
+
+    def recording_coeffs(startpoints, endpoints):
+        corners.append([v for point in endpoints for v in point])
+        return coeffs(startpoints, endpoints)
+
+    geometry._get_perspective_coeffs = recording_coeffs
+    for interpolation, mode, fill, seeds in (("bilinear", InterpolationMode.BILINEAR, 0.0, (40, 41)),
+                                             ("nearest", InterpolationMode.NEAREST, 0.25, (42, 43))):
+        corners.clear()
+        params, out = run(v2.RandomPerspective(distortion_scale=0.6, p=1.0, interpolation=mode, fill=fill),
+                          seeds, images)
+        cases.append(case(f"perspective_{interpolation}_fill{fill}",
+                          {"kind": "random_perspective", "interpolation": interpolation, "fill": fill},
+                          {"apply": [1, 1], "corners": [list(c) for c in corners]}, images, out))
+    geometry._get_perspective_coeffs = coeffs
+    # Not applied: the sample passes through.
+    cases.append(case("perspective_not_applied", {"kind": "random_perspective", "interpolation": "bilinear"},
+                      {"apply": [0, 0], "corners": [[0] * 8, [0] * 8]}, images, images))
+    return cases
+
+
+def noise_and_gray_cases() -> list[dict[str, Any]]:
+    images = batch(149, 2, 3, 6, 7)
+    gray = batch(150, 2, 1, 6, 7)
+    cases = []
+    for label, mean, sigma, clip, seed in (("clipped", 0.0, 0.1, True, 51), ("unclipped", 0.05, 0.3, False, 52)):
+        torch.manual_seed(seed)
+        out = v2.GaussianNoise(mean=mean, sigma=sigma, clip=clip)(images)
+        torch.manual_seed(seed)
+        noise = torch.randn_like(images)
+        cases.append(case(f"gaussian_noise_{label}",
+                          {"kind": "gaussian_noise", "noise_mean": mean, "sigma": sigma, "clip": clip},
+                          {"apply": [1, 1], "noise": rows(noise)["values"]}, images, out))
+    apply = [1, 0]
+    cases.append(case("random_grayscale", {"kind": "random_grayscale"}, {"apply": apply}, images,
+                      per_sample(images, lambda img, i: F2.rgb_to_grayscale(img, num_output_channels=3)
+                                 if apply[i] else img)))
+    cases.append(case("random_grayscale_one_channel", {"kind": "random_grayscale"}, {"apply": [1, 1]}, gray,
+                      per_sample(gray, lambda img, i: F2.rgb_to_grayscale(img, num_output_channels=1))))
+    return cases
+
+
+def magnitude_tables() -> list[dict[str, Any]]:
+    """Each policy's magnitude table, as torchvision computes it."""
+    spaces = (("standard", 31, v2.RandAugment._AUGMENTATION_SPACE),
+              ("standard", 10, v2.AutoAugment._AUGMENTATION_SPACE),
+              ("wide", 31, v2.TrivialAugmentWide._AUGMENTATION_SPACE),
+              ("wide", 8, v2.TrivialAugmentWide._AUGMENTATION_SPACE),
+              ("augmix", 10, v2.AugMix._AUGMENTATION_SPACE))
+    tables = []
+    for space, bins, ops in spaces:
+        for h, w in ((9, 8), (224, 224), (32, 40)):
+            table = {}
+            for name, (fn, signed) in ops.items():
+                values = fn(bins, h, w)
+                table[name] = {"signed": signed,
+                               "values": [0.0] * bins if values is None else [float(v) for v in values]}
+            tables.append({"space": space, "bins": bins, "height": h, "width": w, "ops": table})
+    return tables
 
 
 def build() -> list[dict[str, Any]]:
@@ -162,12 +387,13 @@ def build() -> list[dict[str, Any]]:
     cases.append(case("vertical_flip", {"kind": "vertical_flip"}, {"apply": [0, 1]}, rgb,
                       per_sample(rgb, lambda img, i: F.vflip(img) if i == 1 else img)))
 
+    # RandomRotation's fill=0: outside pixels through the fill mask (it changes bilinear borders).
     for interpolation, mode in (("nearest", InterpolationMode.NEAREST), ("bilinear", InterpolationMode.BILINEAR)):
         for label, angles, images in (("odd", [30.0, -45.0], rgb), ("even", [90.0, 17.5], big)):
             cases.append(case(f"rotate_{interpolation}_{label}",
                               {"kind": "rotate", "interpolation": interpolation},
                               {"angle": angles}, images,
-                              per_sample(images, lambda img, i: F.rotate(img, angles[i], interpolation=mode))))
+                              per_sample(images, lambda img, i: F2.rotate(img, angles[i], interpolation=mode, fill=0))))
 
     for index, (label, factors) in enumerate((("brightness", [0.5, 1.4]), ("contrast", [0.6, 1.3]),
                                                ("saturation", [0.2, 1.7]), ("hue", [-0.3, 0.25]))):
@@ -207,7 +433,10 @@ def build() -> list[dict[str, Any]]:
                       gray, F.gaussian_blur(gray, [3, 3], [1.1, 1.1])))
 
     cases.append(case("grayscale", {"kind": "grayscale"}, {}, rgb, F.rgb_to_grayscale(rgb)))
-    cases.extend(randaugment_cases()[0])
+    cases.extend(randaugment_cases())
+    cases.extend(policy_cases())
+    cases.extend(geometry_cases())
+    cases.extend(noise_and_gray_cases())
 
     # Advanced Augment erasing (Cutout / Random Erasing): F.erase on each sample's drawn box;
     # a 0-sized box leaves the sample unchanged.
@@ -251,7 +480,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
-    randaugment_table = randaugment_cases()[1]
     payload = {
         "schema_version": SCHEMA_VERSION,
         "generator": "generate_image_transform_fixtures.py",
@@ -259,7 +487,7 @@ def main() -> None:
         "torchvision_version": torchvision.__version__,
         "cases": build(),
         "mix_cases": mix_cases(),
-        "randaugment_magnitudes": randaugment_table,
+        "augment_magnitudes": magnitude_tables(),
     }
     args.output.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {len(payload['cases'])} cases to {args.output}")
