@@ -782,10 +782,16 @@ af::array PolicyAugment(af::array images, const ImageOpDraws& draws, Interpolati
 
 // torchvision v2 AugMix: the original weighted by weights[i][0] plus each
 // chain's result weighted by its weight; a chain's picks are its slots of
-// order, Identity past its depth.
+// order, Identity past its depth. A chain no sample weighs (no sample drew
+// AugMix) is not run.
 af::array AugMix(const af::array& images, const ImageOpDraws& draws, int mixture_width, Interpolation interpolation) {
     const size_t n = draws.order.size();
     const size_t slots = n == 0 ? 0 : draws.order.front().size() / static_cast<size_t>(mixture_width);
+    const auto weighed = [&](size_t k) {
+        for (size_t i = 0; i < n; ++i)
+            if (draws.weights[i][k] != 0.0f) return true;
+        return false;
+    };
     const auto weight = [&](size_t k) {
         std::vector<float> values(n);
         for (size_t i = 0; i < n; ++i) values[i] = draws.weights[i][k];
@@ -793,6 +799,7 @@ af::array AugMix(const af::array& images, const ImageOpDraws& draws, int mixture
     };
     af::array mix = weight(0) * images;
     for (size_t chain = 0; chain < static_cast<size_t>(mixture_width); ++chain) {
+        if (!weighed(chain + 1)) continue;
         af::array augmented = images;
         for (size_t s = 0; s < slots; ++s) augmented = PolicyPicks(augmented, draws, chain * slots + s, interpolation);
         mix = mix + weight(chain + 1) * augmented;

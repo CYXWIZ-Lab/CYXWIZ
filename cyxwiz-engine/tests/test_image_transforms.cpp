@@ -560,6 +560,8 @@ void CheckNewDraws() {
     augmix.probability = 0.0f;
     const auto plain = cyxwiz::image::DrawImageOp(augmix, shape, 2, true, rng);
     Check(plain.weights[0][0] == 1.0f && plain.weights[0][1] == 0.0f, "AugMix not applied keeps the image");
+    const auto unmixed = cyxwiz::image::ApplyImageOp(augmix, cyxwiz::image::DrawImageOp(augmix, shape, 64, true, rng), shape, rows);
+    Check(unmixed.ReadData<float>()[0] == 0.5f, "AugMix with no sample applied leaves the batch as it is");
     Check(cyxwiz::image::DrawImageOp(augmix, shape, 2, false, rng).order.empty(), "AugMix passes through outside training");
 }
 
