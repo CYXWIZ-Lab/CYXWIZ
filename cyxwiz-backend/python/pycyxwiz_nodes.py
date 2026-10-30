@@ -34,9 +34,19 @@ _ROLES = ("activation", "layer")
 _TARGETS = ("categorical", "continuous")
 _TYPES = {float: "float", int: "int", bool: "bool", str: "string"}
 
+# The settings of the node create() is making, per thread, so a node's
+# __init__ can read them before they are stored on the instance.
+import threading as _threading
+_creating = _threading.local()
+
 
 class Param:
-    """A node setting: Param(float, default=1.0, min=0.01, description="...")."""
+    """A node setting: Param(float, default=1.0, min=0.01, description="...").
+
+    type is float, int, bool or str. Without a default the setting starts at
+    0, 0, False, "" or the first of its choices; the default itself must meet
+    min, max and choices. Read the value in the module as self.<name>.
+    """
 
     def __init__(self, type=float, default=None, min=None, max=None, choices=None, description=""):
         if type not in _TYPES:
@@ -58,7 +68,10 @@ class Param:
     def __get__(self, instance, owner):
         if instance is None:
             return self
-        return instance.__dict__.get("_cyxwiz_settings", {}).get(self.name, self.default)
+        settings = instance.__dict__.get("_cyxwiz_settings")
+        if settings is None:
+            settings = getattr(_creating, "settings", None) or {}
+        return settings.get(self.name, self.default)
 
     def __set__(self, instance, value):
         raise AttributeError("setting '%s' is read-only inside the node; set it in the graph" % self.name)
@@ -89,6 +102,7 @@ class Param:
         return result
 
     def check(self, value, label):
+        """Raise ValueError (naming it as label) when value breaks min, max or choices."""
         if self.min is not None and value < self.min:
             raise ValueError("%s must be at least %s" % (label, self.min))
         if self.max is not None and value > self.max:
@@ -105,6 +119,7 @@ class Param:
         return "%s-%s" % ("" if self.min is None else self.min, "" if self.max is None else self.max)
 
     def describe(self):
+        """The setting's entry in node.json: name, type, default, validation, description, choices."""
         return {"name": self.name, "type": _TYPES[self.type], "default": _text(self.default),
                 "validation": self.validation(), "description": self.description,
                 "choices": [_text(c) for c in self.choices] if self.choices is not None else []}
@@ -213,10 +228,12 @@ def loss(id, name, version, target="categorical", category="Loss", description="
 
 
 def is_node(cls):
+    """True for a class marked with @nodes.node, @nodes.activation or @nodes.loss."""
     return isinstance(getattr(cls, "__cyxwiz_node__", None), dict)
 
 
 def is_loss(cls):
+    """True for a class marked with @nodes.loss."""
     return is_node(cls) and cls.__cyxwiz_node__["role"] == "loss"
 
 
@@ -250,9 +267,16 @@ def create(cls, settings=None, input_shape=None):
         raise ValueError("%s has no setting %s" % (cls.__cyxwiz_node__["name"], ", ".join(unknown)))
     values = {name: param.convert(settings[name]) if name in settings else param.default
               for name, param in params.items()}
-    module = cls.__new__(cls)
+    # cls() rather than __new__ + __init__: pycyxwiz's own check then refuses
+    # an __init__ that does not call super().__init__() with a clear error;
+    # without it, the half-made module crashes the process when it is used.
+    previous = getattr(_creating, "settings", None)
+    _creating.settings = values
+    try:
+        module = cls()
+    finally:
+        _creating.settings = previous
     module.__dict__["_cyxwiz_settings"] = values
-    module.__init__()
     if input_shape is not None and callable(getattr(module, "build", None)):
         module.build(list(input_shape))
     return module
@@ -440,6 +464,15 @@ def _source_file(cls):
     if not path or not __import__("os").path.isfile(path):
         raise ValueError("%s is not defined in a .py file; save it in a file and import it to bundle it"
                          % cls.__name__)
+    # The module's file is not always where the class came from: code run
+    # with exec() under __main__ reports the main script's file. Copying
+    # that file would bundle other code, so the class must be defined in it.
+    import re
+    with open(path, encoding="utf-8", errors="replace") as f:
+        defined = re.search(r"^class\s+%s\b" % re.escape(cls.__name__), f.read(), re.M)
+    if not defined:
+        raise ValueError("%s is not defined in %s; save it in a .py file and import it to bundle it"
+                         % (cls.__name__, path))
     return __import__("os").path.abspath(path)
 
 

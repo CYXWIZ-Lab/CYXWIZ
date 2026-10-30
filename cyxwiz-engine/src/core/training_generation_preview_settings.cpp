@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
+#include <cerrno>
 #include <cmath>
+#include <cstdlib>
 #include <iomanip>
 #include <regex>
 #include <sstream>
@@ -34,9 +37,12 @@ long long ParseInteger(const std::string& text, const char* name, long long low,
 }
 
 float ParseFloat(const std::string& text, const char* name) {
-    float value = 0.0f;
-    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || !std::isfinite(value))
+    // strtof, not from_chars: Apple's libc++ only has float from_chars from macOS 26.
+    char* end = nullptr;
+    errno = 0;
+    const float value = text.empty() || std::isspace(static_cast<unsigned char>(text[0]))
+                            ? 0.0f : std::strtof(text.c_str(), &end);
+    if (end != text.c_str() + text.size() || errno == ERANGE || !std::isfinite(value))
         Fail(std::string("Generation previews: ") + name + " must be a number (got \"" + text + "\")");
     return value;
 }

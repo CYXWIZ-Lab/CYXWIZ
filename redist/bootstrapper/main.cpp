@@ -250,14 +250,21 @@ int wmain(int argc, wchar_t** argv) {
         installer_mode = true;
         ++first_forwarded_argument;
     }
-    // Runs the base's plugin check tool with the active runtime's DLL path,
-    // in the caller's folder so relative plugin paths work (TOFIX125 P5).
+    // cyxwiz-cli, this launcher's console build (CYXWIZ_COMMAND_LINE_TOOL): a
+    // terminal waits for it and gets its output and exit code, which a GUI
+    // program cannot give. `plugin-check <folder>...` runs the base's plugin
+    // check tool with the active runtime's DLL path, in the caller's folder
+    // so relative plugin paths work (TOFIX125).
     bool plugin_check_mode = false;
-    if (!installer_mode && argc > first_forwarded_argument &&
-        std::wstring_view(argv[first_forwarded_argument]) == L"--plugin-check") {
-        plugin_check_mode = true;
-        ++first_forwarded_argument;
+#ifdef CYXWIZ_COMMAND_LINE_TOOL
+    if (installer_mode || argc <= first_forwarded_argument ||
+        std::wstring_view(argv[first_forwarded_argument]) != L"plugin-check") {
+        std::cerr << "usage: cyxwiz-cli [--runtime-root <folder>] plugin-check <plugin folder>...\n";
+        return 64;
     }
+    plugin_check_mode = true;
+    ++first_forwarded_argument;
+#endif
     std::error_code caller_directory_error;
     const auto caller_directory = std::filesystem::current_path(caller_directory_error);
 

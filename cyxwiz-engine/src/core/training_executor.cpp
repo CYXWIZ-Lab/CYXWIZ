@@ -16,6 +16,7 @@
 #include "algorithms/arrayfire_host_materialization.h"
 #include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
+#include <cyxwiz/neural_provider.h>
 #include <cyxwiz/utilities.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -320,6 +321,37 @@ bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
     const int validation_freq = std::max(1, config.validation_freq);
     return epoch == total_epochs || validation_freq <= 1 ||
            epoch % validation_freq == 0;
+}
+
+// Why the model cannot train on a route ("" when it can), before the run
+// activates it. ArrayFire 3.10's CUDA backend cannot compile its own
+// convolution kernel for real image sizes, so Conv2D on CUDA needs the NVIDIA
+// provider (cyxwiz.nvidia-cublas-cell); without it the first batch would stop
+// with an NVRTC compile error (TOFIX178 1.0(d)).
+std::string ModelUnsupportedOnRoute(const TrainingConfiguration& config, DeviceType type, int device_id) {
+    if (type != DeviceType::CUDA) return {};
+    const bool has_conv2d = std::any_of(config.layers.begin(), config.layers.end(), [](const CompiledLayer& layer) {
+        return layer.type == gui::NodeType::Conv2D;
+    });
+    if (!has_conv2d) return {};
+    NeuralOpRequest request;
+    request.op = NeuralOp::Conv2dForward;
+    request.target = {DeviceType::CUDA, device_id};
+    request.device_resident = true;
+    request.dtype = DataType::Float32;
+    request.batch = 1;
+    request.input = 3;
+    request.hidden = 8;
+    request.conv_height = 32;
+    request.conv_width = 32;
+    request.conv_kernel = 3;
+    request.conv_stride = 1;
+    request.conv_padding = 1;
+    request.conv_bias = true;
+    if (NeuralProviderRegistry::Instance().FindSupporting(request)) return {};
+    return "Conv2D cannot run on ArrayFire CUDA here: ArrayFire cannot compile its CUDA convolution "
+           "kernel and the NVIDIA provider (cyxwiz.nvidia-cublas-cell) is not installed. Install the CUDA GPU "
+           "pack, or choose ArrayFire OpenCL on this GPU in Preferences > Devices (faster than the CPU)";
 }
 
 bool ShouldMaterializeFirstBatchDebugSamples(
@@ -787,7 +819,13 @@ void TrainingExecutor::Train(
     // Do not publish an effective device until preflight actually succeeds.
     ExecutionDeviceContext execution_context;
     try {
-        execution_context = PrepareExecutionDeviceForRun(execution_policy_value);
+        execution_context = PrepareExecutionDeviceForRun(
+            execution_policy_value, [this](DeviceType type, int device_id) {
+                return ModelUnsupportedOnRoute(config_, type, device_id);
+            });
+        if (execution_context.selection_fallback_applied) {
+            spdlog::warn("TrainingExecutor: {}", execution_context.error);
+        }
         spdlog::info("TrainingExecutor: ArrayFire device preflight completed: {}",
                      execution_context.Describe());
     } catch (const std::exception& e) {
@@ -961,6 +999,27 @@ void TrainingExecutor::Train(
             try {
                 external_batchers_ = external_batcher_factory_(config_, batch_size);
             } catch (const std::exception& e) {
+                if (stop_requested_.load()) {
+                    // Stopped while the data was being prepared: cancelled, not failed.
+                    spdlog::info("TrainingExecutor: stopped while preparing the data");
+                    UpdateMetrics([&](TrainingMetrics& m) {
+                        m.total_epochs = epochs;
+                        m.is_training = false;
+                        m.is_paused = false;
+                        m.is_complete = true;
+                        m.terminal_status = "cancelled";
+                        m.terminal_reason = "user_cancelled";
+                        m.status_message = "Training cancelled while preparing the data";
+                    });
+                    CrashRunRecorder::Instance().MarkCancelled();
+                    TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f,
+                                                                           0.0f);
+                    TrainingTraceCollector::Instance().FinishRun("cancelled");
+                    BackendDebugHooks::SetDebugEventCallback({});
+                    is_paused_.store(false);
+                    is_training_.store(false);
+                    return;
+                }
                 spdlog::error("TrainingExecutor: preparing the dataset batchers failed: {}", e.what());
                 fail_run(std::string("dataset_batcher_setup_failed: ") + e.what());
                 return;
@@ -1101,6 +1160,7 @@ void TrainingExecutor::Train(
     spdlog::debug("TrainingExecutor: Step 1 - Notifying plugin hooks");
     // Notify plugin hooks: training start
     {
+        hook_total_epochs_ = epochs;
         cyxwiz::plugin::TrainingContext ctx;
         ctx.total_epochs = epochs;
         ctx.learning_rate = optimizer_
@@ -1228,6 +1288,15 @@ void TrainingExecutor::Train(
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
                                       initialized_from);
     checkpoint_manager->SetTokenizer(CheckpointTokenizerFromConfig(config_));
+    CheckpointDataSplit split;
+    split.known = true;
+    split.train = config_.train_ratio;
+    split.val = config_.val_ratio;
+    split.test = config_.test_ratio;
+    split.stratified = config_.stratified;
+    split.seed = config_.split_seed;
+    split.excluded_files = config_.image_excluded_files;
+    checkpoint_manager->SetDataSplit(std::move(split));
 
     generation_preview_.reset();
     generation_preview_checkpoints_ = nullptr;
@@ -1435,7 +1504,9 @@ void TrainingExecutor::Train(
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
             validation_ran_this_epoch = RunValidationSequence(*active_sequence_batcher);
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
-        } else if (should_validate_this_epoch && active_val_ibatcher) {
+        } else if (should_validate_this_epoch && active_val_ibatcher && num_val_samples > 0) {
+            // Not without a validation part (an image Data Split at 0.9 / 0 /
+            // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
             RunValidationArrow(*active_val_ibatcher);
             active_val_ibatcher->SetPhase(train_batcher_phase);
@@ -1821,8 +1892,9 @@ void TrainingExecutor::Train(
                 "TrainingExecutor: configured Sequence test split produced "
                 "0 held-out samples; test metrics were skipped");
         }
-    } else if (!stop_requested_.load() && active_test_ibatcher &&
-        active_test_ibatcher->GetNumSamples() > 0) {
+    } else if (!stop_requested_.load() && active_test_ibatcher && num_test_samples > 0) {
+        // num_test_samples: counted in the test phase (a batcher's count
+        // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
         const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
@@ -1851,11 +1923,11 @@ void TrainingExecutor::Train(
                 "test_mae={:.4f}, test_rmse={:.4f} ({} samples)",
                 test_evaluation.loss, test_evaluation.mae,
                 test_evaluation.rmse,
-                active_test_ibatcher->GetNumSamples());
+                num_test_samples);
         } else {
             spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
                          test_evaluation.loss, test_evaluation.accuracy * 100.0f,
-                         active_test_ibatcher->GetNumSamples());
+                         num_test_samples);
         }
         if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_test) {
             model_->SetTraining(false);
@@ -2486,6 +2558,25 @@ TrainingMetrics TrainingExecutor::GetMetrics() const {
     return metrics_;
 }
 
+void TrainingExecutor::NotifyPluginBatch(bool start, int epoch, int batch, int total_batches,
+                                         float loss, float accuracy) {
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    if (hooks.GetHookCount() == 0) return;
+    cyxwiz::plugin::TrainingContext ctx;
+    ctx.current_epoch = epoch;
+    ctx.total_epochs = hook_total_epochs_;
+    ctx.current_batch = batch;
+    ctx.total_batches = total_batches;
+    ctx.train_loss = loss;
+    ctx.train_accuracy = accuracy;
+    ctx.learning_rate = optimizer_ ? static_cast<float>(optimizer_->GetLearningRate()) : config_.learning_rate;
+    if (start) {
+        hooks.NotifyBatchStart(ctx);
+    } else {
+        hooks.NotifyBatchEnd(ctx);
+    }
+}
+
 void TrainingExecutor::UpdateMetrics(const std::function<void(TrainingMetrics&)>& updater) {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     updater(metrics_);
@@ -2592,6 +2683,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
         ++batch_num;
         sample_count += batch.size;
+        NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::Forward, epoch, batch_num,
@@ -2729,6 +2821,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
                              ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm) : std::string());
         }
 
+        NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         if (batch_cb) {
             CrashRunRecorder::Instance().MarkStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
@@ -2968,6 +3061,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         batch_num++;
         fetch_total_ms += fetch_ms;
         fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
+        NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
 
         // Forward pass through model
         CrashRunRecorder::Instance().MarkStage(
@@ -3205,6 +3299,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
             }
         }
 
+        NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         // Batch callback
         if (batch_cb) {
             CrashRunRecorder::Instance().MarkStage(

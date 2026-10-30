@@ -13,6 +13,7 @@
 #include "../../core/data_studio_presentation.h"
 #include "query_editor.h"
 #include "profile_view.h"
+#include "image_gallery_view.h"
 #include "missing_view.h"
 #include "outliers_view.h"
 #include "correlation_view.h"
@@ -45,7 +46,8 @@ namespace cyxwiz {
 class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
-    enum class ExploreTab { Query, Profile, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize };
+    // Images shows only for an image dataset.
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -93,6 +95,8 @@ public:
     // Opens Results on one of its views (a test finished, Train > Test >
     // View / Compare test results, Tools > Evaluation).
     void ShowResults(ResultsView::View view);
+    // ML readiness (the Data Split card's "Show the split in Data Studio").
+    void ShowReadiness();
     // Results > Test: MainWindow hands it each finished test and its "Run
     // test again".
     TestView* GetTestView() { return results_ ? &results_->Test() : nullptr; }
@@ -112,6 +116,7 @@ public:
 private:
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
+    std::unique_ptr<ImageGalleryView> gallery_;
     std::unique_ptr<MissingView> missing_;
     std::unique_ptr<OutliersView> outliers_;
     std::unique_ptr<CorrelationView> correlation_;

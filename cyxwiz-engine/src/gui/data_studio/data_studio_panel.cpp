@@ -16,6 +16,7 @@
 #include "../../core/dataset_catalog.h"
 #include "../../core/sql_editing.h"
 #include "../../core/dataset_picker_presentation.h"
+#include "../../core/image_index_service.h"
 #include "../node_editor.h"
 
 #include <algorithm>
@@ -31,6 +32,8 @@ DataStudioPanel::DataStudioPanel() {
     profile_->on_outliers = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Outliers, column); };
     profile_->on_distribution = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Distribution, column); };
     profile_->on_correlation = [this] { ShowExplore(active_dataset_, ExploreTab::Correlation); };
+    gallery_ = std::make_unique<ImageGalleryView>();
+    gallery_->on_open_index = [this](const std::string& index) { ShowExplore(index, ExploreTab::Query); };
     missing_ = std::make_unique<MissingView>();
     missing_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_open_profile = [this](const std::string& column) { ShowExplore(active_dataset_, ExploreTab::Profile, column); };
@@ -174,6 +177,13 @@ void DataStudioPanel::ShowProfile(const std::string& dataset_name) {
     explore_tab_ = ExploreTab::Profile;
 }
 
+void DataStudioPanel::ShowReadiness() {
+    visible_ = true;
+    ::gui::BringToFront("Data Studio");
+    job_ = studio::Job::Ready;
+    if (readiness_) readiness_->Activate();
+}
+
 void DataStudioPanel::ShowResults(ResultsView::View view) {
     visible_ = true;
     ::gui::BringToFront("Data Studio");
@@ -278,6 +288,7 @@ void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     if (query_editor_) query_editor_->SetActiveDataset(dataset_name);
     if (profile_) profile_->SetActiveDataset(dataset_name);
+    if (gallery_) gallery_->SetDataset(dataset_name);
     if (visualizer_) visualizer_->SetActiveDataset(dataset_name);
 }
 
@@ -304,6 +315,10 @@ void DataStudioPanel::RefreshView() {
                     n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
+                if (type == ::gui::NodeType::DataInput) {
+                    if (const auto f = parameters->find("folder_path"); f != parameters->end()) n.folder_path = f->second;
+                    if (const auto c = parameters->find("labels_csv"); c != parameters->end()) n.labels_csv = c->second;
+                }
                 const auto registry = parameters->find("dataset_name");
                 if (type == ::gui::NodeType::DataInput && registry != parameters->end()) n.dataset_name = registry->second;
                 const auto time = parameters->find("time_column");
@@ -359,6 +374,12 @@ void DataStudioPanel::RefreshView() {
         d.rows = entry.rows;
         d.columns = entry.columns;
         d.tabular = IsTabularDataset(entry);
+        d.images = entry.modality == DatasetModality::Image && !d.tabular;
+        if (d.images) {
+            const ImageIndexStatus index = GetImageIndexStatus(d.name);
+            if (index.state == ImageIndexStatus::State::Building)
+                in.image_index_progress[d.name] = studio::Thousands(static_cast<int64_t>(index.done)) + " of " + studio::Thousands(static_cast<int64_t>(index.total));
+        }
         in.datasets.push_back(std::move(d));
     }
     // What feeds each check, in the graph as it runs (recipes lowered): read

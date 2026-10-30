@@ -10,6 +10,8 @@
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
+#include "image_cv_steps.h"
+#include "image_split_counts.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
@@ -98,6 +100,12 @@ struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
+    // Normalize's statistics (TOFIX178 1.4): "same" uses norm_mean / norm_std;
+    // "per_channel" and "imagenet" one value per image channel (norm_channels).
+    std::string norm_statistics = "same";
+    std::vector<float> norm_channel_mean, norm_channel_std;
+    size_t norm_channels = 0;  // the images' channels where Normalize sits (image graphs)
+    int norm_node_id = -1;
 
     bool has_onehot = false;
     size_t num_classes = 0;
@@ -166,7 +174,7 @@ struct AudioPreprocessingConfig {
 /**
  * Text shape contract the compiler reads from the graph: the reachable Text
  * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
- * Tokenizing itself runs in PipelineMaterializer.
+ * Tokenizing itself runs in the pipeline run before training.
  */
 struct TextPreprocessingConfig {
     int max_length = 512;
@@ -435,6 +443,9 @@ struct TrainingConfiguration {
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    // A step only the pipeline run applies (SQL, Text Clean ...) is on the
+    // Training Dataset path: training trains on that run's result.
+    bool training_data_needs_pipeline_run = false;
     TargetContract target;              // Objective target provenance
     RegressionTargetTransform regression_target_transform;
 
@@ -444,6 +455,12 @@ struct TrainingConfiguration {
     float test_ratio = 0.1f;
     int split_seed = 42;
     bool has_data_split = false;        // true if a DataSplit node was found
+    int data_split_node_id = -1;        // that node (its compile messages and AS COMPILED card)
+    // An image dataset's parts as training reads them (TOFIX178 1.5; known
+    // once the images are indexed).
+    ImageSplitCounts image_split;
+    // A Validation / Test image dataset wired to the Data Split, counted whole.
+    ImageSplitCounts image_split_dev, image_split_test;
     bool stratified = false;            // preserve label ratios when supported
 
     // DataLoader configuration (from DataLoader node, or defaults if absent).
@@ -487,12 +504,19 @@ struct TrainingConfiguration {
     // The image transform nodes between Resize and Normalize, in graph
     // order: run by the image batcher on the device (Normalize after them).
     cyxwiz::image::ImageAugmentation image_augmentation;
+    // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
+    // prepared; each one's position places it among image_augmentation.ops.
+    std::vector<cyxwiz::CvImageStep> image_cv_steps;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
     // The Quality Analyzer node and the files its analysis leaves out of
     // training (the image batcher skips them; they stay on disk).
     int image_quality_node_id = -1;
     std::vector<std::string> image_excluded_files;
+    // The images the image index found unreadable (the training dataset's and
+    // any wired role's): training leaves them out before the split, as the
+    // compile counted, so its parts are the counted ones (TOFIX178 1.5).
+    std::vector<std::string> image_unreadable_files;
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when
@@ -500,7 +524,7 @@ struct TrainingConfiguration {
     AudioPreprocessingConfig audio_preprocessing;
 
     // Preprocessing - text-specific legacy override bundle. Graph text
-    // nodes now route through PipelineMaterializer instead of this config.
+    // nodes now run in the pipeline run instead of this config.
     TextPreprocessingConfig text_preprocessing;
 
     // Structured sequence tagging / NER contract. Populated when the selected

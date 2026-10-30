@@ -15,13 +15,17 @@ void PluginPanelRegistry::Register(const std::string& plugin_id, IPanelProvider*
     std::lock_guard lock(mutex_);
 
     for (auto& info : panels) {
-        if (panels_.count(info.panel_id)) {
-            spdlog::warn("PluginPanelRegistry: Duplicate panel {}, skipping", info.panel_id);
+        if (const auto it = panels_.find(info.panel_id); it != panels_.end()) {
+            if (it->second.plugin_id != plugin_id || it->second.provider != provider)
+                spdlog::warn("PluginPanelRegistry: Duplicate panel {}, skipping", info.panel_id);
             continue;
         }
         bool vis = info.show_by_default;
         spdlog::info("PluginPanelRegistry: Registered panel '{}' ({})", info.title, info.panel_id);
-        panels_[info.panel_id] = PanelEntry{plugin_id, std::move(info), provider, vis};
+        // The key first: the right side (which moves info) is evaluated
+        // before the subscript (C++17), which would read an empty id.
+        const std::string panel_id = info.panel_id;
+        panels_[panel_id] = PanelEntry{plugin_id, std::move(info), provider, vis};
     }
 }
 
@@ -33,8 +37,9 @@ void PluginPanelRegistry::RegisterDirect(const std::string& plugin_id,
                                           IPanelProvider* provider) {
     if (!provider) return;
     std::lock_guard lock(mutex_);
-    if (panels_.count(panel_id)) {
-        spdlog::warn("PluginPanelRegistry: Duplicate panel {}, skipping", panel_id);
+    if (const auto it = panels_.find(panel_id); it != panels_.end()) {
+        if (it->second.plugin_id != plugin_id || it->second.provider != provider)
+            spdlog::warn("PluginPanelRegistry: Duplicate panel {}, skipping", panel_id);
         return;
     }
     PluginPanelInfo info;

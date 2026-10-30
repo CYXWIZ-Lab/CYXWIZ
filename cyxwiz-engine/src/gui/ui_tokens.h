@@ -57,6 +57,8 @@ struct Tokens {
     // grid, and the stops of the sequential and diverging colour scales.
     static constexpr int kSeriesCount = 6;
     ImVec4 series[kSeriesCount];
+    // Image channels: red, green, blue (Explore > Images histograms).
+    ImVec4 channel[3];
     ImVec4 plot_bg;
     ImVec4 plot_grid;
     ImVec4 scale_sequential[4];  // low to high

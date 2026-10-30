@@ -582,6 +582,27 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"AdvancedAugment", "Advanced Augment is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
          gui::NodeType::AdvancedAugment, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageContrast", "Image Contrast (CLAHE) is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageContrast, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageDenoise", "Image Denoise is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageDenoise, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageSharpen", "Image Sharpen is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageSharpen, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageEdges", "Image Edges is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageEdges, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageSmooth", "Image Smooth is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageSmooth, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageWarp", "Image Warp is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageWarp, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImagePyramid", "Image Pyramid is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImagePyramid, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"IFFTNode", "legacy IFFT graph execution is not implemented",
          gui::NodeType::IFFTNode, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
@@ -901,7 +922,7 @@ const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
 GetPipelineAllowedParameterValuesRuntimeCapabilities() {
     static const std::vector<PipelineAllowedParameterValuesRuntimeCapability> capabilities = {
         {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
-        {"DataInput", "source_type", "file", {"file", "folder"}},
+        {"DataInput", "source_type", "file", {"file"}},
         {"DataInput", "dataset_role", "train", {"train", "dev", "validation", "test", "inference", "unspecified"}},
         {"DataInput", "type", "auto", data_input::AllowedNames()},
         {"DataInput", "file_type", "auto", data_input::AllowedNames()},
@@ -1411,6 +1432,20 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the image batcher's device transform plan"},
         {gui::NodeType::AdvancedAugment, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ImageContrast, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
+        {gui::NodeType::ImageDenoise, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
+        {gui::NodeType::ImageSharpen, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
+        {gui::NodeType::ImageEdges, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
+        {gui::NodeType::ImageSmooth, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
+        {gui::NodeType::ImageWarp, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
+        {gui::NodeType::ImagePyramid, PipelineTrainingSupportRole::Preprocessing,
+         "done once with the prepared images (OpenCV on the CPU workers)"},
         {gui::NodeType::AugmentationPreset, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the image batcher's device transform plan"},
         {gui::NodeType::QualityAnalyzer, PipelineTrainingSupportRole::Preprocessing,
@@ -1457,37 +1492,6 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the embeddings file written after training"},
         {gui::NodeType::PairScoreOutput, PipelineTrainingSupportRole::TrainingControl,
          "compiled into the pair-score defaults saved with the trained model"},
-    };
-    return capabilities;
-}
-
-const std::vector<PipelineMaterializerStorageBackendCapability>&
-GetPipelineMaterializerStorageBackendCapabilities() {
-    static const std::vector<PipelineMaterializerStorageBackendCapability> capabilities = {
-        {PipelineStorageBackend::ArrowTable,
-         PipelineMaterializerStorageSupport::ArrowTableOnly,
-         true,
-         "in-memory Arrow tables are the only PipelineMaterializer storage backend"},
-        {PipelineStorageBackend::ParquetBacked,
-         PipelineMaterializerStorageSupport::StreamingOperatorsOnly,
-         true,
-         "a table on disk runs through operators that stream, one row group at a time"},
-        {PipelineStorageBackend::ImageDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer only applies Arrow-table operators; image datasets use domain batchers"},
-        {PipelineStorageBackend::AudioDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer only applies Arrow-table operators; audio datasets use domain batchers"},
-        {PipelineStorageBackend::TextDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer only applies Arrow-table operators; text datasets use domain batchers"},
-        {PipelineStorageBackend::SparseFeatureDataset,
-         PipelineMaterializerStorageSupport::None,
-         false,
-         "PipelineMaterializer does not apply table operators to an already materialized sparse CSR artifact"},
     };
     return capabilities;
 }
@@ -1584,26 +1588,6 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type) {
         return {};
     }
     return ResolvePipelineRuntimeSupport(legacy_type_name);
-}
-
-const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
-    switch (backend) {
-    case PipelineStorageBackend::ArrowTable:
-        return "ArrowTable";
-    case PipelineStorageBackend::ParquetBacked:
-        return "ParquetBacked";
-    case PipelineStorageBackend::ImageDataset:
-        return "ImageDataset";
-    case PipelineStorageBackend::AudioDataset:
-        return "AudioDataset";
-    case PipelineStorageBackend::TextDataset:
-        return "TextDataset";
-    case PipelineStorageBackend::SparseFeatureDataset:
-        return "SparseFeatureDataset";
-    case PipelineStorageBackend::Unknown:
-        return "Unknown";
-    }
-    return "Unknown";
 }
 
 const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode) {
@@ -1721,22 +1705,6 @@ const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
         return "training_workflow";
     }
     return "unknown";
-}
-
-PipelineMaterializerStorageBackendCapability
-ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend) {
-    const auto& capabilities = GetPipelineMaterializerStorageBackendCapabilities();
-    auto it = std::find_if(capabilities.begin(), capabilities.end(),
-        [backend](const PipelineMaterializerStorageBackendCapability& capability) {
-            return capability.backend == backend;
-        });
-    if (it != capabilities.end()) {
-        return *it;
-    }
-    return {backend,
-            PipelineMaterializerStorageSupport::None,
-            false,
-            "storage backend is unknown to PipelineMaterializer"};
 }
 
 std::optional<gui::NodeType>
@@ -1869,6 +1837,31 @@ ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name) {
     return &*it;
 }
 
+bool PipelineStepLearnsFromEveryRow(gui::NodeType type) {
+    using gui::NodeType;
+    switch (type) {
+        case NodeType::PCANode:
+        case NodeType::KMeansCluster:
+        case NodeType::DBSCANCluster:
+        case NodeType::HierarchicalCluster:
+        case NodeType::GMMCluster:
+        case NodeType::OutlierDetector:
+        case NodeType::LinearRegressionNode:
+        case NodeType::PolynomialRegressionNode:
+        case NodeType::DecisionTreeClassifier:
+        case NodeType::RandomForestClassifier:
+        case NodeType::GradientBoostingClassifier:
+        case NodeType::NaiveBayesClassifier:
+        case NodeType::KNNClassifier:
+        case NodeType::LogisticRegressionNode:
+        case NodeType::SVMClassifier:
+        case NodeType::SVMRegressor:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name) {
     const auto& capabilities = GetPipelineSourceRuntimeCapabilities();
     auto it = std::find_if(capabilities.begin(), capabilities.end(),
@@ -1970,6 +1963,38 @@ bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
     return it != capabilities.end();
 }
 
+bool IsTrainingOnlyNode(gui::NodeType node_type) {
+    for (const auto& capability : GetPipelineSupportedTrainingRoleCapabilities()) {
+        if (capability.node_type != node_type) continue;
+        return capability.role != PipelineTrainingSupportRole::DataSource &&
+               capability.role != PipelineTrainingSupportRole::Preprocessing;
+    }
+    return false;
+}
+
+bool IsPipelineRunTrainingStep(gui::NodeType node_type) {
+    switch (node_type) {
+        case gui::NodeType::SQLQuery:
+        case gui::NodeType::TextCleanNode:
+        case gui::NodeType::FillMissingValues:
+        case gui::NodeType::SelectColumns:
+        case gui::NodeType::FilterRows:
+        case gui::NodeType::DataConvert:
+        case gui::NodeType::RemoveDuplicateRows:
+        case gui::NodeType::SortRows:
+        case gui::NodeType::RenameColumns:
+        case gui::NodeType::JoinTables:
+        case gui::NodeType::MathFormula:
+        case gui::NodeType::StringManipulation:
+        case gui::NodeType::SampleRows:
+        case gui::NodeType::BinningNode:
+        case gui::NodeType::PolynomialFeaturesNode:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type) {
     const auto& capabilities = GetPipelineSupportedTrainingRoleCapabilities();
     auto it = std::find_if(
@@ -2017,7 +2042,9 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
     return {};
 }
 
-bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
+bool HasTrainingGraphStructure(
+    const std::vector<gui::MLNode>& nodes,
+    const std::function<std::optional<PipelineTrainingSupportRole>(const gui::MLNode&)>& extension_role) {
     bool has_source = false;
     bool has_model = false;
     bool has_loss = false;
@@ -2025,6 +2052,12 @@ bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
     for (const auto& node : nodes) {
         has_source |= node.type == gui::NodeType::DataInput ||
                       node.type == gui::NodeType::DatasetInput;
+        if (node.type == gui::NodeType::PluginCustom && extension_role) {
+            if (const auto role = extension_role(node)) {
+                has_model |= *role == PipelineTrainingSupportRole::ModelLayer;
+                has_loss |= *role == PipelineTrainingSupportRole::Loss;
+            }
+        }
         for (const auto& capability : roles) {
             if (capability.node_type != node.type) continue;
             has_model |= capability.role == PipelineTrainingSupportRole::ModelLayer;

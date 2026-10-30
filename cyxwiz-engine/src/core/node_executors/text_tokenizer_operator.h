@@ -28,18 +28,16 @@ namespace cyxwiz {
  * mapping a string label column to integer class IDs (string→int
  * vocab built in this Apply pass).
  *
- * v1 combines tokenize + vocab build + padding into one operator.
- * TextVocabulary and TextPadding are folded parameter nodes in
- * PipelineMaterializer; they are not separate Arrow table transforms.
- * Splitting them into standalone operators is deferred until a real use
- * case needs intermediate vocab/token columns addressable separately.
+ * v1 combines tokenize + vocab build + padding into one operator; its
+ * own settings hold the vocabulary and padding (the legacy TextVocabulary
+ * and TextPadding nodes are not applied; the compiler says so).
  *
  * Closes Fix B from tofix.md "TextTokenizer is a config extractor,
  * not a pipeline operation" — this operator IS the real pipeline
  * operation. The legacy config-extractor path in graph_compiler.cpp
  * still works for graphs that haven't been migrated; both can coexist
- * because PipelineMaterializer only fires when the source dataset is
- * an Arrow table (text-via-RegisterTextDataset graphs are skipped).
+ * because the pipeline run applies it only to Arrow tables
+ * (text-via-RegisterTextDataset graphs are skipped).
  *
  * Params:
  *   text_col          (required)        — string column with raw text

@@ -1,6 +1,7 @@
 #include "text_tokenizer_operator.h"
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
+#include "../split_partitioning.h"
 #include "text_column_utils.h"
 
 #include <cyxwiz/tokenizer.h>
@@ -902,6 +903,15 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "' must be string/large_string, got '" + bad_type + "'");
     }
     const uint64_t total_rows = static_cast<uint64_t>(texts.size());
+    // The vocabulary comes from the Train rows when the pipeline run marked
+    // them (TOFIX178 S0-g3); every row is encoded with it.
+    const std::vector<bool> fit_row = TrainRowMask(input);
+    std::vector<std::string> fit_texts;
+    if (!fit_row.empty()) {
+        for (size_t row = 0; row < texts.size() && row < fit_row.size(); ++row)
+            if (fit_row[row]) fit_texts.push_back(texts[row]);
+    }
+    const std::vector<std::string>& vocab_texts = fit_row.empty() ? texts : fit_texts;
     const uint64_t estimated_token_matrix_bytes =
         preflight_estimate.estimated_peak_bytes;
     report_progress("Planning token matrix",
@@ -941,7 +951,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                         0,
                         total_rows,
                         estimated_token_matrix_bytes);
-        tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+        tokenizer.Train(vocab_texts, min_word_freq_, max_vocab_size_);
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         ARROW_RETURN_NOT_OK(SaveBuiltVocabulary(tokenizer));
     } else if (!vocab_file_.empty()) {
@@ -955,7 +965,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                         0,
                         total_rows,
                         estimated_token_matrix_bytes);
-        tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+        tokenizer.Train(vocab_texts, min_word_freq_, max_vocab_size_);
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     }
     CheckLoadedVocabulary(tokenizer);
@@ -1019,6 +1029,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             uint64_t total) {
             report_progress(stage, message, progress, processed, total, estimated_token_matrix_bytes);
         }));
+    ARROW_ASSIGN_OR_RAISE(out_table, CarryPartition(input, out_table));
     const size_t n = static_cast<size_t>(out_table->num_rows());
 
     spdlog::info("TextTokenizer: {} samples tokenized, vocab_size={}, "

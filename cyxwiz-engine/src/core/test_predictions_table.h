@@ -37,9 +37,11 @@ struct TestPredictionsSource {
     std::optional<double> loss;
     double seconds = 0.0;
     bool partial = false;
+    // Each row's file (images); a "file" column after row_id when one per row.
+    std::vector<std::string> files;
 };
 
-// One row per test sample: row_id (when known), true_class, predicted_class,
+// One row per test sample: row_id (when known), file (images), true_class, predicted_class,
 // confidence, then the scores (the class names also go in the metadata) - binary (two classes): "score", the positive
 // class's probability; multi-class: "score_<class name>" per class (the class
 // index when names are missing or repeat). `class_probabilities` is row-major

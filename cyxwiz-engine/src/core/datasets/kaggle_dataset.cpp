@@ -1,6 +1,7 @@
 #include "kaggle_dataset.h"
+#include "../image_formats.h"
+#include "../image_utils.h"
 #include <spdlog/spdlog.h>
-#include <stb_image.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -244,7 +245,6 @@ bool KaggleDataset::LoadCSVFile(const std::string& path) {
 }
 
 bool KaggleDataset::LoadImageFolder(const std::string& path) {
-    std::vector<std::string> extensions = {".jpg", ".jpeg", ".png", ".bmp"};
     int label = 0;
 
     for (const auto& class_dir : fs::directory_iterator(path)) {
@@ -253,21 +253,11 @@ bool KaggleDataset::LoadImageFolder(const std::string& path) {
         class_names_.push_back(class_dir.path().filename().string());
 
         for (const auto& img_entry : fs::directory_iterator(class_dir.path())) {
-            std::string ext = img_entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-            if (std::find(extensions.begin(), extensions.end(), ext) != extensions.end()) {
-                // Load image using stb_image
-                int width, height, channels;
-                unsigned char* data = stbi_load(img_entry.path().string().c_str(),
-                                                 &width, &height, &channels, 0);
-                if (data) {
-                    std::vector<float> sample(width * height * channels);
-                    for (int i = 0; i < width * height * channels; i++) {
-                        sample[i] = data[i] / 255.0f;
-                    }
-                    stbi_image_free(data);
-
+            if (image_formats::IsImageExtension(img_entry.path().extension().string())) {
+                // OpenCV, as training reads images: RGB in [0, 1].
+                int width = 0, height = 0, channels = 0;
+                std::vector<float> sample;
+                if (ImageUtils::LoadImage(img_entry.path().string(), sample, width, height, channels)) {
                     samples_.push_back(std::move(sample));
                     labels_.push_back(label);
 

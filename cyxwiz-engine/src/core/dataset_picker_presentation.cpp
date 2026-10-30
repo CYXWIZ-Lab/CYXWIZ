@@ -26,9 +26,12 @@ std::string DatasetSizeText(const DatasetEntry& entry) {
 }
 
 const char* DatasetOriginText(const DatasetEntry& entry) {
-    // A graph node's output (pipeline run "ds_operator_<Type>_<id>" or a
-    // materialized result) is made from Data Input data, not loaded itself.
-    if (entry.materialized || entry.name.rfind("ds_operator_", 0) == 0) return "node result";
+    // A data step's result (a pipeline run's "ds_<step>_<id>", or "prepared_..."
+    // read back from disk) is made from Data Input data, not loaded itself; the
+    // run's copy of the Data Input ("ds_datainput_", "ds_input_") is the input.
+    const auto starts = [&entry](const char* prefix) { return entry.name.rfind(prefix, 0) == 0; };
+    if ((starts("ds_") && !starts("ds_datainput_") && !starts("ds_input_")) || starts("prepared_"))
+        return "node result";
     if (entry.Has(kBackingLegacy) && entry.backings == kBackingLegacy) return "older dataset";
     return "Data Input";
 }

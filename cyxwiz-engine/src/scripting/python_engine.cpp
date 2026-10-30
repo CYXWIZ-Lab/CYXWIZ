@@ -1,4 +1,5 @@
 #include "python_engine.h"
+#include "python_environment.h"
 
 #ifdef CYXWIZ_HAS_PYTHON
 
@@ -37,223 +38,6 @@ namespace py = pybind11;
 namespace scripting {
 
 namespace {
-
-bool IsVenvBinDir(const std::filesystem::path& path) {
-    auto name = path.filename().string();
-#ifdef _WIN32
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return name == "scripts";
-#else
-    return name == "bin";
-#endif
-}
-
-std::filesystem::path ResolveVenvRoot(const std::filesystem::path& interpreter_path) {
-    auto parent = interpreter_path.parent_path();
-    if (!IsVenvBinDir(parent)) {
-        return {};
-    }
-    auto root = parent.parent_path();
-    if (root.empty()) {
-        return {};
-    }
-    if (std::filesystem::exists(root / "pyvenv.cfg")) {
-        return root;
-    }
-    return {};
-}
-
-std::string ReadVenvBasePython(const std::filesystem::path& venv_root) {
-    // Read the 'home' field from pyvenv.cfg to get the base Python installation
-    std::filesystem::path cfg_file = venv_root / "pyvenv.cfg";
-    if (!std::filesystem::exists(cfg_file)) {
-        return "";
-    }
-
-    std::ifstream file(cfg_file);
-    if (!file.is_open()) {
-        return "";
-    }
-
-    std::string line;
-    while (std::getline(file, line)) {
-        // Look for "home = <path>" line
-        auto pos = line.find('=');
-        if (pos == std::string::npos) {
-            continue;
-        }
-        std::string key = line.substr(0, pos);
-        std::string value = line.substr(pos + 1);
-
-        // Trim whitespace
-        key.erase(0, key.find_first_not_of(" \t"));
-        key.erase(key.find_last_not_of(" \t") + 1);
-        value.erase(0, value.find_first_not_of(" \t"));
-        value.erase(value.find_last_not_of(" \t") + 1);
-
-        if (key == "home") {
-            return value;
-        }
-    }
-
-    return "";
-}
-
-std::filesystem::path ResolvePythonHomeFromInterpreter(const std::filesystem::path& interpreter_path) {
-    auto venv_root = ResolveVenvRoot(interpreter_path);
-    if (!venv_root.empty()) {
-        return venv_root;
-    }
-    auto parent = interpreter_path.parent_path();
-#ifndef _WIN32
-    // POSIX layouts keep the interpreter in <prefix>/bin.
-    if (parent.filename() == "bin") {
-        return parent.parent_path();
-    }
-#endif
-    return parent;
-}
-
-std::filesystem::path FindPosixSitePackages([[maybe_unused]] const std::filesystem::path& base_root) {
-#ifndef _WIN32
-    std::filesystem::path lib_dir = base_root / "lib";
-    if (!std::filesystem::exists(lib_dir)) {
-        return {};
-    }
-
-    for (const auto& entry : std::filesystem::directory_iterator(lib_dir)) {
-        if (!entry.is_directory()) {
-            continue;
-        }
-        auto name = entry.path().filename().string();
-        if (name.rfind("python", 0) != 0) {
-            continue;
-        }
-        std::filesystem::path candidate = entry.path() / "site-packages";
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
-        }
-    }
-#endif
-    return {};
-}
-
-std::string DeriveSitePackagesFromHome(const std::filesystem::path& python_home) {
-#ifdef _WIN32
-    std::filesystem::path site_packages = python_home / "Lib" / "site-packages";
-    if (std::filesystem::exists(site_packages)) {
-        return site_packages.string();
-    }
-#else
-    std::filesystem::path site_packages = FindPosixSitePackages(python_home);
-    if (site_packages.empty()) {
-        site_packages = python_home / "lib" / "python3" / "site-packages";
-    }
-    if (std::filesystem::exists(site_packages)) {
-        return site_packages.string();
-    }
-#endif
-    return "";
-}
-
-std::filesystem::path NormalizePath(const std::filesystem::path& path) {
-    try {
-        return std::filesystem::absolute(path).lexically_normal();
-    } catch (...) {
-        return path.lexically_normal();
-    }
-}
-
-bool IsPathUnderRoot(const std::filesystem::path& path, const std::filesystem::path& root) {
-    if (root.empty()) {
-        return false;
-    }
-    auto norm_path = NormalizePath(path);
-    auto norm_root = NormalizePath(root);
-
-#ifdef _WIN32
-    std::string path_str = norm_path.string();
-    std::string root_str = norm_root.string();
-    std::transform(path_str.begin(), path_str.end(), path_str.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    std::transform(root_str.begin(), root_str.end(), root_str.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (root_str.back() != '\\' && root_str.back() != '/') {
-        root_str += "\\";
-    }
-    return path_str.rfind(root_str, 0) == 0;
-#else
-    auto pit = norm_path.begin();
-    auto rit = norm_root.begin();
-    for (; rit != norm_root.end(); ++rit, ++pit) {
-        if (pit == norm_path.end() || *pit != *rit) {
-            return false;
-        }
-    }
-    return true;
-#endif
-}
-
-bool IsSamePath(const std::filesystem::path& a, const std::filesystem::path& b) {
-    if (a.empty() || b.empty()) {
-        return false;
-    }
-    auto na = NormalizePath(a);
-    auto nb = NormalizePath(b);
-#ifdef _WIN32
-    std::string sa = na.string();
-    std::string sb = nb.string();
-    std::transform(sa.begin(), sa.end(), sa.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    std::transform(sb.begin(), sb.end(), sb.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return sa == sb;
-#else
-    return na == nb;
-#endif
-}
-
-std::string TrimWhitespace(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-    return value.substr(start, end - start);
-}
-
-std::optional<std::filesystem::path> ReadVenvBaseHome(const std::filesystem::path& venv_root) {
-    auto cfg_path = venv_root / "pyvenv.cfg";
-    if (!std::filesystem::exists(cfg_path)) {
-        return std::nullopt;
-    }
-    std::ifstream file(cfg_path.string());
-    if (!file.is_open()) {
-        return std::nullopt;
-    }
-    std::string line;
-    while (std::getline(file, line)) {
-        auto pos = line.find('=');
-        if (pos == std::string::npos) {
-            continue;
-        }
-        std::string key = TrimWhitespace(line.substr(0, pos));
-        if (key != "home") {
-            continue;
-        }
-        std::string value = TrimWhitespace(line.substr(pos + 1));
-        if (value.empty()) {
-            return std::nullopt;
-        }
-        std::filesystem::path home_path(value);
-        if (home_path.is_relative()) {
-            home_path = venv_root / home_path;
-        }
-        return home_path;
-    }
-    return std::nullopt;
-}
 
 std::filesystem::path GetExecutableDir() {
 #ifdef _WIN32
@@ -483,36 +267,6 @@ std::string ReadProjectInterpreterOverride() {
     }
 }
 
-std::string DeriveSitePackagesPath(const std::string& interpreter_path) {
-    if (interpreter_path.empty()) {
-        return "";
-    }
-    std::filesystem::path interp(interpreter_path);
-    std::filesystem::path parent = interp.parent_path();
-#ifdef _WIN32
-    std::filesystem::path site_packages;
-    auto venv_root = ResolveVenvRoot(interp);
-    if (!venv_root.empty()) {
-        site_packages = venv_root / "Lib" / "site-packages";
-    } else {
-        site_packages = parent / "Lib" / "site-packages";
-    }
-#else
-    std::filesystem::path base_root = ResolveVenvRoot(interp);
-    if (base_root.empty()) {
-        base_root = parent.parent_path();
-    }
-    std::filesystem::path site_packages = FindPosixSitePackages(base_root);
-    if (site_packages.empty()) {
-        site_packages = base_root / "lib" / "python3" / "site-packages";
-    }
-#endif
-    if (std::filesystem::exists(site_packages)) {
-        return site_packages.string();
-    }
-    return "";
-}
-
 } // namespace
 
 PythonEngine::PythonEngine() : initialized_(false), main_thread_state_(nullptr) {
@@ -694,6 +448,7 @@ void PythonEngine::ConfigureCustomPythonPath() {
     if (pm.HasActiveProject()) {
         scripts_path = pm.GetScriptsPath();
     }
+    active_scripts_path_ = scripts_path;
 
     std::string engine_module_dir;
     auto exe_dir = GetExecutableDir();
@@ -715,7 +470,7 @@ void PythonEngine::ConfigureCustomPythonPath() {
         std::filesystem::path venv_root = !python_home.empty() ? ResolveVenvRoot(std::filesystem::path(effective_interpreter_path_)) : std::filesystem::path{};
         if (!venv_root.empty()) {
             // This is a venv - read base Python from pyvenv.cfg
-            base_prefix = ReadVenvBasePython(venv_root);
+            base_prefix = ReadVenvBaseHome(venv_root).value_or(std::filesystem::path{}).string();
             if (base_prefix.empty()) {
                 spdlog::warn("Failed to read base Python from pyvenv.cfg, falling back to sys.base_prefix");
                 base_prefix = py::str(sys.attr("base_prefix")).cast<std::string>();
@@ -972,22 +727,52 @@ bool PythonEngine::HasInterpreterMismatch(std::string* reason_out) const {
     return true;
 }
 
-bool PythonEngine::ReloadForProject(std::string* error_out) {
-    if (!initialized_) {
-        // Lazy initialization: do not initialize here. Initialization happens on first Python use.
-        return true;
+PythonProjectSwitch PythonEngine::SwitchToProjectEnvironment(std::string* detail_out) {
+    // Not started: the first use starts with the right environment.
+    if (!initialized_ || !HasInterpreterMismatch()) {
+        return PythonProjectSwitch::Unchanged;
     }
 
-    std::string mismatch;
-    if (HasInterpreterMismatch(&mismatch)) {
-        std::string msg = "Python interpreter mismatch; restart required (" + mismatch + ")";
-        spdlog::warn("{}", msg);
-        if (error_out) {
-            *error_out = msg;
-        }
-        return false;
+    PythonSelection selection = ResolvePythonConfig();
+    std::string blocker;
+    if (!ValidateSelection(selection, &blocker)) {
+        if (detail_out) *detail_out = blocker;
+        return PythonProjectSwitch::RestartNeeded;
     }
-    return true;
+    const PythonEnvironment from = DescribePythonEnvironment(active_interpreter_path_);
+    const PythonEnvironment to = DescribePythonEnvironment(selection.interpreter_path);
+    blocker = InPlaceSwitchBlocker(from, to, PY_MAJOR_VERSION, PY_MINOR_VERSION);
+    std::string new_scripts;
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (pm.HasActiveProject()) {
+        new_scripts = pm.GetScriptsPath();
+    }
+    if (blocker.empty()) {
+        try {
+            py::gil_scoped_acquire gil;
+            const auto compiled = SwitchEnvironmentInPlace(from, to, active_scripts_path_, new_scripts);
+            if (!compiled.empty()) {
+                blocker = "compiled modules of the previous environment are loaded (";
+                for (size_t i = 0; i < compiled.size() && i < 3; ++i) {
+                    blocker += (i ? ", " : "") + compiled[i];
+                }
+                blocker += compiled.size() > 3 ? ", ...)" : ")";
+            }
+        } catch (const std::exception& e) {
+            blocker = std::string("the switch failed: ") + e.what();
+        }
+    }
+    if (!blocker.empty()) {
+        if (detail_out) *detail_out = blocker;
+        return PythonProjectSwitch::RestartNeeded;
+    }
+
+    ApplySelection(selection);
+    active_interpreter_path_ = effective_interpreter_path_;
+    active_source_ = selection.source;
+    active_scripts_path_ = new_scripts;
+    if (detail_out) *detail_out = selection.interpreter_path;
+    return PythonProjectSwitch::Switched;
 }
 
 void PythonEngine::Shutdown() {

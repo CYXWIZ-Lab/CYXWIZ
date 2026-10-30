@@ -133,11 +133,11 @@ static bool load_window_icon(GLFWwindow* window) {
     spdlog::debug("macOS uses the application bundle icon for regular windows");
     return true;
 #else
-    // Try both possible locations
-    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
+    // Try both possible locations. The icon is the mark alone (no wordmark).
+    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz_icon.png";
 
     if (!std::filesystem::exists(icon_path)) {
-        icon_path = "resources/cyxwiz.png";
+        icon_path = "resources/cyxwiz_icon.png";
         if (!std::filesystem::exists(icon_path)) {
             spdlog::warn("Window icon not found at either location");
             return false;
@@ -258,7 +258,6 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
     if (pm.OpenProject(startup_project_path_)) {
         if (startup_project_from_command_line_)
             spdlog::debug("Opened project from the command line: {}", startup_project_path_);
-        UpdateWindowTitle();  // Update window title with project name
     } else {
         spdlog::error("Failed to open project {}", startup_project_path_);
     }
@@ -299,6 +298,8 @@ void CyxWizApp::UpdateWindowTitle() {
         title = "CyxWiz Engine - " + project_name;
     }
 
+    if (title == window_title_) return;
+    window_title_ = title;
     glfwSetWindowTitle(window_, title.c_str());
     spdlog::debug("Window title updated to: {}", title);
 }
@@ -840,11 +841,10 @@ void CyxWizApp::Render() {
         spdlog::debug("Creating main window with project: {}", startup_project_path_);
 
         main_window_ = std::make_unique<gui::MainWindow>();
-        OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
+        OpenStartupProjectIfRequested();
         OpenStartupGraphIfRequested();
         for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
         startup_scripts_.clear();
-        UpdateWindowTitle();  // Update window title regardless (shows project name or just "CyxWiz Engine")
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 
@@ -874,6 +874,7 @@ void CyxWizApp::Render() {
 
     // Render main window (with docking)
     if (main_window_) {
+        UpdateWindowTitle();
         ImGuiErrorRecoveryState before;
         ImGui::ErrorRecoveryStoreState(&before);
         std::string failure;

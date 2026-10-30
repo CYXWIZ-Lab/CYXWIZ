@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_audit.h"
+#include "../../core/image_index_service.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
 #include "../node_editor.h"  // gui::MLNode for RestoreFromRegistry
@@ -62,6 +63,7 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const std::string csv    = ctx.image_labels_csv;
     const std::string name   = ctx.dataset_name;
     const int layout         = ctx.image_layout;
+    const std::vector<std::string> display_names = ctx.image_class_names;
 
     state->dataset_name = name;
     state->previous_dataset_name = ctx.previous_dataset_name;
@@ -70,7 +72,7 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading images " + name,
-        [folder, csv, name, layout, state]
+        [folder, csv, name, layout, display_names, state]
         (cyxwiz::LambdaTask& task) {
             try {
                 task.ReportProgress(0.1f, "Scanning folder");
@@ -111,19 +113,22 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 img_entry.num_images  = info.num_samples;
                 img_entry.num_classes = info.num_classes;
                 img_entry.class_names = info.class_names;
+                img_entry.display_names = display_names;
                 // LoadImageFolder / LoadImageCSV may uniquify the
                 // registry key. Use the DatasetHandle name here, not
                 // DatasetInfo::name: for ImageCSVDataset the info name
                 // is a display label like "cat_dog (CSV)", which is not
                 // the actual key stored in DataRegistry::datasets_.
                 reg.RegisterImageDataset(canonical_name, img_entry);
+                // The index table follows on a task of its own: Loaded does not wait.
+                cyxwiz::BuildImageIndexInBackground(canonical_name, img_entry, img_entry.display_names);
 
                 state->success      = true;
                 state->backend      = 3;
                 state->dataset_name = canonical_name;  // may have been uniquified
                 state->rows         = static_cast<int64_t>(info.num_samples);
                 state->cols         = 1;
-                // Decoded per batch at the graph's Resize size: nothing is held.
+                // Nothing in memory: training decodes once into cache/images (PrepareImageSet).
                 state->bytes        = 0;
                 state->num_classes  = info.num_classes;
                 state->message      = "Loaded " +

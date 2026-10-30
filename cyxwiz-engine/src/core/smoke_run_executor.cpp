@@ -10,7 +10,7 @@
 #include "label_column_resolver.h"
 #include "metric_learning_sampling.h"
 #include "model_builder.h"
-#include "pipeline_materializer.h"
+#include "training_input_preparation.h"
 #include "sparse_feature_dataset_batcher.h"
 #include "training_batcher_setup.h"
 #include <algorithm>
@@ -182,41 +182,29 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     std::unique_ptr<IBatcher> batcher;
     std::string batcher_source;
 
-    if (registry.IsArrowDataset(config.dataset_name) && !links.empty()) {
-        PipelineOperatorExecutionContext materialization_context;
-        materialization_context.cancellation_requested = stop_requested;
-        auto materialized = PipelineMaterializer::Materialize(
-            nodes, links, registry, config.dataset_name, options.cache_config,
-            {}, std::move(materialization_context));
-        if (!materialized.success &&
-            materialized.failure_kind == MaterializationFailureKind::Cancelled) {
+    const int feeder = TrainingInputFeeder(nodes, links);
+    if (registry.IsArrowDataset(config.dataset_name) && feeder >= 0) {
+        // The data steps before the Data Split, as Train runs them: the table
+        // kept on disk, else a run of those steps (TOFIX178 S0-f2).
+        const auto prepared = PrepareStepResult(nodes, links, feeder, registry, options.roots,
+                                                options.cache_config, stop_requested);
+        if (prepared.cancelled) {
             result.stopped = true;
             result.summary = "Smoke Run stopped while preparing data.";
             return result;
         }
-        if (!materialized.success) {
-            result.summary = materialized.error_message;
+        if (!prepared.ok) {
+            result.summary = prepared.error;
             result.issues.push_back({
-                IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                IssueLevel::Error, -1, "DataSteps", result.summary,
                 errors::Data::MaterializationFailed
             });
             return result;
         }
+        const bool steps_made_it = prepared.dataset != config.dataset_name;
 
-        if (materialized.operators_applied > 0 &&
-            materialized.effective_kind ==
-                PipelineMaterializerSourceKind::SparseFeatureDataset) {
-            auto sparse_dataset =
-                registry.GetSparseFeatureDataset(materialized.effective_dataset_name);
-            if (!sparse_dataset) {
-                result.summary = "Materialized sparse dataset is unavailable: " +
-                                 materialized.effective_dataset_name;
-                result.issues.push_back({
-                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
-                    errors::Data::MaterializationFailed
-                });
-                return result;
-            }
+        if (steps_made_it && registry.IsSparseFeatureDataset(prepared.dataset)) {
+            auto sparse_dataset = registry.GetSparseFeatureDataset(prepared.dataset);
             // Same training batcher Train builds from the Data Loader and Data
             // Split settings (seeded shuffle, stratified split, class
             // balancing), so the bounded sample is representative instead of
@@ -237,17 +225,15 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 });
                 return result;
             }
-            batcher_source = "materialized sparse features";
+            batcher_source = "prepared sparse features";
             config.input_size = static_cast<size_t>(sparse_dataset->GetNumFeatures());
             config.input_shape = {config.input_size};
-        } else if (materialized.operators_applied > 0) {
-            auto arrow_dataset =
-                registry.GetArrowDataset(materialized.effective_dataset_name);
+        } else if (steps_made_it) {
+            auto arrow_dataset = registry.GetArrowDataset(prepared.dataset);
             if (!arrow_dataset || !arrow_dataset->GetSchema()) {
-                result.summary = "Materialized Arrow text table is unavailable: " +
-                                 materialized.effective_dataset_name;
+                result.summary = "The prepared text table is unavailable: " + prepared.dataset;
                 result.issues.push_back({
-                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                    IssueLevel::Error, -1, "DataSteps", result.summary,
                     errors::Data::MaterializationFailed
                 });
                 return result;
@@ -256,7 +242,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             const int label_idx =
                 FindCommonLabelColumnIndex(arrow_dataset->GetSchema());
             if (label_idx < 0) {
-                result.summary = "Materialized Arrow text table has no label column.";
+                result.summary = "The prepared text table has no label column.";
                 result.issues.push_back({
                     IssueLevel::Error, -1, "ArrowDataset", result.summary,
                     errors::Data::RequiredLabelColumnMissing
@@ -282,7 +268,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 BatcherPhase::Train,
                 0.0f,
                 static_cast<uint32_t>(config.dataloader_seed));
-            batcher_source = "materialized Arrow text";
+            batcher_source = "prepared Arrow text";
 
             if (arrow_dataset->GetNumColumns() > 1) {
                 config.input_size =

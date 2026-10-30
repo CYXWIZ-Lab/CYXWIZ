@@ -6,6 +6,7 @@
 
 #include "graph_model.h"
 #include "node_metadata.h"
+#include "pipeline_runtime_capabilities.h"
 
 #include <optional>
 #include <string>
@@ -24,6 +25,11 @@ std::optional<NodeMetadata> ResolveNodeMetadata(const gui::MLNode& node);
 // code at all: a script without them would leave the layer out and still run
 // (TOFIX125 P6). Built-in nodes and signal nodes: nothing.
 std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node);
+
+// What an extension node is to the toolbar's Train check, as the compiler
+// counts it: a trainable layer (role Layer) is a model layer, a loss node the
+// loss; nothing for activations, simulation and unknown nodes.
+std::optional<PipelineTrainingSupportRole> ExtensionTrainingRole(const gui::MLNode& node);
 
 // A simulation node (a plugin's signal node) in generated code: never a
 // layer, since it is not part of a trained model (declaring one shifted every

@@ -6,6 +6,17 @@ After training, test the model on the graph's test split:
 - **Train > Test > Run Quick Test** runs the first 10 batches only. Its
   results say *quick test* and are never taken for a full run.
 
+Image and audio graphs test their Data Split's test part (or the dataset
+wired to its Test input; see image_split.md), through the same image steps
+as training. Each image's file is kept with its result.
+
+The test part is the one the model trained without: the Data Split it
+trained with (its ratios, Stratified, seed and the images a Quality node
+left out), kept with the model and in every checkpoint it saves. When the
+graph's Data Split changed since, the log says so and the test still reads
+the part the model never saw. A checkpoint saved before 2026-10-30 has no
+split recorded and is tested with the graph's current one.
+
 The test runs in the background (Task View) and, when it ends, Data Studio
 opens **Results > Test** on it. **Train > Test > View Test Results** opens it
 again later.

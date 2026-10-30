@@ -9,7 +9,11 @@
 
 namespace {
 using namespace std::chrono_literals;
-void Require(bool value, const char* reason) { if (!value) throw std::runtime_error(reason); }
+void Require(bool value, const char* reason) {
+    if (value) return;
+    std::cerr<<"FAILED: "<<reason<<"\n";
+    throw std::runtime_error(reason);
+}
 template<class Condition> void Await(Condition condition, bool pump = true) {
     const auto limit = std::chrono::steady_clock::now()+5s;
     while (!condition()) {
@@ -24,7 +28,9 @@ void RunGraphCompileTaskTests() {
     const ScopedDebugRunRootOverrideForTesting debug(std::filesystem::current_path()/"compile_task_trace");
     auto& tasks=AsyncTaskManager::Instance(); tasks.Initialize(1);
     const auto ui=std::this_thread::get_id();
-    std::atomic<bool> entered=false; bool complete=false; int heartbeats=0;
+    // The compile holds until the heartbeats are counted: a fixed sleep raced
+    // Windows' 15 ms timer tick, which stretches each 5 ms heartbeat sleep.
+    std::atomic<bool> entered=false, release=false; bool complete=false; int heartbeats=0;
     gui::MLNode node; node.id=7;
     std::vector<gui::MLNode> nodes{node};
     const auto start=std::chrono::steady_clock::now();
@@ -34,7 +40,9 @@ void RunGraphCompileTaskTests() {
             Require(ok&&config.input_size==7,"snapshot result"); complete=true;
         },[&](const auto& snapshot,const auto&) {
             Require(std::this_thread::get_id()!=ui,"compile must run on worker");
-            entered=true; std::this_thread::sleep_for(400ms);
+            entered=true;
+            const auto limit=std::chrono::steady_clock::now()+5s;
+            while(!release&&std::chrono::steady_clock::now()<limit) std::this_thread::sleep_for(1ms);
             TrainingConfiguration config;config.is_valid=true;config.input_size=snapshot.at(0).id;
             return config;
         });
@@ -47,6 +55,7 @@ void RunGraphCompileTaskTests() {
         std::this_thread::sleep_for(5ms);
     }
     Require(heartbeats==10&&!complete,"main callback pumping must remain responsive during compile");
+    release=true;
     Await([&]{return complete;});
     for(int mode=0;mode<3;++mode) {
         bool delivered=false;

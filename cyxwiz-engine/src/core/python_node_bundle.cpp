@@ -262,11 +262,16 @@ std::vector<fs::path> FindPythonBundles(const std::vector<fs::path>& roots) {
     for (const auto& root : roots) {
         std::error_code ec;
         if (!fs::is_directory(root, ec)) continue;
+        std::vector<fs::path> here;
         for (const auto& item : fs::directory_iterator(root, ec)) {
-            if (item.is_directory(ec) && item.path().extension() == ".cyxnode") found.push_back(item.path());
+            if (item.is_directory(ec) && item.path().extension() == ".cyxnode") here.push_back(item.path());
         }
+        // Sorted within a root only: the roots keep their order, so the
+        // project's bundle comes before a user bundle with the same id
+        // whatever the drive or folder names.
+        std::sort(here.begin(), here.end());
+        found.insert(found.end(), here.begin(), here.end());
     }
-    std::sort(found.begin(), found.end());
     return found;
 }
 

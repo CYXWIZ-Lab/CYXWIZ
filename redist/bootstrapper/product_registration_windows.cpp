@@ -439,4 +439,18 @@ ProductUnregistrationResult UnregisterPlatformProduct(
     return result;
 }
 
+std::optional<std::filesystem::path> RegisteredPlatformInstallRoot(
+    ProductInstallScope scope) {
+    const HKEY hive = scope == ProductInstallScope::AllUsers
+        ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+    std::vector<wchar_t> value(32768, L'\0');  // the longest Windows path
+    DWORD size = static_cast<DWORD>(value.size() * sizeof(wchar_t));
+    const LSTATUS status = ::RegGetValueW(
+        hive,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CyxWiz",
+        L"InstallLocation", RRF_RT_REG_SZ, nullptr, value.data(), &size);
+    if (status != ERROR_SUCCESS || value[0] == L'\0') return std::nullopt;
+    return std::filesystem::path(value.data());
+}
+
 }  // namespace cyxwiz::runtime::detail

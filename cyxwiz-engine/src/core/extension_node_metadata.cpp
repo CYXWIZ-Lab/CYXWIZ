@@ -63,6 +63,17 @@ std::optional<std::string> ExtensionCodeExportRefusal(const gui::MLNode& node) {
     return std::nullopt;
 }
 
+std::optional<PipelineTrainingSupportRole> ExtensionTrainingRole(const gui::MLNode& node) {
+    if (node.type != gui::NodeType::PluginCustom) return std::nullopt;
+    const auto descriptor = ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    if (!descriptor) return std::nullopt;
+    if (descriptor->kind == ExtensionNodeKind::Loss) return PipelineTrainingSupportRole::Loss;
+    if (descriptor->kind == ExtensionNodeKind::TensorLayer && descriptor->role == ExtensionLayerRole::Layer) {
+        return PipelineTrainingSupportRole::ModelLayer;
+    }
+    return std::nullopt;
+}
+
 std::string SimulationNodeCodeComment(const gui::MLNode& node, const char* framework, const std::string& indent) {
     std::string out = indent + "# " + node.name + " (" + node.extension_type_id +
                       ") is a simulation node, not part of this model";

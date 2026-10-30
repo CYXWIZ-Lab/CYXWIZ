@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <utility>
+#include "../core/studio_toolbar_presentation.h"
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 #include "../core/compile_report_presentation.h"
 #include "../core/cross_validation_runner.h"
@@ -210,6 +211,7 @@ private:
     // Status bar height follows the interface text size (TOFIX129).
     static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
+    void RenderPythonRestartNotice();
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
@@ -301,6 +303,7 @@ private:
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
     cyxwiz::compile_report::Report compile_report_;
+    cyxwiz::compile_report::Mode compile_report_mode_ = cyxwiz::compile_report::Mode::Compile;
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.
@@ -330,17 +333,28 @@ private:
     std::vector<DataInputLoad> data_input_loads_;
     std::string data_input_loads_project_;
     bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // Train on a graph whose Training Dataset path has pipeline-run steps
+    // (SQL, Text Clean ...): run them first, then train on the result.
+    bool StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void PollTrainingPipelineRun();
+    struct TrainingPipelineRun {
+        uint64_t task_id = 0;
+        int feeder = -1;
+        std::string project;
+    };
+    std::optional<TrainingPipelineRun> training_pipeline_run_;
+    std::string training_pipeline_result_;  // read by the next StartTrainingFromGraph
     void PollDataInputLoads();
 
-    // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
-    // fingerprint of the (nodes, links) tuple at the moment of the last
-    // *successful* Local Debug run. `have_last_debug_result_` gates the
-    // cache (0 is a valid hash and "no prior run" needs to be
-    // distinguishable). StartTrainingFromGraph checks these to warn the
-    // user if the graph has drifted since the last debug — or, under
-    // EngineConfig::RequireDebugBeforeTrain(), blocks training outright.
-    uint64_t last_debug_graph_hash_ = 0;
-    bool have_last_debug_result_ = false;
+    // The last Local Debug run (TOFIX178 UI-1): passed or failed, when, why,
+    // and the HashGraphStructure of the graph it ran on. The canvas bar shows
+    // it; StartTrainingFromGraph warns when it is not a pass on the graph as
+    // it is now, or, under EngineConfig::RequireDebugBeforeTrain(), refuses.
+    cyxwiz::studio_toolbar::DebugInputs local_debug_;
+    uint64_t local_debug_graph_hash_ = 0;
+    double local_debug_checked_at_ = -1.0;
+    // Twice a second: is the canvas still the graph the run used?
+    void UpdateLocalDebugStatus();
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;
@@ -351,6 +365,10 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    // Scopes the dataset catalog subscription that recompiles the graph when a
+    // dataset is added, replaced or removed (declared after live_compile_, so
+    // it goes first).
+    std::shared_ptr<int> live_compile_datasets_ = std::make_shared<int>(0);
     void UpdateLiveCompile();
     // Python node bundles (TOFIX125 P4): registered from <project>/nodes,
     // the user nodes folder and plugin nodes/ folders; Python is started
@@ -358,7 +376,14 @@ private:
     std::unique_ptr<cyxwiz::PythonNodeProvider> python_node_provider_;
     double python_nodes_checked_at_ = -1.0;
     std::string python_start_error_logged_;
+    bool graph_needs_python_ = false;  // the open graph uses an approved Python node
     void UpdatePythonNodes();
+    // The running interpreter follows the open project's environment: moved
+    // in place when it can be, otherwise a restart is asked for.
+    void SyncProjectPython();
+    std::string python_restart_reason_;  // non-empty: this project needs a restart
+    std::string python_restart_project_; // the project that verdict is for
+    bool python_sync_pending_ = false;   // a project closed: sync on the next frame
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;

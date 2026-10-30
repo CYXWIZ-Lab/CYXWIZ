@@ -21,6 +21,22 @@ namespace gui {
 
 namespace {
 
+// The OpenCV image steps (TOFIX178 1.3f) are done once with the images.
+bool DoneOnceWithImages(NodeType type) {
+    switch (type) {
+        case NodeType::ImageContrast:
+        case NodeType::ImageDenoise:
+        case NodeType::ImageSharpen:
+        case NodeType::ImageEdges:
+        case NodeType::ImageSmooth:
+        case NodeType::ImageWarp:
+        case NodeType::ImagePyramid:
+            return true;
+        default:
+            return false;
+    }
+}
+
 const cyxwiz::SupportAxisDefinition* FindSupportAxis(
     const cyxwiz::NodeMetadata* metadata,
     const char* axis_name) {
@@ -569,6 +585,10 @@ void NodeEditor::ShowNodeAddSearch() {
                     ImGui::PopStyleColor();
                 } else {
                     ImGui::TextColored(t.text_bright, "%s", node->name.c_str());
+                    if (DoneOnceWithImages(node->type)) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(t.success, "once");
+                    }
                 }
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 18));

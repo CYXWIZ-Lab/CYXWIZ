@@ -125,10 +125,20 @@ PythonNodeRuntime& PythonNodeRuntime::Instance() {
 
 bool PythonNodeRuntime::Available() { return true; }
 
+void PythonNodeRuntime::SetRestartReason(std::string reason) {
+    std::lock_guard<std::mutex> lock(restart_mutex_);
+    restart_reason_ = std::move(reason);
+}
+
 bool PythonNodeRuntime::Ready(std::string& error) {
-    if (Py_IsInitialized()) return true;
+    if (Py_IsInitialized()) {
+        std::lock_guard<std::mutex> lock(restart_mutex_);
+        if (restart_reason_.empty()) return true;
+        error = restart_reason_;
+        return false;
+    }
     wanted_.store(true);
-    error = "Python is not running yet; the Engine starts it for Python nodes (open a project)";
+    error = "Python is starting for the Python nodes (it needs an open project); try again in a moment";
     return false;
 }
 
@@ -327,6 +337,8 @@ std::shared_ptr<ITensorLossFactory> MakePythonLossFactory(const PythonBundle& bu
 #else  // !CYXWIZ_HAS_PYTHON
 
 bool PythonNodeRuntime::Available() { return false; }
+
+void PythonNodeRuntime::SetRestartReason(std::string) {}
 
 bool PythonNodeRuntime::Ready(std::string& error) {
     error = "Python is not available in this build of CyxWiz";

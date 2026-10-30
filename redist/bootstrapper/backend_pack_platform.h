@@ -83,6 +83,15 @@ inline std::string CurrentArrayFireBackendPluginRelativePath(
     return "runtime/" + CurrentArrayFireBackendPluginName(backend);
 }
 
+// The launcher's command-line build, beside it in the install root.
+constexpr std::string_view CurrentCommandLineToolExecutableName() {
+#if defined(_WIN32)
+    return "cyxwiz-cli.exe";
+#else
+    return "cyxwiz-cli";
+#endif
+}
+
 constexpr std::string_view CurrentProductRemovalFinalizerExecutableName() {
 #ifdef _WIN32
     return "cyxwiz-product-removal-finalizer.exe";
@@ -100,7 +109,7 @@ constexpr std::string_view CurrentInstallerManagerExecutableName() {
 }
 
 // The C++ plugin check tool in the base (TOFIX125 P5), started with
-// `cyxwiz-runtime-bootstrapper --plugin-check <plugin folder>...`.
+// `cyxwiz-cli plugin-check <plugin folder>...`.
 constexpr std::string_view CurrentPluginCheckExecutableName() {
 #ifdef _WIN32
     return "cyxwiz-plugin-check.exe";

@@ -765,12 +765,14 @@ void TestView::RenderPredictions(const TestingMetrics& m) {
         "Only mistakes " + FormatCompiledCount(static_cast<long long>(view_.mistakes.size())) + ", most confident first";
     const char* modes[] = {all.c_str(), mistakes.c_str()};
     ui::SegmentedControl("##predictions_mode", modes, 2, &predictions_mode_);
-    const bool by_dataset = m.row_ids.size() == samples;
+    // Images name each sample's file (TOFIX178 1.5); tables give its row.
+    const bool by_file = m.row_files.size() == samples;
+    const bool by_dataset = by_file || m.row_ids.size() == samples;
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
     if (!ImGui::BeginTable("##predictions", by_dataset ? 5 : 4, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("#", 0, 0.5f);
-    if (by_dataset) ImGui::TableSetupColumn("Dataset row", 0, 0.8f);
+    if (by_dataset) ImGui::TableSetupColumn(by_file ? "File" : "Dataset row", 0, by_file ? 1.6f : 0.8f);
     ImGui::TableSetupColumn("Predicted", 0, 1.2f);
     ImGui::TableSetupColumn("Actual", 0, 1.2f);
     ImGui::TableSetupColumn("Confidence", 0, 1.2f);
@@ -788,7 +790,12 @@ void TestView::RenderPredictions(const TestingMetrics& m) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Text("%zu", i);
-            if (by_dataset) {
+            if (by_file) {
+                ImGui::TableNextColumn();
+                const std::string& path = m.row_files[i];
+                ImGui::TextUnformatted(std::filesystem::path(path).filename().string().c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+            } else if (by_dataset) {
                 ImGui::TableNextColumn();
                 const std::string row = DatasetRow(m, i, samples);
                 ImGui::TextUnformatted(row.c_str());

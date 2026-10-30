@@ -20,6 +20,7 @@ namespace cyxwiz {
 class ClusteringOperatorBase : public IPipelineOperator {
 public:
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
     }

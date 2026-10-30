@@ -535,6 +535,33 @@ int main() {
     }
 
     {
+        // An image folder is labelled by its class folders or labels CSV: no
+        // "Label column" row, before or after loading.
+        auto input = MakeNode(1, gui::NodeType::DataInput, "Image input");
+        input.parameters["file_category"] = "image";
+        input.parameters["dataset_name"] = "cat_dog";
+        input.parameters["labels_csv"] = "cat_dog.csv";
+
+        const auto unloaded = gui::properties_truth::ResolveNodeTruth(input, gui::properties_truth::NodeTruthContext{});
+        Check(unloaded.properties.empty() && !unloaded.has_issue, "unloaded image input has no label column row");
+
+        gui::properties_truth::DatasetTruthFact fact;
+        fact.dataset_name = "cat_dog";
+        fact.backing_store = "ImageDataset";
+        fact.found = true;
+        fact.rows = 25000;
+        fact.has_labels = true;
+        fact.has_class_count = true;
+        fact.class_count = 2;
+        std::vector<gui::properties_truth::DatasetTruthFact> facts = {fact};
+        const auto report = gui::properties_truth::ResolveNodeTruth(
+            input, gui::properties_truth::NodeTruthContext{nullptr, nullptr, &facts});
+        Check(report.properties.size() == 1 && report.properties[0].canonical_key == "dataset_class_count",
+              "loaded image input shows its classes only");
+        Check(!report.has_issue, "loaded image input with classes has no issue");
+    }
+
+    {
         auto input = MakeNode(1, gui::NodeType::DataInput, "Tabular input");
         input.parameters["dataset_name"] = "table";
         input.parameters["label_column"] = "missing";

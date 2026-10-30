@@ -21,6 +21,7 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 | Depthwise Conv2D (`kernel_size`, `stride`, `padding`, `depth_multiplier` M) | same formula, `C x M` channels; channel `c*M + m` sees only input channel `c` | `nn.Conv2d(C, C*M, k, groups=C)` |
 | MaxPool2D / AvgPool2D (`pool_size`, `stride`) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
+| BatchNorm (`eps`, `momentum`) | unchanged; one mean and variance per channel over the batch and every pixel | `nn.BatchNorm2d` (after Flatten the same node is `nn.BatchNorm1d`) |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |
 | Adaptive Avg Pool (`output_size` s) | `[s, s, C]` for any H, W (cell i averages rows `floor(i*H/s)` to `ceil((i+1)*H/s) - 1`) | `nn.AdaptiveAvgPool2d(s)` |
 | Upsample, PixelShuffle | scaled | `nn.Upsample` / `nn.PixelShuffle` |
@@ -46,6 +47,27 @@ Rules the compiler checks:
   sample to average.
 - No convolution layer after the Flatten or Global Avg Pool.
 - Only the layers in the first table run before it.
+
+## Residual blocks
+
+A layer's output can feed two nodes, and **Add** joins them again, before
+Flatten as well as after it. That is a ResNet block:
+
+```
+... -> ReLU --+--> Conv 3x3 (stride 2) -> BatchNorm -> ReLU -> Conv 3x3 -> BatchNorm --+
+              |                                                                       Add -> ReLU -> ...
+              +--> Conv 1x1 (stride 2) -> BatchNorm ----------------------------------+
+```
+
+- The two inputs of Add must have the same shape `[H, W, C]`. When the main
+  path changes the size or the channels (stride 2, more filters), give the
+  shortcut a 1x1 Conv with the same stride and filters, as above; when it does
+  not, link the block's input straight to Add (identity shortcut).
+- Each layer is built from its own input in the graph, so a shortcut Conv
+  takes the block's input (`[64, 64, 16]`), not the main path's.
+- BatchNorm learns while training (batch statistics, running mean and
+  variance updated) and uses the running statistics when the model is tested
+  or used.
 
 ## Conv1D: convolution over a sequence
 
@@ -88,7 +110,12 @@ and Conv1D included, against torch (forward, input gradient and parameter gradie
 `tests/computation_truth/fixtures/spatial_layers_pytorch.json`).
 `cnn_graph_training_contract` compiles the example graph with Flatten and with
 Global Avg Pool, checks the shapes and parameter counts against torch's, and
-runs it forward and backward. `conv1d_graph_pytorch_parity` builds a Conv1D
+runs it forward and backward; it also builds Conv -> BatchNorm -> ReLU, an
+identity residual block and a downsampling block, and sets torch's weights on a
+residual CNN (stem, downsampling block with a projection shortcut, Global Avg
+Pool, Dense) to match torch's logits, input gradient, every layer's gradients and
+BatchNorm's running statistics on CUDA, OpenCL and CPU
+(`tests/computation_truth/fixtures/cnn_graph_pytorch.json`). `conv1d_graph_pytorch_parity` builds a Conv1D
 graph on table rows (Flatten) and on an Embedding (Global Avg Pool, and the
 text CNN with Global Max Pool), sets
 torch's parameters on the built model and matches torch's output and every

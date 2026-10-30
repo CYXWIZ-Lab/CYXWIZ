@@ -177,6 +177,77 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
     return nullptr;
 }
 
+// A step before the Data Split that learns from every row (PCA here, behind
+// another step) is warned with CW-C-0206 (TOFIX178 S0-g5). Its own function:
+// main's frame is near the stack limit.
+void CheckEveryRowStepWarned(const gui::MLNode& source, const gui::MLNode& run_step,
+                             const std::vector<gui::MLNode>& split_to_model) {
+    auto every_row = Node(
+        68,
+        gui::NodeType::PCANode,
+        "Reduce",
+        {Pin(6801, gui::PinType::Dataset, "Data", true)},
+        {Pin(6802, gui::PinType::Dataset, "Reduced", false)});
+    std::vector<gui::MLNode> nodes = {source, run_step, every_row};
+    nodes.insert(nodes.end(), split_to_model.begin(), split_to_model.end());
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(nodes, {
+        Link(1, 60, 6001, 66, 6601),
+        Link(2, 66, 6602, 68, 6801),
+        Link(3, 68, 6802, 62, 6201),
+        Link(4, 62, 6204, 63, 6301),
+        Link(5, 63, 6302, 2, 201),
+        Link(6, 2, 202, 14, 1401),
+        Link(7, 63, 6303, 14, 1402),
+        Link(8, 14, 1403, 5, 501)}, true);
+    bool warned = false;
+    for (const auto& issue : config.issues)
+        warned |= issue.level == cyxwiz::IssueLevel::Warning && issue.node_id == every_row.id &&
+                  issue.error_code == std::string(cyxwiz::errors::Compiler::LearnsFromEveryRow) &&
+                  issue.message.find("'Reduce' learns from every row before the Data Split") != std::string::npos;
+    Check(warned, "PCA behind another step before the Data Split is warned (CW-C-0206)");
+}
+
+// A label the steps make (a SQL / Rename before the Split): not in the
+// source, so it is a warning checked when they run (TOFIX178 S0-e). Its own
+// function: main's frame is near the stack limit.
+void CheckLabelMadeBySteps(const gui::MLNode& source,
+                           const std::vector<gui::MLNode>& steps_to_model,
+                           const std::vector<gui::MLNode>& plain_to_model,
+                           const std::vector<gui::NodeLink>& run_links,
+                           const std::vector<gui::NodeLink>& plain_links) {
+    cyxwiz::GraphCompiler compiler;
+    auto labelled = source;
+    labelled.parameters["dataset_name"] = "compiler_schema_contract";
+    labelled.parameters["file_category"] = "tabular";
+    labelled.parameters["label_column"] = "species";
+    std::vector<gui::MLNode> nodes{labelled};
+    nodes.insert(nodes.end(), steps_to_model.begin(), steps_to_model.end());
+    auto config = compiler.Compile(nodes, run_links, true);
+    Check(config.is_valid, "a label the steps make compiles: " + config.error_message);
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning, "the steps before the Data Split must make it"),
+          "the missing source label is a warning naming who must make it");
+    Check(config.dataset_roles.train.label_column == "species" && config.target.primary_column == "species",
+          "training looks for the requested label on the steps' result");
+    // The Data Split's Label column wins over the Data Input's.
+    auto source_label = labelled;
+    source_label.parameters["label_column"] = "class";
+    nodes = {source_label};
+    nodes.insert(nodes.end(), steps_to_model.begin(), steps_to_model.end());
+    for (auto& node : nodes)
+        if (node.type == gui::NodeType::DataSplit) node.parameters["label_column"] = "species";
+    config = compiler.Compile(nodes, run_links, true);
+    Check(config.is_valid && config.dataset_roles.train.label_column == "species",
+          "the Split's label column is the label: " + config.dataset_roles.train.label_column);
+
+    nodes = {labelled};
+    nodes.insert(nodes.end(), plain_to_model.begin(), plain_to_model.end());
+    config = compiler.Compile(nodes, plain_links, true);
+    Check(!HasIssueText(config, cyxwiz::IssueLevel::Warning, "the steps before the Data Split must make it") &&
+              HasIssueText(config, "is not present in registered dataset"),
+          "without a pipeline-run step a missing label is reported as before");
+}
+
 } // namespace
 
 int main() {
@@ -2547,11 +2618,40 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "Dataset-preserving preprocessing before Data Split should compile");
+    Check(!HasIssueCode(config, cyxwiz::errors::Compiler::LearnsFromEveryRow),
+          "a scaler learns from the Train rows: no every-row warning");
     Check(config.dataset_roles.train.dataset_name == "role_train_dataset" &&
               config.dataset_roles.train.source_node_id == role_train.id,
           "Data Split should resolve Data Input through a Dataset transform");
     Check(!HasIssueText(config, "Training role must originate"),
           "valid Dataset preprocessing must not obscure the Training source");
+    Check(!config.training_data_needs_pipeline_run,
+          "an operator-only Training path is prepared without a pipeline run");
+
+    // SQL / Text Clean / Filter Rows run only in the pipeline run: training
+    // trains on that run's result (TOFIX178 S0-e).
+    auto run_step = Node(
+        66,
+        gui::NodeType::FilterRows,
+        "Keep Rows",
+        {Pin(6601, gui::PinType::Dataset, "Data", true)},
+        {Pin(6602, gui::PinType::Dataset, "Filtered", false)});
+    nodes = {role_train, run_step, role_transform, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    auto run_links = links;
+    run_links[0] = Link(1, 60, 6001, 66, 6601);
+    run_links.push_back(Link(8, 66, 6602, 65, 6501));
+    config = compiler.Compile(nodes, run_links, true);
+    Check(config.is_valid, "a Filter Rows step before the Data Split compiles: " + config.error_message);
+    Check(config.training_data_needs_pipeline_run,
+          "a pipeline-run step on the Training path asks for the pipeline run");
+    Check(config.dataset_roles.train.source_node_id == role_train.id,
+          "the Training source is still the Data Input behind the run step");
+
+    CheckLabelMadeBySteps(role_train,
+                          {run_step, role_transform, role_split, role_loader, binary_dense, binary_loss, optimizer},
+                          {role_transform, role_split, role_loader, binary_dense, binary_loss, optimizer},
+                          run_links, links);
 
     auto false_dataset_transform = Node(
         67,
@@ -2568,6 +2668,24 @@ int main() {
               HasIssueText(config, "Training role must originate"),
           "Dataset-shaped nodes without a materializer owner must not hide "
           "the Data Split source contract");
+
+    // A supplied Test input goes through the Training branch's steps; steps of
+    // its own are refused (TOFIX178 S0-g4).
+    nodes = {role_train, role_test, run_step, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    config = compiler.Compile(nodes, {
+        Link(1, 60, 6001, 62, 6201),
+        Link(2, 61, 6101, 66, 6601),
+        Link(3, 66, 6602, 62, 6203),
+        Link(4, 62, 6204, 63, 6301),
+        Link(5, 63, 6302, 2, 201),
+        Link(6, 2, 202, 14, 1401),
+        Link(7, 63, 6303, 14, 1402),
+        Link(8, 14, 1403, 5, 501)}, true);
+    Check(!config.is_valid && HasIssueText(config, "Test input goes through the Training branch's steps"),
+          "a step on the Test input is refused with its reason");
+    CheckEveryRowStepWarned(role_train, run_step,
+                            {role_split, role_loader, binary_dense, binary_loss, optimizer});
 
     auto role_dev = Node(
         64,

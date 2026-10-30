@@ -21,6 +21,7 @@ struct ImNodesEditorContext;
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
 
@@ -276,6 +277,14 @@ public:
     // The background compile of this graph (TOFIX123): link tooltips show
     // the compiler's reason for a failed node. Owned by MainWindow.
     void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+    const cyxwiz::LiveGraphCompile* GetLiveCompile() const { return live_compile_; }
+    // The last Local Debug run against this graph, for the canvas bar
+    // (TOFIX178 UI-1); MainWindow sets it every frame.
+    void SetLocalDebugStatus(const cyxwiz::studio_toolbar::DebugInputs& status, bool require_debug) {
+        local_debug_status_ = status;
+        require_debug_before_train_ = require_debug;
+    }
+    void SetOpenDebuggerCallback(std::function<void()> callback) { open_debugger_callback_ = std::move(callback); }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -375,6 +384,19 @@ public:
     // A node newly selected on the canvas (the Info panel shows it).
     using NodeSelectedCallback = std::function<void(const MLNode&)>;
     void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
+
+    // The table node `node_id` holds from the canvas runs when it and every step
+    // before it are unchanged since (TOFIX178 S0-d: training uses it instead of
+    // preparing the data again); nothing while a run executes.
+    std::optional<std::string> CurrentRunResult(int node_id);
+    // The table node `node_id` got in the last finished run, while it is
+    // loaded: Train reads it after running the steps itself (TOFIX178 S0-e;
+    // a step that writes a file always runs, so its result is never current).
+    std::optional<std::string> LastRunResult(int node_id) const;
+    // The columns of the table reaching `node_id`'s first input: the last
+    // run's result of the step feeding it, or the Data Input's loaded table
+    // when one is wired directly. Empty when neither is known yet.
+    std::vector<std::string> InputColumns(int node_id) const;
 
     // Check if graph is ready for training
     bool IsGraphValid() const;
@@ -762,6 +784,11 @@ private:
     void RenderHoveredNodeTooltip(int hovered_node_id);
     void SyncPipelineExecutionVisualization();
     void RenderMinimap();
+    // The strip along the canvas bottom: the counts, the selection and what
+    // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
+    void RenderCanvasFooter();
+    static constexpr float kCanvasFooterHeight = 26.0f;
+    int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
     void HandleInteractions();
     void ShowContextMenu();
     void ConfigureNode(int node_id);
@@ -989,6 +1016,9 @@ private:
     // Current file path for save/load
     std::string current_file_path_;
     const cyxwiz::LiveGraphCompile* live_compile_ = nullptr;
+    cyxwiz::studio_toolbar::DebugInputs local_debug_status_;
+    bool require_debug_before_train_ = false;
+    std::function<void()> open_debugger_callback_;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
     struct PendingNode {
@@ -1104,6 +1134,7 @@ private:
     // Zoom state
     float zoom_ = 1.0f;
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
+    ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
     static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
     static constexpr float ZOOM_MAX = 2.0f;
 
@@ -1160,6 +1191,9 @@ private:
 
     // Flag to recreate ImNodes editor context (full reset)
     bool pending_context_reset_ = false;
+    // Undo and Redo keep the canvas where it was across that reset; a cleared
+    // or loaded graph starts from the origin.
+    bool pending_context_keep_view_ = false;
 
     // UI-owned rejection feedback, rendered even when the Studio tab is hidden.
     bool graph_busy_dialog_pending_ = false;

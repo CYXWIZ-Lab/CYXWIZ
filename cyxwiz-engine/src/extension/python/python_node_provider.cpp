@@ -52,6 +52,19 @@ void AppendFileStamp(std::ostringstream& out, const fs::path& path) {
 
 }  // namespace
 
+bool PythonNodeProvider::UsesApprovedNode(const std::vector<gui::MLNode>& nodes) const {
+    for (const auto& node : nodes) {
+        if (node.type != gui::NodeType::PluginCustom) continue;
+        std::string provider_id;
+        std::string type_name;
+        if (!SplitExtensionTypeId(node.extension_type_id, provider_id, type_name)) continue;
+        for (const auto& state : bundles_) {
+            if (state.approved && state.bundle.id == provider_id) return true;
+        }
+    }
+    return false;
+}
+
 std::string PythonBundleNotApprovedMessage(const std::string& bundle_id) {
     return "the code of Python node bundle " + bundle_id +
            " is not approved yet; approve it in the Plugin Manager to run it";

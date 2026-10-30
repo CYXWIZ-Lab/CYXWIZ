@@ -273,7 +273,7 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     const bool regression_mode = UsesContinuousTargetMetrics(config_);
     const std::string source_dataset = use_arrow_dataset_ && arrow_dataset_       ? arrow_dataset_->GetName()
                                        : use_parquet_dataset_ && parquet_dataset_ ? parquet_dataset_->GetName()
-                                                                                  : std::string();
+                                                                                  : external_source_.source_dataset;
     UpdateMetrics([regression_mode, &source_dataset](TestingMetrics& m) {
         m.current_batch = 0;
         m.total_batches = 0;
@@ -296,6 +296,7 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.regression_width = 0;
         m.regression_note.clear();
         m.row_ids.clear();
+        m.row_files.clear();
         m.source_dataset = source_dataset;
         m.class_probabilities.clear();
         m.probability_classes = 0;
@@ -493,8 +494,15 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
     // The samples' dataset rows; a batch without them leaves row_ids shorter
     // than the samples, which readers take as "rows not known".
     if (batch.row_ids.size() == batch.size) {
-        UpdateMetrics([&batch](TestingMetrics& m) {
+        std::vector<std::string> files;
+        if (external_source_.row_file) {
+            files.reserve(batch.size);
+            for (const int64_t row : batch.row_ids) files.push_back(external_source_.row_file(row));
+        }
+        UpdateMetrics([&batch, &files](TestingMetrics& m) {
             m.row_ids.insert(m.row_ids.end(), batch.row_ids.begin(), batch.row_ids.end());
+            m.row_files.insert(m.row_files.end(), std::make_move_iterator(files.begin()),
+                               std::make_move_iterator(files.end()));
         });
     }
     if (UsesContinuousTargetMetrics(config_)) {

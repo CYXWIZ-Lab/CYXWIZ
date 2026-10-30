@@ -180,6 +180,13 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
         case NodeType::AugmentationPreset:
+        case NodeType::ImageContrast:
+        case NodeType::ImageDenoise:
+        case NodeType::ImageSharpen:
+        case NodeType::ImageEdges:
+        case NodeType::ImageSmooth:
+        case NodeType::ImageWarp:
+        case NodeType::ImagePyramid:
         case NodeType::QualityAnalyzer: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;

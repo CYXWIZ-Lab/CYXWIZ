@@ -19,7 +19,6 @@ struct DataRegistry::PreparedArrowPublication::Impl {
     decltype(last_access_times_)::node_type access;
     decltype(arrow_datasets_)::node_type displaced_arrow;
     decltype(parquet_backed_datasets_)::node_type displaced_parquet;
-    decltype(materialization_provenance_)::node_type displaced_provenance;
     decltype(last_access_times_)::node_type displaced_access;
 };
 
@@ -152,7 +151,6 @@ bool DataRegistry::TryPublishPreparedArrowTable(PreparedArrowPublication& prepar
         value.access.mapped() = std::chrono::steady_clock::now();
         value.displaced_arrow = arrow_datasets_.extract(name);
         value.displaced_parquet = parquet_backed_datasets_.extract(name);
-        value.displaced_provenance = materialization_provenance_.extract(name);
         value.displaced_access = last_access_times_.extract(name);
         ForgetTabularSourcePathUnlocked(name);
         arrow_datasets_.insert(std::move(value.arrow));

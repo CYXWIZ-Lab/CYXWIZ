@@ -14,9 +14,11 @@
 
 namespace cyxwiz {
 
-void ScriptEditorPanel::StartEditorRun(const std::string& code) {
+void ScriptEditorPanel::StartEditorRun(const std::string& code, const std::string& file) {
     running_indicator_time_ = 0.0f;
-    script_running_ = scripting_engine_->ExecuteScriptAsync(code);
+    scripting::ScriptingEngine::RunCallbacks callbacks;
+    callbacks.script_filename = file;
+    script_running_ = scripting_engine_->ExecuteScriptAsync(code, std::move(callbacks));
     if (!script_running_ && script_output_sink_) {
         // A notebook cell or another run holds the interpreter.
         script_output_sink_->AppendScriptOutput(
@@ -92,7 +94,7 @@ void ScriptEditorPanel::DoRunScript() {
     }
 
     // Execute asynchronously
-    StartEditorRun(script);
+    StartEditorRun(script, tab->filepath);
 }
 
 void ScriptEditorPanel::SyncActiveCellEditor(EditorTab& tab) {
@@ -232,7 +234,7 @@ void ScriptEditorPanel::RunSelection() {
     // Dedent and execute asynchronously for plot capture support
     std::string dedented = DedentCode(selected_text);
     spdlog::debug("Dedented selection:\n{}", dedented);
-    StartEditorRun(dedented);
+    StartEditorRun(dedented, {});  // part of the file: its line numbers are not the file's
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
@@ -268,7 +270,7 @@ void ScriptEditorPanel::RunCurrentSection() {
     // Dedent and execute asynchronously for plot capture support
     std::string dedented = DedentCode(section.code);
     spdlog::debug("Dedented section:\n{}", dedented);
-    StartEditorRun(dedented);
+    StartEditorRun(dedented, {});  // part of the file: its line numbers are not the file's
 }
 
 std::vector<ScriptEditorPanel::Section> ScriptEditorPanel::ParseSections(const std::string& text) {

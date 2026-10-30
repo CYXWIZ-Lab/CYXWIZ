@@ -100,7 +100,6 @@ int BlurTransform::ValidateKernelSize(int kernel_size, BlurType type) {
     // Make odd if even
     if (kernel_size % 2 == 0) {
         kernel_size += 1;
-        spdlog::debug("BlurTransform: Adjusted kernel size to {} (must be odd)", kernel_size);
     }
 
     // Median blur has stricter limits in OpenCV
@@ -173,7 +172,6 @@ bool BlurTransform::BoxBlur(
             std::memcpy(image_data.data(), result.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("BlurTransform: Applied box blur (kernel={})", kernel_size);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -210,8 +208,6 @@ bool BlurTransform::GaussianBlur(
             std::memcpy(image_data.data(), result.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("BlurTransform: Applied Gaussian blur (kernel={}, sigma={})",
-                      kernel_size, sigma);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -264,7 +260,6 @@ bool BlurTransform::MedianBlur(
             std::memcpy(image_data.data(), img.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("BlurTransform: Applied median blur (kernel={})", kernel_size);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -327,8 +322,6 @@ bool BlurTransform::BilateralFilter(
             std::memcpy(image_data.data(), img.data, image_data.size() * sizeof(float));
         }
 
-        spdlog::debug("BlurTransform: Applied bilateral filter (d={}, sigma_color={}, sigma_space={})",
-                      diameter, sigma_color, sigma_space);
         return true;
 
     } catch (const cv::Exception& e) {

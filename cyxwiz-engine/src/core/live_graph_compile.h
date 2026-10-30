@@ -47,6 +47,9 @@ public:
     // The hash of the graph seen by the last Update (a cache key for views
     // derived from the canvas, e.g. the Properties panel).
     uint64_t GraphRevision() const { return seen_revision_; }
+    // The latest finished compile is of the graph as it is now (false while
+    // an edit waits for the pause or compiles).
+    bool UpToDate() const { return result_ && result_->revision == seen_revision_; }
 
     // Error-level issues of the latest compile on this node.
     bool NodeHasError(int node_id) const;

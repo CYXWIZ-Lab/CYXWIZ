@@ -141,6 +141,28 @@ void Properties::RenderCompiledCard(MLNode& node) {
                                  {"Learnable parameters", card.parameters},
                                  {"Parameter memory", card.parameter_memory}});
         Wrapped(t.text_dim, card.parameter_note);
+    } else if (!card.table_rows.empty()) {
+        ImGui::Spacing();
+        const int columns = static_cast<int>(card.table_columns.size());
+        if (columns > 0 && ImGui::BeginTable("##split", columns, ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableNextRow();
+            for (const auto& header : card.table_columns) {
+                ImGui::TableNextColumn();
+                ImGui::TextColored(t.text_dim, "%s", header.c_str());
+            }
+            for (const auto& cells : card.table_rows) {
+                ImGui::TableNextRow();
+                for (size_t i = 0; i < cells.size(); ++i) {
+                    ImGui::TableNextColumn();
+                    if (i == 0) ImGui::TextColored(t.text_dim, "%s", cells[i].c_str());
+                    else ImGui::TextUnformatted(cells[i].c_str());
+                }
+            }
+            ImGui::EndTable();
+        }
+        for (const auto& note : card.notes) Wrapped(t.text_dim, note);
+        if (card.show_split_link && open_readiness_ && cyxwiz::ui::LinkButton("Show the split in Data Studio"))
+            open_readiness_();
     } else if (!card.no_shapes_text.empty()) {
         ImGui::Spacing();
         Wrapped(t.pending, card.no_shapes_text);

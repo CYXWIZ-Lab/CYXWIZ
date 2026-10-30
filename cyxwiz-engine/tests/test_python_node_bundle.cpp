@@ -112,6 +112,17 @@ int main() {
     fs::create_directories(work / "nodes" / "not-a-bundle");
     const auto found = cyxwiz::FindPythonBundles({FixtureBundle().parent_path(), work / "nodes", work / "missing"});
     Check(found.size() == 1 && found[0] == FixtureBundle(), "FindPythonBundles lists *.cyxnode folders only");
+    {
+        // The roots keep their order (project, then user, then plugins): a
+        // root whose path sorts later still comes first when given first.
+        fs::create_directories(work / "z_project" / "b.cyxnode");
+        fs::create_directories(work / "z_project" / "a.cyxnode");
+        fs::create_directories(work / "a_user" / "c.cyxnode");
+        const auto ordered = cyxwiz::FindPythonBundles({work / "z_project", work / "a_user"});
+        Check(ordered.size() == 3 && ordered[0] == work / "z_project" / "a.cyxnode" &&
+                  ordered[1] == work / "z_project" / "b.cyxnode" && ordered[2] == work / "a_user" / "c.cyxnode",
+              "FindPythonBundles keeps the roots' order and sorts within a root");
+    }
     Check(cyxwiz::UserPythonNodesFolder().filename() == "nodes", "the user nodes folder is .../cyxwiz/nodes");
 
     // --- refusals ----------------------------------------------------------------------

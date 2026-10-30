@@ -1723,11 +1723,27 @@ public:
         epoch_end_val_losses.push_back(context.val_loss);
     }
 
+    void OnBatchStart(cyxwiz::plugin::TrainingContext& context) override {
+        batch_starts.push_back({context.current_epoch, context.current_batch});
+        batch_totals.push_back(context.total_batches);
+    }
+
+    void OnBatchEnd(cyxwiz::plugin::TrainingContext& context) override {
+        batch_ends.push_back({context.current_epoch, context.current_batch});
+        batch_end_losses.push_back(context.train_loss);
+        batch_total_epochs.push_back(context.total_epochs);
+    }
+
     int training_start_count = 0;
     int training_end_count = 0;
     std::vector<int> epoch_start_epochs;
     std::vector<int> epoch_end_epochs;
     std::vector<float> epoch_end_val_losses;
+    std::vector<std::pair<int, int>> batch_starts;  // (epoch, batch)
+    std::vector<std::pair<int, int>> batch_ends;
+    std::vector<int> batch_totals;
+    std::vector<float> batch_end_losses;
+    std::vector<int> batch_total_epochs;
 };
 
 void TestValidationEarlyStoppingLifecycle(
@@ -1804,6 +1820,22 @@ void TestValidationEarlyStoppingLifecycle(
               std::isfinite(hook.epoch_end_val_losses[0]) &&
               std::isfinite(hook.epoch_end_val_losses[1]),
           label + " should publish validation values to both epoch-end hooks");
+    // OnBatchStart / OnBatchEnd (TOFIX125 hardening): every training batch of
+    // both epochs, numbered 1..total in order, the end with its loss.
+    {
+        const int per_epoch = hook.batch_totals.empty() ? 0 : hook.batch_totals.front();
+        std::vector<std::pair<int, int>> expected;
+        for (int epoch = 1; epoch <= 2; ++epoch)
+            for (int batch = 1; batch <= per_epoch; ++batch) expected.push_back({epoch, batch});
+        Check(per_epoch > 0 && hook.batch_starts == expected && hook.batch_ends == expected,
+              label + " should call OnBatchStart and OnBatchEnd for every training batch, in order");
+        bool losses_finite = !hook.batch_end_losses.empty();
+        for (float loss : hook.batch_end_losses) losses_finite = losses_finite && std::isfinite(loss);
+        Check(losses_finite, label + " should give OnBatchEnd the batch loss");
+        bool totals = true;
+        for (int total : hook.batch_total_epochs) totals = totals && total == 5;
+        Check(totals, label + " should give batch hooks the run's epoch count");
+    }
 
     if (save_best_checkpoint) {
         Check(!final_metrics.checkpoint_used.empty(),
@@ -2123,6 +2155,69 @@ void TestScheduledValidationPatienceLifecycle(
         "scheduled validation patience");
 }
 
+// A test set whose count follows its phase, like a wired image or audio
+// test dataset: none outside the test phase (TOFIX178 1.5).
+class TestPhaseOnlyBatcher : public cyxwiz::IBatcher {
+public:
+    TestPhaseOnlyBatcher(std::shared_ptr<cyxwiz::IBatcher> inner, cyxwiz::BatcherPhase test_phase)
+        : inner_(std::move(inner)), test_phase_(test_phase) {}
+    cyxwiz::Batch GetNextBatch() override { return inner_->GetNextBatch(); }
+    void Reset() override { inner_->Reset(); }
+    bool IsEpochComplete() const override { return inner_->IsEpochComplete(); }
+    size_t GetNumBatches() const override { return in_test_ ? inner_->GetNumBatches() : 0; }
+    size_t GetNumSamples() const override { return in_test_ ? inner_->GetNumSamples() : 0; }
+    void SetNormalization(float mean, float std_dev) override { inner_->SetNormalization(mean, std_dev); }
+    void SetOneHotEncoding(size_t classes) override { inner_->SetOneHotEncoding(classes); }
+    void SetScalarLabelMode(bool enable) override { inner_->SetScalarLabelMode(enable); }
+    void SetClassIndexLabelMode(bool enable) override { inner_->SetClassIndexLabelMode(enable); }
+    void SetFlatten(bool flatten) override { inner_->SetFlatten(flatten); }
+    void SetDropLast(bool drop_last) override { inner_->SetDropLast(drop_last); }
+    void SetPhase(cyxwiz::BatcherPhase phase) override {
+        in_test_ = phase == test_phase_;
+        inner_->SetPhase(phase);
+    }
+
+private:
+    std::shared_ptr<cyxwiz::IBatcher> inner_;
+    cyxwiz::BatcherPhase test_phase_;
+    bool in_test_ = false;
+};
+
+void CheckHeldOutTestOfPhaseCountedSet(const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+                                       cyxwiz::TrainingConfiguration config) {
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+        cyxwiz::BuildArrowTrainingBatchers(config, dataset, "label", config.batch_size));
+    Check(resolved.test != nullptr, "phase-counted case has a test batcher");
+    resolved.test = std::make_shared<TestPhaseOnlyBatcher>(resolved.test, resolved.test_phase);
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(config.epochs, config.batch_size, [](int, int, int, float, float) {},
+                   [](int, float, float, float, float, float) {},
+                   [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
+    // It was skipped: the gate read the count outside the test phase (0).
+    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 2,
+          "a test set counted only in its phase is still scored after training");
+}
+
+// A split with no validation part runs no validation (it scored 0 samples
+// every epoch and reported a validation loss and accuracy of 0).
+void CheckNoValidationWithoutValidationPart(const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+                                            cyxwiz::TrainingConfiguration config) {
+    config.train_ratio = 0.75f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.25f;
+    config.validation_freq = 1;
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+        cyxwiz::BuildArrowTrainingBatchers(config, dataset, "label", config.batch_size));
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(config.epochs, config.batch_size, [](int, int, int, float, float) {},
+                   [](int, float, float, float, float, float) {},
+                   [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
+    Check(final_metrics.val_sample_count == 0 && !final_metrics.has_validation_metrics,
+          "no validation part: no validation metrics");
+}
+
 void CheckExternalResolvedRoleLifecycleCase(
     const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
     cyxwiz::TrainingConfiguration config,
@@ -2240,6 +2335,8 @@ void TestExternalResolvedRoleLifecycle(
         {2, 3},
         "completed",
         "completed_all_epochs");
+    CheckHeldOutTestOfPhaseCountedSet(dataset, completed_config);
+    CheckNoValidationWithoutValidationPart(dataset, completed_config);
 
     auto plateau_config = MakeConfig(
         work_dir / "external-resolved-scheduled-patience");
@@ -3622,6 +3719,47 @@ std::optional<cyxwiz::DeviceInfo> FirstDeviceOfType(
     return std::nullopt;
 }
 
+// A model the requested route cannot run (Conv2D on CUDA without the NVIDIA
+// provider, TOFIX178 1.0(d)): Strict refuses with the reason, Compatibility
+// recovers to ArrayFire CPU and keeps the reason.
+void TestRunPreflightRouteUnsupportedByModel() {
+    const auto inventory = cyxwiz::Device::GetAvailableDevices();
+    const auto accelerator = std::find_if(inventory.begin(), inventory.end(), [](const cyxwiz::DeviceInfo& device) {
+        return device.type == cyxwiz::DeviceType::CUDA || device.type == cyxwiz::DeviceType::OPENCL;
+    });
+    if (accelerator == inventory.end()) {
+        std::cout << "SKIP: an unsupported-route preflight needs an accelerator route\n";
+        return;
+    }
+    cyxwiz::test::InstallQualifiedRouteSnapshot(inventory);
+    const auto unsupported = [type = accelerator->type](cyxwiz::DeviceType requested, int) {
+        return requested == type ? std::string("Conv2D cannot run here in this test") : std::string();
+    };
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    bool strict_refused = false;
+    try {
+        (void)cyxwiz::PrepareExecutionDeviceForRun(cyxwiz::ExecutionPolicy::Strict, unsupported);
+    } catch (const std::runtime_error& error) {
+        strict_refused = std::string(error.what()).find("Conv2D cannot run here in this test") != std::string::npos;
+    }
+    Check(strict_refused, "strict preflight refuses a route the model cannot run, with the reason");
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    const auto recovered = cyxwiz::PrepareExecutionDeviceForRun(cyxwiz::ExecutionPolicy::Compatibility, unsupported);
+    Check(recovered.selection_fallback_applied && recovered.effective_backend == "arrayfire_cpu" &&
+              recovered.error.find("Conv2D cannot run here in this test") != std::string::npos,
+          "compatibility preflight recovers to ArrayFire CPU and says why: " + recovered.error);
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(accelerator->type, accelerator->device_id);
+    const auto kept = cyxwiz::PrepareExecutionDeviceForRun(
+        cyxwiz::ExecutionPolicy::Compatibility, [](cyxwiz::DeviceType, int) { return std::string(); });
+    Check(!kept.selection_fallback_applied, "a route the model can run is kept");
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+}
+
 void TestRunPreflightEnforcesRouteQualification() {
     const auto inventory = cyxwiz::Device::GetAvailableDevices();
     const auto rejected = std::find_if(
@@ -4635,6 +4773,7 @@ int main(int argc, char** argv) {
     TestTrainingTracePersistenceCoalescing();
 
     TestRunPreflightEnforcesRouteQualification();
+    TestRunPreflightRouteUnsupportedByModel();
     TestWeightedSamplerEpochAndUpdateCount(work_dir);
 
     TestSequenceBatchContract();

@@ -15,6 +15,8 @@
 #include <utility>
 
 #include "operator_figures.h"
+#include "process_memory_snapshot.h"
+#include "training_split_policy.h"
 #include "pipeline_node_run_facts.h"
 
 namespace gui {
@@ -112,6 +114,14 @@ public:
     }
 
     /**
+     * How the runtime memory guard reads the process's memory (TOFIX178
+     * S0-e2); empty reads it from the OS. Tests set one to drive the guard.
+     */
+    void SetProcessMemoryProbe(std::function<ProcessMemorySnapshot()> probe) {
+        process_memory_probe_ = std::move(probe);
+    }
+
+    /**
      * Stop the currently running pipeline
      */
     void StopExecution();
@@ -206,6 +216,12 @@ public:
     // Node ID -> fitted model file of the last run (nodes with a Model output).
     const std::map<int, std::string>& ModelArtifacts() const { return last_model_artifacts_; }
 
+    // The table node `node_id` left in this executor's runs, when the node and
+    // everything upstream of it is unchanged in `pipeline_json` and the table is
+    // still loaded; nothing while a run executes or when it would run again.
+    // Runs nothing (TOFIX178 S0-d: training uses the canvas run's result).
+    std::optional<std::string> CurrentNodeResult(const std::string& pipeline_json, int node_id);
+
 private:
     struct InputLink {
         int node_id = -1;
@@ -239,6 +255,8 @@ private:
         std::map<int, std::string> pin_outputs; // output pin >= 1 -> dataset
         std::string model_artifact;
         std::string outcome;
+        // What the hash covered, so a dirty node can say which key changed.
+        std::map<std::string, std::string> parameters;
     };
     std::map<int, NodeRunCache> run_cache_;
     // Restores each unchanged node's hash and output from run_cache_ (when
@@ -279,6 +297,19 @@ private:
     std::mutex status_mutex_;             // current_status_: nodes report progress from their own threads
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
+    std::function<ProcessMemorySnapshot()> process_memory_probe_;
+    // The training graph's split (TOFIX178 S0-g2, "training_split" in the
+    // JSON): a step reading a Data Input reads its rows with their partition
+    // ("__partition__") so the steps that learn fit on the Train rows only.
+    std::optional<TrainingSplitPolicy> split_policy_;
+    std::string split_policy_key_;            // in each step's change hash
+    std::set<int> source_node_ids_;           // the run's Data Inputs
+    std::mutex partitioned_mutex_;
+    std::map<std::string, std::string> partitioned_sources_;  // source + policy -> partitioned name
+    // `name` with its rows' partition when `input_node` is a Data Input and
+    // the graph has a split, followed by the supplied Validation / Test
+    // inputs' rows when it is the training input; `name` otherwise.
+    std::string PartitionedSource(int input_node, const std::string& name, const ExecutionContext& ctx);
     std::string graph_path_;              // the graph file the run came from (lineage)
     // In-memory copies of disk inputs (AdmitInputTable), kept until the next run.
     std::vector<std::string> admitted_inputs_;
@@ -441,9 +472,9 @@ private:
     // A step without its input table: keeps the lookup's own reason.
     void ReportMissingInput(const std::string& step);
 
-    // SQL over files (TOFIX154 step 3). A step's inputs are Parquet files
-    // DuckDB reads in place: a disk table's own file, or a memory table
-    // written once (StepInputFile). The result comes back as a table, or,
+    // SQL over files (TOFIX154 step 3). A step's inputs: a disk table's own
+    // Parquet file, read in place, or a memory table, which DuckDB scans as
+    // it is (TOFIX178 0.5). The result comes back as a table, or,
     // when an input is on disk or large, DuckDB writes it to the pipeline
     // cache; a result above the data budget's threshold stays there on disk.
     // A check's output is its input (the same table or file) under output_name.
@@ -476,40 +507,31 @@ private:
     // same files; null after ReportError.
     std::shared_ptr<arrow::Table> FetchStepSql(const std::vector<StepSqlInput>& inputs, const std::string& sql,
                                                const std::string& error_prefix);
-    // The SqlTransform inputs for a step: one file per input; false after
-    // ReportError.
+    // The SqlTransform inputs for a step (a file or a table each); false
+    // after ReportError.
     bool PrepareStepSqlInputs(const std::vector<StepSqlInput>& inputs, const std::string& sql,
                               std::vector<SqlTransformInput>& files, uint64_t& input_bytes, bool& any_on_disk);
-    // The Parquet file a dataset is read from ("" after ReportError).
-    std::string StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
-                              uint64_t& bytes, bool& on_disk);
     // Steps that read their inputs from the files, never whole: SQL steps
     // (RunStepSql) and operators that stream (RunStreamingOperator). They are
     // not admitted first.
     static bool StepReadsInputFiles(const Node& node);
     // <project>/cache/pipeline, or <temp>/cyxwiz/pipeline outside a project.
     std::filesystem::path PipelineCacheRoot() const;
-    // Parquet copies of memory tables, kept while their table lives.
-    struct StepInputCopy {
-        std::weak_ptr<arrow::Table> table;
-        std::string path;
-    };
-    std::map<std::string, StepInputCopy> step_input_copies_;
     // Result files this executor wrote (output dataset -> file); one name per
     // run, since Windows cannot replace a file that is still mapped.
     std::map<std::string, std::string> step_result_files_;
-    // Sibling branches run at once (TOFIX157 A2): step_input_copies_,
-    // step_result_files_ and admitted_inputs_ change under step_files_mutex_,
-    // and a table's copy is made under its own name lock, so two steps reading
-    // one table write (or read in) one copy, the second waiting for the first.
+    // Sibling branches run at once (TOFIX157 A2): step_result_files_ and
+    // admitted_inputs_ change under step_files_mutex_; a disk table read in
+    // is made under its own name lock, so two steps reading one table read
+    // it in once, the second waiting for the first.
     std::mutex step_files_mutex_;
     std::map<std::string, std::shared_ptr<std::mutex>> name_locks_;
     std::shared_ptr<std::mutex> NameLock(const std::string& key);
     // Held while a node writes an export file: two branches exporting to one
     // file write it one after the other (none for an empty path).
     std::unique_lock<std::mutex> LockExportPath(const std::string& path);
-    // Removes the copies whose table is gone and the result files no dataset
-    // uses any more (at run start and when the executor goes).
+    // Removes the result files no dataset uses any more (at run start and
+    // when the executor goes).
     void RemoveUnusedStepFiles();
     Node* FindNodeById(std::vector<Node>& nodes, int node_id);
     const Node* FindNodeById(const std::vector<Node>& nodes, int node_id) const;

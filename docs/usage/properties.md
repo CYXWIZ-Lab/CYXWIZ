@@ -52,6 +52,11 @@ dropped from its labels ("Max new tokens" under Generation previews). *Reset*
 appears on a row whose value differs from its default. A value is written to
 the node only when you change it: looking at a node changes nothing.
 
+Numbers are typed fields with - / + steps, never sliders: type the exact
+value, or step it. A setting with a range keeps its value in the range;
+its step is 0.01 for a range up to 1 (the Data Split's ratios), 0.1 up to
+10, and 1 beyond.
+
 Settings the rules know but no editor shows (for example a Data Input's
 label column, owned by the loader) are listed read-only below the rows. A
 Data Input also gets a **Data** row: the file, whether it is loaded, and the
@@ -70,6 +75,10 @@ batch, the output memory per batch, the learnable parameters and their
 memory. **▸ Details** adds the layer's parameters and the node type's support
 (local training, remote training, export). The shapes come from the
 compiler's dimension rules, not from the panel.
+
+A Data Split on an image or audio graph shows its parts instead of shapes:
+a row per part and a column per class, the images left out, and **Show the
+split in Data Studio** (see image_split.md).
 
 A Concatenate fed by an Embedding also gets the *Word + POS fusion* card with
 the compiler's verdict and the fix when it will not compile.

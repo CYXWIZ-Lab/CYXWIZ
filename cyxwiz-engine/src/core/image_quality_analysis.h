@@ -62,7 +62,6 @@ std::string ImageQualityDeviceLabel();
 
 // <project>/cache/quality when a project is open, else <temp>/cyxwiz/quality.
 // The Engine sets the root as projects open and close.
-void SetImageQualityProjectRoot(const std::string& root);
 std::filesystem::path ImageQualityCacheDir();
 
 // Decodes every image on CPU workers and measures it on the ArrayFire device

@@ -38,6 +38,10 @@ static const char* PermissionName(PluginPermission p) {
     }
 }
 
+const char* EnginePluginContext::PermissionLabel(PluginPermission permission) {
+    return PermissionName(permission);
+}
+
 bool EnginePluginContext::CheckPermission(PluginPermission required, const char* action) const {
     if (!plugin_) {
         spdlog::error("[Plugin:{}] No plugin instance for permission check", plugin_id_);

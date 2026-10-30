@@ -57,6 +57,8 @@ struct ConfigFacts {
     double learning_rate = 0.0;
     bool normalize = false;
     double norm_mean = 0.0, norm_std = 0.0;
+    std::vector<float> norm_channel_mean, norm_channel_std;  // per channel (TOFIX178 1.4)
+    bool norm_imagenet = false;
     bool one_hot = false;
     int num_classes = 0;
 

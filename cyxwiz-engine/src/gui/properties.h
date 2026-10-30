@@ -66,6 +66,12 @@ public:
     // (TOFIX146 "Open in Table Viewer"); `title` names the tab.
     using OpenTableCallback = std::function<void(const std::string& dataset_name, const std::string& title)>;
     void SetOpenTableCallback(OpenTableCallback callback) { open_table_ = std::move(callback); }
+    // Opens Data Studio's Profile of a dataset (Normalize: "Measure again in
+    // Data Studio").
+    using OpenProfileCallback = std::function<void(const std::string& dataset_name)>;
+    void SetOpenProfileCallback(OpenProfileCallback callback) { open_profile_ = std::move(callback); }
+    // Opens Data Studio's ML readiness (the Data Split card's "Show the split").
+    void SetOpenReadinessCallback(std::function<void()> callback) { open_readiness_ = std::move(callback); }
 
     void SetBackendPlacementFacts(
         std::vector<properties_truth::BackendPlacementTruthFact> facts);
@@ -82,6 +88,9 @@ private:
     void RenderHeader(MLNode& node);
     void RenderActionsMenu(MLNode& node);
     void RenderSettings(MLNode& node);
+    // Normalize per channel (TOFIX178 1.4): a typed row per image channel.
+    void RenderChannelRows(MLNode& node, const cyxwiz::properties_view::Setting& row);
+    size_t NormalizeChannels(const MLNode& node) const;
     void RenderMetadataRows(MLNode& node);
     void RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::Setting& row);
     void RenderLooseTruths(MLNode& node);
@@ -144,6 +153,8 @@ private:
     struct SqlStepView;
     std::unique_ptr<SqlStepView> sql_view_;
     OpenTableCallback open_table_;
+    OpenProfileCallback open_profile_;
+    std::function<void()> open_readiness_;
     void RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* metadata);
 

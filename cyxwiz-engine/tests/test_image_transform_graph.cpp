@@ -7,12 +7,18 @@
 // centres outside training, and the batch keeps its [N, H, W, C] shape.
 // The Quality Analyzer: training refuses a missing, stale or unusable
 // analysis, and the batcher leaves the rejected files out.
+// The image split (TOFIX178 1.5): the compile counts the parts the batcher
+// makes, says them, warns of a class too small for a part and refuses a
+// wired dataset with other classes.
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/image_dataset_batcher.h"
+#include "../src/core/image_index.h"
+#include "../src/core/image_split_counts.h"
 #include "../src/core/image_quality_analysis.h"
+#include "../src/core/normalize_statistics.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <algorithm>
@@ -37,6 +43,11 @@ FileCategory FileCategoryFromString(const std::string& text) {
     return text == "image" ? FileCategory::Image : FileCategory::Tabular;
 }
 }  // namespace cyxwiz::loaders
+
+namespace cyxwiz {
+// graph_compiler.cpp: the image split part of a compile.
+void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLNode>& nodes);
+}  // namespace cyxwiz
 
 namespace {
 
@@ -279,6 +290,85 @@ void CheckCompiler() {
                  "Hue 0.7", "hue must be between 0 and 0.5", "hue above 0.5");
     CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip x", {{"probability", "often"}}}},
                  "Flip x", "probability must be a float", "a probability that is not a number");
+
+    // OpenCV steps (TOFIX178 1.3f): placed among the transforms in canvas
+    // order, done once, so before the first random one.
+    const auto cv = Compile({kResize,
+                             {gui::NodeType::ImageContrast, "CLAHE", {{"clip_limit", "3"}, {"tile_grid", "4"}}},
+                             {gui::NodeType::CenterCrop, "Crop 6", {{"width", "6"}, {"height", "6"}}},
+                             {gui::NodeType::ImageEdges, "Edges", {{"method", "sobel"}}},
+                             {gui::NodeType::HorizontalFlip, "Flip", {}},
+                             kNormalize});
+    Check(cv.is_valid, "CLAHE, Crop, Edges, Flip compiles; errors:\n" + Errors(cv));
+    Check(cv.image_cv_steps.size() == 2 && cv.image_cv_steps[0].position == 0 && cv.image_cv_steps[1].position == 1 &&
+              cv.image_cv_steps[0].clip_limit == 3.0f && cv.image_cv_steps[0].tile_grid == 4 &&
+              cv.image_cv_steps[1].edge_method == cyxwiz::CvEdgeMethod::Sobel,
+          "two OpenCV steps with their settings and places");
+    Check(cv.input_shape == std::vector<size_t>({6, 6, 1}) && !cv.layers.empty() &&
+              cv.layers.front().input_shape == std::vector<size_t>({6, 6, 1}),
+          "Edges gives one channel: the Conv2D sees [6, 6, 1]");
+    bool told = false;
+    for (const auto& issue : cv.issues)
+        told = told || (issue.level == cyxwiz::IssueLevel::Info && issue.node_name == "Edges" &&
+                        issue.message.find("one channel") != std::string::npos);
+    Check(told, "Edges says it gives one channel");
+    const auto denoise = Compile({kResize, {gui::NodeType::ImageDenoise, "Denoise", {}}});
+    bool warned = false;
+    for (const auto& issue : denoise.issues)
+        warned = warned || (issue.level == cyxwiz::IssueLevel::Warning && issue.node_name == "Denoise" &&
+                            issue.message.find("ms an image") != std::string::npos);
+    Check(denoise.is_valid && warned, "Denoise compiles with a warning on its cost");
+    CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip", {}}, {gui::NodeType::ImageContrast, "Late CLAHE", {}}},
+                 "Late CLAHE", "move it before Horizontal Flip", "an OpenCV step after a random one");
+    CheckRefused({kResize, {gui::NodeType::ImagePyramid, "Pyramid", {{"levels", "2"}}}},
+                 "Pyramid", "under 5 pixels a side: use a larger Resize", "a pyramid too deep for 8 x 8");
+    CheckRefused({kResize, {gui::NodeType::ImageWarp, "Warp", {{"source_points", "0,0, 1,0, 1.5,1, 0,1"}}}},
+                 "Warp", "Corner 3 of the source is outside the image", "a corner outside the image");
+    CheckRefused({kResize, {gui::NodeType::ImageWarp, "Warp 3", {{"source_points", "0,0, 1,0"}}}},
+                 "Warp 3", "must be 8 numbers", "too few points");
+    CheckRefused({kResize, {gui::NodeType::ImageSmooth, "Smooth", {{"method", "gaussian"}}}},
+                 "Smooth", "method must be box, median or bilateral", "an unknown smoothing");
+    CheckRefused({kResize, kNormalize, {gui::NodeType::ImageSharpen, "Late sharpen", {}}},
+                 "Late sharpen", "between Resize and Normalize", "an OpenCV step after Normalize");
+    CheckRefused({kResize, {gui::NodeType::ImageSharpen, "Sharpen", {}},
+                  {gui::NodeType::Resize, "Second resize", {{"width", "4"}, {"height", "4"}}}},
+                 "Second resize", "Resize must come before the image transforms", "Resize after an OpenCV step");
+
+    // Normalize per channel (TOFIX178 1.4).
+    const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
+                                                {{"statistics", "per_channel"},
+                                                 {"channel_mean", "0.5282,0.4924,0.4528"},
+                                                 {"channel_std", "0.2346, 0.2270, 0.2304"}}}});
+    Check(cyxwiz::ChannelSummary("per channel", {0.5282f, 0.4924f, 0.4528f}, {0.2346f, 0.2270f, 0.2304f}) ==
+              "per channel, mean 0.528 / 0.492 / 0.453, std 0.235 / 0.227 / 0.230",
+          "the per-channel summary the compile report and the Data Input dialog show");
+    Check(per_channel.is_valid, "per channel compiles; errors:\n" + Errors(per_channel));
+    Check(per_channel.preprocessing.norm_channel_mean == std::vector<float>({0.5282f, 0.4924f, 0.4528f}) &&
+              per_channel.preprocessing.norm_channel_std == std::vector<float>({0.2346f, 0.2270f, 0.2304f}) &&
+              per_channel.preprocessing.norm_channels == 3 && per_channel.preprocessing.norm_node_id > 0,
+          "per channel: three means and stds for RGB");
+    const auto imagenet = Compile({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "imagenet"}}}});
+    bool noted = false;
+    for (const auto& issue : imagenet.issues)
+        noted = noted || (issue.level == cyxwiz::IssueLevel::Info && issue.message.find("pretrained on ImageNet") != std::string::npos);
+    Check(imagenet.is_valid && imagenet.preprocessing.norm_channel_mean == std::vector<float>({0.485f, 0.456f, 0.406f}) &&
+              imagenet.preprocessing.norm_channel_std == std::vector<float>({0.229f, 0.224f, 0.225f}) && noted,
+          "ImageNet: torchvision's values, with a note");
+    const auto same = Compile({kResize, kNormalize});
+    Check(same.is_valid && same.preprocessing.norm_channel_mean.empty() && same.preprocessing.norm_statistics == "same",
+          "same for every channel: one pair, as before");
+    CheckRefused({kResize, {gui::NodeType::Grayscale, "Gray", {}},
+                  {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"},
+                                                           {"channel_mean", "0.5,0.5,0.5"}, {"channel_std", "0.2,0.2,0.2"}}}},
+                 "Normalize", "3 means for 1 channel", "three means after Grayscale");
+    CheckRefused({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"},
+                                                                    {"channel_mean", "0.5,0.5,0.5"}, {"channel_std", "0.2,0,0.2"}}}},
+                 "Normalize", "Std G is 0", "a std of 0");
+    CheckRefused({kResize, {gui::NodeType::Normalize, "Normalize", {{"statistics", "per_channel"}}}},
+                 "Normalize", "a mean and a std for each channel", "per channel without values");
+    CheckRefused({kResize, {gui::NodeType::Grayscale, "Gray", {}},
+                  {gui::NodeType::Normalize, "Normalize", {{"statistics", "imagenet"}}}},
+                 "Normalize", "ImageNet statistics are for RGB images", "ImageNet on one channel");
 }
 
 void WriteLe(std::ofstream& out, uint32_t value, int bytes) {
@@ -336,7 +426,8 @@ void CheckBatcher() {
     crop.kind = cyxwiz::image::ImageOpKind::RandomCrop;
     crop.height = 2;
     crop.width = 2;
-    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 2, 0.5f, false, 0, 11);
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, {0.5f, 0.5f, 0.0f, false, 11}, false, 11);
     cyxwiz::image::ImageAugmentation flip_crop;
     flip_crop.ops = {flip, crop};
     batcher.SetImageTransforms(flip_crop);
@@ -363,7 +454,8 @@ void CheckBatcher() {
     cyxwiz::image::ImageAugmentation mixup;
     mixup.mix = cyxwiz::image::BatchMix::MixUp;
     mixup.mix_probability = 1.0f;
-    cyxwiz::ImageDatasetBatcher mixing(entry, resize, 2, 0.5f, false, 0, 11);
+    cyxwiz::ImageDatasetBatcher mixing(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, {0.5f, 0.5f, 0.0f, false, 11}, false, 11);
     mixing.SetOneHotEncoding(2);
     mixing.SetImageTransforms(mixup);
     mixing.SetPhase(cyxwiz::BatcherPhase::Val);
@@ -376,6 +468,26 @@ void CheckBatcher() {
     mixing.Reset();
     const auto mixed = mixing.GetNextBatch();
     Check(mixed.labels.Shape() == std::vector<size_t>({2, 2}), "mixed labels keep [N, C]");
+
+    // Normalize per channel (TOFIX178 1.4): each channel its own mean and std.
+    cyxwiz::ImageDatasetBatcher normalized(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 2, {0.5f, 0.5f, 0.0f, false, 11}, false, 11);
+    normalized.SetNormalization(0.5f, 0.5f);
+    normalized.SetChannelNormalization({0.1f, 0.2f, 0.3f}, {0.5f, 0.25f, 0.125f});
+    normalized.SetPhase(cyxwiz::BatcherPhase::Val);
+    normalized.Reset();
+    const auto n_batch = normalized.GetNextBatch();
+    const float* nv = n_batch.data.ReadData<float>();
+    double worst = 0.0;
+    for (size_t s = 0; s < 2; ++s)
+        for (int row = 0; row < 4; ++row)
+            for (int column = 0; column < 4; ++column) {
+                const float* px = nv + s * 48 + (row * 4 + column) * 3;
+                const float rgb[3] = {Red(column), 40.0f * row / 255.0f, 200.0f / 255.0f};
+                const float mean[3] = {0.1f, 0.2f, 0.3f}, sd[3] = {0.5f, 0.25f, 0.125f};
+                for (int c = 0; c < 3; ++c) worst = std::max<double>(worst, std::fabs(px[c] - (rgb[c] - mean[c]) / sd[c]));
+            }
+    Check(worst < 1e-5, "per channel normalize on the device: (x - mean[c]) / std[c] (worst " + std::to_string(worst) + ")");
     const float* mixed_labels = mixed.labels.ReadData<float>();
     for (size_t s = 0; s < 2; ++s) {
         Check(std::fabs(mixed_labels[2 * s] + mixed_labels[2 * s + 1] - 1.0f) < 1e-5f,
@@ -510,10 +622,11 @@ void CheckQualityAnalyzer() {
     resize.resize_mode = cyxwiz::ResizeMode::Exact;
     resize.target_width = side;
     resize.target_height = side;
-    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 8, 0.5f, false, 0, 7);
-    Check(batcher.GetNumSamples() + batcher.GetNumValSamples() == 8, "8 images before the filter");
+    cyxwiz::ImageDatasetBatcher batcher(
+        cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(resize)).set, 8, {0.5f, 0.5f, 0.0f, false, 7}, false, 7);
+    Check(batcher.GetNumSamples() + batcher.SamplesIn(cyxwiz::BatcherPhase::Val) == 8, "8 images before the filter");
     batcher.ExcludeFiles(config.image_excluded_files);
-    Check(batcher.GetNumSamples() == 3 && batcher.GetNumValSamples() == 3, "6 images after it, split 3 + 3");
+    Check(batcher.GetNumSamples() == 3 && batcher.SamplesIn(cyxwiz::BatcherPhase::Val) == 3, "6 images after it, split 3 + 3");
 
     // As the canvas builds it: Data Input -> Quality Analyzer -> Data Split ->
     // Data Loader -> Resize -> model, the Loader's labels into the loss. The
@@ -571,6 +684,157 @@ void CheckQualityAnalyzer() {
     cyxwiz::DataRegistry::Instance().UnregisterImageDataset("quality_graph");
 }
 
+// Registers an image folder and its index, as loading it in the Engine does.
+void RegisterIndexed(const std::string& name, const fs::path& root, size_t images,
+                     const std::vector<std::string>& classes) {
+    cyxwiz::DataRegistry::ImageDatasetEntry entry;
+    entry.folder_path = root.string();
+    entry.layout = 0;
+    entry.num_images = images;
+    entry.num_classes = classes.size();
+    entry.class_names = classes;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    registry.RegisterImageDataset(name, entry);
+    const auto index = cyxwiz::BuildImageIndex(cyxwiz::ListImageSet(entry), {});
+    Check(index && static_cast<size_t>(index->num_rows()) == images, name + " is indexed");
+    registry.RegisterArrowTable(index, cyxwiz::DataRegistry::ImageIndexName(name));
+}
+
+bool Says(const cyxwiz::TrainingConfiguration& config, cyxwiz::IssueLevel level, const std::string& needle) {
+    for (const auto& issue : config.issues)
+        if (issue.level == level && issue.message.find(needle) != std::string::npos) return true;
+    return false;
+}
+
+void CheckImageSplit() {
+    // 10 images of 'a', 3 of 'b' (one unreadable), 2 of 'b' in a holdout, 2 of 'c' in another.
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_image_split";
+    fs::remove_all(root);
+    for (int i = 0; i < 10; ++i)
+        WriteBmp(root / "train" / "a" / (std::to_string(i) + ".bmp"), 4, [i](int r, int c) { return Texture(i, r, c); });
+    for (int i = 0; i < 2; ++i)
+        WriteBmp(root / "train" / "b" / (std::to_string(i) + ".bmp"), 4, [i](int r, int c) { return Texture(20 + i, r, c); });
+    {
+        std::ofstream broken(root / "train" / "b" / "broken.bmp", std::ios::binary);
+        broken << "not an image";
+    }
+    for (const char* cls : {"a", "b"})
+        WriteBmp(root / "holdout" / cls / "0.bmp", 4, [](int r, int c) { return Texture(30, r, c); });
+    for (const char* cls : {"a", "c"})
+        WriteBmp(root / "other" / cls / "0.bmp", 4, [](int r, int c) { return Texture(40, r, c); });
+    RegisterIndexed("split_train", root / "train", 13, {"a", "b"});
+    RegisterIndexed("split_holdout", root / "holdout", 2, {"a", "b"});
+    RegisterIndexed("split_other", root / "other", 2, {"a", "c"});
+
+    // The counts are the batcher's parts, class by class.
+    const cyxwiz::SampleSplitSettings split{0.6f, 0.2f, 0.2f, true, 5};
+    const auto counts = cyxwiz::CountImageSplit("split_train", split, {});
+    Check(counts.known && counts.images == 12 && counts.unreadable == 1 && counts.left_out == 0,
+          "12 readable images are counted, the broken one is not (" + counts.reason + ")");
+    Check(counts.parts[0] + counts.parts[1] + counts.parts[2] == 12 && counts.per_class.size() == 2,
+          "the parts hold every readable image");
+    const auto* entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry("split_train");
+    cyxwiz::ImagePreprocessingConfig preprocessing;
+    preprocessing.resize_mode = cyxwiz::ResizeMode::Exact;
+    preprocessing.target_width = 4;
+    preprocessing.target_height = 4;
+    const auto images = cyxwiz::PrepareImageSet(*entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set;
+    Check(images != nullptr, "the split images are prepared");
+    cyxwiz::ImageDatasetBatcher batcher(images, 4, split, true, 3);
+    const cyxwiz::BatcherPhase phases[3] = {cyxwiz::BatcherPhase::Train, cyxwiz::BatcherPhase::Val,
+                                           cyxwiz::BatcherPhase::Test};
+    for (size_t part = 0; part < 3; ++part) {
+        size_t of_a = 0;
+        for (const size_t image : batcher.Part(phases[part]))
+            of_a += fs::path(batcher.Files().at(image)).parent_path().filename() == "a" ? 1 : 0;
+        Check(batcher.SamplesIn(phases[part]) == counts.parts[part] && of_a == counts.per_class[0][part],
+              "part " + std::to_string(part) + " counts what the batcher trains on");
+    }
+    // Images a Quality node leaves out are taken out before the split.
+    const auto fewer = cyxwiz::CountImageSplit("split_train", split, {batcher.Files().front()});
+    Check(fewer.known && fewer.images == 11 && fewer.left_out == 1, "a left-out image is not split");
+
+    // The compile says the parts; class 'b' (2 images) is too small for 10 %.
+    cyxwiz::TrainingConfiguration config;
+    config.dataset_name = "split_train";
+    config.train_ratio = 0.8f;
+    config.val_ratio = 0.1f;
+    config.test_ratio = 0.1f;
+    config.stratified = true;
+    config.split_seed = 42;
+    cyxwiz::CompileImageSplit(config, {});
+    const auto& parts = config.image_split.parts;
+    Check(config.image_split.known &&
+              Says(config, cyxwiz::IssueLevel::Info,
+                   "Images: " + std::to_string(parts[0]) + " train \xC2\xB7 " + std::to_string(parts[1]) +
+                       " validation \xC2\xB7 " + std::to_string(parts[2]) + " test, by class (seed 42)."),
+          "the compile says the image parts");
+    Check(config.dataset_roles.manifest.train_rows == static_cast<int64_t>(parts[0]) &&
+              config.dataset_roles.manifest.test_rows == static_cast<int64_t>(parts[2]),
+          "the run manifest gets the image parts");
+    Check(Says(config, cyxwiz::IssueLevel::Warning, "Class 'b' has 2 images: its validation part is empty"),
+          "a class too small for the validation share is warned about");
+    Check(!Says(config, cyxwiz::IssueLevel::Warning, "Class 'a'"), "a class large enough is not warned about");
+
+    // A wired Validation dataset is that part whole; other classes are refused.
+    cyxwiz::TrainingConfiguration wired = config;
+    wired.issues.clear();
+    wired.dataset_roles.dev.dataset_name = "split_holdout";
+    wired.val_ratio = 0.0f;
+    wired.train_ratio = 0.9f;
+    cyxwiz::CompileImageSplit(wired, {});
+    Check(wired.image_split_dev.known && wired.image_split_dev.parts[2] == 2 &&
+              wired.dataset_roles.manifest.dev_rows == 2 &&
+              !Says(wired, cyxwiz::IssueLevel::Error, "classes"),
+          "a wired Validation dataset with the training classes is read whole (known " +
+              std::to_string(wired.image_split_dev.known) + ", " + std::to_string(wired.image_split_dev.parts[2]) +
+              " images, manifest " + std::to_string(wired.dataset_roles.manifest.dev_rows) + "); errors:\n" +
+              Errors(wired));
+    // Training leaves out what the compile counted as unreadable before the
+    // split, so its parts are the counted ones.
+    Check(config.image_unreadable_files.size() == 1 &&
+              fs::path(config.image_unreadable_files[0]).filename() == "broken.bmp",
+          "the compile hands training the unreadable files");
+
+    // A file whose header reads but whose pixels are cut off: the index counts
+    // it, decoding fails; training drops it from its own part and every
+    // other image stays where the compile counted it.
+    {
+        const fs::path cut = root / "cut";
+        for (int i = 0; i < 10; ++i)
+            WriteBmp(cut / "a" / (std::to_string(i) + ".bmp"), 4, [i](int r, int c) { return Texture(i, r, c); });
+        WriteBmp(cut / "a" / "truncated.bmp", 4, [](int r, int c) { return Texture(7, r, c); });
+        fs::resize_file(cut / "a" / "truncated.bmp", 60);  // the headers (54 bytes) and a few pixels
+        RegisterIndexed("split_cut", cut, 11, {"a"});
+        const cyxwiz::SampleSplitSettings cut_split{0.6f, 0.2f, 0.2f, true, 9};
+        const auto counted = cyxwiz::CountImageSplit("split_cut", cut_split, {});
+        const auto* cut_entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry("split_cut");
+        const auto cut_images = cyxwiz::PrepareImageSet(*cut_entry, cyxwiz::PreparedImageSpecFrom(preprocessing)).set;
+        if (counted.known && counted.unreadable == 0 && cut_images && cut_images->Unreadable().size() == 1) {
+            cyxwiz::ImageDatasetBatcher cut_batcher(cut_images, 4, cut_split, true, 3);
+            cut_batcher.ExcludeFiles(counted.unreadable_files);
+            size_t smaller = 0, same = 0;
+            for (size_t part = 0; part < 3; ++part) {
+                const size_t n = cut_batcher.SamplesIn(phases[part]);
+                smaller += n + 1 == counted.parts[part] ? 1 : 0;
+                same += n == counted.parts[part] ? 1 : 0;
+            }
+            Check(smaller == 1 && same == 2, "an image that does not decode leaves only its own part");
+        } else {
+            std::cout << "note: this OpenCV decodes or the index rejects the truncated BMP; case skipped\n";
+        }
+    }
+
+    cyxwiz::TrainingConfiguration other = config;
+    other.issues.clear();
+    other.dataset_roles.test.dataset_name = "split_other";
+    cyxwiz::CompileImageSplit(other, {});
+    Check(Says(other, cyxwiz::IssueLevel::Error,
+               "The Test Dataset's classes (a, c) are not the training classes (a, b)"),
+          "a wired Test dataset with other classes is refused");
+    fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -589,6 +853,7 @@ int main() {
     CheckCompiler();
     CheckBatcher();
     CheckQualityAnalyzer();
+    CheckImageSplit();
     std::cout << "image transform graph contract passed (" << checks << " checks)\n";
     return 0;
 }

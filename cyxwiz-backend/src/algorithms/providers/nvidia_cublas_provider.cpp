@@ -2183,16 +2183,6 @@ private:
 
 } // namespace
 
-bool NvidiaProviderDeviceMemoryForTesting(size_t& free_bytes,
-                                          size_t& total_bytes) {
-    free_bytes = 0;
-    total_bytes = 0;
-    if (cudaDeviceSynchronize() != cudaSuccess) {
-        return false;
-    }
-    return cudaMemGetInfo(&free_bytes, &total_bytes) == cudaSuccess;
-}
-
 void RegisterNvidiaCublasNeuralProvider(NeuralProviderRegistry& registry) {
     const NvidiaRuntimeProbe probe = ProbeNvidiaRuntime();
     if (!probe.ok) {
@@ -2210,5 +2200,26 @@ void RegisterNvidiaCublasNeuralProvider(NeuralProviderRegistry& registry) {
 }
 
 } // namespace cyxwiz
+
+// The module's entry points (TOFIX178 1.0(c)): the backend loads this
+// library at run time and calls them; see LoadNvidiaProviderModule.
+#if defined(_WIN32)
+#define CYXWIZ_NVIDIA_PROVIDER_EXPORT extern "C" __declspec(dllexport)
+#else
+#define CYXWIZ_NVIDIA_PROVIDER_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
+
+CYXWIZ_NVIDIA_PROVIDER_EXPORT int cyxwiz_nvidia_provider_abi() { return CYXWIZ_NEURAL_PROVIDER_MODULE_ABI; }
+
+CYXWIZ_NVIDIA_PROVIDER_EXPORT void cyxwiz_nvidia_provider_register(cyxwiz::NeuralProviderRegistry* registry) {
+    if (registry) cyxwiz::RegisterNvidiaCublasNeuralProvider(*registry);
+}
+
+CYXWIZ_NVIDIA_PROVIDER_EXPORT bool cyxwiz_nvidia_provider_device_memory(size_t* free_bytes, size_t* total_bytes) {
+    *free_bytes = 0;
+    *total_bytes = 0;
+    if (cudaDeviceSynchronize() != cudaSuccess) return false;
+    return cudaMemGetInfo(free_bytes, total_bytes) == cudaSuccess;
+}
 
 #endif // CYXWIZ_HAS_NVIDIA_DNN_PROVIDER

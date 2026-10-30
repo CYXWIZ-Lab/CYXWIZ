@@ -304,6 +304,8 @@ std::vector<std::string> ParseCatalogEnumValues(
 bool IsSupportedPropertiesParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",
+        "channels",
+        "column",
         "directory",
         "dropdown",
         "enum",
@@ -3662,9 +3664,8 @@ int main() {
         const std::vector<std::string> source_type_values(
             source_type_axis->allowed_values.begin(),
             source_type_axis->allowed_values.end());
-        Check(ContainsString(source_type_values, "file") &&
-                  ContainsString(source_type_values, "folder"),
-              "DataInput source_type should allow file and folder");
+        Check(source_type_values == std::vector<std::string>({"file"}),
+              "DataInput source_type should allow file only (image folders train from the image registry)");
         Check(!ContainsString(source_type_values, "ml_dataset"),
               "DataInput source_type should not advertise ml_dataset without a runtime owner");
     }
@@ -4011,69 +4012,6 @@ int main() {
                   "supported training backend reason should be shared: " +
                       TypeId(capability.node_type));
         }
-
-        std::set<int> materializer_storage_backends;
-        int materializer_supported_backends = 0;
-        const std::set<std::string> expected_materializer_storage_backends = {
-            "ArrowTable",
-            "ParquetBacked",
-            "ImageDataset",
-            "AudioDataset",
-            "TextDataset",
-            "SparseFeatureDataset",
-        };
-        for (const auto& capability :
-             cyxwiz::GetPipelineMaterializerStorageBackendCapabilities()) {
-            const std::string backend_name =
-                cyxwiz::PipelineStorageBackendName(capability.backend);
-            const int key = static_cast<int>(capability.backend);
-            Check(materializer_storage_backends.insert(key).second,
-                  "duplicate materializer storage backend capability: " +
-                      backend_name);
-            Check(ContainsString(expected_materializer_storage_backends,
-                                 backend_name),
-                  "unexpected materializer storage backend capability: " +
-                      backend_name);
-            const auto resolved =
-                cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
-                    capability.backend);
-            Check(resolved.backend == capability.backend,
-                  "materializer storage backend capability does not resolve: " +
-                      backend_name);
-            Check(resolved.materializer_supported ==
-                      capability.materializer_supported,
-                  "materializer storage backend support mismatch: " +
-                      backend_name);
-            Check(resolved.storage_support == capability.storage_support,
-                  "materializer storage support scope mismatch: " +
-                      backend_name);
-            Check(capability.reason != nullptr &&
-                      std::string(capability.reason).size() > 16,
-                  "materializer storage backend reason is too weak: " +
-                      backend_name);
-            if (capability.materializer_supported) {
-                ++materializer_supported_backends;
-                // In memory every operator; a table on disk (TOFIX154) the
-                // operators that stream.
-                Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable ||
-                          capability.backend == cyxwiz::PipelineStorageBackend::ParquetBacked,
-                      "only ArrowTable and ParquetBacked should be materializer-supported today");
-                Check(capability.storage_support ==
-                          (capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable
-                               ? cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly
-                               : cyxwiz::PipelineMaterializerStorageSupport::StreamingOperatorsOnly),
-                      "materializer support scope per backend");
-            } else {
-                Check(capability.storage_support ==
-                          cyxwiz::PipelineMaterializerStorageSupport::None,
-                      "unsupported materializer backend should advertise no storage scope");
-            }
-        }
-        Check(materializer_supported_backends == 2,
-              "exactly two materializer storage backends should be supported today");
-        Check(materializer_storage_backends.size() ==
-                  expected_materializer_storage_backends.size(),
-              "materializer storage scope should pin Arrow plus five pass-through domains");
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
@@ -6375,6 +6313,40 @@ int main() {
                   "DataConvert runtime/property catalog disagreement: " + key);
         }
         Check(found, "DataConvert runtime format constraint must exist: " + key);
+    }
+    // Execute Pipeline on a training graph runs the data steps and leaves
+    // the training nodes to training.
+    for (const auto type : {gui::NodeType::DataInput, gui::NodeType::StandardScaler, gui::NodeType::MinMaxScaler})
+        Check(!cyxwiz::IsTrainingOnlyNode(type), "a data step runs in the data pipeline");
+    for (const auto type : {gui::NodeType::DataSplit, gui::NodeType::DataLoader, gui::NodeType::Dense,
+                            gui::NodeType::ReLU, gui::NodeType::CrossEntropyLoss, gui::NodeType::Adam,
+                            gui::NodeType::Output})
+        Check(cyxwiz::IsTrainingOnlyNode(type), "a training node is left to training");
+    // A column transform's output is kept between runs unless it saves its
+    // fitted values; Use saved values puts the file in the key (TOFIX178 0.5).
+    {
+        auto& operators = cyxwiz::PipelineOperatorFactory::Instance();
+        std::string error;
+        auto fit = operators.Create(gui::NodeType::StandardScaler);
+        Check(fit && fit->Configure({{"columns", "a"}}, error) && fit->IsCacheable(),
+              "a scaler that fits is kept: " + error);
+        auto saving = operators.Create(gui::NodeType::StandardScaler);
+        Check(saving->Configure({{"columns", "a"}, {"save_state", "true"}, {"state_path", "s.cyxstate.json"}}, error) &&
+                  !saving->IsCacheable(),
+              "a scaler that saves its fitted values is not kept: " + error);
+        auto saved = operators.Create(gui::NodeType::StandardScaler);
+        std::vector<cyxwiz::PipelineOperatorCacheDependency> dependencies;
+        Check(saved->Configure({{"columns", "a"}, {"operation_mode", "transform_only"},
+                                {"state_path", "s.cyxstate.json"}}, error) &&
+                  saved->IsCacheable() && saved->CollectCacheDependencies(dependencies, error) &&
+                  dependencies.size() == 1 && dependencies[0].path == "s.cyxstate.json",
+              "Use saved values is kept with the values file in the key: " + error);
+    }
+    // The compiler's every-row answer is the operators' own (TOFIX178 S0-g5).
+    for (const auto type : cyxwiz::PipelineOperatorFactory::Instance().GetSupportedTypes()) {
+        const auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op && op->LearnsFromEveryRow() == cyxwiz::PipelineStepLearnsFromEveryRow(type),
+              "PipelineStepLearnsFromEveryRow disagrees with operator " + (op ? op->GetName() : std::string("?")));
     }
     std::cout << "Pipeline operator metadata drift guard passed\n";
     return 0;

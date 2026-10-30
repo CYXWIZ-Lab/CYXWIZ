@@ -89,8 +89,6 @@ bool ImageEnhancer::ApplyCLAHE(
             return false;
         }
 
-        spdlog::debug("ImageEnhancer: Applied CLAHE (clip_limit={}, tile_size={})",
-                      clip_limit, tile_size);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -152,7 +150,6 @@ bool ImageEnhancer::ApplyDenoise(
             return false;
         }
 
-        spdlog::debug("ImageEnhancer: Applied denoise (strength={})", strength);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -186,13 +183,10 @@ bool ImageEnhancer::ApplySharpen(
 
         // Apply threshold if specified
         if (threshold > 0.0f) {
+            // One mask value per pixel and channel (the comparison keeps the
+            // image's channels), 255 where the detail is above the threshold.
             cv::Mat diff = cv::abs(img - blurred);
             cv::Mat mask = diff > threshold;
-            if (channels == 3) {
-                // Convert single-channel mask to 3-channel
-                std::vector<cv::Mat> mask_channels = {mask, mask, mask};
-                cv::merge(mask_channels, mask);
-            }
             mask.convertTo(mask, CV_32FC(channels), 1.0 / 255.0);
             sharpened = img.mul(1.0 - mask) + sharpened.mul(mask);
         }
@@ -204,8 +198,6 @@ bool ImageEnhancer::ApplySharpen(
         std::memcpy(image_data.data(), sharpened.data,
                     image_data.size() * sizeof(float));
 
-        spdlog::debug("ImageEnhancer: Applied sharpen (amount={}, radius={})",
-                      amount, radius);
         return true;
 
     } catch (const cv::Exception& e) {
@@ -298,8 +290,6 @@ bool ImageEnhancer::ApplyEdgeDetection(
         switch (detector_type) {
             case EdgeDetectorType::Canny: {
                 cv::Canny(gray, edges, threshold1, threshold2);
-                spdlog::debug("ImageEnhancer: Applied Canny edge detection (t1={}, t2={})",
-                              threshold1, threshold2);
                 break;
             }
 
@@ -317,8 +307,6 @@ bool ImageEnhancer::ApplyEdgeDetection(
 
                 // Combine gradients
                 cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
-                spdlog::debug("ImageEnhancer: Applied Sobel edge detection (kernel_size={})",
-                              kernel_size);
                 break;
             }
 
@@ -326,8 +314,6 @@ bool ImageEnhancer::ApplyEdgeDetection(
                 cv::Mat laplacian;
                 cv::Laplacian(gray, laplacian, CV_16S, kernel_size);
                 cv::convertScaleAbs(laplacian, edges);
-                spdlog::debug("ImageEnhancer: Applied Laplacian edge detection (kernel_size={})",
-                              kernel_size);
                 break;
             }
 
@@ -345,7 +331,6 @@ bool ImageEnhancer::ApplyEdgeDetection(
 
                 // Combine gradients
                 cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
-                spdlog::debug("ImageEnhancer: Applied Scharr edge detection");
                 break;
             }
 

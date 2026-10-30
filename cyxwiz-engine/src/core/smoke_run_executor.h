@@ -4,6 +4,7 @@
 #include "graph_compiler.h"
 #include "graph_model.h"
 #include "materialization_cache.h"
+#include "training_input_preparation.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -27,8 +28,10 @@ struct SmokeRunResult {
 
 struct SmokeRunOptions {
     // Same prepared-data cache as Train, so a Smoke Run reuses (or seeds)
-    // the cached materialization instead of rebuilding it every time.
+    // the prepared data instead of running the steps every time.
     MaterializationCacheConfig cache_config;
+    // The project's folders, for a run of the data steps.
+    StepRunRoots roots;
     // Checked during materialization and between batches.
     std::function<bool()> should_stop;
 };

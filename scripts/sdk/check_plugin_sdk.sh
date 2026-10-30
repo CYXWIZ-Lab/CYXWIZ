@@ -36,6 +36,11 @@ core_headers=$(ls "$work/sdk/include/core" | tr '\n' ' ')
 [ "$core_headers" = "extension_node_contract.h graph_model.h node_metadata.h " ] \
     || fail "core/ should hold only the three contract headers, has: $core_headers"
 [ -f "$work/sdk/lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake" ] || fail "no CyxWizSDKConfig.cmake"
+backend_found=no
+for library in "$work/sdk/lib/cyxwiz-backend.lib" "$work/sdk/lib/libcyxwiz-backend.so" "$work/sdk/lib/libcyxwiz-backend.dylib"; do
+    if [ -f "$library" ] && [ ! -L "$library" ]; then backend_found=yes; fi
+done
+[ "$backend_found" = yes ] || fail "no backend library (a real file, not a symlink) in sdk/lib"
 examples="$work/sdk/examples/python-nodes/builtin-layers"
 for file in builtin_layers.py test_builtin_layers.py blobs_python_layers.cyxgraph blobs.csv             pycyxwiz_test_env.py nodes/builtin-layers.cyxnode/node.json nodes/builtin-layers.cyxnode/node.py; do
     [ -f "$examples/$file" ] || fail "the Python examples lack $file"

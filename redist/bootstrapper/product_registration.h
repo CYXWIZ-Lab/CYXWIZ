@@ -3,6 +3,7 @@
 #include "product_installation_receipt.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace cyxwiz::runtime {
@@ -29,5 +30,11 @@ ProductRegistrationResult RegisterInstalledProduct(
 
 ProductUnregistrationResult UnregisterInstalledProduct(
     const ProductRegistrationRequest& request);
+
+// Where CyxWiz is installed for this scope, as its registration records it
+// (Windows: Apps & Features InstallLocation; Linux: the launcher of the
+// CyxWiz desktop entry). Nothing when it is not registered, and on macOS,
+// whose app bundles live inside the install root.
+std::optional<std::filesystem::path> RegisteredInstallRoot(ProductInstallScope scope);
 
 }  // namespace cyxwiz::runtime

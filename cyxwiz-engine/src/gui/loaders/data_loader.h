@@ -136,6 +136,7 @@ struct ApplyContext {
     // for the Memory tab; pixels are loaded lazily at training time.
     std::string image_labels_csv;
     int image_layout = 0;
+    std::vector<std::string> image_class_names;  // display names by class index ("" keeps the label)
 
     // Audio-specific (commit 4) ------------------------------------
     // audio_labeled_subdirs == true  → folder/<class>/*.wav layout.

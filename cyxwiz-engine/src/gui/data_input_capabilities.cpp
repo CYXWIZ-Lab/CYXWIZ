@@ -1,5 +1,6 @@
 #include "data_input_capabilities.h"
 #include "../core/data_input_formats.h"
+#include "../core/image_formats.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -60,9 +61,7 @@ FolderScan ScanFolder(const std::string& path, int max_files) {
     if (path.empty() || !fs::is_directory(path, ec)) return scan;
     const auto kind_of = [](const fs::path& file) {
         const std::string ext = LowerExtension(file.string());
-        if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "bmp" || ext == "gif" || ext == "tga" ||
-            ext == "webp" || ext == "tif" || ext == "tiff")
-            return FolderKind::Images;
+        if (cyxwiz::image_formats::IsImageExtension(ext)) return FolderKind::Images;
         if (ext == "wav" || ext == "flac" || ext == "ogg" || ext == "aiff" || ext == "aif" || ext == "mp3")
             return FolderKind::Audio;
         if (ext == "txt" || ext == "text" || ext == "md") return FolderKind::Text;
@@ -116,10 +115,11 @@ bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category) {
            file_category == FileCategory::TimeSeries;
 }
 
-const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_category) {
-    if (file_category == FileCategory::Image) {
-        return "Image preview is not wired yet. Apply can still scan supported image folders.";
-    }
+bool HasRowsAndColumns(cyxwiz::loaders::FileCategory file_category) {
+    return file_category != FileCategory::Image && file_category != FileCategory::Audio;
+}
+
+const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory) {
     return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
 }
 
