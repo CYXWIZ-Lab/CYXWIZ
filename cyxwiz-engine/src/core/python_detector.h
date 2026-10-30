@@ -102,6 +102,16 @@ public:
      */
     static std::string GetRequirementError(const PythonInstallation& python);
 
+    /**
+     * @brief The same, for an Engine that embeds Python 3.<embedded_minor>
+     * (0: no embedded Python, so any supported version will do).
+     */
+    static std::string GetRequirementError(const PythonInstallation& python, int embedded_minor);
+
+    /// The versions this Engine accepts, for messages: "3.12" when it embeds
+    /// Python 3.12, "3.12-3.13" without an embedded Python.
+    static std::string SupportedVersionsText();
+
 private:
     /**
      * @brief Get list of candidate Python paths to check.

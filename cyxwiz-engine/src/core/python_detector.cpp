@@ -190,7 +190,36 @@ bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
     return true;
 }
 
+namespace {
+
+int EmbeddedMinor() {
+#ifdef CYXWIZ_PYTHON_LINKED_MINOR
+    return CYXWIZ_PYTHON_LINKED_MINOR;
+#else
+    return 0;
+#endif
+}
+
+} // namespace
+
+std::string PythonDetector::SupportedVersionsText() {
+    const int embedded = EmbeddedMinor();
+    return embedded != 0 ? "3." + std::to_string(embedded) : "3.12-3.13";
+}
+
 std::string PythonDetector::GetRequirementError(const PythonInstallation& python) {
+    return GetRequirementError(python, EmbeddedMinor());
+}
+
+std::string PythonDetector::GetRequirementError(const PythonInstallation& python, int embedded_minor) {
+    // An embedded libpython accepts only its own minor version, so the
+    // general 3.12-3.13 range would name versions this Engine cannot use.
+    if (embedded_minor != 0 && (python.major != 3 || python.minor != embedded_minor)) {
+        const std::string embedded = "3." + std::to_string(embedded_minor);
+        return "This Engine embeds Python " + embedded + " and needs a matching " + embedded + "; found " +
+               python.version;
+    }
+
     if (python.major < 3 || (python.major == 3 && python.minor < 12)) {
         return "Python version too old (supported versions: 3.12-3.13; found " + python.version + ")";
     }
@@ -198,13 +227,6 @@ std::string PythonDetector::GetRequirementError(const PythonInstallation& python
     if (python.major > 3 || (python.major == 3 && python.minor > 13)) {
         return "Python version unsupported (supported versions: 3.12-3.13; found " + python.version + ")";
     }
-
-#ifdef CYXWIZ_PYTHON_LINKED_MINOR
-    if (python.major == 3 && python.minor != CYXWIZ_PYTHON_LINKED_MINOR) {
-        return "This Engine embeds Python 3." + std::to_string(CYXWIZ_PYTHON_LINKED_MINOR) +
-               "; found " + python.version;
-    }
-#endif
 
     if (!python.has_venv_module) {
         return "Python missing venv module (required for creating virtual environments)";
@@ -258,7 +280,7 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::FindBestPython
     }
 
     if (valid.empty()) {
-        spdlog::warn("No supported Python 3.12-3.13 installations found");
+        spdlog::warn("No supported Python {} installations found", SupportedVersionsText());
         return std::nullopt;
     }
 
