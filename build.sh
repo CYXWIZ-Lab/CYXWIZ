@@ -184,6 +184,7 @@ cmake -B "$BUILD_DIR" -S . \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_OVERLAY_PORTS=vcpkg-ports \
+    -DVCPKG_OVERLAY_TRIPLETS=vcpkg-triplets \
     -DCYXWIZ_BUILD_ENGINE=$BUILD_ENGINE \
     -DCYXWIZ_BUILD_SERVER_NODE=$BUILD_SERVER_NODE \
     -DCYXWIZ_BUILD_TESTS=ON \
