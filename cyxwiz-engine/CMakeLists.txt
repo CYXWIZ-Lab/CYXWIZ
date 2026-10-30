@@ -6252,6 +6252,24 @@ add_test(NAME roc_pr_sklearn_parity COMMAND test_computation_truth_roc_pr)
 set(CYXWIZ_CLUSTERING_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/clustering_pytorch.json"
 )
+set(CYXWIZ_TIME_SERIES_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/time_series_statsmodels.json")
+add_executable(test_computation_truth_time_series
+    tests/computation_truth/test_computation_truth_time_series.cpp
+)
+target_include_directories(test_computation_truth_time_series PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_time_series PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_time_series PRIVATE
+    CYXWIZ_TIME_SERIES_FIXTURE="${CYXWIZ_TIME_SERIES_FIXTURE}"
+)
+set_target_properties(test_computation_truth_time_series PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ComputationTruthTimeSeries COMMAND test_computation_truth_time_series)
+
 add_executable(test_computation_truth_clustering
     tests/computation_truth/test_computation_truth_clustering.cpp
 )

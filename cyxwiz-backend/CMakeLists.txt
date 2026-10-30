@@ -250,6 +250,8 @@ set(BACKEND_SOURCES
     src/algorithms/time_series/stationarity.cpp
     src/algorithms/time_series/seasonality.cpp
     src/algorithms/time_series/forecasting.cpp
+    src/algorithms/time_series/arima.cpp
+    src/algorithms/time_series/series_device.cpp
     src/algorithms/time_series/generation.cpp
     src/algorithms/time_series/windowing.cpp
     src/algorithms/text_processing.cpp
