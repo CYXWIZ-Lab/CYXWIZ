@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <stdexcept>
 
 namespace cyxwiz {
 
@@ -22,9 +23,8 @@ std::pair<std::vector<double>, std::vector<double>> TimeSeries::Periodogram(cons
     if (!series_detail::SeriesRefusal(data, 4, "The periodogram").empty()) return {power, frequency};
     try {
         series_detail::Periodogram(series_detail::LinearDetrend(data), power, frequency);
-    } catch (const af::exception&) {
-        power.clear();
-        frequency.clear();
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("The periodogram failed on the ArrayFire device: ") + e.what());
     }
     return {power, frequency};
 }
