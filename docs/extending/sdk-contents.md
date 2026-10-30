@@ -68,7 +68,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/stats_utils.h` | stats_utils.h - Lightweight statistical utilities Pure math functions that work on std::vector<double>. No DataTable dependency, header-only for simplicity. | `DescriptiveStats` |
 | `cyxwiz/tensor.h` |  Needs ArrayFire headers. | `Tensor`, `AlwaysFalse`, `DataType`, `TensorDeviceLayout` |
 | `cyxwiz/text_processing.h` |  | `TokenizationResult`, `WordFrequencyResult`, `TFIDFResult`, `EmbeddingResult`, `SentimentResult`, `TextProcessing` |
-| `cyxwiz/time_series.h` |  | `DecompositionResult`, `AutocorrelationResult`, `StationarityResult`, `SeasonalityResult`, `ForecastResult`, `TimeSeries`, `WindowConfig`, `WindowResult` |
+| `cyxwiz/time_series.h` |  | `DecompositionResult`, `AutocorrelationResult`, `StationarityResult`, `Differenced`, `SeasonalityResult`, `ForecastResult`, `TimeSeries`, `WindowConfig`, `WindowResult` |
 | `cyxwiz/tokenizer.h` |  | `TokenizedText`, `Vocabulary`, `Tokenizer`, `TokenizerType`, `ByteBPEPiecePolicy`, `BPEInitialUnit` |
 | `cyxwiz/utilities.h` |  | `CalculatorResult`, `UnitConversionResult`, `RandomNumberResult`, `HashResult`, `JSONResult`, `RegexMatch`, `RegexResult`, `Utilities`, `ParserState` |
 | `cyxwiz/version.h` |  |  |
