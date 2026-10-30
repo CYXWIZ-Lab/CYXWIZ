@@ -979,6 +979,12 @@ MainWindow::MainWindow()
     });
 
     live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
+    // A dataset added, replaced or removed changes what the graph compiles to
+    // without a graph edit: an image index built after loading gives the Data
+    // Split its counts (TOFIX178 1.5), a table loaded gives its columns.
+    cyxwiz::DatasetCatalog::Instance().Subscribe(live_compile_datasets_, [this](const cyxwiz::DatasetChange&) {
+        if (live_compile_) live_compile_->Invalidate();
+    });
     properties_->SetLiveCompile(live_compile_.get());
     node_editor_->SetLiveCompile(live_compile_.get());
 
