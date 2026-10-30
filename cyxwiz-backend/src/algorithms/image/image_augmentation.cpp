@@ -304,37 +304,34 @@ af::array Affine(const af::array& images, const ImageOpDraws& draws, Interpolati
 }
 
 // torch interpolate's weights from `in_size` pixels to `out` along one axis,
-// reading only [start, start + size) (the crop box): column-major [out,
-// in_size]. Bilinear is the antialiased filter torchvision resize uses
-// (antialias=True: a triangle widened by the scale when shrinking, the plain
-// bilinear when growing); nearest takes floor(i * scale).
-std::vector<float> ResampleWeights(int in_size, int start, int size, int out, Interpolation interpolation) {
-    std::vector<float> matrix(static_cast<size_t>(out) * static_cast<size_t>(in_size), 0.0f);
-    const auto at = [&](int source, int i) -> float& {
-        return matrix[static_cast<size_t>(start + source) * static_cast<size_t>(out) + static_cast<size_t>(i)];
-    };
-    const float scale = static_cast<float>(size) / static_cast<float>(out);
-    for (int i = 0; i < out; ++i) {
-        if (interpolation == Interpolation::Nearest) {
-            const int source = size == out ? i : (std::min)(static_cast<int>(std::floor(static_cast<float>(i) * scale)), size - 1);
-            at(source, i) = 1.0f;
-            continue;
-        }
-        const float support = scale >= 1.0f ? scale : 1.0f;
-        const float invscale = scale >= 1.0f ? 1.0f / scale : 1.0f;
-        const float center = scale * (static_cast<float>(i) + 0.5f);
-        const int first = (std::max)(static_cast<int>(center - support + 0.5f), 0);
-        const int count = (std::min)(static_cast<int>(center + support + 0.5f), size) - first;
-        std::vector<float> weights(static_cast<size_t>((std::max)(count, 0)));
-        float total = 0.0f;
-        for (int j = 0; j < count; ++j) {
-            const float x = std::fabs((static_cast<float>(j + first) - center + 0.5f) * invscale);
-            weights[static_cast<size_t>(j)] = x < 1.0f ? 1.0f - x : 0.0f;
-            total += weights[static_cast<size_t>(j)];
-        }
-        for (int j = 0; j < count; ++j) at(first + j, i) = total != 0.0f ? weights[static_cast<size_t>(j)] / total : 0.0f;
+// per sample reading only [start, start + size) (its crop box), built on the
+// device: [out, in_size, 1, N]. Bilinear is the antialiased filter
+// torchvision resize uses (antialias=True: a triangle widened by the scale
+// when shrinking, the plain bilinear when growing, normalised over its
+// window); nearest takes floor(i * scale).
+af::array ResampleWeights(dim_t in_size, const std::vector<int>& starts, const std::vector<int>& sizes, int out,
+                          Interpolation interpolation) {
+    const af::dim4 dims(out, in_size, 1, static_cast<dim_t>(starts.size()));
+    const af::array size = PerSample(ToFloat(sizes), dims);
+    const af::array i = af::iota(af::dim4(out, 1, 1, 1), af::dim4(1, in_size, 1, dims[3]), f32);
+    const af::array j = af::iota(af::dim4(1, in_size, 1, 1), af::dim4(out, 1, 1, dims[3]), f32) -
+                        PerSample(ToFloat(starts), dims);  // the pixel's place in the box
+    const af::array scale = size / static_cast<float>(out);
+    if (interpolation == Interpolation::Nearest) {
+        const af::array source =
+            af::select(size == static_cast<float>(out), i, (af::min)(af::floor(i * scale), size - 1.0f));
+        return (j == source).as(f32);
     }
-    return matrix;
+    const af::array shrinking = scale >= 1.0f;
+    const af::array support = af::select(shrinking, scale, af::constant(1.0f, dims));
+    const af::array invscale = af::select(shrinking, 1.0f / scale, af::constant(1.0f, dims));
+    const af::array center = scale * (i + 0.5f);
+    const af::array first = (af::max)(af::trunc(center - support + 0.5f), 0.0f);
+    const af::array last = (af::min)(af::trunc(center + support + 0.5f), size);
+    const af::array weights =
+        (j >= first && j < last).as(f32) * (af::max)(1.0f - af::abs((j - center + 0.5f) * invscale), 0.0f);
+    const af::array total = af::tile(af::sum(weights, 1), 1, static_cast<unsigned>(in_size), 1, 1);
+    return af::select(total != 0.0f, weights / total, af::constant(0.0f, dims));
 }
 
 // torchvision F.resized_crop: each sample's box resized to height x width,
@@ -342,18 +339,12 @@ std::vector<float> ResampleWeights(int in_size, int start, int size, int out, In
 af::array ResizedCrop(const af::array& images, const ImageOpDraws& draws, int height, int width,
                       Interpolation interpolation) {
     const dim_t h = images.dims(0), w = images.dims(1), c = images.dims(2), n = images.dims(3);
-    std::vector<float> rows_op, cols_op;
-    for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
-        const auto r = ResampleWeights(static_cast<int>(h), draws.top[i], draws.box_height[i], height, interpolation);
-        const auto k = ResampleWeights(static_cast<int>(w), draws.left[i], draws.box_width[i], width, interpolation);
-        rows_op.insert(rows_op.end(), r.begin(), r.end());
-        cols_op.insert(cols_op.end(), k.begin(), k.end());
-    }
-    const af::array along_h = af::moddims(
-        af::matmul(af::array(height, h, 1, n, rows_op.data()), af::moddims(images, h, w * c, 1, n)), height, w, c, n);
+    const af::array rows_op = ResampleWeights(h, draws.top, draws.box_height, height, interpolation);
+    const af::array cols_op = ResampleWeights(w, draws.left, draws.box_width, width, interpolation);
+    const af::array along_h =
+        af::moddims(af::matmul(rows_op, af::moddims(images, h, w * c, 1, n)), height, w, c, n);
     const af::array by_width = af::moddims(af::reorder(along_h, 1, 0, 2, 3), w, height * c, 1, n);
-    const af::array along_w =
-        af::moddims(af::matmul(af::array(width, w, 1, n, cols_op.data()), by_width), width, height, c, n);
+    const af::array along_w = af::moddims(af::matmul(cols_op, by_width), width, height, c, n);
     return af::reorder(along_w, 1, 0, 2, 3);
 }
 
