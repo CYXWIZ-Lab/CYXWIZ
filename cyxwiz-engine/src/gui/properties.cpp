@@ -262,8 +262,16 @@ void Properties::RefreshView(MLNode& node) {
     key.facts_serial = facts_serial_;
     if (view_valid_ && key == view_key_) return;
 
-    view_metadata_ = cyxwiz::ResolveNodeMetadata(node);
-    const cyxwiz::NodeMetadata* metadata = view_metadata_ ? &*view_metadata_ : nullptr;
+    BuildView(node, view_metadata_, view_);
+    view_key_ = key;
+    view_valid_ = true;
+}
+
+// The settings view of `node` (its metadata kept in `metadata`: the view's
+// rows point into it), from the graph, the compile and the dataset facts.
+void Properties::BuildView(MLNode& node, std::optional<cyxwiz::NodeMetadata>& metadata_out, View& view_out) {
+    metadata_out = cyxwiz::ResolveNodeMetadata(node);
+    const cyxwiz::NodeMetadata* metadata = metadata_out ? &*metadata_out : nullptr;
 
     properties_truth::NodeTruthContext truth_context;
     if (node_editor_) {
@@ -309,9 +317,18 @@ void Properties::RefreshView(MLNode& node) {
         in.compiled = &compiled;
     }
 
-    view_ = cyxwiz::properties_view::Build(in);
-    view_key_ = key;
-    view_valid_ = true;
+    view_out = cyxwiz::properties_view::Build(in);
+}
+
+void Properties::BuildSettingsRows(MLNode& node, SettingsRows& settings) {
+    RefreshDatasetFacts();
+    BuildView(node, settings.metadata, settings.view);
+}
+
+void Properties::RenderSettingsRows(MLNode& node, const SettingsRows& settings) {
+    ImGui::PushID(node.id);
+    RenderMetadataRows(node, settings.view);
+    ImGui::PopID();
 }
 
 // ---------------------------------------------------------------------------
@@ -585,7 +602,7 @@ void Properties::RenderSettings(MLNode& node) {
 
     switch (view_.route) {
         case SettingsRoute::Metadata:
-            RenderMetadataRows(node);
+            RenderMetadataRows(node, view_);
             break;
         case SettingsRoute::Custom:
         case SettingsRoute::Fallback:
@@ -615,8 +632,8 @@ void Properties::RenderSettings(MLNode& node) {
     ImGui::Spacing();
 }
 
-void Properties::RenderMetadataRows(MLNode& node) {
-    for (const auto& group : view_.groups) {
+void Properties::RenderMetadataRows(MLNode& node, const View& view) {
+    for (const auto& group : view.groups) {
         if (group.name.empty()) {
             properties_rows::Rows rows("##flat");
             if (rows.ok) for (const auto& row : group.rows) RenderMetadataRow(node, row);
