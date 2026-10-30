@@ -603,6 +603,11 @@ void NodeEditor::ApplyStepAfterInsert() {
             deferred_focus_ = {};
         }
     }
+    if (!pending_step_moves_.empty()) {
+        const auto moves = std::move(pending_step_moves_);
+        pending_step_moves_.clear();
+        for (const auto& move : moves) MoveOrRemoveStep(move);
+    }
     if (!pending_replacements_.empty()) {
         const auto replacements = std::move(pending_replacements_);
         pending_replacements_.clear();
@@ -789,6 +794,91 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     last_added_step_ = step_id;
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
     if (request.open_dialog) OpenNodeConfiguration(step_id);
+}
+
+void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {
+    const MLNode* step = FindNodeById(move.step);
+    if (!step || step->inputs.empty() || step->outputs.empty()) return;
+    const bool remove = move.after == kRemoveStep;
+    const MLNode* after = remove ? nullptr : FindNodeById(move.after);
+    if (!remove && (!after || after->outputs.empty() || move.after == move.step)) return;
+    if (IsSubgraphMember(step->id) || (after && IsSubgraphMember(after->id))) {
+        spdlog::warn("Node {} is a step of a recipe; open the recipe on the canvas to move it", step->id);
+        return;
+    }
+    const int step_id = step->id;
+    const int step_in = step->inputs.front().id;
+    const int step_out = step->outputs.front().id;
+    const auto feed = std::find_if(links_.begin(), links_.end(), [&](const NodeLink& l) { return l.to_pin == step_in; });
+    if (feed == links_.end()) {
+        spdlog::warn("Node {} has no input link; nothing moved", step_id);
+        return;
+    }
+    if (!CanReplaceGraph(remove ? "remove a step" : "move a step")) return;
+    const int source = feed->from_node;
+    const int source_pin = feed->from_pin;
+    const std::string name = step->name;
+
+    // The chain after the source (each node read by exactly one link from
+    // its first output), with where its nodes are now.
+    const auto place = [&](int id) {
+        if (const auto pending = pending_positions_.find(id); pending != pending_positions_.end()) return pending->second;
+        if (const auto cached = cached_node_positions_.find(id); cached != cached_node_positions_.end()) return cached->second;
+        const MLNode* node = FindNodeById(id);
+        return node ? ImVec2(node->initial_pos_x, node->initial_pos_y) : ImVec2(0.0f, 0.0f);
+    };
+    const auto chain = [&]() {
+        std::vector<int> ids;
+        int from = source, pin = source_pin;
+        for (size_t guard = 0; guard < nodes_.size(); ++guard) {
+            int next = -1, readers = 0;
+            for (const auto& link : links_)
+                if (link.from_node == from && link.from_pin == pin) {
+                    next = link.to_node;
+                    ++readers;
+                }
+            const MLNode* node = readers == 1 ? FindNodeById(next) : nullptr;
+            if (!node || node->outputs.empty() || std::find(ids.begin(), ids.end(), next) != ids.end()) break;
+            ids.push_back(next);
+            from = next;
+            pin = node->outputs.front().id;
+        }
+        return ids;
+    };
+    const std::vector<int> before = chain();
+    std::vector<ImVec2> places;
+    for (const int id : before) places.push_back(place(id));
+
+    SaveUndoState();
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
+    // Take it out: what read its result reads what fed it.
+    links_.erase(std::remove_if(links_.begin(), links_.end(), [&](const NodeLink& l) { return l.to_pin == step_in; }),
+                 links_.end());
+    for (auto& link : links_)
+        if (link.from_node == step_id && link.from_pin == step_out) {
+            link.from_node = source;
+            link.from_pin = source_pin;
+        }
+    if (remove) {
+        DeleteNode(step_id);
+    } else {
+        // Put it back after `after`: it takes over what read after's result.
+        const MLNode* target = FindNodeById(move.after);
+        const int after_out = target->outputs.front().id;
+        for (auto& link : links_)
+            if (link.from_node == move.after && link.from_pin == after_out) {
+                link.from_node = step_id;
+                link.from_pin = step_out;
+            }
+        links_.push_back({next_link_id_++, move.after, after_out, step_id, step_in, LinkType::TensorFlow});
+        RebuildPinLookup();
+    }
+    // The chain's nodes take its places in their new order, so it stays a line.
+    const std::vector<int> now = chain();
+    for (size_t i = 0; i < now.size() && i < places.size(); ++i) pending_positions_[now[i]] = places[i];
+    pending_positions_frames_ = 3;
+    ClearValidationState();
+    spdlog::info("{} node {} ({})", remove ? "Removed" : "Moved", step_id, name);
 }
 
 void NodeEditor::ReplaceStep(const PendingReplacement& request) {

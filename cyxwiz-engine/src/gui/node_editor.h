@@ -274,6 +274,8 @@ public:
 
     // Set properties panel for node selection display
     void SetPropertiesPanel(Properties* properties) { properties_panel_ = properties; }
+    // Data Studio's image recipe edits a step's settings with Properties' editor.
+    Properties* GetPropertiesPanel() const { return properties_panel_; }
     // The background compile of this graph (TOFIX123): link tooltips show
     // the compiler's reason for a failed node. Owned by MainWindow.
     void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
@@ -698,6 +700,16 @@ public:
     void RequestReplaceStep(int step_id, NodeType type, std::map<std::string, std::string> parameters = {}) {
         pending_replacements_.push_back({step_id, type, std::move(parameters)});
     }
+    // Takes a step out of its chain (Data Studio Prepare's Remove, TOFIX178
+    // 1.6): what fed it now feeds what read it, the node goes, and the
+    // chain's later nodes close the gap; one undo point. Applied, like
+    // RequestStepAfter, at the start of the next canvas frame.
+    void RequestRemoveStep(int step_id) { pending_step_moves_.push_back({step_id, kRemoveStep}); }
+    // Moves a step to just after `after_id` (Prepare's drag): taken out as
+    // RequestRemoveStep does and put back as RequestStepAfter does; the
+    // chain's nodes keep their places on the canvas in the new order. One
+    // undo point; applied at the start of the next canvas frame.
+    void RequestMoveStep(int step_id, int after_id) { pending_step_moves_.push_back({step_id, after_id}); }
     // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
     // yet); Data Studio's Prepare picks it once it is on the canvas.
     int LastAddedStep() const { return last_added_step_; }
@@ -1104,6 +1116,13 @@ private:
         bool open_dialog = false;  // open the new node's dialog once it is added
     };
     std::vector<PendingStepAfter> pending_steps_after_;
+    static constexpr int kRemoveStep = -2;
+    struct PendingStepMove {
+        int step = -1;
+        int after = kRemoveStep;  // the step it goes after; kRemoveStep: taken out
+    };
+    std::vector<PendingStepMove> pending_step_moves_;
+    void MoveOrRemoveStep(const PendingStepMove& move);
     struct PendingReplacement {
         int step = -1;
         NodeType type = NodeType::SQLQuery;
