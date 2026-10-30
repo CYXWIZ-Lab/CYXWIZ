@@ -37,6 +37,13 @@ std::shared_ptr<arrow::Array> Chunk(const std::shared_ptr<arrow::Table>& t, cons
     return column && column->num_chunks() > 0 ? column->chunk(0) : nullptr;
 }
 
+// The next `width` px on this row when it fits before `right_edge`, else
+// on the next row: nothing runs off a narrow panel.
+void Flow(float width, float right_edge, float gap) {
+    ImGui::SameLine(0.0f, gap);
+    if (ImGui::GetCursorScreenPos().x + width > right_edge) ImGui::NewLine();
+}
+
 // What a tile shows over its picture.
 struct TileText {
     const std::string* tag = nullptr;   // the class, bottom left
@@ -384,17 +391,20 @@ void ImageGalleryView::RenderToolbar(const ig::View& view) {
         }
         layout_ = static_cast<Layout>(layout);
     }
-    ImGui::SameLine(0.0f, 16.0f);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     if (layout_ == Layout::Grid) {
+        const float tile_w = ImGui::CalcTextSize("Tile").x + 52.0f + 2.0f * ImGui::GetFrameHeight() + 3.0f * style.ItemSpacing.x;
+        Flow(tile_w, right_edge, 16.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "Tile");
         ImGui::SameLine();
         ui::NumberField("##tile_size", &tile_, kMinTile, kMaxTile, kTileStep, 52.0f, "Tile size in pixels");
-        ImGui::SameLine(0.0f, 12.0f);
         static const char* kFits[] = {"Fill", "Fit"};
+        Flow(ui::SegmentedControlWidth(kFits, 2), right_edge, 12.0f);
         int fit = fill_ ? 0 : 1;
         if (ui::SegmentedControl("##tile_fit", kFits, 2, &fit)) fill_ = fit == 0;
-        ImGui::SameLine(0.0f, 16.0f);
+        Flow(ImGui::CalcTextSize("Show").x + style.ItemSpacing.x + ui::FilterChipWidth("Class", ""), right_edge, 16.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "Show");
         struct Toggle {
@@ -403,12 +413,13 @@ void ImageGalleryView::RenderToolbar(const ig::View& view) {
         };
         for (const Toggle& toggle : {Toggle{"Class##show_class", &show_class_}, Toggle{"Name##show_name", &show_name_},
                                      Toggle{"Size##show_size", &show_size_}, Toggle{"Flags##show_flags", &show_flags_}}) {
-            ImGui::SameLine();
             const std::string id = toggle.label;
             const std::string label = id.substr(0, id.find("##"));
+            Flow(ui::FilterChipWidth(label.c_str(), ""), right_edge, style.ItemSpacing.x);
             if (ui::FilterChip(id.c_str(), label.c_str(), "", *toggle.on)) *toggle.on = !*toggle.on;
         }
     } else if (layout_ == Layout::Viewer) {
+        ImGui::SameLine(0.0f, 16.0f);
         if (ui::SecondaryButton(ICON_FA_CHEVRON_LEFT "##viewer_previous", view.previous >= 0, "This is the first image"))
             Pick(view, view.previous);
         ImGui::SameLine();
@@ -419,10 +430,11 @@ void ImageGalleryView::RenderToolbar(const ig::View& view) {
         ImGui::SameLine();
         if (ui::SecondaryButton(ICON_FA_CHEVRON_RIGHT "##viewer_next", view.next >= 0, "This is the last image"))
             Pick(view, view.next);
-        // The zoom controls, right aligned (they wrap below when narrow).
-        const float zoom_w = 330.0f;
-        if (ui::SameLineRight(zoom_w)) viewer_.RenderZoomControls();
+        // The zoom controls, right aligned; on the next row when there is no room.
+        ui::SameLineRight(330.0f);
+        viewer_.RenderZoomControls();
     } else {
+        ImGui::SameLine(0.0f, 16.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "Click a column to sort by it; double-click a row to open it in the viewer.");
     }
@@ -449,7 +461,8 @@ void ImageGalleryView::RenderFilters(const ig::View& view, bool sort_buttons) {
         if (!view.quality && input_.sort == ig::Sort::Blurriest) input_.sort = ig::Sort::DatasetOrder;
         int sort = static_cast<int>(input_.sort);
         const int shown = view.quality ? 4 : 3;
-        ImGui::SameLine(0.0f, 16.0f);
+        Flow(ImGui::CalcTextSize("Sort").x + ImGui::GetStyle().ItemSpacing.x + ui::SegmentedControlWidth(kSorts, shown),
+             right_edge, 16.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "Sort");
         ImGui::SameLine();
@@ -461,7 +474,7 @@ void ImageGalleryView::RenderFilters(const ig::View& view, bool sort_buttons) {
     }
     const float pager_w = ImGui::CalcTextSize(view.showing.c_str()).x + 2.0f * ui::ButtonWidth(ICON_FA_CHEVRON_LEFT, ui::ButtonSize::Small) +
                           2.0f * ImGui::GetStyle().ItemSpacing.x;
-    if (!ui::SameLineRight(pager_w)) ImGui::SameLine(0.0f, 16.0f);
+    if (!ui::SameLineRight(pager_w)) Flow(pager_w, right_edge, 16.0f);
     if (ui::SecondaryButton(ICON_FA_CHEVRON_LEFT "##previous", view.has_previous, "This is the first page", ui::ButtonSize::Small))
         input_.page = view.page - 1;
     ImGui::SameLine();
@@ -606,8 +619,8 @@ void ImageGalleryView::RenderDetails(const ig::View& view, float width) {
         ImGui::Dummy(ImVec2(width, width * 0.6f));
     }
     ImGui::TextUnformatted(view.detail_title.c_str());
-    if (ui::SameLineRight(ui::ButtonWidth("Open in viewer", ui::ButtonSize::Small)) &&
-        ui::SecondaryButton("Open in viewer")) {
+    ui::SameLineRight(ui::ButtonWidth("Open in viewer", ui::ButtonSize::Small));
+    if (ui::SecondaryButton("Open in viewer")) {
         before_viewer_ = layout_;
         layout_ = Layout::Viewer;
     }
@@ -702,7 +715,9 @@ void ImageGalleryView::Render() {
     RenderFilters(*view, layout_ == Layout::Grid);
     ImGui::Spacing();
 
-    const float height = ImGui::GetContentRegionAvail().y;
+    // Beside the details when wide; above them when narrow, leaving them room.
+    const float height = side ? ImGui::GetContentRegionAvail().y
+                              : std::max(200.0f, ImGui::GetContentRegionAvail().y * 0.6f);
     if (layout_ == Layout::Grid) RenderGrid(*view, grid_w, height);
     else RenderList(*view, grid_w, height);
     view = &CurrentView();  // a click this frame
@@ -712,7 +727,11 @@ void ImageGalleryView::Render() {
         RenderDetails(*view, kDetailWidth - style.ScrollbarSize);
         ImGui::EndChild();
     } else {
-        RenderDetails(*view, ImGui::GetContentRegionAvail().x);
+        // At least a preview and its facts; the panel scrolls to it when short.
+        ImGui::BeginChild("##gallery_details", ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 300.0f)),
+                          ImGuiChildFlags_None);
+        RenderDetails(*view, ImGui::GetContentRegionAvail().x - style.ScrollbarSize);
+        ImGui::EndChild();
     }
 }
 

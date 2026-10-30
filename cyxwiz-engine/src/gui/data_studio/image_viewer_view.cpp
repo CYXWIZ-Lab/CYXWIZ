@@ -49,6 +49,13 @@ void DrawCheckerboard(ImDrawList* dl, const ImVec2& min, const ImVec2& max) {
         }
 }
 
+// The next `width` px on this row when it fits before `right_edge`, else
+// on the next row: nothing runs off a narrow panel.
+void Flow(float width, float right_edge, float gap) {
+    ImGui::SameLine(0.0f, gap);
+    if (ImGui::GetCursorScreenPos().x + width > right_edge) ImGui::NewLine();
+}
+
 std::string Stat(const ChannelHistogram& h) {
     char text[48];
     std::snprintf(text, sizeof(text), "mean %.1f \xC2\xB7 std %.1f", h.mean, h.std_dev);
@@ -147,13 +154,17 @@ void ImageViewerView::RenderZoomControls() {
 
 void ImageViewerView::RenderControls(bool has_model) {
     const ui::Tokens& t = ui::CurrentTokens();
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Channel");
     ImGui::SameLine();
     const int channels = pixels_.HasAlpha() ? 6 : 5;
     if (channel_ >= channels) channel_ = 0;
     ui::SegmentedControl("##viewer_channel", kChannels, channels, &channel_);
-    ImGui::SameLine(0.0f, 16.0f);
+    Flow(ImGui::CalcTextSize("View").x + gap + 2.0f * ui::ButtonWidth(ICON_FA_ROTATE_LEFT, ui::ButtonSize::Small) + gap,
+         right_edge, 16.0f);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "View");
     ImGui::SameLine();
     if (ui::GhostButton(ICON_FA_ROTATE_LEFT "##rotate_left")) {
@@ -167,29 +178,29 @@ void ImageViewerView::RenderControls(bool has_model) {
         fitted_ = true;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the view right (the file is not changed)");
-    ImGui::SameLine();
+    Flow(ui::ButtonWidth(ICON_FA_ARROWS_LEFT_RIGHT " Flip", ui::ButtonSize::Small), right_edge, gap);
     if (ui::GhostButton(ICON_FA_ARROWS_LEFT_RIGHT " Flip##flip", true, nullptr, orientation_.flip))
         orientation_.flip = !orientation_.flip;
-    ImGui::SameLine();
+    Flow(ui::ButtonWidth(ICON_FA_BORDER_ALL " Pixel grid", ui::ButtonSize::Small), right_edge, gap);
     if (ui::GhostButton(ICON_FA_BORDER_ALL " Pixel grid##grid", true, nullptr, pixel_grid_)) pixel_grid_ = !pixel_grid_;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lines between pixels from 800 %%");
-    ImGui::SameLine();
+    Flow(ui::ButtonWidth("Checkerboard", ui::ButtonSize::Small), right_edge, gap);
     if (ui::GhostButton("Checkerboard##checker", true, nullptr, checkerboard_)) checkerboard_ = !checkerboard_;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shows behind transparent pixels");
 
     const float compare_w = ImGui::CalcTextSize("Compare").x + ImGui::GetStyle().ItemSpacing.x +
                             ui::SegmentedControlWidth(kCompare, 3);
-    if (ui::SameLineRight(compare_w)) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.text_dim, "Compare");
-        ImGui::SameLine();
-        if (!has_model) compare_ = 0;
-        ImGui::BeginDisabled(!has_model);
-        ui::SegmentedControl("##viewer_compare", kCompare, 3, &compare_);
-        ImGui::EndDisabled();
-        if (!has_model && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("The graph's image steps show here once it has compiled");
-    }
+    // Right aligned; on the next row when there is no room.
+    ui::SameLineRight(compare_w);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Compare");
+    ImGui::SameLine();
+    if (!has_model) compare_ = 0;
+    ImGui::BeginDisabled(!has_model);
+    ui::SegmentedControl("##viewer_compare", kCompare, 3, &compare_);
+    ImGui::EndDisabled();
+    if (!has_model && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("The graph's image steps show here once it has compiled");
 }
 
 void ImageViewerView::RenderCanvas(const ImVec2& size, const ModelPicture& model) {
@@ -363,7 +374,8 @@ void ImageViewerView::RenderStatus() {
         std::snprintf(right, sizeof(right), "%d \xC3\x97 %d \xC2\xB7 %s \xC2\xB7 %s \xC2\xB7 %s", pixels_.width, pixels_.height,
                       kind, pixels_.bits == 32 ? "32-bit float" : pixels_.bits == 16 ? "16 bit" : "8 bit",
                       iv::ZoomText(view_.zoom).c_str());
-        if (ui::SameLineRight(ImGui::CalcTextSize(right).x)) ImGui::TextColored(t.text_dim, "%s", right);
+        ui::SameLineRight(ImGui::CalcTextSize(right).x);
+        ImGui::TextColored(t.text_dim, "%s", right);
     }
     ImGui::EndChild();
 }
@@ -377,7 +389,8 @@ void ImageViewerView::RenderSide(const std::vector<std::pair<std::string, std::s
     ui::BeginCard("viewer_histogram");
     ImGui::TextUnformatted("Histogram");
     const char* range = "0 to 255, 32 bins";
-    if (ui::SameLineRight(ImGui::CalcTextSize(range).x)) ImGui::TextColored(t.text_dim, "%s", range);
+    ui::SameLineRight(ImGui::CalcTextSize(range).x);
+    ImGui::TextColored(t.text_dim, "%s", range);
     struct Row {
         const char* name;
         const ChannelHistogram* h;
@@ -398,7 +411,8 @@ void ImageViewerView::RenderSide(const std::vector<std::pair<std::string, std::s
         if (!lit) colour.w *= 0.35f;
         ImGui::TextColored(colour, "%s", row.name);
         const std::string stat = Stat(*row.h);
-        if (ui::SameLineRight(ImGui::CalcTextSize(stat.c_str()).x)) ImGui::TextColored(t.text_dim, "%s", stat.c_str());
+        ui::SameLineRight(ImGui::CalcTextSize(stat.c_str()).x);
+        ImGui::TextColored(t.text_dim, "%s", stat.c_str());
         const ImVec2 at = ImGui::GetCursorScreenPos();
         const float h = 36.0f;
         ImGui::Dummy(ImVec2(inner, h));
@@ -471,7 +485,9 @@ void ImageViewerView::Render(const std::string& path, const std::vector<std::pai
     const float left_w = std::max(1.0f, side ? ImGui::GetContentRegionAvail().x - kSideWidth - style.ItemSpacing.x * 2.0f
                                              : ImGui::GetContentRegionAvail().x);
     const float status_h = ImGui::GetFrameHeight() + 4.0f;
-    const float canvas_h = std::max(240.0f, ImGui::GetContentRegionAvail().y - strip_height - status_h - style.ItemSpacing.y * 3.0f);
+    // Beside the side panel when wide; above it when narrow, leaving it room.
+    const float below = ImGui::GetContentRegionAvail().y - strip_height - status_h - style.ItemSpacing.y * 3.0f;
+    const float canvas_h = std::max(200.0f, side ? below : below * 0.55f);
 
     ImGui::BeginGroup();
     RenderCanvas(ImVec2(left_w, canvas_h), model);
@@ -486,7 +502,11 @@ void ImageViewerView::Render(const std::string& path, const std::vector<std::pai
     ImGui::EndGroup();
 
     if (side) ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
-    ImGui::BeginChild("##viewer_side", ImVec2(side ? kSideWidth : 0.0f, side ? canvas_h + strip_height + status_h + style.ItemSpacing.y * 2.0f : 0.0f),
+    // Below the picture when narrow: at least the histograms; the panel
+    // scrolls to it when short.
+    ImGui::BeginChild("##viewer_side", ImVec2(side ? kSideWidth : 0.0f,
+                                              side ? canvas_h + strip_height + status_h + style.ItemSpacing.y * 2.0f
+                                                   : std::max(ImGui::GetContentRegionAvail().y, 320.0f)),
                       ImGuiChildFlags_None);
     RenderSide(detail);
     ImGui::EndChild();
