@@ -34,6 +34,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <set>
@@ -756,17 +757,27 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
         float float_val = static_cast<float>(parsed);
         ImGui::SetNextItemWidth(editor_width);
         char buf[32];
-        // A typed field with - / + (owner 2026-10-21: no sliders); a ranged
-        // value steps by a hundredth of its range and stays in it.
+        // A typed field with - / + (owner 2026-10-21: no sliders). The step
+        // follows the range (0.01 up to 1, 0.1 up to 10, 1 beyond) and a value
+        // smaller than that steps by its own magnitude (epsilon 1e-5 by 1e-5),
+        // so one press never jumps it by orders of magnitude. A ranged value
+        // stays in its range.
         const double span = range.has_range ? range.max_value - range.min_value : 0.0;
-        const float step = !range.has_range || span <= 1.0 ? 0.01f : span <= 10.0 ? 0.1f : 1.0f;
-        const char* format = range.has_range && span <= 10.0 ? "%.4f" : "%.6g";
+        float step = !range.has_range || span <= 1.0 ? 0.01f : span <= 10.0 ? 0.1f : 1.0f;
+        // A 0 in a range that starts above 0 steps by the range's start.
+        const float magnitude = float_val != 0.0f ? std::fabs(float_val)
+                                : range.has_range && range.min_value > 0.0 ? static_cast<float>(range.min_value)
+                                                                           : 0.0f;
+        const bool tiny = magnitude > 0.0f && magnitude < step;
+        if (tiny) step = std::pow(10.0f, std::floor(std::log10(magnitude)));
+        const char* format = range.has_range && span <= 10.0 && !tiny ? "%.4f" : "%.6g";
         if (ImGui::InputFloat("##value", &float_val, step_buttons ? step : 0.0f, step_buttons ? step * 10.0f : 0.0f,
                               format)) {
             if (range.has_range)
                 float_val = std::clamp(float_val, static_cast<float>(range.min_value), static_cast<float>(range.max_value));
-            // %g keeps small values such as var_smoothing 1e-9 (%.4f showed 0.0000).
-            std::snprintf(buf, sizeof(buf), format, float_val);
+            // Stored with %g, whatever is shown: small values such as
+            // var_smoothing 1e-9 or epsilon 1e-5 keep their digits.
+            std::snprintf(buf, sizeof(buf), "%.6g", float_val);
             value = buf;
             changed = true;
         }
