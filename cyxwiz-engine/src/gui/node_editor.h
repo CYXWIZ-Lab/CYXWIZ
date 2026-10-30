@@ -1191,6 +1191,9 @@ private:
 
     // Flag to recreate ImNodes editor context (full reset)
     bool pending_context_reset_ = false;
+    // Undo and Redo keep the canvas where it was across that reset; a cleared
+    // or loaded graph starts from the origin.
+    bool pending_context_keep_view_ = false;
 
     // UI-owned rejection feedback, rendered even when the Studio tab is hidden.
     bool graph_busy_dialog_pending_ = false;

@@ -217,6 +217,12 @@ void ImageDatasetBatcher::SetNormalization(float mean, float std_dev) {
     augmentation_.std_dev = (std_dev > 0.0f) ? std_dev : 1.0f;
 }
 
+void ImageDatasetBatcher::SetChannelNormalization(const std::vector<float>& mean, const std::vector<float>& std_dev) {
+    augmentation_.normalize = true;
+    augmentation_.channel_mean = mean;
+    augmentation_.channel_std = std_dev;
+}
+
 void ImageDatasetBatcher::SetImageTransforms(const image::ImageAugmentation& compiled) {
     augmentation_.ops = compiled.ops;
     augmentation_.mix = compiled.mix;

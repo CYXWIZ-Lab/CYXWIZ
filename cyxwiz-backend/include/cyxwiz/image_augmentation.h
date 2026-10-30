@@ -155,6 +155,10 @@ struct CYXWIZ_API ImageAugmentation {
     bool normalize = false;
     float mean = 0.0f;
     float std_dev = 1.0f;
+    // Per channel when set (one value for each channel of the images after
+    // the ops), used instead of mean / std_dev.
+    std::vector<float> channel_mean;
+    std::vector<float> channel_std;
 
     bool Empty() const { return ops.empty() && mix == BatchMix::None && !normalize; }
     ImageShape ShapeAfter(const ImageShape& input) const;

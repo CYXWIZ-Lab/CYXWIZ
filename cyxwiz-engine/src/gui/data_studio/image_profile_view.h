@@ -10,6 +10,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,10 +28,18 @@ public:
     void SetDataset(const std::string& dataset);
     // The canvas graph's compile, for its Resize and fixed transforms (may be null).
     void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+    // Writes a node's settings with an undo point (Data Studio: the node
+    // editor's SetStepParameters); unset, Use in Normalize is not offered.
+    using NodeWriter = std::function<bool(int node_id, const std::map<std::string, std::string>& values)>;
+    void SetNodeWriter(NodeWriter writer) { node_writer_ = std::move(writer); }
+    // Selects a node on the canvas (Show Normalize on canvas); unset, not offered.
+    void SetShowNode(std::function<void(int node_id)> show) { show_node_ = std::move(show); }
     void Render();
 
 private:
     void Refresh();       // the index rows, when the index changed
+    void SyncNormalize();  // the graph's Normalize, every frame (Use in Normalize changes it)
+    void UseInNormalize();  // Normalize per channel with the measured statistics
     void ListSets();      // the prepared sets, on a task
     void MeasureStats();  // prepares the set when needed, then its channel statistics, on a task
     void MeasureQuality();  // the Quality Analyzer's measurements at the Resize size, on a task
@@ -39,6 +49,10 @@ private:
 
     std::string dataset_;
     const LiveGraphCompile* live_compile_ = nullptr;
+    NodeWriter node_writer_;
+    std::function<void(int)> show_node_;
+    int norm_node_id_ = -1;
+    std::string stats_measured_;         // the day the statistics were measured, "2026-10-29"
     image_profile::Input input_;
     image_profile::View view_;
     const void* index_seen_ = nullptr;   // the index table the rows came from

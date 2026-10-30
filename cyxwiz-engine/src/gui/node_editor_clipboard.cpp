@@ -69,6 +69,7 @@ void NodeEditor::Undo() {
     pending_positions_ = previous.positions;
     pending_positions_frames_ = 3;
     pending_context_reset_ = true;
+    pending_context_keep_view_ = true;
     selected_node_ids_.clear();
     ClearValidationState();
     links_ = previous.links;
@@ -122,6 +123,7 @@ void NodeEditor::Redo() {
     pending_positions_ = next.positions;
     pending_positions_frames_ = 3;
     pending_context_reset_ = true;
+    pending_context_keep_view_ = true;
     selected_node_ids_.clear();
     ClearValidationState();
     links_ = next.links;

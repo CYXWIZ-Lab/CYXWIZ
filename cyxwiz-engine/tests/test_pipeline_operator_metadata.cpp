@@ -304,6 +304,7 @@ std::vector<std::string> ParseCatalogEnumValues(
 bool IsSupportedPropertiesParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",
+        "channels",
         "column",
         "directory",
         "dropdown",

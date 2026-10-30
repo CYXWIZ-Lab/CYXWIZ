@@ -13,9 +13,9 @@
 
 namespace gui {
 
-PythonSettingsPanel::PythonSettingsPanel() {
-    LoadSettings();
-}
+// Settings load when the panel is first drawn (Preferences), not when the
+// toolbar is built: checking the interpreter runs Python three times.
+PythonSettingsPanel::PythonSettingsPanel() = default;
 
 void PythonSettingsPanel::LoadSettings() {
     auto& config = cyxwiz::core::EngineConfig::Instance();
@@ -119,6 +119,10 @@ void PythonSettingsPanel::RevertSettings() {
 }
 
 void PythonSettingsPanel::Render() {
+    if (!loaded_) {
+        LoadSettings();
+        loaded_ = true;
+    }
     ImGui::TextWrapped("Configure Python interpreter and virtual environment settings.");
     ImGui::Spacing();
     ImGui::Separator();

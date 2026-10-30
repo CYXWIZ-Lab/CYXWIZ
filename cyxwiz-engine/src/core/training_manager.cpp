@@ -764,6 +764,8 @@ bool TrainingManager::StartTrainingImage(
                      run.dataloader_seed);
         if (run.preprocessing.has_normalization) {
             batcher->SetNormalization(run.preprocessing.norm_mean, run.preprocessing.norm_std);
+            if (!run.preprocessing.norm_channel_mean.empty())
+                batcher->SetChannelNormalization(run.preprocessing.norm_channel_mean, run.preprocessing.norm_channel_std);
         }
         if (UsesScalarBinaryTargets(run.loss_type)) {
             batcher->SetScalarLabelMode(true);

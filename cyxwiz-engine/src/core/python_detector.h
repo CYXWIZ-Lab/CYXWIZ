@@ -111,15 +111,6 @@ private:
      * @return Vector of paths to check
      */
     static std::vector<std::string> GetCandidatePaths();
-
-    /**
-     * @brief Execute command and capture output.
-     *
-     * @param command Command to execute
-     * @param output Output will be written here
-     * @return Exit code (0 = success)
-     */
-    static int ExecuteCommand(const std::string& command, std::string& output);
 };
 
 } // namespace core

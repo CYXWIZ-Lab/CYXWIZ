@@ -44,6 +44,10 @@ struct Input {
     std::string stats_error;
     bool normalize = false;          // the graph has a Normalize node
     float norm_mean = 0.0f, norm_std = 1.0f;
+    // Normalize per channel or ImageNet (TOFIX178 1.4): one value per channel.
+    std::vector<float> norm_channel_mean, norm_channel_std;
+    bool norm_imagenet = false;
+    bool can_set_normalize = false;  // the screen can write the graph's Normalize (Use in Normalize)
     // Quality: the Quality Analyzer's measurements at the Resize size, judged
     // with the default checks.
     enum class QualityStep { Looking, NotMeasured, Measuring, Measured } quality_step = QualityStep::Looking;
@@ -104,6 +108,10 @@ struct View {
     std::vector<StatsRow> stats;     // empty until measured
     std::string stats_note;          // what Normalize makes of them, or what Measure does
     bool can_measure = false;        // the graph has a Resize and nothing runs
+    bool normalize_matches = false;  // Normalize already centres these at 0 with spread 1
+    size_t stats_note_head = 0;      // when it does: the length of "Normalize uses these statistics" in stats_note
+    bool can_use_in_normalize = false;  // Use in Normalize: sets Normalize per channel to these
+    std::string use_note;            // what Use in Normalize does
     // Quality.
     std::string quality_title;       // "Quality", then where and with what it was measured
     std::string quality_summary;     // "2,340 images fail a check (9.4%); 402 fail more than one."
