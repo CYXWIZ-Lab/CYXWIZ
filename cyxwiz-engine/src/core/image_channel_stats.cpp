@@ -1,5 +1,7 @@
 #include "image_channel_stats.h"
 
+#include "algorithms/arrayfire_host_materialization.h"
+
 #include <arrayfire.h>
 
 #include <algorithm>
@@ -41,8 +43,12 @@ ImageChannelStats MeasureImageChannelStats(const PreparedImageSet& set,
             const af::array s = af::sum(x, 1);
             const af::array q = af::sum(x * x, 1);
             std::vector<float> hs(channels), hq(channels);
-            s.host(hs.data());
-            q.host(hq.data());
+            MaterializeArrayFireToHost(s, hs.data(), ArrayFireHostSyncCategory::MetricScalarReadback,
+                                       "ImageChannelStats::Measure", "arrayfire_aggregate_vector",
+                                       "bounded_metric_readback", "per-channel pixel sum");
+            MaterializeArrayFireToHost(q, hq.data(), ArrayFireHostSyncCategory::MetricScalarReadback,
+                                       "ImageChannelStats::Measure", "arrayfire_aggregate_vector",
+                                       "bounded_metric_readback", "per-channel pixel sum of squares");
             for (size_t c = 0; c < channels; ++c) {
                 sum[c] += hs[c];
                 squares[c] += hq[c];
