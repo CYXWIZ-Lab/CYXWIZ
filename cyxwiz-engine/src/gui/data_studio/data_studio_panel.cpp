@@ -287,6 +287,8 @@ void DataStudioPanel::RefreshView() {
                 if (it != parameters->end()) n.file_path = it->second;
                 const auto registry = parameters->find("dataset_name");
                 if (type == ::gui::NodeType::DataInput && registry != parameters->end()) n.dataset_name = registry->second;
+                const auto time = parameters->find("time_column");
+                if (type == ::gui::NodeType::DataInput && time != parameters->end()) n.time_column = time->second;
                 const auto mode = parameters->find("balance_mode");
                 if (type == ::gui::NodeType::DataLoader && mode != parameters->end()) n.balance = mode->second;
             }
