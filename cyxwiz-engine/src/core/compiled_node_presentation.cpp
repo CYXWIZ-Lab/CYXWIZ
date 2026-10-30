@@ -362,6 +362,46 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         card.input_note = "Stored as uint8 in the prepared images; a new setting prepares them again.";
         card.details.emplace_back("Done once", CvImageStepText(*step));
         SetParameters(card, inputs, true, 0);
+    } else if (node_id == config->data_split_node_id && config->image_split.known) {
+        // The image split as training makes it (TOFIX178 1.5).
+        const auto& split = config->image_split;
+        card.role = "Splits the " + FormatCompiledCount(static_cast<long long>(split.images)) +
+                    " images once, " + (config->stratified ? "by class" : "in one shuffle") +
+                    ", the same way every run (seed " + std::to_string(config->split_seed) + ").";
+        // Per class up to six classes; more show the totals (Data Studio lists each class).
+        const size_t classes = split.shown_names.size();
+        const bool by_class = classes > 0 && classes <= 6;
+        card.table_columns.push_back("");
+        if (by_class) card.table_columns.insert(card.table_columns.end(), split.shown_names.begin(), split.shown_names.end());
+        card.table_columns.push_back("images");
+        const char* part_names[3] = {"Train", "Validation", "Test"};
+        const ImageSplitCounts* wired[3] = {nullptr, config->image_split_dev.known ? &config->image_split_dev : nullptr,
+                                            config->image_split_test.known ? &config->image_split_test : nullptr};
+        for (size_t part = 0; part < 3; ++part) {
+            // A wired dataset is that part whole (its own counts are in part 2).
+            const ImageSplitCounts& from = wired[part] ? *wired[part] : split;
+            const size_t column = wired[part] ? 2 : part;
+            std::vector<std::string> row{part_names[part]};
+            if (by_class)
+                for (size_t c = 0; c < classes; ++c)
+                    row.push_back(c < from.per_class.size()
+                                      ? FormatCompiledCount(static_cast<long long>(from.per_class[c][column]))
+                                      : "0");
+            row.push_back(FormatCompiledCount(static_cast<long long>(from.parts[column])));
+            card.table_rows.push_back(std::move(row));
+        }
+        for (const auto& [part, role] : {std::pair{1, &config->dataset_roles.dev}, std::pair{2, &config->dataset_roles.test}})
+            if (wired[part])
+                card.notes.push_back(std::string(part_names[part]) + ": all of '" + role->dataset_name +
+                                     "', wired to this split.");
+        card.notes.push_back("Validation is checked every epoch; the test images are kept out of training and "
+                             "scored once at the end, and by Run Test (F8).");
+        if (split.unreadable + split.left_out > 0)
+            card.notes.push_back("Left out before the split: " +
+                                 FormatCompiledCount(static_cast<long long>(split.unreadable)) + " unreadable, " +
+                                 FormatCompiledCount(static_cast<long long>(split.left_out)) +
+                                 " by the Quality node.");
+        card.show_split_link = true;
     } else {
         const bool on_path = std::any_of(config->graph_plan.nodes.begin(), config->graph_plan.nodes.end(),
                                          [&](const CompiledGraphNode& n) { return n.node_id == node_id; });
@@ -373,7 +413,7 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         card.no_shapes_text =
             "No shapes or parameters: the compiler rejected this node. The same reason shows in the Compile "
             "popup and on its links.";
-    } else if (!card.has_shapes && card.no_shapes_text.empty()) {
+    } else if (!card.has_shapes && card.no_shapes_text.empty() && card.table_rows.empty()) {
         card.no_shapes_text = "This node has no tensor shape of its own in the compiled model.";
     }
     if (inputs.state == LiveCompileState::Compiling && !card.has_shapes && card.no_shapes_text.empty()) {

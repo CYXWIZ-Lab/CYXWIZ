@@ -3,10 +3,15 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/column_role_store.h"
 #include "../../core/dataset_catalog.h"
+#include "../../core/data_registry.h"
+#include "../../core/image_split_presentation.h"
+#include "../../core/live_graph_compile.h"
 #include "../../core/session_query_service.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -184,6 +189,97 @@ void ReadinessView::Measure() {
         alive_);
 }
 
+void ReadinessView::RenderImages(const studio::SplitSet& set) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_bright, "%s", set.name.c_str());
+    if (!config || !config->image_split.known) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "%s",
+                           config && !config->image_split.reason.empty()
+                               ? ("Counting the split when " + config->image_split.reason + ".").c_str()
+                               : "Counting the split once the graph compiles.");
+        ImGui::PopTextWrapPos();
+        return;
+    }
+    image_split::Input input;
+    input.split = config->image_split;
+    input.wired_val = config->image_split_dev;
+    input.wired_test = config->image_split_test;
+    input.wired_val_name = config->dataset_roles.dev.dataset_name;
+    input.wired_test_name = config->dataset_roles.test.dataset_name;
+    input.dataset = set.parts.front().dataset;
+    input.train = config->train_ratio;
+    input.val = config->val_ratio;
+    input.test = config->test_ratio;
+    input.stratified = config->stratified;
+    input.seed = config->split_seed;
+    const image_split::View v = image_split::Build(input);
+    ImGui::SameLine(0.0f, 10.0f);
+    ImGui::TextColored(t.text_dim, "%s", v.subtitle.c_str());
+    if (set.node_id >= 0) {
+        const float link_w = ImGui::CalcTextSize("Show the Data Split").x + 16.0f;
+        ImGui::SameLine(0.0f, 14.0f);
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - link_w));
+        if (ui::LinkButton("Show the Data Split", static_cast<bool>(on_show_node))) on_show_node(set.node_id);
+    }
+    ImGui::Spacing();
+    // The three parts, side by side when they fit.
+    const int columns = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / 220.0f), 1, 3);
+    if (ImGui::BeginTable("##parts", columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+        for (size_t i = 0; i < v.cards.size(); ++i) {
+            ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(i));
+            ui::BeginCard("part");
+            ImGui::TextColored(t.text_dim, "%s", v.cards[i].name.c_str());
+            {
+                ui::FontScope heading(ui::Font::Heading);
+                ImGui::TextUnformatted(v.cards[i].count.c_str());
+            }
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "%s", v.cards[i].detail.c_str());
+            ImGui::PopTextWrapPos();
+            ui::EndCard();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ui::BeginCard("classes");
+    ImGui::TextUnformatted("Each class in each part");
+    if (ImGui::BeginTable("##classes", 5, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY,
+                          ImVec2(0.0f, std::min(320.0f, ImGui::GetTextLineHeightWithSpacing() *
+                                                            (static_cast<float>(v.classes.size()) + 1.5f))))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        for (const char* header : {"", "images", "train", "validation", "test"}) ImGui::TableSetupColumn(header);
+        ImGui::TableHeadersRow();
+        for (const auto& row : v.classes) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(row.name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(row.images.c_str());
+            for (const auto& cell : row.parts) {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(cell.c_str());
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(v.balanced ? t.success : t.warning, "%s", v.balance.c_str());
+    ImGui::PopTextWrapPos();
+    ui::EndCard();
+    ImGui::Spacing();
+    ui::BeginCard("counted");
+    ImGui::TextUnformatted("What is counted");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", v.counted.c_str());
+    ImGui::PopTextWrapPos();
+    ui::EndCard();
+}
+
 void ReadinessView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (sets_.empty()) {
@@ -196,7 +292,9 @@ void ReadinessView::Render() {
         return;
     }
     if (chosen_ >= sets_.size()) chosen_ = 0;
-    if (!IsRunning() && Signature() != measured_) Measure();
+    const bool images = !sets_[chosen_].parts.empty() &&
+                        DataRegistry::Instance().GetImageDatasetEntry(sets_[chosen_].parts.front().dataset);
+    if (!images && !IsRunning() && Signature() != measured_) Measure();
 
     // Which set, when there are several.
     if (sets_.size() > 1) {
@@ -213,6 +311,10 @@ void ReadinessView::Render() {
         ImGui::Spacing();
     }
     const studio::SplitSet& set = sets_[chosen_];
+    if (images) {
+        RenderImages(set);
+        return;
+    }
 
     // Header: the set, its splits, the verdict, actions.
     ImGui::AlignTextToFramePadding();

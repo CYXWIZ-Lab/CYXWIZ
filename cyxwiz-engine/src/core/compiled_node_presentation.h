@@ -59,6 +59,12 @@ struct CompiledNodeCard {
     std::string parameter_memory;
     std::string parameter_note;
     std::string no_shapes_text;     // why there are no shapes, when there are none
+    // A table in place of shapes (the image split, TOFIX178 1.5): the first
+    // column names the rows; then notes under it.
+    std::vector<std::string> table_columns;
+    std::vector<std::vector<std::string>> table_rows;
+    std::vector<std::string> notes;
+    bool show_split_link = false;   // "Show the split in Data Studio"
 
     std::vector<std::pair<std::string, std::string>> details;
 };

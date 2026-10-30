@@ -71,6 +71,10 @@ memory. **▸ Details** adds the layer's parameters and the node type's support
 (local training, remote training, export). The shapes come from the
 compiler's dimension rules, not from the panel.
 
+A Data Split on an image or audio graph shows its parts instead of shapes:
+a row per part and a column per class, the images left out, and **Show the
+split in Data Studio** (see image_split.md).
+
 A Concatenate fed by an Embedding also gets the *Word + POS fusion* card with
 the compiler's verdict and the fix when it will not compile.
 

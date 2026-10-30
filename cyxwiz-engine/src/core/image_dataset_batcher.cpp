@@ -37,11 +37,11 @@ ImageDatasetBatcher::~ImageDatasetBatcher() = default;
 ImageDatasetBatcher::ImageDatasetBatcher(
     std::shared_ptr<const PreparedImageSet> images,
     int batch_size,
-    float train_split,
+    const SampleSplitSettings& split,
     bool shuffle,
-    uint32_t seed)
-    : images_(std::move(images)), train_split_(train_split), seed_(seed), batch_size_(batch_size),
-      shuffle_(shuffle), augmentation_rng_(seed ^ 0x9E3779B9u), rng_(seed)
+    uint32_t shuffle_seed)
+    : images_(std::move(images)), split_(split), batch_size_(batch_size),
+      shuffle_(shuffle), augmentation_rng_(shuffle_seed ^ 0x9E3779B9u), rng_(shuffle_seed)
 {
     if (!images_ || images_->Count() == 0) {
         spdlog::error("ImageDatasetBatcher: no prepared images");
@@ -55,23 +55,25 @@ ImageDatasetBatcher::ImageDatasetBatcher(
                      images_->Unreadable().size(), images_->Count(), images_->Unreadable().front());
     Split(UsableImages(*images_, {}));
     Reset();
-    spdlog::info("ImageDatasetBatcher: {} train / {} val images at {}x{}, {} classes, batch_size={}",
-                 train_indices_.size(), val_indices_.size(), images_->Width(), images_->Height(), num_classes_,
-                 batch_size_);
+    spdlog::info("ImageDatasetBatcher: {} train / {} validation / {} test images at {}x{}, {} classes, "
+                 "batch_size={}", train_indices_.size(), val_indices_.size(), test_indices_.size(), images_->Width(),
+                 images_->Height(), num_classes_, batch_size_);
 }
 
-void ImageDatasetBatcher::Split(std::vector<size_t> indices) {
-    // Shuffled train/val split (see audio_dataset_batcher.cpp for the
-    // full rationale). Sequential split was leaking class-imbalanced
-    // val sets that made the reported val metrics meaningless.
-    rng_.seed(seed_);
-    const size_t total = indices.size();
-    size_t train_count = static_cast<size_t>(total * train_split_);
-    if (train_count == 0) train_count = total;
-    if (train_count > total) train_count = total;
-    std::shuffle(indices.begin(), indices.end(), rng_);
-    train_indices_.assign(indices.begin(), indices.begin() + train_count);
-    val_indices_.assign(indices.begin() + train_count, indices.end());
+void ImageDatasetBatcher::Split(const std::vector<size_t>& usable) {
+    auto parts = SplitSamples(usable, images_->Labels(), split_);
+    train_indices_ = std::move(parts.train);
+    val_indices_ = std::move(parts.val);
+    test_indices_ = std::move(parts.test);
+}
+
+const std::vector<std::string>& ImageDatasetBatcher::Files() const {
+    static const std::vector<std::string> none;
+    return images_ ? images_->Files() : none;
+}
+
+const std::vector<size_t>& ImageDatasetBatcher::Part(BatcherPhase phase) const {
+    return phase == BatcherPhase::Val ? val_indices_ : phase == BatcherPhase::Test ? test_indices_ : train_indices_;
 }
 
 void ImageDatasetBatcher::ExcludeFiles(const std::vector<std::string>& files) {
@@ -80,8 +82,9 @@ void ImageDatasetBatcher::ExcludeFiles(const std::vector<std::string>& files) {
     const size_t left_out = images_->Count() - images_->Unreadable().size() - kept.size();
     Split(kept);
     Reset();
-    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images; split again: {} train / {} val",
-                 left_out, images_->Count(), train_indices_.size(), val_indices_.size());
+    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images; split again: {} train / {} "
+                 "validation / {} test", left_out, images_->Count(), train_indices_.size(), val_indices_.size(),
+                 test_indices_.size());
 }
 
 Tensor ImageDatasetBatcher::GatherRows(const size_t* indices, size_t n) {
@@ -167,6 +170,9 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         ? rows
         : rows.Reshape({actual_size, sample_shape_.height, sample_shape_.width, sample_shape_.channels});
 
+    // Image numbers in the prepared set (= rows of the dataset's index table):
+    // test results name the files with them.
+    batch.row_ids.assign(indices, indices + actual_size);
     batch.size = actual_size;
     current_idx_ += actual_size;
 
@@ -174,15 +180,9 @@ Batch ImageDatasetBatcher::GetNextBatch() {
 }
 
 void ImageDatasetBatcher::Reset() {
-    // Active index set depends on the current phase. Val never shuffles.
-    if (current_phase_ == BatcherPhase::Val) {
-        epoch_order_ = val_indices_;
-    } else {
-        epoch_order_ = train_indices_;
-        if (shuffle_) {
-            std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
-        }
-    }
+    // The current phase's part; only train batches are shuffled.
+    epoch_order_ = Part(current_phase_);
+    if (current_phase_ == BatcherPhase::Train && shuffle_) std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }
 
@@ -208,7 +208,7 @@ size_t ImageDatasetBatcher::GetNumBatches() const {
 }
 
 size_t ImageDatasetBatcher::GetNumSamples() const {
-    return train_indices_.size();
+    return Part(current_phase_).size();
 }
 
 void ImageDatasetBatcher::SetNormalization(float mean, float std_dev) {

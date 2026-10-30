@@ -1,3 +1,4 @@
+#include "../core/image_batchers.h"
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/session_query_service.h"
 #include "../core/pipeline_type_names.h"
@@ -956,6 +957,9 @@ MainWindow::MainWindow()
     properties_->SetNodeEditor(node_editor_.get());
     // A step's input or output opens in the Table Viewer (TOFIX146). The
     // viewer holds rows in memory, so a very large output opens its first rows.
+    properties_->SetOpenReadinessCallback([this] {
+        if (data_studio_panel_) data_studio_panel_->ShowReadiness();
+    });
     properties_->SetOpenProfileCallback([this](const std::string& dataset_name) {
         if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset_name);
     });
@@ -5864,6 +5868,12 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
             test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
+    } else if (const auto* image_entry = registry.GetImageDatasetEntry(dataset_name)) {
+        // Images (TOFIX178 1.5): the Data Split's test part, or a wired Test
+        // dataset whole, through the graph's image steps.
+        started = cyxwiz::TestManager::Instance().StartTesting(
+            std::move(config), cyxwiz::MakeImageTestSource(dataset_name, *image_entry, test_selection.scope), test_batch_size,
+            model, nullptr, active_model_info.model_device);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {

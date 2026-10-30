@@ -6,6 +6,10 @@ After training, test the model on the graph's test split:
 - **Train > Test > Run Quick Test** runs the first 10 batches only. Its
   results say *quick test* and are never taken for a full run.
 
+Image and audio graphs test their Data Split's test part (or the dataset
+wired to its Test input; see image_split.md), through the same image steps
+as training. Each image's file is kept with its result.
+
 The test runs in the background (Task View) and, when it ends, Data Studio
 opens **Results > Test** on it. **Train > Test > View Test Results** opens it
 again later.

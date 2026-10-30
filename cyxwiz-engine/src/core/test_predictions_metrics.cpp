@@ -19,6 +19,7 @@ namespace cyxwiz {
 std::shared_ptr<arrow::Table> PredictionsTableFromMetrics(const TestingMetrics& m) {
     if (m.causal_lm_mode) return nullptr;
     TestPredictionsSource source{m.row_ids, m.source_dataset};
+    source.files = m.row_files;
     source.loss = m.test_loss;
     source.seconds = m.total_time_seconds;
     source.partial = m.partial;

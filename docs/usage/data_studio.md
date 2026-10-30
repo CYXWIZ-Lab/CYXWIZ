@@ -649,6 +649,11 @@ pick from. A Data Split that splits one input by ratio does that during
 training; it is not previewed here. A Data Split input that is not loaded is
 named in an orange line.
 
+**Images.** For an image dataset the job shows the split training will
+make, from the canvas graph's compile: a card per part, each class in each
+part with its share, whether the shares match the whole set's, and what was
+counted. Nothing is queried (see image_split.md).
+
 **When.** Opening the job compares the splits in the background (Task View
 shows it); so do a change to a split's data and **Check again**. The tab's
 line then says what it found (*no leakage*, *leakage found*, *not
@@ -759,7 +764,7 @@ Sections:
 | Curves | ROC and precision-recall (one line per class against the rest for three or more), AUC and AP; the precision-recall curve is drawn as steps, so its area is AP; a ring marks the threshold |
 | Threshold | two classes, or one class against the rest: the **Positive class** by name, a typed **Threshold** (- / +) and **Best F1**; precision, recall, specificity, F1, balanced accuracy, MCC, accuracy and the 2 x 2 counts at that threshold |
 | Plots | regression: predicted vs actual, residuals vs predicted, residual histogram |
-| Predictions | every row with its dataset row, or the mistakes with the most confident first (regression: the largest errors first) |
+| Predictions | every row with its dataset row (an image test: its file, the full path on hover), or the mistakes with the most confident first (regression: the largest errors first) |
 | By column value | the error by the values (or ranges) of a column of the tested table |
 | Comparison | the latest test beside the one before (Train > Test > Compare Test Results opens it) |
 
@@ -773,7 +778,9 @@ keeps the latest test (below). **Clear** asks first, then forgets the latest
 test and the one before (kept tests stay). **Run test again** tests again.
 
 `test_predictions` has a `row_id` column (each test row's row in the tested
-table, counted from 0), and its metadata keeps the tested table's name, the
+table, counted from 0; an image test's row in the dataset's index table),
+a `file` column after it for an image test, and its metadata keeps the
+tested table's name, the
 class names, the loss and the time, so the results join back to the data and
 a copy read back later gives the whole run.
 

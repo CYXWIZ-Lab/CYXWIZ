@@ -201,10 +201,13 @@ set(ENGINE_SOURCES
     src/core/datasets/huggingface_dataset.cpp
     src/core/datasets/custom_dataset.cpp
     src/core/sparse_feature_dataset_cache.cpp
+    src/core/image_batchers.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
     src/core/prepared_image_set.cpp
     src/core/image_index.cpp
+    src/core/image_split_counts.cpp
+    src/core/image_split_presentation.cpp
     src/core/image_index_service.cpp
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
@@ -4547,6 +4550,17 @@ set_target_properties(test_compiled_node_presentation PROPERTIES
 add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# ===== Test: ML readiness for image datasets (TOFIX178 1.5) =====
+add_executable(test_image_split_presentation
+    tests/test_image_split_presentation.cpp
+    src/core/image_split_presentation.cpp
+)
+target_include_directories(test_image_split_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_image_split_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_split_presentation COMMAND test_image_split_presentation)
+
 # ===== Test: live compile recounts parameters after training (TOFIX123/TOFIX125) =====
 add_executable(test_live_graph_compile
     tests/test_live_graph_compile.cpp
@@ -7149,6 +7163,8 @@ target_link_libraries(test_cnn_image_training_smoke PRIVATE ${OpenCV_LIBS})
 add_executable(test_image_transform_graph
     tests/test_image_transform_graph.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/image_index.cpp
+    src/core/image_split_counts.cpp
     src/core/image_quality_analysis.cpp
     src/core/prepared_image_set.cpp
     src/core/datasets/image_csv_dataset.cpp

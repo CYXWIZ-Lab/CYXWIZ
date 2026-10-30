@@ -85,6 +85,13 @@ std::optional<GraphImageQualityResult> GraphImageQuality(const std::string& name
     return catalog.image_quality(name, width, height, parameters);
 }
 
+std::optional<ImageSplitCounts> GraphImageSplit(const std::string& name, const SampleSplitSettings& split,
+                                                const std::vector<std::string>& excluded) {
+    const auto& catalog = Catalog();
+    if (name.empty() || !catalog.image_split) return std::nullopt;
+    return catalog.image_split(name, split, excluded);
+}
+
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name) {
     const auto& catalog = Catalog();
     if (name.empty() || !catalog.source_path) return std::nullopt;

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include "crash_run_recorder.h"
+#include "image_batchers.h"
 #include "image_dataset_batcher.h"
 #include <stdexcept>
 #include "audio_dataset_batcher.h"
@@ -19,6 +20,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <optional>
 #include <chrono>
 #include <filesystem>
 
@@ -722,58 +724,59 @@ bool TrainingManager::StartTrainingImage(
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
 
+    // A Validation or Test image dataset wired to the Data Split (TOFIX178
+    // 1.5): read in full as that part, through the same image steps.
+    std::optional<DataRegistry::ImageDatasetEntry> dev_entry, test_entry;
+    for (auto [role, entry] : {std::pair{&config.dataset_roles.dev, &dev_entry},
+                               std::pair{&config.dataset_roles.test, &test_entry}}) {
+        if (!role->IsSupplied() || role->joined_to_training) continue;
+        const auto* found = DataRegistry::Instance().GetImageDatasetEntry(role->dataset_name);
+        if (!found) {
+            spdlog::error("TrainingManager: '{}' is wired as {} but is not a loaded image dataset", role->dataset_name,
+                          role == &config.dataset_roles.dev ? "validation" : "test");
+            return false;
+        }
+        *entry = *found;
+    }
+
     // On the training thread: the images decoded once at the graph's Resize
     // size and mode (from the project's cache/images when they were before;
     // TOFIX178 1.3b), then the batcher gathers from them and runs the image
     // transforms and Normalize on the device. A Stop stops the decoding.
     auto stop_requested = std::make_shared<std::function<bool()>>();
-    ExternalBatcherFactory factory = [image_entry, stop_requested](const TrainingConfiguration& run,
-                                                                   int run_batch_size) {
-        // The leading transforms that are the same every epoch and the OpenCV
-        // steps are done once with the images (1.3c, 1.3f); the rest run on
-        // each batch.
-        const auto transforms = SplitFixedImageTransforms(run.image_augmentation, run.image_cv_steps);
-        size_t reported = 0;
-        const auto prepared = PrepareImageSet(
-            image_entry, PreparedImageSpecFrom(run.image_preprocessing), transforms.fixed, 0,
-            [&](size_t done, size_t total) {
-                if (done * 10 / total != reported * 10 / total || done == total) {
-                    reported = done;
-                    spdlog::info("Preparing images: {} of {} decoded", done, total);
-                }
-                return !(*stop_requested && (*stop_requested)());
-            });
-        if (!prepared.set) throw std::runtime_error("the images could not be prepared: " + prepared.error);
-        if (prepared.from_cache)
-            spdlog::info("Training reads the {} prepared images from {}", prepared.set->Count(),
-                         prepared.set->Path().string());
-
-        auto batcher = std::make_shared<ImageDatasetBatcher>(
-            prepared.set, run_batch_size, run.train_ratio, run.shuffle,
-            static_cast<uint32_t>(run.dataloader_seed));
-        batcher->SetDropLast(run.drop_last);
-        batcher->SetImageTransforms(transforms.per_batch);
-        batcher->ExcludeFiles(run.image_excluded_files);
-        if (batcher->GetNumSamples() == 0) throw std::runtime_error("the image dataset has no images to train on");
+    ExternalBatcherFactory factory = [image_entry, dev_entry, test_entry, stop_requested](
+                                         const TrainingConfiguration& run, int run_batch_size) {
+        const auto stop = [stop_requested] { return *stop_requested && (*stop_requested)(); };
+        const auto make_batcher = [&](const DataRegistry::ImageDatasetEntry& entry, const SampleSplitSettings& split) {
+            return std::shared_ptr<ImageDatasetBatcher>(MakeImageBatcher(entry, run, run_batch_size, split, stop));
+        };
+        // The Data Split's shares (a wired role's share is 0: the compiler
+        // gave it to train) and its seed, by class when stratified.
+        const SampleSplitSettings split = ImageSplitOf(run);
+        auto batcher = make_batcher(image_entry, split);
+        if (batcher->SamplesIn(BatcherPhase::Train) == 0)
+            throw std::runtime_error("the image dataset has no images to train on");
 
         // The compiler set input_shape [H, W, C] from the same Resize size and
         // transforms (ApplyImageInputShape), so the model and the batches agree.
-        spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image steps ({} done "
-                     "once), seed={}", batcher->GetNumSamples(), run.input_size,
-                     run.image_augmentation.ops.size() + run.image_cv_steps.size(), transforms.fixed.size(),
-                     run.dataloader_seed);
-        if (run.preprocessing.has_normalization) {
-            batcher->SetNormalization(run.preprocessing.norm_mean, run.preprocessing.norm_std);
-            if (!run.preprocessing.norm_channel_mean.empty())
-                batcher->SetChannelNormalization(run.preprocessing.norm_channel_mean, run.preprocessing.norm_channel_std);
-        }
-        if (UsesScalarBinaryTargets(run.loss_type)) {
-            batcher->SetScalarLabelMode(true);
-        } else if (run.preprocessing.has_onehot && run.preprocessing.num_classes > 0) {
-            batcher->SetOneHotEncoding(run.preprocessing.num_classes);
-        }
+        spdlog::info("TrainingManager: Image dataset {} train / {} validation / {} test images, input_size={}, {} "
+                     "image steps, split seed={}", batcher->SamplesIn(BatcherPhase::Train),
+                     batcher->SamplesIn(BatcherPhase::Val), batcher->SamplesIn(BatcherPhase::Test), run.input_size,
+                     run.image_augmentation.ops.size() + run.image_cv_steps.size(), run.split_seed);
+
+        // One batcher, three parts by phase; a wired role reads its own set.
         ResolvedExternalBatchers batchers;
-        batchers.train = std::move(batcher);
+        batchers.train = batcher;
+        if (dev_entry) {
+            batchers.dev = make_batcher(*dev_entry, SampleSplitSettings{0.0f, 1.0f, 0.0f, false, split.seed});
+        } else if (batcher->SamplesIn(BatcherPhase::Val) > 0) {
+            batchers.dev = batcher;
+        }
+        if (test_entry) {
+            batchers.test = make_batcher(*test_entry, SampleSplitSettings{0.0f, 0.0f, 1.0f, false, split.seed});
+        } else if (batcher->SamplesIn(BatcherPhase::Test) > 0) {
+            batchers.test = batcher;
+        }
         return batchers;
     };
 
@@ -813,11 +816,13 @@ bool TrainingManager::StartTrainingAudio(
     // features config.audio_preprocessing describes (Spectrogram /
     // MelSpectrogram / MFCC / AudioAugmentation nodes) and probes a sample
     // for the actual feature shape.
-    auto batcher = std::make_unique<AudioDatasetBatcher>(
+    auto batcher = std::make_shared<AudioDatasetBatcher>(
         audio_entry,
         config.audio_preprocessing,
-        batch_size, config.train_ratio, config.shuffle, config.num_workers,
-        static_cast<uint32_t>(config.dataloader_seed));
+        batch_size,
+        SampleSplitSettings{config.train_ratio, config.val_ratio, config.test_ratio, config.stratified,
+                            static_cast<uint32_t>(config.split_seed)},
+        config.shuffle, config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
 
     if (batcher->GetNumSamples() == 0) {
@@ -841,10 +846,10 @@ bool TrainingManager::StartTrainingAudio(
         static_cast<size_t>(batcher->GetFeatureRows())
     };
 
-    spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{}), num_workers={}, seed={}",
-                 batcher->GetNumSamples(), config.input_size,
-                 batcher->GetFeatureRows(), batcher->GetFeatureCols(),
-                 config.num_workers, config.dataloader_seed);
+    spdlog::info("TrainingManager: Audio dataset {} train / {} validation / {} test clips, input_size={} ({}x{}), "
+                 "num_workers={}, split seed={}", batcher->SamplesIn(BatcherPhase::Train),
+                 batcher->SamplesIn(BatcherPhase::Val), batcher->SamplesIn(BatcherPhase::Test), config.input_size,
+                 batcher->GetFeatureRows(), batcher->GetFeatureCols(), config.num_workers, config.split_seed);
 
     // Mirror image path: hand normalization / one-hot through to the batcher.
     if (config.preprocessing.has_normalization) {
@@ -858,7 +863,12 @@ bool TrainingManager::StartTrainingAudio(
         batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     }
 
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
+    // One batcher, three parts by phase (the held-out test runs at the end).
+    ResolvedExternalBatchers batchers;
+    batchers.train = batcher;
+    if (batcher->SamplesIn(BatcherPhase::Val) > 0) batchers.dev = batcher;
+    if (batcher->SamplesIn(BatcherPhase::Test) > 0) batchers.test = batcher;
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batchers));
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),

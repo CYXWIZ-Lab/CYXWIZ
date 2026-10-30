@@ -89,6 +89,8 @@ public:
     // Opens Results on one of its views (a test finished, Train > Test >
     // View / Compare test results, Tools > Evaluation).
     void ShowResults(ResultsView::View view);
+    // ML readiness (the Data Split card's "Show the split in Data Studio").
+    void ShowReadiness();
     // Results > Test: MainWindow hands it each finished test and its "Run
     // test again".
     TestView* GetTestView() { return results_ ? &results_->Test() : nullptr; }

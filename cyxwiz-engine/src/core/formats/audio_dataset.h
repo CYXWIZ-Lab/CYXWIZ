@@ -95,6 +95,9 @@ public:
 
     // Debug: file path for a given sample index
     const std::string& GetFilePath(size_t index) const { return file_paths_.at(index); }
+    // The label without decoding the file (the split reads every label).
+    int GetItemLabel(size_t index) const override { return labels_.at(index); }
+    const std::vector<int>& Labels() const { return labels_; }
 
 private:
     AudioDatasetConfig config_;

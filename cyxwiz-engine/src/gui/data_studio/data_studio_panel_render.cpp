@@ -288,7 +288,12 @@ void DataStudioPanel::RenderJobBody() {
         case studio::Job::Explore: RenderExplore(); break;
         case studio::Job::Prepare: if (prepare_) prepare_->Render(); break;
         case studio::Job::Validate: if (validate_) validate_->Render(); break;
-        case studio::Job::Ready: if (readiness_) readiness_->Render(); break;
+        case studio::Job::Ready:
+            if (readiness_) {
+                if (node_editor_) readiness_->SetLiveCompile(node_editor_->GetLiveCompile());
+                readiness_->Render();
+            }
+            break;
         case studio::Job::Publish: if (publish_) publish_->Render(); break;
         case studio::Job::Results: if (results_) results_->Render(); break;
     }
