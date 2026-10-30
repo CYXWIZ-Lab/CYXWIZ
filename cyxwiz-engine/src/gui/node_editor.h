@@ -337,6 +337,9 @@ public:
     // node's dialog); nullptr when it no longer exists.
     MLNode* GetNodeForConfiguration(int node_id) { return FindNodeById(node_id); }
     const std::string& GetCurrentFilePath() const { return current_file_path_; }
+    // Counts graph replacements (clear, new, open): a view drops what it
+    // said about the graph before.
+    uint64_t GraphGeneration() const { return graph_generation_; }
     // File > Save: writes the graph to its file, asking for one the first time.
     // An empty graph is nothing to save and returns true.
     bool SaveCurrentGraph();
@@ -791,6 +794,7 @@ private:
     int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
     double fingerprint_checked_at_ = -1.0;
     bool unsaved_ = false;
+    uint64_t graph_generation_ = 0;
     bool clear_confirm_requested_ = false;
     void RenderNodes();
     void RenderHoveredNodeTooltip(int hovered_node_id);

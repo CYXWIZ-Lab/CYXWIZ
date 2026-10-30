@@ -62,6 +62,7 @@ private:
     ::gui::Properties::SettingsRows settings_;
     std::string settings_key_;
     std::string message_;
+    uint64_t message_graph_ = 0;  // the graph generation it was said about
     bool message_error_ = false;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };

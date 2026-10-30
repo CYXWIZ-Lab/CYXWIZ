@@ -222,6 +222,7 @@ void NodeEditor::DeleteNode(int node_id) {
 void NodeEditor::ClearGraph() {
     if (!CanReplaceGraph("clear the graph")) return;
     SaveUndoState();
+    ++graph_generation_;
     ClearValidationState();  // Graph changed — stale compile results
 
     // IMPORTANT: Clear every properties/dialog node reference BEFORE clearing

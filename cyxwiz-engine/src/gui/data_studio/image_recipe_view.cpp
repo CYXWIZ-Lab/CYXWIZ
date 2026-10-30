@@ -109,7 +109,14 @@ std::string ImageRecipeView::SamplePath(const std::string& dataset, size_t* coun
 void ImageRecipeView::UpdatePreviews(const TrainingConfiguration& config, const ir::View& view) {
     size_t count = 0;
     const std::string path = SamplePath(config.dataset_name, &count);
-    if (path.empty()) return;
+    if (path.empty()) {
+        // The images were unloaded: no pictures of a sample that is gone.
+        if (!task_ && !preview_key_.empty()) {
+            ReleaseTextures();
+            preview_key_.clear();
+        }
+        return;
+    }
     const PreparedImageSpec spec = PreparedImageSpecFrom(config.image_preprocessing);
     const std::string key = path + "|" + ImageStepsKey(spec, config.image_augmentation, config.image_cv_steps);
     if (key == preview_key_ || task_) return;
@@ -184,7 +191,7 @@ void ImageRecipeView::RenderAddMenu(::gui::NodeEditor* editor, int after_node, b
         if (!meta || meta->status != NodeImplementationStatus::Implemented) return;
         if (ImGui::MenuItem((meta->icon + "  " + meta->name).c_str())) {
             editor->RequestStepAfter(after_node, type);
-            message_ = "Added a " + meta->name + " node (Ctrl+Z on the canvas undoes it).";
+            message_ = "Added " + meta->name + " (Ctrl+Z on the canvas undoes it).";
             message_error_ = false;
         }
         if (ImGui::IsItemHovered() && !meta->brief_description.empty()) ImGui::SetTooltip("%s", meta->brief_description.c_str());
@@ -381,7 +388,8 @@ void ImageRecipeView::Render(::gui::NodeEditor* editor) {
     const std::string sample = SamplePath(config->dataset_name, &count);
     if (count > 0) {
         const std::string file = sample.substr(sample.find_last_of("/\\") + 1);
-        const std::string label = "Sample " + file;
+        // While the pictures are drawn (the first draw of a step builds its GPU code).
+        const std::string label = (task_ ? "Drawing the pictures of " : "Sample ") + file;
         ui::SameLineRight(ImGui::CalcTextSize(label.c_str()).x + ui::ButtonWidth("Next sample", ui::ButtonSize::Small) + 24.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "%s", label.c_str());
@@ -389,6 +397,10 @@ void ImageRecipeView::Render(::gui::NodeEditor* editor) {
         if (ui::SecondaryButton("Next sample")) ++sample_;
     } else {
         ImGui::TextColored(t.text_faint, "The pictures show once the images are loaded and indexed.");
+    }
+    if (message_graph_ != editor->GraphGeneration()) {
+        message_.clear();
+        message_graph_ = editor->GraphGeneration();
     }
     if (!message_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
