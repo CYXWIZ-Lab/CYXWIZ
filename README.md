@@ -133,15 +133,18 @@ Builds use CMake presets and vcpkg for dependencies; ArrayFire 3.10 is installed
 | ArrayFire 3.10 | [Windows installer](https://arrayfire.com/download/) | `ArrayFire.sh` installer, e.g. into `/opt` | `brew install arrayfire` |
 | Python (optional scripting) | 3.12 or 3.13 | 3.12 or 3.13 | 3.12 or 3.13 |
 
-**Linux packages** (Ubuntu 22.04 names, as used by CI):
+**Linux packages** (Ubuntu 22.04 names, as used by CI; Arch Linux names are in [INSTALL.md](INSTALL.md#linux-packages)):
 
 ```bash
 sudo apt-get install -y autoconf autoconf-archive automake build-essential cmake curl \
   libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev libxext-dev libxi-dev \
-  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev ninja-build patchelf pkg-config
+  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev nasm ninja-build patchelf pkg-config \
+  tar unzip zip
 curl -LO https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
 chmod +x ArrayFire.sh && sudo ./ArrayFire.sh --include-subdir --prefix=/opt
 ```
+
+The ArrayFire installer is 3.9 GB, served from Amazon S3; on networks where S3 is slow it can take days. [INSTALL.md](INSTALL.md#arrayfire-from-source-linux) builds the CPU backend from ArrayFire's GitHub source release instead (84 MB, about an hour).
 
 **macOS packages:**
 
@@ -171,6 +174,8 @@ chmod +x setup.sh build.sh
 ./build.sh --engine -j 8
 ```
 
+The first build compiles about 330 libraries through vcpkg, among them ONNX Runtime and llama.cpp, which takes hours (most of a day on a four-core laptop). Later builds reuse them.
+
 | Wrapper option | Effect |
 | --- | --- |
 | `--debug` | Debug instead of the default Release configuration |
@@ -179,8 +184,9 @@ chmod +x setup.sh build.sh
 | `--build-dir PATH` | Use a custom or existing compatible build tree |
 | `--clean` | Delete the build tree first (only when a clean rebuild is needed) |
 | `-j N` | Parallel jobs; Windows defaults to 8, Linux/macOS auto-detect |
+| `-DNAME=VALUE` | Linux/macOS: pass a CMake setting through, for example `-DArrayFire_DIR=...` |
 
-With no component option, both the Engine and the Server Node are built. Wrapper builds use `build/<platform>-<configuration>`, for example `build/windows-release`. If CMake cannot find ArrayFire, pass `-DArrayFire_DIR=<ArrayFire>/cmake` (Windows) or the directory containing `ArrayFireConfig.cmake`.
+With no component option, both the Engine and the Server Node are built. Wrapper builds use `build/<platform>-<configuration>`, for example `build/windows-release`. If CMake cannot find ArrayFire, pass `-DArrayFire_DIR=<ArrayFire>/cmake` (Windows) or the directory containing `ArrayFireConfig.cmake`, for example `./build.sh --engine -DArrayFire_DIR=$HOME/opt/ArrayFire-3.10.0/share/ArrayFire/cmake`.
 
 For direct CMake presets, a fast edit/build loop, every build option, backend-only builds, and troubleshooting, see [INSTALL.md](INSTALL.md).
 
@@ -196,7 +202,7 @@ For direct CMake presets, a fast edit/build loop, every build option, backend-on
 ./build/linux-release/bin/cyxwiz-engine     # or build/macos-release/bin/cyxwiz-engine
 ```
 
-ArrayFire's libraries must be on the library search path at run time (on Windows, `af.dll` and the backend DLLs you use; the ArrayFire installer can add them to `PATH`). The Server Node runs as `cyxwiz-server-gui` or `cyxwiz-server-daemon` from the same `bin` folder.
+Scripting needs a Python 3.12 with its `venv` module on the system ([INSTALL.md](INSTALL.md#python-312-for-scripting-linux) has the Linux packages and a source build). ArrayFire's libraries must be on the library search path at run time (on Windows, `af.dll` and the backend DLLs you use; the ArrayFire installer can add them to `PATH`). On Linux, when ArrayFire is not in a system folder, add its `lib` folder: `LD_LIBRARY_PATH=$HOME/opt/ArrayFire-3.10.0/lib ./build/linux-release/bin/cyxwiz-engine`. The Server Node runs as `cyxwiz-server-gui` or `cyxwiz-server-daemon` from the same `bin` folder.
 
 Tests use Catch2 and CTest:
 
