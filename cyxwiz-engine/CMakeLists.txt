@@ -211,6 +211,7 @@ set(ENGINE_SOURCES
     src/core/image_index_service.cpp
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
+    src/core/image_recipe_presentation.cpp
     src/core/image_pixels.cpp
     src/core/image_viewer.cpp
     src/core/image_pipeline_preview.cpp
@@ -7002,6 +7003,21 @@ set_target_properties(test_image_gallery_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME image_gallery_presentation COMMAND test_image_gallery_presentation)
+
+# ===== Test: Data Studio > Prepare's image recipe (TOFIX178 1.6) =====
+add_executable(test_image_recipe_presentation
+    tests/test_image_recipe_presentation.cpp
+    src/core/image_recipe_presentation.cpp
+)
+target_include_directories(test_image_recipe_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_image_recipe_presentation PRIVATE cyxwiz-image-cv cyxwiz-backend nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_image_recipe_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_recipe_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_recipe_presentation COMMAND test_image_recipe_presentation)
 
 # ===== Test: Explore > Images viewer: zoom, orientation, pixels, histograms =====
 add_executable(test_image_viewer
