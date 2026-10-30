@@ -164,7 +164,7 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
 
     if (inputs.state == LiveCompileState::Compiled || inputs.state == LiveCompileState::Failed) {
         card.status_note = inputs.data_loaded
-            ? "Recompiled after your last edit. Data loaded."
+            ? "Compiled from the graph as it is now, with its data loaded."
             : "Data not loaded: shapes come from the saved data contract.";
         // Compile (F7) reports unloaded data as an error: the chip says it
         // too instead of a plain green "Compiled".
