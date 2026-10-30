@@ -179,12 +179,14 @@ if ! command -v ninja &> /dev/null; then
     echo ""
 fi
 
+# Overlay folders as absolute paths: CMake keeps them as given, and a rebuild
+# that re-runs CMake by itself does so from the build folder.
 cmake -B "$BUILD_DIR" -S . \
     -G "$GENERATOR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_OVERLAY_PORTS=vcpkg-ports \
-    -DVCPKG_OVERLAY_TRIPLETS=vcpkg-triplets \
+    -DVCPKG_OVERLAY_PORTS="$PWD/vcpkg-ports" \
+    -DVCPKG_OVERLAY_TRIPLETS="$PWD/vcpkg-triplets" \
     -DCYXWIZ_BUILD_ENGINE=$BUILD_ENGINE \
     -DCYXWIZ_BUILD_SERVER_NODE=$BUILD_SERVER_NODE \
     -DCYXWIZ_BUILD_TESTS=ON \
