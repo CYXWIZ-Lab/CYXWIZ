@@ -78,32 +78,34 @@ void ImageViewerView::Load(const std::string& path) {
     loading_ = true;
     fitted_ = true;
     hovering_ = false;
-    auto result = std::make_shared<std::pair<ImagePixels, ImageHistograms>>();
+    struct Result {
+        ImagePixels pixels;
+        ImageHistograms histograms;
+        ImageDisplay display;
+    };
+    auto result = std::make_shared<Result>();
     std::weak_ptr<int> alive = alive_;
+    const int max_side = TextureManager::Instance().MaxTextureSize();  // UI thread: needs the GL context
     task_ = AsyncTaskManager::Instance().RunAsync(
         "Viewer: " + path,
-        [path, result](LambdaTask&) {
-            result->first = DecodeImagePixels(path);
-            result->second = ComputeHistograms(result->first);
+        [path, result, max_side](LambdaTask&) {
+            result->pixels = DecodeImagePixels(path);
+            result->histograms = ComputeHistograms(result->pixels);
+            result->display = MakeImageDisplay(result->pixels, max_side);
         },
         nullptr,
-        [this, alive, result, path](bool, const std::string&) {
+        [this, alive, result](bool, const std::string&) {
             if (alive.expired()) return;
             task_ = 0;
             Release();
-            pixels_ = std::move(result->first);
-            histograms_ = result->second;
+            pixels_ = std::move(result->pixels);
+            histograms_ = result->histograms;
+            display_ = std::move(result->display);
             loading_ = false;
-            if (!pixels_.error.empty() || pixels_.rgba.empty()) return;
-            auto& textures = TextureManager::Instance();
-            colour_ = textures.CreateTextureFromUint8Data(pixels_.rgba.data(), pixels_.width, pixels_.height, 4);
-            const auto grey = PlaneRgba(pixels_, ImagePlane::Luminance);
-            luminance_ = textures.CreateTextureFromUint8Data(grey.data(), pixels_.width, pixels_.height, 4);
-            if (pixels_.HasAlpha()) {
-                const auto alpha = PlaneRgba(pixels_, ImagePlane::Alpha);
-                alpha_ = textures.CreateTextureFromUint8Data(alpha.data(), pixels_.width, pixels_.height, 4);
-            }
-            if (path != path_) path_.clear();  // another image was picked meanwhile: load it next frame
+            if (!pixels_.error.empty() || display_.colour.empty()) return;
+            colour_ = TextureManager::Instance().CreateTextureFromUint8Data(display_.colour.data(), display_.width,
+                                                                            display_.height, 4);
+            display_.colour = {};
         },
         alive_);
 }
@@ -193,7 +195,9 @@ void ImageViewerView::RenderControls(bool has_model) {
 void ImageViewerView::RenderCanvas(const ImVec2& size, const ModelPicture& model) {
     const ui::Tokens& t = ui::CurrentTokens();
     const ImVec2 at = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("##viewer_canvas", size, ImGuiButtonFlags_MouseButtonLeft);
+    // At least a pixel: a zero-size button asserts in a very narrow panel.
+    ImGui::InvisibleButton("##viewer_canvas", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
+                           ImGuiButtonFlags_MouseButtonLeft);
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -203,7 +207,9 @@ void ImageViewerView::RenderCanvas(const ImVec2& size, const ModelPicture& model
     hovering_ = false;
 
     if (loading_ || !pixels_.error.empty() || !colour_) {
-        const char* text = loading_ ? ICON_FA_SPINNER " Reading the image" : pixels_.error.c_str();
+        const char* text = loading_ ? ICON_FA_SPINNER " Reading the image"
+                           : !pixels_.error.empty() ? pixels_.error.c_str()
+                                                    : "This image cannot be shown.";
         const ImVec2 ts = ImGui::CalcTextSize(text);
         dl->AddText(ImVec2(at.x + (size.x - ts.x) * 0.5f, at.y + (size.y - ts.y) * 0.5f),
                     ui::ToU32(loading_ ? t.running : t.caution), text);
@@ -267,13 +273,23 @@ void ImageViewerView::RenderCanvas(const ImVec2& size, const ModelPicture& model
     const ImVec2 max(min.x + shown_w, min.y + shown_h);
     if (checkerboard_) DrawCheckerboard(dl, min, max);
 
+    // The luminance and alpha views are uploaded the first time they show.
+    auto& textures = TextureManager::Instance();
+    if (channel_ == 4 && !luminance_ && !display_.luminance.empty()) {
+        luminance_ = textures.CreateTextureFromUint8Data(display_.luminance.data(), display_.width, display_.height, 4);
+        display_.luminance = {};
+    }
+    if (channel_ == 5 && !alpha_ && !display_.alpha.empty()) {
+        alpha_ = textures.CreateTextureFromUint8Data(display_.alpha.data(), display_.width, display_.height, 4);
+        display_.alpha = {};
+    }
     uint32_t texture = colour_;
     ImU32 mask = IM_COL32_WHITE;
     // A channel mask (not a theme colour): R, G or B alone.
     if (channel_ == 1) mask = IM_COL32(255, 0, 0, 255);
     else if (channel_ == 2) mask = IM_COL32(0, 255, 0, 255);
     else if (channel_ == 3) mask = IM_COL32(0, 0, 255, 255);
-    else if (channel_ == 4) texture = luminance_;
+    else if (channel_ == 4 && luminance_) texture = luminance_;
     else if (channel_ == 5 && alpha_) texture = alpha_;
     DrawQuad(dl, Texture(texture), min, max, iv::CornerUVs(orientation_), mask);
 
@@ -452,8 +468,8 @@ void ImageViewerView::Render(const std::string& path, const std::vector<std::pai
 
     const ImGuiStyle& style = ImGui::GetStyle();
     const bool side = ImGui::GetContentRegionAvail().x >= 760.0f;
-    const float left_w = side ? ImGui::GetContentRegionAvail().x - kSideWidth - style.ItemSpacing.x * 2.0f
-                              : ImGui::GetContentRegionAvail().x;
+    const float left_w = std::max(1.0f, side ? ImGui::GetContentRegionAvail().x - kSideWidth - style.ItemSpacing.x * 2.0f
+                                             : ImGui::GetContentRegionAvail().x);
     const float status_h = ImGui::GetFrameHeight() + 4.0f;
     const float canvas_h = std::max(240.0f, ImGui::GetContentRegionAvail().y - strip_height - status_h - style.ItemSpacing.y * 3.0f);
 

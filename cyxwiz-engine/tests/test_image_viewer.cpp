@@ -101,6 +101,36 @@ void CheckPixels(const fs::path& dir) {
           "16-bit RGBA");
     Check(cyxwiz::ComputeHistograms(ga_pixels).alpha.bins[128 / 8] == 1, "alpha histogram");
 
+    // The display copy: shrunk to the texture limit, aspect kept; the full
+    // pixels stay for the readout.
+    cv::Mat wide(2, 8, CV_8UC3, cv::Scalar(10, 20, 30));
+    const std::string wide_path = (dir / "wide.png").string();
+    cv::imwrite(wide_path, wide);
+    const auto wide_pixels = cyxwiz::DecodeImagePixels(wide_path);
+    const auto shrunk = cyxwiz::MakeImageDisplay(wide_pixels, 4);
+    Check(shrunk.width == 4 && shrunk.height == 1 && shrunk.colour.size() == 16 && shrunk.luminance.size() == 16 &&
+              shrunk.alpha.empty() && shrunk.colour[0] == 30 && wide_pixels.width == 8,
+          "display shrunk to the limit");
+    const auto whole = cyxwiz::MakeImageDisplay(wide_pixels, 4096);
+    Check(whole.width == 8 && whole.height == 2 && whole.colour == wide_pixels.rgba, "no shrink under the limit");
+
+    // Five channels (a multi-band TIFF): the first three show as colour. This
+    // OpenCV cannot write one (imwrite takes 1, 3 or 4 channels), so the
+    // check runs only where it can.
+    cv::Mat bands(1, 1, CV_8UC(5));
+    for (int c = 0; c < 5; ++c) bands.data[c] = static_cast<uchar>(c + 1);  // bands 1 .. 5
+    const std::string bands_path = (dir / "bands.tif").string();
+    bool written = false;
+    try {
+        written = cv::imwrite(bands_path, bands);
+    } catch (const cv::Exception&) {
+    }
+    if (written) {
+        const auto five = cyxwiz::DecodeImagePixels(bands_path);
+        Check(five.error.empty() && five.channels == 3 && five.rgba[0] == 3 && five.rgba[2] == 1,
+              "five bands show the first three: " + five.error);
+    }
+
     std::ofstream(dir / "broken.png") << "not an image";
     Check(!cyxwiz::DecodeImagePixels((dir / "broken.png").string()).error.empty(), "a broken file says why");
 }

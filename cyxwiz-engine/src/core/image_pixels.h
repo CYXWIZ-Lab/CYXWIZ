@@ -13,7 +13,8 @@ namespace cyxwiz {
 
 struct ImagePixels {
     int width = 0, height = 0;
-    int channels = 0;        // in the file: 1 grey, 3 colour, 4 colour + alpha
+    int channels = 0;        // 1 grey, 2 grey + alpha, 3 colour, 4 colour + alpha (a file with more
+                             // channels, a multi-band TIFF, shows its first three as colour)
     int bits = 8;            // per channel in the file: 8, 16 or 32 (float)
     std::vector<uint8_t> rgba;  // width * height * 4, scaled to 8 bits
     std::string error;       // set when the file cannot be read
@@ -22,6 +23,15 @@ struct ImagePixels {
 
 // The file at full size; `error` says why when it cannot be read.
 ImagePixels DecodeImagePixels(const std::string& path);
+
+// What the viewer uploads: the picture and its luminance and alpha views,
+// shrunk (area average) so neither side is over `max_side` (a texture's
+// limit). The readout and histograms keep the full-size pixels.
+struct ImageDisplay {
+    int width = 0, height = 0;
+    std::vector<uint8_t> colour, luminance, alpha;  // RGBA each; alpha empty without one
+};
+ImageDisplay MakeImageDisplay(const ImagePixels& pixels, int max_side);
 
 inline constexpr int kHistogramBins = 32;  // 8 values each
 

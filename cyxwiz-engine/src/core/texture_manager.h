@@ -44,6 +44,10 @@ public:
      */
     uint32_t CreateTextureFromUint8Data(const unsigned char* data, int width, int height, int channels);
 
+    // The largest texture side the GPU takes (GL_MAX_TEXTURE_SIZE); a bigger
+    // image has to be shrunk first. UI thread (needs the GL context).
+    int MaxTextureSize() const;
+
     /**
      * Load texture from file
      * @param filepath Path to image file

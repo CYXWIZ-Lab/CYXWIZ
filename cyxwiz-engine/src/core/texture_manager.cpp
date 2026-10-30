@@ -92,23 +92,48 @@ uint32_t TextureManager::CreateTextureFromUint8Data(const unsigned char* data, i
     return texture_id;
 }
 
+int TextureManager::MaxTextureSize() const {
+    GLint size = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &size);
+    return size > 0 ? size : 4096;
+}
+
 uint32_t TextureManager::LoadTextureFromFile(const std::string& filepath, int* out_width, int* out_height) {
     // OpenCV, as the image index and training read: every type in
     // core/image_formats.h, 16-bit and float images scaled to 8 bits.
-    cv::Mat image = cv::imread(filepath, cv::IMREAD_UNCHANGED);
-    if (image.empty()) {
-        spdlog::warn("Failed to load image: {}", filepath);
+    cv::Mat rgba;
+    try {
+        cv::Mat image = cv::imread(filepath, cv::IMREAD_UNCHANGED);
+        if (image.empty()) {
+            spdlog::warn("Failed to load image: {}", filepath);
+            return 0;
+        }
+        // More than 4 channels (a multi-band TIFF): its first three as colour.
+        if (image.channels() > 4) {
+            cv::Mat three(image.rows, image.cols, CV_MAKETYPE(image.depth(), 3));
+            const int pairs[] = {0, 0, 1, 1, 2, 2};
+            cv::mixChannels(&image, 1, &three, 1, pairs, 3);
+            image = three;
+        }
+        if (image.depth() == CV_16U) image.convertTo(image, CV_8U, 1.0 / 257.0);
+        else if (image.depth() == CV_32F || image.depth() == CV_64F) image.convertTo(image, CV_8U, 255.0);
+        else if (image.depth() != CV_8U) image.convertTo(image, CV_8U);
+        if (image.channels() == 2) cv::extractChannel(image, image, 0);  // grey + alpha: the grey
+        const int code = image.channels() == 1 ? cv::COLOR_GRAY2RGBA
+                         : image.channels() == 4 ? cv::COLOR_BGRA2RGBA
+                                                 : cv::COLOR_BGR2RGBA;
+        cv::cvtColor(image, rgba, code);
+        // Shrunk to what one texture takes, or it would come out black.
+        const int limit = MaxTextureSize();
+        if (std::max(rgba.cols, rgba.rows) > limit) {
+            const double scale = static_cast<double>(limit) / std::max(rgba.cols, rgba.rows);
+            cv::resize(rgba, rgba, cv::Size(std::max(1, static_cast<int>(rgba.cols * scale)),
+                                            std::max(1, static_cast<int>(rgba.rows * scale))), 0, 0, cv::INTER_AREA);
+        }
+    } catch (const cv::Exception& e) {
+        spdlog::warn("Failed to load image: {} ({})", filepath, e.what());
         return 0;
     }
-    if (image.depth() == CV_16U) image.convertTo(image, CV_8U, 1.0 / 257.0);
-    else if (image.depth() == CV_32F || image.depth() == CV_64F) image.convertTo(image, CV_8U, 255.0);
-    else if (image.depth() != CV_8U) image.convertTo(image, CV_8U);
-    if (image.channels() == 2) cv::extractChannel(image, image, 0);  // grey + alpha: the grey
-    cv::Mat rgba;
-    const int code = image.channels() == 1 ? cv::COLOR_GRAY2RGBA
-                     : image.channels() == 4 ? cv::COLOR_BGRA2RGBA
-                                             : cv::COLOR_BGR2RGBA;
-    cv::cvtColor(image, rgba, code);
 
     uint32_t texture_id = CreateTextureFromUint8Data(rgba.data, rgba.cols, rgba.rows, 4);
 

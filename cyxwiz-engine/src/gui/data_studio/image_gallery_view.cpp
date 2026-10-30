@@ -467,7 +467,8 @@ void ImageGalleryView::RenderGrid(const ig::View& view, float width, float heigh
     const float avail = ImGui::GetContentRegionAvail().x;
     columns_ = std::max(1, static_cast<int>((avail + gap) / step));
     // The tiles stretch to fill the row exactly.
-    const float size = std::floor((avail - gap * static_cast<float>(columns_ - 1)) / static_cast<float>(columns_));
+    // At least a pixel: a zero-size button asserts in a very narrow panel.
+    const float size = std::max(1.0f, std::floor((avail - gap * static_cast<float>(columns_ - 1)) / static_cast<float>(columns_)));
     for (size_t k = 0; k < view.shown.size(); ++k) {
         const size_t i = view.shown[k];
         if (k % static_cast<size_t>(columns_) != 0) ImGui::SameLine();

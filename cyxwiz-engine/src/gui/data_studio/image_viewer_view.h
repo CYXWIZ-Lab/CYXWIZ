@@ -56,6 +56,9 @@ private:
     ImagePixels pixels_;
     ImageHistograms histograms_;
     uint32_t colour_ = 0, luminance_ = 0, alpha_ = 0;  // textures
+    // The luminance and alpha views, uploaded the first time they are shown
+    // (then freed); the display size when the image was shrunk to fit a texture.
+    ImageDisplay display_;
 
     image_viewer::View view_;
     bool fitted_ = true;  // the zoom follows the area until the user zooms
