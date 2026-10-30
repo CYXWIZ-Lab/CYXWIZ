@@ -280,7 +280,8 @@ std::string ForecastSentence(const series::ForecastAnswer& a) {
     const std::string unit = StepUnit(a.series.step);
     // "Holt-Winters (additive trend, ...)" / "ARIMA(2,1,1) (ar.L1 1.09, ...)".
     const std::string label = a.request.method == Method::Arima ? f.method : std::string(MethodLabel(a.request.method));
-    std::string out = label + " (" + ModelWords(a) + ") forecasts " + Round(f.forecast[0]) + " " + a.request.base.value + " next " + unit;
+    const std::string model = ModelWords(a);
+    std::string out = label + (model.empty() ? "" : " (" + model + ")") + " forecasts " + Round(f.forecast[0]) + " " + a.request.base.value + " next " + unit;
     if (!f.lower_bound.empty()) out += ", between " + Round(f.lower_bound[0]) + " and " + Round(f.upper_bound[0]) + " " + Level(a.request.level);
     if (f.forecast.size() > 1) {
         const auto hi = std::max_element(f.forecast.begin(), f.forecast.end());

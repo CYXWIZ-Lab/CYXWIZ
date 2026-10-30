@@ -198,16 +198,21 @@ void LinesOver(const std::vector<double>& xs, const std::vector<Line>& lines, fl
         dl->AddText(ImVec2(tx, at.y + height - line_h - 2.0f), ui::ToU32(t.text_dim), mark.c_str());
     }
     float legend_x = at.x + width - 4.0f;
+    const size_t stride = std::max<size_t>(1, xs.size() / kPoints);  // a long series: every n-th point
+    // The legend from the right; the lines in order, so a later line (a trend) draws over an earlier one (the series).
     for (size_t l = lines.size(); l-- > 0;) {
+        legend_x -= ImGui::CalcTextSize(lines[l].name.c_str()).x + 18.0f;
+        dl->AddCircleFilled(ImVec2(legend_x + 5.0f, at.y + 2.0f + line_h * 0.5f), 4.0f, ui::ToU32(ui::SeriesColour(t, first_colour + l)));
+        dl->AddText(ImVec2(legend_x + 13.0f, at.y + 2.0f), ui::ToU32(t.text_dim), lines[l].name.c_str());
+    }
+    for (size_t l = 0; l < lines.size(); ++l) {
         const ImU32 c = ui::ToU32(ui::SeriesColour(t, first_colour + l));
         std::vector<ImVec2> pts;
-        for (size_t i = 0; i < xs.size() && i < lines[l].ys.size(); ++i)
+        for (size_t i = 0; i < xs.size() && i < lines[l].ys.size(); i += stride)
             if (std::isfinite(lines[l].ys[i])) pts.emplace_back(X(xs[i]), Y(l, lines[l].ys[i]));
         if (pts.size() > 1) dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), c, ImDrawFlags_None, 2.0f);
-        for (const auto& q : pts) dl->AddCircleFilled(q, 3.0f, c);
-        legend_x -= ImGui::CalcTextSize(lines[l].name.c_str()).x + 18.0f;
-        dl->AddCircleFilled(ImVec2(legend_x + 5.0f, at.y + 2.0f + line_h * 0.5f), 4.0f, c);
-        dl->AddText(ImVec2(legend_x + 13.0f, at.y + 2.0f), ui::ToU32(t.text_dim), lines[l].name.c_str());
+        if (stride == 1 && pts.size() <= 400)
+            for (const auto& q : pts) dl->AddCircleFilled(q, 3.0f, c);
     }
     dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(t.text_faint), (lines[0].name + " " + sv::Num(data[0].second)).c_str());
     const std::string low = sv::Num(data[0].first);
@@ -317,10 +322,11 @@ void Band(const std::vector<double>& xs, const Line& line, const Line& centre, c
     // The band: one quad per step where both edges are known.
     ImVec4 fill = ui::SeriesColour(t, 1);
     fill.w = 0.22f;
-    for (size_t i = 0; i + 1 < xs.size() && i + 1 < low.size() && i + 1 < high.size(); ++i) {
-        if (!std::isfinite(low[i]) || !std::isfinite(high[i]) || !std::isfinite(low[i + 1]) || !std::isfinite(high[i + 1])) continue;
-        const ImVec2 q[4] = {ImVec2(X(xs[i]), Y(high[i])), ImVec2(X(xs[i + 1]), Y(high[i + 1])), ImVec2(X(xs[i + 1]), Y(low[i + 1])),
-                             ImVec2(X(xs[i]), Y(low[i]))};
+    const size_t stride = std::max<size_t>(1, xs.size() / kPoints);  // a long series: every n-th point
+    for (size_t i = 0; i + stride < xs.size() && i + stride < low.size() && i + stride < high.size(); i += stride) {
+        const size_t j = i + stride;
+        if (!std::isfinite(low[i]) || !std::isfinite(high[i]) || !std::isfinite(low[j]) || !std::isfinite(high[j])) continue;
+        const ImVec2 q[4] = {ImVec2(X(xs[i]), Y(high[i])), ImVec2(X(xs[j]), Y(high[j])), ImVec2(X(xs[j]), Y(low[j])), ImVec2(X(xs[i]), Y(low[i]))};
         dl->AddConvexPolyFilled(q, 4, ui::ToU32(fill));
     }
     if (std::isfinite(mark_x)) {
@@ -336,7 +342,7 @@ void Band(const std::vector<double>& xs, const Line& line, const Line& centre, c
         const ImU32 c = ui::ToU32(ui::SeriesColour(t, static_cast<size_t>(l)));
         const float thickness = l == 0 ? 1.6f : 2.0f;
         std::vector<ImVec2> pts;
-        for (size_t i = 0; i < xs.size() && i < both[l]->ys.size(); ++i) {
+        for (size_t i = 0; i < xs.size() && i < both[l]->ys.size(); i += stride) {
             if (std::isfinite(both[l]->ys[i])) {
                 pts.emplace_back(X(xs[i]), Y(both[l]->ys[i]));
                 continue;

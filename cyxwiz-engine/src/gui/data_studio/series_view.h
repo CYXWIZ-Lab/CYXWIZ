@@ -53,6 +53,8 @@ private:
     void RenderCorrelogram(const ExploreContext& context);
     void RenderSeriesLine(const series::Series& s);
     void Message(const std::string& text, bool error);
+    // What shows while a look runs (the text, and Stop); false when stopped.
+    template <typename T> bool Waiting(ExploreJob<T>& job, const std::string& key, const char* text);
     void Export(const std::string& name, const std::string& csv);
 
     std::shared_ptr<const DatasetProfile> seen_;
@@ -64,6 +66,7 @@ private:
     series::CorrelogramRequest correlogram_;
     std::string message_;
     bool message_error_ = false;
+    std::string stopped_key_;
     plot::ColumnPicker picker_;
     ExploreJob<series::PartsAnswer> parts_job_;
     ExploreJob<series::SeasonalityAnswer> season_job_;

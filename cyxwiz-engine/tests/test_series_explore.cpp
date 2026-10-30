@@ -215,6 +215,9 @@ int main() {
     Contains(series_view::HoldoutSentence(f), "times better than repeating last year", "holdout words: baseline");
     Contains(series_view::ForecastCsv(f), "1961-01-01,,,", "forecast CSV future rows");
 
+    forecast.holdout = -1;
+    const auto by_default = series::RunForecast("airline", forecast, run, {});
+    Check(by_default.ok() && by_default.holdout == 24, "the default check holds out twice the period: " + std::to_string(by_default.holdout));
     forecast.method = series::Method::Arima;
     forecast.p = 2;
     forecast.d = 1;
@@ -238,6 +241,13 @@ int main() {
           "Exp. Smoothing node parameters");
     forecast.method = series::Method::SeasonalNaive;
     Check(series::NodeParameters(forecast).empty() && std::string(series::ForecastNodeType(forecast.method)).empty(), "the baseline has no node");
+    // The order search: the orders by AIC, not the random walk.
+    forecast.method = series::Method::Arima;
+    forecast.p = forecast.d = forecast.q = -1;
+    forecast.holdout = 0;
+    const auto chosen = series::RunForecast("airline", forecast, run, {});
+    std::cout << "chosen " << chosen.fit.method << " aic " << chosen.fit.aic << " " << chosen.error << std::endl;
+    Check(chosen.ok() && chosen.fit.method != "ARIMA(0,1,0)" && chosen.fit.aic < 1400.0, "the search finds a better order than the random walk: " + chosen.fit.method);
     forecast.method = series::Method::Simple;
     forecast.horizon = 0;
     Check(!series::RunForecast("airline", forecast, run, {}).ok(), "a horizon of 0 is refused");

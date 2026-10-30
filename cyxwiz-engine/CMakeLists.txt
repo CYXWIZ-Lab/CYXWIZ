@@ -758,6 +758,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/groups_view.cpp
     src/gui/data_studio/projection_view.cpp
     src/gui/data_studio/series_view.cpp
+    src/gui/data_studio/forecast_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp
@@ -7347,6 +7348,15 @@ if(WIN32)
 endif()
 set_target_properties(test_stats_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME StatsExplore COMMAND test_stats_explore)
+
+# Timing of the time series fits on a long series (TOFIX129 D6); prints, not a check.
+add_executable(bench_time_series_long tests/bench_time_series_long.cpp)
+target_include_directories(bench_time_series_long PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include)
+target_link_libraries(bench_time_series_long PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(bench_time_series_long PRIVATE NOMINMAX _USE_MATH_DEFINES)
+endif()
+set_target_properties(bench_time_series_long PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # Data Studio > Explore > Series and Forecast (TOFIX129 D6): reading, steps, periods, the held-out check, words.
 add_executable(test_series_explore tests/test_series_explore.cpp

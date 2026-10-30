@@ -141,7 +141,7 @@ struct ForecastRequest {
     bool multiplicative = true;    // Holt-Winters season
     double alpha = -1, beta = -1, gamma = -1;  // -1: estimated
     int p = -1, d = -1, q = -1;    // ARIMA; -1: chosen
-    int holdout = 0;               // the last rows held out for the check (0: none)
+    int holdout = -1;              // the last rows held out for the check (0: none; -1: twice the period, else 12, at most a third of the rows)
 };
 
 struct HoldoutScore {
@@ -161,7 +161,7 @@ struct ForecastAnswer {
     std::vector<std::string> future_labels;  // the horizon's dates (or numbers / indices)
     std::vector<double> future_t;
     // The held-out check: the last `holdout` rows, every method fitted on the rest.
-    int holdout = 0;
+    int holdout = 0;                     // rows held out (the default resolved)
     std::vector<double> actual;
     std::vector<HoldoutScore> scores;    // the chosen method first, the seasonal naive baseline last
 };
