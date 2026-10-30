@@ -683,14 +683,18 @@ Each row shows the step's picture on a sample image (the image after that
 step; a per-batch row shows several draws, and Normalize shows the picture the
 model gets), its settings in short and the shape after it. **Next sample**
 takes the next image of the index; the pictures show once the images are
-loaded and indexed.
+loaded and indexed. The first pictures of a step take a moment (its GPU code is
+built once); the label says *Drawing the pictures of ...* meanwhile.
 
 - **Settings** opens the node's settings in the row, the same typed fields as
   Properties; a change applies to the node.
 - **Show on canvas**, **Open dialog** and **Remove** (once-only and per-batch
   rows) act on the node; Ctrl+Z on the canvas undoes a removal.
-- **Drag a row by its handle** to move its step: a line under a row shows where
-  it lands, and the node moves on the canvas with its links. Resize stays
+- **Drag a row by its handle** to move its step: over the upper half of a row
+  it goes before that row, over the lower half after it, and a line on that
+  side shows where it lands (no line: the order would not change). The node
+  moves on the canvas with its links, and the steps between its old and new
+  place swap places so the line stays in order. Resize stays
   first and Normalize last, and an OpenCV step can't go after a random one
   (*Image Contrast (CLAHE) is done once with the images: it must come before
   the first random step.*); a refused move shows why while you drag.
