@@ -52,6 +52,11 @@ dropped from its labels ("Max new tokens" under Generation previews). *Reset*
 appears on a row whose value differs from its default. A value is written to
 the node only when you change it: looking at a node changes nothing.
 
+Numbers are typed fields with - / + steps, never sliders: type the exact
+value, or step it. A setting with a range keeps its value in the range;
+its step is 0.01 for a range up to 1 (the Data Split's ratios), 0.1 up to
+10, and 1 beyond.
+
 Settings the rules know but no editor shows (for example a Data Input's
 label column, owned by the loader) are listed read-only below the rows. A
 Data Input also gets a **Data** row: the file, whether it is loaded, and the

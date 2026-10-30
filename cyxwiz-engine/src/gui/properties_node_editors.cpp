@@ -125,21 +125,6 @@ bool FloatRow(MLNode& node,
     return changed;
 }
 
-bool SliderRow(MLNode& node, const char* key, const char* label, float fallback, float min_value, float max_value,
-               const char* format = "%.2f") {
-    float v = std::clamp(ParseFiniteFloatOr(ParamOr(node, key), fallback), min_value, max_value);
-    properties_rows::Label(label);
-    ImGui::PushID(key);
-    const bool changed = ImGui::SliderFloat("##v", &v, min_value, max_value, format);
-    if (changed) {
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), format, v);
-        node.parameters[key] = buf;
-    }
-    ImGui::PopID();
-    properties_rows::Status(key);
-    return changed;
-}
 
 void Note(const char* text) {
     const auto& t = cyxwiz::ui::CurrentTokens();

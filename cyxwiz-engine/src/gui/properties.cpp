@@ -744,15 +744,8 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
         int int_val = 0;
         properties_rules::TryParseIntStrict(value, int_val);
         ImGui::SetNextItemWidth(editor_width);
-        const bool slider = param.name != "epochs" && range.has_range && range.max_value - range.min_value >= 1.0 &&
-                            range.max_value - range.min_value <= 10000.0;
-        if (slider) {
-            int_val = std::clamp(int_val, static_cast<int>(range.min_value), static_cast<int>(range.max_value));
-            if (ImGui::SliderInt("##value", &int_val, static_cast<int>(range.min_value), static_cast<int>(range.max_value))) {
-                value = std::to_string(int_val);
-                changed = true;
-            }
-        } else if (ImGui::InputInt("##value", &int_val, step_buttons ? 1 : 0)) {
+        // A typed field with - / + (owner 2026-10-21: no sliders), kept in range.
+        if (ImGui::InputInt("##value", &int_val, step_buttons ? 1 : 0)) {
             if (range.has_range) int_val = std::clamp(int_val, static_cast<int>(range.min_value), static_cast<int>(range.max_value));
             value = std::to_string(int_val);
             changed = true;
@@ -763,17 +756,17 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
         float float_val = static_cast<float>(parsed);
         ImGui::SetNextItemWidth(editor_width);
         char buf[32];
-        if (range.has_range) {
-            float_val = std::clamp(float_val, static_cast<float>(range.min_value), static_cast<float>(range.max_value));
-            if (ImGui::SliderFloat("##value", &float_val, static_cast<float>(range.min_value), static_cast<float>(range.max_value), "%.4f")) {
-                std::snprintf(buf, sizeof(buf), "%.4f", float_val);
-                value = buf;
-                changed = true;
-            }
-        } else if (ImGui::InputFloat("##value", &float_val, step_buttons ? 0.01f : 0.0f, step_buttons ? 0.1f : 0.0f,
-                                     "%.6g")) {
+        // A typed field with - / + (owner 2026-10-21: no sliders); a ranged
+        // value steps by a hundredth of its range and stays in it.
+        const double span = range.has_range ? range.max_value - range.min_value : 0.0;
+        const float step = !range.has_range || span <= 1.0 ? 0.01f : span <= 10.0 ? 0.1f : 1.0f;
+        const char* format = range.has_range && span <= 10.0 ? "%.4f" : "%.6g";
+        if (ImGui::InputFloat("##value", &float_val, step_buttons ? step : 0.0f, step_buttons ? step * 10.0f : 0.0f,
+                              format)) {
+            if (range.has_range)
+                float_val = std::clamp(float_val, static_cast<float>(range.min_value), static_cast<float>(range.max_value));
             // %g keeps small values such as var_smoothing 1e-9 (%.4f showed 0.0000).
-            std::snprintf(buf, sizeof(buf), "%.6g", float_val);
+            std::snprintf(buf, sizeof(buf), format, float_val);
             value = buf;
             changed = true;
         }
