@@ -50,6 +50,13 @@ public:
     // Set node editor for accessing model graph
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
 
+    // "Change in Preferences" opens Preferences > Servers (TOFIX168 step 3b)
+    void SetOpenServerPreferencesCallback(std::function<void()> callback) {
+        open_server_preferences_ = std::move(callback);
+    }
+    // The server address changed: drop the connections to the old server.
+    void OnServerChanged();
+
     // Set P2P training panel for monitoring
     // Also wires the panel's Resume / Start over actions (TOFIX118 P4 GUI).
     void SetP2PTrainingPanel(P2PTrainingPanel* panel);
@@ -126,7 +133,7 @@ private:
     network::DataStreamClient* datastream_client_ = nullptr;
 
     bool show_;
-    char server_address_[256];
+    std::function<void()> open_server_preferences_;
     bool connecting_;
     std::string connection_error_;
 

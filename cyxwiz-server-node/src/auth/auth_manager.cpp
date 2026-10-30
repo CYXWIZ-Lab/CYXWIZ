@@ -590,46 +590,50 @@ std::string AuthManager::GetRememberedEmail() const {
 
 bool AuthManager::LastSessionExpired() const { return last_session_expired_; }
 
-std::future<bool> AuthManager::ProbeService(std::string api_url) {
-    return std::async(std::launch::async, [api_url]() {
-        try {
-            std::string host = api_url;
-            bool use_ssl = false;
-            int port = 80;
-            if (host.rfind("https://", 0) == 0) {
-                host = host.substr(8);
-                use_ssl = true;
-                port = 443;
-            } else if (host.rfind("http://", 0) == 0) {
-                host = host.substr(7);
-            }
-            const auto slash = host.find('/');
-            if (slash != std::string::npos) host = host.substr(0, slash);
-            const auto colon = host.find(':');
-            if (colon != std::string::npos) {
-                port = std::stoi(host.substr(colon + 1));
-                host = host.substr(0, colon);
-            }
-            if (host.empty()) return false;
-            httplib::Result res;
-            if (use_ssl) {
-                httplib::SSLClient client(host, port);
-                client.set_connection_timeout(3);
-                client.set_read_timeout(3);
-                client.enable_server_certificate_verification(true);
-                res = client.Get("/health");
-            } else {
-                httplib::Client client(host, port);
-                client.set_connection_timeout(3);
-                client.set_read_timeout(3);
-                res = client.Get("/health");
-            }
-            return res && res->status == 200;
-        } catch (const std::exception& e) {
-            spdlog::debug("Service probe failed: {}", e.what());
-            return false;
+int AuthManager::HttpGet(const std::string& url, std::string* body) {
+    try {
+        std::string host = url;
+        bool use_ssl = false;
+        int port = 80;
+        if (host.rfind("https://", 0) == 0) {
+            host = host.substr(8);
+            use_ssl = true;
+            port = 443;
+        } else if (host.rfind("http://", 0) == 0) {
+            host = host.substr(7);
         }
-    });
+        std::string path = "/";
+        const auto slash = host.find('/');
+        if (slash != std::string::npos) {
+            path = host.substr(slash);
+            host = host.substr(0, slash);
+        }
+        const auto colon = host.find(':');
+        if (colon != std::string::npos) {
+            port = std::stoi(host.substr(colon + 1));
+            host = host.substr(0, colon);
+        }
+        if (host.empty()) return 0;
+        httplib::Result res;
+        if (use_ssl) {
+            httplib::SSLClient client(host, port);
+            client.set_connection_timeout(3);
+            client.set_read_timeout(3);
+            client.enable_server_certificate_verification(true);
+            res = client.Get(path);
+        } else {
+            httplib::Client client(host, port);
+            client.set_connection_timeout(3);
+            client.set_read_timeout(3);
+            res = client.Get(path);
+        }
+        if (!res) return 0;
+        if (body) *body = res->body;
+        return res->status;
+    } catch (const std::exception& e) {
+        spdlog::debug("GET {} failed: {}", url, e.what());
+        return 0;
+    }
 }
 
 void AuthManager::OpenWebsite(const std::string& url_text) {

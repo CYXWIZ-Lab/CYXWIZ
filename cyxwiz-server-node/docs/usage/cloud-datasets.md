@@ -30,10 +30,9 @@ A remote job's Data Inputs come from one of two places (TOFIX164):
 
 ## Network
 
-The node connects to the gateway address the job names (the Engine's
-`servers.cloud_gateway` setting, by default the central server's host on port
-50060). The connection is plain gRPC on the LAN for now; TLS between machines
-is TOFIX163 D4. The access token is scoped to one dataset and expires with the
+The node connects to the gateway address the job names (the gateway of the
+Engine's server address, Preferences > Servers). An `https://` address is
+dialled over TLS; a plain `host:port` (the LAN) is plain gRPC. The access token is scoped to one dataset and expires with the
 reservation (plus a few minutes), so a leaked job config does not open the
 account's other data.
 

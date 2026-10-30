@@ -537,6 +537,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_preferences_storage.cpp
+    src/gui/panels/toolbar_preferences_servers.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/dataset_picker.cpp
@@ -3520,6 +3521,15 @@ set_target_properties(test_server_address PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME test_server_address COMMAND test_server_address)
+
+add_executable(test_server_address_view
+    tests/test_server_address_view.cpp
+)
+target_link_libraries(test_server_address_view PRIVATE cyxwiz-protocol)
+set_target_properties(test_server_address_view PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_server_address_view COMMAND test_server_address_view)
 
 # ===== Test: Reservation card presentation (TOFIX118 gaps 5-6) =====
 add_executable(test_reservation_presentation

@@ -22,7 +22,45 @@ rules as the `cyxcloud` CLI:
   `cyxwiz-server-daemon --server=ADDR`. When set it decides `central_server`
   and `auth_api_url` (`--central-server` still overrides central alone).
 
-There is no field for it in Preferences yet (TOFIX168 step 3b).
+## Setting it on screen (TOFIX168 step 3b)
+
+**Engine: Preferences > Servers.**
+- **Server address**: type it, or click an example (This PC
+  `http://localhost:8000`, Another PC, No front door, CyxWiz). The line under
+  the field says what kind of address it is, or why it can't be used.
+- **Use this server** saves it. When you are signed in it asks first:
+  changing the server signs you out, because a sign-in belongs to the server
+  that issued it. The Engine then drops its connections to the old server;
+  central reconnects in the background and CyxCloud when a panel needs it.
+  Applying an empty address goes back to the separate addresses.
+- **What the Engine connects to**: central, the CyxCloud gateway and sign-in
+  with their addresses and whether each answers. A front door is asked once
+  at its `/health` (it reports every service); without one, central and the
+  gateway are asked over gRPC and the API at its `/health`. **Check again**
+  asks again.
+- **Account**: who is signed in, and where.
+- **Separate addresses (development)**: central, gateway and sign-in fields,
+  used only while the server address is empty. They save when you leave a
+  field.
+
+Server Connection, Deploy Model (step 1) and the Account popup show the
+server in use with **Change in Preferences**; they no longer have address
+fields of their own.
+
+**Server node: Settings > Network** has the same address field, examples and
+service rows (central and sign-in: a node gets the gateway address in each
+job), the separate addresses under a disclosure, and this node's own API
+(HTTP API port, and "Serve this node's API over TLS", which was "Enable TLS"
+and is about the node's API, not the connection to CyxWiz). **Save changes**
+writes the config file the node loaded and says which; saving a new server
+signs the node out. The daemon uses the new server after it restarts.
+
+**Server node sign-in card: Change** opens the "CyxWiz server" dialog with
+the same field, examples and rows; **Use this server** saves
+`network.cyxwiz_server`.
+
+The words and rows come from `cyxwiz-protocol/common/server_address_view`
+(tested by `test_server_address_view`); both apps render that one model.
 
 ## TLS
 

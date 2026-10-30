@@ -4,6 +4,7 @@
 #include "../panel.h"
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
+#include "common/server_address_view.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
 #include "../dialogs/create_project_dialog.h"
@@ -126,6 +127,8 @@ public:
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
     void SetOnLoginSuccessCallback(std::function<void(const std::string&)> callback) { on_login_success_callback_ = callback; }
     void SetOnLogoutCallback(std::function<void()> callback) { on_logout_callback_ = callback; }
+    // The server address changed in Preferences > Servers: reconnect.
+    void SetServerChangedCallback(std::function<void()> callback) { server_changed_callback_ = callback; }
 
     // Edit menu callbacks
     void SetUndoCallback(std::function<void()> callback) { undo_callback_ = callback; }
@@ -347,6 +350,13 @@ private:
     // the prepared-data caches, measured off the UI thread, with Clear.
     void RenderStorageTab();
     void MeasureStorage();
+    // Preferences > Servers (TOFIX168 step 3b, toolbar_preferences_servers.cpp)
+    void RenderServersTab();
+    void LoadServerSettings();
+    void StartServerProbe(const std::string& key);
+    void PollServerProbe();
+    void ApplyServerAddress(const std::string& address);
+    void SignOut();
     void RenderAppearancePreferences();  // Preferences > Appearance
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
@@ -448,6 +458,7 @@ private:
     std::function<void()> exit_callback_;
     std::function<void(const std::string&)> on_login_success_callback_;
     std::function<void()> on_logout_callback_;
+    std::function<void()> server_changed_callback_;
 
     // Project creation state
     CreateProjectDialog create_project_dialog_;  // File > New Project
@@ -533,6 +544,17 @@ private:
     std::shared_ptr<int> storage_alive_ = std::make_shared<int>(0);
     bool preferences_open_appearance_ = false;
     std::string preferences_select_tab_;  // tab to select when the dialog opens
+    // Preferences > Servers
+    bool servers_loaded_ = false;  // buffers filled from the config when the tab opens
+    char server_address_buf_[256] = {};
+    char separate_central_buf_[256] = {};
+    char separate_gateway_buf_[256] = {};
+    char separate_api_buf_[256] = {};
+    bool server_change_confirm_ = false;  // signed in: asked before signing out
+    bool show_separate_addresses_ = false;
+    std::future<cyxwiz::protocol::ServerReach> server_probe_;
+    cyxwiz::protocol::ServerReach server_reach_;
+    std::string server_probed_;  // what the last probe asked about
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
     // Python/Scripting preferences

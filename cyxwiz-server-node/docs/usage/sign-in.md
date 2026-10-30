@@ -10,7 +10,7 @@ local.
   with. The address comes from the node config: `network.cyxwiz_server` (the
   one server address, docs/usage/server-address.md) when set, else
   `network.auth_api_url` (default `http://127.0.0.1:3002/api`). Change opens
-  the Sign-in service dialog.
+  the CyxWiz server dialog.
 - **Email** and **Password**. The email is remembered between runs; the
   password never is, and it is wiped from memory as soon as the request is sent.
   Enter submits from either field; the eye button shows the password.
@@ -38,22 +38,24 @@ or press Esc. The service's raw text never shows; the node's log has it.
 
 | Message | What happened | What to do |
 | --- | --- | --- |
-| Can't reach the CyxWiz service at `host:port` | no connection or a timeout | Try again, or Change service |
+| Can't reach the CyxWiz service at `host:port` | no connection or a timeout | Try again, or Change server |
 | That password doesn't match this email | the service refused the password (401) | try again, or reset it on the website; a "Caps Lock is on" hint shows when it is |
 | No account with that email | the service knows no such user | check the spelling, or create an account (link in the message) |
 | Your sign-in expired | the saved session was no longer accepted, at startup or while running | sign in again; running jobs were not affected |
 | The CyxWiz service had a problem (HTTP 5xx) | the service failed | try again in a moment |
 | This account is suspended / Too many sign-in attempts | the service said so (403 / 429) | contact support / wait a minute |
 
-## Change the sign-in service
+## Change the CyxWiz server
 
-The dialog shows the address, three examples you can click (production, this
-PC, another PC on the network), and whether the address answers
-("Reachable · CyxWiz API", checked at its `/health` route about half a second
-after you stop typing). Malformed addresses are refused with the reason; a
-missing path gets `/api` added. **Use this service** saves the address in the
-node config, so the daemon renews the sign-in against the same service. The
-central server the node reports to is a separate setting (Settings).
+One address decides where the node signs in and the central server it
+reports to (docs/usage/server-address.md). The dialog shows the address, four
+examples you can click (This PC `http://localhost:8000`, Another PC, No front
+door, CyxWiz), what kind of address it is, and a row for central and for
+sign-in saying whether each answers (asked about half a second after you
+stop typing). An address that can't be used is refused with the reason.
+**Use this server** saves it as `network.cyxwiz_server` in the config file the
+node loaded, so the daemon reports to and renews the sign-in at the same
+server after it restarts. Settings > Network edits the same address.
 
 ## After sign-in
 

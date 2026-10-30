@@ -42,11 +42,6 @@ int64_t UnixNow() {
 
 ConnectionDialog::ConnectionDialog(network::GRPCClient* client, network::JobManager* job_manager)
     : client_(client), job_manager_(job_manager), show_(false), connecting_(false) {
-    // Load server address from config
-    std::string addr = core::EngineConfig::Instance().GetCentralServerAddress();
-    std::strncpy(server_address_, addr.c_str(), sizeof(server_address_) - 1);
-    server_address_[sizeof(server_address_) - 1] = '\0';
-
     // Initialize dataset URI for P2P training
     std::strncpy(dataset_uri_, "remote://engine", sizeof(dataset_uri_) - 1);
     dataset_uri_[sizeof(dataset_uri_) - 1] = '\0';
@@ -106,11 +101,19 @@ void ConnectionDialog::RenderConnectionPanel() {
 
     ImGui::Spacing();
 
-    // Server address input
-    ImGui::Text("Server Address:");
+    // The server in use (TOFIX168 step 3b): one address for the whole Engine,
+    // set in Preferences > Servers.
+    auto& config = core::EngineConfig::Instance();
+    const std::string server = config.GetServerAddress();
+    const std::string central = config.GetCentralServerAddress();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Server");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##server_address", server_address_, sizeof(server_address_));
+    ImGui::TextUnformatted(server.empty() ? central.c_str() : server.c_str());
+    ImGui::SameLine();
+    if (ui::LinkButton("Change in Preferences") && open_server_preferences_) {
+        open_server_preferences_();
+    }
 
     ImGui::Spacing();
 
@@ -130,15 +133,15 @@ void ConnectionDialog::RenderConnectionPanel() {
             connecting_ = true;
             connection_error_.clear();
 
-            spdlog::info("Attempting to connect to: {}", server_address_);
+            spdlog::info("Attempting to connect to: {}", central);
 
-            if (client_->Connect(server_address_)) {
+            if (client_->Connect(central)) {
                 spdlog::info("Successfully connected!");
                 connecting_ = false;
 
                 // Also connect reservation client
                 if (reservation_client_ && !reservation_client_->IsConnected()) {
-                    reservation_client_->Connect(server_address_);
+                    reservation_client_->Connect(central);
                 }
 
                 // Check for active reservations (reconnection support)
@@ -163,6 +166,18 @@ void ConnectionDialog::RenderConnectionPanel() {
     if (!connection_error_.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(t.error, "Error: %s", connection_error_.c_str());
+    }
+}
+
+void ConnectionDialog::OnServerChanged() {
+    if (client_ && client_->IsConnected()) {
+        client_->Disconnect();
+        if (connection_callback_) connection_callback_(false);
+    }
+    connection_error_.clear();
+    if (reservation_client_) {
+        reservation_client_->Disconnect();
+        reservation_client_->ConnectAsync(core::EngineConfig::Instance().GetCentralServerAddress());
     }
 }
 

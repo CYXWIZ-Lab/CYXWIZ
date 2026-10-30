@@ -63,6 +63,8 @@ add_library(cyxwiz-protocol STATIC
     common/version.cpp
     common/utils.cpp
     common/server_address.cpp
+    common/server_address_view.cpp
+    common/server_address_probe.cpp
 )
 
 target_include_directories(cyxwiz-protocol

@@ -44,8 +44,9 @@ the browser's error line.
 
 See `server-connection.md`, "Datasets that live in CyxCloud": when the job is
 sent, the Engine mints one access token per cloud dataset and the node
-streams the file from the gateway. The gateway address comes from the config
-(`servers.cloud_gateway`; empty means the central server's host on port
+streams the file from the gateway. The gateway address comes from the server
+address (Preferences > Servers, server-address.md); with no server address,
+from `servers.cloud_gateway` (empty: the central server's host on port
 50060).
 
 ## Parameters the node carries

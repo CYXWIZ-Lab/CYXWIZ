@@ -132,6 +132,9 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/panels/deployment_panel.cpp
         src/gui/panels/api_keys_panel.cpp
         src/gui/panels/settings_panel.cpp
+        src/gui/panels/settings_network.cpp
+        src/gui/server_probe.cpp
+        src/gui/server_address_widgets.cpp
         src/gui/panels/logs_panel.cpp
         src/gui/panels/pool_mining_panel.cpp
         src/gui/panels/marketplace_panel.cpp
@@ -472,7 +475,7 @@ if(CYXWIZ_BUILD_TESTS)
         src/core/sign_in_presentation.cpp
     )
     target_include_directories(test_sign_in_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_sign_in_presentation PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_link_libraries(test_sign_in_presentation PRIVATE cyxwiz-protocol Catch2::Catch2 Catch2::Catch2WithMain)
     target_compile_features(test_sign_in_presentation PRIVATE cxx_std_17)
     add_test(NAME test_sign_in_presentation COMMAND test_sign_in_presentation)
 

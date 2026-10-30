@@ -33,7 +33,7 @@ bool FillCloudJobDatasets(const cyxwiz::GraphJobDatasetPlan& plan, DataStreamCli
         return false;
     }
     if (gateway_address.empty()) {
-        error = "no CyxCloud gateway address is configured (servers.cloud_gateway)";
+        error = "no CyxCloud gateway address is configured (set the server in Preferences > Servers)";
         return false;
     }
 

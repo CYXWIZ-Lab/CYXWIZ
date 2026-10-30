@@ -902,8 +902,8 @@ void CloudBrowserPanel::TryAutoConnect() {
         owned_client_ = std::make_unique<network::DataStreamClient>();
     }
 
-    // The gateway address from the config (servers.cloud_gateway), or the
-    // central server's host on the gateway's port (TOFIX164).
+    // The gateway the server address leads to (TOFIX168), or with no server
+    // address servers.cloud_gateway / central's host on port 50060 (TOFIX164).
     const std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCloudGatewayAddress();
 
     spdlog::info("CloudBrowser: Connecting to CyxCloud gateway at {}", gateway_addr);

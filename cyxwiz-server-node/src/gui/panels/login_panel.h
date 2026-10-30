@@ -6,6 +6,7 @@
 #include "auth/auth_manager.h"
 #include "core/sign_in_presentation.h"
 #include "gui/server_panel.h"
+#include "gui/server_probe.h"
 #include "gui/texture.h"
 
 #include <chrono>
@@ -42,7 +43,8 @@ private:
     // Actions
     void StartSignIn();
     void StartNodeRegistration();
-    void UseService(const std::string& api_url);
+    void OpenServiceDialog();
+    void UseServer(const std::string& address);
     void OpenCreateAccount();
     void ClearMessage();
     void ShowProblem(core::SignInProblem problem, int http_status, const std::string& detail);
@@ -53,7 +55,6 @@ private:
     void PollRegistration();
     void PollDaemonStatus();
     void PollHeartbeat();
-    void PollServiceProbe();
     void PollProgressCard();
 
     static bool CapsLockOn();
@@ -93,14 +94,10 @@ private:
     static constexpr int kRegisterRetrySeconds = 60;
     static constexpr int kProgressCardSeconds = 4;
 
-    // Change the sign-in service
+    // Change the CyxWiz server (TOFIX168 step 3b)
     bool open_service_dialog_ = false;
     char service_buffer_[512] = "";
-    std::string probed_address_;
-    core::ServiceReach service_reach_ = core::ServiceReach::Unknown;
-    std::future<bool> probe_future_;
-    Clock::time_point service_edited_at_{};
-    bool service_dirty_ = false;
+    ServerProbe service_probe_;
 
     // Work offline
     bool open_offline_confirm_ = false;

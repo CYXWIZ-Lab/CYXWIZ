@@ -2873,6 +2873,21 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
                 spdlog::info("Auth token cleared from gRPC client after logout");
             }
         });
+
+        // Preferences > Servers changed the server (TOFIX168 step 3b): drop
+        // every connection to the old one. Central reconnects in the
+        // background; CyxCloud connects again when a panel needs it.
+        toolbar_->SetServerChangedCallback([this]() {
+            if (connection_dialog_) connection_dialog_->OnServerChanged();
+            if (deployment_dialog_) deployment_dialog_->OnServerChanged();
+            if (datastream_client_ && datastream_client_->IsConnected()) datastream_client_->Disconnect();
+        });
+    }
+    if (connection_dialog_ && toolbar_) {
+        connection_dialog_->SetOpenServerPreferencesCallback([this]() { toolbar_->OpenPreferences("Servers"); });
+    }
+    if (deployment_dialog_ && toolbar_) {
+        deployment_dialog_->SetOpenServerPreferencesCallback([this]() { toolbar_->OpenPreferences("Servers"); });
     }
 
     spdlog::debug("Network components set in MainWindow");

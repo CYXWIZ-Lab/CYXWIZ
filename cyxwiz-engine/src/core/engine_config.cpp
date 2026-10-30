@@ -618,6 +618,11 @@ std::string EngineConfig::GetServerAddress() const {
     return server_address_;
 }
 
+EngineConfig::SeparateAddresses EngineConfig::GetSeparateAddresses() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {central_server_address_, cloud_gateway_address_, auth_api_url_};
+}
+
 void EngineConfig::SetServerAddress(const std::string& address) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (server_address_ != address) {

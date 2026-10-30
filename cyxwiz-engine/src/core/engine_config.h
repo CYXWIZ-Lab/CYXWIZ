@@ -81,6 +81,15 @@ public:
     std::string GetServerAddress() const;
     void SetServerAddress(const std::string& address);
 
+    // The per-service keys as saved, for Preferences > Servers; the getters
+    // below give the addresses in effect. An empty gateway follows central.
+    struct SeparateAddresses {
+        std::string central;
+        std::string gateway;
+        std::string auth_api;
+    };
+    SeparateAddresses GetSeparateAddresses() const;
+
     // Central Server (gRPC orchestrator)
     std::string GetCentralServerAddress() const;
     void SetCentralServerAddress(const std::string& address);

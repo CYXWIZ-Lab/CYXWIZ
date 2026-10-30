@@ -56,7 +56,7 @@ View Build(const Input& in) {
             v.connection_tone = Tone::Accent;
         } else {
             v.connection = "Gateway unreachable at " + in.gateway + " (" + in.connect_error +
-                           "): check Preferences, Servers, or start the gateway";
+                           "): check the server in Preferences > Servers, or start the gateway";
             v.connection_tone = Tone::Warning;
             v.offer_try_again = true;
         }
@@ -146,7 +146,7 @@ View Build(const Input& in) {
                         {"File", in.remembered.file_name},
                         {"File id", in.remembered.file_id},
                         {"Size", FormatSize(in.remembered.size_bytes)},
-                        {"Gateway", in.gateway + " (servers.cloud_gateway)"}};
+                        {"Gateway", in.gateway + " (from the server address)"}};
         v.remembered_note =
             in.connected
                 ? "These are saved in the graph; pick a dataset and file above to change them."
