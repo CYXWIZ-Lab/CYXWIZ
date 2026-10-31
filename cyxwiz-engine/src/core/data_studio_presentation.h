@@ -75,6 +75,27 @@ struct RailItem {
     std::string tip;
     int node_id = -1;
     Tone tone = Tone::Plain;
+    bool training = false;     // the table training reads (see TrainingReader)
+};
+
+// What training reads (TOFIX129 D7a, owner ruling 2026-10-31): the node wired
+// into the Data Split's Training Dataset pin (the Data Loader's input without
+// a Split). Start Training takes that node's result (the canvas run's, the
+// prepared cache's, or a run of the steps it starts itself), so everything
+// Data Studio puts on the path to it feeds training, and nothing else does.
+struct TrainingReader {
+    int node_id = -1;          // -1: nothing feeds a Data Split or a Data Loader
+    std::string name;          // the node ("tier1_paragraphs")
+    std::string dataset;       // its table ("" until it runs, or loads)
+    bool split = false;        // through a Data Split (false: a Data Loader alone)
+};
+
+// The line Explore shows above a table: what training makes of it.
+struct ReadsNote {
+    enum class Kind { None, This, Other, NotRun };
+    Kind kind = Kind::None;
+    std::string text;          // "Training reads this table."
+    std::string link;          // a link after the text ("Show it"), "" for none
 };
 
 struct RailSection {
@@ -134,9 +155,15 @@ struct View {
     std::array<JobView, kJobCount> jobs;
     std::string last_run;      // "tier1_paragraphs · 15,349 rows · 4/4 checks · 3.1 s"; "" before any run
     Tone last_run_tone = Tone::Plain;
+    TrainingReader training;   // what training reads
 };
 
 View Build(const Input& input);
+
+// What training makes of `dataset` (a registry name): This when it is the
+// training reader's table, Other when training reads another, NotRun when
+// the reader has no table yet, None when nothing feeds a Split or a Loader.
+ReadsNote TrainingReads(const View& view, const std::string& dataset);
 
 // Prepare: a recipe's steps in run order as its step list shows them.
 struct StepRow {

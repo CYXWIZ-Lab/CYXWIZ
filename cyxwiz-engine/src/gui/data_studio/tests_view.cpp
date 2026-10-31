@@ -2,6 +2,7 @@
 
 #include "../../core/file_dialogs.h"
 #include "../../core/session_query_service.h"
+#include "../../core/explore_presentation.h"
 #include "../../core/stats_presentation.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
@@ -479,8 +480,7 @@ void TestsView::RenderAnswer(const stats::TestAnswer& a) {
             message_ = keep_as_node(a.request);
             message_error_ = false;
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Adds a Hypothesis Test node with these settings after the data in use: the test runs with the graph");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("Hypothesis Test").c_str());
     }
 }
 

@@ -310,7 +310,7 @@ void SeriesView::RenderParts(const ExploreContext& context) {
     if (add_to_graph) {
         if (ui::PrimaryButton("Add as a step", true, nullptr, ui::ButtonSize::Small))
             Message(add_to_graph("TimeSeriesDecomposition", "Decomposition (" + base_.value + ")", series::NodeParameters(a->request), true), false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puts the Decomposition node after the data in use: the rest of the graph gets trend, seasonal and residual columns");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::StepTip("Decomposition", "trend, seasonal and residual columns").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_parts.csv", sv::PartsCsv(*a));
@@ -392,7 +392,7 @@ void SeriesView::RenderSeasonality(const ExploreContext& context) {
     if (add_to_graph) {
         if (ui::SecondaryButton("Keep as a node"))
             Message(add_to_graph("SeasonalityDetector", "Seasonality (" + base_.value + ")", series::NodeParameters(a->request), false), false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the Seasonality Detector node as a branch reading the data in use");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("Seasonality Detector").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_seasonality.csv", sv::SeasonalityCsv(*a));
@@ -471,12 +471,12 @@ void SeriesView::RenderStationarity(const ExploreContext& context) {
             if (ui::PrimaryButton("Add a Differencing step", true, nullptr, ui::ButtonSize::Small))
                 Message(add_to_graph("Differencing", "Difference " + base_.value, {{"value_col", base_.value}, {"lag", "1"}, {"order", std::to_string(d)}}, true), false);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Puts a Differencing node (order %d) after the data in use, so the rest of the graph works on a stationary series", d);
+                ImGui::SetTooltip("%s", explore_view::StepTip("Differencing (order " + std::to_string(d) + ")", "a stationary series").c_str());
             ExploreNextButton("Keep as a node");
         }
         if (ui::SecondaryButton("Keep as a node"))
             Message(add_to_graph("StationarityTest", "Stationarity (" + base_.value + ")", series::NodeParameters(a->request), false), false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the Stationarity Test node as a branch reading the data in use");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("Stationarity Test").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_stationarity.csv", sv::StationarityCsv(*a));
@@ -541,7 +541,7 @@ void SeriesView::RenderCorrelogram(const ExploreContext& context) {
             add_to_graph("PACFNode", "PACF (" + base_.value + ")", series::NodeParameters(a->request), false);
             Message(acf + (correlogram_.differenced ? " The nodes read the column as it is; put a Differencing step before them for the differenced correlogram." : ""), false);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the ACF and PACF nodes as branches reading the data in use");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("ACF and PACF").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_correlogram.csv", sv::CorrelogramCsv(*a));

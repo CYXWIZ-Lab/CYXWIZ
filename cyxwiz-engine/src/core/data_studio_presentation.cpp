@@ -159,6 +159,37 @@ const Dataset* DatasetOfInput(const Input& in, const GraphNode& n) {
     return found;
 }
 
+const GraphNode* NodeWithId(const Input& in, int id) {
+    for (const auto& n : in.nodes)
+        if (n.id == id) return &n;
+    return nullptr;
+}
+
+// The node on a Data Split's first pin (Training Dataset), else on a Data
+// Loader's first pin: the same rule as TrainingInputFeeder (the launcher's).
+TrainingReader TrainingReaderOf(const Input& in) {
+    TrainingReader reader;
+    const auto feeder_of = [&](NodeType type) -> const GraphNode* {
+        for (const auto& n : in.nodes) {
+            if (n.type != type || n.input_from.empty()) continue;
+            return NodeWithId(in, n.input_from[0]);
+        }
+        return nullptr;
+    };
+    const GraphNode* feeder = feeder_of(NodeType::DataSplit);
+    reader.split = feeder != nullptr;
+    if (!feeder) feeder = feeder_of(NodeType::DataLoader);
+    if (!feeder) return reader;
+    reader.node_id = feeder->id;
+    reader.name = feeder->name;
+    if (IsDataInput(*feeder)) {
+        if (const Dataset* d = DatasetOfInput(in, *feeder)) reader.dataset = d->name;
+    } else if (feeder->ran && feeder->error.empty() && DatasetNamed(in, feeder->output_dataset)) {
+        reader.dataset = feeder->output_dataset;
+    }
+    return reader;
+}
+
 void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
     // One chip per named type ("Check × 4"); Prepare's other step
     // nodes share one chip naming them.
@@ -339,6 +370,7 @@ View Build(const Input& in) {
     }
 
     // The rail: Data Inputs, node results, published files, other datasets.
+    v.training = TrainingReaderOf(in);
     std::set<std::string> shown;
     RailSection sources{"Data Inputs", {}};
     for (const auto& n : in.nodes) {
@@ -347,7 +379,9 @@ View Build(const Input& in) {
         item.kind = RailItem::Kind::DataInput;
         item.label = n.name;
         item.node_id = n.id;
+        item.training = n.id == v.training.node_id;
         item.tip = n.file_path;
+        if (item.training) item.tip += (item.tip.empty() ? "" : "\n") + std::string("Training reads this table as it is loaded.");
         if (const Dataset* d = DatasetOfInput(in, n)) {
             item.dataset = d->name;
             item.meta = Thousands(static_cast<int64_t>(d->rows));
@@ -390,6 +424,7 @@ View Build(const Input& in) {
         item.kind = RailItem::Kind::NodeResult;
         item.label = n.name;
         item.node_id = n.id;
+        item.training = n.id == v.training.node_id;
         if (!n.error.empty()) {
             item.meta = "failed";
             item.tone = Tone::Error;
@@ -407,6 +442,8 @@ View Build(const Input& in) {
             item.dataset = n.output_dataset;
             shown.insert(n.output_dataset);
         }
+        if (item.training)
+            item.tip += (item.tip.empty() ? "" : "\n") + std::string("Training reads this table: the steps before it have run on the data.");
         results.items.push_back(std::move(item));
     }
     RailSection published{"Published", {}};
@@ -433,6 +470,9 @@ View Build(const Input& in) {
     RailSection other{"Other datasets", {}};
     for (const auto& d : in.datasets) {
         if (shown.count(d.name) || !d.tabular) continue;
+        // The pipeline run's partition-marked copy of a Data Input (<name>__split,
+        // TOFIX178 S0-g2) is the run's own; listing it would look like a dataset.
+        if (d.name.size() > 7 && d.name.compare(d.name.size() - 7, 7, "__split") == 0) continue;
         RailItem item;
         item.kind = RailItem::Kind::Other;
         item.label = d.label.empty() ? d.name : d.label;
@@ -522,6 +562,32 @@ View Build(const Input& in) {
         v.last_run_tone = checks_ran && checks_passed < checks_ran ? Tone::Warn : Tone::Ok;
     }
     return v;
+}
+
+ReadsNote TrainingReads(const View& view, const std::string& dataset) {
+    ReadsNote note;
+    const TrainingReader& t = view.training;
+    if (t.node_id < 0) {
+        note.kind = ReadsNote::Kind::None;
+        note.text = "Nothing feeds a Data Split or a Data Loader yet, so training reads no table. "
+                    "Steps added here feed it once the graph trains on this data.";
+        return note;
+    }
+    if (!dataset.empty() && dataset == t.dataset) {
+        note.kind = ReadsNote::Kind::This;
+        note.text = std::string("Training reads this table") + (t.split ? " through the Data Split." : " through the Data Loader.");
+        return note;
+    }
+    if (t.dataset.empty()) {
+        note.kind = ReadsNote::Kind::NotRun;
+        note.text = "Training reads \"" + t.name + "\", which has no table yet (run its steps in Prepare); this is not it.";
+        note.link = "Show the node";
+        return note;
+    }
+    note.kind = ReadsNote::Kind::Other;
+    note.text = "Training reads \"" + t.name + "\", not this table.";
+    note.link = "Show what training reads";
+    return note;
 }
 
 }  // namespace cyxwiz::studio

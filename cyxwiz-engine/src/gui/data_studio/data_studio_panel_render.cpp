@@ -181,13 +181,16 @@ void DataStudioPanel::RenderRail(float height, float max_height) {
                 ImGui::SetTooltip("%s", tip.c_str());
             }
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float meta_w = ImGui::CalcTextSize(item.meta.c_str()).x;
+            // The table training reads carries a cap before its count (TOFIX129 D7a).
+            const float cap_w = item.training ? ImGui::CalcTextSize(ICON_FA_GRADUATION_CAP).x + 6.0f : 0.0f;
+            const float meta_w = ImGui::CalcTextSize(item.meta.c_str()).x + cap_w;
             const float icon_w = ImGui::CalcTextSize(ICON_FA_TABLE).x + 6.0f;
             dl->AddText(ImVec2(pos.x + 2.0f, pos.y), ui::ToU32(t.text_faint), KindIcon(item.kind));
+            if (item.training) dl->AddText(ImVec2(pos.x + w - meta_w, pos.y), ui::ToU32(t.info), ICON_FA_GRADUATION_CAP);
             const ImVec4 clip(pos.x, pos.y, pos.x + w - meta_w - 10.0f, pos.y + ImGui::GetTextLineHeight());
             dl->AddText(nullptr, 0.0f, ImVec2(pos.x + icon_w, pos.y), ui::ToU32(item.dataset.empty() ? t.text_dim : t.text),
                         item.label.c_str(), nullptr, 0.0f, &clip);
-            dl->AddText(ImVec2(pos.x + w - meta_w, pos.y), ui::ToU32(ToneColour(item.tone)), item.meta.c_str());
+            dl->AddText(ImVec2(pos.x + w - meta_w + cap_w, pos.y), ui::ToU32(ToneColour(item.tone)), item.meta.c_str());
             ImGui::PopID();
         }
         ImGui::Spacing();
@@ -427,6 +430,26 @@ void DataStudioPanel::RenderExplore() {
         if (ui::FilterChip(label, label, "", explore_tab_ == tab)) explore_tab_ = tab;
     }
     ImGui::Spacing();
+    // What training makes of this table (TOFIX129 D7a): one line above every
+    // view, so a plot of the raw input is never taken for what the model sees.
+    if (!active_dataset_.empty()) {
+        const ui::Tokens& t = ui::CurrentTokens();
+        const studio::ReadsNote note = studio::TrainingReads(view_, active_dataset_);
+        const bool reads = note.kind == studio::ReadsNote::Kind::This;
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(reads ? t.info : t.text_dim, "%s %s", reads ? ICON_FA_GRADUATION_CAP : ICON_FA_CIRCLE_INFO, note.text.c_str());
+        ImGui::PopTextWrapPos();
+        if (!note.link.empty() && view_.training.node_id >= 0) {
+            // Beside the text when it fits after its last line, else under it.
+            SameLineOrWrap(ImGui::CalcTextSize(note.link.c_str()).x + ImGui::GetStyle().ItemSpacing.x * 2.0f, right_edge);
+            if (ui::LinkButton(note.link.c_str())) {
+                if (!view_.training.dataset.empty()) SetActiveDataset(view_.training.dataset);
+                else ShowOnCanvas({view_.training.node_id});
+            }
+        }
+        ImGui::Spacing();
+    }
     switch (explore_tab_) {
         case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
         case ExploreTab::Profile:

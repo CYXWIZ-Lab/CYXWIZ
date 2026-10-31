@@ -394,13 +394,13 @@ void GroupsView::RenderActions(const groups::GroupsAnswer& a) {
             message_error_ = false;
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Puts the %s node after the data in use: the rest of the graph gets a cluster_id column", gv::MethodLabel(a.request.method));
+            ImGui::SetTooltip("%s", explore_view::StepTip(gv::MethodLabel(a.request.method), "a cluster_id column").c_str());
         ExploreNextButton("Keep as a node");
         if (ui::SecondaryButton("Keep as a node")) {
             message_ = add_to_graph(a.request, false);
             message_error_ = false;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the %s node as a branch reading the data in use", gv::MethodLabel(a.request.method));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip(gv::MethodLabel(a.request.method)).c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export(a);

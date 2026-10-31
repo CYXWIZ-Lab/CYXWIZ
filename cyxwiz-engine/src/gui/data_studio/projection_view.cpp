@@ -368,13 +368,13 @@ void ProjectionView::RenderActions(const groups::ProjectionAnswer& a) {
             message_ = add_to_graph(a.request, true);
             message_error_ = false;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puts the %s node after the data in use: the rest of the graph gets its columns beside the others", node);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::StepTip(node, "its component columns beside the others").c_str());
         ExploreNextButton("Keep as a node");
         if (ui::SecondaryButton("Keep as a node")) {
             message_ = add_to_graph(a.request, false);
             message_error_ = false;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the %s node as a branch reading the data in use", node);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip(node).c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export(a);

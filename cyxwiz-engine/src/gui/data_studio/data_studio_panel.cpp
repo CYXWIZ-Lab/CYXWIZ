@@ -61,7 +61,7 @@ DataStudioPanel::DataStudioPanel() {
         if (step) node_editor_->RequestStepAfter(from->id, type, name, std::move(params));
         else node_editor_->RequestBranchAfter(from->id, type, std::move(params), name);
         return std::string("Added the node \"") + name + "\" " + (step ? "after" : "reading") + " \"" + from->name +
-               "\" (Ctrl+Z on the canvas undoes it).";
+               "\" (Ctrl+Z on the canvas undoes it). " + (step ? explore_view::StepAddedNote() : explore_view::BranchAddedNote());
     };
     groups_->add_to_graph = [add_node](const groups::GroupsRequest& r, bool step) {
         ::gui::NodeType type = ::gui::NodeType::KMeansCluster;
@@ -95,7 +95,8 @@ DataStudioPanel::DataStudioPanel() {
         if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
         const std::string name = stats_view::TestName(r) + " (" + (r.values.empty() ? r.groups : r.values) + ")";
         node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::HypothesisTest, HypothesisTestOperator::ParametersFromRequest(r), name);
-        return "Added the Hypothesis Test node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+        return "Added the Hypothesis Test node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it). " +
+               explore_view::BranchAddedNote();
     };
     regression_->add_to_graph = [this](const stats::RegressionRequest& r) -> std::string {
         const studio::GraphNode* from = NodeOfDataset(active_dataset_);
@@ -112,7 +113,7 @@ DataStudioPanel::DataStudioPanel() {
                                              {{"feature_cols", features}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
         }
         return std::string("Added the ") + (r.polynomial ? "Polynomial" : "Linear") + " Regression node \"" + name + "\" reading \"" +
-               from->name + "\" (Ctrl+Z on the canvas undoes it).";
+               from->name + "\" (Ctrl+Z on the canvas undoes it). " + explore_view::BranchAddedNote();
     };
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
@@ -149,7 +150,8 @@ DataStudioPanel::DataStudioPanel() {
         if (!from || !node_editor_) return "The data's node is no longer in the graph.";
         const std::string name = "Plot: " + title;
         node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::Plot, {{"plot_spec", spec_json}}, name);
-        return "Added the Plot node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+        return "Added the Plot node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it). " +
+               explore_view::BranchAddedNote();
     };
     query_editor_->step_blocker = [this](const std::vector<std::string>& inputs) { return StepBlocker(inputs); };
     query_editor_->on_turn_into_step = [this](const std::string& sql, const std::vector<std::string>& inputs) {
@@ -257,7 +259,8 @@ std::string DataStudioPanel::AddKeepRowsStep(const std::string& column, const st
     const std::string name = "Keep rows with " + column;
     node_editor_->RequestStepAfter(from->id, ::gui::NodeType::SQLQuery, name,
                                    {{guided::kGuidedOpsParameter, guided::ToJson(saved.step)}, {"query", saved.generated.sql}});
-    return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it).";
+    return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it). " +
+           explore_view::StepAddedNote();
 }
 
 void DataStudioPanel::AddTransformStep(::gui::NodeType type, std::map<std::string, std::string> parameters, bool compare) {
@@ -341,10 +344,13 @@ void DataStudioPanel::RefreshView() {
             return true;
         };
         const auto& links = node_editor_->GetLinks();
+        std::map<int, int> recipe_last_step;  // a recipe node -> its last step
         for (const auto& node : node_editor_->GetNodes()) {
             if (!add(node.id, node.type, node.name, &node.parameters)) continue;
-            if (node.type == ::gui::NodeType::DataSplit) {
-                // The node linked to each input pin (ML readiness: train, validation, test).
+            if (node.type == ::gui::NodeType::DataSplit || node.type == ::gui::NodeType::DataLoader) {
+                // The node linked to each input pin (ML readiness: train, validation,
+                // test; the training reader: the first pin of the Split, or of the
+                // Loader without one).
                 auto& from = in.nodes.back().input_from;
                 for (const auto& pin : node.inputs) {
                     int source = -1;
@@ -365,6 +371,13 @@ void DataStudioPanel::RefreshView() {
                 const ::gui::MLNode* stored = node_editor_->FindStep(step.id);
                 add(step.id, step.type, step.name, stored ? &stored->parameters : nullptr);
             }
+            // A collapsed recipe feeding the Split stands for its last step (in
+            // run order; checks pass the table through), whose result training reads.
+            if (!summary.steps.empty()) recipe_last_step[node.id] = summary.steps.back().id;
+        }
+        for (auto& n : in.nodes) {
+            if ((n.type != ::gui::NodeType::DataSplit && n.type != ::gui::NodeType::DataLoader) || n.input_from.empty()) continue;
+            if (const auto last = recipe_last_step.find(n.input_from[0]); last != recipe_last_step.end()) n.input_from[0] = last->second;
         }
     }
     for (const auto& entry : DatasetCatalog::Instance().List()) {
@@ -407,6 +420,9 @@ void DataStudioPanel::RefreshView() {
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
+    // Nothing picked yet: Explore opens on what training reads (TOFIX129 D7a),
+    // so the plots show the data the model sees, not the raw input.
+    if (active_dataset_.empty() && !view_.training.dataset.empty()) SetActiveDataset(view_.training.dataset);
     if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);
     if (validate_) {
         std::vector<int> recipes;

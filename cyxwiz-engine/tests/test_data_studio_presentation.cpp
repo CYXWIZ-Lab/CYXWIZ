@@ -284,7 +284,67 @@ int main() {
               "a run step and a passing check: " + ran[0].meta);
     }
 
+    // What training reads (TOFIX129 D7a): the node on the Data Split's first pin
+    // (the Data Loader's without a Split), its table once it ran, and the line
+    // Explore shows above any table.
+    {
+        Input g;
+        GraphNode raw = Node(1, NodeType::DataInput, "Spotify tracks");
+        raw.dataset_name = "spotify";
+        GraphNode scale = Ran(Node(2, NodeType::StandardScaler, "Scale numbers"), 8582, 20, 0.4, "12:00:01", "ds_scaler_2");
+        GraphNode split = Node(3, NodeType::DataSplit, "Split");
+        split.input_from = {2, -1, -1};
+        GraphNode plot = Node(4, NodeType::Plot, "Plot: popularity");
+        g.nodes = {raw, scale, split, plot};
+        g.datasets = {{"spotify", "Spotify tracks", 8582, 20, true}, {"ds_scaler_2", "", 8582, 20, true},
+                      {"ds_datainput_1__split", "", 8582, 21, true}};  // the run's partition-marked copy
+        const View gv = Build(g);
+        Check(gv.rail.size() == 3, "the run's __split copy is not listed under Other datasets");
+        Check(gv.training.node_id == 2 && gv.training.name == "Scale numbers" && gv.training.dataset == "ds_scaler_2" && gv.training.split,
+              "the scaler feeds the Split, so training reads its table");
+        Check(!gv.rail[0].items[0].training && gv.rail[1].items.size() == 1 && gv.rail[1].items[0].training &&
+                  gv.rail[1].items[0].tip.find("Training reads this table") != std::string::npos,
+              "the rail marks the scaler's result, not the raw input");
+        const ReadsNote this_one = TrainingReads(gv, "ds_scaler_2");
+        Check(this_one.kind == ReadsNote::Kind::This && this_one.text == "Training reads this table through the Data Split." &&
+                  this_one.link.empty(),
+              "the scaled table: " + this_one.text);
+        const ReadsNote other = TrainingReads(gv, "spotify");
+        Check(other.kind == ReadsNote::Kind::Other && other.text == "Training reads \"Scale numbers\", not this table." &&
+                  other.link == "Show what training reads",
+              "the raw input: " + other.text);
+
+        // Before the scaler ran: training reads it once it runs.
+        Input before = g;
+        before.nodes[1] = Node(2, NodeType::StandardScaler, "Scale numbers");
+        before.datasets.pop_back();
+        const View bv = Build(before);
+        Check(bv.training.node_id == 2 && bv.training.dataset.empty(), "not run: no table yet");
+        const ReadsNote not_run = TrainingReads(bv, "spotify");
+        Check(not_run.kind == ReadsNote::Kind::NotRun && not_run.text.find("has no table yet") != std::string::npos &&
+                  not_run.link == "Show the node",
+              "not run: " + not_run.text);
+
+        // A Data Input straight into a Data Loader (no Split): training reads it as loaded.
+        Input loader_only = g;
+        loader_only.nodes = {raw, Node(5, NodeType::DataLoader, "Loader")};
+        loader_only.nodes[1].input_from = {1};
+        const View lv = Build(loader_only);
+        Check(lv.training.node_id == 1 && lv.training.dataset == "spotify" && !lv.training.split &&
+                  lv.rail[0].items[0].training && lv.rail[0].items[0].tip.find("as it is loaded") != std::string::npos,
+              "a Data Input feeding the Loader is what training reads");
+        Check(TrainingReads(lv, "spotify").text == "Training reads this table through the Data Loader.", "loader wording");
+
+        // Nothing feeds training: say so, no link.
+        Input none = g;
+        none.nodes = {raw, scale};
+        const ReadsNote nothing = TrainingReads(Build(none), "spotify");
+        Check(nothing.kind == ReadsNote::Kind::None && nothing.link.empty() && nothing.text.find("reads no table") != std::string::npos,
+              "no training input: " + nothing.text);
+    }
+
     Check(Thousands(15349) == "15,349" && Thousands(7) == "7" && Thousands(1234567) == "1,234,567", "thousands");
-    std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph), split sets (Data Split inputs, catalog names). OK\n";
+    std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph), split sets (Data Split inputs, catalog names), "
+                 "what training reads. OK\n";
     return 0;
 }

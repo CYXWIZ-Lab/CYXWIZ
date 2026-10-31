@@ -417,12 +417,14 @@ void ForecastView::RenderActions(const series::ForecastAnswer& a) {
         const bool has_node = type[0] != '\0';
         if (ui::PrimaryButton("Add as a step", has_node, has_node ? nullptr : "The seasonal naive baseline has no node; pick a method", ui::ButtonSize::Small))
             Message(add_to_graph(type, name, series::NodeParameters(a.request), true), false);
+        const char* node_label = a.request.method == Method::Arima ? "ARIMA" : "Exp. Smoothing";
         if (has_node && ImGui::IsItemHovered())
-            ImGui::SetTooltip("Puts the %s node after the data in use: the rest of the graph gets fitted / residual columns and %d future rows with forecast / low / high",
-                              a.request.method == Method::Arima ? "ARIMA" : "Exp. Smoothing", a.request.horizon);
+            ImGui::SetTooltip("%s", explore_view::StepTip(node_label, "fitted / residual columns and " + std::to_string(a.request.horizon) +
+                                                                      " future rows with forecast / low / high").c_str());
         ExploreNextButton("Keep as a node");
         if (ui::SecondaryButton("Keep as a node", has_node, has_node ? nullptr : "The seasonal naive baseline has no node"))
             Message(add_to_graph(type, name, series::NodeParameters(a.request), false), false);
+        if (has_node && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip(node_label).c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) {

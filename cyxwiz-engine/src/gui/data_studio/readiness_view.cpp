@@ -293,6 +293,12 @@ void ReadinessView::RenderImages(const studio::SplitSet& set) {
 
 void ReadinessView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
+    // Says what this job is (TOFIX129 D7a): a comparison, not a change.
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Compares the splits only: nothing here changes the data or the graph. "
+                                     "Training reads the steps before the Data Split, not these figures.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
     if (sets_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_dim, "No splits to compare yet.");
