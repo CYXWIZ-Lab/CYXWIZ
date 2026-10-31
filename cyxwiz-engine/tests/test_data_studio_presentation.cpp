@@ -233,6 +233,59 @@ int main() {
                   half.split_sets[0].note == "validation: \"Base corpus v2 validation: 2,310 windows\" is not loaded",
               "a split not loaded: " + half.split_sets[0].note);
 
+        // The flow back from a split input (TOFIX178 1.8h). The 1.8 graph: Data
+        // Input (25,000 images) -> Quality Analyzer -> Data Split; the analyzer
+        // only leaves files of its source out, so the split reads the Data Input.
+        Input q;
+        GraphNode images = Node(1, NodeType::DataInput, "Cats_Dogs Data");
+        images.dataset_name = "cat_dog";
+        GraphNode quality = Node(2, NodeType::QualityAnalyzer, "Quality Analyzer");
+        quality.input_from = {1};
+        GraphNode image_split = Node(3, NodeType::DataSplit, "Split 80/10/10");
+        image_split.input_from = {2, -1, -1};
+        q.nodes = {images, quality, image_split};
+        q.datasets = {{"cat_dog", "Cats_Dogs Data", 25000, 0, false, true}};
+        const View qv = Build(q);
+        Check(qv.split_sets.size() == 1 && qv.split_sets[0].parts.size() == 1 &&
+                  qv.split_sets[0].parts[0].dataset == "cat_dog" &&
+                  qv.split_sets[0].parts[0].label == "Cats_Dogs Data, after Quality Analyzer" &&
+                  qv.split_sets[0].note.empty(),
+              "a Quality Analyzer before the split reads its Data Input: " + qv.split_sets[0].note);
+        q.datasets.clear();
+        Check(Build(q).split_sets[0].note == "train: \"Cats_Dogs Data\" is not loaded",
+              "through the analyzer, the Data Input not loaded is named");
+
+        // A table step before the split (SQL): training reads its run result.
+        Input r;
+        GraphNode table = Node(1, NodeType::DataInput, "Reviews");
+        table.dataset_name = "reviews";
+        GraphNode sql = Node(2, NodeType::SQLQuery, "Keep English rows");
+        sql.input_from = {1};
+        GraphNode table_split = Node(3, NodeType::DataSplit, "Split");
+        table_split.input_from = {2, -1, -1};
+        r.nodes = {table, sql, table_split};
+        r.datasets = {{"reviews", "Reviews", 5000, 3, true}};
+        Check(Build(r).split_sets[0].note ==
+                  "train: \"Keep English rows\" has not run yet: run the graph, and the split reads its result",
+              "a step that has not run: " + Build(r).split_sets[0].note);
+        r.nodes[1].ran = true;
+        r.nodes[1].output_dataset = "ds_sql_2";
+        r.datasets.push_back({"ds_sql_2", "Keep English rows", 4100, 3, true});
+        const View ran = Build(r);
+        Check(ran.split_sets[0].parts.size() == 1 && ran.split_sets[0].parts[0].dataset == "ds_sql_2" &&
+                  ran.split_sets[0].parts[0].label == "Keep English rows",
+              "a step that ran: the split reads its result");
+        r.nodes[1].error = "Binder Error: column \"lang\" not found";
+        Check(Build(r).split_sets[0].note == "train: \"Keep English rows\" failed in its last run",
+              "a step that failed is named");
+
+        // Two analyzers feeding each other: the walk stops.
+        q.nodes[1].input_from = {4};
+        GraphNode loop = Node(4, NodeType::QualityAnalyzer, "Second analyzer");
+        loop.input_from = {2};
+        q.nodes.push_back(loop);
+        Check(Build(q).split_sets[0].note == "train: the inputs loop back on themselves", "a loop stops the walk");
+
         // No Data Split: kjv80_base_v1's files, grouped by name.
         Input k;
         k.datasets = {{"documents_test", "", 66, 20, true},
