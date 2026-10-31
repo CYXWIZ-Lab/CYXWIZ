@@ -589,42 +589,112 @@ TransformResult DataTransform::ScaleColumns(const Columns& data, const std::vect
         });
 }
 
-OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const std::string& method, double threshold) {
-    OutlierFlags result;
-    if (method != "iqr" && method != "zscore") {
-        result.error_message = "Unknown outlier method '" + method + "' (iqr or zscore)";
-        return result;
+OutlierBounds DataTransform::OutlierBoundsOf(const std::vector<double>& data, const std::string& method, double threshold) {
+    OutlierBounds bounds;
+    if (method != "iqr" && method != "zscore" && method != "modified_z") {
+        bounds.error_message = "Unknown outlier method '" + method + "' (iqr, zscore or modified_z)";
+        return bounds;
     }
     if (!(threshold > 0.0)) {
-        result.error_message = "Threshold must be positive";
-        return result;
+        bounds.error_message = "Threshold must be positive";
+        return bounds;
     }
     if (data.empty()) {
+        bounds.success = true;  // nothing to learn from: no spread, nothing flagged
+        return bounds;
+    }
+    try {
+        const af::array x = HostValuesToDevice(data);
+        if (method == "iqr") {
+            const std::vector<double> q = PercentilesAt(af::sort(x), {0.25, 0.75}, "DataTransform::OutlierBoundsOf");
+            const double spread = q[1] - q[0];
+            if (spread > 0.0) {
+                bounds.lo = q[0] - threshold * spread;
+                bounds.hi = q[1] + threshold * spread;
+                bounds.spread = true;
+            }
+        } else if (method == "zscore") {
+            const double std_dev = PopulationStd(x);
+            if (std_dev > 0.0) {
+                const double mean = af::mean<double>(x);
+                bounds.lo = mean - threshold * std_dev;
+                bounds.hi = mean + threshold * std_dev;
+                bounds.spread = true;
+            }
+        } else {
+            // Iglewicz and Hoaglin: 0.6745 (x - median) / MAD, the MAD scaled to a
+            // normal's standard deviation; the same bounds Explore > Outliers draws.
+            const double median = PercentilesAt(af::sort(x), {0.5}, "DataTransform::OutlierBoundsOf")[0];
+            const double mad = PercentilesAt(af::sort(af::abs(x - median)), {0.5}, "DataTransform::OutlierBoundsOf")[0];
+            if (mad > 0.0) {
+                bounds.lo = median - threshold * mad / 0.6745;
+                bounds.hi = median + threshold * mad / 0.6745;
+                bounds.spread = true;
+            }
+        }
+        bounds.success = true;
+    } catch (const af::exception& e) {
+        bounds = OutlierBounds{};
+        bounds.error_message = DeviceError("DataTransform::OutlierBoundsOf", e);
+    }
+    return bounds;
+}
+
+OutlierFlags DataTransform::FlagOutside(const std::vector<double>& data, const OutlierBounds& bounds) {
+    OutlierFlags result;
+    result.bounds = bounds;
+    if (!bounds.success) {
+        result.error_message = bounds.error_message;
+        return result;
+    }
+    result.is_outlier.assign(data.size(), 0);
+    if (data.empty() || !bounds.spread) {
         result.success = true;
         return result;
     }
     try {
         const af::array x = HostValuesToDevice(data);
-        af::array flags;
-        if (method == "iqr") {
-            const std::vector<double> q = PercentilesAt(af::sort(x), {0.25, 0.75}, "DataTransform::FindOutliers");
-            const double spread = q[1] - q[0];
-            flags = x < q[0] - threshold * spread || x > q[1] + threshold * spread;
-        } else {
-            const double std_dev = PopulationStd(x);
-            flags = std_dev > 0.0 ? af::abs(x - af::mean<double>(x)) / std_dev > threshold
-                                  : af::constant(0, x.dims(), b8);
-        }
-        const std::vector<double> values = DeviceToHostValues(flags.as(x.type()), "DataTransform::FindOutliers");
-        result.is_outlier.resize(values.size());
-        for (size_t i = 0; i < values.size(); ++i) result.is_outlier[i] = values[i] != 0.0 ? 1 : 0;
+        const af::array flags = x < bounds.lo || x > bounds.hi;
+        const std::vector<double> values = DeviceToHostValues(flags.as(x.type()), "DataTransform::FlagOutside");
+        for (size_t i = 0; i < values.size() && i < result.is_outlier.size(); ++i) result.is_outlier[i] = values[i] != 0.0 ? 1 : 0;
         result.count = static_cast<size_t>(af::count<double>(flags));
         result.success = true;
     } catch (const af::exception& e) {
         result = OutlierFlags{};
-        result.error_message = DeviceError("DataTransform::FindOutliers", e);
+        result.bounds = bounds;
+        result.error_message = DeviceError("DataTransform::FlagOutside", e);
     }
     return result;
+}
+
+ClippedValues DataTransform::ClipTo(const std::vector<double>& data, const OutlierBounds& bounds) {
+    ClippedValues result;
+    if (!bounds.success) {
+        result.error_message = bounds.error_message;
+        return result;
+    }
+    if (data.empty() || !bounds.spread) {
+        result.values = data;
+        result.success = true;
+        return result;
+    }
+    try {
+        const af::array x = HostValuesToDevice(data);
+        // A missing value (NaN) stays missing: clamp would turn it into a bound.
+        const af::array missing = af::isNaN(x);
+        const af::array clipped = af::select(missing, x, af::clamp(x, bounds.lo, bounds.hi));
+        result.clipped = static_cast<size_t>(af::count<double>(clipped != x && !missing));
+        result.values = DeviceToHostValues(clipped, "DataTransform::ClipTo");
+        result.success = true;
+    } catch (const af::exception& e) {
+        result = ClippedValues{};
+        result.error_message = DeviceError("DataTransform::ClipTo", e);
+    }
+    return result;
+}
+
+OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const std::string& method, double threshold) {
+    return FlagOutside(data, OutlierBoundsOf(data, method, threshold));
 }
 
 TransformResult DataTransform::LogTransform(const Columns& data, const std::string& base, bool use_log1p) {

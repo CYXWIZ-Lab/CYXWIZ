@@ -2530,6 +2530,20 @@ set_target_properties(test_time_series_analysis_operators PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Outlier Detector Operator (TOFIX129 D7a G2) =====
+add_executable(test_outlier_detector_operator
+    tests/test_outlier_detector_operator.cpp
+    src/core/node_executors/preprocessing_operators.cpp
+)
+target_include_directories(test_outlier_detector_operator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_outlier_detector_operator PRIVATE cyxwiz-training-core)
+target_link_libraries(test_outlier_detector_operator PRIVATE
+    Arrow::arrow_shared nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_outlier_detector_operator PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_outlier_detector_operator PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Decision Tree Operator =====
 add_executable(test_decision_tree_operator
     tests/test_decision_tree_operator.cpp

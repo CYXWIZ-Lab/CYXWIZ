@@ -91,5 +91,13 @@ log(1 + x) on -1 or less (use Power Transform, Yeo-Johnson); a Min-Max range
 that does not rise; saved values from other settings or columns. A zero scale
 (a constant column, or zero spread) divides by 1, as scikit-learn does.
 
-The Outlier Detector node runs the same code: it flags a value outside
-[q1 - t·IQR, q3 + t·IQR], or with |z| > t using the std that divides by n.
+The Outlier Detector node runs the same code. Its rule learns each column's
+bounds from the Train rows (every row without a Data Split): IQR, outside
+[q1 - t·IQR, q3 + t·IQR]; Z-score, |z| > t using the std that divides by n;
+Modified Z, |x - median| > t·MAD / 0.6745 (the rule Explore > Outliers
+draws). Then every row is tested, and the action decides: **flag** adds an
+`is_outlier` column (1 when any inspected column is outside its bounds),
+**clip** pulls each value into its column's bounds (the column becomes
+float64), **remove** drops the rows outside. A column with no spread (all
+values equal, Q1 = Q3, MAD = 0) flags nothing. Explore > Outliers adds the
+step with its rule and factor (see data_studio.md).

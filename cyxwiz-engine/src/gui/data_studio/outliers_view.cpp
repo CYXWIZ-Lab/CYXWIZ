@@ -142,6 +142,7 @@ void OutliersView::Render(const ExploreContext& context) {
         else part(t.text_faint, "Counting...");
         if (!p.exact) part(t.text_faint, "(quartiles approximate on this table)");
     }
+    if (mad_ready && bounds.ok() && counts) RenderStepButtons(context, bounds, counts->total());
     ImGui::Spacing();
 
     const float avail = ImGui::GetContentRegionAvail().x;
@@ -389,6 +390,39 @@ void OutliersView::RenderFigures(const DatasetProfile& p, const ProfiledColumn& 
     ImGui::TextColored(t.text_faint, "%s", explore::OutlierRuleExplain(rule_));
     if (!p.exact) ImGui::TextColored(t.text_faint, "This table is profiled approximately: Q1, median and Q3 are close estimates.");
     ImGui::PopTextWrapPos();
+}
+
+void OutliersView::RenderStepButtons(const ExploreContext& context, const explore::OutlierBounds& bounds, size_t outliers) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const std::string blocker = !on_add_step ? "Prepare is not available" : step_blocker ? step_blocker() : std::string();
+    const bool enabled = blocker.empty();
+    const char* reason = enabled ? nullptr : blocker.c_str();
+    const std::string rule = std::string(explore::OutlierRuleName(rule_)) + " " + ev::Figure(factor_);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "In Prepare:");
+    ImGui::SameLine();
+    const auto add = [&](const char* label, const char* action, const std::string& gives) {
+        if (ui::SecondaryButton(label, enabled, reason)) {
+            message_ = on_add_step(column_, rule_, factor_, action);
+            message_error_ = message_.rfind("Added", 0) != 0;
+        }
+        if (enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            ImGui::SetTooltip("%s\nThe step learns %s's bounds from the Train rows (every row without a Data Split), so its count can differ from the %s found here.",
+                              ev::StepTip(std::string("Outlier Detector (") + rule + ")", gives).c_str(), column_.c_str(),
+                              ev::Count(outliers, "outlier", "outliers").c_str());
+        }
+    };
+    add("Flag rows", "flag", "an is_outlier column (1 for the rows outside " + ev::Figure(bounds.lo) + " .. " + ev::Figure(bounds.hi) + ")");
+    ExploreNextButton("Clip values");
+    add("Clip values", "clip", column_ + " with every value pulled into " + ev::Figure(bounds.lo) + " .. " + ev::Figure(bounds.hi));
+    ExploreNextButton("Drop rows");
+    add("Drop rows", "remove", "the rows without the outliers (" + ev::Count(outliers, "row", "rows") + " here)");
+    (void)context;
+    if (!message_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(message_error_ ? t.error : t.success, "%s", message_.c_str());
+        ImGui::PopTextWrapPos();
+    }
 }
 
 }  // namespace cyxwiz

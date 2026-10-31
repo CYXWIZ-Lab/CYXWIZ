@@ -1010,7 +1010,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"HierarchicalCluster", "metric", "euclidean", {"euclidean", "manhattan", "cosine"}},
         {"GMMCluster", "covariance_type", "full", {"full", "tied", "diag", "spherical"}},
         {"OrdinalEncoder", "categories", "auto", {"auto"}},
-        {"OutlierDetector", "method", "iqr", {"iqr", "zscore"}},
+        {"OutlierDetector", "method", "iqr", {"iqr", "zscore", "modified_z"}},
+        {"OutlierDetector", "action", "flag", {"flag", "clip", "remove"}},
         {"FilterDesigner", "filter_type", "lowpass", {"lowpass", "highpass", "bandpass", "bandstop"}},
         {"TimeSeriesDecomposition", "method", "additive", {"additive", "multiplicative"}},
         {"TimeSeriesDecomposition", "algorithm", "stl", {"stl", "classical"}},
@@ -1845,7 +1846,6 @@ bool PipelineStepLearnsFromEveryRow(gui::NodeType type) {
         case NodeType::DBSCANCluster:
         case NodeType::HierarchicalCluster:
         case NodeType::GMMCluster:
-        case NodeType::OutlierDetector:
         case NodeType::LinearRegressionNode:
         case NodeType::PolynomialRegressionNode:
         case NodeType::DecisionTreeClassifier:

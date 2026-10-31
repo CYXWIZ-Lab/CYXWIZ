@@ -225,14 +225,35 @@ def main():
     centers, scales = [1.5, -2.0, 0.25], [2.0, 0.5, 4.0]
     add("scale_columns", "given", cols, centers=centers, scales=scales,
         outputs=[vec((c - m) / d) for c, m, d in zip(cols, centers, scales)])
-    for label, x, method, t in [("iqr_skewed", skewed, "iqr", 1.5), ("iqr_ties", ties, "iqr", 1.0),
-                                ("zscore_normal", normal, "zscore", 2.0), ("zscore_skewed", skewed, "zscore", 2.5)]:
+    def outlier_bounds(x, method, t):
+        """The rule's bounds learned from x: IQR fences, mean +- t std (population),
+        or Iglewicz-Hoaglin median +- t MAD / 0.6745 (linear medians); None without spread."""
         if method == "iqr":
             q = percentile(x, torch.tensor([0.25, 0.75]))
-            flags = (x < q[0] - t * (q[1] - q[0])) | (x > q[1] + t * (q[1] - q[0]))
-        else:
-            flags = (x - x.mean()).abs() / x.std(unbiased=False) > t
-        add("outliers", label, [x], method=method, threshold=t, flags=[int(f) for f in flags.tolist()])
+            spread = float(q[1] - q[0])
+            return (float(q[0]) - t * spread, float(q[1]) + t * spread) if spread > 0 else None
+        if method == "zscore":
+            s = float(x.std(unbiased=False))
+            return (float(x.mean()) - t * s, float(x.mean()) + t * s) if s > 0 else None
+        med = float(percentile(x, torch.tensor(0.5)))
+        mad = float(percentile((x - med).abs(), torch.tensor(0.5)))
+        return (med - t * mad / 0.6745, med + t * mad / 0.6745) if mad > 0 else None
+    for label, x, method, t in [("iqr_skewed", skewed, "iqr", 1.5), ("iqr_ties", ties, "iqr", 1.0),
+                                ("zscore_normal", normal, "zscore", 2.0), ("zscore_skewed", skewed, "zscore", 2.5),
+                                ("modified_z_skewed", skewed, "modified_z", 3.5), ("modified_z_normal", normal, "modified_z", 2.0),
+                                ("modified_z_ties", ties, "modified_z", 3.5), ("iqr_constant", constant, "iqr", 1.5)]:
+        b = outlier_bounds(x, method, t)
+        flags = ((x < b[0]) | (x > b[1])) if b else torch.zeros_like(x, dtype=torch.bool)
+        add("outliers", label, [x], method=method, threshold=t, flags=[int(f) for f in flags.tolist()],
+            lo=b[0] if b else None, hi=b[1] if b else None)
+    # A step learns the bounds from the Train rows and applies them to every row
+    # (TOFIX129 D7a G2): flags on the whole column, and the values clipped into the bounds.
+    train = skewed[:7]
+    for label, method, t in [("train_iqr", "iqr", 1.5), ("train_zscore", "zscore", 1.0), ("train_modified_z", "modified_z", 2.5)]:
+        b = outlier_bounds(train, method, t)
+        flags = (skewed < b[0]) | (skewed > b[1])
+        add("outliers_from_train", label, [train, skewed], method=method, threshold=t, lo=b[0], hi=b[1],
+            flags=[int(f) for f in flags.tolist()], clipped=vec(skewed.clamp(b[0], b[1])))
     def robust(c, q_min=25.0, q_max=75.0, center=True, scale=True):
         """scikit-learn RobustScaler; a spread below 10 eps scales by 1 (_handle_zeros_in_scale)."""
         mid = percentile(c, torch.tensor(0.5)) if center else 0.0

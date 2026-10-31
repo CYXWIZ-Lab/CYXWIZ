@@ -3121,14 +3121,15 @@ void CheckPreprocessingScalerEncoderFamilyContract(
               FindParameter(target, "target_col")->required &&
               ParameterMatches(target, "smoothing", "float", "1.0"),
           "TargetEncoder should require its categorical and numeric target columns");
-    Check(outlier != nullptr && outlier->parameters.size() == 4 &&
+    Check(outlier != nullptr && outlier->parameters.size() == 5 &&
               ParameterMatches(outlier, "columns", "string", "all") &&
               ParameterMatches(outlier, "label_col", "string", "") &&
               ParameterMatches(outlier, "method", "dropdown", "iqr") &&
-              HasEnumValue(outlier, "method", "zscore") &&
+              HasEnumValue(outlier, "method", "zscore") && HasEnumValue(outlier, "method", "modified_z") &&
               ParameterMatches(outlier, "threshold", "float", "1.5") &&
-              !HasParameter(outlier, "action"),
-          "OutlierDetector metadata should match its flag-only operator contract");
+              ParameterMatches(outlier, "action", "dropdown", "flag") &&
+              HasEnumValue(outlier, "action", "clip") && HasEnumValue(outlier, "action", "remove"),
+          "OutlierDetector metadata should match its flag / clip / remove operator contract (TOFIX129 D7a)");
 
     const auto configure_defaults = [](const cyxwiz::NodeMetadata* meta,
                                        bool expected) {

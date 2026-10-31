@@ -772,7 +772,7 @@ int main() {
     {
         auto outlier = MakeNode(2, gui::NodeType::OutlierDetector, "Outlier");
         outlier.parameters["method"] = "lof";
-        outlier.parameters["action"] = "remove";
+        outlier.parameters["action"] = "winsor";
 
         const auto report = gui::properties_truth::ResolveNodeTruth(outlier);
         const auto* method = FindProperty(report, "method");
@@ -787,6 +787,14 @@ int main() {
         Check(HasStatus(*action,
                         gui::properties_truth::TruthStatus::Unsupported),
               "unsupported OutlierDetector action should be visible");
+
+        // The actions and rules the operator ships (TOFIX129 D7a G2) are supported.
+        outlier.parameters["method"] = "modified_z";
+        outlier.parameters["action"] = "remove";
+        const auto shipped = gui::properties_truth::ResolveNodeTruth(outlier);
+        Check(!HasStatus(*FindProperty(shipped, "method"), gui::properties_truth::TruthStatus::Unsupported) &&
+                  !HasStatus(*FindProperty(shipped, "action"), gui::properties_truth::TruthStatus::Unsupported),
+              "modified_z and remove are shipped OutlierDetector settings");
     }
 
     {

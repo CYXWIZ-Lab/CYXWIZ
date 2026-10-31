@@ -136,6 +136,22 @@ arrow::Status ReadNumericDouble(
     return arrow::Status::OK();
 }
 
+// Replace a column with double values, keeping the nulls (NaN in `values`)
+// as nulls; the column becomes float64 under its own name.
+arrow::Result<std::shared_ptr<arrow::Table>> ReplaceColumnWithDouble(
+    const std::shared_ptr<arrow::Table>& table, int col_idx, const std::vector<double>& values) {
+    arrow::DoubleBuilder builder(arrow::default_memory_pool());
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(values.size())));
+    for (double v : values) {
+        if (std::isfinite(v)) builder.UnsafeAppend(v);
+        else builder.UnsafeAppendNull();
+    }
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    const std::string name = table->schema()->field(col_idx)->name();
+    return table->SetColumn(col_idx, arrow::field(name, arrow::float64()), std::make_shared<arrow::ChunkedArray>(array));
+}
+
 // Replace a column with transformed float values (reuses
 // ReplaceColumnWithFloat from ts_column_utils.h).
 arrow::Result<std::shared_ptr<arrow::Table>> ReplaceWithDoubles(
@@ -1336,6 +1352,7 @@ bool OutlierDetectorOperator::Configure(
     label_col_.clear();
     method_ = "iqr";
     threshold_ = 1.5;
+    action_ = "flag";
 
     // "columns" can be "all" or a csv list. "all" maps to empty =
     // auto-detect numeric (matches ResolveFeatureColumns semantic).
@@ -1353,10 +1370,17 @@ bool OutlierDetectorOperator::Configure(
     auto m = params.find("method");
     if (m != params.end() && !m->second.empty()) {
         method_ = ToLowerAscii(TrimString(m->second));
-        if (method_ != "iqr" && method_ != "zscore") {
-            error = GetName() + ": only 'iqr' and 'zscore' methods supported "
-                    "in v1 (isolation_forest / lof deferred to tofix); got '" +
-                    method_ + "'";
+        if (method_ != "iqr" && method_ != "zscore" && method_ != "modified_z") {
+            error = GetName() + ": method must be 'iqr', 'zscore' or 'modified_z'; got '" + method_ + "'";
+            return false;
+        }
+    }
+
+    auto a = params.find("action");
+    if (a != params.end() && !a->second.empty()) {
+        action_ = ToLowerAscii(TrimString(a->second));
+        if (action_ != "flag" && action_ != "clip" && action_ != "remove") {
+            error = GetName() + ": action must be 'flag', 'clip' or 'remove'; got '" + action_ + "'";
             return false;
         }
     }
@@ -1400,9 +1424,15 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const int64_t n = input->num_rows();
     std::vector<int> is_outlier(n, 0);
 
-    // Per-column IQR or Z-score detection. A row is flagged if ANY
-    // column marks it as an outlier.
-    int total_flagged = 0;
+    // The bounds are learned from the Train rows when the pipeline run marked
+    // them (TOFIX178 S0-g3), from every row otherwise; then every row is tested.
+    ARROW_ASSIGN_OR_RAISE(auto train_rows, TrainRowsOf(input));
+    const bool learns_from_train = train_rows.get() != input.get();
+
+    // A row is an outlier when ANY selected column puts it outside its bounds.
+    std::shared_ptr<arrow::Table> out = input;
+    int64_t total_flagged = 0;
+    size_t values_clipped = 0;
     for (size_t column_index = 0; column_index < resolved.size(); ++column_index) {
         const auto& name = resolved[column_index];
         ReportProgress(progress_callback_, "Detecting outliers",
@@ -1412,10 +1442,19 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                        static_cast<uint64_t>(column_index),
                        static_cast<uint64_t>(resolved.size()),
                        estimated_bytes);
+        std::vector<double> learn;
+        int learn_idx = -1;
+        ARROW_RETURN_NOT_OK(ReadNumericDouble(train_rows, name, GetName(), learn, learn_idx));
+        // Missing values (NaN) say nothing about the spread.
+        learn.erase(std::remove_if(learn.begin(), learn.end(), [](double v) { return !std::isfinite(v); }), learn.end());
+        const OutlierBounds bounds = DataTransform::OutlierBoundsOf(learn, method_, threshold_);
+        if (!bounds.success) {
+            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + bounds.error_message);
+        }
         std::vector<double> data;
         int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(input, name, GetName(), data, idx));
-        const OutlierFlags col_outliers = DataTransform::FindOutliers(data, method_, threshold_);
+        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
+        const OutlierFlags col_outliers = DataTransform::FlagOutside(data, bounds);
         if (!col_outliers.success) {
             return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + col_outliers.error_message);
         }
@@ -1425,28 +1464,56 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 total_flagged++;
             }
         }
+        if (action_ == "clip" && bounds.spread) {
+            const ClippedValues clipped = DataTransform::ClipTo(data, bounds);
+            if (!clipped.success) {
+                return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + clipped.error_message);
+            }
+            values_clipped += clipped.clipped;
+            ARROW_ASSIGN_OR_RAISE(out, ReplaceColumnWithDouble(out, idx, clipped.values));
+        }
+        if (bounds.spread) {
+            spdlog::debug("OutlierDetector: '{}' bounds [{}, {}] ({} {}, learned from {} rows{}), {} outside",
+                          name, bounds.lo, bounds.hi, method_, threshold_, learn.size(),
+                          learns_from_train ? " of the Train partition" : "", col_outliers.count);
+        } else {
+            spdlog::debug("OutlierDetector: '{}' has no spread to measure against ({}): nothing is an outlier", name, method_);
+        }
     }
 
-    // Append is_outlier column.
-    ReportProgress(progress_callback_, "Appending outlier flag",
-                   "Appending is_outlier column", 0.90,
-                   static_cast<uint64_t>(resolved.size()),
-                   static_cast<uint64_t>(resolved.size()),
-                   estimated_bytes);
-    arrow::Int32Builder builder;
-    ARROW_RETURN_NOT_OK(builder.Reserve(n));
-    for (int v : is_outlier) ARROW_RETURN_NOT_OK(builder.Append(v));
-    std::shared_ptr<arrow::Array> arr;
-    ARROW_RETURN_NOT_OK(builder.Finish(&arr));
-    auto field = arrow::field("is_outlier", arrow::int32());
-    auto chunked = std::make_shared<arrow::ChunkedArray>(arr);
-    ARROW_ASSIGN_OR_RAISE(
-        auto out,
-        input->AddColumn(input->num_columns(), field, chunked));
+    if (action_ == "flag") {
+        ReportProgress(progress_callback_, "Appending outlier flag",
+                       "Appending is_outlier column", 0.90,
+                       static_cast<uint64_t>(resolved.size()),
+                       static_cast<uint64_t>(resolved.size()),
+                       estimated_bytes);
+        arrow::Int32Builder builder;
+        ARROW_RETURN_NOT_OK(builder.Reserve(n));
+        for (int v : is_outlier) ARROW_RETURN_NOT_OK(builder.Append(v));
+        std::shared_ptr<arrow::Array> arr;
+        ARROW_RETURN_NOT_OK(builder.Finish(&arr));
+        auto field = arrow::field("is_outlier", arrow::int32());
+        auto chunked = std::make_shared<arrow::ChunkedArray>(arr);
+        ARROW_ASSIGN_OR_RAISE(out, out->AddColumn(out->num_columns(), field, chunked));
+    } else if (action_ == "remove") {
+        ReportProgress(progress_callback_, "Dropping outlier rows",
+                       "Dropping the rows outside the bounds", 0.90,
+                       static_cast<uint64_t>(resolved.size()),
+                       static_cast<uint64_t>(resolved.size()),
+                       estimated_bytes);
+        arrow::BooleanBuilder keep;
+        ARROW_RETURN_NOT_OK(keep.Reserve(n));
+        for (int v : is_outlier) keep.UnsafeAppend(v == 0);
+        std::shared_ptr<arrow::Array> mask;
+        ARROW_RETURN_NOT_OK(keep.Finish(&mask));
+        ARROW_ASSIGN_OR_RAISE(auto kept, arrow::compute::Filter(out, mask));
+        out = kept.table();
+    }
 
-    spdlog::info("OutlierDetector: {}/{} rows flagged (method={}, threshold={}, "
-                 "cols checked={})",
-                 total_flagged, n, method_, threshold_, resolved.size());
+    spdlog::info("OutlierDetector: {}/{} rows outside the bounds (method={}, threshold={}, action={}, cols checked={}{}{})",
+                 total_flagged, n, method_, threshold_, action_, resolved.size(),
+                 action_ == "clip" ? ", values clipped=" + std::to_string(values_clipped) : "",
+                 action_ == "remove" ? ", rows kept=" + std::to_string(out->num_rows()) : "");
     ReportProgress(progress_callback_, "Complete",
                    "OutlierDetector materialization complete", 1.0,
                    static_cast<uint64_t>(n), static_cast<uint64_t>(n),

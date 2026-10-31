@@ -20,6 +20,7 @@
 #include "../node_editor.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <set>
 
@@ -118,6 +119,22 @@ DataStudioPanel::DataStudioPanel() {
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);
+    };
+    // Missing > Fill in Prepare and Outliers > Flag / Clip / Drop rows (TOFIX129
+    // D7a G2): steps on the data path, so training reads their result.
+    missing_->on_fill = [add_node](const std::string& column, const std::string& strategy, const std::string& value) {
+        std::map<std::string, std::string> params{{"columns", column}, {"strategy", strategy}};
+        if (strategy == "constant") params["value"] = value;
+        return add_node(::gui::NodeType::FillMissingValues, "Fill " + column + " (" + strategy + ")", std::move(params), true);
+    };
+    outliers_->step_blocker = missing_->drop_blocker;
+    outliers_->on_add_step = [add_node](const std::string& column, explore::OutlierRule rule, double factor, const char* action) {
+        const char* method = rule == explore::OutlierRule::Iqr ? "iqr" : rule == explore::OutlierRule::ZScore ? "zscore" : "modified_z";
+        const char* verb = std::string(action) == "flag" ? "Flag" : std::string(action) == "clip" ? "Clip" : "Drop";
+        char factor_text[32];
+        std::snprintf(factor_text, sizeof(factor_text), "%g", factor);
+        return add_node(::gui::NodeType::OutlierDetector, std::string(verb) + " outliers in " + column,
+                        {{"columns", column}, {"method", method}, {"threshold", factor_text}, {"action", action}}, true);
     };
     visualizer_ = std::make_unique<Visualizer>();
     prepare_ = std::make_unique<PrepareView>();

@@ -2538,14 +2538,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::OutlierDetector, NodeCategory::Preprocessing, "Outlier Detector", ICON_FA_FILTER,
-        {"outlier", "iqr", "zscore", "detect"}, 0, false, "Flag numeric outliers",
-        "Adds an is_outlier column using IQR or Z-score detection.", "",
+        {"outlier", "iqr", "zscore", "modified z", "clip", "drop", "detect"}, 0, false, "Flag, clip or drop numeric outliers",
+        "Learns each column's bounds (IQR, Z-score or Modified Z) from the Train rows, then flags the rows outside them "
+        "in an is_outlier column, clips the values into the bounds, or drops those rows.", "",
         {{"Data", PinType::Dataset, true, "Input data"}},
-        {{"Flagged", PinType::Dataset, true, "Input data plus is_outlier"}},
+        {{"Result", PinType::Dataset, true, "Input data flagged, clipped or without its outlier rows"}},
         {{"columns", "string", "all", "Columns to inspect", {}, ""},
          {"label_col", "string", "", "Label column to exclude", {}, ""},
-         {"method", "dropdown", "iqr", "Method", {"iqr", "zscore"}, ""},
-         {"threshold", "float", "1.5", "Positive IQR multiplier or Z-score threshold", {}, ""}},
+         {"method", "dropdown", "iqr", "Rule: IQR fences, Z-score, or Modified Z (median and MAD)", {"iqr", "zscore", "modified_z"}, ""},
+         {"threshold", "float", "1.5", "The rule's factor: IQR multiple (1.5), z (3), modified z (3.5)", {}, ""},
+         {"action", "dropdown", "flag", "flag adds is_outlier; clip clamps the values into the bounds; remove drops the rows", {"flag", "clip", "remove"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DataProfiler, NodeCategory::Analytics, "Data Profiler", ICON_FA_MAGNIFYING_GLASS_CHART,

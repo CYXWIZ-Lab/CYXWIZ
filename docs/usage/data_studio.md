@@ -115,6 +115,38 @@ Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
 
+### What reaches training
+
+Training reads one table: the result of the node wired into the Data Split's
+Training Dataset input (the Data Loader's input when there is no Split). Start
+Training takes the canvas run's result of that node, else the prepared data
+kept on disk, else it runs the steps before it through the Data Pipeline
+executor first. Steps that learn (scalers, encoders, Fill Missing, Outlier
+Detector) learn from the Train rows only. So:
+
+- **A step feeds training.** Everything on the way to that node does: every
+  Prepare step, Missing's **Drop these rows** and **Fill in Prepare**,
+  Outliers' **Flag / Clip / Drop rows**, Groups', Projection's, Series' and
+  Forecast's **Add as a step**, Query's **Turn into step**, Images' **Use in
+  Normalize**. Their buttons say so on hover, and the message after adding one
+  ends with *Training reads its result.*
+- **A branch only shows.** **Keep as a node** (Tests, Regression, Series'
+  Seasonality / Stationarity / ACF, Groups, Projection, Forecast), **Keep as
+  Plot node** and dashboards read the data and keep their result with the
+  graph; training does not read them. The message ends with *Training does not
+  read a branch.*
+- **Nothing else changes training.** Profile's column roles and *Treat as
+  missing*, Query's **Save as Dataset**, every **Export CSV...**, ML readiness
+  and Validate's table change no step (a failing check stops the run).
+
+The rail marks the table training reads with a cap, and Explore opens on it
+when nothing is picked. One line above every view says what training makes of
+the table in front of you: *Training reads this table through the Data Split.*,
+*Training reads "Scale numbers", not this table.* (with **Show what training
+reads**), *Training reads "Scale numbers", which has no table yet (run its steps
+in Prepare); this is not it.* (with **Show the node**), or *Nothing feeds a Data
+Split or a Data Loader yet, so training reads no table.*
+
 ## Query
 
 Write SQL that names tables by their names, in double quotes when the name
@@ -389,8 +421,14 @@ Profile; the link under the summary goes there).
     the canvas undoes it. It needs the table to be a Data Input or a node
     result of the open graph.
   - **Open in Query** puts the SQL for these rows in Query and runs it.
+  - **Fill with ... / Fill in Prepare** adds a Fill Missing Values step on
+    the column: a number column takes its mean, median or mode, or a typed
+    constant; any other column its mode or a constant. The step learns the
+    statistic from the Train rows and fills the empty cells of every row.
+    Texts marked as missing are values to it: drop those rows, or make
+    them empty first.
   - **General recommendations** (folded) lists ways to fill values by kind
-    of data. Prepare has no "fill missing values" step yet.
+    of data.
 
 The counts come from Profile's profile, so switching tabs does not compute
 them again; complete rows, the mixes and the row pages are SQL on the
@@ -411,6 +449,13 @@ Values far from the rest of a number column.
   - A rule with no spread on the column (Q1 = Q3, all values equal, or
     MAD = 0) says so instead of counting every value.
 - **Summary**: how many outliers, low and high, and the bounds.
+- **In Prepare**: **Flag rows**, **Clip values** and **Drop rows** add an
+  Outlier Detector step on the column with this rule and factor, and the
+  action flag (an `is_outlier` column), clip (every value pulled into the
+  bounds) or remove (the rows outside dropped). The step learns the bounds
+  from the Train rows (every row without a Data Split) and applies them to
+  every row, so its count can differ from the one found here, which reads
+  the whole table. Training reads the step's result.
 - **Distribution**: the column's histogram with the bounds dashed and the
   bins past them in orange; a note says when a bound lies beyond the values.
 - **Rows**: row number, score, low or high, the column checked, then the

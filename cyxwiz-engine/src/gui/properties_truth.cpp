@@ -800,10 +800,10 @@ void AddOutlierTruth(NodeTruthReport& report, const MLNode& node) {
         true,
         false,
         false);
-    if (method.effective_value != "iqr" && method.effective_value != "zscore") {
+    if (method.effective_value != "iqr" && method.effective_value != "zscore" && method.effective_value != "modified_z") {
         method.statuses.clear();
         AddStatus(method, TruthStatus::Unsupported);
-        method.message = "OutlierDetector v1 supports only iqr and zscore.";
+        method.message = "OutlierDetector supports iqr, zscore and modified_z.";
     }
     report.properties.push_back(std::move(method));
 
@@ -832,11 +832,11 @@ void AddOutlierTruth(NodeTruthReport& report, const MLNode& node) {
         true,
         false,
         false,
-        "v1 appends an is_outlier flag column.");
-    if (action.effective_value != "flag") {
+        "flag appends an is_outlier column; clip clamps the values into the bounds; remove drops the rows.");
+    if (action.effective_value != "flag" && action.effective_value != "clip" && action.effective_value != "remove") {
         action.statuses.clear();
         AddStatus(action, TruthStatus::Unsupported);
-        action.message = "OutlierDetector v1 only supports action=flag.";
+        action.message = "OutlierDetector supports action=flag, clip or remove.";
     }
     report.properties.push_back(std::move(action));
 }
