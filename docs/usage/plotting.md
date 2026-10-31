@@ -462,6 +462,14 @@ in its own window; **Auto scale**, **Follow current epoch**, the epoch
 window, **Log loss axis** and **Smooth** are in the chart window's toolbar
 and the dashboard's controls.
 
+A training point during an epoch is the mean loss (and accuracy) of the
+batches since the previous point (every log interval, "metrics every 10
+batches"), not the epoch's running mean, so the curve does not jump at each
+epoch start; batch 1 is a point in the first epoch only. At each epoch's end
+the whole-epoch values are kept as well: the **best** line on the training
+cards names the best whole epoch, never one batch. Validation is one point
+per epoch.
+
 Canvas training reports to this window, and so does word-vector training
 (word2vec, GloVe) of a Word Embeddings node: it gets its own run behind the
 **Run** switcher and leaves the model run's view alone (see

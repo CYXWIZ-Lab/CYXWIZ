@@ -61,6 +61,7 @@ To write your own nodes in Python or C++, see
 | --- | --- |
 | [Classic ML models](classic_ml.md) | Naive Bayes, KNN, logistic regression, SVM |
 | [Convolutional layers](cnn_layers.md) | Training image graphs as CNNs |
+| [Image classifier: a ResNet from scratch](image_classifier_resnet.md) | The cats vs dogs ResNet example, from data to a test score |
 | [Conv3D](conv3d.md) | Convolution over volumes |
 | [Cross Attention](cross_attention.md) | One sequence attending to another |
 | [Linear Attention](linear_attention.md) | Self-attention with linear cost |
