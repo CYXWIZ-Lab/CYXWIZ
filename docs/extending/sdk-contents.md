@@ -36,7 +36,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/cyxwiz.h` | Main header file for CyxWiz Backend Include this to get access to all backend functionality |  |
 | `cyxwiz/cyxwiz_c.h` | CyxWiz C API This header provides a pure C interface to the CyxWiz backend library. Use this when integrating with C code or languages with C FFI. |  |
 | `cyxwiz/data_loader.h` |  | `DataLoaderConfig`, `ColumnInfo`, `DataLoader`, `BatchIterator` |
-| `cyxwiz/data_transform.h` |  | `TransformResult`, `ColumnStats`, `BoxCoxLambdaResult`, `NormalityTestResult`, `RobustScaleOptions`, `StandardizeOptions`, `OutlierFlags`, `DataTransform`, `ColumnMoments` |
+| `cyxwiz/data_transform.h` |  | `TransformResult`, `ColumnStats`, `BoxCoxLambdaResult`, `NormalityTestResult`, `RobustScaleOptions`, `StandardizeOptions`, `OutlierBounds`, `ClippedValues`, `OutlierFlags`, `DataTransform`, `ColumnMoments` |
 | `cyxwiz/dataloader.h` |  | `DataBatch`, `DatasetBase`, `MNISTDataset`, `FashionMNISTDataset`, `SyntheticDataset`, `TrainingDataLoader`, `Split` |
 | `cyxwiz/debug_hooks.h` |  | `BackendDebugHooks` |
 | `cyxwiz/device.h` |  | `DeviceActivationResult`, `DeviceInfo`, `DeviceRouteResolution`, `ProcessDeviceSelection`, `Device`, `DeviceMetadataStatus`, `DeviceKind`, `DeviceIdentityConfidence`, `DeviceActivationStage`, `DeviceRouteResolutionStatus` |
