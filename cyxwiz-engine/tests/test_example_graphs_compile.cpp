@@ -1,9 +1,10 @@
-// The shipped text-classification examples compile (TOFIX152 finding). The
-// graphs are loaded the way the canvas loads a starter: each node made by
-// CreateGraphNode, so its pins are the registry's, then linked by pin index,
-// and compiled by GraphCompiler. Before, every test built its own pins, so a
-// stale pin type (Text Tokenizer's Tensor output feeding Data Split) shipped
-// and no example with a tokenizer compiled.
+// The shipped examples compile: the text classifiers (TOFIX152 finding) and
+// the image ResNet (TOFIX178 1.8). The graphs are loaded the way the canvas
+// loads a starter: each node made by CreateGraphNode, so its pins are the
+// registry's, then linked by pin index, and compiled by GraphCompiler.
+// Before, every test built its own pins, so a stale pin type (Text
+// Tokenizer's Tensor output feeding Data Split) shipped and no example with a
+// tokenizer compiled.
 
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
@@ -136,6 +137,7 @@ int main() {
         root / "text" / "test_03_sentiment_lstm_mini.cyxgraph",
         root / "text" / "test_04_sentiment_gru_mini.cyxgraph",
         root / "text" / "test_05_sentiment_transformer_mini.cyxgraph",
+        root / "cats_dogs_resnet_scratch.cyxgraph",
     };
     for (const auto& path : graphs) {
         std::vector<gui::MLNode> nodes;
@@ -165,6 +167,6 @@ int main() {
         if (config.is_valid) std::cout << name << ": compiles (" << config.layers.size() << " layers)\n";
     }
     if (failures > 0) return 1;
-    std::cout << "example text graphs compile\n";
+    std::cout << "example graphs compile\n";
     return 0;
 }

@@ -3526,16 +3526,16 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
 add_test(NAME graph_compiler_deferred_nodes COMMAND test_graph_compiler_deferred_nodes)
 
 # ===== Test: shipped text examples compile with registry pins (TOFIX152) =====
-add_executable(test_example_text_graphs_compile
-    tests/test_example_text_graphs_compile.cpp
+add_executable(test_example_graphs_compile
+    tests/test_example_graphs_compile.cpp
     src/gui/node_type_import_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
-target_include_directories(test_example_text_graphs_compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_example_text_graphs_compile PRIVATE
+target_include_directories(test_example_graphs_compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_example_graphs_compile PRIVATE
     cyxwiz-training-core
     Arrow::arrow_shared
     Parquet::parquet_shared
@@ -3546,12 +3546,12 @@ target_link_libraries(test_example_text_graphs_compile PRIVATE
     cyxwiz-backend
 )
 if(WIN32)
-    target_compile_definitions(test_example_text_graphs_compile PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    target_compile_definitions(test_example_graphs_compile PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
-set_target_properties(test_example_text_graphs_compile PROPERTIES
+set_target_properties(test_example_graphs_compile PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME example_text_graphs_compile COMMAND test_example_text_graphs_compile)
+add_test(NAME example_graphs_compile COMMAND test_example_graphs_compile)
 
 # ===== Test: Remote job presentation (TOFIX118 P4 GUI) =====
 add_executable(test_remote_job_presentation

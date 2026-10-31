@@ -1,0 +1,1405 @@
+{
+  "classical_tree_table_contract_version": 2,
+  "data_boundary_version": 2,
+  "data_validator_contract_version": 2,
+  "evaluation_table_contract_version": 2,
+  "execution_mode": 0,
+  "framework": 0,
+  "version": "2.1",
+  "workflow_description": "TOFIX178 1.8: cats vs dogs, a small ResNet trained from scratch",
+  "nodes": [
+    {
+      "category": 0,
+      "description": "cat_dog/",
+      "id": 1,
+      "name": "Cats_Dogs Data",
+      "parameters": {
+        "archive_member": "",
+        "audio_filename_col": "",
+        "audio_label_col": "",
+        "audio_labels_csv": "",
+        "audio_layout": "0",
+        "configured": "false",
+        "data_loaded": "false",
+        "dataset_name": "cat_dog",
+        "decimal_point": ".",
+        "delimiter": ",",
+        "file_category": "image",
+        "file_path": "",
+        "file_type": "auto",
+        "folder_path": "",
+        "force_disk_backed": "false",
+        "has_header": "true",
+        "image_layout": "1",
+        "label_column": "",
+        "labels_csv": "",
+        "max_rows": "0",
+        "missing_value_tokens": "na",
+        "quote_char": "\"",
+        "skip_rows": "0",
+        "source_type": "file"
+      },
+      "pos_x": 0.0,
+      "pos_y": 300.0,
+      "type": 157
+    },
+    {
+      "id": 2,
+      "type": 247,
+      "name": "Quality Analyzer",
+      "description": "",
+      "parameters": {
+        "blur_check": "true",
+        "blur_min": "300",
+        "brightness_check": "true",
+        "brightness_min": "50",
+        "brightness_max": "220",
+        "contrast_check": "true",
+        "contrast_min": "0.12",
+        "duplicate_check": "true"
+      },
+      "pos_x": 380.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 3,
+      "type": 106,
+      "name": "Split 80/10/10",
+      "description": "",
+      "parameters": {
+        "train_ratio": "0.8",
+        "val_ratio": "0.1",
+        "test_ratio": "0.1",
+        "stratified": "true",
+        "seed": "42"
+      },
+      "pos_x": 600.0,
+      "pos_y": 300.0,
+      "category": 21
+    },
+    {
+      "id": 4,
+      "type": 104,
+      "name": "Data Loader",
+      "description": "",
+      "parameters": {
+        "batch_size": "64",
+        "epochs": "20",
+        "shuffle": "true",
+        "seed": "42",
+        "drop_last": "false",
+        "validation_freq": "1",
+        "save_best_checkpoint": "true",
+        "early_stopping_patience": "0",
+        "num_workers": "0",
+        "model_seed": "42"
+      },
+      "pos_x": 820.0,
+      "pos_y": 300.0,
+      "category": 21
+    },
+    {
+      "id": 5,
+      "type": 110,
+      "name": "Resize 72",
+      "description": "",
+      "parameters": {
+        "width": "72",
+        "height": "72",
+        "mode": "exact"
+      },
+      "pos_x": 1040.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 6,
+      "type": 111,
+      "name": "Center Crop 64",
+      "description": "",
+      "parameters": {
+        "width": "64",
+        "height": "64"
+      },
+      "pos_x": 1260.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 7,
+      "type": 362,
+      "name": "Random Resized Crop",
+      "description": "",
+      "parameters": {
+        "width": "0",
+        "height": "0",
+        "scale_min": "0.35",
+        "scale_max": "1.0",
+        "ratio_min": "0.75",
+        "ratio_max": "1.3333",
+        "interpolation": "bilinear"
+      },
+      "pos_x": 1480.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 8,
+      "type": 113,
+      "name": "Horizontal Flip",
+      "description": "",
+      "parameters": {
+        "probability": "0.5"
+      },
+      "pos_x": 1700.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 9,
+      "type": 116,
+      "name": "Color Jitter",
+      "description": "",
+      "parameters": {
+        "brightness": "0.2",
+        "contrast": "0.2",
+        "saturation": "0.2",
+        "hue": "0.0"
+      },
+      "pos_x": 1920.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 10,
+      "type": 108,
+      "name": "Normalize (ImageNet)",
+      "description": "",
+      "parameters": {
+        "statistics": "imagenet"
+      },
+      "pos_x": 2140.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 11,
+      "type": 2,
+      "name": "Conv 32 stem",
+      "description": "",
+      "parameters": {
+        "filters": "32",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 160.0,
+      "pos_y": 720.0,
+      "category": 6
+    },
+    {
+      "id": 12,
+      "type": 10,
+      "name": "BN stem",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 380.0,
+      "pos_y": 720.0,
+      "category": 9
+    },
+    {
+      "id": 13,
+      "type": 29,
+      "name": "ReLU stem",
+      "description": "",
+      "parameters": {},
+      "pos_x": 600.0,
+      "pos_y": 720.0,
+      "category": 7
+    },
+    {
+      "id": 14,
+      "type": 2,
+      "name": "Conv 32 s1a",
+      "description": "",
+      "parameters": {
+        "filters": "32",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 820.0,
+      "pos_y": 720.0,
+      "category": 6
+    },
+    {
+      "id": 15,
+      "type": 10,
+      "name": "BN s1a",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1040.0,
+      "pos_y": 720.0,
+      "category": 9
+    },
+    {
+      "id": 16,
+      "type": 29,
+      "name": "ReLU s1a",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1260.0,
+      "pos_y": 720.0,
+      "category": 7
+    },
+    {
+      "id": 17,
+      "type": 2,
+      "name": "Conv 32 s1b",
+      "description": "",
+      "parameters": {
+        "filters": "32",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 1480.0,
+      "pos_y": 720.0,
+      "category": 6
+    },
+    {
+      "id": 18,
+      "type": 10,
+      "name": "BN s1b",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1700.0,
+      "pos_y": 720.0,
+      "category": 9
+    },
+    {
+      "id": 19,
+      "type": 47,
+      "name": "Add s1",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1920.0,
+      "pos_y": 720.0
+    },
+    {
+      "id": 20,
+      "type": 29,
+      "name": "ReLU s1",
+      "description": "",
+      "parameters": {},
+      "pos_x": 2140.0,
+      "pos_y": 720.0,
+      "category": 7
+    },
+    {
+      "id": 21,
+      "type": 2,
+      "name": "Conv 64 s2a",
+      "description": "",
+      "parameters": {
+        "filters": "64",
+        "kernel_size": "3",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 160.0,
+      "pos_y": 1140.0,
+      "category": 6
+    },
+    {
+      "id": 22,
+      "type": 10,
+      "name": "BN s2a",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 380.0,
+      "pos_y": 1140.0,
+      "category": 9
+    },
+    {
+      "id": 23,
+      "type": 29,
+      "name": "ReLU s2a",
+      "description": "",
+      "parameters": {},
+      "pos_x": 600.0,
+      "pos_y": 1140.0,
+      "category": 7
+    },
+    {
+      "id": 24,
+      "type": 2,
+      "name": "Conv 64 s2b",
+      "description": "",
+      "parameters": {
+        "filters": "64",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 820.0,
+      "pos_y": 1140.0,
+      "category": 6
+    },
+    {
+      "id": 25,
+      "type": 10,
+      "name": "BN s2b",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1040.0,
+      "pos_y": 1140.0,
+      "category": 9
+    },
+    {
+      "id": 26,
+      "type": 2,
+      "name": "Conv 64 s2s",
+      "description": "",
+      "parameters": {
+        "filters": "64",
+        "kernel_size": "1",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 1260.0,
+      "pos_y": 1320.0,
+      "category": 6
+    },
+    {
+      "id": 27,
+      "type": 10,
+      "name": "BN s2s",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1480.0,
+      "pos_y": 1320.0,
+      "category": 9
+    },
+    {
+      "id": 28,
+      "type": 47,
+      "name": "Add s2",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1700.0,
+      "pos_y": 1140.0
+    },
+    {
+      "id": 29,
+      "type": 29,
+      "name": "ReLU s2",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1920.0,
+      "pos_y": 1140.0,
+      "category": 7
+    },
+    {
+      "id": 30,
+      "type": 2,
+      "name": "Conv 128 s3a",
+      "description": "",
+      "parameters": {
+        "filters": "128",
+        "kernel_size": "3",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 160.0,
+      "pos_y": 1560.0,
+      "category": 6
+    },
+    {
+      "id": 31,
+      "type": 10,
+      "name": "BN s3a",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 380.0,
+      "pos_y": 1560.0,
+      "category": 9
+    },
+    {
+      "id": 32,
+      "type": 29,
+      "name": "ReLU s3a",
+      "description": "",
+      "parameters": {},
+      "pos_x": 600.0,
+      "pos_y": 1560.0,
+      "category": 7
+    },
+    {
+      "id": 33,
+      "type": 2,
+      "name": "Conv 128 s3b",
+      "description": "",
+      "parameters": {
+        "filters": "128",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 820.0,
+      "pos_y": 1560.0,
+      "category": 6
+    },
+    {
+      "id": 34,
+      "type": 10,
+      "name": "BN s3b",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1040.0,
+      "pos_y": 1560.0,
+      "category": 9
+    },
+    {
+      "id": 35,
+      "type": 2,
+      "name": "Conv 128 s3s",
+      "description": "",
+      "parameters": {
+        "filters": "128",
+        "kernel_size": "1",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 1260.0,
+      "pos_y": 1740.0,
+      "category": 6
+    },
+    {
+      "id": 36,
+      "type": 10,
+      "name": "BN s3s",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1480.0,
+      "pos_y": 1740.0,
+      "category": 9
+    },
+    {
+      "id": 37,
+      "type": 47,
+      "name": "Add s3",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1700.0,
+      "pos_y": 1560.0
+    },
+    {
+      "id": 38,
+      "type": 29,
+      "name": "ReLU s3",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1920.0,
+      "pos_y": 1560.0,
+      "category": 7
+    },
+    {
+      "id": 39,
+      "type": 2,
+      "name": "Conv 256 s4a",
+      "description": "",
+      "parameters": {
+        "filters": "256",
+        "kernel_size": "3",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 160.0,
+      "pos_y": 1980.0,
+      "category": 6
+    },
+    {
+      "id": 40,
+      "type": 10,
+      "name": "BN s4a",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 380.0,
+      "pos_y": 1980.0,
+      "category": 9
+    },
+    {
+      "id": 41,
+      "type": 29,
+      "name": "ReLU s4a",
+      "description": "",
+      "parameters": {},
+      "pos_x": 600.0,
+      "pos_y": 1980.0,
+      "category": 7
+    },
+    {
+      "id": 42,
+      "type": 2,
+      "name": "Conv 256 s4b",
+      "description": "",
+      "parameters": {
+        "filters": "256",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 820.0,
+      "pos_y": 1980.0,
+      "category": 6
+    },
+    {
+      "id": 43,
+      "type": 10,
+      "name": "BN s4b",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1040.0,
+      "pos_y": 1980.0,
+      "category": 9
+    },
+    {
+      "id": 44,
+      "type": 2,
+      "name": "Conv 256 s4s",
+      "description": "",
+      "parameters": {
+        "filters": "256",
+        "kernel_size": "1",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 1260.0,
+      "pos_y": 2160.0,
+      "category": 6
+    },
+    {
+      "id": 45,
+      "type": 10,
+      "name": "BN s4s",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1480.0,
+      "pos_y": 2160.0,
+      "category": 9
+    },
+    {
+      "id": 46,
+      "type": 47,
+      "name": "Add s4",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1700.0,
+      "pos_y": 1980.0
+    },
+    {
+      "id": 47,
+      "type": 29,
+      "name": "ReLU s4",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1920.0,
+      "pos_y": 1980.0,
+      "category": 7
+    },
+    {
+      "id": 48,
+      "type": 8,
+      "name": "Global Avg Pool",
+      "description": "",
+      "parameters": {},
+      "pos_x": 160.0,
+      "pos_y": 2400.0
+    },
+    {
+      "id": 49,
+      "type": 14,
+      "name": "Dropout 0.2",
+      "description": "",
+      "parameters": {
+        "rate": "0.2"
+      },
+      "pos_x": 380.0,
+      "pos_y": 2400.0,
+      "category": 16
+    },
+    {
+      "id": 50,
+      "type": 0,
+      "name": "Dense 1",
+      "description": "",
+      "parameters": {
+        "units": "1"
+      },
+      "pos_x": 600.0,
+      "pos_y": 2400.0,
+      "category": 6
+    },
+    {
+      "id": 51,
+      "type": 75,
+      "name": "BCE with Logits",
+      "description": "",
+      "parameters": {
+        "reduction": "mean",
+        "pos_weight": "1.0",
+        "label_smoothing": "0.1"
+      },
+      "pos_x": 820.0,
+      "pos_y": 2400.0
+    },
+    {
+      "id": 52,
+      "type": 82,
+      "name": "AdamW",
+      "description": "",
+      "parameters": {
+        "learning_rate": "0.002",
+        "beta1": "0.9",
+        "beta2": "0.999",
+        "epsilon": "1e-8",
+        "weight_decay": "0.05",
+        "lr_schedule": "warmup_cosine",
+        "warmup_ratio": "0.05",
+        "min_lr_ratio": "0.01",
+        "grad_clip_norm": "0"
+      },
+      "pos_x": 1040.0,
+      "pos_y": 2400.0
+    },
+    {
+      "id": 53,
+      "type": 71,
+      "name": "Output",
+      "description": "",
+      "parameters": {
+        "num_classes": "2"
+      },
+      "pos_x": 1260.0,
+      "pos_y": 2400.0,
+      "category": 15
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "from_node": 1,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 2,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 2,
+      "from_node": 2,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 3,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 3,
+      "from_node": 3,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 4,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 4,
+      "from_node": 4,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 5,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 5,
+      "from_node": 5,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 6,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 6,
+      "from_node": 6,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 7,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 7,
+      "from_node": 7,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 8,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 8,
+      "from_node": 8,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 9,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 9,
+      "from_node": 9,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 10,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 10,
+      "from_node": 10,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 11,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 11,
+      "from_node": 11,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 12,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 12,
+      "from_node": 12,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 13,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 13,
+      "from_node": 13,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 14,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 14,
+      "from_node": 14,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 15,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 15,
+      "from_node": 15,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 16,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 16,
+      "from_node": 16,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 17,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 17,
+      "from_node": 17,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 18,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 18,
+      "from_node": 18,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 19,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 19,
+      "from_node": 13,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 19,
+      "to_pin": 0,
+      "to_pin_index": 1,
+      "link_type": 0
+    },
+    {
+      "id": 20,
+      "from_node": 19,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 20,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 21,
+      "from_node": 20,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 21,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 22,
+      "from_node": 21,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 22,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 23,
+      "from_node": 22,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 23,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 24,
+      "from_node": 23,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 24,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 25,
+      "from_node": 24,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 25,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 26,
+      "from_node": 20,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 26,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 27,
+      "from_node": 26,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 27,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 28,
+      "from_node": 25,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 28,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 29,
+      "from_node": 27,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 28,
+      "to_pin": 0,
+      "to_pin_index": 1,
+      "link_type": 0
+    },
+    {
+      "id": 30,
+      "from_node": 28,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 29,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 31,
+      "from_node": 29,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 30,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 32,
+      "from_node": 30,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 31,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 33,
+      "from_node": 31,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 32,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 34,
+      "from_node": 32,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 33,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 35,
+      "from_node": 33,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 34,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 36,
+      "from_node": 29,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 35,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 37,
+      "from_node": 35,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 36,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 38,
+      "from_node": 34,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 37,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 39,
+      "from_node": 36,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 37,
+      "to_pin": 0,
+      "to_pin_index": 1,
+      "link_type": 0
+    },
+    {
+      "id": 40,
+      "from_node": 37,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 38,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 41,
+      "from_node": 38,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 39,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 42,
+      "from_node": 39,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 40,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 43,
+      "from_node": 40,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 41,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 44,
+      "from_node": 41,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 42,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 45,
+      "from_node": 42,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 43,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 46,
+      "from_node": 38,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 44,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 47,
+      "from_node": 44,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 45,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 48,
+      "from_node": 43,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 46,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 49,
+      "from_node": 45,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 46,
+      "to_pin": 0,
+      "to_pin_index": 1,
+      "link_type": 0
+    },
+    {
+      "id": 50,
+      "from_node": 46,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 47,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 51,
+      "from_node": 47,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 48,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 52,
+      "from_node": 48,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 49,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 53,
+      "from_node": 49,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 50,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 54,
+      "from_node": 50,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 51,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 55,
+      "from_node": 4,
+      "from_pin": 0,
+      "from_pin_index": 1,
+      "to_node": 51,
+      "to_pin": 0,
+      "to_pin_index": 1,
+      "link_type": 0
+    },
+    {
+      "id": 56,
+      "from_node": 51,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 52,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 57,
+      "from_node": 52,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 53,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    }
+  ],
+  "annotations": [],
+  "groups": [
+    {
+      "id": 1,
+      "name": "Data and augmentation",
+      "description": "Data Input - Quality Analyzer - Split 80/10/10 - Loader; fixed Resize / Center Crop once; per batch on the GPU: Random Resized Crop, Flip, Color Jitter; ImageNet Normalize",
+      "node_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    },
+    {
+      "id": 2,
+      "name": "Stem + stage 1 (32 channels, 64 x 64)",
+      "description": "Conv 3x3 - BN - ReLU stem, then a residual block: two Conv-BN, Add the block input, ReLU",
+      "node_ids": [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    },
+    {
+      "id": 3,
+      "name": "Stage 2 (64 channels, 32 x 32)",
+      "description": "The first conv has stride 2; the skip is a 1x1 stride-2 Conv-BN so the shapes match at Add",
+      "node_ids": [
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    },
+    {
+      "id": 4,
+      "name": "Stage 3 (128 channels, 16 x 16)",
+      "description": "Stride-2 residual block with a 1x1 projection skip",
+      "node_ids": [
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    },
+    {
+      "id": 5,
+      "name": "Stage 4 (256 channels, 8 x 8)",
+      "description": "Stride-2 residual block with a 1x1 projection skip",
+      "node_ids": [
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    },
+    {
+      "id": 6,
+      "name": "Head and training",
+      "description": "Global average pool - Dropout - Dense 1 logit; BCE with logits (label smoothing 0.1); AdamW with warmup-cosine",
+      "node_ids": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    }
+  ]
+}
