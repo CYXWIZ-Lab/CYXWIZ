@@ -3545,16 +3545,16 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
 add_test(NAME graph_compiler_deferred_nodes COMMAND test_graph_compiler_deferred_nodes)
 
 # ===== Test: shipped text examples compile with registry pins (TOFIX152) =====
-add_executable(test_example_text_graphs_compile
-    tests/test_example_text_graphs_compile.cpp
+add_executable(test_example_graphs_compile
+    tests/test_example_graphs_compile.cpp
     src/gui/node_type_import_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
-target_include_directories(test_example_text_graphs_compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_example_text_graphs_compile PRIVATE
+target_include_directories(test_example_graphs_compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_example_graphs_compile PRIVATE
     cyxwiz-training-core
     Arrow::arrow_shared
     Parquet::parquet_shared
@@ -3565,12 +3565,12 @@ target_link_libraries(test_example_text_graphs_compile PRIVATE
     cyxwiz-backend
 )
 if(WIN32)
-    target_compile_definitions(test_example_text_graphs_compile PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    target_compile_definitions(test_example_graphs_compile PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
-set_target_properties(test_example_text_graphs_compile PROPERTIES
+set_target_properties(test_example_graphs_compile PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME example_text_graphs_compile COMMAND test_example_text_graphs_compile)
+add_test(NAME example_graphs_compile COMMAND test_example_graphs_compile)
 
 # ===== Test: Remote job presentation (TOFIX118 P4 GUI) =====
 add_executable(test_remote_job_presentation
@@ -5324,6 +5324,7 @@ target_include_directories(test_engine_config_observability PRIVATE
 )
 
 target_link_libraries(test_engine_config_observability PRIVATE
+    cyxwiz-protocol
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )
@@ -6062,6 +6063,16 @@ set_target_properties(test_data_studio_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME data_studio_presentation COMMAND test_data_studio_presentation)
+
+# ===== Test: Training Dashboard report windows (TOFIX178 1.8i) =====
+add_executable(test_training_report_window tests/test_training_report_window.cpp)
+target_include_directories(test_training_report_window PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_training_report_window PRIVATE cyxwiz-backend)
+set_target_properties(test_training_report_window PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME training_report_window COMMAND test_training_report_window)
 
 # ===== Test: dataset lineage (TOFIX148 Publish) =====
 add_executable(test_dataset_lineage

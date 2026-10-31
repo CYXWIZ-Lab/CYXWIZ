@@ -160,6 +160,26 @@ def probability_loss_matrix() -> list[dict[str, Any]]:
             "targets": [[[[1.0, 0.0]], [[0.25, 0.75]]]],
         },
         {
+            # torch has no BCE label_smoothing: it gets the smoothed targets
+            # t x (1 - e) + e / 2 that CyxWiz builds from the raw ones.
+            "name": "bce_logits_label_smoothing_mean",
+            "loss_type": "bce_with_logits",
+            "reduction": "mean",
+            "pos_weight": 1.0,
+            "label_smoothing": 0.1,
+            "predictions": [[3.0, -2.0], [0.25, -0.75]],
+            "targets": [[1.0, 0.0], [1.0, 0.0]],
+        },
+        {
+            "name": "bce_logits_label_smoothing_weighted_none",
+            "loss_type": "bce_with_logits",
+            "reduction": "none",
+            "pos_weight": 2.0,
+            "label_smoothing": 0.2,
+            "predictions": [1.5, -0.5, 0.0, -4.0],
+            "targets": [1.0, 0.0, 1.0, 0.0],
+        },
+        {
             "name": "kl_probability_none_zero_target",
             "loss_type": "kl_div",
             "reduction": "none",
@@ -227,9 +247,10 @@ def probability_loss_matrix() -> list[dict[str, Any]]:
             pos_weight = torch.tensor(
                 definition["pos_weight"], dtype=torch.float32
             )
+            smoothing = definition.get("label_smoothing", 0.0)
             loss = functional.binary_cross_entropy_with_logits(
                 predictions,
-                targets,
+                targets * (1.0 - smoothing) + 0.5 * smoothing,
                 pos_weight=pos_weight,
                 reduction=reduction,
             )
@@ -252,6 +273,7 @@ def probability_loss_matrix() -> list[dict[str, Any]]:
             "dtype": "float32",
             "reduction": reduction,
             "pos_weight": definition.get("pos_weight", 1.0),
+            "label_smoothing": definition.get("label_smoothing", 0.0),
             "log_target": definition.get("log_target", False),
             "tolerance": definition.get(
                 "tolerance", {"atol": 1.0e-6, "rtol": 1.0e-6}

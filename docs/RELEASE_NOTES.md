@@ -7,6 +7,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Training Dashboard points are the mean since the previous point**, not
+  the epoch's running mean, so the curves no longer jump at each epoch start;
+  the training cards' "best" names a whole epoch, never one batch.
+- **Data Studio ML readiness follows the flow back from each Data Split
+  input**: through a Quality Analyzer to its Data Input, or to a step's run
+  result (SQL, Text Clean, ...), and says which one has not been loaded or run.
+- **Canvas groups follow the zoom**, and a group's name no longer sits on its
+  first node's title.
 - **Plugin SDK: `cyxwiz::image::RandAugmentOp` is now `AugmentOp`** in
   `cyxwiz/image_augmentation.h`, with a new `Invert` value: AutoAugment,
   TrivialAugment and AugMix pick from the same list as RandAugment. A plugin
@@ -30,6 +38,16 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Example: cats vs dogs ResNet from scratch**
+  (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
+  `docs/usage/image_classifier_resnet.md`): 92.6 % test accuracy on one
+  GTX 1050 Ti.
+- **Python: `BCEWithLogitsLoss(reduction, pos_weight, label_smoothing)`** and
+  a `label_smoothing` property.
+- **BCE with Logits has `label_smoothing`**: training targets become
+  target x (1 - e) + e / 2, the two-class form of CrossEntropy's label
+  smoothing; checked against PyTorch. Plugin SDK: `BCEWithLogitsLoss` takes it
+  as a third constructor argument (`GetLabelSmoothing` / `SetLabelSmoothing`).
 - `KNOWN_ISSUES.md` ships in every release package, next to `LICENSE`. It lists known problems
   in the GPU runtimes and what to do about them. The first entry is an ArrayFire oneAPI bug in
   indexed min / max along rows (arrayfire/arrayfire#3732), which CyxWiz already works around.

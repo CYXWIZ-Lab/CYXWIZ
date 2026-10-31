@@ -649,7 +649,8 @@ void TestProbabilityLossParity(const json& cases) {
                 "torch.nn.functional.binary_cross_entropy";
         } else if (loss_type == "bce_with_logits") {
             loss = std::make_unique<cyxwiz::BCEWithLogitsLoss>(
-                reduction, test_case.at("pos_weight").get<float>());
+                reduction, test_case.at("pos_weight").get<float>(),
+                test_case.at("label_smoothing").get<float>());
             expected_operation =
                 "torch.nn.functional.binary_cross_entropy_with_logits";
         } else {

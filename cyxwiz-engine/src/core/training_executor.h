@@ -57,6 +57,10 @@ struct TrainingMetrics {
     // Training metrics
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
+    // The latest Dashboard point (TOFIX178 1.8i): the mean over the batches
+    // since the previous point (ReportWindow), not since the epoch began.
+    float report_loss = 0.0f;
+    float report_accuracy = 0.0f;
     float train_mae = 0.0f;
     float train_rmse = 0.0f;
 

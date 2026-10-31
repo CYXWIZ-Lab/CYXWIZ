@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include "crash_run_recorder.h"
+#include "training_report_window.h"
 #include "image_batchers.h"
 #include "image_dataset_batcher.h"
 #include <stdexcept>
@@ -1092,7 +1093,7 @@ void TrainingManager::TrainingThreadFunc(
             CrashRunRecorder::Instance().MarkStage(
                 TrainingTraceStage::UIPlotUpdate, epoch, 0, 0,
                 train_loss, train_acc);
-            panel->AddLossPoint(epoch, static_cast<double>(train_loss), static_cast<double>(val_loss));
+            panel->AddEpochLoss(epoch, static_cast<double>(train_loss), static_cast<double>(val_loss));
             if (regression_mode) {
                 panel->ShowAccuracyPlot(false);
                 panel->AddCustomMetric("Train MAE", epoch,
@@ -1108,7 +1109,7 @@ void TrainingManager::TrainingThreadFunc(
             } else {
                 panel->ShowAccuracyPlot(true);
                 // Convert accuracy from fraction (0-1) to percentage (0-100).
-                panel->AddAccuracyPoint(epoch,
+                panel->AddEpochAccuracy(epoch,
                     static_cast<double>(train_acc) * 100.0,
                     static_cast<double>(val_acc) * 100.0);
             }
@@ -1209,9 +1210,13 @@ void TrainingManager::TrainingThreadFunc(
                     exec && UsesRegressionMetrics(exec->GetConfig());
                 const int report_interval =
                     exec ? std::max(0, exec->GetConfig().log_interval) : 0;
+                // Each point is the mean since the previous one (the executor's
+                // report windows); batch 1 is drawn in the first epoch only, so a
+                // later epoch never starts with a one-batch point.
                 const bool metrics_sampled =
-                    batch <= 1 || batch >= total_batches ||
-                    (report_interval > 0 && batch % report_interval == 0);
+                    ReportWindow::Ends(epoch, batch) &&
+                    (batch <= 1 || batch >= total_batches ||
+                     (report_interval > 0 && batch % report_interval == 0));
                 {
                     std::lock_guard<std::mutex> lock(metrics_mutex_);
                     cached_metrics_.current_epoch = epoch;
@@ -1238,13 +1243,16 @@ void TrainingManager::TrainingThreadFunc(
                         double frac_epoch = static_cast<double>(epoch - 1) +
                                             static_cast<double>(batch) /
                                             static_cast<double>(total_batches);
+                        // The point is the mean since the previous one (the
+                        // executor's report window), not the epoch's running mean.
+                        const TrainingMetrics point = exec ? exec->GetMetrics() : TrainingMetrics{};
                         panel->AddLossPoint(frac_epoch,
-                                            static_cast<double>(batch_loss),
+                                            static_cast<double>(exec ? point.report_loss : batch_loss),
                                             -1.0);
                         if (!regression_mode) {
                             panel->AddAccuracyPoint(
                                 frac_epoch,
-                                static_cast<double>(batch_acc) * 100.0,
+                                static_cast<double>(exec ? point.report_accuracy : batch_acc) * 100.0,
                                 -1.0);
                         }
                     }

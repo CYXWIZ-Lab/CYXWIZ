@@ -1194,10 +1194,11 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // BCEWithLogits Loss (for binary / multi-label classification)
     py::class_<cyxwiz::BCEWithLogitsLoss, cyxwiz::Loss>(m, "BCEWithLogitsLoss")
-        .def(py::init<cyxwiz::Reduction, float>(),
+        .def(py::init<cyxwiz::Reduction, float, float>(),
              py::arg("reduction") = cyxwiz::Reduction::Mean,
              py::arg("pos_weight") = 1.0f,
-             "Create BCEWithLogits Loss with optional positive-class weight")
+             py::arg("label_smoothing") = 0.0f,
+             "Create BCEWithLogits Loss with optional positive-class weight and label smoothing")
         .def("forward", &cyxwiz::BCEWithLogitsLoss::Forward,
              py::arg("predictions"),
              py::arg("targets"),
@@ -1209,7 +1210,11 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_property("pos_weight",
              &cyxwiz::BCEWithLogitsLoss::GetPosWeight,
              &cyxwiz::BCEWithLogitsLoss::SetPosWeight,
-             "Positive-class weighting factor");
+             "Positive-class weighting factor")
+        .def_property("label_smoothing",
+             &cyxwiz::BCEWithLogitsLoss::GetLabelSmoothing,
+             &cyxwiz::BCEWithLogitsLoss::SetLabelSmoothing,
+             "Label smoothing: targets become t x (1 - e) + e / 2");
 
     py::class_<cyxwiz::SoftDiceLoss, cyxwiz::Loss>(m, "SoftDiceLoss")
         .def(py::init<cyxwiz::Reduction, float>(),

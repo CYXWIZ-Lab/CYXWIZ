@@ -265,7 +265,8 @@ float ResolveBCEWithLogitsPosWeight(const TrainingConfiguration& config) {
     }
 }
 
-float ResolveCrossEntropyLabelSmoothing(const TrainingConfiguration& config) {
+// CrossEntropy and BCEWithLogits share label_smoothing in [0, 1).
+float ResolveLabelSmoothing(const TrainingConfiguration& config) {
     const std::string* value = FindLossParam(config, {"label_smoothing"});
     if (!value || IsNeutralLossValue(*value)) {
         return 0.0f;
@@ -281,7 +282,7 @@ float ResolveCrossEntropyLabelSmoothing(const TrainingConfiguration& config) {
         return smoothing;
     } catch (...) {
         throw std::runtime_error(
-            "CrossEntropy label_smoothing must be a finite float in [0, 1)");
+            config.GetLossName() + " label_smoothing must be a finite float in [0, 1)");
     }
 }
 
@@ -1852,7 +1853,7 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             out.class_weights_applicable = true;
             out.class_weights = ResolveCrossEntropyClassWeights(config);
             out.label_smoothing_applicable = true;
-            out.label_smoothing = ResolveCrossEntropyLabelSmoothing(config);
+            out.label_smoothing = ResolveLabelSmoothing(config);
             break;
         case gui::NodeType::FocalLoss:
             out.alpha = ResolveLossFloatParam(
@@ -1862,6 +1863,8 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             break;
         case gui::NodeType::BCEWithLogits:
             out.pos_weight = ResolveBCEWithLogitsPosWeight(config);
+            out.label_smoothing_applicable = true;
+            out.label_smoothing = ResolveLabelSmoothing(config);
             break;
         case gui::NodeType::SmoothL1Loss:
         case gui::NodeType::HuberLoss:
@@ -1945,10 +1948,11 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
         case gui::NodeType::BCEWithLogits: {
             const float pos_weight = resolved.pos_weight.value();
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using BCEWithLogits loss "
-                         "(reduction={}, pos_weight={})",
-                         ReductionName(reduction), pos_weight);
+                         "(reduction={}, pos_weight={}, label_smoothing={})",
+                         ReductionName(reduction), pos_weight,
+                         resolved.label_smoothing);
             return std::make_unique<BCEWithLogitsLoss>(
-                reduction, pos_weight);
+                reduction, pos_weight, resolved.label_smoothing);
         }
         case gui::NodeType::L1Loss:
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using L1 loss (reduction={})",

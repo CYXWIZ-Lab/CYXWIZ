@@ -1127,7 +1127,8 @@ void ValidateCrossEntropyWeightParams(
     }
 }
 
-void ValidateCrossEntropyLabelSmoothing(
+// CrossEntropy and BCEWithLogits: label_smoothing in [0, 1).
+void ValidateLabelSmoothing(
     TrainingConfiguration& config,
     const gui::MLNode& loss_node) {
     const std::string* raw =
@@ -1148,7 +1149,7 @@ void ValidateCrossEntropyLabelSmoothing(
         AddIssue(
             config,
             IssueLevel::Error,
-            "CrossEntropy label_smoothing must be a finite float in [0, 1).",
+            config.GetLossName() + " label_smoothing must be a finite float in [0, 1).",
             loss_node.id,
             loss_node.name,
             errors::Compiler::InvalidParameter);
@@ -5971,11 +5972,13 @@ TrainingConfiguration GraphCompiler::Compile(
                 loss_node->name);
         }
         if (loss_node->type != gui::NodeType::CrossEntropyLoss) {
+            std::vector<const char*> cross_entropy_only = {
+                "weight", "class_weight", "class_weights", "weights"};
+            if (loss_node->type != gui::NodeType::BCEWithLogits) {
+                cross_entropy_only.push_back("label_smoothing");
+            }
             const auto class_weight_params = PresentUnsupportedParameters(
-                loss_node->parameters,
-                {"weight", "class_weight", "class_weights", "weights",
-                 "label_smoothing"},
-                true);
+                loss_node->parameters, cross_entropy_only, true);
             if (!class_weight_params.empty()) {
                 AddIssue(
                     config,
@@ -6085,7 +6088,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss) {
             ValidateCrossEntropyWeightParams(config, *loss_node);
-            ValidateCrossEntropyLabelSmoothing(config, *loss_node);
+            ValidateLabelSmoothing(config, *loss_node);
         }
     }
 
@@ -6106,6 +6109,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
         if (loss_node && loss_node->type == gui::NodeType::BCEWithLogits) {
             ValidateBCEWithLogitsPosWeight(config, *loss_node);
+            ValidateLabelSmoothing(config, *loss_node);
         }
     }
 
