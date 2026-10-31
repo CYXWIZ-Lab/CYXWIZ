@@ -20,7 +20,8 @@ using namespace cyxwiz;
 void Require(bool ok,const std::string& why){if(!ok)throw std::runtime_error(why);}
 std::vector<float> Values(const Tensor& t){
     const auto*p=t.ReadData<float>();std::vector<float> v(p,p+t.NumElements());
-    for(float f:v)Require(std::isfinite(f),"nonfinite value");return v;
+    for(float f:v)Require(std::isfinite(f),"nonfinite value");
+    return v;
 }
 std::vector<float> Weights(SequentialModel& model){
     std::vector<float> result;
