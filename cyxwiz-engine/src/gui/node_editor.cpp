@@ -3688,12 +3688,16 @@ void NodeEditor::RenderGroups() {
         max_x += group.padding;
         max_y += group.padding;
 
-        // Convert to screen coordinates
+        // Convert to screen coordinates (grid positions scale with the zoom, as
+        // the nodes and frames do)
         ImVec2 panning = ImNodes::EditorContextGetPanning();
         ImVec2 origin = ImGui::GetCursorScreenPos();
 
-        ImVec2 screen_min = ImVec2(origin.x + min_x + panning.x, origin.y + min_y + panning.y);
-        ImVec2 screen_max = ImVec2(origin.x + max_x + panning.x, origin.y + max_y + panning.y);
+        ImVec2 screen_min = ImVec2(origin.x + min_x * zoom_ + panning.x, origin.y + min_y * zoom_ + panning.y);
+        ImVec2 screen_max = ImVec2(origin.x + max_x * zoom_ + panning.x, origin.y + max_y * zoom_ + panning.y);
+        // A band above the padding for the group's name, so it never sits on
+        // the top-left node's title
+        screen_min.y -= ImGui::GetTextLineHeight() + 8.0f * zoom_;
 
         // Draw group background
         ImU32 fill_color = ImGui::ColorConvertFloat4ToU32(group.color);
