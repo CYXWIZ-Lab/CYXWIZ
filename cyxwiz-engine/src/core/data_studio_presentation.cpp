@@ -175,6 +175,53 @@ const Dataset* DatasetOfInput(const Input& in, const GraphNode& n) {
     return found;
 }
 
+// Where a Data Split input's rows come from, walking the flow back from the
+// node linked to that input. A step's run result is what training reads
+// (SQL, Text Clean, a recipe ...); a Quality Analyzer only leaves files of its
+// own source out (as the compiler treats it), so the walk goes through it to
+// the Data Input; a Data Input gives its loaded dataset.
+struct SplitSource {
+    const Dataset* dataset = nullptr;
+    std::string label;    // "Cats_Dogs Data, after Quality Analyzer"
+    std::string problem;  // why there are no rows yet
+};
+
+SplitSource TraceSplitSource(const Input& in, int from) {
+    const auto node_of = [&](int id) -> const GraphNode* {
+        for (const auto& m : in.nodes)
+            if (m.id == id) return &m;
+        return nullptr;
+    };
+    std::vector<std::string> filters;
+    std::set<int> seen;
+    const GraphNode* n = node_of(from);
+    while (n && seen.insert(n->id).second) {
+        if (IsDataInput(*n)) {
+            SplitSource out;
+            out.dataset = DatasetOfInput(in, *n);
+            out.label = n->name;
+            for (auto it = filters.rbegin(); it != filters.rend(); ++it)
+                out.label += (it == filters.rbegin() ? ", after " : " and ") + *it;
+            if (!out.dataset) out.problem = "\"" + n->name + "\" is not loaded";
+            return out;
+        }
+        if (n->type == NodeType::QualityAnalyzer) {
+            filters.push_back(n->name);
+            n = n->input_from.empty() || n->input_from[0] < 0 ? nullptr : node_of(n->input_from[0]);
+            continue;
+        }
+        SplitSource out;
+        out.label = n->name;
+        if (n->ran && n->error.empty()) out.dataset = DatasetNamed(in, n->output_dataset);
+        if (!out.dataset)
+            out.problem = n->ran && !n->error.empty()
+                              ? "\"" + n->name + "\" failed in its last run"
+                              : "\"" + n->name + "\" has not run yet: run the graph, and the split reads its result";
+        return out;
+    }
+    return {nullptr, "", n ? "the inputs loop back on themselves" : "no data reaches it"};
+}
+
 void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
     // One chip per named type ("Check × 4"); Prepare's other step
     // nodes share one chip naming them.
@@ -490,17 +537,13 @@ View Build(const Input& in) {
         for (size_t pin = 0; pin < n.input_from.size() && pin < 3; ++pin) {
             const int from = n.input_from[pin];
             if (from < 0) continue;
-            const GraphNode* source = nullptr;
-            for (const auto& m : in.nodes)
-                if (m.id == from) source = &m;
-            const Dataset* d = source && IsDataInput(*source) ? DatasetOfInput(in, *source) : nullptr;
-            if (!d) {
-                set.note += std::string(set.note.empty() ? "" : "; ") + kSplits[pin] + ": " +
-                            (source && IsDataInput(*source) ? "\"" + source->name + "\" is not loaded" : "not read from a Data Input");
+            const SplitSource source = TraceSplitSource(in, from);
+            if (!source.dataset) {
+                set.note += std::string(set.note.empty() ? "" : "; ") + kSplits[pin] + ": " + source.problem;
                 continue;
             }
-            set.parts.push_back({kSplits[pin], d->name, source->name});
-            in_sets.insert(d->name);
+            set.parts.push_back({kSplits[pin], source.dataset->name, source.label});
+            in_sets.insert(source.dataset->name);
         }
         v.split_sets.push_back(std::move(set));
     }

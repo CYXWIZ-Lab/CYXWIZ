@@ -241,6 +241,17 @@ TEST_CASE("Probability loss parameters reject invalid domains",
         std::invalid_argument);
     weighted.SetPosWeight(3.5f);
     REQUIRE(weighted.GetPosWeight() == Catch::Approx(3.5f));
+    REQUIRE_THROWS_AS(
+        weighted.SetLabelSmoothing(1.0f), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        weighted.SetLabelSmoothing(-0.1f), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCEWithLogitsLoss(
+            cyxwiz::Reduction::Mean, 1.0f,
+            std::numeric_limits<float>::quiet_NaN()),
+        std::invalid_argument);
+    weighted.SetLabelSmoothing(0.1f);
+    REQUIRE(weighted.GetLabelSmoothing() == Catch::Approx(0.1f));
 }
 
 TEST_CASE("Probability losses validate shape and dtype before compute",

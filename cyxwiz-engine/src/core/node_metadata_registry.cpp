@@ -3701,7 +3701,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"Targets", PinType::Labels, true, "Same-shaped binary Float32 targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
-         {"pos_weight", "float", "1.0", "Positive-class weight", {}, ""}},
+         {"pos_weight", "float", "1.0", "Positive-class weight", {}, ""},
+         {"label_smoothing", "float", "0.0", "Trains on target x (1 - e) + e / 2 instead of hard 0 / 1 targets (the two-class form of CrossEntropy label smoothing); 0 turns it off", {}, "0-0.99"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::L1Loss, NodeCategory::Training, "L1 Loss", ICON_FA_CHART_LINE,

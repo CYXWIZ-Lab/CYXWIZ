@@ -623,9 +623,11 @@ void TrainingPlotPanel::RenderKpiCards() {
         std::snprintf(value, sizeof(value), value_format, s.values[best]);
         return std::string("best ") + value + " at epoch " + FormatEpochValue(s.epochs[best]);
     };
+    // best_of: the series "best" reads (training: whole epochs, never one point).
     const auto add_metric = [&](const char* id, const char* label, const MetricSeries& s,
                                 bool lower_is_better, const char* value_format,
-                                const char* delta_format, const char* tooltip_format) {
+                                const char* delta_format, const char* tooltip_format,
+                                const MetricSeries* best_of = nullptr) {
         if (count_of(s) == 0) {
             return;
         }
@@ -640,14 +642,16 @@ void TrainingPlotPanel::RenderKpiCards() {
         std::snprintf(tooltip, sizeof(tooltip), tooltip_format, s.values.back());
         card.tooltip = tooltip;
         change_text(s, lower_is_better, delta_format, card.sub1, card.sub1_color);
-        card.sub2 = best_text(s, lower_is_better, value_format);
+        const MetricSeries& best_series = best_of && count_of(*best_of) > 0 ? *best_of : s;
+        card.sub2 = best_text(best_series, lower_is_better, value_format);
         card.sub2_color = c.muted;
         cards.push_back(std::move(card));
     };
 
-    add_metric("##kpi_loss", "Loss", train_loss_, true, "%.4f", "%.4f", "Training loss: %.6f");
+    add_metric("##kpi_loss", "Loss", train_loss_, true, "%.4f", "%.4f", "Training loss: %.6f",
+               &train_loss_epochs_);
     add_metric("##kpi_acc", "Accuracy", train_accuracy_, false, "%.2f%%", "%.2f%%",
-               "Training accuracy: %.2f%%");
+               "Training accuracy: %.2f%%", &train_accuracy_epochs_);
     add_metric("##kpi_val_loss", "Val loss", val_loss_, true, "%.4f", "%.4f",
                "Validation loss: %.6f");
     if (!val_loss_.values.empty() && !cards.empty() && cards.back().id == "##kpi_val_loss") {
@@ -797,6 +801,47 @@ void TrainingPlotPanel::AddAccuracyPoint(double epoch, double train_acc, double 
     }
 }
 
+namespace {
+// A batch point already drawn inside this epoch (x in (epoch - 1, epoch]).
+bool HasPointInEpoch(const std::vector<double>& xs, int epoch) {
+    return std::any_of(xs.begin(), xs.end(), [epoch](double x) { return x > epoch - 1 && x <= epoch; });
+}
+}  // namespace
+
+void TrainingPlotPanel::AddEpochLoss(int epoch, double train_loss, double val_loss) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    ++data_version_;
+    train_loss_epochs_.epochs.push_back(epoch);
+    train_loss_epochs_.values.push_back(train_loss);
+    if (!HasPointInEpoch(train_loss_.epochs, epoch)) {
+        train_loss_.epochs.push_back(epoch);
+        train_loss_.values.push_back(train_loss);
+        TrimDataIfNeeded(train_loss_);
+    }
+    if (val_loss >= 0.0) {
+        val_loss_.epochs.push_back(epoch);
+        val_loss_.values.push_back(val_loss);
+        TrimDataIfNeeded(val_loss_);
+    }
+}
+
+void TrainingPlotPanel::AddEpochAccuracy(int epoch, double train_acc, double val_acc) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    ++data_version_;
+    train_accuracy_epochs_.epochs.push_back(epoch);
+    train_accuracy_epochs_.values.push_back(train_acc);
+    if (!HasPointInEpoch(train_accuracy_.epochs, epoch)) {
+        train_accuracy_.epochs.push_back(epoch);
+        train_accuracy_.values.push_back(train_acc);
+        TrimDataIfNeeded(train_accuracy_);
+    }
+    if (val_acc >= 0.0) {
+        val_accuracy_.epochs.push_back(epoch);
+        val_accuracy_.values.push_back(val_acc);
+        TrimDataIfNeeded(val_accuracy_);
+    }
+}
+
 void TrainingPlotPanel::AddCustomMetric(const std::string& metric_name, int epoch, double value) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
@@ -847,6 +892,8 @@ void TrainingPlotPanel::ClearLocked() {
     val_loss_.values.clear();
     train_accuracy_.epochs.clear();
     train_accuracy_.values.clear();
+    train_loss_epochs_ = {};
+    train_accuracy_epochs_ = {};
     val_accuracy_.epochs.clear();
     val_accuracy_.values.clear();
     custom_metrics_.clear();

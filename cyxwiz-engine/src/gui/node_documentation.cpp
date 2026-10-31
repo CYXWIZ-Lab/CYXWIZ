@@ -1216,7 +1216,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "separate Sigmoid + BCELoss. The preferred choice for binary classification.",
         "Input: raw logits. Sigmoid is applied internally.",
         {
-            {"pos_weight", "Weight for positive class (for imbalanced data)"}
+            {"pos_weight", "Weight for positive class (for imbalanced data)"},
+            {"label_smoothing", "Trains on target x (1 - e) + e / 2 instead of hard 0 / 1 (0.1 is common)"}
         },
         {
             "Standard choice for binary classification",

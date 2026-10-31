@@ -8649,6 +8649,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce",
         "name": "bce_scalar_sum",
@@ -8700,6 +8701,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce",
         "name": "bce_rank2_none_fractional_targets",
@@ -8758,6 +8760,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce",
         "name": "bce_boundary_mean",
@@ -8820,6 +8823,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce",
         "name": "bce_rank3_sum",
@@ -8897,6 +8901,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce_with_logits",
         "name": "bce_logits_rank2_none",
@@ -8960,6 +8965,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce_with_logits",
         "name": "bce_logits_fractional_mean_weighted",
@@ -9018,6 +9024,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce_with_logits",
         "name": "bce_logits_extreme_sum_weighted",
@@ -9083,6 +9090,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "bce_with_logits",
         "name": "bce_logits_rank4_none",
@@ -9127,6 +9135,126 @@
         "expected": {
           "loss": {
             "shape": [
+              1
+            ],
+            "values": [
+              0.35958147048950195
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.0006435364484786987,
+              0.01730072870850563,
+              -0.09695586562156677,
+              0.06770531088113785
+            ]
+          }
+        },
+        "label_smoothing": 0.1,
+        "log_target": false,
+        "loss_type": "bce_with_logits",
+        "name": "bce_logits_label_smoothing_mean",
+        "operation": "torch.nn.functional.binary_cross_entropy_with_logits",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            3.0,
+            -2.0,
+            0.25,
+            -0.75
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            1.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              4
+            ],
+            "values": [
+              0.5326852202415466,
+              0.6214846968650818,
+              1.3169797658920288,
+              0.8199648857116699
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              4
+            ],
+            "values": [
+              -0.24660849571228027,
+              0.2152947634458542,
+              -0.8500000238418579,
+              -0.18021516501903534
+            ]
+          }
+        },
+        "label_smoothing": 0.2,
+        "log_target": false,
+        "loss_type": "bce_with_logits",
+        "name": "bce_logits_label_smoothing_weighted_none",
+        "operation": "torch.nn.functional.binary_cross_entropy_with_logits",
+        "pos_weight": 2.0,
+        "predictions": {
+          "shape": [
+            4
+          ],
+          "values": [
+            1.5,
+            -0.5,
+            0.0,
+            -4.0
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            1.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
               2,
               3
             ],
@@ -9154,6 +9282,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "kl_div",
         "name": "kl_probability_none_zero_target",
@@ -9217,6 +9346,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "kl_div",
         "name": "kl_probability_mean",
@@ -9281,6 +9411,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": false,
         "loss_type": "kl_div",
         "name": "kl_probability_rank3_sum",
@@ -9354,6 +9485,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": true,
         "loss_type": "kl_div",
         "name": "kl_log_target_rank2_none",
@@ -9411,6 +9543,7 @@
             ]
           }
         },
+        "label_smoothing": 0.0,
         "log_target": true,
         "loss_type": "kl_div",
         "name": "kl_log_target_extreme_mean",

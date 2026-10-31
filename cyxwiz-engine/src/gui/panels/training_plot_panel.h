@@ -69,6 +69,12 @@ public:
     // Integer values still work — callers passing int are implicitly promoted.
     void AddLossPoint(double epoch, double train_loss, double val_loss = -1.0);
     void AddAccuracyPoint(double epoch, double train_acc, double val_acc = -1.0);
+    // A finished epoch: the train value over the whole epoch (what the cards'
+    // "best" reads) and its validation value. The train curve itself is the
+    // per-batch points (each the mean since the previous point); the epoch
+    // value is drawn only when that epoch had no batch point.
+    void AddEpochLoss(int epoch, double train_loss, double val_loss = -1.0);
+    void AddEpochAccuracy(int epoch, double train_acc, double val_acc = -1.0);
     void AddCustomMetric(const std::string& metric_name, int epoch, double value);
 
     // Control
@@ -273,6 +279,8 @@ private:
     MetricSeries val_loss_;
     MetricSeries train_accuracy_;
     MetricSeries val_accuracy_;
+    MetricSeries train_loss_epochs_;      // one whole-epoch value per epoch
+    MetricSeries train_accuracy_epochs_;
     std::vector<MetricSeries> custom_metrics_;
     std::vector<TrainingRunComparisonRecord> run_comparison_records_;
     std::string run_export_note_;  // where Export Run CSV wrote, or why it could not

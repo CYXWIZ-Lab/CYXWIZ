@@ -344,15 +344,14 @@ void DataStudioPanel::RefreshView() {
         const auto& links = node_editor_->GetLinks();
         for (const auto& node : node_editor_->GetNodes()) {
             if (!add(node.id, node.type, node.name, &node.parameters)) continue;
-            if (node.type == ::gui::NodeType::DataSplit) {
-                // The node linked to each input pin (ML readiness: train, validation, test).
-                auto& from = in.nodes.back().input_from;
-                for (const auto& pin : node.inputs) {
-                    int source = -1;
-                    for (const auto& link : links)
-                        if (link.to_node == node.id && link.to_pin == pin.id) source = link.from_node;
-                    from.push_back(source);
-                }
+            // The node linked to each input pin, so a view can follow the flow
+            // back (ML readiness: a Data Split's train / validation / test).
+            auto& from = in.nodes.back().input_from;
+            for (const auto& pin : node.inputs) {
+                int source = -1;
+                for (const auto& link : links)
+                    if (link.to_node == node.id && link.to_pin == pin.id) source = link.from_node;
+                from.push_back(source);
             }
             if (node.type != ::gui::NodeType::Subgraph) continue;
             // A recipe's steps count as the graph's nodes too (checks inside
