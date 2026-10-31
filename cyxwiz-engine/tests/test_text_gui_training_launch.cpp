@@ -1823,8 +1823,7 @@ int main(int argc, char** argv) {
               "saved NER launch should build attention masks");
         cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(
             sequence_build, dispatch_config);
-        Check(dispatch_config.output_size ==
-                  static_cast<int>(sequence_build.tag_vocabulary_size),
+        Check(dispatch_config.output_size == sequence_build.tag_vocabulary_size,
               "saved NER launch should align classifier width with sequence tags");
 
         const auto batch_shape = batch.word_ids.Shape();
