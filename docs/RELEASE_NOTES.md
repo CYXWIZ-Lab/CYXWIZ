@@ -30,6 +30,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **BCE with Logits has `label_smoothing`**: training targets become
+  target x (1 - e) + e / 2, the two-class form of CrossEntropy's label
+  smoothing; checked against PyTorch. Plugin SDK: `BCEWithLogitsLoss` takes it
+  as a third constructor argument (`GetLabelSmoothing` / `SetLabelSmoothing`).
 - `KNOWN_ISSUES.md` ships in every release package, next to `LICENSE`. It lists known problems
   in the GPU runtimes and what to do about them. The first entry is an ArrayFire oneAPI bug in
   indexed min / max along rows (arrayfire/arrayfire#3732), which CyxWiz already works around.

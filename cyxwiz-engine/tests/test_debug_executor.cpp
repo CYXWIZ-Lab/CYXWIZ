@@ -1784,6 +1784,7 @@ void TestWeightedLossConfigParams() {
     bce_cfg.layers.back().units = 1;
     bce_cfg.loss_type = gui::NodeType::BCEWithLogits;
     bce_cfg.loss_params["pos_weight"] = "2.5";
+    bce_cfg.loss_params["label_smoothing"] = "0.1";
     bce_cfg.loss_params["reduction"] = "sum";
     auto bce_built = BuildSequentialFromConfig(bce_cfg);
     ExpectTrue(bce_built.ok(), "weighted BCEWithLogits config should build");
@@ -1794,6 +1795,8 @@ void TestWeightedLossConfigParams() {
                "BCEWithLogitsLoss should preserve reduction");
     ExpectNear(bce_loss->GetPosWeight(), 2.5f, 1e-6f,
                "BCEWithLogitsLoss should preserve pos_weight");
+    ExpectNear(bce_loss->GetLabelSmoothing(), 0.1f, 1e-6f,
+               "BCEWithLogitsLoss should preserve label_smoothing");
 
     auto focal_cfg = MakeTabularConfig();
     focal_cfg.loss_type = gui::NodeType::FocalLoss;

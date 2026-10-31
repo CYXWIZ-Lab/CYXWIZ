@@ -3405,7 +3405,8 @@ void CheckLossFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
     const auto* bce_logits =
         metadata.GetMetadata(gui::NodeType::BCEWithLogits);
     Check(HasInputType(bce_logits, "Logits", gui::PinType::Tensor) &&
-              ParameterMatches(bce_logits, "pos_weight", "float", "1.0"),
+              ParameterMatches(bce_logits, "pos_weight", "float", "1.0") &&
+              ParameterMatches(bce_logits, "label_smoothing", "float", "0.0"),
           "BCEWithLogits should expose its stable-logit and weighting contract");
 
     Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::SmoothL1Loss),

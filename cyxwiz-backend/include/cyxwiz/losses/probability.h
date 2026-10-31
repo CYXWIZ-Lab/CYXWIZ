@@ -19,10 +19,13 @@ private:
     float denominator_epsilon_;
 };
 
+// label_smoothing e trains on t x (1 - e) + e / 2, the two-class form of
+// torch CrossEntropyLoss(label_smoothing=e) and of timm's BinaryCrossEntropy.
 class CYXWIZ_API BCEWithLogitsLoss : public Loss {
 public:
     explicit BCEWithLogitsLoss(Reduction reduction = Reduction::Mean,
-                               float pos_weight = 1.0f);
+                               float pos_weight = 1.0f,
+                               float label_smoothing = 0.0f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
@@ -30,9 +33,12 @@ public:
 
     float GetPosWeight() const { return pos_weight_; }
     void SetPosWeight(float pos_weight);
+    float GetLabelSmoothing() const { return label_smoothing_; }
+    void SetLabelSmoothing(float label_smoothing);
 
 private:
     float pos_weight_ = 1.0f;
+    float label_smoothing_ = 0.0f;
 };
 
 class CYXWIZ_API KLDivLoss : public Loss {
