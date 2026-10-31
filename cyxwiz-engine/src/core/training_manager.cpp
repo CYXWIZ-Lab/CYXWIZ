@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include "crash_run_recorder.h"
+#include "training_report_window.h"
 #include "image_batchers.h"
 #include "image_dataset_batcher.h"
 #include <stdexcept>
@@ -1213,8 +1214,9 @@ void TrainingManager::TrainingThreadFunc(
                 // report windows); batch 1 is drawn in the first epoch only, so a
                 // later epoch never starts with a one-batch point.
                 const bool metrics_sampled =
-                    (batch <= 1 && epoch <= 1) || batch >= total_batches ||
-                    (report_interval > 0 && batch % report_interval == 0);
+                    ReportWindow::Ends(epoch, batch) &&
+                    (batch <= 1 || batch >= total_batches ||
+                     (report_interval > 0 && batch % report_interval == 0));
                 {
                     std::lock_guard<std::mutex> lock(metrics_mutex_);
                     cached_metrics_.current_epoch = epoch;

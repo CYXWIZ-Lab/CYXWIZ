@@ -195,9 +195,10 @@ Derives from `Loss`.
 
 | Member | What it does |
 |---|---|
-| `BCEWithLogitsLoss(self: BCEWithLogitsLoss, reduction: Reduction = Reduction.Mean, pos_weight: float = 1.0) -> None` | Create BCEWithLogits Loss with optional positive-class weight |
+| `BCEWithLogitsLoss(self: BCEWithLogitsLoss, reduction: Reduction = Reduction.Mean, pos_weight: float = 1.0, label_smoothing: float = 0.0) -> None` | Create BCEWithLogits Loss with optional positive-class weight and label smoothing |
 | `backward(self: BCEWithLogitsLoss, predictions: Tensor, targets: Tensor) -> Tensor` | Backward: gradient w.r.t logits |
 | `forward(self: BCEWithLogitsLoss, predictions: Tensor, targets: Tensor) -> Tensor` | Forward: compute binary cross entropy from logits |
+| `label_smoothing` (property) | Label smoothing: targets become t x (1 - e) + e / 2 |
 | `pos_weight` (property) | Positive-class weighting factor |
 
 ### `BatchIterator`

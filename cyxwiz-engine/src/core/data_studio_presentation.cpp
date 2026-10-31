@@ -222,7 +222,6 @@ SplitSource TraceSplitSource(const Input& in, int from) {
     return {nullptr, "", n ? "the inputs loop back on themselves" : "no data reaches it"};
 }
 
-
 void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
     // One chip per named type ("Check × 4"); Prepare's other step
     // nodes share one chip naming them.
