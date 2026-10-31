@@ -5310,6 +5310,7 @@ target_include_directories(test_engine_config_observability PRIVATE
 )
 
 target_link_libraries(test_engine_config_observability PRIVATE
+    cyxwiz-protocol
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )
