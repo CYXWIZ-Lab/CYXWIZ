@@ -1,4 +1,5 @@
 #include "training_executor.h"
+#include "training_report_window.h"
 #include <set>
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/gradient_clipping.h>
@@ -2608,6 +2609,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
     int batch_num = 0;
     size_t sample_count = 0;
     SequenceTagMetrics aggregate_metrics;
+    ReportWindow report_window;
 
     const size_t total_batches = batcher.GetNumBatches();
     AttachGraphScheduleIfPending(total_batches);
@@ -2821,6 +2823,16 @@ void TrainingExecutor::RunTrainingEpochSequence(
                              ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm) : std::string());
         }
 
+        if (ShouldReportTrainingBatch(config_, batch_num, static_cast<int>(total_batches), false) &&
+            ReportWindow::Ends(epoch, batch_num)) {
+            const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, loss_weight_sum);
+            const float window_acc = report_window.Accuracy(aggregate_metrics.correct_tokens,
+                                                            aggregate_metrics.total_tokens, current_acc);
+            UpdateMetrics([window_loss, window_acc](TrainingMetrics& m) {
+                m.report_loss = window_loss;
+                m.report_accuracy = window_acc;
+            });
+        }
         NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         if (batch_cb) {
             CrashRunRecorder::Instance().MarkStage(
@@ -3018,6 +3030,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
     int batch_num = 0;
     float current_loss = 0.0f;
     float current_acc = 0.0f;
+    ReportWindow report_window;
     double fetch_total_ms = 0.0;
     double fetch_max_ms = 0.0;
 
@@ -3247,9 +3260,29 @@ void TrainingExecutor::RunTrainingEpochArrow(
                       static_cast<float>(accuracy_count.total)
                 : 0.0f;
             batch_loss = current_loss;
+            if (ReportWindow::Ends(epoch, batch_num)) {
+                double weight = loss_weight_sum;
+                if (device_loss_weight_sum_initialized) {
+                    const ScopedArrayFireHostSyncAttribution weight_sync_attribution(
+                        ArrayFireHostSyncCategory::LossScalarReadback,
+                        "TrainingExecutor::ReportWindowWeight");
+                    weight = device_loss_weight_sum.ReadData<float>()[0];
+                }
+                const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, weight);
+                const float window_acc =
+                    report_window.Accuracy(accuracy_count.correct, accuracy_count.total, current_acc);
+                UpdateMetrics([window_loss, window_acc](TrainingMetrics& m) {
+                    m.report_loss = window_loss;
+                    m.report_accuracy = window_acc;
+                });
+            }
         } else if (regression_metrics) {
             current_loss = FinalizeAggregatedLoss(
                 *loss_, epoch_loss, loss_weight_sum);
+            if (should_report && ReportWindow::Ends(epoch, batch_num)) {
+                const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, loss_weight_sum);
+                UpdateMetrics([window_loss](TrainingMetrics& m) { m.report_loss = window_loss; });
+            }
         }
 
         // Update metrics

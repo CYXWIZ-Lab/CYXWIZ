@@ -6000,6 +6000,16 @@ set_target_properties(test_data_studio_presentation PROPERTIES
 )
 add_test(NAME data_studio_presentation COMMAND test_data_studio_presentation)
 
+# ===== Test: Training Dashboard report windows (TOFIX178 1.8i) =====
+add_executable(test_training_report_window tests/test_training_report_window.cpp)
+target_include_directories(test_training_report_window PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_training_report_window PRIVATE cyxwiz-backend)
+set_target_properties(test_training_report_window PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME training_report_window COMMAND test_training_report_window)
+
 # ===== Test: dataset lineage (TOFIX148 Publish) =====
 add_executable(test_dataset_lineage
     tests/test_dataset_lineage.cpp
