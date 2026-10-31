@@ -220,6 +220,17 @@ public:
     // The caller should call Reset() afterwards to pick up the new phase's
     // epoch order. Image/audio batchers override this.
     virtual void SetPhase(BatcherPhase /*phase*/) {}
+
+    // The items with these numbers in the source data (rows of the dataset or
+    // of its index table, the numbers Data Studio and the Studio Debugger
+    // show), prepared the way validation sees them: fixed steps, Normalize and
+    // the label form, no random augmentation; whatever the phase (TOFIX178
+    // 6.0b, Local Debug's picked sample). nullopt: this batcher cannot reach
+    // items by number. A number outside the data throws.
+    virtual std::optional<Batch> GetSourceSamples(const std::vector<size_t>& /*indices*/) { return std::nullopt; }
+    // The Data Split part an item falls in; nullopt when it is in none (left
+    // out, e.g. by a Quality node) or the batcher cannot tell.
+    virtual std::optional<BatcherPhase> SourceSamplePart(size_t /*index*/) const { return std::nullopt; }
 };
 
 /**

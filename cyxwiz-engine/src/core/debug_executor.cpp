@@ -2,6 +2,8 @@
 #include "debug_numerics.h"
 #include "error_codes.h"
 #include "model_builder.h"
+#include "spatial_batch_layout.h"
+#include "spatial_sequential_head.h"
 #include "synthetic_batch.h"
 
 #include <spdlog/spdlog.h>
@@ -217,6 +219,12 @@ DebugExecutor::DebugExecutor(TrainingConfiguration config)
 
 DebugExecutor::~DebugExecutor() = default;
 
+void DebugExecutor::SetInputSample(Tensor features, Tensor labels, std::string description) {
+    input_features_ = std::move(features);
+    input_labels_ = std::move(labels);
+    input_description_ = std::move(description);
+}
+
 DebugResult DebugExecutor::Run() {
     DebugResult result;
     result.timestamp = std::chrono::steady_clock::now();
@@ -252,8 +260,20 @@ DebugResult DebugExecutor::Run() {
         const auto module_provenance = std::move(built.module_provenance);
 
         // ---- Synthetic batch ----------------------------------------------
-        auto batch = MakeSyntheticBatch(config_, /*seed=*/1337);
-        spdlog::info("DebugExecutor: synthetic batch features[{}] labels[{}]",
+        SyntheticBatch batch;
+        if (!input_description_.empty()) {
+            // Batchers hand out batch-first rows; a spatial model takes them
+            // through the same conversion training's Forward makes.
+            batch.features = UsesSpatialSequentialInput(config_)
+                                 ? SpatialBatchFromRows(input_features_, config_.input_shape)
+                                 : input_features_;
+            batch.labels = input_labels_;
+            result.input_description = input_description_;
+        } else {
+            batch = MakeSyntheticBatch(config_, /*seed=*/1337);
+            result.input_description = "a synthetic sample (seed 1337)";
+        }
+        spdlog::info("DebugExecutor: {} features[{}] labels[{}]", result.input_description,
                      batch.features.NumElements(), batch.labels.NumElements());
 
         // ---- Stage: Forward (per-layer shape capture) ---------------------

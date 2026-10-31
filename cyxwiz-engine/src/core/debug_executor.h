@@ -107,6 +107,9 @@ struct DebugResult {
     float forward_total_ms = 0.0f;
     float backward_total_ms = 0.0f;
     float optimizer_step_ms = 0.0f;
+    // What ran: the picked item ("image 120 of cat_dog, validation") or
+    // "a synthetic sample (seed 1337)".
+    std::string input_description;
 
     float loss_value = std::numeric_limits<float>::quiet_NaN();
     bool loss_finite = false;
@@ -123,8 +126,8 @@ struct DebugResult {
     std::chrono::steady_clock::time_point timestamp{};
 };
 
-// Runs one forward + one backward + one optimizer step on a synthetic
-// batch, producing a DebugResult. Does NOT touch DataRegistry — tensors
+// Runs one forward + one backward + one optimizer step on the picked sample
+// (SetInputSample) or a synthetic batch, producing a DebugResult. Does NOT touch DataRegistry — tensors
 // live on the stack of Run(). Does NOT trigger a reservation / Central
 // Server call. Synchronous (UI thread, ~200ms target).
 //
@@ -138,6 +141,10 @@ public:
     DebugExecutor(const DebugExecutor&) = delete;
     DebugExecutor& operator=(const DebugExecutor&) = delete;
 
+    // Run this sample instead of a synthetic one (TOFIX178 6.0b: the picked
+    // item, see debug_sample_source.h). `description` names it in the result.
+    void SetInputSample(Tensor features, Tensor labels, std::string description);
+
     // Execute the debug pass. Catches exceptions at every stage — a
     // throw leaves `result.reached` at the stage where it failed and
     // `result.failure_summary` set to the exception message.
@@ -148,6 +155,9 @@ private:
     std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Loss> loss_;
     std::unique_ptr<Optimizer> optimizer_;
+    Tensor input_features_;
+    Tensor input_labels_;
+    std::string input_description_;
 };
 
 } // namespace cyxwiz

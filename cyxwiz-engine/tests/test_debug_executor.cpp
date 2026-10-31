@@ -2301,6 +2301,25 @@ void TestDebugExecutorGoldenPath() {
                  res.loss_value);
 }
 
+// TOFIX178 6.0b: Local Debug runs the sample it is given (the picked item)
+// and names it; without one it runs and names a synthetic sample.
+void TestDebugExecutorInputSample() {
+    spdlog::info("--- TestDebugExecutorInputSample ---");
+    auto cfg = MakeTabularConfig();
+    DebugExecutor synthetic(cfg);
+    const auto plain = synthetic.Run();
+    ExpectTrue(plain.success && plain.input_description == "a synthetic sample (seed 1337)",
+               "no sample given: a synthetic one, named: " + plain.input_description);
+
+    const auto given = MakeSyntheticBatch(cfg, /*seed=*/7);
+    DebugExecutor picked(cfg);
+    picked.SetInputSample(given.features, given.labels, "row 3 of rows, validation");
+    const auto res = picked.Run();
+    ExpectTrue(res.success && res.input_description == "row 3 of rows, validation",
+               "the given sample runs and is named: " + res.input_description);
+    ExpectTrue(res.loss_value != plain.loss_value, "the given sample, not the synthetic one, reached the loss");
+}
+
 // TOFIX178 6.0a: Local Debug runs a branched graph the way training does (its
 // graph plan), not as a straight chain. The 1.8 ResNet example (skips into
 // Add, stride-2 blocks with 1x1 projections) used to stop at the first
@@ -2365,6 +2384,18 @@ void TestDebugExecutorResNetExample() {
              g.param_name.compare(g.param_name.size() - 12, 12, ".running_var") == 0);
         ExpectTrue(g.has_gradient || running_stat, g.param_name + " gets a gradient");
     }
+    // A picked image arrives as the image batcher hands it out, batch first
+    // [1, H, W, C] (TOFIX178 6.0b), and enters the model the way training's
+    // Forward converts it.
+    std::vector<float> pixels(64 * 64 * 3);
+    for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<float>(i % 251) / 251.0f;
+    const auto synthetic = MakeSyntheticBatch(config, 3);
+    DebugExecutor picked(config);
+    picked.SetInputSample(Tensor({1, 64, 64, 3}, pixels.data(), DataType::Float32), synthetic.labels,
+                          "image 0 of cat_dog, train");
+    const auto picked_res = picked.Run();
+    ExpectTrue(picked_res.reached == DebugStage::Complete && picked_res.success,
+               "a batch-first picked image runs the ResNet: " + picked_res.failure_summary);
     spdlog::info("  OK: ResNet layer_traces={}, params_with_grad={}, loss={}",
                  res.layer_traces.size(), res.params_with_grad, res.loss_value);
 }
@@ -2868,6 +2899,7 @@ int main(int argc, char** argv) {
         TestDebugNumericsContract();
         TestDebugExecutorGoldenPath();
         TestDebugExecutorResNetExample();
+        TestDebugExecutorInputSample();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

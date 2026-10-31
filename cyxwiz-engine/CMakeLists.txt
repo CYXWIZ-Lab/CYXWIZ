@@ -285,6 +285,7 @@ set(ENGINE_SOURCES
     src/core/image_utils.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_sample_source.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
     src/core/debug_node_inspector.cpp

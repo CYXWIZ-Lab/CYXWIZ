@@ -21,6 +21,7 @@
 #include "../src/core/normalize_statistics.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <stdexcept>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -495,8 +496,34 @@ void CheckBatcher() {
         Check(std::fabs(sample[1] - 40.0f / 255.0f) < 1e-6f, "validation: the crop starts at row 1");
     }
 
+    // Local Debug's picked sample (TOFIX178 6.0b): image N as validation sees
+    // it, whatever the phase - its validation values, and a train image
+    // centre-cropped and unflipped - with the part it falls in.
     batcher.SetPhase(cyxwiz::BatcherPhase::Train);
     batcher.Reset();
+    const size_t val_image = static_cast<size_t>(val.row_ids[0]);
+    const auto picked = batcher.GetSourceSamples({val_image});
+    Check(picked && picked->size == 1 && picked->data.Shape() == std::vector<size_t>({1, 2, 2, 3}),
+          "a picked image is one [1, 2, 2, 3] sample");
+    const float* p = picked->data.ReadData<float>();
+    bool same = true;
+    for (size_t i = 0; i < 12; ++i) same = same && p[i] == v[i];
+    Check(same, "a picked validation image has its validation batch values");
+    Check(batcher.SourceSamplePart(val_image) == cyxwiz::BatcherPhase::Val, "the picked image is in validation");
+    const size_t train_image = batcher.Part(cyxwiz::BatcherPhase::Train).front();
+    const auto picked_train = batcher.GetSourceSamples({train_image});
+    const float* pt = picked_train->data.ReadData<float>();
+    Check(std::fabs(pt[0] - Red(1)) < 1e-6f && std::fabs(pt[3] - Red(2)) < 1e-6f,
+          "a picked train image: centre crop, not flipped (no random steps)");
+    Check(batcher.SourceSamplePart(train_image) == cyxwiz::BatcherPhase::Train, "the train image is in train");
+    bool refused = false;
+    try {
+        batcher.GetSourceSamples({4});
+    } catch (const std::out_of_range&) {
+        refused = true;
+    }
+    Check(refused, "an image number past the set is refused");
+
     const auto train = batcher.GetNextBatch();
 
     // MixUp on every Train batch: one-hot labels come out mixed (rows still sum

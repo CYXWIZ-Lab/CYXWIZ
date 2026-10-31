@@ -155,6 +155,7 @@
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
+#include "../core/debug_sample_source.h"
 #include "../core/debug_session_manager.h"
 #include "../core/preflight_validator.h"
 #include "../core/smoke_run_executor.h"
@@ -5059,7 +5060,20 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         // after Local Debug completes. Preserve that session source of truth;
         // this once-per-debug-run copy is outside training hot loops.
         cyxwiz::DebugExecutor exe(config);
+        // The picked sample, prepared as validation sees it (TOFIX178 6.0b);
+        // a synthetic one when its data kind cannot hand an item over yet.
+        const auto sample = cyxwiz::MakeDebugSample(config, selected_sample_index, stop_requested);
+        if (sample.ok()) {
+            exe.SetInputSample(sample.features, sample.labels, sample.description);
+        }
         session.debug_result = exe.Run();
+        if (!sample.ok()) {
+            session.debug_result.issues.push_back(
+                {cyxwiz::IssueLevel::Warning, -1, "Local Debug",
+                 "Sample " + std::to_string(selected_sample_index) + " could not run (" + sample.unavailable +
+                     "); Local Debug ran a synthetic sample instead",
+                 cyxwiz::errors::Runtime::UnsupportedNode});
+        }
         session.has_debug_result = true;
         session.success = session.debug_result.success;
         session.failure_summary = session.debug_result.failure_summary;
