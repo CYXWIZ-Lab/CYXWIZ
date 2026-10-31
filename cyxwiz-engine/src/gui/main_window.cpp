@@ -4980,6 +4980,18 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             }
         }
     }
+    // The prepared-data cache and project folders Train uses: Smoke Run and
+    // Local Debug's picked sample run the data steps with them.
+    auto step_cache_config = GraphMaterializationCacheConfig(inputs ? inputs->project_root : std::filesystem::path{});
+    if (inputs && inputs->rebuild_prepared_data) {
+        step_cache_config.mode = cyxwiz::MaterializationCacheMode::Rebuild;
+    }
+    cyxwiz::StepRunRoots step_roots;
+    {
+        auto& project = cyxwiz::ProjectManager::Instance();
+        step_roots = {inputs ? inputs->project_root.string() : project.GetProjectRoot(),
+                      project.GetArtifactsPath(), project.GetExportsPath(), project.GetIngestionCachePath()};
+    }
     if (run_smoke && !smoke_capability.supported) {
         session.studio_events.push_back({
             run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
@@ -4989,17 +5001,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         begin_step("smoke");
         cyxwiz::SmokeRunExecutor smoke_executor;
         cyxwiz::SmokeRunOptions smoke_options;
-        smoke_options.cache_config = GraphMaterializationCacheConfig(
-            inputs ? inputs->project_root : std::filesystem::path{});
-        {
-            auto& project = cyxwiz::ProjectManager::Instance();
-            smoke_options.roots = {inputs ? inputs->project_root.string() : project.GetProjectRoot(),
-                                   project.GetArtifactsPath(), project.GetExportsPath(),
-                                   project.GetIngestionCachePath()};
-        }
-        if (inputs && inputs->rebuild_prepared_data) {
-            smoke_options.cache_config.mode = cyxwiz::MaterializationCacheMode::Rebuild;
-        }
+        smoke_options.cache_config = step_cache_config;
+        smoke_options.roots = step_roots;
         smoke_options.should_stop = [&stop_requested]() { return stop_requested(); };
         try {
             session.smoke_result = smoke_executor.RunTextSmoke(
@@ -5059,10 +5062,19 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         // explanations, stall analysis, replay metadata, and persistence
         // after Local Debug completes. Preserve that session source of truth;
         // this once-per-debug-run copy is outside training hot loops.
-        cyxwiz::DebugExecutor exe(config);
         // The picked sample, prepared as validation sees it (TOFIX178 6.0b);
         // a synthetic one when its data kind cannot hand an item over yet.
-        const auto sample = cyxwiz::MakeDebugSample(config, selected_sample_index, stop_requested);
+        // The model is built from the configuration reconciled to that data.
+        cyxwiz::TrainingConfiguration debug_config = config;
+        cyxwiz::DebugSampleRequest sample_request;
+        sample_request.index = selected_sample_index;
+        sample_request.nodes = &nodes;
+        sample_request.links = &links;
+        sample_request.roots = step_roots;
+        sample_request.cache_config = step_cache_config;
+        sample_request.stop = [&stop_requested]() { return stop_requested(); };
+        const auto sample = cyxwiz::MakeDebugSample(debug_config, sample_request);
+        cyxwiz::DebugExecutor exe(sample.ok() ? debug_config : config);
         if (sample.ok()) {
             exe.SetInputSample(sample.features, sample.labels, sample.description);
         }

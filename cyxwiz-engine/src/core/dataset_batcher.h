@@ -493,6 +493,10 @@ public:
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return indices_.size(); }
+    // Rows of the table by number, as validation sees them (TOFIX178 6.0b).
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    // This batcher's part when the row is in it (it holds one part).
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std) override;
@@ -530,6 +534,8 @@ public:
         size_t width, const std::string& target_base = {});
 
 private:
+    Batch AssembleBatch(const int64_t* rows, size_t n, bool& assembled);
+
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;
     size_t batch_size_;

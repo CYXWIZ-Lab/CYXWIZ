@@ -509,19 +509,60 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             return batch;
         }
 
+        const size_t batch_start = current_index_;
+        const size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
+        bool assembled = false;
+        batch = AssembleBatch(indices_.data() + batch_start, batch_end - batch_start, assembled);
+        if (assembled) current_index_ = batch_end;
+        return batch;
+
+    } catch (const std::exception& e) {
+        spdlog::error("ArrowDatasetBatcher::GetNextBatch exception: {}", e.what());
+        return batch;
+    } catch (...) {
+        spdlog::error("ArrowDatasetBatcher::GetNextBatch unknown exception");
+        return batch;
+    }
+}
+
+std::optional<Batch> ArrowDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
+    if (!dataset_ || indices.empty()) return std::nullopt;
+    std::vector<int64_t> rows;
+    rows.reserve(indices.size());
+    for (size_t index : indices) {
+        if (index >= static_cast<size_t>(dataset_->GetNumRows()))
+            throw std::out_of_range("row " + std::to_string(index) + " is outside the " +
+                                    std::to_string(dataset_->GetNumRows()) + " rows");
+        rows.push_back(static_cast<int64_t>(index));
+    }
+    bool assembled = false;
+    Batch batch = AssembleBatch(rows.data(), rows.size(), assembled);
+    if (!assembled) throw std::runtime_error("the rows could not be read as a batch");
+    return batch;
+}
+
+std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) const {
+    // This batcher holds one part of the split.
+    return std::find(base_indices_.begin(), base_indices_.end(), static_cast<int64_t>(index)) != base_indices_.end()
+               ? std::optional<BatcherPhase>(split_phase_)
+               : std::nullopt;
+}
+
+// These rows as one batch: features (device-resident when they fit),
+// Normalize, the label form and the inspection. `assembled` false: nothing
+// usable (logged).
+Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actual_batch_size, bool& assembled) {
+    Batch batch;
+    assembled = false;
+    {
         // Validate we have features
         if (num_features_ == 0) {
             spdlog::error("ArrowDatasetBatcher::GetNextBatch: No feature columns found");
             return batch;
         }
 
-        // Calculate batch bounds
-        size_t batch_start = current_index_;
-        size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
-        size_t actual_batch_size = batch_end - batch_start;
         batch.size = actual_batch_size;
-        batch.row_ids.assign(indices_.begin() + static_cast<std::ptrdiff_t>(batch_start),
-                             indices_.begin() + static_cast<std::ptrdiff_t>(batch_end));
+        batch.row_ids.assign(batch_rows, batch_rows + actual_batch_size);
 
         // Get Arrow table
         auto table = dataset_->GetArrowTable();
@@ -539,8 +580,8 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                 table,
                 feature_cols_,
                 label_col_indices_,
-                indices_,
-                batch_start,
+                std::vector<int64_t>(batch_rows, batch_rows + actual_batch_size),
+                0,
                 actual_batch_size);
         }
 
@@ -558,7 +599,6 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         // The batch's rows from the device-resident features (TOFIX178 S0-b):
         // converted and normalised once per run, one lookup on the device per
         // batch instead of a host gather, a copy and an upload.
-        const int64_t* batch_rows = indices_.data() + batch_start;
         bool resident = false;
         if (PrepareResidentFeatures(table)) {
             std::vector<int32_t> positions(actual_batch_size);
@@ -695,7 +735,7 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                 };
 
                 for (size_t b = 0; b < actual_batch_size; ++b) {
-                    int64_t row_idx = indices_[batch_start + b];
+                    int64_t row_idx = batch_rows[b];
                     if (row_idx >= 0 && row_idx < num_rows) {
                         if (scalar_label_mode_) {
                             batch_labels_float[b * regression_target_width] =
@@ -714,7 +754,7 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                 if (column_index < 0 || column_index >= num_cols) continue;
                 const auto& target_column = table->column(column_index);
                 for (size_t b = 0; b < actual_batch_size; ++b) {
-                    const int64_t row_idx = indices_[batch_start + b];
+                    const int64_t row_idx = batch_rows[b];
                     if (row_idx >= 0 && row_idx < num_rows) {
                         batch_labels_float[
                             b * regression_target_width + target] =
@@ -769,14 +809,7 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             batch.labels = Tensor(label_shape, label_data.data());
         }
 
-        current_index_ = batch_end;
-        return batch;
-
-    } catch (const std::exception& e) {
-        spdlog::error("ArrowDatasetBatcher::GetNextBatch exception: {}", e.what());
-        return batch;
-    } catch (...) {
-        spdlog::error("ArrowDatasetBatcher::GetNextBatch unknown exception");
+        assembled = true;
         return batch;
     }
 }

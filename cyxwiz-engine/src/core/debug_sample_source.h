@@ -6,19 +6,23 @@
 // augmentation), with the Data Split part it falls in.
 
 #include "graph_compiler.h"
+#include "graph_model.h"
+#include "materialization_cache.h"
+#include "training_input_preparation.h"
 
 #include <cyxwiz/tensor.h>
 
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
 struct DebugSample {
     Tensor features;
     Tensor labels;
-    // "image 120 of cat_dog, validation"; empty when unavailable.
+    // "row 120 of reviews, validation"; empty when unavailable.
     std::string description;
     // Why the picked item cannot run (Local Debug then runs a synthetic sample
     // and says so); empty when it can.
@@ -27,7 +31,21 @@ struct DebugSample {
     bool ok() const { return unavailable.empty(); }
 };
 
-// `stop`: polled while a data kind prepares its items (true stops).
-DebugSample MakeDebugSample(const TrainingConfiguration& config, size_t index, std::function<bool()> stop = {});
+struct DebugSampleRequest {
+    size_t index = 0;
+    const std::vector<gui::MLNode>* nodes = nullptr;
+    const std::vector<gui::NodeLink>* links = nullptr;
+    // The project folders and prepared-data cache Train uses, for the data
+    // steps before the Data Split.
+    StepRunRoots roots;
+    MaterializationCacheConfig cache_config;
+    // Polled while the data is prepared (true stops).
+    std::function<bool()> stop;
+};
+
+// `config` is reconciled to the data the sample comes from as Train
+// reconciles it (label column, target, input width), so the model Local Debug
+// builds from it reads the sample.
+DebugSample MakeDebugSample(TrainingConfiguration& config, const DebugSampleRequest& request);
 
 }  // namespace cyxwiz
