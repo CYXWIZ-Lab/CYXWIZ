@@ -201,6 +201,8 @@ bool OpenDirectoryInFileBrowser(const std::string& directory) {
 #endif
 }
 
+// The training warnings list is its only user.
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const char* ClassifyTrainingWarning(const std::string& text) {
     std::string lower = text;
     std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -229,7 +231,6 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
-#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     const TrainingTraceSummary& trace) {
     for (auto it = trace.recent_events.rbegin();

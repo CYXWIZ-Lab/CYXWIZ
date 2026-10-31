@@ -1,6 +1,7 @@
 #include "text_feature_matrix.h"
 
 #include "../materialization_memory_guard.h"
+#include "../gcc_diagnostics.h"
 #include "../sparse_feature_dataset.h"
 
 #include <arrow/api.h>
@@ -175,6 +176,8 @@ MaterializationMemoryEstimate EstimateSparseTextFeatureMemory(
     return estimate;
 }
 
+// Arrow's builders inlined here: GCC -Warray-bounds false positive (TOFIX187).
+CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
 arrow::Result<std::shared_ptr<arrow::Table>> BuildDenseTextFeatureTable(
     const TextFeatureMatrix& matrix,
     const std::string& feature_prefix) {
@@ -227,6 +230,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> BuildDenseTextFeatureTable(
     return arrow::Table::Make(
         arrow::schema(std::move(fields)), std::move(arrays), matrix.num_rows);
 }
+CYXWIZ_GCC_IGNORE_END
 
 arrow::Result<std::shared_ptr<SparseFeatureDataset>>
 BuildSparseTextFeatureDataset(TextFeatureMatrix matrix,

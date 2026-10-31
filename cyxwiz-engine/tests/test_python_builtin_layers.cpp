@@ -132,7 +132,7 @@ struct Layer {
 struct LossNode {
     std::string python;  // node name in the bundle; empty: a built-in node
     gui::NodeType builtin = gui::NodeType::CrossEntropyLoss;
-    std::map<std::string, std::string> parameters;
+    std::map<std::string, std::string> parameters{};
     bool regression = false;  // the target is y, the head one value
 };
 

@@ -76,27 +76,6 @@ struct ExportResult {
     int num_layers = 0;
 };
 
-// Helper: Create a simple test model (784->128->10 MLP)
-std::unique_ptr<cyxwiz::SequentialModel> CreateTestModel() {
-    auto model = std::make_unique<cyxwiz::SequentialModel>();
-
-    // Add Linear layer: 784 -> 128
-    auto linear1 = cyxwiz::CreateModule(cyxwiz::ModuleType::Linear,
-        {{"in_features", "784"}, {"out_features", "128"}});
-    model->AddModule(std::move(linear1));
-
-    // Add ReLU
-    auto relu = cyxwiz::CreateModule(cyxwiz::ModuleType::ReLU, {});
-    model->AddModule(std::move(relu));
-
-    // Add Linear layer: 128 -> 10
-    auto linear2 = cyxwiz::CreateModule(cyxwiz::ModuleType::Linear,
-        {{"in_features", "128"}, {"out_features", "10"}});
-    model->AddModule(std::move(linear2));
-
-    return model;
-}
-
 // Helper: Create a smaller test model for quick tests
 std::unique_ptr<cyxwiz::SequentialModel> CreateSmallTestModel() {
     auto model = std::make_unique<cyxwiz::SequentialModel>();

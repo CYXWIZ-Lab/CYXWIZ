@@ -39,23 +39,6 @@ std::vector<double> Constrain(const std::vector<double>& x) {
     return a;
 }
 
-// The inverse: AR coefficients of a stationary polynomial -> unconstrained x (NaN when not stationary).
-std::vector<double> Unconstrain(const std::vector<double>& phi) {
-    const size_t k = phi.size();
-    std::vector<double> a = phi, r(k, 0.0);
-    for (size_t j = k; j-- > 0;) {
-        const double rj = a[j];
-        if (!(std::fabs(rj) < 1.0)) return std::vector<double>(k, NAN);
-        r[j] = rj;
-        std::vector<double> previous(j, 0.0);
-        for (size_t i = 0; i < j; ++i) previous[i] = (a[i] + rj * a[j - 1 - i]) / (1.0 - rj * rj);
-        for (size_t i = 0; i < j; ++i) a[i] = previous[i];
-    }
-    std::vector<double> x(k);
-    for (size_t i = 0; i < k; ++i) x[i] = r[i] / std::sqrt(1.0 - r[i] * r[i]);
-    return x;
-}
-
 struct Arma {
     std::vector<double> ar, ma;
     double mu = 0.0;

@@ -658,7 +658,7 @@ struct NodePin {
     // know "Labels here is the y in (X, y) ground truth, sourced
     // from the DataInput's label_column setting" without having to
     // read the source.
-    std::string description;
+    std::string description{};
 
     // Variadic pin support - enables multiple connections to a single pin
     bool is_variadic = false;        // True for pins accepting multiple connections

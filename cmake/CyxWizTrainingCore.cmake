@@ -120,9 +120,12 @@ add_library(cyxwiz-training-hooks STATIC
     ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
     ${_cyxwiz_engine_src}/core/python_node_bundle.cpp
     ${_cyxwiz_engine_src}/core/python_node_approvals.cpp
+    # Here, not in training-core: python_node_bundle hashes the bundle code, and
+    # GNU ld resolves a static library only from the libraries after it.
+    ${_cyxwiz_engine_src}/core/sha256_digest.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
-target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
+target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog OpenSSL::Crypto)
 set_target_properties(cyxwiz-training-hooks PROPERTIES CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
 if(WIN32)
     target_compile_definitions(cyxwiz-training-hooks PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
@@ -147,7 +150,6 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/extension_node_metadata.cpp
     ${_cyxwiz_engine_src}/core/pipeline_runtime_capabilities.cpp
     ${_cyxwiz_engine_src}/core/sequence_arrow_batcher.cpp
-    ${_cyxwiz_engine_src}/core/sha256_digest.cpp
     ${_cyxwiz_engine_src}/core/compute_runtime_config.cpp
     ${_cyxwiz_engine_src}/core/training_benchmark.cpp
     ${_cyxwiz_engine_src}/core/machine_capability.cpp

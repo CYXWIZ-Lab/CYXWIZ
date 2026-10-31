@@ -34,11 +34,11 @@ inline constexpr const char* kTestPredictionsPartialKey = "partial";
 struct TestPredictionsSource {
     std::vector<int64_t> row_ids;
     std::string dataset;
-    std::optional<double> loss;
+    std::optional<double> loss{};
     double seconds = 0.0;
     bool partial = false;
     // Each row's file (images); a "file" column after row_id when one per row.
-    std::vector<std::string> files;
+    std::vector<std::string> files{};
 };
 
 // One row per test sample: row_id (when known), file (images), true_class, predicted_class,
