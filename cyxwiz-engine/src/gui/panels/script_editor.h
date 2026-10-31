@@ -329,8 +329,8 @@ private:
 
     // Section execution helpers
     struct Section {
-        int start_line;
-        int end_line;
+        int start_line = 0;
+        int end_line = 0;
         std::string code;
     };
     std::vector<Section> ParseSections(const std::string& text);
