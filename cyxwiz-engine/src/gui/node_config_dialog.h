@@ -11,6 +11,7 @@
 #undef CreateDialogW
 #endif
 
+#include "../core/cloud_source_presentation.h"
 #include <string>
 #include <map>
 #include <functional>
@@ -232,9 +233,13 @@ public:
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
     bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
-    bool CanApply() const override { return !IsHdf5Source(); }
+    bool CanApply() const override {
+        if (CloudSourceChosen()) return cloud_can_apply_;
+        return !IsHdf5Source();
+    }
     const char* ApplyBlockedReason() const override {
         if (IsBusy()) return "Wait for the load to finish";
+        if (CloudSourceChosen()) return cloud_can_apply_ ? nullptr : cloud_apply_blocked_reason_.c_str();
         if (IsHdf5Source()) return "An HDF5 file can be inspected here; loading it is not built yet";
         return nullptr;
     }
@@ -283,6 +288,33 @@ private:
     void RenderDatasetRoleNote();
     char source_buf_[512] = {};
     bool format_options_open_ = false;
+    // CyxCloud source (TOFIX164 slice 4b, data_input_dialog_cloud_source.cpp):
+    // the source choice above the file field, the account's datasets and the
+    // chosen dataset's files (listed on threads, polled each frame), what the
+    // node's cloud_* parameters remember, and whether Apply may run.
+    enum class SourceKind { ThisComputer, CyxCloud };
+    SourceKind source_kind_ = SourceKind::ThisComputer;
+    bool CloudSourceChosen() const;
+    void RenderSourceChoice();
+    void RenderCloudSource();
+    void RefreshCloudDatasets();
+    void RefreshCloudFiles(const std::string& dataset_id);
+    void PollCloudLists();
+    cyxwiz::cloud_source_view::Input CloudInput() const;
+    void ApplyCloudSource();
+    struct CloudListTask;
+    std::shared_ptr<CloudListTask> cloud_datasets_task_;
+    std::shared_ptr<CloudListTask> cloud_files_task_;
+    bool cloud_listed_ = false;
+    std::vector<cyxwiz::cloud_source_view::DatasetIn> cloud_datasets_;
+    std::vector<cyxwiz::cloud_source_view::FileIn> cloud_files_;
+    std::string cloud_files_of_;
+    std::string cloud_datasets_error_;
+    std::string cloud_selected_dataset_;
+    std::string cloud_selected_file_;
+    cyxwiz::cloud_source_view::Remembered cloud_remembered_;
+    bool cloud_can_apply_ = false;
+    std::string cloud_apply_blocked_reason_;
     data_input::FolderScan folder_scan_;
     std::string folder_scan_path_;
     bool IsHdf5Source() const;

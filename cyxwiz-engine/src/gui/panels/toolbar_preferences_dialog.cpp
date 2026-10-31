@@ -1324,6 +1324,16 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     storage_stale_ = true;  // measured again when it opens
                 }
 
+                if (ImGui::BeginTabItem(ICON_FA_SERVER " Servers", nullptr,
+                                        preferences_select_tab_ == "Servers" ? ImGuiTabItemFlags_SetSelected
+                                                                             : ImGuiTabItemFlags_None)) {
+                    preferences_select_tab_.clear();
+                    RenderServersTab();
+                    ImGui::EndTabItem();
+                } else {
+                    servers_loaded_ = false;  // read from the config again when it opens
+                }
+
                 ImGui::EndTabBar();
             }
             ImGui::EndChild();

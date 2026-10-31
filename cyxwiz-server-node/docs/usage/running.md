@@ -116,8 +116,9 @@ docs/usage/big_data.md.
 
 The GUI signs in with your CyxWiz account and hands the token to the daemon
 when you click Apply. Tokens last 24 hours; the daemon renews its own copy
-through the web API (`auth_api_url` in the daemon config, default
-`http://127.0.0.1:3002/api`) when less than 2 hours remain, so a node can run
+through the web API (`network.cyxwiz_server` when set, else
+`network.auth_api_url`, default `http://127.0.0.1:3002/api`; see the Engine's
+docs/usage/server-address.md) when less than 2 hours remain, so a node can run
 for days. If renewal fails after the token has expired, sign in again in the
 GUI. There is no wallet sign-in.
 

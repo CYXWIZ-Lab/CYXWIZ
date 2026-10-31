@@ -148,8 +148,9 @@ public:
     // Opens a web page in the user's browser (the sign-in service's website).
     static void OpenWebsite(const std::string& url);
 
-    // Answers whether a sign-in service answers at its /health route (3 s).
-    static std::future<bool> ProbeService(std::string api_url);
+    // GET a URL (http or https, certificates checked; 3 s): the status, 0
+    // when nothing answered. The server address probe uses it (TOFIX168).
+    static int HttpGet(const std::string& url, std::string* body);
 
     // The email of the last sign-in, kept even when the session expired.
     std::string GetRememberedEmail() const;

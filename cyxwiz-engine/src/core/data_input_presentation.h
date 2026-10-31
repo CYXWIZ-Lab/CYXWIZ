@@ -41,6 +41,10 @@ struct StripInput {
 
     bool failed = false;       // the last Apply failed (an earlier load may stay)
     std::string failure;
+    // A Data Input whose file lives in CyxCloud (TOFIX164): `source` is the
+    // file's name there, `cloud_dataset` the dataset's; file_size its size.
+    bool cloud = false;
+    std::string cloud_dataset;
 };
 
 // A number and its word ("52,681" "samples"), drawn as one fact.

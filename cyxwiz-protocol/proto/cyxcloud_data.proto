@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+// CyxCloud gateway's DataService, as the gateway serves it (package
+// cyxcloud.data). This file is a copy of cyx_cloud/cyxcloud-protocol/proto/
+// data.proto (cyx_cloud branch distributed-training, 2026-10-21); keep it
+// identical to that file - gRPC routes by package and service name, so a
+// different package here would not reach the gateway (TOFIX164).
+package cyxcloud.data;
+
+// Data streaming service for CyxWiz ML training
+service DataService {
+  // Stream dataset chunks for training
+  rpc StreamData(StreamDataRequest) returns (stream DataChunk);
+
+  // Get dataset metadata
+  rpc GetDataset(GetDatasetRequest) returns (DatasetInfo);
+
+  // Prefetch chunks to local cache
+  rpc Prefetch(PrefetchRequest) returns (PrefetchResponse);
+}
+
+// Request to stream data
+message StreamDataRequest {
+  // Dataset identifier (CID or path)
+  string dataset_id = 1;
+
+  // Batch size (number of samples per chunk)
+  int32 batch_size = 2;
+
+  // Shuffle data before streaming
+  bool shuffle = 3;
+
+  // Number of batches to prefetch
+  int32 prefetch = 4;
+
+  // Optional: start from specific epoch
+  int32 start_epoch = 5;
+
+  // Dataset access token (DataStreamService.CreateAccessToken); required.
+  // The token's dataset must contain the requested file.
+  string access_token = 6;
+}
+
+// Streamed data chunk
+message DataChunk {
+  // Batch index within epoch
+  uint64 batch_index = 1;
+
+  // Raw data bytes (format depends on dataset)
+  bytes data = 2;
+
+  // Whether this is the last chunk in epoch
+  bool is_last = 3;
+
+  // On the last chunk: SHA-256 (hex) of every byte streamed, in order, and
+  // the byte count. The receiver verifies before it uses the file. The
+  // gateway only reaches the last chunk after checking the assembled bytes
+  // against the file's stored content hash; a missing or unreadable chunk
+  // ends the stream with an error instead.
+  string stream_sha256 = 4;
+  uint64 total_bytes = 5;
+}
+
+// Request for dataset info
+message GetDatasetRequest {
+  string dataset_id = 1;
+}
+
+// Dataset metadata
+message DatasetInfo {
+  // Dataset identifier
+  string id = 1;
+
+  // Human-readable name
+  string name = 2;
+
+  // Total size in bytes
+  uint64 size_bytes = 3;
+
+  // Number of samples
+  uint64 num_samples = 4;
+
+  // Number of chunks
+  uint32 num_chunks = 5;
+
+  // Sample shape (e.g., [3, 224, 224] for images)
+  repeated int32 sample_shape = 6;
+
+  // Data type (float32, int64, etc.)
+  string dtype = 7;
+
+  // Additional metadata as JSON
+  string metadata_json = 8;
+}
+
+// Prefetch request
+message PrefetchRequest {
+  // Dataset to prefetch from
+  string dataset_id = 1;
+
+  // Specific chunk IDs to prefetch
+  repeated string chunk_ids = 2;
+}
+
+// Prefetch response
+message PrefetchResponse {
+  // Number of chunks cached
+  uint64 cached_chunks = 1;
+
+  // Number of chunks that failed to cache
+  uint64 failed_chunks = 2;
+}

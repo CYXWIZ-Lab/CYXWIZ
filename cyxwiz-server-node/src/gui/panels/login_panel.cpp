@@ -7,7 +7,9 @@
 #include "gui/icons.h"
 #include "gui/theme.h"
 #include "gui/ui_widgets.h"
+#include "gui/server_address_widgets.h"
 #include "gui/window_frame.h"
+#include "common/server_address.h"
 #include "ipc/daemon_client.h"
 
 #include <imgui.h>
@@ -66,6 +68,13 @@ std::string MachineName() {
     return "CyxWiz-Node";
 }
 
+std::string TrimmedText(const char* text) {
+    const std::string s(text);
+    const auto first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    return s.substr(first, s.find_last_not_of(" \t\r\n") - first + 1);
+}
+
 }  // namespace
 
 LoginPanel::LoginPanel() : ServerPanel("Login", true) {}
@@ -79,7 +88,6 @@ void LoginPanel::Update() {
     PollRegistration();
     PollDaemonStatus();
     PollHeartbeat();
-    PollServiceProbe();
     PollProgressCard();
 }
 
@@ -222,21 +230,6 @@ void LoginPanel::PollHeartbeat() {
     heartbeat_future_ = std::async(std::launch::async, []() { return auth::AuthManager::Instance().SendHeartbeatToApi(); });
 }
 
-void LoginPanel::PollServiceProbe() {
-    if (probe_future_.valid() && probe_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        service_reach_ = probe_future_.get() ? core::ServiceReach::Reachable : core::ServiceReach::Unreachable;
-    }
-    if (!open_service_dialog_ || !service_dirty_ || probe_future_.valid()) return;
-    // Probe 600 ms after the last keystroke, and only a well-formed address.
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - service_edited_at_).count() < 600) return;
-    service_dirty_ = false;
-    const auto check = core::CheckServiceAddress(service_buffer_);
-    if (!check.ok || check.normalized == probed_address_) return;
-    probed_address_ = check.normalized;
-    service_reach_ = core::ServiceReach::Checking;
-    probe_future_ = auth::AuthManager::ProbeService(check.normalized);
-}
-
 void LoginPanel::PollProgressCard() {
     if (!progress_visible_ || register_state_ != core::StepState::Done) return;
     if (Clock::now() < progress_hide_at_) return;
@@ -332,24 +325,47 @@ void LoginPanel::StartNodeRegistration() {
     node_registration_future_ = auth::AuthManager::Instance().RegisterNodeWithApi(node_name_, "server");
 }
 
-void LoginPanel::UseService(const std::string& api_url) {
-    auth::AuthManager::Instance().SetApiBaseUrl(api_url);
-    // Saved in the node config: the daemon reads the same key to renew the sign-in.
+void LoginPanel::OpenServiceDialog() {
+    // The address in the node config (the one the daemon reads too).
     auto& backend = core::BackendManager::Instance();
+    std::string address;
     if (backend.IsInitialized()) {
-        auto config = backend.GetConfig();
-        config.auth_api_url = api_url;
-        backend.UpdateConfig(config);
+        address = backend.GetConfig().cyxwiz_server;
     } else {
         core::ConfigManager manager;
-        const std::string path = core::ConfigManager::FindConfigFile();
-        manager.Load(path);
-        auto config = manager.GetConfig();
-        config.auth_api_url = api_url;
-        manager.SetConfig(config);
-        if (!manager.Save()) spdlog::warn("Sign-in service {} set for this run only (config not saved)", api_url);
+        if (manager.Load(core::ConfigManager::FindConfigFile())) address = manager.GetConfig().cyxwiz_server;
     }
-    spdlog::info("Sign-in service set to {}", api_url);
+    std::strncpy(service_buffer_, address.c_str(), sizeof(service_buffer_) - 1);
+    service_buffer_[sizeof(service_buffer_) - 1] = '\0';
+    service_probe_.Forget();
+    open_service_dialog_ = true;
+}
+
+void LoginPanel::UseServer(const std::string& address) {
+    const auto endpoints = cyxwiz::protocol::ResolveServerAddress(address);
+    if (!endpoints.error.empty()) return;
+    auth::AuthManager::Instance().SetApiBaseUrl(endpoints.api_base_url);
+    // Saved in the node config: the daemon reads the same key for central
+    // and to renew the sign-in.
+    auto& backend = core::BackendManager::Instance();
+    bool saved = false;
+    if (backend.IsInitialized()) {
+        auto config = backend.GetConfig();
+        config.cyxwiz_server = address;
+        saved = backend.UpdateConfig(config);
+    } else {
+        core::ConfigManager manager;
+        manager.Load(core::ConfigManager::FindConfigFile());
+        auto config = manager.GetConfig();
+        config.cyxwiz_server = address;
+        manager.SetConfig(config);
+        saved = manager.Save();
+    }
+    if (saved) {
+        spdlog::info("CyxWiz server set to {}", address);
+    } else {
+        spdlog::warn("CyxWiz server {} set for this run only (config not saved)", address);
+    }
     ClearMessage();
 }
 
@@ -473,14 +489,7 @@ void LoginPanel::RenderCard() {
         ImGui::TextUnformatted(card.service_host.c_str());
         ImGui::PopFont();
         ImGui::SameLine(0.0f, 10.0f);
-        if (ui::LinkButton(card.change_label.c_str(), card.change_enabled)) {
-            std::strncpy(service_buffer_, auth::AuthManager::Instance().GetApiBaseUrl().c_str(), sizeof(service_buffer_) - 1);
-            probed_address_.clear();
-            service_reach_ = core::ServiceReach::Unknown;
-            service_dirty_ = true;
-            service_edited_at_ = Clock::now();
-            open_service_dialog_ = true;
-        }
+        if (ui::LinkButton(card.change_label.c_str(), card.change_enabled)) OpenServiceDialog();
     }
 
     // One message at a time, above the fields.
@@ -605,15 +614,7 @@ void LoginPanel::RenderMessage(const core::SignInMessage& message) {
                         }
                         break;
                     case core::SignInAction::ChangeService:
-                        if (ui::LinkButton("Change service")) {
-                            std::strncpy(service_buffer_, auth::AuthManager::Instance().GetApiBaseUrl().c_str(),
-                                         sizeof(service_buffer_) - 1);
-                            probed_address_.clear();
-                            service_reach_ = core::ServiceReach::Unknown;
-                            service_dirty_ = true;
-                            service_edited_at_ = Clock::now();
-                            open_service_dialog_ = true;
-                        }
+                        if (ui::LinkButton("Change server")) OpenServiceDialog();
                         break;
                     case core::SignInAction::CreateAccount:
                         break;  // the link inside the body
@@ -694,7 +695,10 @@ void LoginPanel::RenderServiceDialog() {
     if (open_service_dialog_ && !ImGui::IsPopupOpen("##service")) ImGui::OpenPopup("##service");
     if (!open_service_dialog_) return;
 
-    const core::ServiceDialog dialog = core::BuildServiceDialog(service_buffer_, service_reach_);
+    const std::string typed = TrimmedText(service_buffer_);
+    const bool usable = cyxwiz::protocol::ResolveServerAddress(typed).error.empty();
+    service_probe_.Update(typed, usable);
+    const core::ServiceDialog dialog = core::BuildServiceDialog(typed, service_probe_.ReachFor(typed));
     const auto& semantic = ::gui::GetTheme().Semantic();
     const ImVec4 muted = ui::Muted();
 
@@ -718,13 +722,9 @@ void LoginPanel::RenderServiceDialog() {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         ImGui::PushFont(GetSafeFont(FONT_MONO));
         const bool entered = ui::TextField("##address", service_buffer_, sizeof(service_buffer_),
-                                           "http://host:port/api", ImGuiInputTextFlags_EnterReturnsTrue);
+                                           "http://localhost:8000", ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::PopFont();
-        if (ImGui::IsItemEdited()) {
-            service_dirty_ = true;
-            service_edited_at_ = Clock::now();
-            service_reach_ = core::ServiceReach::Unknown;
-        }
+        if (ImGui::IsItemEdited()) service_probe_.Edited();
         if (!dialog.address_problem.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(semantic.error, "%s", dialog.address_problem.c_str());
@@ -742,30 +742,17 @@ void LoginPanel::RenderServiceDialog() {
                 if (ui::LinkButton(address.c_str())) {
                     std::strncpy(service_buffer_, address.c_str(), sizeof(service_buffer_) - 1);
                     service_buffer_[sizeof(service_buffer_) - 1] = '\0';
-                    service_dirty_ = true;
-                    service_edited_at_ = Clock::now() - std::chrono::seconds(1);
-                    service_reach_ = core::ServiceReach::Unknown;
                 }
                 ImGui::PopFont();
             }
             ImGui::EndTable();
         }
 
-        if (!dialog.reach_line.empty()) {
-            switch (dialog.reach) {
-                case core::ServiceReach::Reachable:
-                    ImGui::TextColored(semantic.success, ICON_FA_CIRCLE_CHECK " %s", dialog.reach_line.c_str());
-                    break;
-                case core::ServiceReach::Unreachable:
-                    ImGui::TextColored(semantic.error, ICON_FA_CIRCLE_EXCLAMATION " %s", dialog.reach_line.c_str());
-                    break;
-                case core::ServiceReach::Checking:
-                    ui::Spinner("##reach", ImGui::GetTextLineHeight() * 0.4f, 2.0f);
-                    ImGui::SameLine(0.0f, 8.0f);
-                    ImGui::TextColored(muted, "%s", dialog.reach_line.c_str());
-                    break;
-                case core::ServiceReach::Unknown: break;
-            }
+        if (dialog.view.usable) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(muted, "%s", dialog.view.kind_line.c_str());
+            ImGui::PopTextWrapPos();
+            RenderServerRows(dialog.view);
         }
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(muted, "%s", dialog.note.c_str());
@@ -784,7 +771,7 @@ void LoginPanel::RenderServiceDialog() {
         ImGui::SameLine(0.0f, 8.0f);
         if ((ui::PrimaryButton(dialog.use_label.c_str(), use_width, dialog.use_enabled, dialog.address_problem.c_str()) ||
              (entered && dialog.use_enabled))) {
-            UseService(core::CheckServiceAddress(service_buffer_).normalized);
+            UseServer(typed);
             open_service_dialog_ = false;
             ImGui::CloseCurrentPopup();
         }

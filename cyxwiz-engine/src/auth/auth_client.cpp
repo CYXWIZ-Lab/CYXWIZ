@@ -454,6 +454,36 @@ void AuthClient::SetOnAuthStateChanged(AuthStateCallback callback) {
     on_state_changed_ = std::move(callback);
 }
 
+int AuthClient::HttpGet(const std::string& url, std::string* body) {
+    try {
+        const auto parsed = ParseUrl(url);
+        const std::string path = parsed.base_path.empty() ? "/" : parsed.base_path;
+        httplib::Result res;
+        if (url.rfind("https://", 0) == 0) {
+            httplib::SSLClient client(parsed.host, parsed.port);
+            client.enable_server_certificate_verification(true);
+            client.set_connection_timeout(3);
+            client.set_read_timeout(3);
+            res = client.Get(path);
+        } else {
+            httplib::Client client(parsed.host, parsed.port);
+            client.set_connection_timeout(3);
+            client.set_read_timeout(3);
+            res = client.Get(path);
+        }
+        if (!res) {
+            return 0;
+        }
+        if (body) {
+            *body = res->body;
+        }
+        return res->status;
+    } catch (const std::exception& e) {
+        spdlog::debug("GET {} failed: {}", url, e.what());
+        return 0;
+    }
+}
+
 void AuthClient::OpenRegistrationPage() {
     const char* url = "https://cyxwiz.com/register";
 

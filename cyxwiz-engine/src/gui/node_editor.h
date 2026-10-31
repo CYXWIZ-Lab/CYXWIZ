@@ -581,6 +581,10 @@ public:
     // `name` is the extension type id.
     void AddNodeFromMenu(NodeType type, const std::string& name);
     void AddDataInputFromAsset(const std::string& path);
+    // Cloud browser "Use for Training" (TOFIX164): a Data Input on a file in
+    // CyxCloud, with its dialog open on the Source tab.
+    void AddDataInputFromCloud(const std::string& dataset_id, const std::string& dataset_name,
+                               const std::string& file_id, const std::string& file_name, uint64_t size_bytes);
     // Data > Import Dataset: a new Data Input node with its dialog open (data
     // enters the Engine only through Data Input nodes).
     void AddDataInputAndConfigure();

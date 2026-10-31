@@ -54,6 +54,23 @@ DataInputDialog::DataInputDialog(MLNode* node)
     : NodeConfigDialog("Data Input", node)
 {
     if (node_) {
+        // A CyxCloud source (TOFIX164): the node's cloud_* parameters.
+        {
+            const auto param = [this](const char* key) {
+                const auto it = node_->parameters.find(key);
+                return it == node_->parameters.end() ? std::string() : it->second;
+            };
+            cloud_remembered_.dataset_id = param("cloud_dataset_id");
+            cloud_remembered_.dataset_name = param("cloud_dataset_name");
+            cloud_remembered_.file_id = param("cloud_file_id");
+            cloud_remembered_.file_name = param("cloud_file_name");
+            try {
+                cloud_remembered_.size_bytes = std::stoull(param("cloud_size_bytes"));
+            } catch (...) {
+                cloud_remembered_.size_bytes = 0;
+            }
+            if (param("source_type") == "cloud" || cloud_remembered_.Any()) source_kind_ = SourceKind::CyxCloud;
+        }
         if (node_->parameters.count("archive_member")) {
             strncpy(archive_member_, node_->parameters["archive_member"].c_str(), sizeof(archive_member_) - 1);
         }

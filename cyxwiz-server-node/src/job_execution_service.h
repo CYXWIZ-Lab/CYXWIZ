@@ -19,6 +19,7 @@ class NodeClient;  // For communicating with Central Server
 }
 namespace server_node {
 class RemoteDatasetFetcher;
+class CloudDatasetFetcher;
 }
 }
 
@@ -174,6 +175,7 @@ private:
 
         // Dataset download of a remote:// job (runs before training)
         std::shared_ptr<RemoteDatasetFetcher> dataset_fetcher;
+        std::shared_ptr<CloudDatasetFetcher> cloud_fetcher;  // CyxCloud sources (TOFIX164)
         std::mutex dataset_fetcher_mutex;
 
         // Checkpoint state for pause/resume

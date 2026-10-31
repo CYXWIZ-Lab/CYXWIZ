@@ -195,72 +195,29 @@ std::string WebsiteOf(const std::string& api_url) {
     return (parts.scheme.empty() ? std::string("http") : parts.scheme) + "://" + parts.host_port;
 }
 
-ServiceAddressCheck CheckServiceAddress(const std::string& typed) {
-    ServiceAddressCheck check;
-    const std::string text = Trim(typed);
-    const char* example = "Enter an address like http://192.168.1.116:3002/api";
-    if (text.empty()) {
-        check.message = example;
-        return check;
-    }
-    if (text.find_first_of(" \t") != std::string::npos) {
-        check.message = std::string("The address has a space in it. ") + example;
-        return check;
-    }
-    const auto parts = SplitUrl(text);
-    if (parts.scheme != "http" && parts.scheme != "https") {
-        check.message = std::string("The address must start with http:// or https://. ") + example;
-        return check;
-    }
-    if (parts.host_port.empty() || parts.host_port.front() == ':') {
-        check.message = std::string("The address has no host. ") + example;
-        return check;
-    }
-    const auto colon = parts.host_port.find(':');
-    if (colon != std::string::npos) {
-        const std::string port = parts.host_port.substr(colon + 1);
-        const bool digits = !port.empty() && std::all_of(port.begin(), port.end(),
-                                                         [](unsigned char c) { return std::isdigit(c) != 0; });
-        if (!digits || std::stoi(port) < 1 || std::stoi(port) > 65535) {
-            check.message = std::string("The port must be a number from 1 to 65535. ") + example;
-            return check;
-        }
-    }
-    std::string path = parts.path;
-    while (path.size() > 1 && path.back() == '/') path.pop_back();
-    if (path.empty() || path == "/") path = "/api";
-    check.ok = true;
-    check.normalized = parts.scheme + "://" + parts.host_port + path;
-    return check;
-}
-
-ServiceDialog BuildServiceDialog(const std::string& typed_address, ServiceReach reach) {
+ServiceDialog BuildServiceDialog(const std::string& typed_address, const cyxwiz::protocol::ServerReach& reach) {
+    namespace proto = cyxwiz::protocol;
     ServiceDialog dialog;
-    dialog.title = "Sign-in service";
+    dialog.title = "CyxWiz server";
     dialog.explanation =
-        "The CyxWiz website this node signs in with. The central server it reports to is set separately, in "
-        "Settings.";
+        "Where this node signs in and the central server it reports to. One address for both.";
     dialog.address_label = "Address";
-    dialog.examples = {{"CyxWiz (production)", "https://cyxwiz.com/api"},
-                       {"This PC (local stack)", "http://127.0.0.1:3002/api"},
-                       {"Another PC on the network", "http://192.168.1.116:3002/api"}};
-    const auto check = CheckServiceAddress(typed_address);
-    dialog.address_problem = check.ok ? "" : check.message;
-    dialog.reach = check.ok ? reach : ServiceReach::Unknown;
-    switch (dialog.reach) {
-        case ServiceReach::Reachable: dialog.reach_line = "Reachable \xC2\xB7 CyxWiz API"; break;
-        case ServiceReach::Unreachable:
-            dialog.reach_line = "Not reachable \xC2\xB7 check the address and that the service is running";
-            break;
-        case ServiceReach::Checking: dialog.reach_line = "Checking..."; break;
-        case ServiceReach::Unknown: break;
+    for (const auto& example : proto::ServerAddressExamples()) {
+        dialog.examples.emplace_back(example.label, example.value);
     }
+    dialog.view = proto::DescribeServerAddress(typed_address, proto::ServiceSet::NodeServices);
+    if (dialog.view.blank) {
+        dialog.address_problem = "Enter the server address, for example http://localhost:8000.";
+    } else {
+        dialog.address_problem = dialog.view.problem;
+    }
+    if (dialog.view.usable) proto::ApplyReach(dialog.view, reach);
     dialog.note =
-        "\"Create an account\" opens the website of this address. Saved in the node's config; the daemon uses it to "
-        "renew the sign-in.";
+        "\"Create an account\" opens this server's website. Saved in the node's config; the daemon uses it to renew "
+        "the sign-in and to report to central.";
     dialog.cancel_label = "Cancel";
-    dialog.use_label = "Use this service";
-    dialog.use_enabled = check.ok;
+    dialog.use_label = "Use this server";
+    dialog.use_enabled = dialog.view.usable;
     return dialog;
 }
 

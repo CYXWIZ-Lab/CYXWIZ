@@ -1,3 +1,4 @@
+#include "../../core/cloud_connection.h"
 #include "cloud_browser.h"
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
@@ -174,6 +175,9 @@ void CloudBrowserPanel::RenderTabs() {
 
 void CloudBrowserPanel::RenderMyDatasetsTab() {
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    // The fetch thread rebuilds these lists under datasets_mutex_; drawing
+    // them without it raced that rebuild.
+    std::lock_guard<std::mutex> lock(datasets_mutex_);
     if (filtered_datasets_.empty() && !is_loading_.load()) {
         if (my_datasets_.empty()) {
             ImGui::TextColored(t.text_dim,
@@ -197,6 +201,7 @@ void CloudBrowserPanel::RenderPublicDatasetsTab() {
         RefreshPublicDatasets();
     }
 
+    std::lock_guard<std::mutex> lock(datasets_mutex_);
     if (filtered_public_datasets_.empty() && !is_loading_.load()) {
         if (public_datasets_.empty()) {
             ImGui::TextColored(t.text_dim,
@@ -698,7 +703,7 @@ void CloudBrowserPanel::FetchDatasets() {
         std::lock_guard<std::mutex> lock(datasets_mutex_);
         if (success) {
             my_datasets_ = std::move(datasets);
-            ApplyFilter();
+            ApplyFilterLocked();
         } else {
             last_error_ = datastream_client_->GetLastError();
             error_time_ = 5.0f;
@@ -744,6 +749,16 @@ void CloudBrowserPanel::FetchPublicDatasets() {
 
 void CloudBrowserPanel::ApplyFilter() {
     std::lock_guard<std::mutex> lock(datasets_mutex_);
+    ApplyFilterLocked();
+}
+
+// Caller holds datasets_mutex_ (the fetch thread already does; a second lock
+// of a std::mutex on the same thread throws, and threw on the first live
+// listing).
+void CloudBrowserPanel::ApplyFilterLocked() {
+    // The selection survives a refresh by id; its pointer is into the
+    // vector rebuilt below, so it is re-pointed afterwards.
+    const std::string selected_id = selected_dataset_ ? selected_dataset_->id : std::string();
     filtered_datasets_.clear();
 
     std::string filter = search_buffer_;
@@ -772,10 +787,13 @@ void CloudBrowserPanel::ApplyFilter() {
         filtered_datasets_.push_back(ds);
     }
 
-    // Reset selection if it's now invalid
-    if (selected_index_ >= static_cast<int>(filtered_datasets_.size())) {
-        selected_index_ = -1;
-        selected_dataset_ = nullptr;
+    selected_index_ = -1;
+    selected_dataset_ = nullptr;
+    for (int i = 0; i < static_cast<int>(filtered_datasets_.size()); ++i) {
+        if (filtered_datasets_[static_cast<size_t>(i)].id == selected_id) {
+            selected_index_ = i;
+            selected_dataset_ = &filtered_datasets_[static_cast<size_t>(i)];
+        }
     }
 }
 
@@ -884,15 +902,9 @@ void CloudBrowserPanel::TryAutoConnect() {
         owned_client_ = std::make_unique<network::DataStreamClient>();
     }
 
-    // Get gateway address - use central server address with gRPC port
-    std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress();
-    // CyxCloud gateway uses port 50052 for DataStream, override if needed
-    if (gateway_addr.find(":50051") != std::string::npos) {
-        gateway_addr.replace(gateway_addr.find(":50051"), 6, ":50052");
-    };
-    if (gateway_addr.empty()) {
-        gateway_addr = "localhost:50052";  // CyxCloud gateway gRPC port  // Default
-    }
+    // The gateway the server address leads to (TOFIX168), or with no server
+    // address servers.cloud_gateway / central's host on port 50060 (TOFIX164).
+    const std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCloudGatewayAddress();
 
     spdlog::info("CloudBrowser: Connecting to CyxCloud gateway at {}", gateway_addr);
 
@@ -901,12 +913,14 @@ void CloudBrowserPanel::TryAutoConnect() {
         owned_client_->SetAuthToken(auth.GetJwtToken());
         datastream_client_ = owned_client_.get();
         spdlog::info("CloudBrowser: Connected to CyxCloud successfully");
+        if (on_connected_) on_connected_(datastream_client_);
 
         // Auto-refresh datasets
         RefreshDatasets();
         RefreshPublicDatasets();
     } else {
-        spdlog::warn("CloudBrowser: Failed to connect to CyxCloud gateway");
+        spdlog::warn("CloudBrowser: Failed to connect to CyxCloud gateway: {}", owned_client_->GetLastError());
+        cyxwiz::cloud::SetLastConnectError(owned_client_->GetLastError());
     }
 }
 } // namespace gui

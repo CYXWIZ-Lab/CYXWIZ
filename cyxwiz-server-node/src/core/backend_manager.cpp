@@ -151,14 +151,13 @@ OpenAIAPIServer* BackendManager::GetAPIServer() {
 }
 #endif
 
-void BackendManager::UpdateConfig(const NodeConfig& config) {
+bool BackendManager::UpdateConfig(const NodeConfig& config) {
     std::lock_guard<std::mutex> lock(mutex_);
     config_ = config;
 
-    // Save updated config
-    if (config_manager_) {
-        config_manager_->SaveConfig(config, "./config/server_config.yaml");
-    }
+    // Saved where it was loaded from: a fixed ./config path wrote a file the
+    // next start never read when the config lives in %APPDATA% or ~/.config.
+    return config_manager_ && config_manager_->SaveConfig(config, ConfigManager::FindConfigFile());
 }
 
 } // namespace cyxwiz::servernode::core

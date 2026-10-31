@@ -1,4 +1,6 @@
 #include "../core/image_batchers.h"
+#include "../core/cloud_dataset_file_format.h"
+#include "../core/cloud_connection.h"
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/session_query_service.h"
 #include "../core/pipeline_type_names.h"
@@ -716,6 +718,36 @@ MainWindow::MainWindow()
     
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
+    // Its gateway connection serves the whole Engine: remote jobs whose
+    // Data Inputs live in CyxCloud mint their access tokens through it.
+    cloud_browser_panel_->SetConnectedCallback(
+        [this](network::DataStreamClient* client) { SetDataStreamClient(client); });
+    // Use for Training: a Data Input on the dataset's largest trainable file
+    // (Arrow IPC or Parquet); its dialog opens for another choice.
+    cloud_browser_panel_->SetDatasetSelectedCallback([this](const network::CloudDatasetInfo& dataset) {
+        if (!datastream_client_ || !node_editor_) return;
+        network::CloudDatasetInfo info;
+        std::vector<network::CloudFileInfo> files;
+        if (!datastream_client_->GetDatasetInfo(dataset.id, info, files)) {
+            cloud_browser_panel_->ShowError("Could not list the files of '" + dataset.name + "': " +
+                                            datastream_client_->GetLastError());
+            return;
+        }
+        const network::CloudFileInfo* best = nullptr;
+        for (const auto& file : files) {
+            const std::string name = std::filesystem::path(file.path).filename().string();
+            if (!cyxwiz::CloudDatasetFileFormatKnown(name)) continue;
+            if (!best || file.size_bytes > best->size_bytes) best = &file;
+        }
+        if (!best) {
+            cloud_browser_panel_->ShowError("No Arrow IPC or Parquet file in '" + dataset.name +
+                                            "'; remote nodes train from those only");
+            return;
+        }
+        node_editor_->AddDataInputFromCloud(dataset.id, dataset.name, best->id,
+                                            std::filesystem::path(best->path).filename().string(),
+                                            static_cast<uint64_t>(best->size_bytes));
+    });
     node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
     node_browser_panel_->SetNodeEditor(node_editor_.get());
     node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
@@ -2817,6 +2849,21 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
                 spdlog::info("Auth token cleared from gRPC client after logout");
             }
         });
+
+        // Preferences > Servers changed the server (TOFIX168 step 3b): drop
+        // every connection to the old one. Central reconnects in the
+        // background; CyxCloud connects again when a panel needs it.
+        toolbar_->SetServerChangedCallback([this]() {
+            if (connection_dialog_) connection_dialog_->OnServerChanged();
+            if (deployment_dialog_) deployment_dialog_->OnServerChanged();
+            if (datastream_client_ && datastream_client_->IsConnected()) datastream_client_->Disconnect();
+        });
+    }
+    if (connection_dialog_ && toolbar_) {
+        connection_dialog_->SetOpenServerPreferencesCallback([this]() { toolbar_->OpenPreferences("Servers"); });
+    }
+    if (deployment_dialog_ && toolbar_) {
+        deployment_dialog_->SetOpenServerPreferencesCallback([this]() { toolbar_->OpenPreferences("Servers"); });
     }
 
     spdlog::debug("Network components set in MainWindow");
@@ -2824,6 +2871,7 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
 
 void MainWindow::SetDataStreamClient(network::DataStreamClient* client) {
     datastream_client_ = client;
+    cyxwiz::cloud::SetClient(client);  // the Data Input dialog lists datasets through it
 
     // Pass DataStreamClient to cloud panels
     if (cloud_browser_panel_) {
@@ -2834,6 +2882,8 @@ void MainWindow::SetDataStreamClient(network::DataStreamClient* client) {
         cloud_dataset_manager_panel_->SetDataStreamClient(client);
         spdlog::info("DataStreamClient set on CloudDatasetManagerPanel");
     }
+    // Remote jobs with CyxCloud datasets mint their access tokens through it.
+    if (connection_dialog_) connection_dialog_->SetDataStreamClient(client);
 
     spdlog::info("DataStreamClient set in MainWindow");
 }

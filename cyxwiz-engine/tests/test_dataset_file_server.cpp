@@ -136,6 +136,66 @@ int main() {
               "graph with a preparation step refused: " + error);
     }
 
+    std::cout << "resolves each Data Input's file against the project root\n";
+    {
+        nlohmann::json g = GraphWithTestInput(root);
+        for (auto& node : g["nodes"]) {
+            if (node.value("id", 0) == 1) node["parameters"]["file_path"] = "datasets/tokens.parquet";
+            if (node.value("id", 0) == 21) {
+                node["parameters"].erase("file_path");
+                node["parameters"]["cloud_file_id"] = "2f1c7f8e";
+            }
+        }
+        const auto files = cyxwiz::DataInputFiles(g.dump(), "D:/projects/demo");
+        Check(files.size() == 1 && files.count(kTrain) == 1, "one file for the one input with a path");
+        const std::string resolved = files.count(kTrain) ? files.at(kTrain) : std::string();
+        Check(Contains(resolved, "projects") && Contains(resolved, "demo") && Contains(resolved, "tokens.parquet") &&
+                  std::filesystem::path(resolved).is_absolute(),
+              "relative path resolved against the root: " + resolved);
+    }
+
+    std::cout << "plans CyxCloud inputs apart from shipped ones (TOFIX164)\n";
+    {
+        auto cloud_graph = [&](const std::string& file_name, const std::string& dataset_id) {
+            nlohmann::json g = GraphWithTestInput(root);
+            for (auto& node : g["nodes"]) {
+                if (node.value("id", 0) != 1) continue;
+                node["parameters"]["cloud_dataset_id"] = dataset_id;
+                node["parameters"]["cloud_file_id"] = "2f1c7f8e-7d3a-4b4e-9c2d-1a2b3c4d5e6f";
+                node["parameters"]["cloud_file_name"] = file_name;
+                node["parameters"]["cloud_size_bytes"] = "4096";
+            }
+            return g;
+        };
+        cyxwiz::GraphJobDatasetPlan plan;
+        std::string error;
+        Check(cyxwiz::PlanGraphJobDatasets(cloud_graph("tokens.parquet", "dataset-a").dump(), plan, error),
+              "cloud plan ok " + error);
+        Check(plan.ship.empty(), "nothing shipped for a cloud input");
+        Check(plan.cloud.size() == 1 && plan.cloud[0].dataset_name == kTrain && plan.cloud[0].dataset_id == "dataset-a" &&
+                  plan.cloud[0].file_id == "2f1c7f8e-7d3a-4b4e-9c2d-1a2b3c4d5e6f" &&
+                  plan.cloud[0].file_name == "tokens.parquet" && plan.cloud[0].size_bytes == 4096,
+              "the cloud entry carries dataset, file, name and size");
+        Check(plan.kept_private == std::vector<std::string>{kTest}, "the Test input still stays on the Engine");
+        // (the outcome first, so the printed reason is this call's)
+        const bool csv_refused = !cyxwiz::PlanGraphJobDatasets(cloud_graph("tokens.csv", "dataset-a").dump(), plan, error);
+        Check(csv_refused && Contains(error, "Arrow IPC or Parquet"),
+              "a cloud file the node cannot train from is refused: " + error);
+        const bool no_dataset = !cyxwiz::PlanGraphJobDatasets(cloud_graph("tokens.parquet", "").dump(), plan, error);
+        Check(no_dataset && Contains(error, "cloud_dataset_id"), "a cloud file without its dataset is refused: " + error);
+        Check(cyxwiz::CloudDatasetFileFormatKnown("x.FEATHER") && cyxwiz::CloudDatasetFileFormatKnown("x.arrow") &&
+                  !cyxwiz::CloudDatasetFileFormatKnown("x.json") && !cyxwiz::CloudDatasetFileFormatKnown(""),
+              "known formats");
+
+        // The file server has nothing to export for a cloud-only graph and
+        // must not demand a loaded dataset for it.
+        network::DatasetFileServer cloud_server;
+        const bool registered = cloud_server.RegisterJob("job_cloud", cloud_graph("tokens.parquet", "dataset-a").dump(),
+                                                         work / "engine_cache" / "job_cloud", error);
+        Check(registered, "cloud-only job registers without a loaded dataset: " + error);
+        cloud_server.UnregisterJob("job_cloud");
+    }
+
     network::DatasetFileServer server;
     const fs::path cache = work / "engine_cache" / "job_1";
 

@@ -23,6 +23,12 @@ namespace fs = std::filesystem;
 namespace gui {
 void DataInputDialog::Apply() {
     if (!node_) return;
+    // A CyxCloud file: the choice is saved on the node; nothing is read here
+    // (a node trains from the cloud; the sample read comes with 4b.2).
+    if (CloudSourceChosen()) {
+        ApplyCloudSource();
+        return;
+    }
     if (IsHdf5Source()) {
         apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
         apply_success_ = false;

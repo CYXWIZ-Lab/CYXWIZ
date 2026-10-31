@@ -51,6 +51,9 @@ private:
 class NodeClient {
 public:
     NodeClient(const std::string& central_server_address, const std::string& node_id);
+
+    // Where to renew the sign-in token
+    void SetAuthApiUrl(const std::string& url) { if (!url.empty()) auth_api_url_ = url; }
     ~NodeClient();
 
     // Register this node with Central Server (auto-detects hardware)
@@ -176,6 +179,10 @@ private:
     void AddAuthMetadata(grpc::ClientContext& context);
 
     std::string central_server_address_;
+    // Where the sign-in is renewed (the daemon's yaml or --server). It was
+    // read from a BackendManager config the daemon never loads, so renewal
+    // always went to the built-in 127.0.0.1:3002 (TOFIX168).
+    std::string auth_api_url_ = "http://127.0.0.1:3002/api";
     std::string node_id_;
     mutable std::mutex node_id_mutex_;  // guards node_id_ writes vs GetNodeId
     std::string session_token_;

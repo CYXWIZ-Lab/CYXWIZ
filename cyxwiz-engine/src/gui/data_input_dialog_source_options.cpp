@@ -140,6 +140,11 @@ void DataInputDialog::RenderFileSource() {
 
     // === 1. Source =========================================================
     SectionTitle("1. Source");
+    RenderSourceChoice();
+    if (CloudSourceChosen()) {
+        RenderCloudSource();
+        return;
+    }
     FieldLabel("File or folder");
     const float browse_w = cyxwiz::ui::ButtonWidth("Browse file...", cyxwiz::ui::ButtonSize::Small) +
                            cyxwiz::ui::ButtonWidth("Browse folder...", cyxwiz::ui::ButtonSize::Small) +
