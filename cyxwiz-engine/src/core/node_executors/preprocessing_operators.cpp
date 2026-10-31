@@ -856,7 +856,7 @@ arrow::Status QuantileTransformOperator::EndColumnFit(size_t column, Preprocessi
     values_[column].shrink_to_fit();
     feature.numeric_values["count"] = static_cast<double>(quantiles_[column].size());
     for (size_t q = 0; q < quantiles_[column].size(); ++q) {
-        char key[16];
+        char key[24];  // "q" + up to 20 digits of a size_t
         std::snprintf(key, sizeof(key), "q%05zu", q);
         feature.numeric_values[key] = quantiles_[column][q];
     }
@@ -867,7 +867,7 @@ arrow::Status QuantileTransformOperator::LoadColumn(size_t column, const Preproc
     const double count = Saved(feature, "count");
     std::vector<double> quantiles;
     for (size_t q = 0; std::isfinite(count) && q < static_cast<size_t>(count); ++q) {
-        char key[16];
+        char key[24];
         std::snprintf(key, sizeof(key), "q%05zu", q);
         const double value = Saved(feature, key);
         if (!std::isfinite(value) || (!quantiles.empty() && value < quantiles.back())) {
