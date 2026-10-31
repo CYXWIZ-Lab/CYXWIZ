@@ -1,6 +1,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/async_task_manager.h"
 #include "../src/core/data_registry.h"
+#include "../src/core/gcc_diagnostics.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
@@ -1211,8 +1212,11 @@ int main(int argc, char** argv) {
         {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
     };
     // The tokenizer feeds the Data Split: the step training reads.
+    // libstdc++'s vector growth: GCC -Warray-bounds false positive (TOFIX187).
+    CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
     std::vector<gui::NodeLink> training_links = links;
     training_links.push_back({2, 2, 0, 6, 0, gui::LinkType::TensorFlow});
+    CYXWIZ_GCC_IGNORE_END
 
     CheckPreparedStepScope(work_dir, text_csv);
     CheckTokenizerStreamsOnDisk(work_dir);

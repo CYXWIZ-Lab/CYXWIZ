@@ -1,5 +1,6 @@
 #include "data_table.h"
 #include "../core/csv_records.h"
+#include "../core/gcc_diagnostics.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -8,9 +9,12 @@
 
 // HDF5 support (optional - only if HighFive is available)
 #ifdef CYXWIZ_HAS_HDF5
+// HighFive's own path constructor: GCC -Wuninitialized false positive (TOFIX187).
+CYXWIZ_GCC_IGNORE_BEGIN("-Wuninitialized")
 #include <highfive/H5File.hpp>
 #include <highfive/H5DataSet.hpp>
 #include <highfive/H5DataSpace.hpp>
+CYXWIZ_GCC_IGNORE_END
 #endif
 
 namespace cyxwiz {

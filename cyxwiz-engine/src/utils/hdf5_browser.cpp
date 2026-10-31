@@ -1,13 +1,17 @@
 #include "hdf5_browser.h"
+#include "../core/gcc_diagnostics.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <algorithm>
 
 #ifdef CYXWIZ_HAS_HDF5
+// HighFive's own path constructor: GCC -Wuninitialized false positive (TOFIX187).
+CYXWIZ_GCC_IGNORE_BEGIN("-Wuninitialized")
 #include <highfive/H5File.hpp>
 #include <highfive/H5DataSet.hpp>
 #include <highfive/H5DataSpace.hpp>
 #include <highfive/H5Group.hpp>
+CYXWIZ_GCC_IGNORE_END
 #endif
 
 namespace cyxwiz {
