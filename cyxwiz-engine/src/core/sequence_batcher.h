@@ -18,7 +18,7 @@ struct SequenceSample {
     std::vector<int64_t> tag_ids;
     // Causal LM only, optional: one entry per target (word_ids.size() - 1);
     // 0 excludes that target from the loss (prompt tokens in supervised windows).
-    std::vector<uint8_t> target_mask;
+    std::vector<uint8_t> target_mask{};
 };
 
 struct SequenceBatcherConfig {
